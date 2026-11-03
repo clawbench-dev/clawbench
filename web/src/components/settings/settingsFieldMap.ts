@@ -95,11 +95,14 @@ export function formatAnchorForDisplay(value: unknown): string {
   return `${raw.slice(0, sep)} ${raw.slice(sep + 1)}`
 }
 
+/** Sentinel option value for "type it yourself" in a model select. */
+export const CUSTOM_OPTION_VALUE = '__custom__'
+
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
   key: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'datetime' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'datetime' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea' | 'summaryModel'
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
@@ -111,6 +114,8 @@ export interface ItemSpec {
   /** Gray out (disable) this field when the condition is NOT met, but keep it visible. */
   disableUnless?: DependsOn | DependsOn[]
   sectionHeader?: string
+  /** Hard input limit for text/textarea editors (mirrors the server-side cap). */
+  maxLength?: number
   /** Transform raw value for display (e.g., 0 → 'auto' for port_forward.port) */
   displayTransform?: (value: unknown) => unknown
   defaultValue?: unknown
@@ -142,7 +147,7 @@ export interface ItemSpec {
   navigateTo?: string
   /**
    * Show the shared AI-summary-model config status pill on this row
-   * (已配置 / 未配置). Used by the rows that jump to the `aiSummary` panel, so
+   * (已配置 / 未配置). Used by the summary-model rows, so
    * the user can tell at a glance whether the model those features call is
    * actually configured — the backend silently skips when it is not.
    */
@@ -191,6 +196,13 @@ export type CategoryEntry =
  * Each entry is either a flat instant-save item or a group panel with batch save.
  */
 export const categoryItems: Record<string, CategoryEntry[]> = {
+  // The human user's identity. A first-class category rather than a row under
+  // 群聊: the nickname is also the meeting display name, and the profile is
+  // injected into every agent's system prompt — neither is group-chat-specific.
+  identity: [
+    { type: 'item', spec: { labelKey: 'settings.items.userNickname', descriptionKey: 'settings.items.userNicknameDesc', key: 'user.nickname', type: 'text', source: 'server', sectionHeader: 'settings.items.identitySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.userProfile', descriptionKey: 'settings.items.userProfileDesc', key: 'user.profile', type: 'textarea', source: 'server', maxLength: 4000, sectionHeader: 'settings.items.identitySection' } },
+  ],
   appearance: [
     { type: 'item', spec: { labelKey: 'settings.items.theme', descriptionKey: 'settings.items.themeDesc', key: 'theme', type: 'select', source: 'local', sectionHeader: 'settings.items.themeSection', options: [
       { labelKey: 'settings.items.themeAuto', value: 'auto' },
@@ -291,19 +303,18 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // with the rows above: the renderer groups cards by *runs* of the same
     // sectionHeader, so any row with a different header inserted here splits
     // this row into a second, one-row 推荐回复 card.
-    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.recommend_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.recommendSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.recommend_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueEnabled', descriptionKey: 'settings.items.chatAutoContinueEnabledDesc', key: 'chat.auto_continue_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueMaxRetries', descriptionKey: 'settings.items.chatAutoContinueMaxRetriesDesc', key: 'chat.auto_continue_max_retries', type: 'number', source: 'server', min: -1, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRestartResumeWindow', descriptionKey: 'settings.items.chatRestartResumeWindowDesc', key: 'chat.restart_resume_window_minutes', type: 'number', source: 'server', min: 0, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoRenameEnabled', descriptionKey: 'settings.items.chatAutoRenameEnabledDesc', key: 'chat.auto_rename_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoRenameSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummaryForRename', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
-    // Group chat: the reserved display name of the human user, and the cap on
-    // how many times the agents may speak to each other before the floor
-    // returns to the user. Both are global server settings (same value on every
-    // device); the lone sectionHeader forms their own card.
-    { type: 'item', spec: { labelKey: 'settings.items.groupUserNickname', descriptionKey: 'settings.items.groupUserNicknameDesc', key: 'chat.user_nickname', type: 'text', source: 'server', sectionHeader: 'settings.items.groupChatSectionHeader' } },
+    // Group chat: the cap on how many times the agents may speak to each other
+    // before the floor returns to the user. A global server setting (same value
+    // on every device). The user nickname now lives in the 身份 category — it
+    // is not group-chat-specific.
     { type: 'item', spec: { labelKey: 'settings.items.groupMaxSpeeches', descriptionKey: 'settings.items.groupMaxSpeechesDesc', key: 'chat.group_max_speeches', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.groupChatSectionHeader' } },
   ],
   project: [
@@ -356,6 +367,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.tlsSection', descriptionKey: 'settings.items.tlsPanelDesc', key: 'tlsCert', type: 'info', source: 'server', sectionHeader: 'settings.items.tlsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.tlsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
+    // Desktop-only: the Electron shell remembers accepted self-signed
+    // certificates (origin -> fingerprint), so it needs an explicit undo.
+    // `appOnly` keeps it out of the browser, `hideInAndroidApp` out of Android,
+    // which never persists the answer (it re-asks on every connection).
+    { type: 'item', spec: { labelKey: 'settings.items.trustedCerts', descriptionKey: 'settings.items.trustedCertsDesc', key: 'trustedCerts', type: 'action', source: 'local', appOnly: true, hideInAndroidApp: true, sectionHeader: 'settings.items.securitySection' } },
   ],
   skills: [
     // Cross-agent skill discovery, split into one card per concern. Each entry
@@ -376,6 +392,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // (MCPSetting); this entry only opens the section, so it must also be
     // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
+  ],
+  providers: [
+    // Model-provider list (endpoint + credential). Same shape as the MCP
+    // section: the card body is ProviderSetting, so this placeholder item only
+    // opens the section and must be listed in PLACEHOLDER_ITEMS.
+    { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection' } },
   ],
   forgeIntegration: [
     // The master switch gets its OWN card, ahead of everything else: it decides
@@ -594,55 +616,28 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.summarizeApi', value: 'api' },
       { labelKey: 'settings.items.summarizeAuto', value: 'auto' },
     ]} },
-    { type: 'item', spec: { labelKey: 'settings.items.summarizeAutoJunkRatio', descriptionKey: 'settings.items.summarizeAutoJunkRatioDesc', key: 'summarize.auto_junk_ratio', type: 'slider', source: 'server', min: 0.1, max: 0.9, step: 0.05, displayFormat: 'percent', dependsOn: { key: 'summarize.tts_backend', value: 'auto' } } },
-    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', showSummaryModelStatus: true, sectionHeader: 'settings.items.voiceSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', showSummaryModelStatus: true, sectionHeader: 'settings.items.voiceSummarySection' } },
+    // Same header as the two rows above: the cards are grouped by consecutive
+    // sectionHeader, so leaving this one header-less would drop it into the
+    // trailing "其他" card and split the summary settings in two.
+    { type: 'item', spec: { labelKey: 'settings.items.summarizeAutoJunkRatio', descriptionKey: 'settings.items.summarizeAutoJunkRatioDesc', key: 'summarize.auto_junk_ratio', type: 'slider', source: 'server', min: 0.1, max: 0.9, step: 0.05, displayFormat: 'percent', dependsOn: { key: 'summarize.tts_backend', value: 'auto' }, sectionHeader: 'settings.items.voiceSummarySection' } },
   ],
   tts_engine: [
     { type: 'panel', config: {
       panelId: 'tts',
       entrySelector: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
         { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
-        { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
-        { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
-        { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
         { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
       ]},
       commonFields: [
         // The shared voice row is a fixed dropdown per engine, so it is hidden
         // for "openai": that engine takes a free-text voice name (or a custom
         // voice id) in its own tts.openai.voice row below.
-        { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', values: ['edge', 'piper', 'kokoro', 'moss-nano'] } },
+        { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', value: 'edge' } },
         { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
         { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
       ],
       optionSubFields: [
-        {
-          when: 'piper',
-          fields: [
-            { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader' },
-            { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001 },
-            { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1 },
-            { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1 },
-          ],
-        },
-        {
-          when: 'kokoro',
-          fields: [
-            { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader' },
-            { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server' },
-            { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server' },
-          ],
-        },
-        {
-          when: 'moss-nano',
-          fields: [
-            { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader' },
-            { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', options: [
-              { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
-              { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
-            ]},
-          ],
-        },
         {
           when: 'openai',
           fields: [
@@ -664,7 +659,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           ],
         },
       ],
-      requiredFields: ['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path', 'tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
+      requiredFields: ['tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
       needsVoiceReset: true,
@@ -674,37 +669,32 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'panel', config: {
       panelId: 'stt_engine',
       commonFields: [
-        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.sttHeader' },
+        { labelKey: 'settings.items.sttProvider', descriptionKey: 'settings.items.sttProviderDesc', key: 'stt.provider', type: 'select', source: 'server', sectionHeader: 'settings.items.sttHeader', options: [
+          { labelKey: 'settings.items.sttProviderVllm', value: 'vllm' },
+          { labelKey: 'settings.items.sttProviderDoubao', value: 'doubao' },
+        ] },
+        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.api_key', type: 'password', source: 'server' },
-        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.model', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.language', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server' },
-        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100 },
+        { labelKey: 'settings.items.sttResourceId', descriptionKey: 'settings.items.sttResourceIdDesc', key: 'stt.resource_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttZhVariant', descriptionKey: 'settings.items.sttZhVariantDesc', key: 'stt.output_zh_variant', type: 'select', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' }, options: [
+          { labelKey: 'settings.items.sttZhVariantNone', value: '' },
+          { labelKey: 'settings.items.sttZhVariantTraditional', value: 'traditional' },
+          { labelKey: 'settings.items.sttZhVariantTw', value: 'tw' },
+          { labelKey: 'settings.items.sttZhVariantHk', value: 'hk' },
+        ] },
+        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'doubao' } },
         { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
       ],
       requiredFields: ['stt.base_url', 'stt.model'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'stt', values }],
-    }},
-  ],
-  aiSummary: [
-    { type: 'panel', config: {
-      panelId: 'ai_summary',
-      commonFields: [
-        { labelKey: 'settings.items.aiSummaryModel', descriptionKey: 'settings.items.aiSummaryModelDesc', key: 'ai_summary.model', type: 'text', source: 'server', sectionHeader: 'settings.items.aiSummaryApiHeader' },
-        { labelKey: 'settings.items.aiSummaryFormat', descriptionKey: 'settings.items.aiSummaryFormatDesc', key: 'ai_summary.format', type: 'select', source: 'server', options: [
-          { labelKey: 'settings.items.aiSummaryFormatAuto', value: '' },
-          { labelKey: 'settings.items.aiSummaryFormatOpenAI', value: 'openai' },
-          { labelKey: 'settings.items.aiSummaryFormatAnthropic', value: 'anthropic' },
-        ]},
-        { labelKey: 'settings.items.aiSummaryBaseUrl', descriptionKey: 'settings.items.aiSummaryBaseUrlDesc', key: 'ai_summary.api.base_url', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.aiSummaryApiKey', descriptionKey: 'settings.items.aiSummaryApiKeyDesc', key: 'ai_summary.api.key', type: 'password', source: 'server' },
-      ],
-      requiredFields: [],
-      hasConnectivityTest: (v) => !!v['ai_summary.api.base_url'],
-      getTestCategories(values) {
-        return [{ category: 'summarize_voice', values }]
-      },
     }},
   ],
   rag: [
@@ -863,48 +853,5 @@ export const engineVoiceOptions: Record<string, { labelKey: string; value: strin
     { labelKey: 'settings.items.voiceEdgeGuy', value: 'en-US-GuyNeural' },
     { labelKey: 'settings.items.voiceEdgeAria', value: 'en-US-AriaNeural' },
     { labelKey: 'settings.items.voiceEdgeDavis', value: 'en-US-DavisNeural' },
-  ],
-  piper: [
-    { labelKey: 'settings.items.voicePiperHuayanMedium', value: 'zh_CN-huayan-medium' },
-    { labelKey: 'settings.items.voicePiperHuayanXLow', value: 'zh_CN-huayan-x_low' },
-    { labelKey: 'settings.items.voicePiperChaowenMedium', value: 'zh_CN-chaowen-medium' },
-    { labelKey: 'settings.items.voicePiperLessacMedium', value: 'en_US-lessac-medium' },
-    { labelKey: 'settings.items.voicePiperLibrittsHigh', value: 'en_US-libritts-high' },
-  ],
-  kokoro: [
-    { labelKey: 'settings.items.voiceKokoroZf001', value: 'zf_001' },
-    { labelKey: 'settings.items.voiceKokoroZf002', value: 'zf_002' },
-    { labelKey: 'settings.items.voiceKokoroZf003', value: 'zf_003' },
-    { labelKey: 'settings.items.voiceKokoroZf004', value: 'zf_004' },
-    { labelKey: 'settings.items.voiceKokoroZf005', value: 'zf_005' },
-    { labelKey: 'settings.items.voiceKokoroZf006', value: 'zf_006' },
-    { labelKey: 'settings.items.voiceKokoroZf007', value: 'zf_007' },
-    { labelKey: 'settings.items.voiceKokoroZf008', value: 'zf_008' },
-    { labelKey: 'settings.items.voiceKokoroZm009', value: 'zm_009' },
-    { labelKey: 'settings.items.voiceKokoroZm010', value: 'zm_010' },
-    { labelKey: 'settings.items.voiceKokoroZm011', value: 'zm_011' },
-    { labelKey: 'settings.items.voiceKokoroZfXiaobei', value: 'zf_xiaobei' },
-    { labelKey: 'settings.items.voiceKokoroZfShanshan', value: 'zf_shanshan' },
-    { labelKey: 'settings.items.voiceKokoroZfXiaoyi', value: 'zf_xiaoyi' },
-    { labelKey: 'settings.items.voiceKokoroZmYunxi', value: 'zm_yunxi' },
-    { labelKey: 'settings.items.voiceKokoroZmYunjian', value: 'zm_yunjian' },
-  ],
-  'moss-nano': [
-    { labelKey: 'settings.items.voiceMossJunhao', value: 'Junhao' },
-    { labelKey: 'settings.items.voiceMossZhiming', value: 'Zhiming' },
-    { labelKey: 'settings.items.voiceMossWeiguo', value: 'Weiguo' },
-    { labelKey: 'settings.items.voiceMossXiaoyu', value: 'Xiaoyu' },
-    { labelKey: 'settings.items.voiceMossYuewen', value: 'Yuewen' },
-    { labelKey: 'settings.items.voiceMossLingyu', value: 'Lingyu' },
-    { labelKey: 'settings.items.voiceMossTrump', value: 'Trump' },
-    { labelKey: 'settings.items.voiceMossAva', value: 'Ava' },
-    { labelKey: 'settings.items.voiceMossBella', value: 'Bella' },
-    { labelKey: 'settings.items.voiceMossAdam', value: 'Adam' },
-    { labelKey: 'settings.items.voiceMossNathan', value: 'Nathan' },
-    { labelKey: 'settings.items.voiceMossSakura', value: 'Sakura' },
-    { labelKey: 'settings.items.voiceMossYui', value: 'Yui' },
-    { labelKey: 'settings.items.voiceMossAoi', value: 'Aoi' },
-    { labelKey: 'settings.items.voiceMossHina', value: 'Hina' },
-    { labelKey: 'settings.items.voiceMossMei', value: 'Mei' },
   ],
 }

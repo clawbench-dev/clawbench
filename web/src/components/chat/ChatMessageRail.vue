@@ -103,7 +103,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MessageIndexRow from './MessageIndexRow.vue'
-import { designToCss } from '@/utils/uiScale'
+import { designToCss, UI_SCALE_EVENT } from '@/utils/uiScale'
 import type { SpeakerIdentity } from '@/utils/speakerIdentity'
 
 /** One row of the conversation index (the shape /api/ai/chat/user-messages returns). */
@@ -151,6 +151,17 @@ const props = withDefaults(defineProps<{
    * carries the ordinal the reply will get, so it needs no styling of its own.
    */
   generating?: boolean
+  /**
+   * Whether the in-flight slot is the reader's current position.
+   *
+   * While a turn runs, the mark used to sit on the pending slot unconditionally.
+   * That is right only while the reader is watching the reply being written: a
+   * real turn can stream for minutes, and as soon as they scroll up to read
+   * history the highlight stopped moving at all — the rail looked frozen. The
+   * host therefore reports "generating AND at the bottom"; anywhere else the
+   * mark follows the reading position like it does when idle.
+   */
+  pendingActive?: boolean
 }>(), {
   activeId: null,
   resolveSpeaker: null,
@@ -158,6 +169,7 @@ const props = withDefaults(defineProps<{
   getScroller: () => null,
   bottomInset: 0,
   generating: false,
+  pendingActive: false,
 })
 
 const emit = defineEmits<{
@@ -405,6 +417,10 @@ function measure() {
 
   const scroller = props.getScroller?.()
   if (scroller) {
+    // A layout switch can hand us a different element (the scroller is replaced
+    // when the pane moves between the narrow and wide shells). The observer is
+    // still bound to the old, detached node, so re-attach on the way past.
+    if (scroller !== observedScroller) observeTargets()
     // The right inset is exactly the room between the reading measure and the
     // pane edge (already net of the scrollbar lane). Reading it from the
     // scroller rather than recomputing the measure keeps the two in step.
@@ -458,15 +474,20 @@ const activeIndex = computed(() => {
 /**
  * Which node carries the "you are here" highlight.
  *
- * While a reply streams that is the pending slot, not the last finished
- * message: the axis follows the tail, so the slot IS the newest row, and
- * leaving it unhighlighted made it the only node on the axis without the mark
- * — it read as "not a real message" rather than as "this one is being written".
- * The finished message loses the mark at the same time, so exactly one node is
- * ever highlighted.
+ * While a reply streams AND the reader is on it (the viewport is pinned to the
+ * tail), that is the pending slot: it is the newest row, and leaving it
+ * unmarked made it the only node on the axis without the mark — it read as "not
+ * a real message" rather than as "this one is being written". Exactly one node
+ * is ever highlighted, so the finished message gives the mark up at the same
+ * time.
+ *
+ * Everywhere else — idle, or reading history while a turn is still streaming —
+ * the mark belongs to the message at the reading position. Pinning it to the
+ * tail while the reader scrolled away is what made the highlight look frozen.
  */
 function isActive(it: { msg: RailIndexMsg; pending: boolean }) {
-  if (props.generating) return it.pending
+  if (props.pendingActive) return it.pending
+  if (it.pending) return false
   const id = props.activeId
   if (id == null || id === '') return false
   return String(it.msg.id) === String(id)
@@ -606,6 +627,45 @@ function onPointerUp(e: PointerEvent) {
 
 /* ── Lifecycle ────────────────────────────────────────────────────────── */
 let observer: ResizeObserver | null = null
+let observedScroller: HTMLElement | null = null
+let resizeFrame = 0
+
+/**
+ * Point the observer at the boxes that decide the rail's layout.
+ *
+ * Deliberately re-runnable rather than set up once at mount: the rail root is
+ * `v-if`'d on the index, so it does not exist yet when the session's index is
+ * still empty, and the scroller can be replaced by a layout switch. An observer
+ * bound to a node that is no longer in the document never fires again — that
+ * froze the gutter gate, so a pane widened later stayed without a rail until
+ * the whole panel was remounted (which is what switching sessions does).
+ */
+function observeTargets() {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!observer) observer = new ResizeObserver(() => measure())
+  else observer.disconnect()
+  if (railRef.value) observer.observe(railRef.value)
+  const scroller = props.getScroller?.()
+  observedScroller = scroller || null
+  if (!scroller) return
+  observer.observe(scroller)
+  // The PANE as well, not just the scroller: its width is what decides whether
+  // there is a gutter at all, and unlike the scroller it is never replaced.
+  if (scroller.parentElement) observer.observe(scroller.parentElement)
+}
+
+/**
+ * Window resizes and UI-scale changes both move the gutter gate without the
+ * rail itself changing size, so neither necessarily produces an observer
+ * callback. Coalesce them into one measure per frame.
+ */
+function onViewportChange() {
+  if (resizeFrame) return
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0
+    measure()
+  })
+}
 
 async function refresh() {
   await nextTick()
@@ -614,70 +674,70 @@ async function refresh() {
 
 onMounted(() => {
   refresh()
-  if (typeof ResizeObserver !== 'undefined') {
-    observer = new ResizeObserver(() => measure())
-    if (railRef.value) observer.observe(railRef.value)
-    const scroller = props.getScroller?.()
-    if (scroller) observer.observe(scroller)
-  }
+  observeTargets()
+  window.addEventListener('resize', onViewportChange)
+  window.addEventListener(UI_SCALE_EVENT, onViewportChange)
+})
+
+// The rail root appears only once the index has rows. Attach then — otherwise
+// the observer never sees it at all.
+watch(railRef, (el) => {
+  if (!el) return
+  observeTargets()
+  refresh()
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
   observer = null
+  observedScroller = null
+  if (resizeFrame) cancelAnimationFrame(resizeFrame)
+  resizeFrame = 0
+  window.removeEventListener('resize', onViewportChange)
+  window.removeEventListener(UI_SCALE_EVENT, onViewportChange)
   if (hideTimer) clearTimeout(hideTimer)
 })
 
 /**
- * Re-layout when the index itself grows.
+ * Re-layout when the index itself grows or shrinks.
  *
- * `refresh` only re-measures; the scroll offset must also FOLLOW the new tail,
- * otherwise a message that just landed (or the pending slot that preceded it)
- * is appended below the clip edge and the reader never sees it. Only when the
- * list got LONGER — shrinking (session switch, filter) must not move the view.
+ * Only the measurement: which row to keep on screen is `followIndex`'s job now.
+ * Forcing the view to the tail here would drag it away from the reader as soon
+ * as a turn finished while they were reading history.
  */
-watch(() => props.messages.length, async (next, prev) => {
-  await refresh()
-  if (next <= prev) return
-  requestAnimationFrame(() => {
-    measure()
-    ensureVisible(items.value.length - 1)
-  })
-})
-
-// Keep the active node on screen as the reader scrolls the conversation, and
-// re-centre when the list itself changes length.
-watch(activeIndex, (idx) => {
-  if (idx < 0) return
-  // While a reply streams the axis follows the TAIL, not the active message.
-  // The active message is the last FINALIZED one, so tracking it parked its row
-  // on the bottom edge — which left the pending slot exactly one row lower,
-  // i.e. outside the clip box: invisible, and `elementFromPoint` at its centre
-  // hit the panel behind it, so clicking it did nothing. Following the reader
-  // instead would also make the slot vanish as soon as they scrolled up the
-  // conversation, which is precisely when they reach for it. The slot is an
-  // affordance ("take me back to the reply"), so it must stay on screen.
-  ensureVisible(props.generating ? items.value.length - 1 : idx)
-})
+watch(() => props.messages.length, () => { void refresh() })
 
 /**
- * Keep the pending slot on screen while a reply streams.
+ * The row the axis must keep on screen: the one carrying the "you are here"
+ * mark.
  *
- * A new reply is appended at the tail, which is usually BELOW the visible band —
- * without this the spinner is created outside the rail's clipped box and the
- * reader never sees it (the whole point of the slot). Runs after the layout has
- * accounted for the extra item, so `ensureVisible` measures the real range.
+ * While the reader is on the in-flight reply that is the pending slot; while
+ * they read history it is the message they are looking at. Following the mark
+ * (rather than always the tail) is what keeps the highlight VISIBLE — pinning
+ * the view to the tail while the mark followed the reader would scroll the lit
+ * node out of the clipped box, which reads as "no highlight at all".
  */
-watch(() => props.generating, async (on) => {
-  if (!on) return
-  // Two frames: the pending slot is a new ITEM, so the first render only adds it
-  // to the list; `measure()` on the following frame sees the grown content height
-  // and recomputes `maxOffset`, which `ensureVisible` needs (it bails out while
-  // the range is 0).
-  await nextTick()
+const followIndex = computed(() =>
+  props.pendingActive ? items.value.length - 1 : activeIndex.value,
+)
+
+/**
+ * Keep the marked node on screen as the reader scrolls.
+ *
+ * Runs after the layout has accounted for a newly added item: a new reply's
+ * slot is appended BELOW the visible band, and `ensureVisible` bails out while
+ * the scroll range is still 0 — the state measured before the row exists.
+ */
+watch(followIndex, (idx) => {
+  if (idx < 0) return
+  // Synchronously first: `ensureVisible` recomputes the scroll range itself, so
+  // a row appended this tick is handled without waiting for a re-measure.
+  ensureVisible(idx)
+  // …then once more after the frame that lays the new row out, for the case
+  // where the rail's own height (and therefore its range) changed with it.
   requestAnimationFrame(() => {
     measure()
-    ensureVisible(items.value.length - 1)
+    ensureVisible(idx)
   })
 })
 

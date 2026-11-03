@@ -30,7 +30,7 @@
 
       <!-- Empty -->
       <div v-else-if="items.length === 0" class="shared-files-hint">
-        <ScreenShare :size="32" class="shared-files-empty-icon" />
+        <ScreenShare class="shared-files-empty-icon empty-state__icon" />
         <span>{{ t('sharedFiles.empty') }}</span>
       </div>
 
@@ -47,7 +47,7 @@
           @keydown.enter="item.exists && openFile(item)"
         >
           <div class="shared-file-main">
-            <FileIcon :path="item.name" :size="22" />
+            <FileIcon :path="item.name" :is-dir="!!item.isDir" :size="22" />
             <div class="shared-file-info">
               <div class="shared-file-name-row">
                 <span class="shared-file-name" :title="item.name">{{ item.name }}</span>
@@ -160,6 +160,13 @@ async function loadList() {
 }
 
 function openFile(item) {
+  // A folder has no in-app file preview — its public page IS the way to look at
+  // it, so opening the row goes there (same action as "open in new tab").
+  if (item.isDir) {
+    openExternalUrl(shareUrl(item))
+    drawer.close()
+    return
+  }
   // Absolute path for out-of-project files is handled by store.selectFile
   // (external files), and App.vue switches to the view tab on success.
   emit('selectFile', item.path)
@@ -237,11 +244,6 @@ defineExpose({ open: openDrawer })
 /* First load: rows in place of a centred spinner. */
 .shared-files-skeleton {
   padding: var(--space-2) 0;
-}
-
-.shared-files-empty-icon {
-  color: var(--text-muted, #656d76);
-  opacity: var(--opacity-muted);
 }
 
 .shared-files-error { color: #cf222e; }

@@ -28,6 +28,13 @@ export interface NotificationNav {
    */
   usageMeter?: boolean
   /**
+   * Set for meeting notifications (remote-control request, someone joining, a
+   * member sharing, the minutes finishing). A meeting has no session or task —
+   * its share token IS its identity — so without this discriminator the click
+   * falls through to the session channel and is dropped.
+   */
+  meetingToken?: string
+  /**
    * The forge item the click should open, so the destination is that item's
    * detail rather than just the forge tab.
    *
@@ -59,6 +66,7 @@ export const NAV_CHANNELS = [
   'clawbench-open-task',
   'clawbench-open-forge',
   'clawbench-open-usage-meter',
+  'clawbench-open-meeting',
 ] as const
 
 export type NavChannel = (typeof NAV_CHANNELS)[number]

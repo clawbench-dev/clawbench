@@ -24,6 +24,9 @@ function readRepoFile(rel: string): string {
 const INDEX = 'desktop/src/main/index.ts'
 const BRIDGE = 'desktop/src/main/bridge.ts'
 const CERT = 'desktop/src/main/certificate.ts'
+const PRELOAD = 'desktop/src/preload/index.ts'
+const STORE = 'desktop/src/main/store.ts'
+const FIELD_MAP = 'web/src/components/settings/settingsFieldMap.ts'
 
 describe('certificate handler is registered', () => {
   it('registers the app-level certificate-error handler at startup', () => {
@@ -42,6 +45,16 @@ describe('certificate handler is registered', () => {
     expect(src).toContain('event.preventDefault()')
   })
 
+  it('answers subresource failures from the trusted-origin set', () => {
+    // Trust is granted for one navigation but must cover every request to that
+    // origin: each new socket (the WebSocket, most fetches) re-runs certificate
+    // verification with isMainFrame=false. Forgetting to pass the trust set
+    // here is invisible at build time and breaks the whole app at runtime.
+    const src = readRepoFile(CERT)
+    expect(src).toContain('isRememberedCertificate(rememberedCertificates()')
+    expect(src).toContain('decideCertificateAction(url, isMainFrame, remembered)')
+  })
+
   it('prompts the user and trusts only on confirmation', () => {
     const src = readRepoFile(CERT)
     expect(src).toContain('dialog.showMessageBox')
@@ -51,21 +64,34 @@ describe('certificate handler is registered', () => {
   })
 })
 
-describe('certificate trust is per-connection', () => {
-  it('resets the trust set on every connect', () => {
-    // The user asked to be re-prompted each time (matching Android), so a
-    // persisted or process-lifetime trust would be wrong.
+describe('certificate trust is remembered by fingerprint', () => {
+  it('does NOT clear the remembered certificates on connect', () => {
+    // Remembering is the point: reconnecting to the same server must not ask
+    // again. A changed certificate still does, because the entry is keyed by
+    // fingerprint (see the policy test).
     const src = readRepoFile(BRIDGE)
     const connect = src.match(/native:connect-to-server[\s\S]*?\n  \}\)/)
     expect(connect, 'connect-to-server handler not found').not.toBeNull()
-    expect(connect![0], 'connect must reset the certificate trust').toContain('resetCertificateTrust()')
+    expect(connect![0], 'connect must not reset the certificate trust').not.toContain('resetCertificateTrust')
   })
 
-  it('clears the set rather than persisting it to the store', () => {
+  it('persists the accepted fingerprint and matches on it', () => {
     const src = readRepoFile(CERT)
-    expect(src).toContain('trustedOrigins.clear()')
-    // A persisted trust would survive a restart, contradicting the per-connection
-    // decision. Guard against a future "remember" change sneaking in silently.
-    expect(src).not.toContain("getStore().set(")
+    expect(src).toContain("getStore().set('trustedCertificates'")
+    expect(src).toContain('certificate.fingerprint')
+    expect(src).toContain('isRememberedCertificate(')
+  })
+
+  it('declares the store key so an existing install gets a default', () => {
+    const src = readRepoFile(STORE)
+    expect(src).toContain('trustedCertificates: Record<string, string>')
+    expect(src).toContain('trustedCertificates: {},')
+  })
+
+  it('exposes an undo through the settings UI', () => {
+    // Without a way to forget, a mistaken "trust and continue" is permanent.
+    expect(readRepoFile(BRIDGE)).toContain("ipcMain.handle('native:forget-trusted-certs'")
+    expect(readRepoFile(PRELOAD)).toContain("invoke('native:forget-trusted-certs')")
+    expect(readRepoFile(FIELD_MAP)).toContain("key: 'trustedCerts'")
   })
 })

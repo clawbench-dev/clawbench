@@ -66,50 +66,136 @@ describe('the feature has a reachable on/off switch', () => {
   })
 })
 
-describe('startup fail-safe respects a dismissed capsule', () => {
-  it('the fallback timer checks the revoked marker before showing', () => {
-    // `initFloating` schedules a delayed show in case the main window never
-    // emits 'show'. It used to run unconditionally, so a user who dismissed the
-    // capsule (or turned the feature off) within those seconds got it back with
-    // the tray already destroyed.
-    //
-    // The body is matched to the CLOSING `}, STARTUP_SHOW_FALLBACK_MS)` rather
-    // than with a lazy `[\s\S]*?`: a lazy match runs past the timer body into
-    // the rest of the function and finds `startupIntentRevoked` in the `once`
-    // handler above, so deleting the guard still passes.
+describe('the capsule follows the main window, not the feature flag', () => {
+  // The settings row promises "while the app is in the background". The capsule
+  // used to be created as soon as the feature was on — so it sat on top of the
+  // window the user was working in, permanently.
+  it('visibility is derived from the main window being out of sight', () => {
     const src = readRepoFile(FLOATING)
-    // Anchored on the exact closing line (indentation included). A lazy
-    // `[\s\S]*?` was not enough: the timer body contains no `},` of its own, so
-    // the match ran on into the following `once('show')` handler and found
-    // `startupIntentRevoked` there — deleting the guard still passed.
-    const timer = src.match(/\n      setTimeout\(\(\) => \{([\s\S]*?)\n      \}, STARTUP_SHOW_FALLBACK_MS\)/)
-    expect(timer, 'the startup fallback timer must exist').not.toBeNull()
-    // Strip comments first: the guard's own explanatory comment names
-    // `startupIntentRevoked`, and matching that would make the check pass with
-    // the code deleted.
-    const body = timer![1]
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|\s)\/\/[^\n]*/g, '$1')
-    expect(body, 'the fallback must bail when the user revoked the intent').toContain('startupIntentRevoked')
-    expect(body, 'the fallback must bail when the feature was turned off').toContain('isEnabled()')
-    // …and both checks must come BEFORE the show, or they guard nothing.
-    const showAt = body.indexOf('showCapsule()')
-    expect(showAt, 'the fallback must still show the capsule').toBeGreaterThan(-1)
-    expect(body.indexOf('startupIntentRevoked'), 'the revoked check must precede showCapsule').toBeLessThan(showAt)
-    expect(body.indexOf('isEnabled()'), 'the enabled check must precede showCapsule').toBeLessThan(showAt)
+    const sync = src.match(/function syncCapsuleToMainWindow\(\): void \{([\s\S]*?)\n\}/)
+    expect(sync, 'syncCapsuleToMainWindow not found').not.toBeNull()
+    expect(sync![1], 'must branch on the main window, not show unconditionally').toContain('mainWindowOutOfSight()')
+    // The hide half matters as much as the show half: restoring the window has
+    // to take the capsule away again.
+    expect(sync![1], 'must hide when the window is back').toContain('hideCapsule()')
+
+    const predicate = src.match(/function mainWindowOutOfSight\(\): boolean \{([\s\S]*?)\n\}/)
+    expect(predicate, 'mainWindowOutOfSight not found').not.toBeNull()
+    // A minimized window still reports `isVisible()` on Windows, so the two
+    // conditions are not interchangeable.
+    expect(predicate![1], 'a minimized window counts as out of sight').toContain('isMinimized()')
+    expect(predicate![1], 'a hidden window counts as out of sight').toContain('!w.isVisible()')
+    // …and a window that has never been shown must NOT count: `createMainWindow`
+    // builds with `show: false`, so the startup window would otherwise read as
+    // "backgrounded" and the capsule would pop up at every launch.
+    expect(predicate![1], 'a not-yet-shown window is not "hidden"').toContain('mainWindowShown')
   })
 
-  it('both dismissal paths set the marker', () => {
-    // Hiding from the tray/capsule, and turning the feature off, are the two
-    // ways the user can revoke the startup intent.
+  it('every main-window transition that changes visibility is wired', () => {
     const src = readRepoFile(FLOATING)
-    const hide = src.match(/function hideCapsule\(\): void \{([\s\S]*?)\n\}/)
-    expect(hide, 'hideCapsule not found').not.toBeNull()
-    expect(hide![1]).toContain('startupIntentRevoked = true')
+    const wire = src.match(/function wireMainWindow\(w: BrowserWindow\): void \{([\s\S]*?)\n\}/)
+    expect(wire, 'wireMainWindow not found').not.toBeNull()
+    for (const event of ['show', 'hide', 'minimize', 'restore', 'closed']) {
+      expect(wire![1], `the main window's '${event}' event must resync the capsule`).toContain(`'${event}'`)
+    }
+    expect(wire![1], 'the shown flag must be set when the window appears').toContain('mainWindowShown = true')
 
-    const disable = src.match(/export function applyFloatingEnabled\([\s\S]*?\n\}/)
-    expect(disable, 'applyFloatingEnabled not found').not.toBeNull()
-    expect(disable![0]).toContain('startupIntentRevoked = true')
+    // A re-created window (macOS activate, the capsule's own "open the app")
+    // must be wired too, which is why the hook lives in window.ts.
+    expect(src, 'must subscribe to main-window creation').toContain('onMainWindowCreated(wireMainWindow)')
+    const win = readRepoFile('desktop/src/main/window.ts')
+    expect(win, 'window.ts must expose the hook').toContain('export function onMainWindowCreated')
+    expect(win, 'window.ts must notify on every creation').toContain('notifyMainWindowCreated(mainWindow)')
+  })
+
+  it('turning the feature on does not put the capsule on screen', () => {
+    // The switch is flipped from the settings row, i.e. with the window in
+    // front. Showing the capsule there is the exact behaviour being fixed.
+    const src = readRepoFile(FLOATING)
+    const enable = src.match(/export function applyFloatingEnabled\([\s\S]*?\n\}/)
+    expect(enable, 'applyFloatingEnabled not found').not.toBeNull()
+    expect(enable![0], 'arming the feature must go through the window-state sync').toContain('syncCapsuleToMainWindow()')
+    expect(enable![0], 'arming the feature must not show the capsule outright').not.toContain('showCapsule()')
+  })
+
+  it('startup arms the feature without showing anything', () => {
+    // The old startup path waited for the main window's `show` and then created
+    // the capsule, with a timer as a fail-safe. Both are gone: at startup the
+    // window is (about to be) in front of the user, so there is nothing to show.
+    const src = readRepoFile(FLOATING)
+    expect(src, 'the startup show timer must be gone').not.toContain('STARTUP_SHOW_FALLBACK_MS')
+    const init = src.match(/export function initFloating\(\): void \{([\s\S]*?)\n\}/)
+    expect(init, 'initFloating not found').not.toBeNull()
+    expect(init![1], 'startup must sync instead of showing').toContain('syncCapsuleToMainWindow()')
+    expect(init![1], 'startup must not show the capsule outright').not.toContain('showCapsule()')
+    // The listener is registered even when the feature is off, or turning it on
+    // later would leave the (already created) window unwired.
+    expect(init![1], 'the main window must be wired regardless of the flag').toContain('onMainWindowCreated')
+  })
+
+  it('the tray keeps the counters moving with no capsule window at all', () => {
+    // Polling used to start in `createWindow`, which now only runs on the first
+    // minimize — the tray tooltip would sit at 0/0/0 until then.
+    const src = readRepoFile(FLOATING)
+    const tray = src.match(/function ensureTray\(\): void \{([\s\S]*?)\n\}/)
+    expect(tray, 'ensureTray not found').not.toBeNull()
+    expect(tray![1], 'the tray must start polling on its own').toContain('startPolling()')
+  })
+})
+
+describe('the capsule surround stays fully transparent', () => {
+  // A transparent window is still a rectangle to the compositor, and the window
+  // is only 4px larger than the pill. Any shadow with a blur radius is clipped
+  // at the window edge and paints that margin — which the user sees as a grey
+  // semi-transparent box framing the capsule on light wallpapers.
+  const HTML = 'desktop/assets/floating.html'
+
+  /** Split a `box-shadow` value on top-level commas (rgba() carries its own). */
+  function layers(decl: string): string[] {
+    const out: string[] = []
+    let depth = 0
+    let cur = ''
+    for (const ch of decl) {
+      if (ch === '(') depth++
+      else if (ch === ')') depth--
+      if (ch === ',' && depth === 0) {
+        out.push(cur.trim())
+        cur = ''
+        continue
+      }
+      cur += ch
+    }
+    if (cur.trim()) out.push(cur.trim())
+    return out
+  }
+
+  /** The numeric lengths of one layer, with colour functions stripped out. */
+  function lengthsOf(layer: string): number[] {
+    // Colour functions carry their own numbers (`rgba(0, 0, 0, .38)`), and
+    // offsets are commonly unitless zeros — so drop parenthesised content first
+    // rather than trying to tell `0` from a colour channel by its suffix.
+    let stripped = ''
+    let depth = 0
+    for (const ch of layer) {
+      if (ch === '(') depth++
+      if (depth === 0) stripped += ch
+      if (ch === ')') depth--
+    }
+    return (stripped.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number)
+  }
+
+  it('no shadow layer has a blur radius', () => {
+    const src = readRepoFile(HTML)
+    const decls = src.match(/box-shadow:[^;]*;/g) ?? []
+    expect(decls.length, 'the capsule should still draw its inset ring').toBeGreaterThan(0)
+    for (const decl of decls) {
+      for (const layer of layers(decl.replace(/^box-shadow:/, '').replace(/;$/, ''))) {
+        // A layer is `offsetX offsetY blur spread colour`; the third length is
+        // the blur. `0 0 0 1px …` (ring) passes, `0 6px 22px …` does not.
+        const blur = lengthsOf(layer)[2] ?? 0
+        expect(blur, `"${decl.trim()}" blurs into the transparent margin`).toBe(0)
+      }
+    }
   })
 })
 
@@ -277,5 +363,48 @@ describe('the feature-state read answers about the feature, not the window', () 
     expect(handler, 'native:floating-is-enabled handler not found').not.toBeNull()
     expect(handler![0]).toContain('isEnabled()')
     expect(handler![0], 'must not report capsule visibility').not.toContain('isFloatingAlive')
+  })
+})
+
+describe('the pill is measured at its natural width', () => {
+  // `measure()` sizes the WINDOW from `#pill.scrollWidth`, so the pill must not
+  // be squeezable by that same window — otherwise the measurement confirms
+  // itself: while the window is too narrow the pill shrinks, its right padding
+  // is eaten by the overflowing row, `scrollWidth` reports the squeezed width,
+  // and the page asks for exactly the width it already has. The capsule then
+  // stays permanently too narrow.
+  //
+  // Measured (Playwright, the bundled Chromium, "执行中 3 · 未读 2"): growing
+  // from a 120px window converged on 162px instead of 177px, leaving the last
+  // glyph 0.4px outside the pill — the user's "文字溢出了". `fit-content` and
+  // `max-width: 100%` were both clamps; the earlier shrink-only test (400 → 88)
+  // could not see it because shrinking never needs to exceed the window.
+  const HTML = 'desktop/assets/floating.html'
+
+  /** Declarations of the `#pill` rule itself, comments stripped. */
+  function pillRule(): string {
+    const src = readRepoFile(HTML).replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = src.match(/(?:^|\n)\s*#pill\s*\{([\s\S]*?)\n\s*\}/)
+    expect(rule, '#pill rule not found').not.toBeNull()
+    return rule![1]
+  }
+
+  it('nothing clamps the pill to the current window width', () => {
+    const decls = pillRule()
+    expect(decls, 'the pill must size to its content').toMatch(/width:\s*max-content\s*;/)
+    expect(decls, 'max-width caps the pill at the window it is measuring').not.toMatch(/max-width:/)
+    expect(decls, 'fit-content shrinks to the available width — same clamp').not.toContain('fit-content')
+    expect(decls, 'a flex item of #hit must not be shrunk').toMatch(/flex:\s*0 0 auto\s*;/)
+  })
+
+  it('the measurement still comes from the pill, not the window', () => {
+    // The guard above only means something while `measure()` reports the pill's
+    // own size. Switching it to the window's width would restore the deadlock
+    // without tripping anything above.
+    const src = readRepoFile(HTML)
+    const measure = src.match(/function measure\(\) \{([\s\S]*?)\n  \}/)
+    expect(measure, 'measure() not found').not.toBeNull()
+    expect(measure![1]).toContain('els.pill.scrollWidth')
+    expect(measure![1]).not.toContain('innerWidth')
   })
 })

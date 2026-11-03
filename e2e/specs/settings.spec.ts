@@ -44,7 +44,16 @@ test.describe('Password Change Dialog', () => {
     // hang on the chat textarea.
     resetSessionCookie()
     await page.context().clearCookies()
-    await page.goto('/')
+    // Navigate to `/login`, not `/`: with the cookies gone the SPA's first
+    // authenticated request 401s and the app HARD-redirects to `/login`
+    // (`utils/authExpiry.ts` does `location.href = '/login'`). Waiting for that
+    // navigation to finish raced with `goto` and intermittently failed the whole
+    // test with "Navigation to ... is interrupted by another navigation to
+    // /login". `/login` serves the same index.html (handler/auth.go ServeLogin),
+    // so this is the terminal state the app was heading for anyway — and
+    // `waitUntil: 'commit'` stops at the first document, leaving the app's own
+    // reload to happen underneath instead of competing with it.
+    await page.goto('/login', { waitUntil: 'commit' })
     // Wait for the SPA to settle on one of its two terminal states before
     // probing: it renders nothing until the async /api/me check resolves.
     await page.locator('.login-page, .app-container').first()

@@ -31,6 +31,9 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.ini', '.conf', '.cfg'], lang: 'ini', label: 'INI', color: '#8b8b8b', isMarkdown: false },
     { exts: ['.properties'], lang: 'properties', label: 'Props', color: '#8b8b8b', isMarkdown: false },
     { exts: ['.csv', '.tsv'], lang: 'plaintext', label: 'CSV', color: '#237f4a', isMarkdown: false },
+    // Meeting transcripts are SubRip; rendering them as Markdown merged every
+    // cue into one paragraph, so they stay plain text with their own badge.
+    { exts: ['.srt'], lang: 'plaintext', label: 'SRT', color: '#7a5af8', isMarkdown: false },
     { exts: ['.go', '.mod', '.sum'], lang: 'go', label: 'Go', color: '#00acd7', isMarkdown: false },
     { exts: ['.py', '.pyi', '.pyw'], lang: 'python', label: 'PY', color: '#3572a5', isMarkdown: false },
     { exts: ['.rs'], lang: 'rust', label: 'RS', color: '#ce412b', isMarkdown: false },
@@ -259,4 +262,13 @@ export function formatFileSize(bytes: number): string {
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+}
+
+/** Format a transfer rate, e.g. "1.2 MB/s". */
+export function formatByteRate(bytesPerSecond: number): string {
+    if (!Number.isFinite(bytesPerSecond) || bytesPerSecond < 1) return '0 B/s'
+    if (bytesPerSecond < 1024) return Math.round(bytesPerSecond) + ' B/s'
+    if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s'
+    if (bytesPerSecond < 1024 * 1024 * 1024) return (bytesPerSecond / (1024 * 1024)).toFixed(1) + ' MB/s'
+    return (bytesPerSecond / (1024 * 1024 * 1024)).toFixed(1) + ' GB/s'
 }

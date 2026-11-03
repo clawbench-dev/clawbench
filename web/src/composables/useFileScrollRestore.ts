@@ -27,7 +27,45 @@
  * fileScrollCache it writes into is shared at module scope.
  */
 
-import { EditorView } from '@codemirror/view'
+import type { EditorView } from '@codemirror/view'
+
+/**
+ * Editor views by their scroll container.
+ *
+ * This module used to call `EditorView.findFromDOM()`, which meant importing
+ * `@codemirror/view` at module scope — and this composable is used by the file
+ * manager, i.e. by the FIRST-SCREEN bundle. One import for a two-line lookup
+ * pulled the entire CodeMirror + Lezer stack (~1.4MB) into the initial payload.
+ *
+ * The editor registers itself instead. The import stays type-only, so it is
+ * erased at build time and the editor chunk remains lazy.
+ */
+const editorViews = new WeakMap<HTMLElement, EditorView>()
+
+/** Called by the editor once its view exists (keyed by its scroll container). */
+export function registerEditorView(scrollDom: HTMLElement, view: EditorView): void {
+    editorViews.set(scrollDom, view)
+}
+
+/** Called on unmount so a detached container cannot be looked up later. */
+export function unregisterEditorView(scrollDom: HTMLElement): void {
+    editorViews.delete(scrollDom)
+}
+
+/**
+ * Resolve the editor that owns a scroll container.
+ *
+ * Falls back to the property CodeMirror itself attaches (`cmView`), which is
+ * exactly what `EditorView.findFromDOM` reads — kept so an editor that predates
+ * the registry (or a test double) still resolves. The registry is preferred
+ * because it does not depend on an internal name.
+ */
+function viewOf(el: HTMLElement): EditorView | null {
+    const registered = editorViews.get(el)
+    if (registered) return registered
+    const internal = (el as unknown as { cmView?: { view?: EditorView } }).cmView
+    return internal?.view ?? null
+}
 import { renderedLineAnchor, renderedLineScrollTop } from '@/utils/scrollRenderedToLine'
 import {
     getFileScroll,
@@ -143,7 +181,7 @@ export function pxCanApply(
  * half of the shared line coordinate. Works without any TOC headings.
  */
 export function cmTopLine(el: HTMLElement): number | null {
-    const view = EditorView.findFromDOM(el)
+    const view = viewOf(el)
     if (!view) return null
     try {
         const topBlock = view.lineBlockAtHeight(el.scrollTop + 1)
@@ -162,7 +200,7 @@ export function cmTopLine(el: HTMLElement): number | null {
  * trip lands on the same visual line.
  */
 export function cmLineScrollTop(el: HTMLElement, line: number): number | null {
-    const view = EditorView.findFromDOM(el)
+    const view = viewOf(el)
     if (!view) return null
     const target = Math.min(Math.max(1, line), view.state.doc.lines)
     let block

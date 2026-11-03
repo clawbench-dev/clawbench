@@ -243,15 +243,21 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["chat.auto_rename_enabled"] {
 		cfg.Chat.AutoRenameEnabled = true
 	}
-	// UserNickname: the reserved display name of the human user in group chat.
-	// An empty value is never valid (it would be an unaddressable participant),
-	// so empty always falls back to the default — no presence map needed. The
-	// value is trimmed here too: a hand-edited config.yaml bypasses the PATCH
-	// path's normalization, and the mention parser trims each target, so an
-	// untrimmed nickname would be unreachable.
-	cfg.Chat.UserNickname = strings.TrimSpace(cfg.Chat.UserNickname)
-	if cfg.Chat.UserNickname == "" {
-		cfg.Chat.UserNickname = "User"
+	// --- User identity ---
+	// The nickname is NOT defaulted to "User" here. The literal is a fallback
+	// applied where the name is actually used (group routing's
+	// groupUserTarget(), the settings/meeting UI), so an empty stored value
+	// means "the user never configured one" — which is distinguishable from a
+	// user who explicitly chose the word "User". Trimming covers a hand-edited
+	// config.yaml; the mention parser trims each target, so an untrimmed
+	// nickname would be unreachable.
+	cfg.User.Nickname = strings.TrimSpace(cfg.User.Nickname)
+	// The profile is injected into every agent system prompt, so a hand-edited
+	// value is clamped rather than allowed to grow without bound. The PATCH
+	// path rejects an over-long value with a 400 instead of silently trimming.
+	cfg.User.Profile = strings.TrimSpace(cfg.User.Profile)
+	if runes := []rune(cfg.User.Profile); len(runes) > MaxUserProfileRunes {
+		cfg.User.Profile = string(runes[:MaxUserProfileRunes])
 	}
 	// GroupMaxSpeeches: the member-to-member speech cap for a group turn.
 	// A non-positive value is nonsensical (it would stop the discussion before
@@ -394,11 +400,28 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- STT ---
+	if cfg.STT.Provider == "" {
+		cfg.STT.Provider = "vllm"
+	}
 	if cfg.STT.BaseURL == "" {
 		cfg.STT.BaseURL = "http://localhost:8000/v1"
 	}
 	if cfg.STT.Model == "" {
 		cfg.STT.Model = "openai/whisper-large-v3"
+	}
+	if cfg.STT.ResourceID == "" {
+		cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
+	}
+	// Bool zero-value trap: ITN and punctuation default to ON, so only an
+	// explicit value in config.yaml may turn them off.
+	if _, ok := presence["stt.enable_itn"]; !ok {
+		cfg.STT.EnableITN = true
+	}
+	if _, ok := presence["stt.enable_punc"]; !ok {
+		cfg.STT.EnablePunc = true
+	}
+	if cfg.STT.EndWindowSize <= 0 {
+		cfg.STT.EndWindowSize = 800
 	}
 	if cfg.STT.Language == "" {
 		cfg.STT.Language = "zh"

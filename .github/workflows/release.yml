@@ -693,6 +693,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
@@ -789,6 +793,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
@@ -858,6 +866,10 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
 
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
@@ -993,6 +1005,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
       - name: Set desktop version from tag
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
@@ -1027,6 +1043,9 @@ jobs:
         # Without it electron-builder skips signing (ad-hoc) instead of failing.
         run: |
           cd desktop
+          # The remote-control helper is an extraResource for every platform's
+          # package; without it electron-builder is asked to copy a missing file.
+          node scripts/build-input-helper.mjs
           npx tsc -p tsconfig.json
           npx electron-builder --dir --arm64
           npx electron-builder --dir --x64

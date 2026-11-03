@@ -343,7 +343,7 @@ else:
         "android/app/src/main/java/com/clawbench/app/BackgroundService.java",  # onStartCommand, ensureConnection need Android framework + JSch
         "android/app/src/main/java/com/clawbench/app/BrowserActivity.java",    # shouldInterceptRequest needs WebView + HttpURLConnection; onReceivedError needs WebViewClient lifecycle
         "android/app/src/main/java/com/clawbench/app/MainActivity.java",       # launchFileChooserWithCamera needs PackageManager + FileProvider; onShowFileChooser needs WebView ChromeClient lifecycle
-        "android/app/src/main/java/com/clawbench/app/PushService.java",        # Service lifecycle methods (onCreate/onStartCommand/startForeground) need Android framework; static methods tested in PushServiceTest
+        "android/app/src/main/java/com/clawbench/app/ScreenShareService.java", # MediaProjection/VirtualDisplay/foreground-service lifecycle cannot be constructed in JVM tests; the pure decisions live in ScreenShareStartPolicy (covered by ScreenShareStartPolicyTest)
         "android/app/src/main/java/com/clawbench/app/LogBottomSheet.java",     # UI bottom sheet component: RecyclerView + LayoutManager + Dialog lifecycle, needs Android framework
         "android/app/src/main/java/com/clawbench/app/SSLHelper.java",          # SSL certificate pinning: KeyStore + TrustManagerFactory + X509TrustManager, needs Android security framework
     }

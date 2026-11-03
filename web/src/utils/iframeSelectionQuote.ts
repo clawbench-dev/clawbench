@@ -54,8 +54,13 @@ export interface IframeSelectionQuoteOptions {
    * `position: fixed` is expressed in), or null when it could not be measured.
    * Without it the bar can only fall back to its pinned top position, which
    * puts it far away from the text the user just selected.
+   *
+   * `sourceEl` is the frame element the selection lives in. The host cannot
+   * derive it (the selection is in another document), yet the bar needs it to
+   * tell "the surface under my anchor moved" from "some unrelated pane scrolled"
+   * — see `useQuoteQuestion.onScroll`.
    */
-  show: (data: QuoteData, anchor: DOMRect | null) => void
+  show: (data: QuoteData, anchor: DOMRect | null, sourceEl: Element | null) => void
   /** Hide the quote bar (empty selection / collapsed). */
   hide: () => void
   /** Debounce for `selectionchange` (mirrors the host's 150ms). */
@@ -73,6 +78,17 @@ export interface ViewportRect {
   width: number
   height: number
 }
+
+/**
+ * How many extra layout passes a selection with no measurable anchor is given
+ * before the bar falls back to its pinned position.
+ *
+ * Two is enough for "the document just navigated / the pane is being sized" —
+ * a layout pass or two — and small enough that a selection that genuinely
+ * cannot be mapped (a frame with no box at all) still shows the bar promptly
+ * rather than appearing dead.
+ */
+const ANCHOR_RETRY_LIMIT = 2
 
 /**
  * Express a rect measured INSIDE an iframe in the host viewport's coordinates.
@@ -122,6 +138,12 @@ export function iframeSelectionAnchor(win: IframeBridgeWindow, sel: Selection): 
   const frame = win.frameElement as HTMLElement | null | undefined
   if (!frame || typeof frame.getBoundingClientRect !== 'function') return null
   const frameRect = frame.getBoundingClientRect()
+  // A frame with no box yet — not laid out, mid-navigation, or inside a pane
+  // whose height has not been computed — cannot be mapped: the scale would be
+  // 0, collapsing every anchor onto the frame's top-left corner, which puts the
+  // bar somewhere the user never selected. Report "not measurable" instead so
+  // the caller can retry once layout exists.
+  if (!(frameRect.width > 0) || !(frameRect.height > 0)) return null
   const mapped = mapIframeRectToHost(
     { top: union.top, left: union.left, width: union.right - union.left, height: union.bottom - union.top },
     frameRect,
@@ -230,6 +252,12 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
    * staged quote) and which makes "did the bar flicker?" impossible to assert.
    */
   let barShown = false
+  /**
+   * How many times this selection has been re-checked because its anchor could
+   * not be measured (see `evaluateSelection`). Reset whenever a measurement
+   * succeeds or the selection goes away, so the retries are per-selection.
+   */
+  let anchorRetries = 0
 
   function scheduleEvaluate(delayMs: number) {
     if (disposed) return
@@ -253,12 +281,27 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
     if (!text) {
       // Always notify: the host may be showing a bar from another surface, and
       // an empty selection in this frame is what dismisses it.
+      anchorRetries = 0
       barShown = false
       hide()
       return
     }
     // The pointer is still pressed — the selection is mid-drag and not final.
     if (pointerCount > 0) return
+
+    const anchor = iframeSelectionAnchor(win, sel!)
+    if (!anchor && anchorRetries < ANCHOR_RETRY_LIMIT) {
+      // The selection exists but has nothing to anchor to YET: the frame's
+      // document was replaced under us, or its layout has not run (a freshly
+      // navigated document, a pane still being sized). Showing the bar now puts
+      // it at its pinned top position, far from the text the user just
+      // selected — the exact defect this bridge exists to prevent. One layout
+      // pass is usually enough, so retry on the next task before giving up.
+      anchorRetries++
+      scheduleEvaluate(0)
+      return
+    }
+    anchorRetries = 0
 
     barShown = true
     show({
@@ -267,7 +310,7 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
       language: '',
       startLine: 0,
       endLine: 0,
-    }, iframeSelectionAnchor(win, sel!))
+    }, anchor, (win.frameElement as Element | null | undefined) ?? null)
   }
 
   function onSelectionChange() {
@@ -346,10 +389,23 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
    * pointer, so a scroll while the button is held is proof the drag is alive.
    * Without this the timer sees a quiet pointer and surfaces the bar, which the
    * next scroll then hides — the reported flicker (issue #572).
+   *
+   * A scroll AFTER the bar is up is a different matter: the anchor is expressed
+   * in HOST viewport coordinates, so anything that scrolls this document moves
+   * the selected text out from under it and leaves the bar pointing at nothing
+   * (measured: one 411px scroll of the previewed document put the bar 475px
+   * away from its own text). The host hides its bar on scroll, but the common
+   * case here is the browser revealing the selection it was just given — hiding
+   * then takes the bar away from the user mid-interaction — so the bar is
+   * re-measured and follows the text instead.
    */
   function onScroll() {
     if (disposed) return
-    if (pointerCount > 0) lastPointerActivity = Date.now()
+    if (pointerCount > 0) {
+      lastPointerActivity = Date.now()
+      return
+    }
+    if (barShown) scheduleEvaluate(0)
   }
 
   function releasePointer() {

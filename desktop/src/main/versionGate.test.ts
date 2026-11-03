@@ -10,22 +10,32 @@ vi.mock('./install', () => ({
   httpGetBuffer: vi.fn(),
   downloadAndInstall: vi.fn(),
   installPayload: vi.fn(),
+  fetchNpmIntegrity: vi.fn(async () => ''),
   restartInto: vi.fn(),
   appRoot: () => '/tmp/app',
 }))
 vi.mock('./clientLog', () => ({ recordError: vi.fn() }))
 // `labels.ts` reads the persisted language through the store; the gate tests
-// exercise the English wording, so pin it to 'en'.
+// exercise the English wording, so pin it to 'en'. The same store holds the
+// accepted certificate fingerprints, which the gate hands to the release-info
+// request.
+const trust = vi.hoisted(() => ({ fingerprints: {} as Record<string, string> }))
 vi.mock('./store', () => ({
-  getStore: () => ({ get: () => 'en' }),
+  getStore: () => ({
+    get: (key: string) => (key === 'trustedCertificates' ? trust.fingerprints : 'en'),
+  }),
+}))
+vi.mock('./updater', () => ({
+  fetchDesktopLatest: vi.fn(async () => null),
 }))
 
-import { evaluateGate, beginNavigation, installServerVersion, formatInstallFailure } from './versionGate'
+import { evaluateGate, beginNavigation, checkVersionGate, installServerVersion, formatInstallFailure } from './versionGate'
 import type { VersionGateInfo } from './versionGate'
 import type { DesktopLatest } from './updater'
+import { fetchDesktopLatest } from './updater'
 import { versionGateLabels } from './labels'
 import { dialog } from 'electron'
-import { downloadAndInstall, installPayload } from './install'
+import { downloadAndInstall, installPayload, fetchNpmIntegrity } from './install'
 
 const latest = (over: Partial<DesktopLatest> = {}): DesktopLatest => ({
   version: 'v1.1.0',
@@ -79,6 +89,35 @@ describe('beginNavigation', () => {
     const a = beginNavigation()
     const b = beginNavigation()
     expect(b).toBeGreaterThan(a)
+  })
+})
+
+describe('checkVersionGate', () => {
+  afterEach(() => {
+    trust.fingerprints = {}
+    vi.mocked(fetchDesktopLatest).mockReset()
+  })
+
+  it('asks the server with the certificate fingerprint the user accepted', async () => {
+    // The release-info answer decides which binary is downloaded, so the main
+    // process has to know the certificate the window was told to trust.
+    trust.fingerprints['https://192.168.1.50:20000'] = 'sha256/AAAA'
+    vi.mocked(fetchDesktopLatest).mockResolvedValue(latest())
+
+    const gen = beginNavigation()
+    const info = await checkVersionGate('https://192.168.1.50:20000/app', gen)
+
+    expect(fetchDesktopLatest).toHaveBeenCalledWith('https://192.168.1.50:20000/app', 'sha256/AAAA')
+    expect(info).not.toBeNull()
+  })
+
+  it('passes no fingerprint for a server the user never accepted a certificate from', async () => {
+    vi.mocked(fetchDesktopLatest).mockResolvedValue(latest())
+
+    await checkVersionGate('https://example.com/app', beginNavigation())
+
+    // Empty means "verify normally", never "accept anything".
+    expect(fetchDesktopLatest).toHaveBeenCalledWith('https://example.com/app', '')
   })
 })
 
@@ -136,6 +175,31 @@ describe('installServerVersion failure reporting', () => {
 
     expect(dialogDetail()).toContain('all download sources failed')
     expect(installPayload).not.toHaveBeenCalled()
+  })
+})
+
+describe('installServerVersion integrity', () => {
+  beforeEach(() => {
+    vi.mocked(dialog.showMessageBox).mockReset()
+    vi.mocked(installPayload).mockReset()
+    vi.mocked(downloadAndInstall).mockReset()
+    vi.mocked(fetchNpmIntegrity).mockReset()
+    // "Later" on the restart prompt, so nothing tries to launch a process.
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 1, checkboxChecked: false })
+  })
+
+  it('checks the payload against the checksum the registry publishes', async () => {
+    if (process.platform === 'darwin') return // macOS has no payload path
+    vi.mocked(fetchNpmIntegrity).mockResolvedValue('sha512-abc')
+    vi.mocked(installPayload).mockResolvedValue('/tmp/app-1.1.0')
+
+    const payloadUrl = 'https://registry.example/p/-/p-1.1.0.tgz'
+    const ok = await installServerVersion(gateInfo({ payloadUrls: [payloadUrl] }), null)
+
+    expect(ok).toBe(true)
+    // The payload is the app itself; an unverified archive is an unverified
+    // application.
+    expect(installPayload).toHaveBeenCalledWith([payloadUrl], '1.1.0', '/tmp/app', undefined, 'sha512-abc')
   })
 })
 

@@ -838,8 +838,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	var cfg model.Config
 	var presence map[string]bool
 	// Legacy values extracted from the raw map for migration (summarize.tts_model
-	// / tts_api were removed from the typed struct).
+	// / tts_api were removed from the typed struct; chat.user_nickname moved to
+	// the first-class user section).
 	var legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat string
+	var legacyUserNickname string
 
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
@@ -874,6 +876,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			}
 		}
 
+		// Capture the legacy chat.user_nickname for migration into the
+		// first-class user section. It was a chat field until the nickname
+		// became the human user's identity, used by meetings and injected into
+		// agent prompts as well.
+		if chatMap, ok := raw["chat"].(map[string]any); ok {
+			if n, ok := chatMap["user_nickname"].(string); ok && strings.TrimSpace(n) != "" {
+				legacyUserNickname = n
+			}
+		}
+
 		// Parse into typed config struct
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to parse %s: %v\n", configPath, err)
@@ -888,17 +900,19 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Migrate legacy TTS summary model config (summarize.tts_model / tts_api)
 	// into the new shared ai_summary section so existing configs keep working.
-	if cfg.AISummary.API.BaseURL == "" && legacySummaryBaseURL != "" {
-		cfg.AISummary.API.BaseURL = legacySummaryBaseURL
-		cfg.AISummary.API.Key = legacySummaryKey
-	}
-	if cfg.AISummary.Model == "" {
-		cfg.AISummary.Model = legacySummaryModel
-	}
-	// Migrate the API format too, so anthropic endpoints are not defaulted to
-	// "openai" (which would cause the recommendation/summary call to fail).
-	if cfg.AISummary.Format == "" {
-		cfg.AISummary.Format = legacySummaryFormat
+	applyLegacySummaryFallback(&cfg, legacySummaryBaseURL, legacySummaryKey, legacySummaryModel, legacySummaryFormat)
+
+	// Migrate legacy chat.user_nickname into user.nickname. The new value wins
+	// when both are present (a user who already edited the new key must not be
+	// overwritten by the stale one). A legacy value equal to the fallback
+	// literal is DROPPED: the old ApplyDefaults materialized "User" into every
+	// config, so keeping it would make an unconfigured install look configured
+	// (and would pre-fill "User" in the meeting UI). An empty value now means
+	// "not configured", and the literal is applied at use time.
+	if strings.TrimSpace(cfg.User.Nickname) == "" {
+		if legacy := strings.TrimSpace(legacyUserNickname); legacy != "" && legacy != model.DefaultUserNickname {
+			cfg.User.Nickname = legacy
+		}
 	}
 
 	// Apply all defaults (returns auto-generated password if created)
@@ -938,7 +952,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
 	model.ChatRestartResumeWindowMinutes = cfg.Chat.RestartResumeWindowMinutes
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
-	model.ChatUserNickname = cfg.Chat.UserNickname
+	model.UserNickname = cfg.User.Nickname
+	model.UserProfile = cfg.User.Profile
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
@@ -977,71 +992,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.String("engine", "edge"),
 			slog.String("voice", p.Voice),
 			slog.String("rate", p.Rate),
-		)
-	case "piper":
-		p := speech.NewPiperProvider()
-		// Resolve model path: explicit config > voice-based path
-		p.ModelPath = speech.ResolveModelPath(cfg.TTS.Voice, cfg.TTS.Piper.ModelPath)
-		if cfg.TTS.Piper.NoiseScale > 0 {
-			p.NoiseScale = cfg.TTS.Piper.NoiseScale
-		}
-		// LengthScale: explicit piper.length_scale takes priority;
-		// otherwise convert speed multiplier (length_scale = 1/speed)
-		if cfg.TTS.Piper.LengthScale > 0 {
-			p.LengthScale = cfg.TTS.Piper.LengthScale
-		} else if cfg.TTS.Speed > 0 {
-			p.LengthScale = 1.0 / cfg.TTS.Speed
-		}
-		if cfg.TTS.Piper.SentenceSilence > 0 {
-			p.SentenceSilence = cfg.TTS.Piper.SentenceSilence
-		}
-		ttsProvider = p
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "piper"),
-			slog.String("model_path", p.ModelPath),
-			slog.Float64("noise_scale", p.NoiseScale),
-			slog.Float64("length_scale", p.LengthScale),
-			slog.Float64("sentence_silence", p.SentenceSilence),
-		)
-	case "kokoro":
-		k := speech.NewKokoroProvider()
-		if cfg.TTS.Voice != "" {
-			k.Voice = cfg.TTS.Voice
-		}
-		if cfg.TTS.Speed > 0 {
-			k.Speed = cfg.TTS.Speed
-		}
-		if cfg.TTS.Kokoro.Lang != "" {
-			k.Lang = cfg.TTS.Kokoro.Lang
-		}
-		k.ModelPath, k.VoicesPath = speech.ResolveKokoroPaths(cfg.TTS.Kokoro.ModelPath, cfg.TTS.Kokoro.VoicesPath)
-		ttsProvider = k
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "kokoro"),
-			slog.String("model_path", k.ModelPath),
-			slog.String("voices_path", k.VoicesPath),
-			slog.String("voice", k.Voice),
-			slog.String("lang", k.Lang),
-			slog.Float64("speed", k.Speed),
-		)
-	case "moss-nano":
-		m := speech.NewMossNanoProvider()
-		if cfg.TTS.MossNano.Backend != "" {
-			m.Backend = cfg.TTS.MossNano.Backend
-		}
-		m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-		if cfg.TTS.Voice != "" {
-			m.Voice = cfg.TTS.Voice
-		}
-		ttsProvider = m
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "moss-nano"),
-			slog.String("backend", m.Backend),
-			slog.String("model_dir", m.ModelDir),
-			slog.String("voice", m.Voice),
 		)
 	case strOpenAI:
 		o := newOpenAITTSProvider(cfg)
@@ -1082,6 +1032,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	handler.SetSTTProvider(sttProvider)
 	slog.Info(
 		"stt provider configured",
+		slog.String("provider", cfg.STT.Provider),
 		slog.String("base_url", cfg.STT.BaseURL),
 		slog.String("model", cfg.STT.Model),
 		slog.Bool("streaming", cfg.STT.Streaming),
@@ -1240,7 +1191,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	case summarizeBackendAPI:
 		ttsSummarizer = buildAISummarizer(cfg)
 		if ttsSummarizer == nil {
-			slog.Error("summarize.tts_backend is \"api\" but ai_summary.api.base_url is not configured")
+			slog.Error("summarize.tts_backend is \"api\" but no summary model is configured (bind a provider in settings)")
 			os.Exit(1)
 		}
 	case summarizeBackendAuto:
@@ -1301,11 +1252,39 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// 必须同步完成的部分：model.Agents / AgentList 要在默认 agent 选择
 	// （下方）与 scheduler.LoadTasksFromDB（其会校验 task.AgentID 是否存在，
 	// 否则静默跳过注册）之前就绪。
+	// Model providers must be in memory before the first turn: the spawn paths
+	// read the snapshot (not the DB) to keep every turn off the read pool.
+	if err := service.LoadProvidersIntoMemory(); err != nil {
+		slog.Error("failed to load model providers", "error", err)
+	}
+
+	// Authoritative model catalog: load the last snapshot synchronously (so a
+	// cold start still has a list) and refresh in the background when it is
+	// missing or stale. Nothing on the turn path waits for the download.
+	if err := model.LoadCatalogFromDisk(); err != nil {
+		slog.Warn("failed to load model catalog snapshot", "error", err)
+	}
+	model.RefreshCatalogIfStale()
+
+	// The shared summary model is configured by referencing a provider. Turn a
+	// legacy ai_summary endpoint into a providers row once, before anything can
+	// read the config (a failed write leaves the legacy fallback working).
+	if err := handler.MigrateAISummaryProvider(); err != nil {
+		slog.Error("failed to migrate ai_summary to a model provider", "error", err)
+	}
+
 	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
 		ConfigDir:     filepath.Dir(configPath),
 		SkipDiscovery: true,
 	}); err != nil {
 		slog.Error("failed to refresh agents", "error", err)
+	}
+
+	// Config-file backends (codex) mirror the provider into their own file.
+	// Reconciling at startup keeps that file in step with the database even if
+	// the previous process died between a binding edit and the write.
+	if err := service.ReconcileProviderConfigs(); err != nil {
+		slog.Error("failed to reconcile provider config files", "error", err)
 	}
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))
@@ -2208,12 +2187,6 @@ func newTTSProvider(cfg model.Config) speech.SpeechProvider {
 	switch cfg.TTS.Engine {
 	case "edge":
 		return newEdgeTTSProvider(cfg)
-	case "piper":
-		return newPiperTTSProvider(cfg)
-	case "kokoro":
-		return newKokoroTTSProvider(cfg)
-	case "moss-nano":
-		return newMossNanoTTSProvider(cfg)
 	case strOpenAI:
 		return newOpenAITTSProvider(cfg)
 	default:
@@ -2235,50 +2208,6 @@ func newEdgeTTSProvider(cfg model.Config) *speech.EdgeTTSProvider {
 		}
 	}
 	return p
-}
-
-func newPiperTTSProvider(cfg model.Config) *speech.PiperProvider {
-	p := speech.NewPiperProvider()
-	p.ModelPath = speech.ResolveModelPath(cfg.TTS.Voice, cfg.TTS.Piper.ModelPath)
-	if cfg.TTS.Piper.NoiseScale > 0 {
-		p.NoiseScale = cfg.TTS.Piper.NoiseScale
-	}
-	if cfg.TTS.Piper.LengthScale > 0 {
-		p.LengthScale = cfg.TTS.Piper.LengthScale
-	} else if cfg.TTS.Speed > 0 {
-		p.LengthScale = 1.0 / cfg.TTS.Speed
-	}
-	if cfg.TTS.Piper.SentenceSilence > 0 {
-		p.SentenceSilence = cfg.TTS.Piper.SentenceSilence
-	}
-	return p
-}
-
-func newKokoroTTSProvider(cfg model.Config) *speech.KokoroProvider {
-	k := speech.NewKokoroProvider()
-	if cfg.TTS.Voice != "" {
-		k.Voice = cfg.TTS.Voice
-	}
-	if cfg.TTS.Speed > 0 {
-		k.Speed = cfg.TTS.Speed
-	}
-	if cfg.TTS.Kokoro.Lang != "" {
-		k.Lang = cfg.TTS.Kokoro.Lang
-	}
-	k.ModelPath, k.VoicesPath = speech.ResolveKokoroPaths(cfg.TTS.Kokoro.ModelPath, cfg.TTS.Kokoro.VoicesPath)
-	return k
-}
-
-func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
-	m := speech.NewMossNanoProvider()
-	if cfg.TTS.MossNano.Backend != "" {
-		m.Backend = cfg.TTS.MossNano.Backend
-	}
-	m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-	if cfg.TTS.Voice != "" {
-		m.Voice = cfg.TTS.Voice
-	}
-	return m
 }
 
 // newOpenAITTSProvider builds the OpenAI-compatible TTS provider. Every field
@@ -2303,14 +2232,57 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 	return o
 }
 
+// applyLegacySummaryFallback copies the removed summarize.tts_api / tts_model
+// block into the shared ai_summary config.
+//
+// It is a migration safety net for configs written before ai_summary existed,
+// and it deliberately runs ONLY while no provider is bound. Once a provider is
+// referenced, the legacy keys are dead weight: re-applying them made the
+// startup log report the pre-provider endpoint as the active one, and kept a
+// stale endpoint reachable behind the binding — so deleting the provider row
+// silently fell back to it instead of reading as "not configured" (the
+// contract model.AISummaryConfig documents).
+func applyLegacySummaryFallback(cfg *model.Config, baseURL, key, modelName, format string) {
+	if cfg.AISummary.ProviderID != nil {
+		return
+	}
+	if cfg.AISummary.API.BaseURL == "" && baseURL != "" {
+		cfg.AISummary.API.BaseURL = baseURL
+		cfg.AISummary.API.Key = key
+	}
+	if cfg.AISummary.Model == "" {
+		cfg.AISummary.Model = modelName
+	}
+	// The API format too, so anthropic endpoints are not defaulted to "openai"
+	// (which would cause the recommendation/summary call to fail).
+	if cfg.AISummary.Format == "" {
+		cfg.AISummary.Format = format
+	}
+}
+
 // buildAISummarizer creates an LLM summarizer from the shared ai_summary config.
-// Returns nil if ai_summary.api.base_url is empty.
+// Returns nil when the summary model is not configured.
+//
+// The gate is SummaryConfigured, not the legacy ai_summary.api.base_url: since
+// the provider migration rewrites config.yaml to {provider_id, model} and
+// clears that block, gating on it made the summarizer nil on the first restart
+// after a successful migration — startup then hard-failed when
+// summarize.tts_backend was "api" and silently degraded "auto" to the simple
+// cleaner.
 func buildAISummarizer(cfg model.Config) summarize.Summarizer {
-	if cfg.AISummary.API.BaseURL == "" {
+	baseURL, _, format, ok := cfg.AISummary.SummaryEndpoint()
+	if !ok {
 		return nil
 	}
 	s := summarize.NewAISummarizer(cfg.AISummary)
-	slog.Info("ai summarizer configured", slog.String("format", cfg.AISummary.Format), slog.String("base_url", cfg.AISummary.API.BaseURL))
+	if s == nil {
+		return nil
+	}
+	slog.Info("ai summarizer configured",
+		slog.String("format", summarize.ResolveFormat(baseURL, format)),
+		slog.String("base_url", baseURL),
+		slog.String("model", cfg.AISummary.SummaryModel()),
+	)
 	return s
 }
 
@@ -2322,7 +2294,7 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 	case summarizeBackendAPI:
 		s := buildAISummarizer(cfg)
 		if s == nil {
-			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but ai_summary.api.base_url is empty, falling back to simple")
+			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but no summary model is configured, falling back to simple")
 			return summarize.NewSimple()
 		}
 		return s
@@ -2480,6 +2452,15 @@ func hotReloadTerminal(cfg model.Config, port int) {
 
 // newSTTProvider builds the STT provider from config.
 func newSTTProvider(cfg model.Config) stt.STTProvider {
+	if cfg.STT.Provider == "doubao" {
+		p := stt.NewDoubaoProvider(cfg.STT.APIKey, cfg.STT.ResourceID)
+		p.EnableITN = cfg.STT.EnableITN
+		p.EnablePunc = cfg.STT.EnablePunc
+		p.EnableDDC = cfg.STT.EnableDDC
+		p.OutputZHVariant = cfg.STT.OutputZHVariant
+		p.EndWindowSize = cfg.STT.EndWindowSize
+		return p
+	}
 	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
 }
 

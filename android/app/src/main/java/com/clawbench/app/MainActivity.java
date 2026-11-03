@@ -4,12 +4,19 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
+import android.media.projection.MediaProjectionManager;
+import android.util.Base64;
 import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,6 +32,7 @@ import android.webkit.CookieManager;
 import android.widget.FrameLayout;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.ConsoleMessage;
@@ -65,10 +73,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -206,6 +216,159 @@ public class MainActivity extends AppCompatActivity {
                     AppLog.w(TAG, "POST_NOTIFICATIONS permission denied — tunnel notification will not show");
                 }
             });
+
+    // Media permission launcher — the WebView only asks us (via
+    // onPermissionRequest) once a page calls getUserMedia, and the OS grant has
+    // to happen first. The pending request is held so the answer can be relayed
+    // back to the page instead of leaving it hanging.
+    //
+    // One slot for both audio and video: the page awaits its getUserMedia call,
+    // so a second request while the dialog is up means the first one is already
+    // dead. Requesting them together also matters — a mixed {audio,video}
+    // request that only gets the microphone granted fails as a whole.
+    private PermissionRequest pendingMicRequest;
+
+    private final ActivityResultLauncher<String[]> micPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), granted -> {
+                PermissionRequest request = pendingMicRequest;
+                pendingMicRequest = null;
+                if (request == null) return;
+                String[] grantable = MicPermissionPolicy.grantableResources(
+                        request.getResources(),
+                        holdsPermission(Manifest.permission.RECORD_AUDIO),
+                        holdsPermission(Manifest.permission.CAMERA));
+                if (grantable.length > 0) {
+                    request.grant(grantable);
+                } else {
+                    AppLog.w(TAG, "media capture denied — voice input and camera unavailable");
+                    request.deny();
+                }
+            });
+
+    // ── Screen sharing (桌面共享) ────────────────────────────────────────────
+    // Android has no getDisplayMedia, so the share runs on MediaProjection. Two
+    // system dialogs stand between the click and the first frame:
+    //   1. RECORD_AUDIO (only when system audio is requested) — AudioPlaybackCapture
+    //      refuses to start without it, and the app may never have asked for the
+    //      microphone (voice input is the only other consumer, and it is opt-in).
+    //   2. The MediaProjection consent dialog, which cannot be skipped, cached or
+    //      replayed: Android 14 requires a fresh grant for every session.
+    // The two are chained rather than fired together so the user never sees two
+    // dialogs stacked on top of each other.
+    private ScreenShareOptions pendingScreenShareOptions;
+
+    private final ActivityResultLauncher<String> screenShareAudioPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+                if (!isGranted && pendingScreenShareOptions != null) {
+                    AppLog.w(TAG, "RECORD_AUDIO denied — sharing without system audio");
+                    // Degrade instead of aborting: the picture is still useful.
+                    pendingScreenShareOptions = pendingScreenShareOptions.withoutSystemAudio();
+                }
+                launchProjectionConsent();
+            });
+
+    private final ActivityResultLauncher<Intent> projectionConsentLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+                ScreenShareOptions options = pendingScreenShareOptions;
+                pendingScreenShareOptions = null;
+                if (options == null) return;
+                if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+                    AppLog.i(TAG, "screen share consent denied");
+                    ScreenShareStatus.setDenied();
+                    return;
+                }
+                installScreenShareTickListener();
+                ScreenShareService.start(this, result.getResultCode(), result.getData(), options);
+            });
+
+    /**
+     * Route capture progress into the page.
+     *
+     * <p>The service cannot touch the WebView (it has no reference and may
+     * outlive it), so it publishes into ScreenShareStatus and calls this listener
+     * instead. The page pulls the actual payload — that keeps the multi-hundred
+     * kilobyte frames out of an evaluated script string and gives the WebView
+     * natural backpressure: a frame it never takes is simply overwritten.
+     */
+    /**
+     * Whether an OS runtime permission is currently held.
+     *
+     * A single place for the check so the WebView grant path cannot ask for one
+     * permission and test another — the pair has to agree or getUserMedia is
+     * granted a resource the OS will refuse.
+     */
+    private boolean holdsPermission(String permission) {
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void installScreenShareTickListener() {
+        ScreenShareStatus.setTickListener(() -> {
+            WebView view = webView;
+            if (view == null) return;
+            view.post(() -> {
+                try {
+                    view.evaluateJavascript(
+                            "window.__clawbenchScreenTick&&window.__clawbenchScreenTick()", null);
+                } catch (Exception e) {
+                    AppLog.w(TAG, "screen tick dispatch failed", e);
+                }
+            });
+        });
+    }
+
+    /** Start the consent chain. Called from the bridge. */
+    void requestScreenCapture(ScreenShareOptions options) {
+        // A second start while one is live would create a second
+        // MediaProjection and overwrite the service's projection/imageReader/
+        // virtualDisplay without releasing the old ones — the abandoned display
+        // can never be released afterwards, so the system's "screen is being
+        // shared" indicator stays on until the process dies. A WebView reload
+        // clears the page's own state and makes this reachable in normal use.
+        if (ScreenShareStartPolicy.shouldIgnoreStart(ScreenShareStatus.getState())) {
+            AppLog.i(TAG, "screen share already "
+                    + ScreenShareStatus.getState() + " — ignoring the start request");
+            return;
+        }
+        pendingScreenShareOptions = options;
+        ScreenShareStatus.beginRequesting();
+        if (options.systemAudio
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            screenShareAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
+            return;
+        }
+        launchProjectionConsent();
+    }
+
+    private void launchProjectionConsent() {
+        ScreenShareOptions options = pendingScreenShareOptions;
+        if (options == null) return;
+        MediaProjectionManager manager =
+                (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (manager == null) {
+            pendingScreenShareOptions = null;
+            ScreenShareStatus.setError("MediaProjectionManager unavailable");
+            return;
+        }
+        try {
+            projectionConsentLauncher.launch(manager.createScreenCaptureIntent());
+        } catch (Exception e) {
+            pendingScreenShareOptions = null;
+            AppLog.e(TAG, "createScreenCaptureIntent failed", e);
+            ScreenShareStatus.setError("cannot request screen capture");
+        }
+    }
+
+    /** Stop capture and release the projection. Idempotent. */
+    void stopScreenCaptureInternal() {
+        pendingScreenShareOptions = null;
+        ScreenShareStatus.setTickListener(null);
+        ScreenShareService.stop(this);
+        // The service resets the status again in onDestroy, but stopService is
+        // asynchronous; clearing here makes "stopped" observable immediately for
+        // a page that asks right after the click.
+        ScreenShareStatus.reset();
+    }
 
     // Activity result launcher for file chooser (replaces deprecated onActivityResult)
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
@@ -821,6 +984,48 @@ public class MainActivity extends AppCompatActivity {
                     launchFileChooserWithoutCamera();
                 }
                 return true;
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                // getUserMedia is denied by default in a WebView: the page gets
+                // NotAllowedError unless this callback grants the resource AND
+                // the app holds the matching OS permission. Voice input needs
+                // the microphone, a video meeting's camera needs the camera.
+                String[] requested = request.getResources();
+                if (!MicPermissionPolicy.wantsAudio(requested)
+                        && !MicPermissionPolicy.wantsVideo(requested)) {
+                    AppLog.w(TAG, "WebView permission request denied (no audio or video capture)");
+                    request.deny();
+                    return;
+                }
+                String[] grantable = MicPermissionPolicy.grantableResources(
+                        requested,
+                        holdsPermission(Manifest.permission.RECORD_AUDIO),
+                        holdsPermission(Manifest.permission.CAMERA));
+                // Ask for exactly the missing OS permissions, together: a mixed
+                // {audio,video} request granted only half of it fails as a whole,
+                // and two stacked dialogs would be worse than one.
+                List<String> missing = new ArrayList<>();
+                if (MicPermissionPolicy.wantsAudio(requested)
+                        && !holdsPermission(Manifest.permission.RECORD_AUDIO)) {
+                    missing.add(Manifest.permission.RECORD_AUDIO);
+                }
+                if (MicPermissionPolicy.wantsVideo(requested)
+                        && !holdsPermission(Manifest.permission.CAMERA)) {
+                    missing.add(Manifest.permission.CAMERA);
+                }
+                if (missing.isEmpty()) {
+                    request.grant(grantable);
+                    return;
+                }
+                // Supersede any request still waiting on the dialog — a second
+                // getUserMedia call must not leave the first page hanging.
+                if (pendingMicRequest != null) {
+                    pendingMicRequest.deny();
+                }
+                pendingMicRequest = request;
+                micPermissionLauncher.launch(missing.toArray(new String[0]));
             }
 
             @Override
@@ -1687,6 +1892,9 @@ public class MainActivity extends AppCompatActivity {
     private final java.util.concurrent.ConcurrentHashMap<Integer, okhttp3.Call> activeDownloads =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** Sub-directory of the public Downloads collection the app saves into. */
+    private static final String DOWNLOAD_SUBDIR = "ClawBench";
+
     /**
      * Download a project file while streaming byte progress back to the WebView.
      *
@@ -1694,8 +1902,20 @@ public class MainActivity extends AppCompatActivity {
      * DownloadManager and reports progress only in the system notification, this
      * streams the response with OkHttp and dispatches
      * {@code clawbench-download-progress} CustomEvents so the in-product progress
-     * bar can follow it. The finished file is registered with DownloadManager so
-     * it still appears in the Downloads app.
+     * bar can follow it.
+     *
+     * <p>The bytes land in the public Downloads collection through MediaStore.
+     * Scoped storage (targetSdk 29+) refuses to open a public Downloads path with
+     * the File API — it fails with {@code EACCES} whatever permission the app
+     * holds — so a MediaStore row is the only supported way for an app to
+     * contribute a file there. The row is created pending, which keeps the
+     * half-written file invisible until the last byte arrives, and it also makes
+     * the finished file show up in the Downloads app without a media scan.
+     *
+     * <p>Below API 29 the app holds no WRITE_EXTERNAL_STORAGE (declared with
+     * {@code maxSdkVersion=28} and never requested at runtime), so a direct save
+     * cannot work there either; the download is handed to DownloadManager, which
+     * writes the file as the system.
      *
      * <p>Runs off the UI thread; all JS dispatch is marshalled back to the UI
      * thread because {@code evaluateJavascript} must be called there.
@@ -1724,6 +1944,15 @@ public class MainActivity extends AppCompatActivity {
             if (safeName.length() > 200) safeName = safeName.substring(0, 200);
             final String finalName = safeName;
 
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                // No writable public path without the storage permission, and
+                // DownloadManager needs none.
+                AppLog.i(TAG, "streamDownloadWithProgress: API " + Build.VERSION.SDK_INT
+                        + ", delegating to DownloadManager");
+                downloadFileViaManager(url, finalName);
+                return;
+            }
+
             String cookie = CookieManager.getInstance().getCookie(serverUrl);
             Request request = new Request.Builder().url(url)
                     .addHeader("Cookie", cookie == null ? "" : cookie)
@@ -1731,14 +1960,10 @@ public class MainActivity extends AppCompatActivity {
             okhttp3.Call call = buildTrustingOkHttpClient().newCall(request);
             activeDownloads.put(downloadId, call);
 
-            java.io.File outDir = new java.io.File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ClawBench");
-            if (!outDir.exists() && !outDir.mkdirs()) {
-                AppLog.w(TAG, "streamDownloadWithProgress: cannot create " + outDir);
-            }
-            java.io.File outFile = new java.io.File(outDir, finalName);
-            boolean ok = false;
+            ContentResolver cr = getContentResolver();
+            Uri sinkUri = null;
             long total = 0;
+            long received = 0;
             try (Response response = call.execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
                     AppLog.w(TAG, "streamDownloadWithProgress: HTTP " + response.code());
@@ -1746,14 +1971,15 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
                 total = response.body().contentLength();
-                long received = 0;
+                sinkUri = createDownloadFile(cr, finalName, mimeTypeFor(finalName));
                 long lastReported = 0;
                 byte[] buffer = new byte[16384];
                 try (InputStream is = response.body().byteStream();
-                     FileOutputStream fos = new FileOutputStream(outFile)) {
+                     OutputStream os = cr.openOutputStream(sinkUri, "w")) {
+                    if (os == null) throw new IOException("no output stream for " + sinkUri);
                     int len;
                     while ((len = is.read(buffer)) != -1) {
-                        fos.write(buffer, 0, len);
+                        os.write(buffer, 0, len);
                         received += len;
                         // Throttle to ~1% granularity to avoid flooding the JS bridge.
                         if (total <= 0 || received - lastReported >= Math.max(1, total / 100)) {
@@ -1762,10 +1988,12 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 }
-                ok = true;
                 dispatchDownloadEvent(downloadId, received, total, false, false);
             } catch (Exception e) {
                 if (!call.isCanceled()) AppLog.e(TAG, "streamDownloadWithProgress failed", e);
+                // Drop the half-written row: it would otherwise stay in Downloads
+                // as a pending, unreadable entry forever.
+                if (sinkUri != null) deleteDownloadFile(cr, sinkUri);
                 // A user cancel is not a failure: report it separately so the
                 // renderer shows no error toast for a deliberate action.
                 dispatchDownloadEvent(downloadId, 0, total, true, !call.isCanceled(), call.isCanceled());
@@ -1774,37 +2002,83 @@ public class MainActivity extends AppCompatActivity {
                 activeDownloads.remove(downloadId);
             }
 
-            if (!ok) return;
+            publishDownloadFile(cr, sinkUri);
 
-            // Register with DownloadManager so the system notification and the
-            // Downloads app both see the completed file.
-            long dmId = -1;
-            try {
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                String mimeType = android.webkit.MimeTypeMap.getSingleton()
-                        .getMimeTypeFromExtension(extensionOf(finalName));
-                if (mimeType == null) mimeType = "application/octet-stream";
-                dmId = dm.addCompletedDownload(finalName, getString(R.string.download_description),
-                        true, mimeType, outFile.getAbsolutePath(), outFile.length(), true);
-            } catch (Exception e) {
-                // addCompletedDownload can fail on some scopes; the file is saved.
-                AppLog.w(TAG, "streamDownloadWithProgress: addCompletedDownload failed", e);
+            // APK files keep the auto-install behaviour. The MediaStore row is
+            // owned by this app, so the installer can read it with the grant
+            // flag added by launchApkInstaller.
+            if (finalName.toLowerCase().endsWith(".apk")) {
+                launchApkInstaller(sinkUri);
             }
-            Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-            scanIntent.setData(Uri.fromFile(outFile));
-            sendBroadcast(scanIntent);
-
-            // APK files keep the old auto-install behaviour. The URI must come
-            // from DownloadManager: on Android 10+ the app cannot read the
-            // public Downloads file it just wrote, so a file:// URI (or one
-            // derived from the path) is not usable by the installer.
-            if (finalName.toLowerCase().endsWith(".apk") && dmId != -1) {
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                Uri apkUri = dm.getUriForDownloadedFile(dmId);
-                if (apkUri != null) launchApkInstaller(apkUri);
-            }
-            dispatchDownloadEvent(downloadId, outFile.length(), outFile.length(), true, false);
+            dispatchDownloadEvent(downloadId, received, received, true, false);
         }).start();
+    }
+
+    /** Relative path inside public storage that downloads are saved under. */
+    static String downloadRelativePath() {
+        return Environment.DIRECTORY_DOWNLOADS + "/" + DOWNLOAD_SUBDIR;
+    }
+
+    /** MIME type for a file name, defaulting to a generic byte stream. */
+    static String mimeTypeFor(String fileName) {
+        String ext = extensionOf(fileName);
+        // Pinned rather than looked up: the APK type is what opens the system
+        // installer, and it is missing from some devices' MimeTypeMap.
+        if ("apk".equals(ext)) return "application/vnd.android.package-archive";
+        String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+        return mime == null ? "application/octet-stream" : mime;
+    }
+
+    /**
+     * Column values of a pending row in the public Downloads collection.
+     *
+     * <p>Extracted so the wire contract (path, name, MIME type, pending flag)
+     * can be asserted without a live provider.
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    static ContentValues pendingDownloadValues(String displayName, String mimeType) {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, displayName);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, downloadRelativePath());
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        return values;
+    }
+
+    /**
+     * Reserve the destination row for a streamed download.
+     *
+     * @throws IOException when the provider refuses the row, so the caller
+     *         reports a failure instead of silently writing nowhere
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    static Uri createDownloadFile(ContentResolver cr, String displayName, String mimeType)
+            throws IOException {
+        Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                pendingDownloadValues(displayName, mimeType));
+        if (uri == null) throw new IOException("MediaStore rejected " + displayName);
+        return uri;
+    }
+
+    /** Clear the pending flag so the finished file becomes visible to others. */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    static void publishDownloadFile(ContentResolver cr, Uri uri) {
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        try {
+            cr.update(uri, done, null, null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "publishDownloadFile failed", e);
+        }
+    }
+
+    /** Drop a partially written row after a failure or a user cancel. */
+    static void deleteDownloadFile(ContentResolver cr, Uri uri) {
+        try {
+            cr.delete(uri, null, null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "deleteDownloadFile failed", e);
+        }
     }
 
     /** Lowercase extension of a file name, or "" when there is none. */
@@ -2550,8 +2824,9 @@ public class MainActivity extends AppCompatActivity {
         if (pendingNavigation != null && webView != null) {
             AppLog.i(TAG, "MainActivity: onResume - re-dispatching pendingNavigation=" + pendingNavigation.toString());
             final String jsArg = pendingNavigation.toString();
-            // Choose event name based on navigation type: task vs session
-            String eventName = pendingNavigation.has("taskId") ? "clawbench-open-task" : "clawbench-open-session";
+            // Choose event name based on navigation type: meeting vs task vs session.
+            String eventName = pendingNavigation.has("token") ? "clawbench-open-meeting"
+                    : pendingNavigation.has("taskId") ? "clawbench-open-task" : "clawbench-open-session";
             AppLog.i(TAG, "MainActivity: onResume - dispatching " + eventName);
             webView.evaluateJavascript(
                 "window.dispatchEvent(new CustomEvent('" + eventName + "', { detail: " + jsArg + " }))",
@@ -2722,11 +2997,42 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // Determine navigation type: task notification vs session notification
+        // Determine navigation type: meeting / task / session notification
         boolean isTaskNotification = taskId != null || "task_update".equals(eventType);
         boolean isUsageMeterNotification = "usage_meter".equals(eventType);
+        String meetingToken = intent.getStringExtra("meeting_token");
+        boolean isMeetingNotification = "meeting".equals(eventType)
+                && meetingToken != null && !meetingToken.isEmpty();
 
-        if (isUsageMeterNotification) {
+        if (isMeetingNotification) {
+            // A meeting notification: open that meeting's record. The token is
+            // the meeting's identity — there is no session to fall back to, so
+            // without this branch the tap opens the app and stops there.
+            AppLog.i(TAG, "MainActivity: handleNotificationIntent - meeting notification, dispatching clawbench-open-meeting");
+            try {
+                org.json.JSONObject detail = new org.json.JSONObject();
+                detail.put("token", meetingToken);
+                if (projectPath != null) detail.put("projectPath", projectPath);
+                pendingNavigation = detail;
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('clawbench-open-meeting', { detail: " + detail.toString() + " }))",
+                        result -> {
+                            AppLog.i(TAG, "MainActivity: clawbench-open-meeting evaluateJavascript result=" + result);
+                            pendingNavigation = null;
+                        }
+                    );
+                } else {
+                    AppLog.w(TAG, "MainActivity: webView is null, cannot dispatch meeting event (pendingNavigation stored for cold-start)");
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "MainActivity: failed to dispatch meeting event from notification", e);
+            }
+            intent.removeExtra("meeting_token");
+            intent.removeExtra("event_type");
+            intent.removeExtra("project_path");
+            AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
+        } else if (isUsageMeterNotification) {
             // The usage meter is global: there is no session or task to open.
             // Dispatch a dedicated event; the frontend opens the usage popover
             // (wide screen) or the settings entry (narrow screen). Without this
@@ -3109,9 +3415,133 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        /**
+         * Diagnostic probe: try to open and start an {@link AudioRecord} directly.
+         *
+         * <p>WebView reports {@code NotReadableError} ("Could not start audio
+         * source") when its own capture fails, but that message cannot tell
+         * "the OS refuses this app the microphone" apart from "Chromium's audio
+         * stack failed". Recording natively answers exactly that: if this probe
+         * succeeds, the app may record and the fault is inside WebView.
+         *
+         * <p>Returns a short human-readable status; never throws across the bridge.
+         */
+        @JavascriptInterface
+        public String probeMicrophone() {
+            int minBuffer = AudioRecord.getMinBufferSize(
+                    PROBE_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuffer <= 0) {
+                return "minBufferSize=" + minBuffer;
+            }
+            AudioRecord recorder = null;
+            try {
+                recorder = new AudioRecord(
+                        MediaRecorder.AudioSource.MIC,
+                        PROBE_SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        Math.max(minBuffer, 4096));
+                int state = recorder.getState();
+                if (state != AudioRecord.STATE_INITIALIZED) {
+                    return "init_failed state=" + state;
+                }
+                recorder.startRecording();
+                boolean recording = recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING;
+                return "ok recording=" + recording;
+            } catch (Throwable t) {
+                return t.getClass().getSimpleName() + ": " + t.getMessage();
+            } finally {
+                if (recorder != null) {
+                    try {
+                        if (recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                            recorder.stop();
+                        }
+                    } catch (Throwable ignored) {
+                        // stop() throws IllegalStateException if start never took
+                    }
+                    recorder.release();
+                }
+            }
+        }
+
+        /** Sample rate for {@link #probeMicrophone()} — matches WebRTC's default. */
+        private static final int PROBE_SAMPLE_RATE = 16000;
+
         @JavascriptInterface
         public boolean isNativeApp() {
             return true;
+        }
+
+        // ── Screen sharing (桌面共享) ────────────────────────────────────────
+        //
+        // The WebView has no getDisplayMedia, so the page drives the native
+        // MediaProjection session through these calls instead. They are
+        // synchronous (a @JavascriptInterface method cannot return a promise),
+        // which is why starting is "request + poll": the consent dialog is
+        // asynchronous by nature, and the page polls getScreenCaptureState()
+        // until it turns running / denied / error.
+
+        /** Whether this host can share its screen at all. */
+        @JavascriptInterface
+        public boolean isScreenCaptureSupported() {
+            return true;
+        }
+
+        /**
+         * Whether system (playback) audio can be captured.
+         *
+         * <p>AudioPlaybackCapture exists from API 29; below that the share is
+         * picture-only, and the UI must say so instead of offering a switch that
+         * silently does nothing.
+         */
+        @JavascriptInterface
+        public String getAudioCaptureSupport() {
+            boolean supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+            return "{\"systemAudio\":" + supported + "}";
+        }
+
+        /**
+         * Begin the consent chain. Returns the current status, but callers must
+         * poll — the user has a dialog in front of them.
+         */
+        @JavascriptInterface
+        public String startScreenCapture(String optionsJson) {
+            final ScreenShareOptions options = ScreenShareOptions.parse(optionsJson);
+            // ActivityResultLauncher.launch() is main-thread only, and this
+            // method runs on the WebView's private bridge thread.
+            activity.runOnUiThread(() -> activity.requestScreenCapture(options));
+            return ScreenShareStatus.snapshotJson();
+        }
+
+        @JavascriptInterface
+        public void stopScreenCapture() {
+            activity.runOnUiThread(activity::stopScreenCaptureInternal);
+        }
+
+        /** JSON status snapshot; see {@link ScreenShareStatus#snapshotJson()}. */
+        @JavascriptInterface
+        public String getScreenCaptureState() {
+            return ScreenShareStatus.snapshotJson();
+        }
+
+        /**
+         * Take the newest captured frame as base64 JPEG, or "" when none is
+         * pending. Called from the tick the service fires, so the payload never
+         * travels inside an evaluated script string.
+         */
+        @JavascriptInterface
+        public String takeScreenFrame() {
+            byte[] frame = ScreenShareStatus.takeFrame();
+            if (frame == null || frame.length == 0) return "";
+            return Base64.encodeToString(frame, Base64.NO_WRAP);
+        }
+
+        /** Drain queued PCM (48 kHz stereo, 16-bit LE) as base64, or "" when empty. */
+        @JavascriptInterface
+        public String takeSystemAudio() {
+            byte[] pcm = ScreenShareStatus.takeAudio();
+            if (pcm == null || pcm.length == 0) return "";
+            return Base64.encodeToString(pcm, Base64.NO_WRAP);
         }
 
         /**

@@ -299,3 +299,53 @@ func TestBuildTitlePayload_FramesExcerptAsData(t *testing.T) {
 		t.Fatalf("trailer must forbid answering, got: %q", titleTrailer)
 	}
 }
+
+// ── Meeting titles ──────────────────────────────────────────────────────────
+
+func TestGenerateMeetingTitle_OpenAI(t *testing.T) {
+	var capturedBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		// Models wrap titles anyway; the sanitizer is what makes it usable.
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"**发版评审：上线前的取舍**"}}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
+	title, err := GenerateMeetingTitle(context.Background(), s,
+		"## 概要\n讨论了 11 月发版的取舍。\n\n## 结论与决定\n- 延后一周")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if title != "发版评审：上线前的取舍" {
+		t.Fatalf("unexpected title: %q", title)
+	}
+	// The meeting prompt is the system prompt, the minutes are the payload.
+	if !strings.Contains(capturedBody, "会议标题生成器") {
+		t.Fatalf("expected the meeting title prompt in request, got: %s", capturedBody)
+	}
+	if !strings.Contains(capturedBody, "延后一周") {
+		t.Fatalf("expected the minutes in request, got: %s", capturedBody)
+	}
+	// The task is restated after the payload, outside the data block.
+	if !strings.Contains(capturedBody, meetingTitleTrailer) {
+		t.Fatalf("expected the trailer in request, got: %s", capturedBody)
+	}
+}
+
+func TestGenerateMeetingTitle_EmptyMinutes(t *testing.T) {
+	s := NewOpenAI("http://127.0.0.1:1", "key", "m")
+	if _, err := GenerateMeetingTitle(context.Background(), s, "   \n  "); err == nil {
+		t.Fatal("expected an error for empty minutes")
+	}
+}
+
+// The "simple" summarizer is not an LLM backend — naming a meeting must fail
+// rather than return the minutes as a title.
+func TestGenerateMeetingTitle_SimpleBackendIsRejected(t *testing.T) {
+	if _, err := GenerateMeetingTitle(context.Background(), NewSimple(), "## 概要"); err == nil {
+		t.Fatal("expected an error for a non-LLM backend")
+	}
+}

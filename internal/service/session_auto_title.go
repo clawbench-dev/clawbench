@@ -96,7 +96,7 @@ var (
 // unconfigured — the single source of truth for that check, shared by the
 // manual generate-title endpoint and the automatic rename path.
 func ConfigSummaryModelMissing() bool {
-	return model.ConfigInstance.AISummary.API.BaseURL == ""
+	return !model.ConfigInstance.AISummary.SummaryConfigured()
 }
 
 // IsNoUserMessagesError reports whether err is the "nothing to summarize"

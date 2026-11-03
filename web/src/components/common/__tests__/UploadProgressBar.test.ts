@@ -9,9 +9,9 @@ const i18n = createI18n({
   messages: { zh: { common: { cancel: '取消' }, file: { uploading: '上传中...' } } },
 })
 
-function mountBar(props: { visible: boolean; progress: number; done: number; total: number }) {
+function mountBar(props: { visible: boolean; progress: number; done: number; total: number; speed?: number }) {
   return mount(UploadProgressBar, {
-    props,
+    props: { speed: 0, ...props },
     global: { plugins: [i18n] },
   })
 }
@@ -47,6 +47,20 @@ describe('UploadProgressBar', () => {
     await cancelBtn.trigger('click')
 
     expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
+  it('appends the transfer rate to the right-hand value', () => {
+    const wrapper = mountBar({ visible: true, progress: 45, done: 2, total: 4, speed: 1.5 * 1024 * 1024 })
+
+    expect(wrapper.find('.transfer-progress-value').text()).toBe('45% · 1.5 MB/s')
+    // The item count keeps its own slot — the rate must not displace it.
+    expect(wrapper.find('.transfer-progress-detail').text()).toBe('2/4')
+  })
+
+  it('leaves the value as a plain percentage while the rate is unknown', () => {
+    const wrapper = mountBar({ visible: true, progress: 45, done: 2, total: 4, speed: 0 })
+
+    expect(wrapper.find('.transfer-progress-value').text()).toBe('45%')
   })
 
   it('localizes the cancel button tooltip instead of hard-coding Chinese', () => {

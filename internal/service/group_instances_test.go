@@ -107,9 +107,9 @@ func TestAddGroupMembers_NameCollisionWithUserNickname(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	origNick := model.ChatUserNickname
-	model.ChatUserNickname = "Claude"
-	t.Cleanup(func() { model.ChatUserNickname = origNick })
+	origNick := model.UserNickname
+	model.UserNickname = "Claude"
+	t.Cleanup(func() { model.UserNickname = origNick })
 
 	withTestAgents(t, map[string]*model.Agent{
 		"codebuddy": {ID: "codebuddy", Name: "Host", Backend: "codebuddy"},

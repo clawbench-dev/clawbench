@@ -90,7 +90,7 @@
         v-else
         :label="t(entry.field.labelKey)"
         :description="entry.field.descriptionKey ? t(entry.field.descriptionKey) : ''"
-        :type="entry.field.type"
+        :type="panelFieldType(entry.field)"
         :model-value="getLocalValue(entry.field)"
         :options="resolveFieldOptions(entry.field)"
         :option-previews="entry.field.key === 'terminalTheme' ? terminalThemePreviews : undefined"
@@ -596,6 +596,12 @@ function isRagProgressField(field: ItemSpec): boolean {
 
 function setLocalValue(key: string, value: unknown) {
   localValues[key] = value
+}
+
+/** Panels never render the summary-model row (SettingsCategory does), so the
+ *  narrower type keeps SettingsItem's prop union satisfied. */
+function panelFieldType(field: ItemSpec): Exclude<ItemSpec['type'], 'summaryModel'> {
+  return field.type as Exclude<ItemSpec['type'], 'summaryModel'>
 }
 
 function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {

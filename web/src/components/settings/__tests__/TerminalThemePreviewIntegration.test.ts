@@ -99,7 +99,7 @@ vi.mock('@/utils/api', () => ({
 
 vi.mock('@/components/settings/settingsFieldMap', async () => {
   const actual = await vi.importActual<typeof import('@/components/settings/settingsFieldMap')>('@/components/settings/settingsFieldMap')
-  return { ...actual, engineVoiceOptions: { edge: [], piper: [] } }
+  return { ...actual, engineVoiceOptions: { edge: [], openai: [] } }
 })
 
 // Mock lucide icons + BottomSheet teleport

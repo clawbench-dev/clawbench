@@ -19,6 +19,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -39,15 +41,35 @@ const (
 	liveNoteTextMaxRunes = 2000
 	// liveNoteSpeakerMaxRunes bounds the display label supplied by the client.
 	liveNoteSpeakerMaxRunes = 40
+	// liveNoteChatMaxRunes bounds one chat line, mirroring CHAT_MAX_CHARS in
+	// web/src/share/liveControl.ts.
+	liveNoteChatMaxRunes = 2000
+	// liveNoteClientIDMaxRunes bounds the client message id used for idempotency.
+	liveNoteClientIDMaxRunes = 64
+	// liveNoteFilesMaxBatch caps one file-event batch. A meeting opens tens of
+	// files, not thousands; the cap is what stops a looping client from turning
+	// one request into an unbounded transaction.
+	liveNoteFilesMaxBatch = 200
+	// liveNotePathMaxRunes bounds one reported path. Long enough for a deep
+	// project path plus a Windows drive prefix, short enough to keep the row and
+	// the transcript line readable.
+	liveNotePathMaxRunes = 1024
+	// liveNoteFilesMaxBodyBytes bounds one batch body. 200 paths of 1024 runes
+	// plus JSON overhead is well under this; the cap exists so a malformed or
+	// hostile client cannot make the server parse an unbounded array before the
+	// per-batch check runs.
+	liveNoteFilesMaxBodyBytes = 1 << 20
+	// liveNoteSharerMaxRunes bounds the sharer identity ("host" / "viewer:v12").
+	liveNoteSharerMaxRunes = 64
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
 	// across all rooms. The STT backend is a shared HTTP service; a long meeting
 	// with eight speaking viewers would otherwise burst it.
 	liveNoteSTTConcurrency = 4
-	// liveNoteMinutesTimeout bounds one minutes generation (chunked map-reduce
-	// over a possibly hour-long transcript).
-	liveNoteMinutesTimeout = 5 * time.Minute
+	// liveNoteMinutesTimeout bounds one minutes generation. The job runs two
+	// chunked passes now (proofread, then summarize), so the budget covers both.
+	liveNoteMinutesTimeout = 10 * time.Minute
 )
 
 // liveNoteSTTSlots is the process-wide transcription semaphore.
@@ -57,7 +79,13 @@ var liveNoteSTTSlots = make(chan struct{}, liveNoteSTTConcurrency)
 type liveNotesResponse struct {
 	Title    string                    `json:"title,omitempty"`
 	Segments []service.LiveNoteSegment `json:"segments"`
-	Minutes  liveNotesMinutesPayload   `json:"minutes"`
+	// Files are the open/close events so far. A viewer gets the same rows with
+	// Path blanked — it may know which file, not where the publisher keeps it.
+	Files []service.LiveNoteFile `json:"files,omitempty"`
+	// Screens are the screen-sharing intervals (who shared, when). No redaction
+	// needed: a nickname is already visible to every viewer in the roster.
+	Screens []service.LiveNoteScreenShare `json:"screens,omitempty"`
+	Minutes liveNotesMinutesPayload       `json:"minutes"`
 }
 
 // liveNotesMinutesPayload carries the generated minutes and their status so the
@@ -69,6 +97,138 @@ type liveNotesMinutesPayload struct {
 	// FilePath is publisher-only: the Markdown copy written inside the project.
 	// Never sent to viewers — a server path is not theirs to read.
 	FilePath string `json:"filePath,omitempty"`
+	// Revise reports the proofreading stage that runs before summarisation, so
+	// the dialog can say "正在校对转写" instead of a generic spinner.
+	Revise liveNotesRevisePayload `json:"revise"`
+	// Artifacts are the files this meeting left in the project (publisher only:
+	// they are absolute paths on the publisher's disk).
+	Artifacts liveNotesArtifacts `json:"artifacts"`
+}
+
+// liveNotesRevisePayload is the state of the context-aware proofreading pass.
+type liveNotesRevisePayload struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// liveNotesArtifacts lists the permanent files of one meeting.
+//
+// Unlike the database rows these are never cleaned up: they are the copy the
+// user owns, which is why the SPA shows the paths rather than a download.
+type liveNotesArtifacts struct {
+	Dir        string `json:"dir,omitempty"`
+	Minutes    string `json:"minutes,omitempty"`
+	Transcript string `json:"transcript,omitempty"`
+	Revised    string `json:"revised,omitempty"`
+	Audio      string `json:"audio,omitempty"`
+	// AudioMeeting is the merged whole-meeting file. Empty until the merge has
+	// run (or for a recording that predates it).
+	AudioMeeting string `json:"audioMeeting,omitempty"`
+	AudioFiles   int    `json:"audioFiles,omitempty"`
+}
+
+// ServeLiveNotesSessions handles GET /api/live-share/notes/sessions
+// (authenticated, project-scoped): the project's meeting records.
+//
+// The record is the database row, not the folder. A meeting exists from the
+// moment the publisher attaches — including one that recorded nothing, or whose
+// AI 听记 was off — and the folder is only created once there is something to
+// put in it. Listing folders instead would silently drop exactly those
+// meetings, and would lose the record entirely once the folder is deleted.
+func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		serveLiveNotesList(w, r)
+	case http.MethodDelete:
+		serveLiveNotesDelete(w, r)
+	default:
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
+}
+
+func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	if token := r.URL.Query().Get("token"); token != "" {
+		if !validShareToken(token) {
+			http.NotFound(w, r)
+			return
+		}
+		record, exists, err := service.GetMeetingRecord(projectPath, projectID, token)
+		if err != nil {
+			slog.Error("live notes: get session failed", "err", err)
+			model.WriteError(w, model.Internal(err))
+			return
+		}
+		if !exists {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"session": record})
+		return
+	}
+	sessions, err := service.ListMeetingRecords(projectPath, projectID, 200)
+	if err != nil {
+		slog.Error("live notes: list sessions failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{jsonSessions: sessions})
+}
+
+// ServeLiveNotesArtifact handles
+// GET /api/live-share/notes/sessions/artifact?token=&kind= (authenticated,
+// project-scoped).
+//
+// The caller addresses the meeting by TOKEN, never by a path: the folder name
+// comes from our own row. That removes the whole class of "validate the client
+// supplied directory name" problems — there is no client supplied path.
+// `kind` is one of minutes / transcript / revised / chat (default minutes).
+func ServeLiveNotesArtifact(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	dirName, err := service.MeetingDirName(token)
+	if err != nil {
+		slog.Error("live notes: artifact dir lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if dirName == "" {
+		// The meeting produced no artifacts (notes off, silence, chat-only
+		// before the archive was written).
+		http.NotFound(w, r)
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "minutes"
+	}
+	content, file, err := service.ReadLiveNoteArtifactWithName(projectPath, dirName, kind)
+	switch {
+	case errors.Is(err, service.ErrLiveNoteSessionNotFound):
+		http.NotFound(w, r)
+		return
+	case errors.Is(err, service.ErrLiveNoteArtifactKind), errors.Is(err, service.ErrLiveNoteArtifactTooLarge):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	case err != nil:
+		slog.Error("live notes: read artifact failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"kind": kind, strContent: content, jsonFile: file})
 }
 
 // ServeLiveShareNotes handles GET /api/live-share/notes?token=&since=
@@ -98,6 +258,18 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	files, err := service.ListLiveNoteFiles(token, 0)
+	if err != nil {
+		slog.Error("live notes: list files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	screens, err := service.ListLiveNoteScreenShares(token)
+	if err != nil {
+		slog.Error("live notes: list screen shares failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	note, _, err := service.GetLiveNote(token)
 	if err != nil {
 		slog.Error("live notes: get note failed", "err", err)
@@ -107,13 +279,319 @@ func ServeLiveShareNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:    note.Title,
 		Segments: segments,
-		Minutes: liveNotesMinutesPayload{
-			Status:   note.Status,
-			Markdown: note.Minutes,
-			Error:    note.Error,
-			FilePath: note.FilePath,
-		},
+		Files:    files,
+		Screens:  screens,
+		Minutes:  liveNotesPayload(projectPath, note),
 	})
+}
+
+// serveLiveNotesDelete handles DELETE /api/live-share/notes/sessions?token=
+// (authenticated, project-scoped).
+//
+// Two refusals, both 409 rather than 400: the request is well-formed, the
+// meeting simply cannot be deleted right now.
+//   - the room is still publishing (the user should end the meeting first);
+//   - the minutes/proofread job is running — its detached goroutine would
+//     recreate the folder and re-upsert the row seconds after the delete.
+//
+// "Running" is judged by the job's last write, not by the bare status: a crash
+// during generation leaves status='generating' behind with no job to finish it,
+// and refusing forever would make that meeting (and its folder) undeletable.
+// The age threshold is the SPA's own isStaleGenerating, so the list and this
+// guard agree on which meetings are interrupted rather than in progress.
+func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	if liveRegistry.Get(token) != nil {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveNotesMeetingLive")
+		return
+	}
+	generating, err := service.LiveNoteGenerationRunning(token, time.Now().UnixMilli())
+	if err != nil {
+		slog.Error("live notes: delete lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if generating {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "LiveNotesGenerating")
+		return
+	}
+	if err := service.DeleteMeetingRecord(projectPath, projectID, token); err != nil {
+		if errors.Is(err, service.ErrMeetingNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("live notes: delete failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeLiveNotesChat handles GET /api/live-share/notes/sessions/chat?token=&since=
+// (authenticated, project-scoped): the meeting's chat, oldest first.
+func ServeLiveNotesChat(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	messages, err := service.ListLiveNoteChat(token, since)
+	if err != nil {
+		slog.Error("live notes: list chat failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	count, err := service.CountLiveNoteChat(token)
+	if err != nil {
+		slog.Error("live notes: count chat failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{strMessages: messages, "count": count})
+}
+
+// ServeLiveShareNoteChat handles POST /api/live-share/notes/chat
+// (authenticated, project-scoped): the publisher persists one chat line.
+//
+// Body: {"token","id","speaker","viewerId","text"}. `id` is the chat frame's own
+// id and is the idempotency key — the publisher retries on failure, and a retry
+// whose response was lost must not duplicate the line.
+func ServeLiveShareNoteChat(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, liveNoteFilesMaxBodyBytes)
+	var body struct {
+		Token    string `json:"token"`
+		ID       string `json:"id"`
+		Speaker  string `json:"speaker"`
+		ViewerID string `json:"viewerId"`
+		Text     string `json:"text"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	text := strings.TrimSpace(body.Text)
+	if text == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	id, err := service.AppendLiveNoteChat(body.Token, projectID, service.LiveNoteChatMessage{
+		ClientID: truncateRunes(strings.TrimSpace(body.ID), liveNoteClientIDMaxRunes),
+		Speaker:  truncateRunes(strings.TrimSpace(body.Speaker), liveNoteSpeakerMaxRunes),
+		ViewerID: truncateRunes(strings.TrimSpace(body.ViewerID), 32),
+		Text:     truncateRunes(text, liveNoteChatMaxRunes),
+	})
+	if err != nil {
+		slog.Error("live notes: append chat failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
+}
+
+// ServeLiveShareNoteFiles handles POST /api/live-share/notes/files
+// (authenticated, project-scoped): the publisher reports which files were
+// opened, and when.
+//
+// Body: {"token","files":[{"owner","ownerName","path","openedAt","closedAt","source"}]}.
+// Batched rather than one request per open: a busy meeting switches files a few
+// times a minute, and a request per switch would put the whole event stream on
+// the same connection the audio uploads use.
+//
+// The interval is the payload, not two events: the transcript has to say
+// "10:03–10:11 opened X", and a close that never arrives (crash, killed app) is
+// stamped by CloseOpenLiveNoteFiles when the meeting ends.
+func ServeLiveShareNoteFiles(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+		Files []struct {
+			Owner     string `json:"owner"`
+			OwnerName string `json:"ownerName"`
+			Path      string `json:"path"`
+			OpenedAt  int64  `json:"openedAt"`
+			ClosedAt  int64  `json:"closedAt"`
+			Source    string `json:"source"`
+		} `json:"files"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	if len(body.Files) > liveNoteFilesMaxBatch {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	files := make([]service.LiveNoteFile, 0, len(body.Files))
+	for _, f := range body.Files {
+		path := truncateRunes(strings.TrimSpace(f.Path), liveNotePathMaxRunes)
+		if path == "" || f.OpenedAt <= 0 {
+			// One malformed entry must not discard the batch: the client retries
+			// the whole thing, and dropping the rest would lose real events.
+			continue
+		}
+		closedAt := f.ClosedAt
+		if closedAt > 0 && closedAt < f.OpenedAt {
+			closedAt = f.OpenedAt
+		}
+		files = append(files, service.LiveNoteFile{
+			Owner:     strings.TrimSpace(f.Owner),
+			OwnerName: strings.TrimSpace(f.OwnerName),
+			Path:      path,
+			OpenedAt:  f.OpenedAt,
+			ClosedAt:  closedAt,
+			Source:    strings.TrimSpace(f.Source),
+		})
+	}
+	if err := service.RecordLiveNoteFiles(r.Context(), body.Token, projectID, files); err != nil {
+		slog.Error("live notes: record files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeLiveShareNoteScreen handles POST /api/live-share/notes/screen
+// (authenticated, project-scoped): the publisher reports a CHANGE of who is
+// sharing the screen.
+//
+// Body: {"token","sharer","sharerName","at"}. `sharer` is "host", "viewer:<id>",
+// or "" for "nobody is sharing". Transitions rather than state: the server
+// closes the previous interval and opens the next one in one transaction, so
+// the timeline can never show two sharers at once.
+//
+// The publisher reports it because the publisher is the only party that sees
+// every transition: the host's own picture, an audience member claiming the
+// screen, a revocation, and a sharer who disconnects.
+func ServeLiveShareNoteScreen(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token      string `json:"token"`
+		Sharer     string `json:"sharer"`
+		SharerName string `json:"sharerName"`
+		At         int64  `json:"at"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	sharer := truncateRunes(strings.TrimSpace(body.Sharer), liveNoteSharerMaxRunes)
+	if sharer != "" && sharer != "host" && !strings.HasPrefix(sharer, "viewer:") {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest")
+		return
+	}
+	if err := service.SetLiveNoteScreenSharer(r.Context(), body.Token, projectID, sharer,
+		truncateRunes(strings.TrimSpace(body.SharerName), liveNoteSpeakerMaxRunes), body.At); err != nil {
+		slog.Error("live notes: record screen sharer failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// liveNotesPayload turns a stored row into the publisher-facing payload.
+//
+// Artifacts are resolved here rather than stored as four columns: the folder is
+// the single fact, and the file names inside it are a convention.
+func liveNotesPayload(projectPath string, note service.LiveNote) liveNotesMinutesPayload {
+	return liveNotesMinutesPayload{
+		Status:    note.Status,
+		Markdown:  note.Minutes,
+		Error:     note.Error,
+		FilePath:  note.FilePath,
+		Revise:    liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError},
+		Artifacts: liveNoteArtifactsOf(service.MeetingDirPath(projectPath, note.DirName)),
+	}
+}
+
+// liveNoteArtifactsOf lists what is ACTUALLY on disk for a meeting folder.
+//
+// Each Markdown file is stat'ed rather than assumed: the folder exists from the
+// first audio segment, but the transcripts and the minutes only appear once the
+// post-meeting job reaches them. Reporting a path to a file that does not exist
+// yet is worse than reporting nothing — the user would go looking for it.
+func liveNoteArtifactsOf(dir string) liveNotesArtifacts {
+	if strings.TrimSpace(dir) == "" {
+		return liveNotesArtifacts{}
+	}
+	paths := service.LiveNotesPathsIn(dir)
+	out := liveNotesArtifacts{Dir: paths.Dir, Audio: paths.Audio}
+	for _, f := range []struct {
+		target string
+		into   *string
+	}{
+		{paths.Minutes, &out.Minutes},
+		{paths.Transcript, &out.Transcript},
+		{paths.Revised, &out.Revised},
+	} {
+		if _, err := os.Stat(f.target); err == nil {
+			*f.into = f.target
+		}
+	}
+	// Count only the channel recordings: the folder also holds the .gitignore
+	// that keeps the binary audio out of the repository, and the merged
+	// whole-meeting file is not a channel.
+	if entries, err := os.ReadDir(paths.Audio); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".webm") || e.Name() == service.LiveNoteMeetingAudioFile {
+				continue
+			}
+			out.AudioFiles++
+		}
+	}
+	if meeting := filepath.Join(paths.Audio, service.LiveNoteMeetingAudioFile); fileExists(meeting) {
+		out.AudioMeeting = meeting
+	}
+	return out
+}
+
+// fileExists reports whether path is a regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // ServeLiveShareNoteSegment handles POST /api/live-share/notes/segment
@@ -176,6 +654,18 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	startedAt := parseLiveNoteMillis(r.FormValue("startedAt"))
+
+	persistLiveNoteAudio(token, projectID, projectPath, r.FormValue("title"), channel, startedAt, audio)
+
+	// Archive-only: the whole-meeting mix track exists to be listened to, not
+	// transcribed. It has no single speaker, so a transcript of it would be a
+	// duplicate of the per-channel lines with the labels lost.
+	if r.FormValue("archive") != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"id": 0, liveNoteTextKey: ""})
+		return
+	}
+
 	text, err := transcribeLiveNoteSegment(r.Context(), audio)
 	if err != nil {
 		slog.Warn("live notes: transcribe failed", "channel", channel, "err", err)
@@ -195,7 +685,7 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 	seg := service.LiveNoteSegment{
 		Channel:    channel,
 		Speaker:    truncateRunes(strings.TrimSpace(r.FormValue("speaker")), liveNoteSpeakerMaxRunes),
-		StartedAt:  parseLiveNoteMillis(r.FormValue("startedAt")),
+		StartedAt:  startedAt,
 		DurationMS: capInt64(parseLiveNoteMillis(r.FormValue("durationMs")), liveNoteSegmentMaxDurationMS),
 		Text:       truncateRunes(text, liveNoteTextMaxRunes),
 	}
@@ -214,6 +704,54 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 		"startedAt":     seg.StartedAt,
 		"durationMs":    seg.DurationMS,
 	})
+}
+
+// ServeLiveNotesAudioMerge handles POST /api/live-share/notes/audio/merge
+// (authenticated, project-scoped). Body: {"token":"..."}.
+//
+// Folds the meeting's audio segments into one file per channel plus the
+// whole-meeting mix, and removes the segments. The publisher calls this once
+// its upload queue has drained — that is the only moment at which "no more
+// audio is coming" is actually true.
+func ServeLiveNotesAudioMerge(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !validShareToken(body.Token) || !liveNotesOwnedByProject(body.Token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	dirName, err := service.MeetingDirName(body.Token)
+	if err != nil {
+		slog.Error("live notes: merge dir lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if dirName == "" {
+		// Nothing was recorded (notes off, or every segment was silence).
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "artifacts": liveNotesArtifacts{}})
+		return
+	}
+	dir := service.MeetingDirPath(projectPath, dirName)
+	merged, err := service.MergeLiveNoteAudio(service.LiveNotesPathsIn(dir))
+	if err != nil {
+		slog.Warn("live notes: merge audio failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	slog.Info("live notes: merged meeting audio",
+		"segments", merged.Segments, "channels", len(merged.Channels), "meeting", merged.Meeting != "")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "artifacts": liveNoteArtifactsOf(dir)})
 }
 
 // ServeLiveShareNotesMinutes handles POST /api/live-share/notes/minutes
@@ -255,13 +793,19 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 	}
 	// Idempotent unless explicitly asked to regenerate: a double-click on
 	// "生成纪要" must not queue two summarisation runs over the same transcript.
-	if !body.Regenerate && (note.Status == service.LiveNotesStatusGenerating || note.Status == service.LiveNotesStatusReady) {
-		writeJSON(w, http.StatusOK, liveNotesMinutesPayload{
-			Status:   note.Status,
-			Markdown: note.Minutes,
-			Error:    note.Error,
-			FilePath: note.FilePath,
-		})
+	//
+	// "Still generating" goes through the same staleness test the delete guard
+	// uses. A row left in `generating` by a crashed process would otherwise
+	// answer this endpoint with a state that never advances — the reader would
+	// wait forever, while DELETE happily reported the same job as finished.
+	running, err := service.LiveNoteGenerationRunning(body.Token, 0)
+	if err != nil {
+		slog.Error("live notes: generation state lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !body.Regenerate && (running || note.Status == service.LiveNotesStatusReady) {
+		writeJSON(w, http.StatusOK, liveNotesPayload(projectPath, note))
 		return
 	}
 
@@ -282,43 +826,237 @@ func ServeLiveShareNotesMinutes(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	go generateLiveNotesMinutes(body.Token, projectID, projectPath, title, segments)
+	go generateLiveNotesArtifacts(body.Token, projectID, projectPath, title, segments)
 
-	writeJSON(w, http.StatusOK, liveNotesMinutesPayload{Status: service.LiveNotesStatusGenerating})
+	writeJSON(w, http.StatusOK, liveNotesMinutesPayload{
+		Status:    service.LiveNotesStatusGenerating,
+		Revise:    liveNotesRevisePayload{Status: service.LiveNotesStatusGenerating},
+		Artifacts: liveNoteArtifactsOf(service.MeetingDirPath(projectPath, note.DirName)),
+	})
 }
 
-// generateLiveNotesMinutes is the detached minutes job. It uses a background
-// context because the HTTP request that started it has already returned.
+// liveNotesStoredTitle returns the title actually stored for the meeting, or
+// fallback when the row is gone or still has no title.
+func liveNotesStoredTitle(token, fallback string) string {
+	row, ok, err := service.GetLiveNote(token)
+	if err != nil || !ok || strings.TrimSpace(row.Title) == "" {
+		return fallback
+	}
+	return row.Title
+}
+
+// liveNotesTimeline joins the "what were we looking at" context for the minutes
+// prompt: files and screen shares, one blank line apart.
+func liveNotesTimeline(files []service.LiveNoteFile, screens []service.LiveNoteScreenShare, startedAt time.Time, projectPath string) string {
+	timeline := service.LiveNoteFilesPromptSection(files, startedAt, projectPath)
+	section := service.LiveNoteScreenPromptSection(screens, startedAt)
+	if section == "" {
+		return timeline
+	}
+	if timeline != "" {
+		timeline += "\n\n"
+	}
+	return timeline + section
+}
+
+// generateLiveNotesArtifacts is the detached post-meeting job.
 //
-// The minutes are both stored (with the 7-day retention) and written into the
-// project as Markdown. The file is the durable copy: it survives cleanup, can be
-// edited, and the user can commit it.
-func generateLiveNotesMinutes(token string, projectID int64, projectPath, title string, segments []service.LiveNoteSegment) {
+// It runs three stages in order, and each one has its own durable output:
+//
+//  1. transcript.vtt         raw ASR, exactly as recognized (WebVTT cues)
+//  2. transcript-revised.md  proofread against the project's own vocabulary
+//  3. minutes.md             summary generated FROM the proofread transcript
+//
+// Stage 2 is why the summary reads like a meeting instead of a dictation: ASR
+// has no idea that "claw bench" is ClawBench, and the project's AGENTS.md does.
+// When proofreading fails the minutes fall back to the raw transcript — a
+// summary of an imperfect transcript beats no summary at all.
+//
+// Everything is written into the meeting folder that already holds the audio,
+// so the three artifacts plus the recording stay together. Both the row and the
+// folder are permanent; deleting the record removes both.
+func generateLiveNotesArtifacts(token string, projectID int64, projectPath, title string, segments []service.LiveNoteSegment) {
 	ctx, cancel := context.WithTimeout(context.Background(), liveNoteMinutesTimeout)
 	defer cancel()
 
-	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, segments)
+	startedAt := liveNotesStartTime(segments)
+	// The row is the authority on the title: a client's copy can be stale (a
+	// second device, a page that never re-read the record), and the rename
+	// below has to inspect what is actually stored.
+	title = liveNotesStoredTitle(token, title)
+	paths, dirErr := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt.UnixMilli())
+	if dirErr != nil {
+		// The transcript and the minutes still go into the database; only the
+		// durable copies are lost, which is worth a warning rather than a
+		// failed meeting.
+		slog.Warn("live notes: meeting folder unavailable", "err", dirErr)
+	}
+	onDisk := dirErr == nil
+
+	// Fold the segments into one recording per channel before anything else
+	// reads the folder: the minutes link to the audio, and the user opens the
+	// meeting expecting one file rather than forty. This is also the retry path
+	// for a publisher whose merge request never arrived.
+	if onDisk {
+		if merged, mergeErr := service.MergeLiveNoteAudio(paths); mergeErr != nil {
+			slog.Warn("live notes: merge audio failed", "err", mergeErr)
+		} else if merged.Segments > 0 {
+			slog.Info("live notes: merged meeting audio", "segments", merged.Segments)
+		}
+	}
+
+	files, filesErr := service.ListLiveNoteFiles(token, 0)
+	if filesErr != nil {
+		// The transcript and the minutes are worth producing without the file
+		// timeline; losing it is a gap, not a reason to fail the meeting.
+		slog.Warn("live notes: list files failed", "err", filesErr)
+		files = nil
+	}
+	screens, screensErr := service.ListLiveNoteScreenShares(token)
+	if screensErr != nil {
+		slog.Warn("live notes: list screen shares failed", "err", screensErr)
+		screens = nil
+	}
+
+	raw := service.BuildLiveNotesTranscript(segments)
+	if onDisk {
+		writeLiveNotesArtifact("transcript", func() (string, error) {
+			return service.WriteLiveNotesRawTranscript(paths, segments, files, screens)
+		})
+	}
+
+	// Who the meeting's initiator is, resolved once and shared by both model
+	// stages: the proofreader needs the spelling, the minutes need the name.
+	self := service.LiveNotesSpeaker{
+		Label: service.LiveNotesSelfLabel(segments),
+		Name:  model.UserNickname,
+	}
+
+	transcript := proofreadLiveNotesTranscript(ctx, token, projectID, projectPath, title, segments, files, screens, raw, paths, onDisk, startedAt, self)
+
+	// One background block for both timelines: they answer the same question
+	// ("what were we looking at") and splitting them into two sections only
+	// makes the model treat the second one as an afterthought.
+	timeline := liveNotesTimeline(files, screens, startedAt, projectPath)
+	minutes, err := service.GenerateLiveNotesMinutes(ctx, title, transcript, timeline, self)
 	if err != nil {
 		slog.Warn("live notes: minutes generation failed", "err", err)
 		if serr := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusFailed, "", err.Error(), ""); serr != nil {
 			slog.Error("live notes: persist minutes failure failed", "err", serr)
+		} else {
+			// The job runs detached (up to ten minutes) and the host has almost
+			// certainly left the meeting page by now, so the failure has to
+			// travel to them — polling the record list is not a notification.
+			service.EmitMeetingEvent(token, projectPath, service.MeetingEventMinutesFailed, title, "", "")
 		}
 		return
 	}
 
+	// Now that the meeting has been summarized there is something to name it
+	// after. Only a placeholder is replaced — a title the user typed is theirs.
+	// Done before the file is written so the minutes.md heading carries the
+	// real name instead of "11-01 17:35".
+	title = nameMeetingFromMinutes(ctx, title, minutes, service.GenerateLiveNotesTitle)
+
 	// A failed write must not lose the minutes: they are still stored below, and
 	// the UI simply shows no file path.
 	filePath := ""
-	written, werr := service.WriteLiveNotesFile(projectPath, title, minutes, segments, liveNotesStartTime(segments))
-	if werr != nil {
-		slog.Warn("live notes: write minutes file failed", "err", werr)
-	} else {
-		filePath = written
+	if onDisk {
+		filePath = writeLiveNotesMinutes(paths, title, startedAt, minutes)
 	}
-
 	if err := service.SetLiveNoteMinutes(token, projectID, title, service.LiveNotesStatusReady, minutes, "", filePath); err != nil {
 		slog.Error("live notes: persist minutes failed", "err", err)
+		return
 	}
+	// Same reason as the failure path: the job outlives the meeting page.
+	service.EmitMeetingEvent(token, projectPath, service.MeetingEventMinutesReady, title, "", "")
+}
+
+// nameMeetingFromMinutes replaces a placeholder title with one the summary
+// model derived from the minutes, and returns the title to use from here on.
+//
+// `generate` is a parameter rather than a direct call so the decision — is this
+// still a placeholder, and what happens when the model fails — is testable
+// without a model.
+func nameMeetingFromMinutes(ctx context.Context, title, minutes string, generate func(context.Context, string) (string, error)) string {
+	if !service.IsPlaceholderMeetingTitle(title) {
+		return title
+	}
+	named, err := generate(ctx, minutes)
+	if err != nil {
+		slog.Warn("live notes: title generation failed", "err", err)
+		return title
+	}
+	if named = strings.TrimSpace(named); named == "" {
+		return title
+	}
+	return named
+}
+
+// proofreadLiveNotesTranscript runs stage 2 and returns the text to summarize.
+//
+// On failure it returns the raw transcript: a summary of an imperfect
+// transcript beats no summary at all, and the failure is recorded where the UI
+// can show it.
+func proofreadLiveNotesTranscript(
+	ctx context.Context, token string, projectID int64, projectPath, title string,
+	segments []service.LiveNoteSegment, files []service.LiveNoteFile, screens []service.LiveNoteScreenShare,
+	raw string,
+	paths service.LiveNotesPaths, onDisk bool, startedAt time.Time, self service.LiveNotesSpeaker,
+) string {
+	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusGenerating, "", ""); err != nil {
+		slog.Warn("live notes: mark revising failed", "err", err)
+	}
+	revised, err := service.ReviseLiveNotesTranscript(ctx, projectPath, title, segments, self)
+	if err != nil {
+		slog.Warn("live notes: proofread failed", "err", err)
+		if serr := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusFailed, "", err.Error()); serr != nil {
+			slog.Error("live notes: persist proofread failure failed", "err", serr)
+		}
+		return raw
+	}
+	if err := service.SetLiveNoteRevise(token, projectID, service.LiveNotesStatusReady, revised, ""); err != nil {
+		slog.Error("live notes: persist proofread failed", "err", err)
+	}
+	if onDisk {
+		// Merged only into the FILE, never into the DB copy or the minutes
+		// input: the proofread text is speech, and the summariser gets the file
+		// timeline as its own explicitly-framed block.
+		body := service.MergeLiveNoteFileEvents(revised, files, screens, service.LiveNotesTimelineBase(segments))
+		writeLiveNotesArtifact("revised", func() (string, error) {
+			return service.WriteLiveNotesRevisedTranscript(paths, title, startedAt, body)
+		})
+	}
+	return revised
+}
+
+// writeLiveNotesArtifact runs one file write, downgrading any error to a
+// warning: a missing durable copy must never abort the pipeline that produces
+// the others.
+func writeLiveNotesArtifact(kind string, write func() (string, error)) {
+	if _, err := write(); err != nil {
+		slog.Warn("live notes: write artifact failed", "kind", kind, "err", err)
+	}
+}
+
+// writeLiveNotesMinutes writes the summary and returns its path ("" on error).
+func writeLiveNotesMinutes(paths service.LiveNotesPaths, title string, startedAt time.Time, minutes string) string {
+	audioFiles := 0
+	if entries, err := os.ReadDir(paths.Audio); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".webm") || e.Name() == service.LiveNoteMeetingAudioFile {
+				continue
+			}
+			audioFiles++
+		}
+	}
+	hasMeeting := fileExists(filepath.Join(paths.Audio, service.LiveNoteMeetingAudioFile))
+	written, err := service.WriteLiveNotesMinutesFile(paths, title, startedAt, minutes, audioFiles, hasMeeting)
+	if err != nil {
+		slog.Warn("live notes: write minutes file failed", "err", err)
+		return ""
+	}
+	return written
 }
 
 // liveNotesStartTime is when the meeting started: the earliest segment's
@@ -364,6 +1102,18 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
+	files, err := service.ListLiveNoteFiles(token, 0)
+	if err != nil {
+		slog.Error("live notes: public files failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	screens, err := service.ListLiveNoteScreenShares(token)
+	if err != nil {
+		slog.Error("live notes: public screen shares failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
 	note, _, err := service.GetLiveNote(token)
 	if err != nil {
 		slog.Error("live notes: public get failed", "err", err)
@@ -372,17 +1122,37 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Segments: segments,
+		Files:    redactLiveNoteFilePaths(files),
+		Screens:  screens,
 		Minutes: liveNotesMinutesPayload{
 			Status:   note.Status,
 			Markdown: note.Minutes,
 			Error:    note.Error,
-			// FilePath deliberately omitted: viewers get the text, not a path
-			// into the publisher's project.
+			// FilePath and Artifacts deliberately omitted: viewers get the text,
+			// not paths into the publisher's project.
+			Revise: liveNotesRevisePayload{Status: note.ReviseStatus},
 		},
 	})
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+// redactLiveNoteFilePaths drops the full path, leaving the base name.
+//
+// A viewer may know WHICH file was opened — that is what makes the transcript
+// followable — but not where the publisher keeps it. The name is what the
+// transcript line renders, so nothing visible is lost.
+func redactLiveNoteFilePaths(files []service.LiveNoteFile) []service.LiveNoteFile {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]service.LiveNoteFile, len(files))
+	copy(out, files)
+	for i := range out {
+		out[i].Path = ""
+	}
+	return out
+}
 
 // liveNotesProject resolves the request's project cookie to both its path and
 // its registry id.
@@ -422,10 +1192,11 @@ func liveNotesOwnedByProject(token, projectPath string, projectID int64) bool {
 	return exists && pid == projectID
 }
 
-// validLiveNoteChannel accepts "system", "mic" or "viewer:<id>".
+// validLiveNoteChannel accepts "system", "mic", the synthetic "mix" archive
+// track, or "viewer:<id>".
 func validLiveNoteChannel(ch string) bool {
 	switch ch {
-	case "system", "mic":
+	case "system", "mic", service.LiveNoteMixChannel:
 		return true
 	}
 	id, ok := strings.CutPrefix(ch, "viewer:")
@@ -438,6 +1209,23 @@ func validLiveNoteChannel(ch string) bool {
 		}
 	}
 	return true
+}
+
+// persistLiveNoteAudio keeps the recording on disk before it is transcribed.
+//
+// The recording is the only artifact that cannot be regenerated: an STT outage,
+// a mis-recognized sentence or a model upgrade all end with "re-transcribe the
+// file", which needs the file. A write failure is logged and ignored — losing
+// the transcript because the disk was read-only would be the worse trade.
+func persistLiveNoteAudio(token string, projectID int64, projectPath, title, channel string, startedAt int64, audio []byte) {
+	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt)
+	if err != nil {
+		slog.Warn("live notes: meeting folder unavailable", "err", err)
+		return
+	}
+	if _, err := service.SaveLiveNoteAudio(paths, channel, startedAt, audio); err != nil {
+		slog.Warn("live notes: save audio failed", "err", err)
+	}
 }
 
 // transcribeLiveNoteSegment calls the STT provider under the process-wide

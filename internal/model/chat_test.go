@@ -296,6 +296,47 @@ func TestChatMessageUnmarshalNoFiles(t *testing.T) {
 	}
 }
 
+// TestFileEntryUnmarshalMeetingToken pins the wire name of the meeting locator.
+//
+// Regression: the client has sent `meetingToken` on quote entries since meeting
+// records became quotable, but FileEntry had no such field, so the decoder
+// silently dropped it on every inbound request — the quote reloaded from the DB
+// with no jump target and the AI never learned which meeting it came from.
+func TestFileEntryUnmarshalMeetingToken(t *testing.T) {
+	raw := `{"path":"会议纪要","kind":"quote","id":"q1","text":"决议：合并","language":"meeting","meetingToken":"tok-9"}`
+	var f FileEntry
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		t.Fatalf("unmarshal quote entry: %v", err)
+	}
+	if f.MeetingToken != "tok-9" {
+		t.Fatalf("MeetingToken = %q, want %q (the wire name is meetingToken)", f.MeetingToken, "tok-9")
+	}
+
+	// It must survive re-encoding too: the entry is persisted as JSON in
+	// chat_history.files / queued_messages.files, so a missing json tag here
+	// would lose it on the way back out.
+	out, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(out), `"meetingToken":"tok-9"`) {
+		t.Fatalf("re-encoded entry lost the meeting locator: %s", out)
+	}
+}
+
+// An entry with no meeting token must not grow a stray empty key: the field is
+// omitempty, and a `"meetingToken":""` on every file attachment would be noise
+// in the persisted JSON.
+func TestFileEntryMeetingTokenOmittedWhenEmpty(t *testing.T) {
+	out, err := json.Marshal(FileEntry{Path: "/a.go"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "meetingToken") {
+		t.Fatalf("empty meeting token must be omitted, got %s", out)
+	}
+}
+
 // TestDedupeFileEntries pins the identity rule the queue endpoint relies on.
 //
 // The regression it guards: the same upload arrives through BOTH channels

@@ -1509,3 +1509,120 @@ func TestIsPathAtOrUnder_SiblingPrefix(t *testing.T) {
 	assert.False(t, isPathAtOrUnder(filepath.Join(dir+"-other", "f.go"), dir),
 		"a sibling sharing a name prefix is not inside the directory")
 }
+
+// A watched directory that is deleted and recreated loses its kernel watch
+// silently: fsnotify prunes its own bookkeeping without telling us, while the
+// refcount keeps claiming the path is held. Without a repair tick, every file
+// created inside the recreated directory afterwards goes unreported — which is
+// exactly "the AI created a file and the preview never refreshed".
+func TestEventLoop_RepairsDroppedDirectoryWatch(t *testing.T) {
+	old := watchRepairInterval
+	watchRepairInterval = 20 * time.Millisecond
+	t.Cleanup(func() { watchRepairInterval = old })
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "generated")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	file := filepath.Join(dir, "out.txt")
+
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+	fw.UpdateWatch("c1", "", file)
+
+	watched := func() bool {
+		for _, p := range fw.watcher.WatchList() {
+			if filepath.Clean(p) == filepath.Clean(dir) {
+				return true
+			}
+		}
+		return false
+	}
+	require.True(t, watched(), "precondition: the parent directory is watched")
+
+	require.NoError(t, os.RemoveAll(dir))
+	require.Eventually(t, func() bool { return !watched() }, 2*time.Second, 5*time.Millisecond,
+		"deleting the directory must drop the watch")
+
+	// Recreate it: the repair tick re-arms the watch with no client action.
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.Eventually(t, watched, 2*time.Second, 5*time.Millisecond,
+		"the repair tick must re-arm the dropped watch")
+
+	// A file created after the repair is reported again.
+	require.NoError(t, os.WriteFile(file, []byte("v1"), 0o644))
+	events := collectEvents(ch, 1, 2*time.Second)
+	require.Len(t, events, 1)
+	assert.Equal(t, "file_change", events[0].Type)
+	assert.Equal(t, file, events[0].Path)
+}
+
+// The repair tick must not disturb a watch that is still healthy: re-adding one
+// would be pointless work, and on Windows it opens a second handle.
+func TestRepairWatches_LeavesHealthyWatchAlone(t *testing.T) {
+	dir := t.TempDir()
+
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+	fw.UpdateWatch("c1", dir, "")
+
+	fw.repairWatches()
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644))
+	events := collectEvents(ch, 1, 2*time.Second)
+	require.Len(t, events, 1)
+	assert.Equal(t, "dir_change", events[0].Type, "a healthy watch still reports exactly one event")
+}
+
+// TestRepairWatches_NoWatchedDirs: the repair tick runs on a timer from
+// process start, long before any client registers a path. It must return
+// immediately rather than iterate an empty map or touch the watcher.
+func TestRepairWatches_NoWatchedDirs(t *testing.T) {
+	fw := setupFileWatcher(t)
+
+	assert.Empty(t, fw.watchedDirs)
+	fw.repairWatches()
+	assert.Empty(t, fw.watchedDirs, "an idle watcher gains no references")
+	assert.Empty(t, fw.watcher.WatchList())
+}
+
+// TestRepairWatches_KeepsReferenceForMissingDir: a directory that no longer
+// exists cannot be watched, but the client still wants it — the reference must
+// be KEPT so the next tick retries and a recreated directory is picked up.
+// Dropping it here would silently stop watching that path forever.
+func TestRepairWatches_KeepsReferenceForMissingDir(t *testing.T) {
+	root := t.TempDir()
+	gone := filepath.Join(root, "will-vanish")
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+
+	fw := setupFileWatcher(t)
+	fw.RegisterClient("c1")
+	fw.UpdateWatch("c1", gone, "")
+	require.Equal(t, 1, fw.watchedDirs[gone], "precondition: the directory is held")
+
+	require.NoError(t, os.RemoveAll(gone))
+	// Wait for inotify to actually drop the watch, otherwise the repair tick
+	// sees a healthy watch and never reaches the Add failure below.
+	require.Eventually(t, func() bool {
+		for _, p := range fw.watcher.WatchList() {
+			if filepath.Clean(p) == filepath.Clean(gone) {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Second, 5*time.Millisecond, "deleting the directory must drop the watch")
+
+	fw.repairWatches()
+
+	assert.Equal(t, 1, fw.watchedDirs[gone], "a failed repair must not release the client's reference")
+
+	// Recreating it makes the next tick succeed again.
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	fw.repairWatches()
+	watched := false
+	for _, p := range fw.watcher.WatchList() {
+		if filepath.Clean(p) == filepath.Clean(gone) {
+			watched = true
+		}
+	}
+	assert.True(t, watched, "the reference kept by the failed repair is what makes this work")
+}

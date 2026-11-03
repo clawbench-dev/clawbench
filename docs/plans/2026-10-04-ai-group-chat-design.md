@@ -279,7 +279,7 @@
 
 **成员头像**：`chat_sessions` 新增 **`agent_avatar` 列**，存成员**自身**的头像 SVG 快照——前端 DiceBear 按成员名生成、随机风格、经 `POST /api/group/member-avatars` 落库，使公开分享页（无 DiceBear 运行时）能渲染同一图标。`speakerFromMember` **优先成员头像**（`m.Avatar`），缺失时回退智能体头像。**存量群不回填**，只在建群/加成员时生成。
 
-**真实智能体名披露**：`SpeakerIdentity` 新增 **`agentName`**（底层真实智能体名）——当成员显示名（池名/序号名）≠ 实时智能体名时非空。前端在消息的「头像 + 昵称」之后，仅当 `agentName != name` 时以弱化样式 `.msg-speaker-real` 显示。分享/导出走同一 `SpeakerIdentity`，与 App 内自动一致。
+**真实智能体名披露**：`SpeakerIdentity` 新增 **`agentName`**（底层真实智能体名）——当成员显示名（池名/序号名）≠ 实时智能体名时非空。前端在消息的「头像 + 称谓」之后，仅当 `agentName != name` 时以弱化样式 `.msg-speaker-real` 显示。分享/导出走同一 `SpeakerIdentity`，与 App 内自动一致。
 
 **主持人成员行 id 存群行 `context_state`**（`host_member_id`）——**读取须用专门的 reader**（`ContextState`（`chat.go:2200`）只认 `Mode`/`ThinkingEffort`/`Usage`，不含 `maxRounds`/`host_member_id`）。需新增 `GetGroupHostMember(groupID)` / `GetGroupMaxRounds(groupID)`（用 `json_extract` 或独立解析），见 §10 #31 与计划 E1。
 
@@ -1431,7 +1431,7 @@ while 队列非空:
 ### 15.9 前端
 
 - `parseGroupRouting` 加 `goalSatisfied` 字段；**前端解析消息原文**（零后端 / DB 改动，与 mention/bcc/end 同构）。
-- 徽章渲染在**发言者头像 / 昵称旁**：一枚**青绿 pill**（`--color-success` 15% 底 + 前景），前缀 `<Check>` 图标（lucide，`size=11`），后跟 i18n 文案（「已完成」/「Done」）。与同排的 host 角色 tag 同一视觉家族（同为彩色 pill），但用 success 色而非 accent 色，读作「完成」而非「角色」。走设计 token。
+- 徽章渲染在**发言者头像 / 称谓旁**：一枚**青绿 pill**（`--color-success` 15% 底 + 前景），前缀 `<Check>` 图标（lucide，`size=11`），后跟 i18n 文案（「已完成」/「Done」）。与同排的 host 角色 tag 同一视觉家族（同为彩色 pill），但用 success 色而非 accent 色，读作「完成」而非「角色」。走设计 token。
 - **徽章是历史消息的永久属性**：一旦写入消息内容就永久显示，不随后续回合重置消失（重置只作用于裁决计数）。
 
 ### 15.10 边界

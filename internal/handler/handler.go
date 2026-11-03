@@ -44,6 +44,10 @@ const (
 	jsonMaxCount    = "MaxCount"
 	jsonSessions    = "sessions"
 	jsonCommands    = "commands"
+	// jsonFile is the "which file does this payload point at" key (artifact
+	// name, watched file). Distinct from entryTypeFile / shareKindFile, which
+	// are VALUES classifying a file, not a key.
+	jsonFile = "file"
 )
 
 // loc returns the Localizer for the current request.
@@ -689,7 +693,24 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// merged timeline back, and asks for the minutes once the share ends.
 	register("/api/live-share/notes", ServeLiveShareNotes)
 	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
+	// Folds the per-segment audio into one file per channel plus the
+	// whole-meeting mix; called once the upload queue has drained.
+	register("/api/live-share/notes/audio/merge", ServeLiveNotesAudioMerge)
 	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
+	// Chat is persisted as it happens (the publisher is the only writer): the
+	// meeting record keeps it after the room is gone.
+	register("/api/live-share/notes/chat", ServeLiveShareNoteChat)
+	// Files opened during the meeting, as intervals. Same reasoning as chat:
+	// the publisher reports them while the room is live, the record keeps them.
+	register("/api/live-share/notes/files", ServeLiveShareNoteFiles)
+	// Who was sharing the screen, as intervals. Recorded as transitions so the
+	// timeline can never show two sharers at once.
+	register("/api/live-share/notes/screen", ServeLiveShareNoteScreen)
+	// Meeting records: GET lists the project's meetings (the database row is the
+	// record, permanent), DELETE removes one with its folder.
+	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
+	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
+	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
 	registerPublic("/api/share/", ServeSharePublic)
 	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)
@@ -730,8 +751,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register(legacyLocalFilePrefix, ServeLocalFile)
 	register("/api/agents", ServeAgents)
 	register("/api/agents/", ServeAgentSubRoutes)
+	// Model providers: definitions + presets + connectivity probe.
+	register("/api/providers", ServeProviders)
+	register("/api/providers/", ServeProviderSubRoutes)
+	// Authoritative model catalog (models.dev snapshot): status + refresh.
+	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
 	register("/api/tts/generate", TTSGenerate)
+	register("/api/tts/generate/pcm", TTSPCMGenerate)
 	register("/api/tts/stream/", TTSStream)
 	register("/api/tts/audio/ws", TTSAudioWS)
 	register("/api/stt/transcribe", STTTranscribe)

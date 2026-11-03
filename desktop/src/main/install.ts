@@ -1,13 +1,15 @@
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
-import http from 'node:http'
-import https from 'node:https'
 import { spawn } from 'node:child_process'
 import { inflateRawSync, gunzipSync } from 'node:zlib'
 import { app } from 'electron'
 import { verifyIntegrity } from '../shared/integrity'
 import { normalizeVersion } from '../shared/version'
+import { httpGetBuffer } from './httpGet'
+
+export { httpGetBuffer } from './httpGet'
+export type { HttpGetOptions } from './httpGet'
 
 /**
  * Self-upgrade installer for the desktop shell.
@@ -529,6 +531,14 @@ function safeJoin(root: string, rel: string): string | null {
  * `urls` is an ordered list of candidates for the same archive (mirror first
  * for China, direct github.com last). Each is tried in turn so one dead mirror
  * degrades the upgrade rather than failing it.
+ *
+ * `integrity` is checked when the caller has one. The FULL package has no
+ * published checksum, so passing '' here is the normal case — which means the
+ * assurance stops at the transport: https (enforced in downloadFirstAvailable)
+ * closes the on-path attacker, but a mirror that is itself compromised — the
+ * gh-proxy services are community-run — can still serve a different archive and
+ * this function cannot tell. The payload path does have a registry checksum
+ * (see installPayload); the full package does not.
  */
 export async function downloadAndInstall(
   urls: string | string[],
@@ -561,6 +571,140 @@ export async function downloadAndInstall(
 }
 
 /**
+ * The user's own npm registry mirror, or '' when none is configured.
+ *
+ * Mirrors the server-side lookup in internal/service/upgrade.go, so both upgrade
+ * paths honour the same setting: NPM_CONFIG_REGISTRY / npm_config_registry,
+ * then the `registry=` line in the user-level ~/.npmrc.
+ *
+ * The server deliberately does NOT read this file — its own npmrc belongs to a
+ * different machine and is usually a private registry the client cannot reach
+ * (see desktopPayloadNpmURLs). Reading it HERE is what makes a user's mirror
+ * usable for a download that runs on the user's machine.
+ */
+export function localNpmRegistryBase(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): string {
+  for (const raw of [env.NPM_CONFIG_REGISTRY, env.npm_config_registry]) {
+    const base = normalizeRegistryBase(raw ?? '')
+    if (base) return base
+  }
+  return normalizeRegistryBase(readNpmrcRegistry(home))
+}
+
+/**
+ * Trim/validate a registry value into `<scheme>://<host>[:port][/path]`, or ''.
+ *
+ * `http:` is refused unless it points at loopback. The registry is where the
+ * payload archive (~3MB of `resources/`, i.e. the whole app) is downloaded
+ * from, and that download carries no checksum of its own — plaintext transport
+ * would let anyone on the path replace the body. `registry=http://…` is a real
+ * historical spelling (npmmirror), so this rejects rather than silently
+ * downgrades; the caller then keeps the server-provided https candidates.
+ *
+ * Loopback is exempt because a local proxy is the user's own machine.
+ */
+function normalizeRegistryBase(raw: string): string {
+  const value = raw.trim()
+  if (!value) return ''
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return ''
+  }
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) return ''
+  if (!url.host) return ''
+  // Keep any path prefix (private registries are often served under one) but
+  // drop trailing slashes so joining a tarball path cannot produce a `//`.
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`
+}
+
+/** Whether `hostname` names this machine (`URL.hostname` keeps IPv6 brackets). */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+}
+
+/** Read the `registry=` line from the user-level ~/.npmrc, or ''. */
+function readNpmrcRegistry(home: string): string {
+  let data: string
+  try {
+    data = fs.readFileSync(path.join(home, '.npmrc'), 'utf8')
+  } catch {
+    return ''
+  }
+  for (const rawLine of data.split('\n')) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue
+    const eq = line.indexOf('=')
+    if (eq < 0) continue
+    if (line.slice(0, eq).trim() !== 'registry') continue
+    return line.slice(eq + 1).trim()
+  }
+  return ''
+}
+
+/**
+ * The path+query of an npm registry tarball URL, or '' for anything else.
+ *
+ * npm tarballs look like `<base>/<pkg>/-/<name>-<version>.tgz`; the `/-/`
+ * segment is the marker that separates them from a GitHub release zip (and its
+ * prefix mirrors), which must never be re-pointed at an npm registry.
+ */
+export function npmTarballPath(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return ''
+  }
+  if (!parsed.pathname.endsWith('.tgz')) return ''
+  if (!parsed.pathname.includes('/-/')) return ''
+  return `${parsed.pathname}${parsed.search}`
+}
+
+/**
+ * Extra candidates obtained by re-pointing the npm tarball URLs at the user's
+ * own mirror, appended after the server's list.
+ *
+ * The server picks its npm base from ITS OWN region (npmmirror in mainland
+ * China, npmjs.org elsewhere), which is the wrong answer when the server runs
+ * abroad and the client does not: the tarball then comes from npmjs.org, which
+ * is slow or unreachable from mainland China. Re-pointing the same path at the
+ * client's configured mirror is exactly the "download failed, retry through my
+ * mirror" step, and it needs no server change.
+ *
+ * Candidates identical to one already in the list are dropped — the common case
+ * (server and client both in China) would otherwise download the same tarball
+ * twice before reporting failure.
+ */
+export function mirrorFallbackUrls(urls: string[], registryBase: string): string[] {
+  if (!registryBase) return []
+  const seen = new Set(urls.map(urlKey))
+  const extra: string[] = []
+  for (const url of urls) {
+    const tarballPath = npmTarballPath(url)
+    if (!tarballPath) continue
+    const candidate = `${registryBase}${tarballPath}`
+    const key = urlKey(candidate)
+    if (seen.has(key)) continue
+    seen.add(key)
+    extra.push(candidate)
+  }
+  return extra
+}
+
+/** Normalised comparison key for de-duplicating candidate URLs. */
+function urlKey(url: string): string {
+  try {
+    return new URL(url).toString()
+  } catch {
+    return url
+  }
+}
+
+/**
  * Try each candidate URL in order, returning the first body that downloads AND
  * looks like an archive.
  *
@@ -570,10 +714,29 @@ export async function downloadAndInstall(
  * and for a payload that failure means falling all the way back to the ~150MB
  * full download instead of simply trying the next candidate. Rejecting the body
  * here keeps the fallback proportional to the problem.
+ *
+ * After the server's candidates are exhausted, npm tarballs are retried through
+ * the local mirror (see mirrorFallbackUrls). `registryBase` is injectable so
+ * tests do not depend on the machine's ~/.npmrc; pass '' to disable the retry.
  */
-export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
+export async function downloadFirstAvailable(
+  urls: string[],
+  registryBase?: string,
+): Promise<Buffer> {
+  const base =
+    registryBase ??
+    (urls.some((url) => npmTarballPath(url)) ? localNpmRegistryBase() : '')
+  const candidates = [...urls, ...mirrorFallbackUrls(urls, base)]
   const errs: string[] = []
-  for (const url of urls) {
+  for (const url of candidates) {
+    // Everything installed here is executable content. A plaintext candidate —
+    // a mirror URL from the server, or a tarball re-pointed at a http registry —
+    // can be rewritten by anyone on the path, and the archive carries no
+    // signature of its own. Loopback is exempt: that is a proxy on this machine.
+    if (!isSecureDownloadUrl(url)) {
+      errs.push(`${url}: refused (not https)`)
+      continue
+    }
     let buf: Buffer
     try {
       buf = await httpGetBuffer(url)
@@ -588,6 +751,106 @@ export async function downloadFirstAvailable(urls: string[]): Promise<Buffer> {
     return buf
   }
   throw new Error(`all download sources failed:\n${errs.join('\n')}`)
+}
+
+/** Whether a download candidate is transported over TLS (or from loopback). */
+export function isSecureDownloadUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol === 'https:') return true
+  return parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname)
+}
+
+/**
+ * The npm packument URL for a tarball URL, or '' for anything else.
+ *
+ * `<base>/@scope/name/-/name-1.2.3.tgz` → `<base>/@scope/name`. The `/-/`
+ * segment is what separates the package metadata path from the file path.
+ */
+export function packumentUrl(tarballUrl: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(tarballUrl)
+  } catch {
+    return ''
+  }
+  const marker = parsed.pathname.indexOf('/-/')
+  if (marker <= 0) return ''
+  return `${parsed.origin}${parsed.pathname.slice(0, marker)}`
+}
+
+/**
+ * The registry-published checksum for `version`, or '' when unavailable.
+ *
+ * The payload is downloaded from a URL the SERVER constructed, so there is no
+ * lockfile to consult; the registry's packument is the only place a checksum
+ * exists.
+ *
+ * Best-effort by design: an unreachable registry (or a package it does not
+ * know) returns '' and the install proceeds over https — the transport is still
+ * protected, and failing the upgrade because a mirror cannot answer a metadata
+ * query would be worse than the assurance it adds.
+ *
+ * Two limits worth knowing before relying on it:
+ *   - it only protects against transport substitution, not a poisoned mirror:
+ *     the checksum is fetched from the same registry that serves the tarball,
+ *     so whoever controls that registry controls both sides;
+ *   - it only applies when the registry answers at all.
+ */
+export async function fetchNpmIntegrity(
+  tarballUrls: string[],
+  version: string,
+  get: (url: string) => Promise<Buffer> = httpGetBuffer,
+  /** Test seam: the lookup deadline. */
+  timeoutMs: number = NPM_METADATA_TIMEOUT_MS,
+): Promise<string> {
+  const wanted = normalizeVersion(version)
+  if (!wanted) return ''
+  for (const url of tarballUrls) {
+    // Same transport rule as the archive itself: metadata fetched over
+    // plaintext could be rewritten in flight, and this value decides whether
+    // the archive is accepted.
+    if (!isSecureDownloadUrl(url)) continue
+    const doc = packumentUrl(url)
+    if (!doc) continue
+    try {
+      const body = await withTimeout(get(doc), timeoutMs)
+      const meta = JSON.parse(body.toString('utf8')) as {
+        versions?: Record<string, { dist?: { integrity?: string } }>
+      }
+      const integrity = meta.versions?.[wanted]?.dist?.integrity
+      if (typeof integrity === 'string' && integrity) return integrity
+    } catch {
+      // Unreachable, slow, or non-JSON: fall through to the next candidate.
+    }
+  }
+  return ''
+}
+
+/**
+ * How long the optional metadata lookup may take before giving up.
+ *
+ * This runs BEFORE the download, on the upgrade path: a registry that accepts
+ * the connection and then never answers would leave the user staring at a
+ * dialog with no progress, where the download itself at least reports bytes.
+ */
+const NPM_METADATA_TIMEOUT_MS = 10_000
+
+/** Reject after `ms` if `p` has not settled. The abandoned request is harmless. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
+    // Do not hold the process open for a best-effort lookup.
+    if (typeof timer === 'object' && typeof timer.unref === 'function') timer.unref()
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
 }
 
 /** Name of the manifest a payload archive carries at its root. */
@@ -757,6 +1020,7 @@ export async function installPayload(
   version: string,
   shellRoot: string,
   electron: string = process.versions.electron ?? '',
+  integrity = '',
 ): Promise<string> {
   const dest = versionDir(version)
   // Refuse to install over the version we are running from: the `rm -rf` below
@@ -766,6 +1030,12 @@ export async function installPayload(
   }
 
   const buf = await downloadFirstAvailable(Array.isArray(urls) ? urls : [urls])
+  // The payload IS the app (`resources/app.asar`), so a substituted archive is
+  // a substituted application. When the registry publishes a checksum for the
+  // tarball it is verified here, before anything is unpacked.
+  if (integrity && !verifyIntegrity(buf, integrity)) {
+    throw new Error('payload integrity verification failed')
+  }
 
   const staging = `${dest}.staging-${process.pid}`
   fs.rmSync(staging, { recursive: true, force: true })
@@ -945,28 +1215,4 @@ export function handOffToPointedVersion(runningVersion: string): boolean {
   const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
   child.unref()
   return true
-}
-
-export function httpGetBuffer(url: string, redirectsLeft = 5): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const lib = url.startsWith('https:') ? https : http
-    lib.get(url, (res) => {
-      // Registries and CDNs redirect tarball URLs; without following them the
-      // download would silently produce a body of zero bytes.
-      const { statusCode, headers } = res
-      if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
-        if (redirectsLeft <= 0) { reject(new Error('too many redirects')); return }
-        res.resume()
-        resolve(httpGetBuffer(new URL(headers.location, url).toString(), redirectsLeft - 1))
-        return
-      }
-      if (statusCode !== 200) {
-        reject(new Error(`download failed: HTTP ${statusCode}`))
-        return
-      }
-      const chunks: Buffer[] = []
-      res.on('data', (c: Buffer) => chunks.push(c))
-      res.on('end', () => resolve(Buffer.concat(chunks)))
-    }).on('error', reject)
-  })
 }

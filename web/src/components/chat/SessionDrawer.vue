@@ -64,11 +64,12 @@
       <!-- Search row (the refresh button lives in the sheet header, because it
            refreshes every list, not just this one) -->
       <div class="model-search-row">
-        <input
-          class="model-search-input"
-          type="text"
-          :placeholder="t('chat.sessionSetting.searchPlaceholder')"
+        <SearchInput
           v-model="searchQuery"
+          :placeholder="t('chat.sessionSetting.searchPlaceholder')"
+          @enter="listNav.confirm"
+          @down="listNav.down"
+          @up="listNav.up"
         />
       </div>
       <!-- Model list -->
@@ -275,6 +276,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
@@ -1119,6 +1121,8 @@ defineExpose({
   flex: 1;
 }
 
+/* The row owns the gutter and the divider; the field itself is the shared
+   SearchInput pill (same affordance as the session/TOC/file search boxes). */
 .model-search-row {
   display: flex;
   align-items: center;
@@ -1128,24 +1132,9 @@ defineExpose({
   flex-shrink: 0;
 }
 
-.model-search-input {
+.model-search-row :deep(.search-pill) {
   flex: 1;
-  padding: var(--space-3) var(--space-5);
-  border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-  outline: none;
-  transition: border-color var(--duration-base);
-}
-
-.model-search-input:focus {
-  border-color: var(--accent-color, #0066cc);
-}
-
-.model-search-input::placeholder {
-  color: var(--text-muted, #999);
+  min-width: 0;
 }
 
 /* Header action cluster. `margin-left: auto` pushes it to the right edge, which

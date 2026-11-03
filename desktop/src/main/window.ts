@@ -4,12 +4,11 @@ import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { contextMenuLabels } from './contextMenu'
 import { resolveNativeLanguage } from './labels'
-import { classifyUrl } from './urlPolicy'
+import { classifyUrl, isAppPopup, shouldBlockPopupNavigation } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
 import { createSplashController, type SplashController } from './splash'
-import { resetCertificateTrust } from './certificate'
 import {
   beginNavigation,
   checkVersionGate,
@@ -106,6 +105,34 @@ export async function downloadVersionFromGate(): Promise<void> {
 }
 
 export function getMainWindow(): BrowserWindow | null { return mainWindow }
+
+/**
+ * Callbacks run for every main window, including one re-created later (macOS
+ * `activate`, the capsule's "open the app" when the window was closed).
+ *
+ * A listener cannot simply be attached once at startup: the window is replaced
+ * when it is closed and re-opened, and a stale listener would leave the new one
+ * unobserved. `floating.ts` needs this to follow minimize/hide — it imports this
+ * module, so a callback registry keeps the dependency pointing one way.
+ */
+const mainWindowHooks: ((win: BrowserWindow) => void)[] = []
+
+export function onMainWindowCreated(fn: (win: BrowserWindow) => void): void {
+  mainWindowHooks.push(fn)
+  // `initFloating` runs after the first `createMainWindow`, so the window that
+  // already exists has to be handed over here rather than only on the next one.
+  if (mainWindow && !mainWindow.isDestroyed()) fn(mainWindow)
+}
+
+function notifyMainWindowCreated(win: BrowserWindow): void {
+  for (const fn of mainWindowHooks) {
+    try {
+      fn(win)
+    } catch {
+      /* a listener must never break window creation */
+    }
+  }
+}
 
 function loginPagePath(): string {
   return path.join(process.resourcesPath, 'login.html')
@@ -351,6 +378,11 @@ function registerWindowGeometryPersistence(win: BrowserWindow): void {
 }
 
 export function createMainWindow(): BrowserWindow {
+  // Idempotent: every caller means "make sure there is a window", and two of
+  // them can now race — the startup path and a `second-instance` reveal that
+  // arrives while the first copy is still booting. Building twice would leak the
+  // first window (nothing holds it) and leave two app windows on screen.
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
   const { bounds: startupBounds, maximized: startMaximized } = startupWindowBounds()
   mainWindow = new BrowserWindow({
     ...startupBounds,
@@ -378,6 +410,9 @@ export function createMainWindow(): BrowserWindow {
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
   registerWindowStateReporting(mainWindow)
+  // After the window's own wiring, before anything can show it: a listener that
+  // missed the first `show` would think the window is still hidden.
+  notifyMainWindowCreated(mainWindow)
   // A (re)load tears down the renderer's listeners, so anything clicked before
   // it re-registers must be deferred rather than sent into the void.
   mainWindow.webContents.on('did-start-loading', () => markRendererLoading())
@@ -405,11 +440,9 @@ export function createMainWindow(): BrowserWindow {
   if (serverUrl) {
     // Cold start with a saved server: same gap as connecting from the login
     // page, so the overlay covers it here too.
-    // Clear any trust from a previous connection in this process. A fresh
-    // process starts empty, but the window can be recreated mid-process (macOS
-    // `activate` after the last window closed), and that navigation is a new
-    // connection the user should re-confirm.
-    resetCertificateTrust()
+    // No certificate reset here: an accepted certificate is remembered per
+    // origin and bound to its fingerprint (certificate.ts), so recreating the
+    // window does not re-ask. A certificate that changed still prompts.
     showSplashFor(serverUrl)
     mainWindow.loadURL(serverUrl)
     // The version gate runs alongside the load; on a mismatch it replaces the
@@ -468,10 +501,43 @@ export function createMainWindow(): BrowserWindow {
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    // One popup is the app's own: the member's shared screen in a window of its
+    // own. It is `about:blank` on purpose (see isAppPopup) — a second document
+    // in the same renderer, which is the only way it can receive the live
+    // MediaStream. Everything else keeps the "never open a second window" rule.
+    if (isAppPopup(target)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 1024,
+          height: 640,
+          minWidth: 480,
+          minHeight: 320,
+          backgroundColor: '#000000',
+          autoHideMenuBar: true,
+          // The app window is frameless; a picture window must not inherit
+          // that — without a title bar it cannot be moved or resized by hand.
+          frame: true,
+          titleBarStyle: 'default',
+        },
+      }
+    }
     if (classifyUrl(target, getStore().get('serverUrl')) === 'external') {
       void shell.openExternal(target)
     }
     return { action: 'deny' }
+  })
+  // The one window that is allowed inherits THIS window's preload, so a page
+  // that opens `about:blank` and then assigns `location` would run the whole
+  // native bridge (server list, SSH password, file download) on a foreign
+  // origin. The popup only ever needs its blank document — the picture is drawn
+  // into it through Teleport from the opener — so it is pinned to that and may
+  // not open windows of its own.
+  mainWindow.webContents.on('did-create-window', (child) => {
+    child.webContents.on('will-navigate', (event, url) => {
+      if (shouldBlockPopupNavigation(url)) event.preventDefault()
+    })
+    child.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   })
   mainWindow.on('closed', () => {
     splash?.destroy()

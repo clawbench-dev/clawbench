@@ -176,6 +176,23 @@ describe('showTerminalNotification', () => {
     expect((h.sent[0].nav as NotificationNav).projectPath).toBe('/p')
   })
 
+  it('routes a meeting notification click to clawbench-open-meeting', () => {
+    // Same trap as forge/usage: a meeting carries no session or task id, so
+    // without the discriminator the click falls through to the session channel
+    // and the renderer drops it on the missing sessionId.
+    markRendererReady()
+    showTerminalNotification('Weekly sync', '张三 asked to control your screen', {
+      projectPath: '/p',
+      meetingToken: 'tok-9',
+    })
+    clickLatest()
+
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0].channel).toBe('clawbench-open-meeting')
+    expect((h.sent[0].nav as NotificationNav).meetingToken).toBe('tok-9')
+    expect((h.sent[0].nav as NotificationNav).projectPath).toBe('/p')
+  })
+
   it('carries the forge item target through to the renderer', () => {
     // The click must deep-link to the ITEM, not just raise the tab. The target
     // is opaque data to the main process — it is forwarded verbatim.

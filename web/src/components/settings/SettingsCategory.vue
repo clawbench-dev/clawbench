@@ -76,6 +76,12 @@
           v-if="card.title === t('settings.items.mcpSection')"
           :description="t('settings.items.mcpDesc')"
         />
+        <!-- Model providers: endpoint + credential shared by agents. The card
+             body is a dedicated component (same pattern as MCPSetting). -->
+        <ProviderSetting
+          v-if="card.title === t('settings.items.providerSection')"
+          :description="t('settings.items.providerDesc')"
+        />
         <!-- Cross-agent skill discovery: directory + git repo lists with
              write-only tokens, plus the live discovered-skill listing. -->
         <SkillsSetting
@@ -100,34 +106,52 @@
           v-if="card.title === t('settings.items.allProjectsSection')"
           @navigate="(id: string) => $emit('navigate', id)"
         />
-        <SettingsItem
+        <template
           v-for="item in card.items"
           :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
-          :setting-key="item.key"
-          :label="getItemLabel(item)"
-          :description="item.descriptionKey ? t(item.descriptionKey) : ''"
-          :type="item.type"
-          :model-value="getItemValue(item)"
-          :disabled="getItemDisabled(item)"
-          :options="resolveItemOptions(item)"
-          :options-filter="resolveOptionsFilter(item)"
-          :option-previews="item.key === 'theme' ? themePreviews : undefined"
-          :reveal-on-select="item.key === 'theme'"
-          :min="item.min"
-          :max="getItemMax(item)"
-          :step="item.step"
-          :needs-restart="item.needsRestart"
-          :summary-model-status="resolveSummaryModelStatus(item)"
-          :force-close="activeKey !== null && activeKey !== item.key"
-          :no-divider="false"
-          :default-value="item.defaultValue"
-          :display-format="item.displayFormat"
-          :display-transform="item.displayTransform"
-          @update:model-value="(v: unknown) => handleUpdate(item, v)"
-          @click="handleClick(item)"
-          @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
-          @discard="handleDiscard"
-        />
+        >
+          <!-- The summary model is chosen where it is referenced, not on a
+               separate page: this row opens a provider → model picker. -->
+          <SettingsItem
+            v-if="item.type === 'summaryModel'"
+            :setting-key="item.key"
+            :label="getItemLabel(item)"
+            :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+            type="action"
+            :model-value="summaryModelLabel"
+            :disabled="getItemDisabled(item)"
+            :summary-model-status="resolveSummaryModelStatus(item)"
+            @click="openSummaryModelPicker"
+          />
+          <SettingsItem
+            v-else
+            :setting-key="item.key"
+            :label="getItemLabel(item)"
+            :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+            :type="item.type"
+            :model-value="getItemValue(item)"
+            :disabled="getItemDisabled(item)"
+            :options="resolveItemOptions(item)"
+            :options-filter="resolveOptionsFilter(item)"
+            :option-previews="item.key === 'theme' ? themePreviews : undefined"
+            :reveal-on-select="item.key === 'theme'"
+            :min="item.min"
+            :max="getItemMax(item)"
+            :max-length="item.maxLength"
+            :step="item.step"
+            :needs-restart="item.needsRestart"
+            :summary-model-status="resolveSummaryModelStatus(item)"
+            :force-close="activeKey !== null && activeKey !== item.key"
+            :no-divider="false"
+            :default-value="item.defaultValue"
+            :display-format="item.displayFormat"
+            :display-transform="item.displayTransform"
+            @update:model-value="(v: unknown) => handleUpdate(item, v)"
+            @click="handleClick(item)"
+            @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
+            @discard="handleDiscard"
+          />
+        </template>
       </SettingsCard>
       <!-- Group panel — C2 fix: arrow closure passes panelId -->
       <SettingsGroupPanel
@@ -137,6 +161,9 @@
         @restart-needed="(fields) => $emit('restartNeeded', fields)"
       />
     </template>
+    <!-- Summary model picker (provider → model) -->
+    <SummaryModelPicker :open="summaryPickerOpen" @update:open="summaryPickerOpen = $event" />
+
     <!-- Password change dialog -->
     <PasswordChangeDialog
       :open="showPasswordDialog"
@@ -162,6 +189,8 @@ import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
 import TlsCertPanel from './TlsCertPanel.vue'
 import MCPSetting from './MCPSetting.vue'
+import ProviderSetting from './ProviderSetting.vue'
+import SummaryModelPicker from './SummaryModelPicker.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
@@ -187,6 +216,7 @@ import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
+import { providerNameOf } from '@/utils/providerNames'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
 import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
@@ -232,6 +262,25 @@ const { isNativeApp, isAndroidApp } = usePlatformDetect()
 const desktopDownload = useDesktopDownload()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
+const summaryPickerOpen = ref(false)
+
+/** Current summary model, shown on the action row. Formatted like the picker's
+ *  own rows ("provider · model"): two providers can serve the same model id, and
+ *  the bare id made a switch between them look like nothing happened. The
+ *  provider name comes from the shared cache (see utils/providerNames), so this
+ *  row does not fire its own request; it falls back to the bare id until some
+ *  screen has loaded the provider list. */
+const summaryModelLabel = computed(() => {
+  const cfg = serverConfig.value.ai_summary as { model?: string; provider_id?: number } | undefined
+  const model = typeof cfg?.model === 'string' ? cfg.model : ''
+  if (!model) return ''
+  const provider = providerNameOf(cfg?.provider_id)
+  return provider ? `${provider} · ${model}` : model
+})
+
+function openSummaryModelPicker() {
+  summaryPickerOpen.value = true
+}
 const showIosSheet = ref(false)
 const upgradeDialogRef = ref<InstanceType<typeof UpgradeDialog> | null>(null)
 const nativeAppVersion = ref('')
@@ -374,7 +423,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'tlsCert'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
@@ -600,6 +649,28 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
   }
 }
 
+/**
+ * Desktop-only row. The shell remembers each accepted self-signed certificate
+ * by origin + fingerprint; this is the only way to undo it without editing the
+ * store by hand.
+ *
+ * It wipes EVERY remembered certificate, so every self-signed server has to be
+ * re-accepted on its next connection — the same class of destructive action as
+ * deleting an agent or a provider, and confirmed the same way.
+ */
+async function forgetTrustedCerts() {
+  const native = getNative()
+  if (!native?.forgetTrustedCerts) return
+  const ok = await dialog.confirm(t('settings.items.trustedCertsConfirm'), { dangerous: true })
+  if (!ok) return
+  try {
+    await native.forgetTrustedCerts()
+    toast.show(t('settings.items.trustedCertsCleared'), { icon: 'success', type: 'success', duration: 3000 })
+  } catch {
+    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
 function handleClick(item: ItemSpec) {
   if (item.key === 'reconfigureServer') {
     try {
@@ -608,6 +679,9 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'changePassword') {
     showPasswordDialog.value = true
+  }
+  if (item.key === 'trustedCerts') {
+    void forgetTrustedCerts()
   }
   if (item.key === 'restartServer') {
     handleRestartServer()

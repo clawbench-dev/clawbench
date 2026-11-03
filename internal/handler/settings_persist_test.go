@@ -264,8 +264,8 @@ func TestPersist_TTSEngine(t *testing.T) {
 
 	model.ConfigInstance = model.Config{}
 
-	cfg := patchAndReadConfig(t, `{"tts":{"engine":"piper","piper":{"model_path":"/tmp/test.onnx"}}}`)
-	assert.Equal(t, "piper", getNestedValue(cfg, "tts.engine"))
+	cfg := patchAndReadConfig(t, `{"tts":{"engine":"edge"}}`)
+	assert.Equal(t, "edge", getNestedValue(cfg, "tts.engine"))
 }
 
 func TestPersist_TTSVoice(t *testing.T) {
@@ -336,102 +336,6 @@ func TestPersist_TTSMaxCacheFiles(t *testing.T) {
 
 	cfg := patchAndReadConfig(t, `{"tts":{"max_cache_files":200}}`)
 	assert.Equal(t, 200, getNestedValue(cfg, "tts.max_cache_files"))
-}
-
-// ─── TTS Piper sub-config ──────────────────────────────────────
-
-func TestPersist_PiperModelPath(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"model_path":"/path/to/model.onnx"}}}`)
-	assert.Equal(t, "/path/to/model.onnx", getNestedValue(cfg, "tts.piper.model_path"))
-}
-
-func TestPersist_PiperNoiseScale(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"noise_scale":0.5}}}`)
-	assert.Equal(t, 0.5, getNestedValue(cfg, "tts.piper.noise_scale"))
-}
-
-func TestPersist_PiperLengthScale(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"length_scale":1.2}}}`)
-	assert.Equal(t, 1.2, getNestedValue(cfg, "tts.piper.length_scale"))
-}
-
-func TestPersist_PiperSentenceSilence(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"piper":{"sentence_silence":0.3}}}`)
-	assert.Equal(t, 0.3, getNestedValue(cfg, "tts.piper.sentence_silence"))
-}
-
-// ─── TTS Kokoro sub-config ──────────────────────────────────────
-
-func TestPersist_KokoroModelPath(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"kokoro":{"model_path":"/path/to/kokoro.onnx"}}}`)
-	assert.Equal(t, "/path/to/kokoro.onnx", getNestedValue(cfg, "tts.kokoro.model_path"))
-}
-
-func TestPersist_KokoroVoicesPath(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"kokoro":{"voices_path":"/path/to/voices.bin"}}}`)
-	assert.Equal(t, "/path/to/voices.bin", getNestedValue(cfg, "tts.kokoro.voices_path"))
-}
-
-func TestPersist_KokoroLang(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"kokoro":{"lang":"en"}}}`)
-	assert.Equal(t, "en", getNestedValue(cfg, "tts.kokoro.lang"))
-}
-
-// ─── TTS MossNano sub-config ──────────────────────────────────────
-
-func TestPersist_MossNanoModelDir(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"moss_nano":{"model_dir":"/path/to/models"}}}`)
-	assert.Equal(t, "/path/to/models", getNestedValue(cfg, "tts.moss_nano.model_dir"))
-}
-
-func TestPersist_MossNanoBackend(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"moss_nano":{"backend":"pytorch"}}}`)
-	assert.Equal(t, "pytorch", getNestedValue(cfg, "tts.moss_nano.backend"))
 }
 
 // The OpenAI TTS sub-config must survive a round trip through config.yaml.
@@ -508,27 +412,20 @@ func TestPersist_OpenAITTSStreamModeRejectsUnknown(t *testing.T) {
 
 // ─── TTS API sub-config ──────────────────────────────────────
 
-func TestPersist_SummarizeTTSAPIBaseURL(t *testing.T) {
+func TestPersist_AISummaryProviderID(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
 	model.ConfigInstance.Summarize.TTSBackend = "api"
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 5, Name: "Summary", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.openai.com/v1", APIKey: "sk-1234567890abcdef", AuthMode: model.ProviderAuthAuto,
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
 
-	cfg := patchAndReadConfig(t, `{"ai_summary":{"api":{"base_url":"https://api.openai.com/v1/chat"}}}`)
-	assert.Equal(t, "https://api.openai.com/v1/chat", getNestedValue(cfg, "ai_summary.api.base_url"))
-}
-
-func TestPersist_SummarizeTTSAPIKey(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Summarize.TTSBackend = "api"
-	model.ConfigInstance.AISummary.API.BaseURL = "https://api.openai.com/v1"
-
-	cfg := patchAndReadConfig(t, `{"ai_summary":{"api":{"key":"sk-1234567890abcdef"}}}`)
-	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "ai_summary.api.key"))
+	cfg := patchAndReadConfig(t, `{"ai_summary":{"provider_id":5}}`)
+	assert.EqualValues(t, 5, getNestedValue(cfg, "ai_summary.provider_id"))
 }
 
 // ─── RAG section ──────────────────────────────────────
@@ -973,4 +870,63 @@ func TestPersist_AutoPasswordStrippedFromBackupToo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
 		"backup must not be more permissive than config.yaml")
+}
+
+// The nickname moved from chat.user_nickname to the first-class user section.
+// The write path merges into the existing file, so without an explicit cleanup
+// the old key would survive forever and a hand-edit of it would look effective
+// while being ignored. The new value wins when both are present.
+func TestWriteConfigYAML_MigratesLegacyNicknameKey(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte("chat:\n  user_nickname: 老板\n  page_size: 20\n"), 0o600))
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.User.Nickname = "老板"
+	model.ConfigInstance.Chat.PageSize = 20
+
+	require.NoError(t, writeConfigYAML(map[string]any{"chat": map[string]any{"page_size": 20}}))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	assert.Equal(t, "老板", getNestedValue(raw, "user.nickname"),
+		"the legacy value must move into the new section")
+	assert.Nil(t, getNestedValue(raw, "chat.user_nickname"),
+		"the legacy key must be removed so it cannot be edited into a no-op")
+	assert.EqualValues(t, 20, getNestedValue(raw, "chat.page_size"),
+		"unrelated keys must be untouched")
+}
+
+// The old ApplyDefaults wrote the fallback literal into every config. Migrating
+// it would make an unconfigured install look configured (and pre-fill "User" in
+// the meeting UI), so a legacy value equal to the fallback is dropped: empty
+// now means "not configured".
+func TestWriteConfigYAML_DropsLegacyFallbackNickname(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
+	require.NoError(t, os.WriteFile(configPath,
+		[]byte("chat:\n  user_nickname: User\n  page_size: 20\n"), 0o600))
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.PageSize = 20
+
+	require.NoError(t, writeConfigYAML(map[string]any{"chat": map[string]any{"page_size": 20}}))
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	assert.Nil(t, getNestedValue(raw, "user.nickname"),
+		"the fallback literal must not be carried into the config")
+	assert.Nil(t, getNestedValue(raw, "chat.user_nickname"),
+		"the legacy key must still be removed")
 }

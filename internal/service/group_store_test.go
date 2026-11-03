@@ -1818,28 +1818,28 @@ func TestPendingBccStore(t *testing.T) {
 	}
 }
 
-// groupUserTarget() is config-driven: it honors chat.user_nickname and falls
+// groupUserTarget() is config-driven: it honors user.nickname and falls
 // back to the language-neutral default when unset.
 func TestGroupUserTarget_ConfigDriven(t *testing.T) {
-	orig := model.ChatUserNickname
-	t.Cleanup(func() { model.ChatUserNickname = orig })
+	orig := model.UserNickname
+	t.Cleanup(func() { model.UserNickname = orig })
 
-	model.ChatUserNickname = ""
+	model.UserNickname = ""
 	if got := groupUserTarget(); got != "User" {
 		t.Fatalf("empty config must fall back to the default, got %q", got)
 	}
-	model.ChatUserNickname = "老板"
+	model.UserNickname = "老板"
 	if got := groupUserTarget(); got != "老板" {
 		t.Fatalf("configured nickname must win, got %q", got)
 	}
 	// Defensive trim: a hand-edited config.yaml bypasses the PATCH
 	// normalization, but the parser trims targets before lookup — an untrimmed
 	// value here would make the user unreachable.
-	model.ChatUserNickname = "  老板  "
+	model.UserNickname = "  老板  "
 	if got := groupUserTarget(); got != "老板" {
 		t.Fatalf("surrounding whitespace must be trimmed, got %q", got)
 	}
-	model.ChatUserNickname = "   "
+	model.UserNickname = "   "
 	if got := groupUserTarget(); got != "User" {
 		t.Fatalf("all-whitespace must fall back to the default, got %q", got)
 	}

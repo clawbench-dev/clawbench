@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { getCookieHeaderForUrl, record, recordError } from './clientLog'
 import { floatingCapsuleLabels, resolveNativeLanguage } from './labels'
-import { createMainWindow, getMainWindow } from './window'
+import { createMainWindow, getMainWindow, onMainWindowCreated } from './window'
 import {
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
@@ -37,11 +37,17 @@ import type { FloatingStats, Rect, ResolvedColors } from './floatingPolicy'
  *
  * Two things are deliberate and worth keeping if this is edited later:
  *
- * 1. **The numbers are computed natively from `/api/ai/sessions/overview`, not
+ * 1. **The capsule is a background affordance, not a permanent ornament.** It
+ *    exists only while the main window is minimized/hidden/closed, which is what
+ *    the settings row promises ("while the app is in the background"). Visibility
+ *    is therefore derived from the main window's state (`syncCapsuleToMainWindow`)
+ *    rather than from the feature flag alone — the flag arms it, the window shows
+ *    it.
+ * 2. **The numbers are computed natively from `/api/ai/sessions/overview`, not
  *    pushed by the web page.** That is how Android does it, and it means the
  *    desktop capsule cannot drift from the phone's, and the web UI needs no
  *    change to feed it.
- * 2. **Dragging is driven from the main process, not by `-webkit-app-region:
+ * 3. **Dragging is driven from the main process, not by `-webkit-app-region:
  *    drag`.** A drag region is handed to the OS as a title bar: right-click
  *    opens the Windows system menu instead of ours, and no DOM click ever
  *    reaches the page, which would kill "click to open the app". Measured on
@@ -69,14 +75,6 @@ const DRAG_MAX_MS = 15_000
 const DRAG_STILL_MS = 2_000
 /** Persist debounce: a drag fires `moved` continuously. */
 const SAVE_DEBOUNCE_MS = 400
-/**
- * How long `initFloating` waits for the main window's `show` before building
- * the capsule anyway.
- *
- * Only a fail-safe: the normal path is the `show` event. It must NOT resurrect
- * a capsule the user has since dismissed — see `startupIntentRevoked`.
- */
-const STARTUP_SHOW_FALLBACK_MS = 4_000
 
 /** Capsule window, or null when hidden. */
 let win: BrowserWindow | null = null
@@ -85,16 +83,17 @@ let colors: ResolvedColors = resolveColors(null)
 /** Set once the capsule document has installed its `floating:state` listener. */
 let pageReady = false
 /**
- * Set when the user has explicitly hidden the capsule (or turned the feature
- * off) since the last time it was shown.
+ * Whether the CURRENT main window has ever been on screen.
  *
- * Guards the startup fail-safe: `initFloating` schedules a delayed
- * `showCapsule()` in case the main window's `show` never arrives, and that
- * timer used to run unconditionally. A user who dismissed the capsule from the
- * tray within those few seconds got it back, with the tray already destroyed
- * and nothing on screen explaining why.
+ * `createMainWindow` builds with `show: false` and shows on `ready-to-show`, so
+ * the window is briefly invisible at every launch. Without this marker that
+ * startup window would read as "the app is in the background" and the capsule
+ * would pop up on top of the window that is about to appear — which is the one
+ * thing it must not do.
  */
-let startupIntentRevoked = false
+let mainWindowShown = false
+/** Main windows already wired to `syncCapsuleToMainWindow` (one can be re-created). */
+const wiredWindows = new WeakSet<BrowserWindow>()
 let saveTimer: NodeJS.Timeout | null = null
 let pollTimer: NodeJS.Timeout | null = null
 let activityTimer: NodeJS.Timeout | null = null
@@ -457,6 +456,9 @@ function createWindow(): BrowserWindow | null {
   }
   win.on('moved', schedulePersistBounds)
   win.on('resize', schedulePersistBounds)
+  // Identity for the `destroyed` listener below: the module variable is
+  // reassigned by later windows, and the event arrives after the fact.
+  const self = win
   // Losing the window mid-drag (an alt-tab, a modal stealing focus) must not
   // leave the capsule glued to the cursor.
   win.on('blur', () => clearDrag())
@@ -468,7 +470,12 @@ function createWindow(): BrowserWindow | null {
   })
   win.webContents.on('destroyed', () => {
     pageReady = false
-    win = null
+    // Only drop OUR reference. The event is asynchronous (measured on Electron
+    // 44: it lands after `destroy()` returns), so by the time it fires the
+    // module may already point at a re-created capsule — nulling that would
+    // leave a live, untracked window on screen that no menu or click can reach
+    // (`fromCapsule` rejects its IPC), and the next show would add a second one.
+    if (win === self) win = null
   })
   void win.loadFile(floatingHtmlPath()).catch((err) => record('E', TAG, `capsule failed to load: ${String(err)}`))
   startPolling()
@@ -545,6 +552,10 @@ function ensureTray(): void {
     tray.on('click', () => toggleCapsule())
     tray.on('double-click', () => openMainWindow())
     syncTray()
+    // The tray is now a surface showing the counters, and the capsule may not
+    // exist yet (it only appears once the window is minimized) — polling cannot
+    // wait for `createWindow` any more or the tooltip would sit at 0/0/0.
+    startPolling()
     record('I', TAG, 'tray icon created')
   } catch (err) {
     tray = null
@@ -578,11 +589,68 @@ export function hasFloatingTray(): boolean {
   return !!tray
 }
 
+/**
+ * Whether the app itself is out of the way, so the capsule is the only surface
+ * left on screen.
+ *
+ * A destroyed window counts: the tray keeps the app alive, and with no window
+ * the capsule is the only way back. A window that exists but has never been
+ * shown does NOT — it is about to appear (see `mainWindowShown`).
+ */
+function mainWindowOutOfSight(): boolean {
+  const w = getMainWindow()
+  if (!w || w.isDestroyed()) return true
+  // Minimized windows still report `isVisible()` on Windows, so this is a
+  // separate question rather than a shortcut.
+  if (w.isMinimized()) return true
+  return mainWindowShown && !w.isVisible()
+}
+
+/**
+ * Show or hide the capsule so it tracks the main window.
+ *
+ * The capsule is a "the app is in the background" affordance, not a permanent
+ * desktop ornament (same wording as the settings row): it appears when the
+ * window is minimized or hidden and goes away when the window is back. Called
+ * on every main-window state change, and once at startup.
+ *
+ * Manual toggling from the tray still wins until the next state change — that
+ * is a deliberate action, not something to undo behind the user's back.
+ */
+function syncCapsuleToMainWindow(): void {
+  if (!isEnabled()) return
+  if (mainWindowOutOfSight()) showCapsule()
+  else hideCapsule()
+}
+
+/**
+ * Follow the main window's state for as long as it exists.
+ *
+ * Idempotent: a re-created window is wired again, an already-wired one is not.
+ * Every event that can change "is the app in front of the user" is listed
+ * explicitly — `focus`/`blur` are NOT, because a visible window that loses focus
+ * is still on screen and the capsule would only duplicate it.
+ */
+function wireMainWindow(w: BrowserWindow): void {
+  if (wiredWindows.has(w)) return
+  wiredWindows.add(w)
+  mainWindowShown = w.isVisible()
+  const sync = (): void => syncCapsuleToMainWindow()
+  w.on('show', () => {
+    mainWindowShown = true
+    sync()
+  })
+  w.on('hide', sync)
+  w.on('minimize', sync)
+  w.on('restore', sync)
+  w.on('closed', () => {
+    mainWindowShown = false
+    sync()
+  })
+}
+
 /** Show the capsule window without touching the feature flag. */
 function showCapsule(): void {
-  // An explicit show clears the "the user dismissed this" marker, so a later
-  // startup fail-safe cannot mistake a deliberate show for a stale one.
-  startupIntentRevoked = false
   const main = getMainWindow()
   const mainWasVisible = !!main && !main.isDestroyed() && main.isVisible()
   const w = createWindow()
@@ -604,9 +672,6 @@ function showCapsule(): void {
 
 /** Hide the capsule window; the tray remains and is the way back. */
 function hideCapsule(): void {
-  // Remember that this was the user's call, not a transient state. The startup
-  // fail-safe in `initFloating` consults this before resurrecting the capsule.
-  startupIntentRevoked = true
   destroyWindow()
   syncTray()
 }
@@ -625,14 +690,13 @@ export function applyFloatingEnabled(enabled: boolean): void {
   }
   if (on) {
     ensureTray()
-    showCapsule()
+    // Arming the feature does not mean "put it on screen now": the capsule
+    // belongs to the background. Turning it on from the settings row (window in
+    // front) leaves it hidden until the window is minimized or closed.
+    syncCapsuleToMainWindow()
   } else {
     // Turning the FEATURE off removes the tray too, so nothing would be left to
     // click: make sure the main window is on screen first.
-    //
-    // `startupIntentRevoked` is set before the teardown so the startup
-    // fail-safe cannot re-show a capsule the user just turned off.
-    startupIntentRevoked = true
     destroyTray()
     const w = getMainWindow()
     if (!w || w.isDestroyed()) {
@@ -798,6 +862,10 @@ function toggleMainWindow(): void {
   if (w.isMinimized()) w.restore()
   if (!w.isVisible()) w.show()
   w.focus()
+  // `restore()`/`show()` emit their own events, but a window that was already
+  // visible only gets `focus()` — no event, no sync. Re-derive so a capsule
+  // shown by hand from the tray does not linger over the window it revealed.
+  syncCapsuleToMainWindow()
 }
 
 /**
@@ -805,9 +873,10 @@ function toggleMainWindow(): void {
  *
  * Mirrors `notification.revealWindow()`: `focus()` alone is a no-op on a
  * minimized window, and the whole point of the click is "take me to the thing
- * that needs me".
+ * that needs me". Exported for the single-instance handler, where the second
+ * copy of the app asks the running one to show itself.
  */
-function openMainWindow(): void {
+export function openMainWindow(): void {
   const w = getMainWindow()
   if (!w || w.isDestroyed()) {
     createMainWindow()
@@ -816,6 +885,9 @@ function openMainWindow(): void {
   if (w.isMinimized()) w.restore()
   if (!w.isVisible()) w.show()
   w.focus()
+  // Same reason as `toggleMainWindow`: focusing an already-visible window emits
+  // nothing, so the capsule has to be told the app is in front again.
+  syncCapsuleToMainWindow()
 }
 
 function resetCapsulePosition(): void {
@@ -925,7 +997,7 @@ export function registerFloatingIpc(): void {
   })
 }
 
-/** Arm the capsule at startup when the preference says it should already be up. */
+/** Arm the capsule feature at startup: tray, main-window tracking, last counts. */
 export function initFloating(): void {
   colors = currentColors()
   const last = getStoreSafe().floatingStats
@@ -934,30 +1006,15 @@ export function initFloating(): void {
     // request is in flight; the poll corrects them a moment later.
     stats = { ...stats, ...last }
   }
+  // Wired unconditionally, not only when the feature is already on: the switch
+  // can be turned on later, and by then the window is long since created.
+  onMainWindowCreated(wireMainWindow)
   if (isEnabled()) {
     ensureTray()
-    // Do not build the capsule before the main window has been shown: creating it
-    // from initFloating (which runs right after createMainWindow, while that
-    // window is still `show: false`) was observed on 0.127.0 to leave the main
-    // window hidden for the session. Waiting for 'show' keeps that sequence
-    // intact; the timeout is a fail-safe so a page that never loads cannot leave
-    // the feature silently off.
-    const main = getMainWindow()
-    if (!main || main.isDestroyed() || main.isVisible()) {
-      showCapsule()
-    } else {
-      main.once('show', () => {
-        if (startupIntentRevoked) return
-        showCapsule()
-      })
-      setTimeout(() => {
-        // The fail-safe must not resurrect a capsule the user dismissed while
-        // this timer was pending (tray "hide" / "turn off" both land here), nor
-        // one whose feature flag has since been turned off.
-        if (startupIntentRevoked || !isEnabled()) return
-        if (!isFloatingAlive()) showCapsule()
-      }, STARTUP_SHOW_FALLBACK_MS)
-    }
+    // No capsule at startup: the main window is (about to be) in front of the
+    // user, and `mainWindowOutOfSight` treats a not-yet-shown window as visible
+    // precisely so this call is a no-op here. The first minimize shows it.
+    syncCapsuleToMainWindow()
   }
   // A monitor unplugged or a resolution change can strand the capsule off-screen.
   screen.on('display-metrics-changed', () => {

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 )
 
 // ContextStateUsage represents the persisted usage state for a session,
@@ -27,6 +28,10 @@ const (
 	payloadKeyContent        = "content"
 )
 
+// eventTypeUserMessage is the chat_stream event type announcing a user row that
+// was just materialized (live broadcast and subscribe-time recovery alike).
+const eventTypeUserMessage = "user_message"
+
 // GetContextStateUsageFunc is a function that retrieves persisted usage state
 // for a session. Injected by the service layer to avoid circular imports.
 type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
@@ -39,7 +44,17 @@ type LiveStreamState struct {
 	MessageID       int64
 	QuestionID      int64
 	QuestionContent string
-	SpeakerID       string
+	// QuestionFiles are the question row's attachments, carried so the
+	// recovery user_message renders the same bubble the live broadcast would
+	// have. Omitting them left a late subscriber's bubble with NO attachment
+	// cards at all, and nothing ever repaired it: the frontend's
+	// rebuildFromDb keeps a _remote bubble as-is instead of adopting the DB
+	// row, so the loss was permanent until a full reload. Direct sends were
+	// immune only because their optimistic bubble already carried the files
+	// and won the id dedupe — which is why it showed up exclusively on
+	// messages that were QUEUED while a turn ran.
+	QuestionFiles []model.FileEntry
+	SpeakerID     string
 }
 
 // StreamStateLookupFunc returns EVERY live run's state for a session, newest
@@ -244,7 +259,7 @@ func buildChatStreamMessage(sessionID string, event ai.StreamEvent) (ServerMessa
 // covers. The hook is only invoked when set; whether to actually persist is
 // StoreNotifiableEvent's decision (it skips when every client is connected).
 func (h *StreamHub) storeEventIfNotifiable(msg ServerMessage, eventType string) {
-	if eventType != "user_message" {
+	if eventType != eventTypeUserMessage {
 		return
 	}
 	h.mu.RLock()
@@ -353,7 +368,7 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		return errorPayload(event)
 	case "warning":
 		return warningPayload(event)
-	case "user_message":
+	case eventTypeUserMessage:
 		return userMessagePayload(event)
 	case "system_message":
 		return systemMessagePayload(event)
@@ -755,11 +770,22 @@ func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID i
 // EmitUserMessageEvent sends a user_message chat_stream event to a single
 // client. Used by the subscribe-time recovery path to hand a late subscriber
 // the question its live stream_start refers to.
-func (h *StreamHub) EmitUserMessageEvent(clientID, sessionID string, messageID int64, content string) {
-	h.emitStateEvent(clientID, sessionID, "user_message", map[string]any{
-		payloadKeyMessageID: messageID,
-		payloadKeyContent:   content,
+//
+// The payload is built by the SAME builder as the live broadcast
+// (userMessagePayload) rather than by hand. Hand-building it is what dropped
+// `files`: the recovery copy carried only messageId+content, so a queued
+// message's bubble came out with no attachment cards while the live broadcast
+// of the very same row had them.
+func (h *StreamHub) EmitUserMessageEvent(clientID, sessionID string, messageID int64, content string, files []model.FileEntry) {
+	payload := userMessagePayload(ai.StreamEvent{
+		Type: eventTypeUserMessage,
+		UserMessage: &ai.UserMessageData{
+			MessageID: messageID,
+			Content:   content,
+			Files:     files,
+		},
 	})
+	h.emitStateEvent(clientID, sessionID, eventTypeUserMessage, payload)
 }
 
 // EmitLiveRunStateToClient re-emits the state a client needs to render a run it
@@ -809,7 +835,7 @@ func (h *StreamHub) EmitLiveRunStateToClient(clientID, sessionID string) {
 			continue
 		}
 		if st.QuestionID > 0 {
-			h.EmitUserMessageEvent(clientID, sessionID, st.QuestionID, st.QuestionContent)
+			h.EmitUserMessageEvent(clientID, sessionID, st.QuestionID, st.QuestionContent, st.QuestionFiles)
 		}
 		h.EmitStreamStartEvent(clientID, sessionID, st.MessageID, st.SpeakerID)
 	}

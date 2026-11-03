@@ -268,8 +268,36 @@ describe('useChatStream', () => {
       expect(placeholder.parentQueueId).toBeUndefined()
     })
 
-    it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {
+    it('adopts the bubble stream_start already opened before the send POST resolves', () => {
+      // The WS routinely beats the HTTP response for a send: stream_start (and
+      // the first thinking/tool frames) arrive while the POST is still in
+      // flight, so connectStream runs AFTER the live bubble exists and already
+      // has content. Treating that bubble as a leftover from a previous turn
+      // finalized it and opened an empty replacement, orphaning everything that
+      // followed — the reported symptom was a blocked permission turn whose
+      // approval card never rendered.
       const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 42 }, 'test-session-1', 42)
+      simulateWsEvent('thinking', { text: 'thinking before the POST resolves' }, 'test-session-1')
+
+      // ...now the send's POST resolves and the sender connects the stream.
+      connectStream('test-session-1')
+
+      const assistants = options.messages.value.filter((m: any) => m.role === 'assistant')
+      expect(assistants.length, 'the live bubble must not be replaced by a second one').toBe(1)
+      expect(assistants[0].id).toBe(42)
+      expect(assistants[0].streaming).toBe(true)
+
+      // The rest of the turn must still land on that bubble.
+      simulateWsEvent('tool_use', { id: 'perm_1', name: 'PermissionApproval', input: '{}', done: false })
+      const live = options.messages.value.find((m: any) => m.role === 'assistant')
+      const toolBlock = (live.blocks || []).find((b: any) => b.type === 'tool_use' && b.id === 'perm_1')
+      expect(toolBlock, 'a later tool frame must land on the adopted bubble').toBeDefined()
+    })
+
+    it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {      const options = createOptions()
       const { connectStream } = useChatStream(options)
 
       // First connect creates a streaming message

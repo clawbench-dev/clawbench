@@ -200,16 +200,20 @@ export interface BuildMarkdownPreviewDomResult {
  * Render a markdown *file* exactly like MarkdownPreview.vue does.
  *
  * Pipeline (mirrors MarkdownPreview.doRender):
- *   renderMarkdownHtml(content, { sanitize: false, skipEnhancements: true,
+ *   renderMarkdownHtml(content, { sanitize, skipEnhancements: true,
  *                                 fixImagePaths })   → annotated string
  *   annotateFilePaths(html, { projectRoot, baseDir: dirName(path), homeDir })
  *
  * @param source The markdown file to render.
- * @param opts   Runtime knobs (thumbnail width / cache-buster). Omitted in tests.
+ * @param opts   Runtime knobs (thumbnail width / cache-buster / sanitize).
+ *               `sanitize` defaults to false: a file preview is a trusted local
+ *               artifact. Callers rendering GENERATED markdown (meeting minutes)
+ *               must pass true — the content can be influenced by meeting
+ *               participants and must not inject raw HTML.
  */
 export function buildMarkdownPreviewDom(
     source: MarkdownSource,
-    opts: { isWideScreen?: boolean; imageTimestamp?: number } = {}
+    opts: { isWideScreen?: boolean; imageTimestamp?: number; sanitize?: boolean } = {}
 ): BuildMarkdownPreviewDomResult {
     const { content, path, projectRoot = '', homeDir = '' } = source
     const currentDir = path ? dirName(path) : ''
@@ -219,7 +223,7 @@ export function buildMarkdownPreviewDom(
     const imageTimestamp = opts.imageTimestamp ?? Date.now()
 
     const html = renderMarkdownHtml(content, {
-        sanitize: false,
+        sanitize: opts.sanitize ?? false,
         skipEnhancements: true,
         fixImagePaths: createFixLocalImagePaths({
             baseDir: currentDir,

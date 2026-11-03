@@ -85,14 +85,16 @@ func TestMonitor_PersistsSyncBuf(t *testing.T) {
 
 	require.NoError(t, mgr.Start())
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if loadSyncBuf("") == "cursor-42" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	assert.Equal(t, "cursor-42", loadSyncBuf(""))
+	// The cursor must become readable with the value the server handed back.
+	//
+	// Poll rather than sample once: the mock answers instantly, so the monitor
+	// publishes the cursor many times a second, and on Windows a publish that
+	// lands while the file is open for reading makes that read fail (the
+	// replace is not one atomic step there). Retrying observes the same
+	// guarantee without depending on where in that window the sample falls.
+	require.Eventually(t, func() bool { return loadSyncBuf("") == "cursor-42" },
+		5*time.Second, 10*time.Millisecond,
+		"the cursor must be persisted so a restart resumes instead of replaying the backlog")
 	mgr.Stop()
 }
 

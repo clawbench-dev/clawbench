@@ -227,6 +227,18 @@ describe('useNavigationContext', () => {
     })
   })
 
+  it('live 来源保留 meetingToken 与 meetingTab（返回时恢复详情）', () => {
+    nav.start({
+      surface: 'live',
+      tab: 'live',
+      label: '返回会议',
+      meetingToken: 'tok-1',
+      meetingTab: 'resources',
+    })
+    expect(nav.origin.value?.meetingToken).toBe('tok-1')
+    expect(nav.origin.value?.meetingTab).toBe('resources')
+  })
+
   describe('15. surfaceToTab 将 surface 映射为有效的 tabId', () => {
     it('映射 task/tasks 为 tasks', () => {
       expect(surfaceToTab('task')).toBe('tasks')
@@ -261,6 +273,12 @@ describe('useNavigationContext', () => {
     })
     it('映射 chat 为 chat', () => {
       expect(surfaceToTab('chat')).toBe('chat')
+    })
+
+    it('映射 live 为 live', () => {
+      // The meeting detail opens files from its minutes and resource list;
+      // Back must land on that panel, not on whatever tab preceded it.
+      expect(surfaceToTab('live')).toBe('live')
     })
 
     it('映射 forge 为 forge', () => {

@@ -104,6 +104,13 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
+  // Set when a `stream_start` opens this turn's bubble BEFORE the sender's POST
+  // resolves (the WS routinely beats the HTTP response). connectStream then has
+  // to adopt that bubble instead of treating it as a leftover from a previous
+  // turn — see connectStream. Cleared as soon as it is consumed, so it can only
+  // ever describe the stream that is already open.
+  let liveStreamOpenedForSend = false
+
   // ── Stream stall watchdog ──
   //
   // A subscription can be silently lost server-side (WS reconnect replaced the
@@ -436,6 +443,10 @@ export function useChatStream(options: UseChatStreamOptions) {
     // stream being torn down; keeping them would replay stale content into the
     // next stream this composable attaches to.
     clearBufferedEvents()
+    // The live-bubble marker describes the stream being torn down; leaving it
+    // set would make the next connectStream (another session's) adopt a stale
+    // bubble instead of closing it.
+    liveStreamOpenedForSend = false
     unsubscribe()
   }
 
@@ -459,6 +470,15 @@ export function useChatStream(options: UseChatStreamOptions) {
     // boundary — which a normal send triggers (loading false→true) just above
     // this call.
     resetStallWindow()
+    // The sender calls this AFTER its POST resolves, and the WS can beat that
+    // response: this turn's `stream_start` then opens the bubble first and fills
+    // it with thinking/tool frames before we get here. That bubble is LIVE, not
+    // a leftover, so it must be reused — finalizing it (the stale-turn branch of
+    // ensureStreamingPlaceholder) would leave an empty replacement and orphan
+    // everything that follows, including the permission approval card a blocked
+    // turn is waiting on. See liveStreamOpenedForSend.
+    const liveOpened = liveStreamOpenedForSend
+    liveStreamOpenedForSend = false
     // Discard events buffered for the PREVIOUS turn. They are replayed on the
     // next stream_start (the only replay trigger), so leaving them here means
     // that if the previous turn never got a placeholder — the very case the
@@ -467,8 +487,11 @@ export function useChatStream(options: UseChatStreamOptions) {
     // stream_start lands. Same-session consecutive sends are the common path,
     // so this is not a corner case. Session switches already clear the buffer
     // via the watcher; this covers the case the watcher cannot see.
-    clearBufferedEvents()
-    ensureStreamingPlaceholder(options)
+    //
+    // Skipped when this turn's stream already opened: that stream_start already
+    // drained the buffer, and anything buffered since then belongs to THIS turn.
+    if (!liveOpened) clearBufferedEvents()
+    ensureStreamingPlaceholder(liveOpened ? { reuseExistingStreaming: true } : options)
     // Subscribe (deduped) — connectStream now guarantees the subscription
     // exists without tearing it down on stream end.
     subscribe(sessionId)
@@ -651,6 +674,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         // only after the DB row loads.
         const speakerId = (payload.agent_id as string | undefined) || ''
         if (messageId) {
+          // Remember that this turn's live bubble is already open. connectStream
+          // (called by the sender once its POST resolves) must reuse it rather
+          // than finalize it as a leftover.
+          liveStreamOpenedForSend = true
           // A stale bubble from a PREVIOUS producer turn used to be finalized
           // here so this stream_start could open its own (the "other agents
           // don't stream at all until you switch sessions" defect). Under

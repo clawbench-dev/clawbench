@@ -58,6 +58,12 @@ func setupTunnelControlTest(t *testing.T) (string, func()) {
 	server.Start()
 
 	cleanup := func() {
+		// Drop in-flight connections BEFORE the graceful Close. Close waits for
+		// active handlers to return, and a control handler parked on the request
+		// body never returns while the test still holds the pipe writer — so a
+		// single failing assertion (e.g. a bind that timed out) turned into a
+		// 20-minute package timeout instead of a fast, readable failure.
+		server.CloseClientConnections()
 		server.Close()
 		service.ProxyService.Stop()
 		service.ProxyService = origProxy
@@ -520,11 +526,26 @@ func TestTunnelControl_DisconnectReleasesAllPorts(t *testing.T) {
 	base, cleanup := setupTunnelControlTest(t)
 	defer cleanup()
 
-	portA := freeLoopbackPort(t)
-	portB := freeLoopbackPort(t)
 	pw, rd, resp := openControlStream(t, h2cTunnelClient(), base)
-	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portA).Type)
-	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portB).Type)
+	// freeLoopbackPort only proves the port was free a moment ago; another test
+	// (the package runs its cases in one process) can take it before the bind
+	// lands, and the server then answers bind_err. Retry with a fresh port
+	// instead of failing on that race — the subject here is the scanner bound,
+	// not which port got bound.
+	bindPort := func() int {
+		for range 5 {
+			port := freeLoopbackPort(t)
+			msg := bindAndExpect(t, pw, rd, port)
+			require.Contains(t, []string{tunnel.MsgBound, tunnel.MsgBindErr}, msg.Type)
+			if msg.Type == tunnel.MsgBound {
+				return port
+			}
+		}
+		t.Fatal("could not bind any loopback port after 5 attempts")
+		return 0
+	}
+	portA := bindPort()
+	portB := bindPort()
 
 	_ = pw.Close()
 	_ = resp.Body.Close()
@@ -1047,11 +1068,26 @@ func TestTunnelControl_OverlongControlLineDropsStream(t *testing.T) {
 	base, cleanup := setupTunnelControlTest(t)
 	defer cleanup()
 
-	portA := freeLoopbackPort(t)
-	portB := freeLoopbackPort(t)
 	pw, rd, resp := openControlStream(t, h2cTunnelClient(), base)
-	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portA).Type)
-	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portB).Type)
+	// freeLoopbackPort only proves the port was free a moment ago; another test
+	// (the package runs its cases in one process) can take it before the bind
+	// lands, and the server then answers bind_err. Retry with a fresh port
+	// instead of failing on that race — the subject here is the scanner bound,
+	// not which port got bound.
+	bindPort := func() int {
+		for range 5 {
+			port := freeLoopbackPort(t)
+			msg := bindAndExpect(t, pw, rd, port)
+			require.Contains(t, []string{tunnel.MsgBound, tunnel.MsgBindErr}, msg.Type)
+			if msg.Type == tunnel.MsgBound {
+				return port
+			}
+		}
+		t.Fatal("could not bind any loopback port after 5 attempts")
+		return 0
+	}
+	portA := bindPort()
+	portB := bindPort()
 
 	// One line past the scanner's 64 KiB ceiling. The `{"type":"bind",...}`
 	// prefix keeps it well-formed up to the truncation point, so the failure is

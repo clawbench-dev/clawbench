@@ -55,6 +55,33 @@ import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw'
 import longcatIcon from '@lobehub/icons-static-svg/icons/longcat-color.svg?raw'
 import stepfunIcon from '@lobehub/icons-static-svg/icons/stepfun-color.svg?raw'
 import nvidiaIcon from '@lobehub/icons-static-svg/icons/nvidia-color.svg?raw'
+import alibabaIcon from '@lobehub/icons-static-svg/icons/alibaba-color.svg?raw'
+import tencentIcon from '@lobehub/icons-static-svg/icons/tencent-color.svg?raw'
+import volcengineIcon from '@lobehub/icons-static-svg/icons/volcengine-color.svg?raw'
+import siliconflowIcon from '@lobehub/icons-static-svg/icons/siliconcloud-color.svg?raw'
+import sensenovaIcon from '@lobehub/icons-static-svg/icons/sensenova-color.svg?raw'
+import modelscopeIcon from '@lobehub/icons-static-svg/icons/modelscope-color.svg?raw'
+import baichuanIcon from '@lobehub/icons-static-svg/icons/baichuan-color.svg?raw'
+import yiIcon from '@lobehub/icons-static-svg/icons/yi-color.svg?raw'
+import internlmIcon from '@lobehub/icons-static-svg/icons/internlm-color.svg?raw'
+import iflytekIcon from '@lobehub/icons-static-svg/icons/iflytekcloud-color.svg?raw'
+import sparkIcon from '@lobehub/icons-static-svg/icons/spark-color.svg?raw'
+import perplexityIcon from '@lobehub/icons-static-svg/icons/perplexity-color.svg?raw'
+import togetherIcon from '@lobehub/icons-static-svg/icons/together-color.svg?raw'
+import upstageIcon from '@lobehub/icons-static-svg/icons/upstage-color.svg?raw'
+import novitaIcon from '@lobehub/icons-static-svg/icons/novita-color.svg?raw'
+import sambanovaIcon from '@lobehub/icons-static-svg/icons/sambanova-color.svg?raw'
+import poeIcon from '@lobehub/icons-static-svg/icons/poe-color.svg?raw'
+import cohereIcon from '@lobehub/icons-static-svg/icons/cohere-color.svg?raw'
+import voyageIcon from '@lobehub/icons-static-svg/icons/voyage-color.svg?raw'
+import morphIcon from '@lobehub/icons-static-svg/icons/morph-color.svg?raw'
+import poolsideIcon from '@lobehub/icons-static-svg/icons/poolside-color.svg?raw'
+import deepinfraIcon from '@lobehub/icons-static-svg/icons/deepinfra-color.svg?raw'
+import hyperbolicIcon from '@lobehub/icons-static-svg/icons/hyperbolic-color.svg?raw'
+import leptonaiIcon from '@lobehub/icons-static-svg/icons/leptonai-color.svg?raw'
+import anyscaleIcon from '@lobehub/icons-static-svg/icons/anyscale-color.svg?raw'
+import snowflakeIcon from '@lobehub/icons-static-svg/icons/snowflake-color.svg?raw'
+import arceeIcon from '@lobehub/icons-static-svg/icons/arcee-color.svg?raw'
 
 // Monochrome icons (fill="currentColor" — inherit CSS `color`, theme-aware)
 import openaiIcon from '@lobehub/icons-static-svg/icons/openai.svg?raw'
@@ -64,6 +91,19 @@ import xaiIcon from '@lobehub/icons-static-svg/icons/xai.svg?raw'
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
 import piIcon from '@lobehub/icons-static-svg/icons/pi.svg?raw'
 import kimiIcon from '@lobehub/icons-static-svg/icons/kimi.svg?raw'
+import ollamaIcon from '@lobehub/icons-static-svg/icons/ollama.svg?raw'
+import lmstudioIcon from '@lobehub/icons-static-svg/icons/lmstudio.svg?raw'
+import nebiusIcon from '@lobehub/icons-static-svg/icons/nebius.svg?raw'
+import ai21Icon from '@lobehub/icons-static-svg/icons/ai21.svg?raw'
+import jinaIcon from '@lobehub/icons-static-svg/icons/jina.svg?raw'
+import clineIcon from '@lobehub/icons-static-svg/icons/cline.svg?raw'
+import basetenIcon from '@lobehub/icons-static-svg/icons/baseten.svg?raw'
+import lambdaIcon from '@lobehub/icons-static-svg/icons/lambda.svg?raw'
+import replicateIcon from '@lobehub/icons-static-svg/icons/replicate.svg?raw'
+import ibmIcon from '@lobehub/icons-static-svg/icons/ibm.svg?raw'
+import friendliIcon from '@lobehub/icons-static-svg/icons/friendli.svg?raw'
+import inceptionIcon from '@lobehub/icons-static-svg/icons/inception.svg?raw'
+import zenmuxIcon from '@lobehub/icons-static-svg/icons/zenmux.svg?raw'
 
 // ---- Provider icon registry ----
 
@@ -103,6 +143,50 @@ const providerIconMap: Record<string, ProviderIconData> = {
     longcat: { raw: longcatIcon },
     stepfun: { raw: stepfunIcon },
     nvidia: { raw: nvidiaIcon },
+    alibaba: { raw: alibabaIcon },
+    tencent: { raw: tencentIcon },
+    volcengine: { raw: volcengineIcon },
+    siliconflow: { raw: siliconflowIcon },
+    sensenova: { raw: sensenovaIcon },
+    modelscope: { raw: modelscopeIcon },
+    baichuan: { raw: baichuanIcon },
+    yi: { raw: yiIcon },
+    internlm: { raw: internlmIcon },
+    iflytekcloud: { raw: iflytekIcon },
+    spark: { raw: sparkIcon },
+    perplexity: { raw: perplexityIcon },
+    together: { raw: togetherIcon },
+    upstage: { raw: upstageIcon },
+    novita: { raw: novitaIcon },
+    sambanova: { raw: sambanovaIcon },
+    poe: { raw: poeIcon },
+    cohere: { raw: cohereIcon },
+    voyage: { raw: voyageIcon },
+    morph: { raw: morphIcon },
+    poolside: { raw: poolsideIcon },
+    deepinfra: { raw: deepinfraIcon },
+    hyperbolic: { raw: hyperbolicIcon },
+    leptonai: { raw: leptonaiIcon },
+    anyscale: { raw: anyscaleIcon },
+    snowflake: { raw: snowflakeIcon },
+    arcee: { raw: arceeIcon },
+
+    // More LLM providers — monochrome icons. They inherit `color`, which is
+    // `--text-primary` in the settings list, so they stay legible on all 36
+    // themes without a per-brand rule in mono-icon-colors.css.
+    ollama: { raw: ollamaIcon },
+    lmstudio: { raw: lmstudioIcon },
+    nebius: { raw: nebiusIcon },
+    ai21: { raw: ai21Icon },
+    jina: { raw: jinaIcon },
+    cline: { raw: clineIcon },
+    baseten: { raw: basetenIcon },
+    lambda: { raw: lambdaIcon },
+    replicate: { raw: replicateIcon },
+    ibm: { raw: ibmIcon },
+    friendli: { raw: friendliIcon },
+    inception: { raw: inceptionIcon },
+    zenmux: { raw: zenmuxIcon },
 
     // CLI backend tools — color icons
     codex: { raw: codexIcon },
@@ -275,6 +359,87 @@ export function getProviderIcon(providerId: string): ProviderIconData | null {
 }
 
 /**
+ * models.dev provider ids that differ from the icon registry's slug. Only
+ * aliases that map to a real brand icon belong here; anything else falls back
+ * to the initial-letter tile.
+ */
+const providerIconAliases: Record<string, string> = {
+    moonshotai: 'kimi',
+    'moonshotai-cn': 'kimi',
+    moonshot: 'kimi',
+    zhipuai: 'zhipu',
+    'zhipuai-coding-plan': 'zhipu',
+    zai: 'zhipu',
+    'zai-coding-plan': 'zhipu',
+    bigmodel: 'zhipu',
+    alibabacloud: 'alibaba',
+    mistralai: 'mistral',
+    'amazon-bedrock': 'bedrock',
+    'google-vertex': 'google',
+    'google-vertex-anthropic': 'google',
+    'github-copilot': 'copilot',
+    bytedance: 'doubao',
+    siliconcloud: 'siliconflow',
+    'siliconcloud-cn': 'siliconflow',
+    iflytek: 'iflytekcloud',
+}
+
+/**
+ * Brand families whose catalogue entries differ only by region or plan suffix:
+ * `alibaba`, `alibaba-cn`, `alibaba-coding-plan-cn`, `alibaba-token-plan`, …
+ * A leading-token match keeps every variant — including ones the catalogue
+ * gains later — on the same icon instead of falling back to a letter tile.
+ *
+ * Order matters: the first matching prefix wins, so put longer/more specific
+ * prefixes before shorter ones that would also match.
+ */
+const providerFamilies: [string, string][] = [
+    ['github-copilot', 'copilot'],
+    ['moonshot', 'kimi'],
+    ['kimi', 'kimi'],
+    ['zhipu', 'zhipu'],
+    ['zai', 'zhipu'],
+    ['bigmodel', 'zhipu'],
+    ['alibaba', 'alibaba'],
+    ['minimax', 'minimax'],
+    ['xiaomi', 'xiaomi'],
+    ['stepfun', 'stepfun'],
+    ['tencent', 'tencent'],
+    ['volcengine', 'volcengine'],
+    ['doubao', 'doubao'],
+    ['hunyuan', 'hunyuan'],
+    ['siliconflow', 'siliconflow'],
+    ['sensenova', 'sensenova'],
+    ['baichuan', 'baichuan'],
+    ['internlm', 'internlm'],
+    ['iflytek', 'iflytekcloud'],
+    ['modelscope', 'modelscope'],
+    ['cloudflare', 'cloudflare'],
+    ['opencode', 'opencode'],
+    ['openrouter', 'openrouter'],
+    ['longcat', 'longcat'],
+    ['qwen', 'qwen'],
+]
+
+/** Resolve a catalogue/provider id to a slug that has an icon, or null.
+ *
+ *  Provider names also reach this function (a hand-made provider has no
+ *  `presetId`), so whitespace is folded to `-`: "Moonshot AI" → `moonshot-ai`
+ *  lands on the Moonshot/Kimi family instead of an "M" tile. */
+export function resolveProviderIconId(providerId: string): string | null {
+    if (!providerId) return null
+    const id = providerId.trim().toLowerCase().replace(/\s+/g, '-')
+    if (!id) return null
+    if (providerIconMap[id]) return id
+    const alias = providerIconAliases[id]
+    if (alias && providerIconMap[alias]) return alias
+    for (const [prefix, target] of providerFamilies) {
+        if (id === prefix || id.startsWith(prefix + '-')) return target
+    }
+    return null
+}
+
+/**
  * Extract the inner content of an SVG (everything inside the <svg> tag).
  * If the <svg> tag has fill="currentColor", propagates it to child elements
  * that don't have their own fill attribute — so `currentColor` still works
@@ -330,15 +495,25 @@ export function getProviderSvgHtml(providerId: string): string | null {
  * Returns the full <svg>...</svg> tag ready for v-html on a <span>.
  * This avoids SVG-namespace issues with v-html on an <svg> element
  * (some mobile WebViews fail to render innerHTML inside SVG).
+ *
+ * `opts.background=false` drops the `provider-icon-bg` class. Callers that
+ * render the logo inside their own tile want that: the per-SVG backdrop would
+ * otherwise paint a second, smaller rounded square inside the tile.
  */
-export function getProviderFullSvg(providerId: string, size: number, cssClasses: string[] = [], ariaLabel?: string): string | null {
+export function getProviderFullSvg(
+    providerId: string,
+    size: number,
+    cssClasses: string[] = [],
+    ariaLabel?: string,
+    opts: { background?: boolean } = {},
+): string | null {
     const data = getProviderIcon(providerId)
     if (!data) return null
     const raw = data.raw
 
     // Build class list
     const classList = ['provider-icon-svg']
-    if (data.needsBg) classList.push('provider-icon-bg')
+    if (data.needsBg && opts.background !== false) classList.push('provider-icon-bg')
     if (data.monoCssClass) classList.push(data.monoCssClass)
     classList.push(...cssClasses)
 

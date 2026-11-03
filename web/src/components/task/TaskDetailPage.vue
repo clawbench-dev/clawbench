@@ -311,6 +311,7 @@ async function onRefresh() {
 /* Fixed bottom action bar */
 .detail-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -318,6 +319,7 @@ async function onRefresh() {
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .action-text {

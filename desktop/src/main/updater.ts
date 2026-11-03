@@ -1,4 +1,5 @@
-import { httpGetBuffer } from './install'
+import { httpGetBuffer } from './httpGet'
+import { recordError } from './clientLog'
 
 /**
  * Desktop release info fetched from the server.
@@ -48,13 +49,68 @@ interface DesktopLatestResponse {
 }
 
 /**
+ * GET the release info, falling back to the pinned certificate.
+ *
+ * Verification runs normally first, so a server with a publicly trusted
+ * certificate keeps working even when a fingerprint from an earlier
+ * self-signed setup is still stored for its origin. Only when that fails is the
+ * remembered certificate tried — and then the peer must present EXACTLY that
+ * certificate, or the request fails (see `httpGet.ts`).
+ *
+ * The cost for a self-signed server is one extra failed handshake per check,
+ * which is what "verify, then pin" buys over "never verify".
+ */
+async function fetchLatestBody(url: string, pinnedFingerprint: string): Promise<Buffer> {
+  try {
+    return await httpGetBuffer(url)
+  } catch (err) {
+    if (!pinnedFingerprint) throw err
+    return await httpGetBuffer(url, { pinnedFingerprint })
+  }
+}
+
+/**
+ * One line naming WHY the release info could not be fetched.
+ *
+ * All three cases end in the same user-visible outcome ("no update offered"),
+ * so the log is the only place the difference is visible. The three lead to
+ * very different actions: a pinned-certificate mismatch means the server's
+ * certificate changed (re-trust it in Settings → Security), a TLS failure means
+ * nothing is remembered for this origin yet, and a network error means the
+ * server is simply not reachable right now.
+ */
+export function classifyFetchFailure(err: unknown): string {
+  const name = (err as { name?: string })?.name ?? ''
+  const message = String((err as Error)?.message ?? err)
+  if (name === 'CertificatePinMismatchError' || /does not match the pinned/.test(message)) {
+    return `pinned certificate mismatch (accept it again in Settings → Security): ${message}`
+  }
+  if (/certificate|self[- ]signed|ERR_TLS|CERT_|UNABLE_TO_VERIFY|unable to verify/i.test(message)) {
+    return `TLS verification failed (no accepted certificate for this server): ${message}`
+  }
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|socket hang up/i.test(message)) {
+    return `server unreachable: ${message}`
+  }
+  return message
+}
+
+/**
  * Fetch and parse /api/desktop/latest for the running platform.
  *
  * Returns null when the server is unreachable, the response is malformed, the
  * platform has no desktop build, or the server is a dev/untagged build with no
  * release to point at — all of which mean "nothing to offer", not an error.
+ *
+ * `pinnedFingerprint` is the certificate the user accepted for this server
+ * (`trustedCertificates[origin]`). The answer decides which version runs and
+ * where it is downloaded from, so it must not be readable by anyone who can
+ * answer on the server's address: without a pin, a self-signed deployment
+ * simply gets no upgrade offered, exactly as before the pinning existed.
  */
-export async function fetchDesktopLatest(serverUrl: string): Promise<DesktopLatest | null> {
+export async function fetchDesktopLatest(
+  serverUrl: string,
+  pinnedFingerprint = '',
+): Promise<DesktopLatest | null> {
   if (!serverUrl) return null
 
   const key = platformKey(process.platform, process.arch)
@@ -62,9 +118,15 @@ export async function fetchDesktopLatest(serverUrl: string): Promise<DesktopLate
 
   let body: string
   try {
-    body = (await httpGetBuffer(latestInfoUrl(serverUrl))).toString('utf8')
-  } catch {
-    // Server unreachable or too old to expose the endpoint — nothing to offer.
+    body = (await fetchLatestBody(latestInfoUrl(serverUrl), pinnedFingerprint)).toString('utf8')
+  } catch (err) {
+    // Server unreachable, too old to expose the endpoint, or presenting a
+    // certificate that is not the pinned one — all of which mean "nothing to
+    // offer", not an error the user should be shown. Logged anyway (and
+    // classified): without this line a certificate change is indistinguishable
+    // from "this server publishes no release", and the only symptom is that
+    // upgrades silently stop being offered.
+    recordError('Updater', classifyFetchFailure(err))
     return null
   }
 

@@ -455,6 +455,9 @@ type shareMetaResponse struct {
 	// NotesEnabled is live-share only: whether the publisher is running AI 听记.
 	// The share page uses it to decide whether to offer the transcript panel.
 	NotesEnabled bool `json:"notesEnabled,omitempty"`
+	// Video is live-share only: false means a voice meeting. The share page
+	// renders a placeholder instead of waiting for a picture that never comes.
+	Video bool `json:"video"`
 }
 
 // serveShareMeta reports whether a token is a file share or a session share.
@@ -475,6 +478,7 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 			Kind:         shareKindLive,
 			Title:        room.Title(),
 			NotesEnabled: room.NotesEnabled(),
+			Video:        room.VideoEnabled(),
 		})
 		return
 	}
@@ -494,14 +498,23 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 
-	_, name, _, fileOK, err := service.GetFileShareByToken(token)
+	path, name, root, fileOK, err := service.GetFileShareByToken(token)
 	if err != nil {
 		slog.Error("share: meta file lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
 	if fileOK {
-		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: shareKindFile, Title: name})
+		// A share of a directory opens the folder listing; a share of a file
+		// opens its preview. The kind is decided from disk, not stored, so a
+		// path that changed type after the link was created still resolves to
+		// what is actually there — but only a share whose ROOT is the target
+		// counts as a folder share (see shareIsFolderShare).
+		kind := shareKindFile
+		if shareIsFolderShare(path, root) {
+			kind = shareKindDir
+		}
+		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: kind, Title: name})
 		return
 	}
 	http.NotFound(w, r)

@@ -28,6 +28,7 @@ export type TabId =
   | 'tasks'
   | 'notifications'
   | 'terminal'
+  | 'live'
   | 'proxy'
   | 'stats'
   | 'settings'
@@ -81,6 +82,11 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
+  // 视频会议: the meeting records, and the meeting itself — screen/camera or
+  // voice. It used to be two tabs (听记 and 桌面共享) even though both drove the
+  // same recorder, the same endpoints and the same artifact folder; a record
+  // can be either kind, so one tab is the honest shape.
+  { id: 'live', titleKey: 'nav.meeting' },
   { id: 'proxy', titleKey: 'nav.portForward' },
   // Notifications sits immediately before settings: settings stays the final
   // tab (it is the "exit" affordance at the end of the dock), and the
@@ -122,6 +128,10 @@ export function isDockTabId(tab: string): tab is DockTabId {
  * port forwarding is genuinely unusable — no wire can carry it). Both are still
  * declared in DOCK_TABS — this function is where the runtime gate is applied.
  *
+ * `live` (会议) is deliberately NOT gated: a host that cannot capture a screen
+ * can still read its meeting records, and a voice meeting only needs a
+ * microphone. The create page explains what is missing instead.
+ *
  * `forgeHidden` is a USER-facing switch, not a runtime capability: issue #590 asks
  * for a way to turn the integration off when it is not in use. On the server
  * that switch stops polling and clears every project's repository binding, so by
@@ -135,7 +145,11 @@ export function isDockTabId(tab: string): tab is DockTabId {
  * import-free on purpose (see the header), so it takes the resulting boolean.
  */
 export function secondaryDockTabs(
-  opts: { terminalDisabled?: boolean; portForwardUnavailable?: boolean; forgeHidden?: boolean } = {},
+  opts: {
+    terminalDisabled?: boolean
+    portForwardUnavailable?: boolean
+    forgeHidden?: boolean
+  } = {},
 ): DockTabId[] {
   return DOCK_TABS.filter((t) => !t.primary)
     .filter((t) => !(t.id === 'terminal' && opts.terminalDisabled))

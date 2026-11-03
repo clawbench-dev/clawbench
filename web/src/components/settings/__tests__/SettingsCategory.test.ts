@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import SettingsCategory from '@/components/settings/SettingsCategory.vue'
 import PasswordChangeDialog from '@/components/settings/PasswordChangeDialog.vue'
+import { rememberProviderNames } from '@/utils/providerNames'
 
 // Mock composables
 const mockSetLocalConfig = vi.fn()
@@ -249,9 +250,12 @@ const i18n = createI18n({
           ttsEngine: 'TTS引擎',
           ttsEngineDesc: 'TTS引擎',
           ttsEngineEdge: 'Edge',
-          ttsEnginePiper: 'Piper',
-          ttsEngineKokoro: 'Kokoro',
-          ttsEngineMossNano: 'MOSS-Nano',
+          ttsEngineSection: 'TTS 引擎',
+          voiceSummarySection: '语音摘要',
+          summarizeTtsSection: '语音摘要',
+          summarizeTtsBackendDesc: '对 AI 输出的消息进行摘要，便于语音朗读',
+          summarizeAutoJunkRatio: '自动判定杂质比例阈值',
+          summarizeAutoJunkRatioDesc: '自动模式下按杂质比例决定是否走大模型摘要',
           ttsVoice: '语音',
           ttsSpeed: '语速',
           summarizeBackend: '摘要方式',
@@ -349,6 +353,10 @@ const i18n = createI18n({
           localeEn: 'English',
           changePassword: '修改密码',
           changePasswordDesc: '更改登录密码',
+          trustedCerts: '已信任的证书',
+          trustedCertsDesc: '清除为自签名服务器记住的证书',
+          trustedCertsCleared: '已清除，下次连接会重新确认证书',
+          trustedCertsConfirm: '清除所有已信任的自签名证书？',
           addToHomeScreen: '添加到主屏幕',
           downloadDesktopApp: '下载桌面版',
           downloadDesktopAppDesc: '下载桌面版',
@@ -396,9 +404,7 @@ const i18n = createI18n({
           aboutActionsSection: '操作',
           securitySection: '安全',
           debugSection: '调试',
-          // aiSummary nav
-          aiSummaryRef: 'AI摘要',
-          aiSummaryRefDesc: 'AI摘要',
+          summaryModelRow: '摘要模型',
           summaryModelConfigured: '已配置',
           summaryModelNotConfigured: '未配置',
         },
@@ -556,20 +562,42 @@ describe('SettingsCategory', () => {
     })
   })
 
+  // ─── TTS category ──────────────────────────────
+  describe('tts category', () => {
+    // Cards are grouped by CONSECUTIVE sectionHeader, so a summary row without
+    // one is flushed into the trailing "其他" card. That split the voice
+    // summary settings across two cards (the ratio row ended up alone under
+    // "其他"). All three summary rows must share the 语音摘要 card.
+    it('keeps every voice-summary row in a single 语音摘要 card', () => {
+      serverConfig.value.summarize = { tts_backend: 'auto', auto_junk_ratio: 0.5 }
+      const wrapper = mountCategory('tts')
+      const titles = wrapper.findAllComponents({ name: 'SettingsCard' }).map(c => c.props().title)
+
+      expect(titles).toEqual(['TTS 引擎', '语音摘要'])
+      expect(titles).not.toContain('其他')
+
+      const summaryCard = wrapper
+        .findAllComponents({ name: 'SettingsCard' })
+        .find(c => c.props().title === '语音摘要')!
+      const keys = summaryCard.findAll('[data-settings-key]').map(el => el.attributes('data-settings-key'))
+      expect(keys).toEqual(['summarize.tts_backend', 'summaryModel', 'summarize.auto_junk_ratio'])
+    })
+  })
+
   // ─── Shared AI-summary-model status ─────────────────────
   describe('AI summary model status', () => {
-    /** The three rows that jump to the aiSummary panel all share one label. */
+    /** The three in-place model pickers all share one label. */
     function jumpRows(wrapper: ReturnType<typeof mountCategory>) {
       return wrapper
         .findAllComponents({ name: 'SettingsItem' })
-        .filter(i => i.props().label === 'AI摘要')
+        .filter(i => i.props().label === '摘要模型')
     }
 
     afterEach(() => {
       delete (serverConfig.value as Record<string, unknown>).ai_summary
     })
 
-    it('marks the jump rows unconfigured when the base URL is unset', () => {
+    it('marks the model rows unconfigured when no provider is bound', () => {
       delete (serverConfig.value as Record<string, unknown>).ai_summary
       const rows = jumpRows(mountCategory('chat'))
       expect(rows.length).toBeGreaterThan(0)
@@ -578,10 +606,8 @@ describe('SettingsCategory', () => {
       }
     })
 
-    it('marks the jump rows configured once the base URL is set', () => {
-      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
-        api: { base_url: 'https://summary.example.com' },
-      }
+    it('marks the model rows configured once a provider is bound', () => {
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 7 }
       const rows = jumpRows(mountCategory('chat'))
       expect(rows.length).toBeGreaterThan(0)
       for (const row of rows) {
@@ -589,10 +615,26 @@ describe('SettingsCategory', () => {
       }
     })
 
+    it('labels the row as "provider · model" like the picker does', async () => {
+      // Two providers can serve the same model id; the bare id made a switch
+      // between them look like nothing happened.
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 4242, model: 'gpt-4o' }
+      const wrapper = mountCategory('chat')
+      const row = () => jumpRows(wrapper)[0]
+      await flushPromises()
+      // Until a screen loads the provider list the row still has to say
+      // something, so it falls back to the bare model id.
+      expect(row().props().modelValue).toBe('gpt-4o')
+
+      // The name arrives later (the providers page / picker publishes it); the
+      // row must pick it up without a re-mount.
+      rememberProviderNames([{ id: 4242, name: 'MiniMax' }])
+      await nextTick()
+      expect(row().props().modelValue).toBe('MiniMax · gpt-4o')
+    })
+
     it('leaves rows without the opt-in flag without a status', () => {
-      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
-        api: { base_url: 'https://summary.example.com' },
-      }
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 7 }
       const wrapper = mountCategory('chat')
       const plain = wrapper
         .findAllComponents({ name: 'SettingsItem' })
@@ -908,6 +950,65 @@ describe('SettingsCategory', () => {
       const item = allItems.find(i => i.props().label === '修改密码')
       expect(item).toBeTruthy()
       expect(item!.props().type).toBe('action')
+    })
+
+    it('clears remembered certificates from the desktop-only row', async () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+      const forget = vi.fn().mockResolvedValue(1)
+      ;(window as any).ClawBenchNative = {
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+        forgetTrustedCerts: forget,
+      }
+      mockDialogConfirm.mockResolvedValueOnce(true)
+      try {
+        const wrapper = mountCategory('security')
+        const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+          .find(i => i.props().label === '已信任的证书')
+        expect(item, 'the desktop shell must expose the undo row').toBeTruthy()
+        await item!.vm.$emit('click')
+        await flushPromises()
+        // Every self-signed server has to be re-accepted afterwards, so the row
+        // asks first — like every other destructive action on this page.
+        expect(mockDialogConfirm).toHaveBeenCalled()
+        expect(forget).toHaveBeenCalledTimes(1)
+        expect(mockToastShow).toHaveBeenCalled()
+      } finally {
+        delete (window as any).ClawBenchNative
+      }
+    })
+
+    it('does not clear remembered certificates when the confirmation is cancelled', async () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+      const forget = vi.fn().mockResolvedValue(1)
+      ;(window as any).ClawBenchNative = {
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+        forgetTrustedCerts: forget,
+      }
+      mockDialogConfirm.mockResolvedValueOnce(false)
+      try {
+        const wrapper = mountCategory('security')
+        const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+          .find(i => i.props().label === '已信任的证书')
+        await item!.vm.$emit('click')
+        await flushPromises()
+        expect(forget).not.toHaveBeenCalled()
+      } finally {
+        delete (window as any).ClawBenchNative
+      }
+    })
+
+    it('hides the trusted-certificate row outside the desktop shell', () => {
+      // Android never persists the certificate answer (it re-asks every
+      // connection), and the browser has no native bridge at all — the row
+      // would be a no-op button there.
+      const wrapper = mountCategory('security')
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '已信任的证书')
+      expect(item).toBeFalsy()
     })
 
     it('opens password dialog when changePassword action is clicked', async () => {

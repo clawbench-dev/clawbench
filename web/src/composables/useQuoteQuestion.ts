@@ -21,7 +21,14 @@ const TAG = 'QuoteQuestion'
  *
  * Exactly one attachment source is expected:
  * - `url` + `label`  — an external address (issue/PR), attached as a URL entry;
- * - `filePath`       — a local file, attached as a file entry.
+ * - `filePath`       — a local file, attached as a file entry;
+ * - `quote`          — a payload the caller already built.
+ *
+ * `quote` exists because a meeting record has no locator the card can carry:
+ * its content lives behind a token and has to be FETCHED (minutes, else
+ * transcript) before the card means anything. `buildComposerQuote` is
+ * synchronous, so the caller that can await does the fetch and hands the
+ * finished payload over instead of a path/address.
  *
  * There is no `onAdd` navigation callback any more: committing always goes
  * through the session picker, whose "add and open" button is what reveals the
@@ -31,6 +38,7 @@ const TAG = 'QuoteQuestion'
 export interface QuoteComposerContext {
   url?: string
   filePath?: string
+  quote?: QuoteData
   label: string
 }
 
@@ -39,7 +47,7 @@ export interface QuoteComposerContext {
  * bar. It is deliberately not part of the chat context yet — see openComposer.
  */
 export interface ComposerAttachment {
-  kind: 'url' | 'file'
+  kind: 'url' | 'file' | 'quote'
   label: string
   url?: string
   path?: string
@@ -61,6 +69,21 @@ const sheetOpen = ref(false)
 // live outside the global selection, and the OpenAPI preview's iframe — in
 // which case the bar falls back to its pinned top position.
 const anchorRect = ref<DOMRect | null>(null)
+/**
+ * The element the selection lives in, i.e. the surface whose scrolling would
+ * move the anchor.
+ *
+ * `onScroll` dismisses the bar because a scroll under a floating anchor leaves
+ * it pointing at nothing. That is only true of the container that HOLDS the
+ * selection: a scroll in an unrelated pane — the chat transcript auto-following
+ * a reply that is streaming in, a background list — moves neither the selected
+ * text nor the anchor, so it must not take the bar away from the user.
+ *
+ * Null when the source cannot be identified (a terminal/CodeMirror selection
+ * pushed through `showBar` without one); those keep the old "any scroll
+ * dismisses" behaviour, which is the safe direction.
+ */
+const quoteAnchorEl = ref<Element | null>(null)
 // Non-null while the bar was opened by an entry point rather than by a text
 // selection. In this mode the bar is useful even with no quote.
 const composerContext = ref<QuoteComposerContext | null>(null)
@@ -122,6 +145,7 @@ const composerAttachment = computed<ComposerAttachment | null>(() => {
   if (!ctx) return null
   if (ctx.url) return { kind: 'url', label: ctx.label, url: ctx.url }
   if (ctx.filePath) return { kind: 'file', label: ctx.label, path: ctx.filePath }
+  if (ctx.quote) return { kind: 'quote', label: ctx.label }
   return null
 })
 
@@ -269,6 +293,8 @@ function evaluateSelection() {
   // here — every quotable branch below (labelled source, chat message, file)
   // surfaces the same bar and wants the same anchor.
   anchorRect.value = selectionAnchorRect(sel)
+  // ...and which surface it belongs to, so a scroll elsewhere cannot dismiss it.
+  quoteAnchorEl.value = container
 
   const derived = deriveQuoteData(sel, container)
   if (!derived) {
@@ -574,10 +600,28 @@ function onScroll(e: Event) {
   if (barPinned.value || composerContext.value) return
   const target = e.target
   if (target instanceof Element && target.closest('.quote-question-bar')) return
+  // A scroll only invalidates the anchor if it moves the quoted content.
+  // `document` (the viewport itself) always qualifies — the anchor is viewport
+  // space — and so does any scrollable between the viewport and the selection.
+  // A scroll in an UNRELATED container (the chat transcript following a stream
+  // while the user reads a file preview) does not move the selection, and
+  // dismissing then takes the bar away mid-interaction.
+  if (target instanceof Element && quoteAnchorEl.value && !scrollMovesSurface(target, quoteAnchorEl.value)) return
   barVisible.value = false
   setQuoteData(null)
   anchorRect.value = null
   lastSelectionQuote.value = null
+}
+
+/**
+ * Whether a scroll on `scrolled` moves the content `source` lives in.
+ *
+ * True when `scrolled` IS the source, contains it (an ancestor scrollable —
+ * the transcript scrolling under a quoted message, the preview pane under an
+ * iframe), or is inside it (a scrollable nested in the quoted region).
+ */
+function scrollMovesSurface(scrolled: Element, source: Element): boolean {
+  return scrolled === source || scrolled.contains(source) || source.contains(scrolled)
 }
 
 /** True while any pointer button is held (used to gate mid-drag selection UI). */
@@ -601,7 +645,7 @@ export function isNativeSelectionShell(): boolean {
 /** The `showBar` shape the iframe bridge helper needs (structural — no import cycle). */
 type ShowBarFn = (
   data: QuoteData,
-  opts?: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean },
+  opts?: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean; anchorEl?: Element | null },
 ) => void
 
 /**
@@ -624,10 +668,13 @@ type ShowBarFn = (
  * defect survived there. Callers now share this factory, so a fourth host
  * cannot drift.
  */
-export function makeIframeQuoteShowHandler(showBar: ShowBarFn): (data: QuoteData, anchor: DOMRect | null) => void {
-  return (data, anchor) => showBar(data, {
+export function makeIframeQuoteShowHandler(
+  showBar: ShowBarFn,
+): (data: QuoteData, anchor: DOMRect | null, sourceEl: Element | null) => void {
+  return (data, anchor, sourceEl) => showBar(data, {
     delay: 0,
     anchor,
+    anchorEl: sourceEl,
     suppressBar: isNativeSelectionShell(),
   })
 }
@@ -704,7 +751,7 @@ export function useQuoteQuestion() {
    * bar leaves the chat input untouched.
    */
   function openComposer(ctx: QuoteComposerContext) {
-    if (!ctx?.url && !ctx?.filePath) return
+    if (!ctx?.url && !ctx?.filePath && !ctx?.quote) return
     composerContext.value = ctx
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
@@ -746,6 +793,9 @@ export function useQuoteQuestion() {
       // it already carries the source label/lines/address.
       return { ...selection, note, id: '' }
     }
+    // A payload the caller built ahead of time (meeting records: the content
+    // has to be fetched, which this function cannot do).
+    if (ctx.quote) return { ...ctx.quote, note, id: '' }
     // No selection: reference the whole object.
     return {
       text: '',
@@ -846,12 +896,18 @@ export function useQuoteQuestion() {
    */
   function showBar(
     data: QuoteData,
-    opts: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean } = {},
+    opts: { delay?: number; anchor?: DOMRect | null; suppressBar?: boolean; anchorEl?: Element | null } = {},
   ) {
     const sel = window.getSelection()
+    const liveHostSelection = sel && !sel.isCollapsed && sel.toString().trim() ? sel : null
     const rect = opts.anchor !== undefined
       ? opts.anchor
-      : (sel && !sel.isCollapsed && sel.toString().trim() ? selectionAnchorRect(sel) : null)
+      : (liveHostSelection ? selectionAnchorRect(liveHostSelection) : null)
+    // The surface whose scroll would move this anchor. A caller that measured a
+    // selection in ANOTHER document (the preview iframe) has to name it — the
+    // host selection is empty there — otherwise every scroll in the app is
+    // treated as relevant (see `onScroll`).
+    const sourceEl = opts.anchorEl ?? (liveHostSelection ? closestElement(liveHostSelection.anchorNode, '*') : null)
     const suppress = opts.suppressBar === true
     if (suppress) {
       // The native menu's action runs AFTER the action mode has dismissed and
@@ -872,11 +928,13 @@ export function useQuoteQuestion() {
         // `handleNativeSelectionAction` writes `quoteData` itself when the user
         // actually picks an action from that menu.
         anchorRect.value = rect
+        quoteAnchorEl.value = sourceEl
         return
       }
       setQuoteData(data)
       barVisible.value = true
       anchorRect.value = rect
+      quoteAnchorEl.value = sourceEl
     }, opts.delay ?? 400)
   }
 

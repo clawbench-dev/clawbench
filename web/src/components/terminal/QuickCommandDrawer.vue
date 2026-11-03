@@ -61,7 +61,7 @@
         </VueDraggable>
       </div>
       <div v-else class="qc-empty">
-        <ZapIcon :size="32" class="qc-empty-icon" />
+        <ZapIcon class="qc-empty-icon empty-state__icon" />
         <span>{{ t('terminal.quickCommandsEmpty') }}</span>
       </div>
     </div>
@@ -368,10 +368,6 @@ async function onDragEnd() {
   padding: var(--space-8);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
-}
-
-.qc-empty-icon {
-  opacity: var(--opacity-disabled);
 }
 
 /* PopupMenu teleports to body — these styles must be unscoped */

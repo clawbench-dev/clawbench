@@ -16,11 +16,27 @@ import (
 // (vLLM Whisper server). Supports streaming and non-streaming at the handler
 // layer; this provider only transcribes a single audio segment.
 type VLLMProvider struct {
-	BaseURL    string       // e.g. "http://localhost:8000" or ".../v1"
-	Model      string       // recognition model, e.g. "openai/whisper-large-v3"
-	APIKey     string       // bearer token (may be empty for local servers)
-	Language   string       // language code (e.g. "zh")
+	BaseURL  string // e.g. "http://localhost:8000" or ".../v1"
+	Model    string // recognition model, e.g. "openai/whisper-large-v3"
+	APIKey   string // bearer token (may be empty for local servers)
+	Language string // language code (e.g. "zh")
+	// Filename is the multipart filename sent to the server; empty means
+	// "recording.webm". Some gateways pick the decoder from the extension, so a
+	// caller uploading a different container must say so.
+	Filename   string
 	HTTPClient *http.Client // injectable for tests
+}
+
+// APIError is a non-2xx answer from the transcription endpoint. It is exported
+// so callers can tell an auth failure from a missing model without matching on
+// the message text.
+type APIError struct {
+	Status int
+	Body   string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("stt: API returned status %d: %s", e.Status, e.Body)
 }
 
 // NewVLLMProvider creates a VLLM STT provider.
@@ -71,7 +87,11 @@ func (p *VLLMProvider) Transcribe(ctx context.Context, audioReader io.Reader, la
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	part, err := writer.CreateFormFile("file", "recording.webm")
+	filename := p.Filename
+	if filename == "" {
+		filename = "recording.webm"
+	}
+	part, err := writer.CreateFormFile("file", filename)
 	if err != nil {
 		return "", fmt.Errorf("stt: create form file: %w", err)
 	}
@@ -109,7 +129,7 @@ func (p *VLLMProvider) Transcribe(ctx context.Context, audioReader io.Reader, la
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("stt: API returned status %d: %s", resp.StatusCode, string(respBody))
+		return "", &APIError{Status: resp.StatusCode, Body: string(respBody)}
 	}
 
 	var transResp openaiTranscribeResponse

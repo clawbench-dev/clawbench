@@ -6,10 +6,17 @@
 <title>ClawBench — 从掌心到桌面，同一个 AI 工作台</title>
 <meta name="description" content="ClawBench 把 CodeBuddy、Claude Code、Codex 等 19 个 AI 编程智能体封装成一个 Web 工作台。服务端执行，客户端呈现，一个会话在手机、平板和桌面之间无缝继续。单文件部署，MIT 开源。">
 <meta name="theme-color" content="#0a0806">
+<!-- 本页有两处部署：Cloudflare Pages（主域）与 GitHub Pages（项目页副本）。
+     canonical 固定指向主域，副本靠它归并，否则同一份内容在两个域名下互相稀释信号。
+     og:image 必须是绝对地址——抓取端不解析相对路径，也不补当前页面地址。 -->
+<link rel="canonical" href="https://clawbench.pages.dev/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="ClawBench — 从掌心到桌面，同一个 AI 工作台">
 <meta property="og:description" content="19 个 AI 编程智能体，一块屏幕就够。服务端执行，客户端呈现，单文件部署。">
-<meta property="og:image" content="img/og.jpg">
+<meta property="og:url" content="https://clawbench.pages.dev/">
+<meta property="og:image" content="https://clawbench.pages.dev/img/og-2026-11.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 <link rel="icon" type="image/png" sizes="32x32" href="img/favicon.png">
 <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
 <link rel="stylesheet" href="css/landing.css">

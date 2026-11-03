@@ -1,0 +1,217 @@
+<template>
+  <div class="meeting-shell">
+    <MeetingList
+      v-if="view === 'list'"
+      :active="active"
+      @create="view = 'create'"
+      @join="view = 'join'"
+      @open="openDetail"
+    />
+    <MeetingCreate v-else-if="view === 'create'" @back="view = 'list'" @started="view = 'meeting'" />
+    <MeetingJoin v-else-if="view === 'join'" @back="view = 'list'" />
+    <MeetingDetail
+      v-else-if="view === 'detail'"
+      :key="detailToken"
+      :token="detailToken"
+      :initial-tab="detailTab"
+      @back="view = 'list'"
+      @quote="(token: string) => emit('quote', token)"
+      @tab-change="detailTab = $event"
+    />
+    <!-- `v-show`, NOT `v-if`: leaving the stage for the record list must not
+         destroy it. Its chat lines, pending control requests and the viewer it
+         granted control to are component state, and its subscription to the
+         viewers' control channel is torn down on unmount — a member's message
+         sent while the host was reading the list would then be neither shown
+         nor archived. The meeting keeps running either way (the room lives in
+         useLiveShare), so the instance has to as well. -->
+    <MeetingStage v-show="view === 'meeting'" :active="view === 'meeting'" @ended="onEnded" />
+  </div>
+</template>
+
+<script setup lang="ts">
+/**
+ * The 会议 dock tab.
+ *
+ * Four views, one state machine:
+ *
+ *   list ──创建──▶ create ──开始──▶ meeting ──结束──▶ detail
+ *    │                                ▲                 │
+ *    └──点一条记录────────────────────────────────────▶│
+ *    └──加入──▶ join                                  └──返回/删除──▶ list
+ *
+ * Ending a meeting lands on the SAME detail view a list row opens: there is no
+ * separate "post-meeting" screen, so the minutes, the transcript, the chat and
+ * the delete button live in exactly one place.
+ */
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import MeetingList from './MeetingList.vue'
+import MeetingCreate from './MeetingCreate.vue'
+import MeetingJoin from './MeetingJoin.vue'
+import MeetingStage from './MeetingStage.vue'
+import MeetingDetail from './MeetingDetail.vue'
+import { useLiveShare } from '@/composables/useLiveShare'
+import { setHostedMeetingToken, setVisibleMeetingToken } from '@/utils/meetingVisibility'
+import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { takeMeetingReturn, clearMeetingView, type MeetingDetailTab } from '@/composables/useMeetingViewState'
+
+const props = defineProps<{ active?: boolean }>()
+const emit = defineEmits<{ quote: [token: string] }>()
+
+type View = 'list' | 'create' | 'join' | 'meeting' | 'detail'
+const view = ref<View>('list')
+const detailToken = ref('')
+const detailTab = ref<MeetingDetailTab>('minutes')
+const share = useLiveShare()
+
+function openDetail(token: string): void {
+  if (!token) return
+  // A running meeting's "record" IS the meeting: opening it returns to the
+  // stage, not to a detail page that has no minutes and no transcript yet.
+  if (share.state.value === 'publishing' && token === share.token.value) {
+    view.value = 'meeting'
+    return
+  }
+  detailToken.value = token
+  // A record opened from the list starts at the minutes, not at whatever tab
+  // the previous record happened to be on.
+  detailTab.value = 'minutes'
+  view.value = 'detail'
+}
+
+function onEnded(token: string): void {
+  // The record exists from the moment the meeting started, so the token is all
+  // the detail needs — no "which folder is this" lookup.
+  if (token) openDetail(token)
+  else view.value = 'list'
+}
+
+// A meeting started from anywhere (the create page, a restored session) brings
+// the tab to the stage.
+let lastToken = ''
+watch(
+  () => share.token.value,
+  (token) => {
+    if (token) lastToken = token
+  },
+  { immediate: true },
+)
+
+watch(
+  () => share.state.value,
+  (next, prev) => {
+    if (next === 'publishing') {
+      if (view.value !== 'meeting') view.value = 'meeting'
+      return
+    }
+    // The share can stop WITHOUT the stage's stop button: the publisher socket
+    // closed, the capture ended, or the Android projection was revoked. The
+    // stage then has no way back (its stop button only renders while
+    // publishing), so the shell has to move — to the record if we know which
+    // meeting it was, otherwise to the list.
+    if (prev === 'publishing' && view.value === 'meeting') {
+      if (lastToken) openDetail(lastToken)
+      else view.value = 'list'
+    }
+  },
+)
+
+// The panel is kept alive by TabPanel, so `active` is the only "entered the tab"
+// signal: a meeting in progress returns to the stage, anything else to the list.
+// Leaving the detail (back to the list) drops the view the coordinator would
+// otherwise use as a return target for a later file jump.
+watch(view, (next) => {
+  if (next === 'list') clearMeetingView()
+})
+
+watch(
+  () => props.active,
+  (active) => {
+    if (!active) return
+    // Returning from a file/resource opened inside a meeting: restore the
+    // record and the tab. The coordinator parks this because the origin itself
+    // is consumed synchronously, before this watcher runs.
+    const pending = takeMeetingReturn()
+    if (pending?.token) {
+      detailToken.value = pending.token
+      detailTab.value = pending.tab
+      view.value = 'detail'
+      return
+    }
+    view.value = share.state.value === 'publishing' ? 'meeting' : 'list'
+  },
+)
+
+/**
+ * Back inside the tab (edge swipe or the Android hardware button): every
+ * subpage returns to the list.
+ *
+ * Gated on `active` like every other panel — an inactive tab must never
+ * intercept a back press, or the gesture would be swallowed by a panel the
+ * user cannot even see.
+ *
+ * The stage is included. It reads as a session rather than a page, but leaving
+ * it costs nothing: the room lives in `useLiveShare`, not in this component, so
+ * the meeting keeps running and its row (see `openDetail`) leads straight back.
+ * What back must NOT do is END the meeting — that is destructive, and the stage
+ * keeps it behind an explicit 结束会议 button.
+ */
+const canGoBack = computed(() => !!props.active && view.value !== 'list')
+
+useFeatureBackHandler(
+  'meeting',
+  () => canGoBack.value,
+  () => {
+    view.value = 'list'
+  },
+  PRIORITY_PAGE,
+)
+
+/**
+ * Opening a meeting from a quote's "jump to source".
+ *
+ * App switches the tab, then calls this; the token comes from the quote, so the
+ * record does not have to be on the current page of the list.
+ */
+function handleOpenMeeting(event: Event): void {
+  const detail = (event as CustomEvent<{ token?: string }>).detail
+  if (detail?.token) openDetail(detail.token)
+}
+
+onMounted(() => {
+  window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
+  if (share.state.value === 'publishing') view.value = 'meeting'
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
+  // The panel is the only writer of these two facts; leaving them behind would
+  // keep suppressing (or worse, keep raising) notifications for a meeting this
+  // client no longer shows.
+  setHostedMeetingToken('')
+  setVisibleMeetingToken('')
+})
+
+// Two facts the global event handler needs (see utils/meetingVisibility):
+// which meeting this client publishes, and whether its stage is what the user
+// is looking at. Derived HERE because this is the only place that knows the
+// tab's active state and the panel's own view at the same time — the stage
+// component alone cannot tell whether the tab is on screen (panels are kept
+// mounted), and the composable alone cannot tell which view is rendered.
+watchEffect(() => {
+  setHostedMeetingToken(share.state.value === 'publishing' ? share.token.value : '')
+})
+watchEffect(() => {
+  setVisibleMeetingToken(props.active && view.value === 'meeting' ? share.token.value : '')
+})
+
+defineExpose({ openDetail })
+</script>
+
+<style scoped>
+.meeting-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+</style>

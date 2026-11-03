@@ -50,7 +50,17 @@
       <li v-for="msg in messages" :key="msg.queueId" class="queued-bar-item">
         <div class="queued-bar-text">{{ msg.text || t('chat.pending.attachment') }}</div>
         <div v-if="msg.files.length > 0" class="queued-bar-files">
-          <span v-for="(f, i) in msg.files" :key="i" class="queued-bar-file">{{ fileLabel(f) }}</span>
+          <!-- Quotes carry no path, so the shared attachment cards skip them
+               (a card would render as an empty pill); they keep the reference
+               chip. Everything else renders through the SAME component the
+               input box uses — thumbnail for images, icon + name otherwise —
+               so a queued attachment looks exactly like an attached one. -->
+          <span
+            v-for="q in quoteFiles(msg)"
+            :key="q.id || q.path"
+            class="queued-bar-file"
+          >{{ t('chat.pending.fileReference') }}</span>
+          <AttachmentTags :files="plainFiles(msg)" readonly />
         </div>
         <div class="queued-bar-actions">
           <button
@@ -116,6 +126,8 @@ import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Zap, Square, Merge, Pencil } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import AttachmentTags from '@/components/chat/AttachmentTags.vue'
+import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
 
 const props = defineProps({
   /** Queued messages for the active session (from useMessageQueue). */
@@ -164,13 +176,14 @@ const nextPreview = computed(() => {
 // Same head the preview shows, so the button and the text always agree.
 const head = computed(() => props.messages[0] || null)
 
-function fileLabel(f) {
-  if (!f) return ''
-  if (f.kind === 'quote') return t('chat.pending.fileReference')
-  if (f.kind === 'url') return f.path || f.url || ''
-  const p = f.path || ''
-  const parts = p.split('/')
-  return parts[parts.length - 1] || p
+/** Quote entries of a row (rendered as reference chips — see the template). */
+function quoteFiles(msg) {
+  return (msg.files || []).filter((f) => isQuoteEntry(f))
+}
+
+/** Everything else: files, directories and URLs, rendered as shared cards. */
+function plainFiles(msg) {
+  return (msg.files || []).filter((f) => !isQuoteEntry(f))
 }
 </script>
 
@@ -309,10 +322,25 @@ function fileLabel(f) {
 .queued-bar-files {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
   margin-top: var(--space-1);
+  min-width: 0;
 }
 
+/* The shared attachment strip brings the input box's own inset; this row
+   already provides one, so drop it and let the cards line up with the text
+   above. It keeps its horizontal scroll, which is what stops a long file list
+   from stretching the row. */
+.queued-bar-files :deep(.chat-attachment-tags) {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  gap: var(--space-2);
+}
+
+/* Reference chip for quoted snippets (the shared cards skip them: a quote has
+   no path, so a card would render as an empty pill). */
 .queued-bar-file {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
@@ -337,8 +365,12 @@ function fileLabel(f) {
    horizontal inset so it lines up with the row text above it. */
 .queued-bar-footer {
   display: flex;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+  justify-content: safe flex-end;
   padding: 0 var(--space-5) var(--space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .queued-bar-action {

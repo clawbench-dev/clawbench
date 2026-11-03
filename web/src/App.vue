@@ -59,6 +59,7 @@
         :file-name="downloadFileName"
         :received="downloadReceived"
         :total="downloadTotal"
+        :speed="downloadSpeed"
         @cancel="cancelDownload"
       />
 
@@ -79,6 +80,7 @@
               <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
+              <span v-if="liveDotVisible(tab, leftTab === tab)" class="dock-badge dock-badge--live" />
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
@@ -217,6 +219,17 @@
                     mode="project"
                     :active="panelIsActive('history')"
                     @open-file="handleSelectFile"
+                  />
+                </TabPanel>
+
+                <!-- 会议 Tab: the meeting records, and the meeting itself.
+                     One tab, not two: 听记 and screen sharing were always the
+                     same pipeline, and a record can be either a voice meeting
+                     or a shared screen. -->
+                <TabPanel tabId="live" :activeTab="leftPanelActive" :noHeader="true">
+                  <MeetingPanel
+                    :active="panelIsActive('live')"
+                    @quote="handleMeetingQuoteButton"
                   />
                 </TabPanel>
 
@@ -532,6 +545,7 @@
               <button class="dock-btn" :data-tab="tab" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
+              <span v-if="liveDotVisible(tab, activeTab === tab)" class="dock-badge dock-badge--live" />
               <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
@@ -542,6 +556,7 @@
               <button class="dock-btn" :data-tab="singleDirectTab" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
+              <span v-if="liveDotVisible(singleDirectTab, activeTab === singleDirectTab)" class="dock-badge dock-badge--live" />
               <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
@@ -627,6 +642,11 @@ import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
+// 会议: records + the meeting itself (screen share or voice only). The tab is
+// always offered — the list is readable even on a host that cannot capture.
+const MeetingPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/live/MeetingPanel.vue') }),
+)
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
@@ -688,6 +708,8 @@ import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
+import { useLiveShare } from './composables/useLiveShare.ts'
+import { useMeetingHistory } from './composables/useMeetingHistory.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -1583,6 +1605,49 @@ function handleOpenUsageMeter(e?: Event) {
   switchTab('settings')
 }
 
+/**
+ * Payload of the `clawbench-open-meeting` event (meeting notification tap, or
+ * a quote jumping to the meeting it was taken from).
+ */
+interface OpenMeetingDetail { token?: string; projectPath?: string; fromNotificationCenter?: boolean }
+
+/**
+ * Handle clawbench-open-meeting.
+ *
+ * The meeting panel listens to the SAME event and sets its own view (it owns
+ * the list/detail/stage state). This handler does the two things the panel
+ * cannot: switch to the meeting tab, and — for a row from another project —
+ * rebuild that project first. A meeting record is project-scoped, so opening
+ * it against the old project would 404 and land on an empty detail page.
+ */
+function handleOpenMeeting(e: Event) {
+  const detail = (e as CustomEvent<OpenMeetingDetail>).detail
+  if (!detail?.token) {
+    appLog.w(TAG, 'clawbench-open-meeting: no token in detail, ignoring')
+    return
+  }
+  const { token, projectPath } = detail
+  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
+  if (!crossProject) recordNotificationOrigin(detail)
+  if (crossProject) {
+    // The panel already handled the original event, against the OLD project.
+    // Re-dispatch once the switch has landed: the second pass is the one whose
+    // detail fetch can find the record. (Same-project jumps need no second
+    // dispatch — the first one is already correct.)
+    hotSwitchProject(projectPath, null)
+      .then(() => {
+        switchTab('live')
+        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', { detail: { token } }))
+      })
+      .catch(() => {
+        appLog.w(TAG, 'clawbench-open-meeting: project switch failed, opening the current project')
+        switchTab('live')
+      })
+    return
+  }
+  switchTab('live')
+}
+
 // Register browse-scoped drawers with tab-drawer binding
 const detailsDrawer = useTabDrawer('view')
 const tocDrawer = useTabDrawer('view')
@@ -1634,7 +1699,7 @@ const markdownViewMode = ref('rendered')
 const toast = useToast()
 provide('toast', toast)
 
-const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, downloadSpeed, cancelDownload } = useDownloadProgress()
 
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
@@ -1951,6 +2016,15 @@ async function restoreProjectWorkspace() {
 }
 
 const { isAppMode, isDesktopApp } = useAppMode()
+// A running share is not a count, so it gets a tinted tab rather than a badge:
+// "1" would be meaningless, and a dot needs a slot the badge layer does not have
+// in both dock variants.
+const liveShareState = useLiveShare().state
+const liveShareActive = computed(() => liveShareState.value !== 'idle')
+// A running meeting (screen or voice) is ONE state: the dock shows a single
+// accent dot (`liveDotVisible` below). There is deliberately no red "recording"
+// tint any more — red is reserved for errors, and "recording vs publishing" is
+// a distinction that only matters inside the panel.
 const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
@@ -2648,6 +2722,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
   window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
+  window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -3486,6 +3561,64 @@ const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
+const meetingHistory = useMeetingHistory()
+
+/**
+ * Stage a meeting quote straight into the chat draft — the DRAG path.
+ *
+ * Dropping a row on the chat already means "put this in the conversation", so
+ * there is no composer detour asking for a note; the card can still be
+ * annotated afterwards, while it is staged. The payload only carries the token:
+ * the meeting's text is fetched here, so the list-row drag and the detail
+ * header's quote button produce an identical card. A meeting with nothing
+ * written yet produces no card at all — a quote with only a title would spend a
+ * prompt slot saying nothing.
+ */
+async function handleMeetingQuote(token: string): Promise<void> {
+  if (!token) return
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (!quote) {
+    toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
+    return
+  }
+  addStagedQuote(quote)
+  switchTab('chat')
+  toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
+    icon: 'chat',
+    type: 'success',
+    duration: 1800,
+  })
+}
+
+/**
+ * "Quote in chat" from the meeting detail header — the SAME interaction as the
+ * issue/PR detail header: the shared quote bar opens in composer mode with the
+ * meeting previewed as a chip and nothing quoted yet. The user annotates it (or
+ * selects part of the minutes, which then becomes the quoted content), and the
+ * card only reaches a chat input when they commit.
+ *
+ * Staging on click — what this used to do — read as "attach this", with no
+ * place to say why, and it also jumped the user to the chat tab while the bar
+ * had a destination row of its own.
+ *
+ * The content has to be fetched before the bar opens (a meeting is addressed by
+ * token, not a path), which is why the quote is built here and handed to the
+ * composer instead of the composer deriving it from a locator.
+ */
+async function handleMeetingQuoteButton(token: string): Promise<void> {
+  if (!token) return
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (!quote) {
+    toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
+    return
+  }
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
+}
+
 // "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
 // composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
 // text is quoted by default — the user selects the part they care about, then
@@ -3586,6 +3719,12 @@ function onChatColDrop(e: DragEvent) {
   const quote = readQuoteDragData(e.dataTransfer)
   if (quote) {
     e.preventDefault()
+    // A meeting drag carries identity only (dragstart cannot await); the text
+    // is fetched here before the card is staged.
+    if (quote.meetingToken) {
+      void handleMeetingQuote(quote.meetingToken)
+      return
+    }
     addStagedQuote(quote)
     switchTab('chat')
     toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: 'chat', type: 'success', duration: 1800 })
@@ -3619,6 +3758,20 @@ function wideDockBtnClass(tab: string) {
     'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
   }
+}
+/**
+ * A live share is a STATE, not an unread count: there is no number to show, so
+ * the dock marks the tab with a plain dot instead of a count pill. It is
+ * deliberately not a red icon tint — red reads as an error/recording state,
+ * while a share is a normal ongoing activity, so the dot borrows the theme
+ * accent the panel header's own marker uses.
+ *
+ * Hidden while the live tab itself is active, like every other dock badge: the
+ * panel header already says "live" there, and a badge on the tab you are
+ * looking at carries no information.
+ */
+function liveDotVisible(tab: string, isActive: boolean) {
+  return tab === 'live' && liveShareActive.value && !isActive
 }
 // Badge lookups shared by the narrow popup, the inline overflow buttons and the
 // wide-screen dock. One switch per concern instead of one per dock.
@@ -4526,6 +4679,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
     window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
+    window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
@@ -5164,6 +5318,30 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+/* A share is on air: a state dot, not a tinted icon. Red is reserved for
+   errors and for the recording indicator; a share is ordinary ongoing work, so
+   the dot uses the theme accent (same marker colour as the panel header). */
+.dock-badge--live {
+  animation: dock-live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dock-live-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The dot itself is the information; the pulse is not, so it can be frozen. */
+@media (prefers-reduced-motion: reduce) {
+  .dock-badge--live {
+    animation: none;
+  }
 }
 
 .dock-badge {

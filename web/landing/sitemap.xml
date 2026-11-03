@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 只发布到主域：sitemap 里的 URL 必须与 sitemap 自身同宿主，跨宿主条目会被搜索引擎整条丢弃。
+     不写 lastmod —— 它是静态文件，写死的日期会随着改动变旧，不如不声明。 -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://clawbench.pages.dev/</loc>
+  </url>
+</urlset>

@@ -90,13 +90,14 @@
           <CopyButton :text="quoteData?.text || ''" class="qq-copy-btn" @click.stop />
         </div>
 
-        <!-- Pending quote target (composer mode only): the file or issue/PR the
-             bar will quote when committed. Read-only — it is not in the chat
-             context yet, so there is nothing to remove here; closing the bar
-             discards it. On commit it becomes a quote card (same card as a text
-             selection quote), not a separate attachment. -->
+        <!-- Pending quote target (composer mode only): the file, issue/PR or
+             conversation the bar will quote when committed. Read-only — it is
+             not in the chat context yet, so there is nothing to remove here;
+             closing the bar discards it. On commit it becomes a quote card
+             (same card as a text selection quote), not a separate attachment. -->
         <div v-if="composerAttachment" class="qq-pending-attachment">
           <Link v-if="composerAttachment.kind === 'url'" :size="13" class="qq-pending-icon" />
+          <MessageSquare v-else-if="composerAttachment.kind === 'quote'" :size="13" class="qq-pending-icon" />
           <FileIcon v-else :path="composerAttachment.path || composerAttachment.label" :size="13" class="qq-pending-icon" />
           <span class="qq-pending-label">{{ composerAttachment.label }}</span>
         </div>

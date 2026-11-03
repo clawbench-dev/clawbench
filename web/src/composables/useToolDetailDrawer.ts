@@ -132,7 +132,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
       summary: block.summary || toolCallSummary(block),
       inputHtml: hasInput ? formatToolInput(block.input!, block.name || '', { done: block.done, status: block.status, output: block.output, askKey: askKeyForToolBlock(block) }) : '',
-      outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '', { annotate: !!block.done }) : '',
+      outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '', { annotate: !!block.done, input: block.input }) : '',
       status: block.status || '',
       done: !!block.done,
       duration: block.duration_ms || 0,
@@ -188,7 +188,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
         }
         if (shared.output) {
           // Share snapshots carry a finished tool, so annotate unconditionally.
-          toolDetailData.value.outputHtml = formatToolOutput(shared.output, block.name || '')
+          toolDetailData.value.outputHtml = formatToolOutput(shared.output, block.name || '', { input: shared.input as Record<string, unknown> | undefined })
         }
         if (shared.done !== undefined) toolDetailData.value.done = !!shared.done
         if (shared.status) toolDetailData.value.status = shared.status
@@ -223,9 +223,13 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       }
       const data = await resp.json()
       const { formatToolInput } = chatRender
-      if (data.input) {
-        const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
-        toolDetailData.value.inputHtml = formatToolInput(input, block.name || data.name || '', { done: block.done, status: block.status, output: data.output || '', askKey: askKeyForToolBlock(block || data) })
+      // Parsed once: the output renderer needs the same input (ViewImage loads
+      // its preview from `image_path`).
+      const fetchedInput: Record<string, unknown> | undefined = data.input
+        ? (typeof data.input === 'string' ? JSON.parse(data.input) : data.input)
+        : undefined
+      if (fetchedInput) {
+        toolDetailData.value.inputHtml = formatToolInput(fetchedInput, block.name || data.name || '', { done: block.done, status: block.status, output: data.output || '', askKey: askKeyForToolBlock(block || data) })
       } else {
         toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
       }
@@ -233,7 +237,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
         // This fetch also runs while the tool is still streaming (the drawer's
         // 3 s poll), so annotation follows the same done-gate as the live path.
         const finished = data.done !== undefined ? !!data.done : !!block.done
-        toolDetailData.value.outputHtml = formatToolOutput(data.output, block.name || data.name || '', { annotate: finished })
+        toolDetailData.value.outputHtml = formatToolOutput(data.output, block.name || data.name || '', { annotate: finished, input: fetchedInput })
       }
       // Verify file path and commit hash annotations after DOM update
       _verifyAnnotations()

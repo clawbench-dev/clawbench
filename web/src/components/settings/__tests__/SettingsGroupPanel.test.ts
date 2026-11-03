@@ -155,8 +155,8 @@ vi.mock('@/components/settings/settingsFieldMap', async () => {
         { labelKey: 'settings.items.voiceEdgeXiaoxiao', value: 'zh-CN-XiaoxiaoNeural' },
         { labelKey: 'settings.items.voiceEdgeYunxi', value: 'zh-CN-YunxiNeural' },
       ],
-      piper: [
-        { labelKey: 'settings.items.voicePiperHuayanMedium', value: 'zh_CN-huayan-medium' },
+      alt: [
+        { labelKey: 'settings.items.voiceAltVoice', value: 'alt-voice' },
       ],
     },
   }
@@ -183,7 +183,7 @@ const i18n = createI18n({
           ttsEngine: 'TTS引擎',
           ttsEngineDesc: 'TTS引擎',
           ttsEngineEdge: 'Edge',
-          ttsEnginePiper: 'Piper',
+          ttsEngineAlt: 'Alt',
           ttsVoice: '语音',
           portForwardEnabled: '启用端口映射',
           portForwardPort: '端口',
@@ -193,7 +193,7 @@ const i18n = createI18n({
           pushModeDisabled: '禁用',
           voiceEdgeXiaoxiao: '晓晓',
           voiceEdgeYunxi: '云希',
-          voicePiperHuayanMedium: '华研',
+          voiceAltVoice: '备选音色',
           terminalFontSize: '终端字号',
           terminalIdleTimeout: '空闲超时',
           terminalMaxSessions: '最大会话数',
@@ -266,7 +266,7 @@ function makeTtsConfig(): GroupPanelConfig {
       source: 'server',
       options: [
         { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
-        { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
+        { labelKey: 'settings.items.ttsEngineAlt', value: 'alt' },
       ],
     },
     commonFields: [
@@ -274,9 +274,9 @@ function makeTtsConfig(): GroupPanelConfig {
     ],
     optionSubFields: [
       {
-        when: 'piper',
+        when: 'alt',
         fields: [
-          { labelKey: 'settings.items.apiBaseUrl', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.apiBaseUrl' },
+          { labelKey: 'settings.items.apiBaseUrl', key: 'tts.alt.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.apiBaseUrl' },
         ],
       },
     ],
@@ -356,6 +356,7 @@ function mountPanel(config: GroupPanelConfig, showTitle = true) {
 // ── Tests ──
 
 describe('SettingsGroupPanel', () => {
+
   beforeEach(() => {
     vi.clearAllMocks()
     // Reset localValues
@@ -584,9 +585,9 @@ describe('SettingsGroupPanel', () => {
       localValues['tts.engine'] = 'edge'
       const wrapper = mountPanel(makeTtsConfig())
       const vm = wrapper.vm as any
-      await vm.$.setupState.handleEntrySelect('piper')
+      await vm.$.setupState.handleEntrySelect('alt')
 
-      expect(localValues['tts.engine']).toBe('piper')
+      expect(localValues['tts.engine']).toBe('alt')
       expect(mockDrawerClose).toHaveBeenCalled()
     })
 
@@ -595,10 +596,10 @@ describe('SettingsGroupPanel', () => {
       localValues['tts.voice'] = 'zh-CN-XiaoxiaoNeural'
       const wrapper = mountPanel(makeTtsConfig())
       const vm = wrapper.vm as any
-      await vm.$.setupState.handleEntrySelect('piper')
+      await vm.$.setupState.handleEntrySelect('alt')
 
-      expect(localValues['tts.engine']).toBe('piper')
-      expect(localValues['tts.voice']).toBe('zh_CN-huayan-medium')
+      expect(localValues['tts.engine']).toBe('alt')
+      expect(localValues['tts.voice']).toBe('alt-voice')
     })
 
     it('does not reset voice when same engine is selected', async () => {
@@ -621,7 +622,7 @@ describe('SettingsGroupPanel', () => {
       const opts = vm.$.setupState.entryOptions
       expect(opts).toHaveLength(2)
       expect(opts[0].value).toBe('edge')
-      expect(opts[1].value).toBe('piper')
+      expect(opts[1].value).toBe('alt')
     })
   })
 
@@ -685,12 +686,12 @@ describe('SettingsGroupPanel', () => {
     })
 
     it('renders optionSubFields matching current entry value', () => {
-      localValues['tts.engine'] = 'piper'
+      localValues['tts.engine'] = 'alt'
       localValues['tts.voice'] = ''
-      localValues['tts.piper.model_path'] = '/models/model.onnx'
+      localValues['tts.alt.model_path'] = '/models/model.onnx'
       const wrapper = mountPanel(makeTtsConfig())
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      // Should have tts.voice + piper.model_path (with section header)
+      // Should have tts.voice + alt.model_path (with section header)
       expect(items.length).toBe(2)
     })
 
@@ -699,7 +700,7 @@ describe('SettingsGroupPanel', () => {
       localValues['tts.voice'] = 'zh-CN-XiaoxiaoNeural'
       const wrapper = mountPanel(makeTtsConfig())
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      // Only tts.voice, no piper sub-fields
+      // Only tts.voice, no alt sub-fields
       expect(items.length).toBe(1)
     })
 

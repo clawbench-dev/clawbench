@@ -387,7 +387,7 @@ const props = defineProps({
   sessionSpeaker: { type: Object, default: null },
   /** Host member row id, so the host's messages get a distinct style. */
   hostMemberId: { type: String, default: '' },
-  /** The configured group-chat user nickname (chat.user_nickname). Renders the
+  /** The configured user nickname (user.nickname). Renders the
    *  reserved human target and is what an @chip shows for the reader. Defaults
    *  to the built-in reserved name so callers that predate the setting work. */
   userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
@@ -479,7 +479,7 @@ const bccExpanded = ref(false)
 // mentionTargets maps the parsed mention targets to display info for the
 // summary row. Names that no longer resolve (removed members) still render as a
 // plain @name so the routing intent stays visible. The reserved human target is
-// shown as the configured nickname (chat.user_nickname), matching what the
+// shown as the configured nickname (user.nickname), matching what the
 // agents actually wrote.
 const mentionTargets = computed(() => {
   const resolve = props.resolveSpeakerByName

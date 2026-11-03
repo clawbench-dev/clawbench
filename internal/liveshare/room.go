@@ -32,6 +32,11 @@ var (
 	ErrViewerExists = errors.New("liveshare: viewer already present")
 	// ErrTalkNotAllowed means the room has not enabled audience speech.
 	ErrTalkNotAllowed = errors.New("liveshare: talking is not enabled for this room")
+	// ErrTalkMuted means the publisher blocked this viewer's microphone. It is
+	// distinct from ErrTalkNotAllowed so the client can say "the host muted
+	// you" instead of "the room has no speech", which is a different situation
+	// and a different fix.
+	ErrTalkMuted = errors.New("liveshare: viewer is muted by the publisher")
 	// ErrScreenNotAllowed means the room has not enabled audience screen sharing.
 	ErrScreenNotAllowed = errors.New("liveshare: screen sharing is not enabled for this room")
 	// ErrScreenBusy means another viewer is already sharing a screen.
@@ -84,6 +89,12 @@ type Viewer struct {
 	// talking is the viewer's microphone state. There is no per-viewer grant:
 	// the room-level switch is the only authorisation (see talk.go).
 	talking bool
+
+	// muted is the publisher's per-viewer block. It is NOT the same thing as
+	// `talking`: `talking` is the viewer's own switch, while `muted` is a
+	// decision only the publisher can undo. A muted viewer's talk-start is
+	// refused, so the microphone stays off until the host unmutes it.
+	muted bool
 }
 
 // Talking reports whether this viewer's microphone is on.
@@ -91,6 +102,13 @@ func (v *Viewer) Talking() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.talking
+}
+
+// Muted reports whether the publisher has blocked this viewer's microphone.
+func (v *Viewer) Muted() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.muted
 }
 
 // Room is a single live share. All methods are safe for concurrent use.
@@ -101,6 +119,11 @@ type Room struct {
 	projectKey string
 	title      string
 	createdAt  time.Time
+
+	// publisherName is the host's nickname, from the `publish` frame. Empty is
+	// a legitimate value (the client did not send one) and only affects the
+	// label in the audience's member list.
+	publisherName string
 
 	publisher Sink
 	// publisherReserved is set between ReservePublisher and AttachPublisher.
@@ -121,11 +144,33 @@ type Room struct {
 	screenEnabled bool
 	screenSharer  string
 
+	// videoEnabled tells viewers whether the publisher is sending a picture.
+	// Voice meetings keep the same room, signaling and chat; they simply have no
+	// video track, and a viewer must not sit on "connecting" waiting for one.
+	videoEnabled bool
+
+	// cameraEnabled and hostScreen split "there is a picture" into the two
+	// things it can be made of. They are orthogonal: a video meeting may run
+	// camera + screen at once (the camera goes out as a second video track and
+	// renders as a picture-in-picture tile), a screen-only share has hostScreen
+	// but no camera, and a voice meeting has neither.
+	//
+	// hostScreen is NOT the same as screenEnabled above: that one is the
+	// audience's permission to share, this one is what the publisher is showing.
+	cameraEnabled bool
+	hostScreen    bool
+
 	// notesEnabled tells viewers whether the publisher is running AI 听记.
 	// Purely informational: the transcript itself never passes through the room
 	// (it is uploaded over HTTP), but a viewer must not show a "听记" control for
 	// a share that has none.
 	notesEnabled bool
+
+	// controlEnabled tells viewers whether they may ask to drive this
+	// publisher's pointer and keyboard. The publisher is the only one that can
+	// answer: injection happens on the host machine (it needs the input
+	// injector) and only a whole-screen capture has a desktop to map onto.
+	controlEnabled bool
 
 	maxViewers  int
 	idleTimeout time.Duration
@@ -144,6 +189,51 @@ func (r *Room) Title() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.title
+}
+
+// PublisherName is the host's nickname for the audience's member list.
+func (r *Room) PublisherName() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.publisherName
+}
+
+// SetPublisherName records the host's nickname from the `publish` frame.
+func (r *Room) SetPublisherName(name string) {
+	r.mu.Lock()
+	r.publisherName = name
+	r.mu.Unlock()
+}
+
+// Roster returns the participant list as the audience sees it: the publisher
+// first, then the viewers in join order.
+//
+// Join order, not map order: a viewer list that reshuffles on every frame would
+// make the same meeting look different each time somebody speaks. Ids are
+// allocated by nextID, so walking it reproduces the order exactly.
+func (r *Room) Roster() []RosterEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := make([]RosterEntry, 0, len(r.viewers)+1)
+	if r.publisher != nil {
+		out = append(out, RosterEntry{ID: "host", Name: r.publisherName, Host: true})
+	}
+	for i := 1; i <= r.nextID; i++ {
+		v := r.viewers[viewerID(i)]
+		if v == nil {
+			continue
+		}
+		v.mu.Lock()
+		out = append(out, RosterEntry{
+			ID:      v.ID,
+			Name:    v.Name,
+			Talking: v.talking,
+			Muted:   v.muted,
+		})
+		v.mu.Unlock()
+	}
+	return out
 }
 
 // TalkEnabled reports whether the audience may request speech.
@@ -226,6 +316,56 @@ func (r *Room) ReleaseScreen(viewerID string) bool {
 	return true
 }
 
+// VideoEnabled reports whether the publisher is sending video for this room.
+func (r *Room) VideoEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.videoEnabled
+}
+
+// SetVideoEnabled flips the video flag. Set on every create call, like the
+// notes flag: a room reused inside the grace window must not inherit the
+// previous meeting's mode.
+func (r *Room) SetVideoEnabled(on bool) {
+	r.mu.Lock()
+	r.videoEnabled = on
+	r.mu.Unlock()
+	r.touch()
+}
+
+// CameraEnabled reports whether the publisher's camera is on.
+func (r *Room) CameraEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cameraEnabled
+}
+
+// SetCameraEnabled flips the camera flag. Written on create and again whenever
+// the publisher toggles the camera mid-meeting, so a viewer joining late sees
+// the current state in its `joined` frame rather than the state at creation.
+func (r *Room) SetCameraEnabled(on bool) {
+	r.mu.Lock()
+	r.cameraEnabled = on
+	r.mu.Unlock()
+	r.touch()
+}
+
+// HostScreen reports whether the publisher's picture is a screen share.
+func (r *Room) HostScreen() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hostScreen
+}
+
+// SetHostScreen records whether the publisher shares a screen. Set on every
+// create call for the same reason as the video flag.
+func (r *Room) SetHostScreen(on bool) {
+	r.mu.Lock()
+	r.hostScreen = on
+	r.mu.Unlock()
+	r.touch()
+}
+
 // NotesEnabled reports whether the publisher is running AI 听记 for this room.
 func (r *Room) NotesEnabled() bool {
 	r.mu.Lock()
@@ -233,8 +373,31 @@ func (r *Room) NotesEnabled() bool {
 	return r.notesEnabled
 }
 
+// ControlEnabled reports whether viewers may ask to drive the publisher's
+// pointer and keyboard.
+//
+// This is a PUBLISHER capability, not a viewer one: injection happens on the
+// host machine, so only the host knows whether it can accept a request (it needs
+// the input injector and a whole-screen capture). Viewers grey their button on
+// this flag instead of asking and being refused.
+func (r *Room) ControlEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.controlEnabled
+}
+
+// SetControlEnabled advertises whether remote control is available right now.
+// Called by the publisher whenever its capability or its picture kind changes.
+func (r *Room) SetControlEnabled(on bool) {
+	r.mu.Lock()
+	r.controlEnabled = on
+	r.mu.Unlock()
+	r.touch()
+}
+
 // SetNotesEnabled flips the AI 听记 flag. Set from the create call, before the
-// publisher socket attaches; viewers learn it from their `joined` frame.
+// publisher socket attaches, and again whenever the publisher toggles 听记 while
+// the meeting runs — viewers learn the change from a `notes-enabled` frame.
 func (r *Room) SetNotesEnabled(on bool) {
 	r.mu.Lock()
 	r.notesEnabled = on
@@ -380,6 +543,38 @@ func (r *Room) RemoveViewer(id string) {
 	r.touch()
 }
 
+// KickViewer removes a viewer and asks its transport to hang up.
+//
+// Removal and the hang-up are one operation on purpose: leaving the socket open
+// would let a removed viewer keep sending offers and control frames under an id
+// the room no longer knows. The frame is sent BEFORE the transport closes so the
+// client can explain why it was disconnected instead of reporting a dropped
+// connection.
+//
+// Returns whether the viewer was sharing its screen, so the caller can tell
+// everybody else that the picture is gone.
+func (r *Room) KickViewer(id string) (wasSharing bool) {
+	r.mu.Lock()
+	v := r.viewers[id]
+	if v == nil {
+		r.mu.Unlock()
+		return false
+	}
+	delete(r.viewers, id)
+	wasSharing = r.screenSharer == id
+	if wasSharing {
+		r.screenSharer = ""
+	}
+	r.mu.Unlock()
+
+	_ = v.sink.Send(ViewerMessage{Type: MsgKicked})
+	if closer, ok := v.sink.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
+	r.touch()
+	return wasSharing
+}
+
 // Viewer returns the viewer with the given id, or nil.
 func (r *Room) Viewer(id string) *Viewer {
 	r.mu.Lock()
@@ -518,15 +713,33 @@ func (g *Registry) SetMaxRooms(n int) {
 // Idempotent by design: the publisher's "start sharing" button may be pressed
 // twice (double click, retry after a flaky response), and minting a second token
 // would silently invalidate the link the user already copied.
+//
+// title is an INITIAL value. A room that is already publishing keeps the title
+// it has; only a room nobody is publishing to (a fresh one, or one still waiting
+// for its publisher to attach) takes the new one.
 func (g *Registry) Create(projectKey, title string) (*Room, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	if token, ok := g.byProject[projectKey]; ok {
 		if room, live := g.rooms[token]; live {
-			room.mu.Lock()
-			room.title = title
-			room.mu.Unlock()
+			// The title is a STARTING state, like the room's switches: a meeting
+			// that is already publishing keeps the name its audience is looking
+			// at. This path is taken by every retry and by a second device (the
+			// create endpoint is idempotent per project), and the caller falls
+			// back to a DATE PLACEHOLDER when the body carries no title — so an
+			// unconditional write would rename a running meeting for everybody
+			// watching it, plus every notification raised afterwards.
+			//
+			// Checked here rather than in the caller because this is the only
+			// writer of title: a caller-side "look up the live room first" has a
+			// window where the room is reaped between the lookup and Create, and
+			// the brand-new room would inherit the dead meeting's name.
+			if !room.HasPublisher() {
+				room.mu.Lock()
+				room.title = title
+				room.mu.Unlock()
+			}
 			room.touch()
 			return room, nil
 		}
@@ -540,16 +753,23 @@ func (g *Registry) Create(projectKey, title string) (*Room, error) {
 		return nil, ErrTooManyRooms
 	}
 
-	token, err := newToken()
+	token, err := NewToken()
 	if err != nil {
 		return nil, err
 	}
 	room := &Room{
-		token:       token,
-		projectKey:  projectKey,
-		title:       title,
-		createdAt:   time.Now(),
-		viewers:     make(map[string]*Viewer),
+		token:      token,
+		projectKey: projectKey,
+		title:      title,
+		createdAt:  time.Now(),
+		viewers:    make(map[string]*Viewer),
+		// Default true: a room created by an older client (or by a test) still
+		// means "screen share", which is what every room did before voice mode.
+		videoEnabled: true,
+		// Same reasoning: before video meetings existed the picture WAS a
+		// screen, and there was no camera. The create call overwrites both for
+		// a room that is not live yet (see serveLiveShareCreate).
+		hostScreen:  true,
 		maxViewers:  g.maxViewers,
 		idleTimeout: g.idleTimeout,
 		lastActive:  time.Now(),
@@ -566,8 +786,20 @@ func (g *Registry) Get(token string) *Room {
 	return g.rooms[token]
 }
 
-// Delete removes a room by token, detaching the publisher. Deleting an unknown
-// token is a no-op.
+// Delete removes a room by token, detaching AND hanging up its publisher.
+// Deleting an unknown token is a no-op.
+//
+// Hanging up matters because the room can be deleted by somebody other than the
+// publisher's own socket: the host ends the meeting from a second device (the
+// DELETE endpoint), or a stale room is rotated out before a new meeting starts.
+// Forgetting the sink alone left that publisher page showing "sharing" forever —
+// its socket stayed open and nothing ever told it the room was gone, so only a
+// reload or a new create noticed. Closing the socket is the signal its teardown
+// already handles (the same one a dropped connection gives).
+//
+// Viewers are the caller's business: the registry does not know how to phrase
+// "the publisher is gone", so `Reap` returns the rooms instead of discarding
+// them silently.
 func (g *Registry) Delete(token string) {
 	g.mu.Lock()
 	room, ok := g.rooms[token]
@@ -579,7 +811,27 @@ func (g *Registry) Delete(token string) {
 	}
 	g.mu.Unlock()
 	if ok {
-		room.SetPublisher(nil)
+		room.endPublisher()
+	}
+}
+
+// endPublisher detaches the publisher and closes its transport.
+//
+// The reservation is cleared too: a socket that reserved the slot but had not
+// finished its upgrade when the room was deleted must not keep a claim on a room
+// nobody can look up any more.
+func (r *Room) endPublisher() {
+	r.mu.Lock()
+	p := r.publisher
+	r.publisher = nil
+	r.publisherReserved = false
+	r.mu.Unlock()
+	r.touch()
+	if p == nil {
+		return
+	}
+	if closer, ok := p.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 }
 
@@ -622,8 +874,12 @@ func (g *Registry) FindByProject(projectKey string) *Room {
 	return g.rooms[token]
 }
 
-// newToken mints a 32-character lowercase hex token.
-func newToken() (string, error) {
+// NewToken mints a 32-character lowercase hex token.
+//
+// Exported because the notes pipeline mints its own token for solo (room-less)
+// sessions: the format has to stay identical to a share token, otherwise the
+// notes endpoints would accept one and reject the other.
+func NewToken() (string, error) {
 	b := make([]byte, tokenBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

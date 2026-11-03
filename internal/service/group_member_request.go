@@ -30,4 +30,10 @@ func applyMemberResumeOverrides(req *ai.ChatRequest, externalSessionID string, i
 		req.SessionID = externalSessionID
 	}
 	// ACP: leave req.SessionID as the member row id (pool key).
+	//
+	// The resume flags above decide whether the system prompt is re-sent, so the
+	// user-identity injection has to be re-evaluated after them: BuildChatRequest
+	// decided while Resume was still false and left the identity in the system
+	// prompt, which a resumed member turn never re-sends.
+	EnsureUserIdentityInPrompt(req)
 }

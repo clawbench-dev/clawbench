@@ -50,7 +50,7 @@
       <div v-else-if="error" class="git-history-error">{{ error }}</div>
       <div v-else-if="!isGit" class="git-history-empty">
         <div class="empty-state-card">
-          <GitBranch :size="36" :stroke-width="1.5" style="color:var(--text-muted);" />
+          <GitBranch class="empty-state__icon" />
           <div class="empty-state-title">{{ t('git.commitList.notGitRepo') }}</div>
           <div class="empty-state-desc">{{ t('git.commitList.notGitRepoDesc') }}</div>
           <div class="empty-state-hint">
@@ -60,7 +60,7 @@
       </div>
       <div v-else-if="commits.length === 0 && untracked" class="git-history-empty">
         <div class="empty-state-card">
-          <FileText :size="36" :stroke-width="1.5" style="color:var(--text-muted);" />
+          <FileText class="empty-state__icon" />
           <div class="empty-state-title">{{ t('git.commitList.untrackedFile') }}</div>
           <div class="empty-state-desc">{{ t('git.commitList.untrackedDesc') }}</div>
           <div class="empty-state-hint">
@@ -68,7 +68,12 @@
           </div>
         </div>
       </div>
-      <div v-else-if="commits.length === 0" class="git-history-empty">{{ t('git.commitList.noCommits') }}</div>
+      <div v-else-if="commits.length === 0" class="git-history-empty">
+        <div class="empty-state-card">
+          <GitCommitHorizontal class="empty-state__icon" />
+          <div class="empty-state-title">{{ t('git.commitList.noCommits') }}</div>
+        </div>
+      </div>
       <div v-else class="commit-list-container">
         <!-- Graph SVG - hidden during search or file mode (no multi-branch graph for single file) -->
         <GitGraph
@@ -125,7 +130,7 @@
 </template>
 
 <script setup>
-import { FileText, Info, GitBranch, MoreVertical } from 'lucide-vue-next'
+import { FileText, GitBranch, GitCommitHorizontal, Info, MoreVertical } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'

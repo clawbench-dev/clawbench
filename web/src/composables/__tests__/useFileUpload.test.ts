@@ -505,6 +505,40 @@ describe('useFileUpload', () => {
       expect(Math.max(...samples)).toBe(100)
     })
 
+    it('reports the batch transfer rate and resets it when the batch ends', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(0)
+      const samples: number[] = []
+
+      xhrSendHandler = (xhr) => {
+        vi.setSystemTime(1000)
+        xhr.upload.onprogress?.({ lengthComputable: true, loaded: 100, total: 1000 })
+        vi.setSystemTime(2000)
+        xhr.upload.onprogress?.({ lengthComputable: true, loaded: 150, total: 1000 })
+        vi.setSystemTime(5000)
+        xhr.upload.onprogress?.({ lengthComputable: true, loaded: 250, total: 1000 })
+        respondSuccess(xhr, 'dir/f.bin')
+      }
+
+      const upload = useFileUpload()
+      const { watch } = await import('vue')
+      const stop = watch(upload.dirUploadSpeed, (v) => samples.push(v), { flush: 'sync' })
+
+      try {
+        await upload.handleFileDropToDir([makeFile('f.bin', 1000)], '/dir')
+      } finally {
+        stop()
+        vi.useRealTimers()
+      }
+
+      // 100 B over 1 s, then the windowed average over 2 s and 4 s. A meter
+      // that used only the last event (50 B/s) or a lifetime average would
+      // produce different numbers.
+      expect(samples.slice(0, 3)).toEqual([100, 75, 37.5])
+      // The bar is hidden after the batch, so the rate must reset with it.
+      expect(upload.dirUploadSpeed.value).toBe(0)
+    })
+
     it('multiple files in dir upload', async () => {
       let callCount = 0
       xhrSendHandler = (xhr) => {

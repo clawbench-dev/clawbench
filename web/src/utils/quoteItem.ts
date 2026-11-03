@@ -69,7 +69,7 @@ export function quotableMessageText(
  * back to 'message' for anything without a url/path — which would label a
  * terminal quote as "chat message" in the drawer.
  */
-export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection' | 'terminal'
+export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting'
 
 /** The normalized quote shape used by every quote surface. */
 export interface QuoteItem {
@@ -100,6 +100,8 @@ export interface QuoteItem {
   sessionId?: string
   /** Task execution id when the quote came from one run's detail view. */
   executionId?: string
+  /** Meeting token when the quote came from a meeting record. */
+  meetingToken?: string
 }
 
 /** The staged-quote shape owned by useChatContext (structurally compatible). */
@@ -118,6 +120,7 @@ export interface StagedQuoteLike {
   taskId?: number
   sessionId?: string
   executionId?: string
+  meetingToken?: string
 }
 
 /**
@@ -151,6 +154,7 @@ export function fromStagedQuote(q: StagedQuoteLike): QuoteItem {
     taskId: q.taskId,
     sessionId: q.sessionId,
     executionId: q.executionId,
+    meetingToken: q.meetingToken,
   }
 }
 
@@ -178,6 +182,7 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
     taskId: f.taskId,
     sessionId: f.sessionId,
     executionId: f.executionId,
+    meetingToken: f.meetingToken,
   }
 }
 
@@ -290,6 +295,9 @@ export function toFileEntry(q: QuoteItem): FileEntry {
     ...(q.sessionId ? { sessionId: q.sessionId } : {}),
     ...(q.messageId ? { messageId: q.messageId } : {}),
     ...(q.executionId ? { executionId: q.executionId } : {}),
+    // Without this the sent meeting quote loses its jump target and falls back
+    // to opening its own LABEL as a file path.
+    ...(q.meetingToken ? { meetingToken: q.meetingToken } : {}),
   }
 }
 
@@ -318,6 +326,7 @@ export type QuoteDisplayType =
   | 'terminal'  // terminal selection
   | 'chat'      // chat message
   | 'file'      // file / code
+  | 'meeting'   // meeting record (minutes / transcript)
   | 'selection' // free-form selection with no addressable source
 
 /**
@@ -336,6 +345,7 @@ const TYPE_MARKER_LANGUAGE: Record<string, QuoteDisplayType> = {
   'diff': 'diff',
   'pr': 'pr',
   'issue': 'issue',
+  'meeting': 'meeting',
 }
 
 /**
@@ -346,13 +356,14 @@ const TYPE_MARKER_LANGUAGE: Record<string, QuoteDisplayType> = {
  * selected a hunk means the commit, not the file.
  */
 export function resolveQuoteType(q: Pick<QuoteItem,
-  'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha' | 'taskId' | 'executionId'
+  'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha' | 'taskId' | 'executionId' | 'meetingToken'
 >): QuoteDisplayType {
   // 1. An explicit type marker from the surface that produced the quote.
   const marked = q.language ? TYPE_MARKER_LANGUAGE[q.language] : undefined
   if (marked) return marked
 
   // 2. Locators, most specific first.
+  if (q.meetingToken) return 'meeting'
   if (q.executionId) return 'exec'
   if (q.taskId) return 'task'
   // A CI run carries both its address and the commit it built; a git diff only

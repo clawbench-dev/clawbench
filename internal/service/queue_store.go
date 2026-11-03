@@ -419,25 +419,28 @@ func GetQueuedMessage(sessionID, queueID string) (model.QueuedMessage, bool, err
 	return row.ToModel(), true, nil
 }
 
-// UpdateQueuedMessageContent rewrites the text of a still-queued message,
-// addressed by (session_id, queue_id), and returns the updated row.
+// UpdateQueuedMessage rewrites a still-queued message in place, addressed by
+// (session_id, queue_id), and returns the updated row.
 //
 // ok=false means no row matched: the drain loop claimed it between the client
 // rendering the queue and the user saving. That MUST NOT be reported as success.
 // The message has already been sent with the OLD text, so answering "saved"
 // would leave the user believing an edit landed that never will.
 //
-// Only `content` is written. Attachments are deliberately untouched: the UI
-// edits text, and rewriting `files` would need the identity dedupe the enqueue
-// path applies (model.DedupeFileEntries) plus path re-validation, neither of
-// which belongs behind an "edit text" call.
+// files == nil keeps the existing attachments; a non-nil (possibly empty) slice
+// REPLACES them. The distinction matters because "no attachment change" and
+// "remove every attachment" are different user intents, and a caller that only
+// edits text must not silently drop the images it never looked at. The caller is
+// responsible for validating paths (handler's validateQueueFiles) and this
+// function applies model.DedupeFileEntries so a replace cannot persist the same
+// attachment twice.
 //
 // The SELECT and UPDATE run in one transaction under the global write mutex,
 // which is the same lock claimQueuedRowTx takes. Without it a claim could land
 // between the two statements: the SELECT would return the row, the UPDATE would
 // match nothing, and the caller would get a "success" carrying text that is not
 // in any row anywhere.
-func UpdateQueuedMessageContent(sessionID, queueID, content string) (model.QueuedMessage, bool, error) {
+func UpdateQueuedMessage(sessionID, queueID, content string, files []model.FileEntry) (model.QueuedMessage, bool, error) {
 	if sessionID == "" || queueID == "" {
 		return model.QueuedMessage{}, false, nil
 	}
@@ -471,10 +474,32 @@ func UpdateQueuedMessageContent(sessionID, queueID, content string) (model.Queue
 		row.Files = unmarshalFilesJSON(filesJSON.String)
 	}
 
-	if _, uErr := tx.ExecContext(context.Background(),
-		"UPDATE queued_messages SET content = ? WHERE id = ?", content, row.ID,
-	); uErr != nil {
-		return model.QueuedMessage{}, false, uErr
+	// nil means "leave attachments alone" (a text-only edit); anything else —
+	// including an empty slice — replaces them. The column is only written when
+	// a replacement was supplied: rewriting it from the parsed value would turn
+	// an unreadable stored blob into an empty list, i.e. a text edit would
+	// silently drop attachments.
+	if files == nil {
+		if _, uErr := tx.ExecContext(context.Background(),
+			"UPDATE queued_messages SET content = ? WHERE id = ?", content, row.ID,
+		); uErr != nil {
+			return model.QueuedMessage{}, false, uErr
+		}
+	} else {
+		row.Files = model.DedupeFileEntries(files)
+		var newFilesJSON string
+		if len(row.Files) > 0 {
+			data, mErr := json.Marshal(row.Files)
+			if mErr != nil {
+				return model.QueuedMessage{}, false, mErr
+			}
+			newFilesJSON = string(data)
+		}
+		if _, uErr := tx.ExecContext(context.Background(),
+			"UPDATE queued_messages SET content = ?, files = ? WHERE id = ?", content, newFilesJSON, row.ID,
+		); uErr != nil {
+			return model.QueuedMessage{}, false, uErr
+		}
 	}
 
 	if cErr := tx.Commit(); cErr != nil {

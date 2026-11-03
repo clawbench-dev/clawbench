@@ -61,6 +61,41 @@ const DefaultRestartResumeWindowMinutes = 60
 // deterministic failure cannot spin forever.
 const AutoContinueUnlimited = -1
 
+// User-identity limits. They are exported because the settings PATCH handler
+// validates against the same numbers the frontend and the prompt builder use.
+const (
+	// DefaultUserNickname is the fallback display name applied where the
+	// nickname is USED (group routing, the settings/meeting UI) when the user
+	// never configured one. It is deliberately NOT written into the config: an
+	// empty stored value means "not configured", which is distinguishable from
+	// a user who explicitly chose this word. It is also the name the
+	// group-chat routing parser reserves for the human user, so an agent named
+	// "User" is rejected.
+	DefaultUserNickname = "User"
+	// MaxUserNicknameRunes bounds the nickname. It is written verbatim into the
+	// group-routing tag's targets attribute and shown in routing chips, so it
+	// must stay short; 32 leaves generous room for CJK names. It also matches
+	// the live-share viewer-name cap, so a nickname that is valid here is valid
+	// when joining a meeting.
+	MaxUserNicknameRunes = 32
+	// MaxUserProfileRunes bounds the free-form self-description. It is injected
+	// into EVERY agent system prompt, so an unbounded value would be a
+	// per-turn cost the user cannot see. 4000 runes is a few paragraphs.
+	MaxUserProfileRunes = 4000
+)
+
+// UserConfig is the human user's identity (config.yaml `user` section).
+type UserConfig struct {
+	// Nickname is how agents address the user and how other meeting viewers see
+	// them. It must not collide with any agent name and must not contain the
+	// group-routing protocol's reserved characters (", <, >, comma).
+	Nickname string `yaml:"nickname"`
+	// Profile is a free-form self-description ("I am a backend engineer, prefer
+	// concise answers…"). Injected into every agent's system prompt so the
+	// agent understands the user's role, expertise and preferences.
+	Profile string `yaml:"profile"`
+}
+
 // Config holds the application configuration.
 type Config struct {
 	Port         int    `yaml:"port"`
@@ -103,6 +138,12 @@ type Config struct {
 		// RetentionEnabled=false, not by 0.
 		RetentionDays int `yaml:"retention_days"`
 	} `yaml:"upload"`
+	// User is the human user's identity. It is a first-class section rather
+	// than a field under chat because it is not chat behavior: the nickname is
+	// how agents address the user (single chat, group chat and meetings), and
+	// the profile is injected into every agent's system prompt so an agent can
+	// understand who it is working with.
+	User UserConfig `yaml:"user"`
 	Chat struct {
 		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)
 		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
@@ -135,12 +176,6 @@ type Config struct {
 		// the call fails — which is why it can default ON: without the model it
 		// is simply inert. (default: true)
 		AutoRenameEnabled bool `yaml:"auto_rename_enabled"`
-		// UserNickname is the reserved display name of the HUMAN user as a group
-		// participant. Agents address the user with this exact name
-		// (<clawbench-mention targets="...">), so it must not collide with any
-		// agent's name and must not contain the protocol's reserved characters
-		// (", <, >, comma). Default "User". (default: "User")
-		UserNickname string `yaml:"user_nickname"`
 		// GroupMaxSpeeches caps how many times the AGENTS may speak to each
 		// other in a group before the discussion is forced to stop and the
 		// floor returns to the human. It counts MEMBER speeches only — the
@@ -159,7 +194,7 @@ type Config struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)
 	} `yaml:"recent_projects"`
 	TTS struct {
-		Engine            string          `yaml:"engine"`              // TTS engine: "edge" (default), "piper", "kokoro", "moss-nano", "openai"
+		Engine            string          `yaml:"engine"`              // TTS engine: "edge" (default) or "openai"
 		TTSModel          string          `yaml:"tts_model"`           // TTS model for speech synthesis (default: "Speech-2.8-Turbo")
 		Voice             string          `yaml:"voice"`               // Voice ID for TTS (default: "female-chengshu")
 		Speed             float64         `yaml:"speed"`               // Speech speed multiplier (default: 1.0)
@@ -167,9 +202,6 @@ type Config struct {
 		InlineCodeMaxLen  int             `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
 		MaxSummarizeRunes int             `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
 		MaxCacheFiles     int             `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
-		Piper             PiperConfig     `yaml:"piper"`               // Piper-specific configuration (only used when engine: "piper")
-		Kokoro            KokoroConfig    `yaml:"kokoro"`              // Kokoro-specific configuration (only used when engine: "kokoro")
-		MossNano          MossNanoConfig  `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 		OpenAI            OpenAITTSConfig `yaml:"openai"`              // OpenAI-compatible /v1/audio/speech configuration (only used when engine: "openai")
 	} `yaml:"tts"`
 	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
@@ -372,13 +404,21 @@ type BingWallpaperConfig struct {
 
 // STTConfig holds configuration for speech-to-text (voice input).
 type STTConfig struct {
-	BaseURL     string `yaml:"base_url"`     // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1")
-	APIKey      string `yaml:"api_key"`      // API key (optional)
-	Model       string `yaml:"model"`        // Recognition model (default: "openai/whisper-large-v3")
-	Language    string `yaml:"language"`     // Language code (default: "zh")
-	Streaming   bool   `yaml:"streaming"`    // true=streaming incremental, false=non-streaming full (default: false)
-	ChunkMs     int    `yaml:"chunk_ms"`     // Streaming slice interval in ms (default: 1000)
-	ShortcutKey string `yaml:"shortcut_key"` // Recording shortcut (default: "F9")
+	Provider   string `yaml:"provider"`    // "vllm" (default) or "doubao" (Volcano Engine Seed-ASR)
+	BaseURL    string `yaml:"base_url"`    // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1"); unused by doubao
+	APIKey     string `yaml:"api_key"`     // API key: vLLM bearer token, or the doubao X-Api-Key
+	Model      string `yaml:"model"`       // vLLM recognition model (default: "openai/whisper-large-v3"); unused by doubao
+	ResourceID string `yaml:"resource_id"` // doubao purchased resource (default: "volc.seedasr.sauc.duration"); unused by vllm
+	Language   string `yaml:"language"`    // Language code (default: "zh"); doubao auto-detects and ignores it
+	// doubao recognition options (ignored by vllm)
+	EnableITN       bool   `yaml:"enable_itn"`        // Normalize numbers/dates to written form (default: true)
+	EnablePunc      bool   `yaml:"enable_punc"`       // Add punctuation (default: true)
+	EnableDDC       bool   `yaml:"enable_ddc"`        // Semantic smoothing: drop filler words and repeats (default: false)
+	OutputZHVariant string `yaml:"output_zh_variant"` // "" | traditional | tw | hk (default: "")
+	EndWindowSize   int    `yaml:"end_window_size"`   // Streaming VAD silence threshold in ms (default: 800)
+	Streaming       bool   `yaml:"streaming"`         // true=streaming incremental, false=non-streaming full (default: false)
+	ChunkMs         int    `yaml:"chunk_ms"`          // Streaming slice interval in ms (default: 1000)
+	ShortcutKey     string `yaml:"shortcut_key"`      // Recording shortcut (default: "F9")
 }
 
 // FileSearchConfig holds configuration for the file search feature.
@@ -436,9 +476,19 @@ type WeChatConfig struct {
 // voice/TTS summarizer (when summarize.tts_backend is "api") and the
 // next-step recommendation feature (chat.recommend_enabled).
 type AISummaryConfig struct {
-	Model  string    `yaml:"model"`  // Model name (empty = backend default)
-	Format string    `yaml:"format"` // API format: "openai" / "anthropic" (empty = auto-detect from base_url)
-	API    APIConfig `yaml:"api"`    // API endpoint + key
+	// ProviderID binds the summary model to a providers row. This is the only
+	// supported way to configure it: the endpoint, key and wire format all come
+	// from that row, so rotating a key happens once for every feature that uses
+	// the shared model. Nil = not configured.
+	ProviderID *int64 `yaml:"provider_id,omitempty"`
+	Model      string `yaml:"model"` // Model name (empty = backend default)
+
+	// Deprecated: migration-only fallback. Read while provider_id is absent so
+	// an upgrade cannot lose a working configuration; the startup migration
+	// turns these into a providers row and clears them. The settings UI never
+	// writes them.
+	Format string    `yaml:"format,omitempty"` // "openai" / "anthropic" ("" = detect from base_url)
+	API    APIConfig `yaml:"api,omitempty"`    // API endpoint + key
 }
 
 // SummarizeConfig holds configuration for voice/TTS reading summaries.
@@ -470,32 +520,9 @@ type RAGConfig struct {
 	RetentionDays  int    `yaml:"retention_days"`   // Archived data retention days (0=keep forever, default: 90)
 }
 
-// PiperConfig holds configuration for the Piper TTS engine.
-type PiperConfig struct {
-	ModelPath       string  `yaml:"model_path"`       // Path to .onnx model file (empty = models/piper-models/<voice>.onnx)
-	NoiseScale      float64 `yaml:"noise_scale"`      // Noise scale for sampling (default: 0.667)
-	LengthScale     float64 `yaml:"length_scale"`     // Length scale for speech rate (default: 1.0)
-	SentenceSilence float64 `yaml:"sentence_silence"` // Silence between sentences in seconds (default: 0.2)
-}
-
-// KokoroConfig holds configuration for the Kokoro TTS engine.
-type KokoroConfig struct {
-	ModelPath  string `yaml:"model_path"`  // Path to kokoro .onnx model file (empty = models/kokoro-models/kokoro-v1.0.onnx)
-	VoicesPath string `yaml:"voices_path"` // Path to voices .bin file (empty = models/kokoro-models/voices-v1.0.bin)
-	Lang       string `yaml:"lang"`        // espeak language code for phonemization (default: "cmn" for Mandarin Chinese)
-}
-
-// MossNanoConfig holds configuration for the MOSS-TTS-Nano TTS engine.
-type MossNanoConfig struct {
-	ModelDir string `yaml:"model_dir"` // Directory for ONNX model files (empty = models/moss-nano-models; CLI auto-downloads if missing)
-	Backend  string `yaml:"backend"`   // Inference backend: "onnx" (default, CPU) or "pytorch" (requires GPU)
-	// Voice is not stored here — moss-nano reuses the shared cfg.TTS.Voice field.
-}
-
 // OpenAITTSConfig holds configuration for the OpenAI-compatible TTS engine.
 //
-// Unlike the other engines, this one is a remote HTTP API rather than a local
-// CLI, so it carries its own endpoint and credential — reusing ai_summary.api
+// This engine carries its own endpoint and credential — reusing ai_summary.api
 // would force the speech endpoint and the summarization endpoint to be the
 // same service, which they need not be.
 //
@@ -567,10 +594,15 @@ var (
 	// ChatAutoRenameEnabled switches on the AI summary rename of a session at
 	// the moment its local title is written. Read by internal/service.
 	ChatAutoRenameEnabled bool
-	// ChatUserNickname is the reserved display name of the human user in group
-	// chat (default "User"). Read by internal/service at request time so a
-	// rename takes effect without a restart.
-	ChatUserNickname string
+	// UserNickname is the human user's display name (default "User"). Read by
+	// internal/service at request time so a rename takes effect without a
+	// restart. Group chat uses it as the routing target; single chat uses it
+	// only to address the user.
+	UserNickname string
+	// UserProfile is the user's free-form self-description, injected into every
+	// agent system prompt (see service.BuildUserIdentitySection). Read at
+	// request time for the same reason.
+	UserProfile string
 	// ChatGroupMaxSpeeches caps member-to-member speeches in a group before
 	// the discussion is forced to stop (default 100). Read by internal/service
 	// at turn time so a change takes effect without a restart.

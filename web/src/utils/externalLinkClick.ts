@@ -67,7 +67,7 @@ export function installExternalLinkClick(): () => void {
 
         e.preventDefault()
         e.stopPropagation()
-        void confirmAndOpen(href)
+        void confirmAndOpenExternalLink(href)
     }
 
     // Keyboard activation, since the span carries role="link" tabindex="0".
@@ -95,7 +95,7 @@ export function installExternalLinkClick(): () => void {
         const href = span.getAttribute('data-href')
         if (!href) return
         e.preventDefault()
-        void confirmAndOpen(href)
+        void confirmAndOpenExternalLink(href)
     }
 
     document.addEventListener('click', handler, true)
@@ -113,13 +113,19 @@ export function installExternalLinkClick(): () => void {
  * are about to go — this is also the moment they may realise they wanted to
  * copy it instead, which is why the dialog carries the URL as plain text.
  *
+ * Exported because the terminal renders its links on a canvas (xterm) rather
+ * than as DOM spans, so the document-level listener above can never see them;
+ * its link provider calls this directly. The confirm step must not be skipped
+ * there either — a stray click inside a terminal full of build output would
+ * otherwise launch a browser.
+ *
  * `href` is RE-VALIDATED here even though the renderer only emits allowed
  * schemes: it arrives from a DOM attribute, and `data-href` is not covered by
  * DOMPurify's URI allowlist (that only inspects `href`/`src`). Raw HTML in an
  * AI message could therefore plant a `javascript:` value. Validating at the
  * sink keeps the guarantee independent of how the element got there.
  */
-async function confirmAndOpen(href: string): Promise<void> {
+export async function confirmAndOpenExternalLink(href: string): Promise<void> {
     if (!isExternalHref(href)) {
         appLog.w(TAG, 'refusing to open non-external href', href)
         return

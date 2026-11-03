@@ -117,7 +117,7 @@
 
         <!-- No cache -->
         <div v-else-if="!loaded || clusters.length === 0 && progress.status === 'idle'" class="mc-empty">
-          <span class="mc-empty-icon"><SparklesIcon :size="24" /></span>
+          <SparklesIcon class="empty-state__icon" />
           <span class="mc-empty-title">{{ t('chat.messageClusters.noCache') }}</span>
           <span class="mc-empty-hint">{{ t('chat.messageClusters.noCacheHint') }}</span>
           <button class="mc-btn primary" @click="handleStartCompute"><PlayIcon :size="14" />{{ t('chat.messageClusters.firstAnalyze') }}</button>
@@ -586,18 +586,6 @@ defineExpose({ open, openDrill, closeDrill, drillCluster, representativeShare })
   min-height: calc(200 * var(--dp));
   padding: calc(24 * var(--dp)) calc(28 * var(--dp));
   text-align: center;
-}
-
-.mc-empty-icon {
-  width: calc(52 * var(--dp));
-  height: calc(52 * var(--dp));
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  color: var(--text-muted);
-  margin-bottom: var(--space-2);
 }
 
 .mc-empty-title {

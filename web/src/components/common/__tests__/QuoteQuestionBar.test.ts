@@ -150,6 +150,22 @@ describe('QuoteQuestionBar', () => {
         expect(chip.find('.lucide-link').exists()).toBe(false)
       })
 
+      it('renders a pre-built payload (a conversation) with neither the link nor the file icon', () => {
+        // Meeting records are addressed by token, so the caller builds the card
+        // and the bar only names it. Showing the file icon here would imply the
+        // label is a path the card would open.
+        const wrapper = mountBar({
+          composerMode: true,
+          composerAttachment: { kind: 'quote', label: 'Meeting · Standup · 11-01 09:00' },
+        })
+
+        const chip = wrapper.find('.qq-pending-attachment')
+        expect(chip.exists()).toBe(true)
+        expect(chip.text()).toContain('Meeting · Standup · 11-01 09:00')
+        expect(chip.find('.lucide-link').exists()).toBe(false)
+        expect(chip.find('.lucide-message-square').exists()).toBe(true)
+      })
+
       it('offers no remove button — the chip is not in the chat context yet', () => {
         // Dismissing the bar is the way to discard it; a close button here would
         // imply the entry already exists somewhere it could be removed from.

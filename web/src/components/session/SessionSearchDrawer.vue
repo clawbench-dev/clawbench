@@ -1399,11 +1399,15 @@ defineExpose({ focusSearchInput })
 
 .detail-footer-row {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
+  justify-content: safe flex-end;
   gap: var(--space-3);
   width: 100%;
   flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Override BottomSheet's default footer padding/border to stay compact

@@ -122,6 +122,36 @@ func modelConfigOption(current string) acp.SessionConfigOption {
 // permission e2e to verify the server recovers the input from the tool_call.
 const acpMockOmitPermRawInputMarker = "[mock:omit-perm-rawinput]"
 
+// acpMockSlowReplyPrefix starts a per-turn override of the reply delay, e.g.
+// "[mock:slow-reply:12000]" waits 12s before the first word of that turn.
+//
+// ACP_MOCK_REPLY_DELAY_MS is a single global value tuned so two messages typed
+// back to back still land in the queue — but the gap between two consecutive
+// `ChatPage.sendMessage` calls is not constant: measured 0.4s normally and
+// ~2.1s on WebKit right after a send (the input row re-renders and Playwright's
+// actionability checks wait it out). A spec that must still be streaming while
+// several more messages are typed and edited therefore cannot rely on the
+// global delay; it asks for a long turn explicitly instead.
+const acpMockSlowReplyPrefix = "[mock:slow-reply:"
+
+// slowReplyDelayMs reports the per-turn reply delay requested by the prompt.
+func slowReplyDelayMs(prompt string) (int, bool) {
+	i := strings.Index(prompt, acpMockSlowReplyPrefix)
+	if i < 0 {
+		return 0, false
+	}
+	rest := prompt[i+len(acpMockSlowReplyPrefix):]
+	end := strings.IndexByte(rest, ']')
+	if end < 0 {
+		return 0, false
+	}
+	ms, err := strconv.Atoi(rest[:end])
+	if err != nil || ms <= 0 {
+		return 0, false
+	}
+	return ms, true
+}
+
 func (a *mockACPAgent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
 	return acp.InitializeResponse{
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -522,7 +552,16 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		// user's own sentence at the end, so a head-only echo hides the sentence
 		// and a tail-only echo hides the injection. This thinking block is the
 		// E2E's only window into what the agent actually received.
-		Update: acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", headTail(userText, 120, 5000))),
+		//
+		// The echoed prefix includes the injected system prompt, whose Media
+		// Generation section carries literal examples such as
+		// `![desc](.clawbench/generated/img_chart.png)`. The UI renders thinking
+		// as Markdown, so an unescaped echo makes the page request those
+		// non-existent files; specs that treat console errors as failures then
+		// report a product failure that is really the mock's own echo. Escaping
+		// the image marker keeps the text readable while removing the side
+		// effect.
+		Update: acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", escapeMarkdownImageEmbeds(headTail(userText, 120, 5000)))),
 	}); err != nil {
 		return err
 	}
@@ -626,12 +665,21 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	// 5. Send the main response text word-by-word
 	// ACP_MOCK_REPLY_DELAY_MS (env) simulates a slow real AI agent: the delay is
 	// applied BEFORE the first word so queued messages pile up while the reply
-	// streams — reproducing real-world ordering conditions in E2E.
+	// streams — reproducing real-world ordering conditions in E2E. A prompt may
+	// override it for that one turn with `[mock:slow-reply:<ms>]` (see
+	// acpMockSlowReplyPrefix).
+	delayMs := 0
 	if d := os.Getenv("ACP_MOCK_REPLY_DELAY_MS"); d != "" {
 		if ms, err := strconv.Atoi(d); err == nil && ms > 0 {
-			if err := pause(ctx, time.Duration(ms)*time.Millisecond); err != nil {
-				return err
-			}
+			delayMs = ms
+		}
+	}
+	if ms, ok := slowReplyDelayMs(userText); ok {
+		delayMs = ms
+	}
+	if delayMs > 0 {
+		if err := pause(ctx, time.Duration(delayMs)*time.Millisecond); err != nil {
+			return err
 		}
 	}
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
@@ -808,21 +856,50 @@ func extractUserText(blocks []acp.ContentBlock) string {
 // To make the cruise E2E exercise that path deterministically, the mock host
 // emits the end tag on its SECOND turn (after routing once), instead of routing
 // forever until the speech cap. The counter is per-session.
+//
+// NON-CRUISE gets the same treatment with a slightly larger budget. The host
+// has no other terminator: it routes to a member every round, the member's
+// reply mentions the next one, and each mention drains as its OWN user turn —
+// so chat.group_max_speeches (a per-turn budget) never accumulates and a plain
+// discussion runs until a human stops it. That is correct for the product but
+// poison for an E2E suite: a group spec that ends without cancelling leaves a
+// discussion running for the rest of the job, and every later spec that sends
+// into the app's auto-selected session queues behind it (observed: queued-*
+// and notifications specs timing out on slow runners). Two routing rounds is
+// enough for the group specs' assertions (host + 2 member turns) and matches
+// the ~10s abort the suite was tuned around. Override with
+// ACP_MOCK_GROUP_ROUTE_TURNS.
+
+// routingBudgetExceeded reports whether this host routing turn is past the
+// discussion budget. Cruise gets a single routing turn (the end tag then
+// triggers its confirmation round); a plain discussion gets
+// ACP_MOCK_GROUP_ROUTE_TURNS (default 2) so the E2E suite can never be poisoned
+// by a discussion that nobody stopped — see groupRoutingReply.
+func routingBudgetExceeded(sid, prompt string) bool {
+	limit := 2
+	if v := os.Getenv("ACP_MOCK_GROUP_ROUTE_TURNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	if strings.Contains(prompt, "[自动巡航模式]") {
+		limit = 1
+	}
+	relayTurnsMu.Lock()
+	relayTurns[sid]++
+	turn := relayTurns[sid]
+	relayTurnsMu.Unlock()
+	return turn > limit
+}
+
 func groupRoutingReply(sid, prompt string) string {
 	const marker = "可选的成员名："
 	idx := strings.Index(prompt, marker)
 	if idx < 0 {
 		return ""
 	}
-	cruise := strings.Contains(prompt, "[自动巡航模式]")
-	if cruise {
-		relayTurnsMu.Lock()
-		relayTurns[sid]++
-		turn := relayTurns[sid]
-		relayTurnsMu.Unlock()
-		if turn > 1 {
-			return "讨论差不多了。<clawbench-group-end/>"
-		}
+	if routingBudgetExceeded(sid, prompt) {
+		return "讨论差不多了。<clawbench-group-end/>"
 	}
 	rest := prompt[idx+len(marker):]
 	// The list ends at the first newline (BuildHostSystemPrompt appends "。\n").
@@ -834,12 +911,20 @@ func groupRoutingReply(sid, prompt string) string {
 		// No addressable member: end the discussion.
 		return "讨论结束。<clawbench-group-end/> 结论：群内暂无其他成员。"
 	}
-	// First name only (comma/、-separated list).
-	name := rest
-	if i := strings.IndexAny(rest, ",、"); i >= 0 {
-		name = rest[:i]
+	// First name only. A roster entry is rendered as "Name（specialty）" and the
+	// entries are joined by "、", so the NAME ends at whichever comes first: the
+	// specialty marker, the list separator, or a comma. Splitting on ",、" alone
+	// is not enough — a specialty may itself contain a comma (e.g. the e2e
+	// "E2E Testing (ACP, member)"), which truncated the name mid-specialty and
+	// produced a target that resolves to no member. The orchestrator then saw
+	// two consecutive unroutable host turns and aborted the whole group turn.
+	end := len(rest)
+	for _, sep := range []string{"（", "、", ","} {
+		if i := strings.Index(rest, sep); i >= 0 && i < end {
+			end = i
+		}
 	}
-	name = strings.TrimSpace(name)
+	name := strings.TrimSpace(rest[:end])
 	if name == "" {
 		return "讨论结束。<clawbench-group-end/> 结论：无人可点。"
 	}
@@ -950,6 +1035,12 @@ func headTail(s string, headLen, tailLen int) string {
 		return s
 	}
 	return s[:headLen] + " … " + s[len(s)-tailLen:]
+}
+
+// escapeMarkdownImageEmbeds neutralizes `![alt](src)` so an echoed prompt
+// cannot make the UI fetch images. See the call site in Prompt for why.
+func escapeMarkdownImageEmbeds(s string) string {
+	return strings.ReplaceAll(s, "![", `!\[`)
 }
 
 func main() {

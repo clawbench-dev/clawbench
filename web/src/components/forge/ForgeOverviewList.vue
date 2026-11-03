@@ -29,7 +29,7 @@
 
   <div v-else-if="unread.items.value.length === 0" class="forge-state">
     <div class="forge-empty-card">
-      <Rss :size="34" :stroke-width="1.5" class="forge-empty-icon" />
+      <Rss class="forge-empty-icon empty-state__icon" />
       <!-- The empty state names the view it belongs to: "nothing unread" and
            "nothing read yet" are different facts, and one shared string would
            read as a bug in whichever view it did not describe. -->

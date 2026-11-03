@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { rmsLevel } from '../useLiveMixer'
 import { LiveMixer } from '../useLiveMixer'
 
 /**
@@ -175,6 +176,37 @@ describe('LiveMixer', () => {
     expect(fedBy(destFor(ctx, trackA.id), ctx, 'b-voice')).toBe(false)
   })
 
+  it('swaps the microphone input without touching the destinations', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, stream('sys'), stream('old-mic'))
+    const trackA = mixer.addViewer('A')
+    const destA = destFor(ctx, trackA.id)
+    expect(fedBy(destA, ctx, 'old-mic')).toBe(true)
+
+    mixer.setMicStream(stream('new-mic'))
+
+    // Same destinations, new input: the sender keeps its track, so a device
+    // switch never renegotiates and the audience hears no gap.
+    expect(fedBy(destA, ctx, 'new-mic')).toBe(true)
+    expect(fedBy(destA, ctx, 'old-mic')).toBe(false)
+    expect(mixer.outTrackFor('A')!.id).toBe(trackA.id)
+  })
+
+  it('ignores a repeated microphone stream', () => {
+    const ctx = new FakeCtx()
+    const mic = stream('mic')
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, null, mic)
+    const trackA = mixer.addViewer('A')
+
+    const sourcesBefore = ctx.sources.length
+    mixer.setMicStream(mic)
+
+    // Rebuilding the source node on every call would pile up dead nodes (and a
+    // second meter) for the length of the meeting.
+    expect(ctx.sources).toHaveLength(sourcesBefore)
+    expect(fedBy(destFor(ctx, trackA.id), ctx, 'mic')).toBe(true)
+  })
+
   it('routes viewer audio to the publisher speakers, but not its own mix', () => {
     const ctx = new FakeCtx()
     const mixer = new LiveMixer(ctx as unknown as AudioContext, stream('sys'), stream('mic'))
@@ -289,5 +321,23 @@ describe('LiveMixer', () => {
     const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
 
     expect(mixer.outTrackFor('nope')).toBeNull()
+  })
+})
+
+
+describe('rmsLevel', () => {
+  it('reads silence as zero and full scale as one', () => {
+    expect(rmsLevel(new Uint8Array(64).fill(128))).toBe(0)
+    // 255 maps to 127/128, not exactly 1: the window is centred on 128.
+    expect(rmsLevel(new Uint8Array(64).fill(255))).toBeCloseTo(127 / 128, 3)
+  })
+
+  it('is not fooled by a DC offset being louder than a quiet sine', () => {
+    // Half scale constant: RMS 0.5, which is above the speaking threshold.
+    expect(rmsLevel(new Uint8Array(64).fill(192))).toBeCloseTo(0.5, 2)
+  })
+
+  it('returns zero for an empty window instead of NaN', () => {
+    expect(rmsLevel(new Uint8Array(0))).toBe(0)
   })
 })

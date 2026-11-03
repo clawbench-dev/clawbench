@@ -507,7 +507,6 @@
     padding: calc(32 * var(--dp)) calc(24 * var(--dp));
 }
 
-.forge-empty-icon { color: var(--text-muted); opacity: var(--opacity-muted); }
 .forge-empty-title { font-size: var(--font-size-lg); color: var(--text-muted); }
 .forge-empty-hint { font-size: var(--font-size-sm); color: var(--text-hint); text-align: center; }
 
@@ -1366,4 +1365,37 @@
     color: var(--text-muted, #999);
     font-weight: var(--font-weight-medium);
     letter-spacing: calc(0.3 * var(--dp));
+}
+
+/* ==========================================================================
+   Empty-state glyph
+   Every "nothing here yet" surface in the app draws the same centred glyph:
+   the dock tabs, the meeting tabs, the drawers and the search dialogs. They
+   had drifted to nine different sizes (24 → 56) and three opacities, which is
+   why the size and the stroke now come from `--empty-icon-size` /
+   `--empty-icon-stroke` in css/variables.css and the colour from the tokens
+   below.
+
+   Declared GLOBALLY, not in each component's <style scoped>: the shape is
+   shared by ~20 components and a scoped rule only reaches the component that
+   declares it. A call site adds `empty-state__icon` to its glyph and keeps
+   only what is genuinely local to it (a margin, a wrapper).
+
+   `width`/`height` here override the `<svg width height>` ATTRIBUTES lucide
+   emits — presentation attributes lose to any CSS rule — so a call site must
+   not pass `:size` for an empty glyph any more: it would be dead code that
+   reads like a decision.
+
+   The colour has no `#…` fallback: every one of the 36 themes defines
+   `--text-muted`, and index.html sets `data-theme` from an inline script before
+   first paint, so the fallback could only ever fire on a broken build — where a
+   grey literal would hide the problem instead of showing it.
+   ========================================================================== */
+.empty-state__icon {
+    width: var(--empty-icon-size);
+    height: var(--empty-icon-size);
+    stroke-width: var(--empty-icon-stroke);
+    color: var(--text-muted);
+    opacity: var(--opacity-muted);
+    flex-shrink: 0;
 }

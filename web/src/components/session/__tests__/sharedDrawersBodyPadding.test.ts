@@ -83,14 +83,20 @@ for (const { name, file, body, row, meta, emptyIcon } of DRAWERS) {
     })
 
     it(`keeps ${emptyIcon} tinted from the muted token`, () => {
-      // The empty state must not hardcode a colour — the whole point of the
-      // icon is that it adapts to every theme. A `var(--token, #fallback)` pair
-      // is the house convention, so var() calls are stripped before the scan.
-      const decls = ruleDecls(css, emptyIcon)
-      expect(decls, `${emptyIcon} rule must exist`).not.toBeNull()
+      // The tint comes from the GLOBAL `.empty-state__icon` rule (one glyph
+      // size/colour for every empty state in the app), so this asserts both
+      // halves: the call site opts in, and the shared rule uses the token
+      // instead of a hardcoded colour. A `var(--token, #fallback)` pair is the
+      // house convention, so var() calls are stripped before the scan.
+      expect(css).toMatch(new RegExp(`class="[^"]*${emptyIcon.slice(1)}[^"]*empty-state__icon`))
+      const shared = stripComments(
+        readFileSync(join(__dirname, '..', '..', '..', '..', 'css', 'components.css'), 'utf8'),
+      )
+      const decls = ruleDecls(shared, '.empty-state__icon')
+      expect(decls, '.empty-state__icon rule must exist').not.toBeNull()
       expect(decls).toMatch(/color:\s*var\(--text-muted/)
       const bare = decls!.replace(/var\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '')
-      expect(bare, `${emptyIcon} must not hardcode a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+      expect(bare, 'the shared empty glyph must not hardcode a colour').not.toMatch(/#[0-9a-f]{3,8}\b/i)
     })
 
     it(`lays out ${meta} like its sibling drawer's meta line`, () => {

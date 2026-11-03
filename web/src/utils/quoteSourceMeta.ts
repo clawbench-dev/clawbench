@@ -11,6 +11,7 @@ import {
   CircleDot,
   FileCode,
 } from 'lucide-vue-next'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import type { QuoteDisplayType } from '@/utils/quoteItem'
 
 /**
@@ -39,6 +40,7 @@ export const QUOTE_TYPE_ICON: Record<QuoteDisplayType, unknown> = {
   terminal: SquareTerminal,
   chat: MessageSquareText,
   file: FileCode,
+  meeting: MEETING_ICON,
   selection: MousePointer2,
 }
 
@@ -60,5 +62,6 @@ export const QUOTE_TYPE_LABEL_KEY: Record<QuoteDisplayType, string> = {
   terminal: 'quoteBar.typeTerminal',
   chat: 'quoteBar.messageQuote',
   file: 'quoteBar.typeFile',
+  meeting: 'quoteBar.typeMeeting',
   selection: 'quoteBar.selectionQuote',
 }

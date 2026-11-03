@@ -16,7 +16,7 @@
         <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       </div>
       <div v-else-if="tasks.length === 0" class="task-empty">
-        <CalendarX class="empty-icon" :size="32" />
+        <CalendarX class="empty-icon empty-state__icon" />
         <span>{{ t('task.noTasks') }}</span>
       </div>
       <div v-else class="task-items-container">
@@ -305,9 +305,7 @@ onMounted(refresh)
   --panel-skeleton-inset: calc(10 * var(--dp));
 }
 
-.empty-icon {
-  opacity: var(--opacity-muted);
-}
+/* Size, stroke and colour come from the global `.empty-state__icon` rule. */
 
 .task-item {
   display: flex;

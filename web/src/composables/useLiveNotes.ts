@@ -15,8 +15,12 @@ import {
   LiveNotesCapture,
   groupNoteSegments,
   mergeNoteSegments,
+  notesRecordingSupported,
+  withMeetingFileEvents,
   type LiveNoteSegment,
   type NoteBlock,
+  type NoteFileEvent,
+  type NotesUploadArgs,
   type NotesUploader,
 } from './liveNotes'
 
@@ -30,8 +34,31 @@ const FINISH_UPLOAD_TIMEOUT_MS = 180_000
 export type NotesPhase = 'idle' | 'recording' | 'finalizing'
 export type MinutesPhase = 'idle' | 'generating' | 'ready' | 'failed'
 
+/** Files a meeting leaves in the project. Empty until the server reports them. */
+export interface NotesArtifacts {
+  dir?: string
+  minutes?: string
+  transcript?: string
+  revised?: string
+  audio?: string
+  /** The merged whole-meeting recording (`audio/meeting.webm`). */
+  audioMeeting?: string
+  audioFiles?: number
+}
+
+/** One stage report from the server: minutes or the proofreading pass. */
+interface NotesStagePayload {
+  status?: MinutesPhase
+  markdown?: string
+  error?: string
+  filePath?: string
+  revise?: { status?: MinutesPhase; error?: string }
+  artifacts?: NotesArtifacts
+}
+
 export type { LiveNoteSegment, NoteBlock }
-export { groupNoteSegments, mergeNoteSegments }
+export { groupNoteSegments, mergeNoteSegments, withMeetingFileEvents }
+export type { NoteFileEvent }
 
 const phase = ref<NotesPhase>('idle')
 const segments = ref<LiveNoteSegment[]>([])
@@ -39,6 +66,15 @@ const minutes = ref('')
 /** Path of the Markdown copy written inside the project (empty until saved). */
 const minutesFile = ref('')
 const minutesPhase = ref<MinutesPhase>('idle')
+/**
+ * The proofreading stage that runs before the summary. Tracked separately
+ * because it fails independently: a proofread failure still leaves usable
+ * minutes, and the dialog has to say which one went wrong.
+ */
+const revisePhase = ref<MinutesPhase>('idle')
+const reviseError = ref('')
+/** Where the recording, both transcripts and the minutes were written. */
+const artifacts = ref<NotesArtifacts>({})
 const error = ref('')
 /** Segments recorded but not yet transcribed (shown while finalizing). */
 const pending = ref(0)
@@ -48,6 +84,15 @@ const lost = ref(0)
 const truncated = ref(false)
 
 let capture: LiveNotesCapture | null = null
+/**
+ * The stream each member's microphone arrives on, kept OUTSIDE the capture.
+ *
+ * 听记 can be switched off and on again mid-meeting, and a new capture starts
+ * with no channels: only a NEW join calls `addViewer`, so every member already
+ * in the room would stay silent in the transcript for the rest of the meeting.
+ * Remembering the streams is what lets `start()` re-attach them.
+ */
+const viewerStreams = new Map<string, MediaStream | null>()
 /**
  * Bumped by start() and reset(). Every async continuation captures it and
  * bails out when it no longer matches, because the module-level state is
@@ -60,18 +105,36 @@ let sessionGen = 0
 let sessionToken = ''
 let sessionTitle = ''
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+/** The upload drain started by a pause, so a later finish can wait for it. */
+let draining: Promise<void> | null = null
 let labelFor: (channel: string) => string = (channel) => channel
+
+/**
+ * Builds the multipart body every segment upload shares.
+ *
+ * The title travels with every segment: the server creates the meeting folder
+ * on the FIRST one (audio is written as it arrives), and it needs a name before
+ * the minutes request ever happens.
+ */
+function segmentForm(token: string, args: NotesUploadArgs, archive: boolean): FormData {
+  const form = new FormData()
+  form.append('token', token)
+  if (sessionTitle) form.append('title', sessionTitle)
+  form.append('channel', args.channel)
+  form.append('speaker', args.speaker)
+  form.append('startedAt', String(args.startedAt))
+  form.append('durationMs', String(args.durationMs))
+  if (archive) form.append('archive', '1')
+  form.append('file', args.blob, 'segment.webm')
+  return form
+}
 
 function uploadSegment(token: string): NotesUploader {
   return async (args) => {
-    const form = new FormData()
-    form.append('token', token)
-    form.append('channel', args.channel)
-    form.append('speaker', args.speaker)
-    form.append('startedAt', String(args.startedAt))
-    form.append('durationMs', String(args.durationMs))
-    form.append('file', args.blob, 'segment.webm')
-    const resp = await fetch('/api/live-share/notes/segment', { method: 'POST', body: form })
+    const resp = await fetch('/api/live-share/notes/segment', {
+      method: 'POST',
+      body: segmentForm(token, args, false),
+    })
     if (!resp.ok) throw new Error(`segment upload failed: ${resp.status}`)
     const data = (await resp.json()) as LiveNoteSegment & { id: number }
     if (!data.id || !data.text) return null
@@ -88,24 +151,66 @@ function uploadSegment(token: string): NotesUploader {
   }
 }
 
+/**
+ * Uploads one chunk of the archive-only mix track.
+ *
+ * Archive, not transcription: the mix has no single speaker, so the server
+ * stores it without calling the STT provider. It never yields a transcript line.
+ */
+function uploadArchiveSegment(token: string): NotesUploader {
+  return async (args) => {
+    const resp = await fetch('/api/live-share/notes/segment', {
+      method: 'POST',
+      body: segmentForm(token, args, true),
+    })
+    if (!resp.ok) throw new Error(`archive upload failed: ${resp.status}`)
+    return null
+  }
+}
+
 export function useLiveNotes() {
   /**
-   * Begin capturing. `systemStream` / `micStream` may be null (the user turned
-   * that source off); viewers are added later as they join.
+   * Begin capturing. Only microphones are transcribed: the system-audio loop
+   * would capture whatever else the machine is playing, which is not what a
+   * meeting transcript is for, and it duplicated every remote voice into a
+   * second channel. Viewers are added later as they join.
+   *
+   * `resume` restarts the recorder of the SAME meeting (听记 was switched off for
+   * a moment). It keeps the segments, the minutes and the member channels — a
+   * plain start would wipe the transcript and make the meeting's minutes cover
+   * only the part recorded after the toggle. A different token always starts
+   * clean: the module is a singleton and would otherwise show the previous
+   * meeting's transcript.
    */
   function start(opts: {
     token: string
     ctx: AudioContext
-    systemStream: MediaStream | null
     micStream: MediaStream | null
     title?: string
     label?: (channel: string) => string
+    resume?: boolean
   }): void {
-    reset()
+    // No recorder on this engine: leave the module idle and say so once. The
+    // meeting continues (picture / microphone / chat), it just has no 听记.
+    if (!notesRecordingSupported()) {
+      appLog.w(TAG, 'MediaRecorder unavailable: notes stay off for this meeting')
+      return
+    }
+    if (opts.resume === true && sessionToken === opts.token) {
+      // Same meeting: keep everything, but invalidate the previous capture's
+      // continuations — its drain must not report "finalizing" over this one.
+      sessionGen += 1
+      stopPolling()
+    } else {
+      reset()
+    }
     sessionToken = opts.token
-    sessionTitle = opts.title ?? ''
-    labelFor = opts.label ?? ((channel) => channel)
+    if (opts.title !== undefined) sessionTitle = opts.title
+    if (opts.label) labelFor = opts.label
     capture = new LiveNotesCapture(opts.ctx, uploadSegment(opts.token), {
+      // The mix track is the file the user actually listens to: one recording
+      // of the whole meeting instead of one per participant.
+      archiveUpload: uploadArchiveSegment(opts.token),
       // Losing a segment is a permanent hole in the transcript, so the count is
       // surfaced instead of being logged and forgotten.
       onSegmentLost: () => {
@@ -115,18 +220,43 @@ export function useLiveNotes() {
         lost.value += 1
       },
     })
-    capture.addChannel('system', labelFor('system'), opts.systemStream)
-    capture.addChannel('mic', labelFor('mic'), opts.micStream)
+    capture.addChannel('mic', () => labelFor('mic'), opts.micStream)
+    // Re-attach every member already in the room (a resumed recorder would
+    // otherwise only hear the host and whoever joins next).
+    for (const [viewerId, stream] of viewerStreams) {
+      capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
+    }
     phase.value = 'recording'
   }
 
-  /** Adds one viewer's microphone as its own channel. */
+  /**
+   * Adds one viewer's microphone as its own channel.
+   *
+   * The stream is remembered even while no recorder runs: 听记 may be switched
+   * on later, and `start()` re-attaches everything it knows about.
+   */
   function addViewer(viewerId: string, stream: MediaStream | null): void {
-    if (!capture || !viewerId) return
-    capture.addChannel(`viewer:${viewerId}`, labelFor(`viewer:${viewerId}`), stream)
+    if (!viewerId) return
+    viewerStreams.set(viewerId, stream)
+    if (!capture) return
+    capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
+  }
+
+  /**
+   * Point the publisher's channel at a different input device.
+   *
+   * The host can switch microphones mid-meeting (headset put on). `addChannel`
+   * replaces an existing channel, so the transcript keeps one "mic" stream of
+   * segments instead of a second one — the segment in flight is flushed under
+   * the same speaker label.
+   */
+  function setMicStream(stream: MediaStream | null): void {
+    if (!capture) return
+    capture.addChannel('mic', () => labelFor('mic'), stream)
   }
 
   function removeViewer(viewerId: string): void {
+    viewerStreams.delete(viewerId)
     capture?.removeChannel(`viewer:${viewerId}`)
   }
 
@@ -142,10 +272,31 @@ export function useLiveNotes() {
     await capture.stopAndFlush(2000)
   }
 
-  /** Flushes queued uploads, then asks for the minutes. */
-  async function finishUploads(): Promise<void> {
+  /**
+   * Flushes queued uploads, then asks for the minutes.
+   *
+   * `merge` is false when the recording is only being PAUSED: turning 听记 off
+   * mid-meeting drains the queue, but folding the audio now would leave the
+   * rest of the meeting (recorded after the toggle) as loose segments beside a
+   * merged file that no longer covers it. The merge AND the minutes wait for
+   * the meeting to end, when nothing more is coming — generating them here
+   * summarized only the first half and nothing ever regenerated them.
+   *
+   * With no live capture there is nothing to drain: either 听记 was never on, or
+   * it was switched off earlier in the meeting. `merge` (i.e. the meeting is
+   * really over) still folds the recording and summarizes every segment.
+   */
+  async function finishUploads(merge = true): Promise<void> {
     const cap = capture
-    if (!cap) return
+    if (!cap) {
+      if (!merge) return
+      // A pause may still be draining its queue (the panel does not await the
+      // toggle). Summarizing now would present a transcript that is missing its
+      // tail as the meeting's end.
+      if (draining) await draining.catch(() => undefined)
+      await finishPaused()
+      return
+    }
     const gen = sessionGen
     capture = null
     phase.value = 'finalizing'
@@ -155,22 +306,69 @@ export function useLiveNotes() {
     const progress = setInterval(() => {
       if (gen === sessionGen) pending.value = cap.pending
     }, 500)
-    try {
-      pending.value = cap.pending
-      const drained = await cap.drainUploads(FINISH_UPLOAD_TIMEOUT_MS)
-      if (gen !== sessionGen) return
-      if (!drained) truncated.value = true
-    } finally {
-      clearInterval(progress)
-      if (gen === sessionGen) {
-        pending.value = 0
-        phase.value = 'idle'
+    const run = (async () => {
+      try {
+        pending.value = cap.pending
+        const drained = await cap.drainUploads(FINISH_UPLOAD_TIMEOUT_MS)
+        if (gen !== sessionGen) return
+        if (!drained) truncated.value = true
+      } finally {
+        clearInterval(progress)
+        if (gen === sessionGen) {
+          pending.value = 0
+          phase.value = 'idle'
+        }
       }
+    })()
+    draining = run
+    try {
+      await run
+    } finally {
+      if (draining === run) draining = null
     }
     // The dialog may have been closed and another meeting started while the
     // backlog drained; its state is not ours to touch.
     if (gen !== sessionGen) return
+    // Merge BEFORE the minutes: only now is "no more audio is coming" true, and
+    // the minutes link to the recording.
+    if (merge) await finishPaused()
+  }
+
+  /**
+   * Fold the recording and summarize the whole meeting.
+   *
+   * The tail of `finishUploads`, split out because it is also what a meeting
+   * whose recorder was paused earlier needs: there is no queue to drain, but
+   * the segments it did produce are the transcript.
+   */
+  async function finishPaused(): Promise<void> {
+    const gen = sessionGen
+    await mergeAudio()
+    if (gen !== sessionGen) return
     if (segments.value.length > 0) await generateMinutes()
+  }
+
+  /**
+   * Folds the meeting's audio segments into one file per channel plus the
+   * whole-meeting mix.
+   *
+   * Failure is logged, not surfaced: the segments stay on disk and the minutes
+   * are still worth generating.
+   */
+  async function mergeAudio(): Promise<void> {
+    if (!sessionToken) return
+    try {
+      const resp = await fetch('/api/live-share/notes/audio/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: sessionToken }),
+      })
+      if (!resp.ok) throw new Error(`audio merge failed: ${resp.status}`)
+      const data = (await resp.json()) as { artifacts?: NotesArtifacts }
+      if (data.artifacts) artifacts.value = data.artifacts
+    } catch (e) {
+      appLog.w(TAG, 'merge meeting audio failed', e)
+    }
   }
 
   /** Convenience for callers with nothing else to tear down. */
@@ -193,24 +391,11 @@ export function useLiveNotes() {
         body: JSON.stringify({ token: sessionToken, title: sessionTitle, regenerate }),
       })
       if (!resp.ok) throw new Error(`minutes request failed: ${resp.status}`)
-      const data = (await resp.json()) as {
-        status?: MinutesPhase
-        markdown?: string
-        error?: string
-        filePath?: string
-      }
+      const data = (await resp.json()) as NotesStagePayload
       if (gen !== sessionGen) return
-      if (data.status === 'ready' && data.markdown) {
-        minutes.value = data.markdown
-        minutesFile.value = data.filePath ?? ''
-        minutesPhase.value = 'ready'
-        return
-      }
-      if (data.status === 'idle') {
-        // Nothing transcribed: there is no meeting to summarise.
-        minutesPhase.value = 'idle'
-        return
-      }
+      applyStage(data)
+      if (data.status === 'ready' && data.markdown) return
+      if (data.status === 'idle') return
       pollMinutes()
     } catch (e) {
       appLog.w(TAG, 'generate minutes failed', e)
@@ -239,24 +424,19 @@ export function useLiveNotes() {
         if (!resp.ok) throw new Error(`notes poll failed: ${resp.status}`)
         const data = (await resp.json()) as {
           segments?: LiveNoteSegment[]
-          minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
+          minutes?: NotesStagePayload
         }
         if (gen !== sessionGen) return
         if (data.segments?.length) {
           segments.value = mergeNoteSegments(segments.value, data.segments)
         }
-        const st = data.minutes?.status ?? 'idle'
-        minutesPhase.value = st
-        if (st === 'ready') {
-          minutes.value = data.minutes?.markdown ?? ''
-          minutesFile.value = data.minutes?.filePath ?? ''
-          return
-        }
-        if (st === 'failed') {
+        applyStage(data.minutes ?? {})
+        if (minutesPhase.value === 'ready') return
+        if (minutesPhase.value === 'failed') {
           error.value = data.minutes?.error ?? ''
           return
         }
-        if (st === 'idle') return
+        if (minutesPhase.value === 'idle') return
         pollMinutes(attempt + 1)
       } catch (e) {
         appLog.w(TAG, 'minutes poll failed', e)
@@ -264,6 +444,23 @@ export function useLiveNotes() {
         pollMinutes(attempt + 1)
       }
     }, 2000)
+  }
+
+  /**
+   * Applies one server payload.
+   *
+   * Three call sites (initial POST, poll, refresh) used to parse the same shape
+   * by hand; they now share this so a new field cannot be wired into one and
+   * forgotten in the others.
+   */
+  function applyStage(data: NotesStagePayload): void {
+    const st = data.status ?? 'idle'
+    minutesPhase.value = st
+    if (data.markdown !== undefined) minutes.value = data.markdown
+    if (data.filePath) minutesFile.value = data.filePath
+    if (data.artifacts) artifacts.value = data.artifacts
+    if (data.revise?.status) revisePhase.value = data.revise.status
+    reviseError.value = data.revise?.error ?? ''
   }
 
   /** Pulls anything the local state missed (dialog reopened mid-share). */
@@ -277,17 +474,13 @@ export function useLiveNotes() {
       if (!resp.ok) return
       const data = (await resp.json()) as {
         segments?: LiveNoteSegment[]
-        minutes?: { status?: MinutesPhase; markdown?: string; error?: string; filePath?: string }
+        minutes?: NotesStagePayload
       }
       if (gen !== sessionGen) return
       if (data.segments?.length) {
         segments.value = mergeNoteSegments(segments.value, data.segments)
       }
-      if (data.minutes?.status) {
-        minutesPhase.value = data.minutes.status
-        minutes.value = data.minutes.markdown ?? minutes.value
-        minutesFile.value = data.minutes.filePath ?? minutesFile.value
-      }
+      if (data.minutes?.status) applyStage(data.minutes)
     } catch (e) {
       appLog.d(TAG, 'refresh failed', e)
     }
@@ -315,6 +508,9 @@ export function useLiveNotes() {
     sessionGen += 1
     stopPolling()
     capture = null
+    draining = null
+    viewerStreams.clear()
+    labelFor = (channel) => channel
     sessionToken = ''
     sessionTitle = ''
     phase.value = 'idle'
@@ -322,6 +518,9 @@ export function useLiveNotes() {
     minutes.value = ''
     minutesFile.value = ''
     minutesPhase.value = 'idle'
+    revisePhase.value = 'idle'
+    reviseError.value = ''
+    artifacts.value = {}
     error.value = ''
     pending.value = 0
     lost.value = 0
@@ -334,6 +533,9 @@ export function useLiveNotes() {
     minutes,
     minutesFile,
     minutesPhase,
+    revisePhase,
+    reviseError,
+    artifacts,
     error,
     pending,
     lost,
@@ -341,10 +543,12 @@ export function useLiveNotes() {
     start,
     addViewer,
     removeViewer,
+    setMicStream,
     stopCapture,
     finishUploads,
     finish,
     generateMinutes,
+    mergeAudio,
     refresh,
     reset,
   }

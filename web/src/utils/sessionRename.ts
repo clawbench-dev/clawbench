@@ -13,7 +13,7 @@ import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
  * would silently apply to only one of them. See `sessionRename.test.ts`.
  *
  * The button is offered only when the user has configured the shared AI summary
- * model (`ai_summary.api.base_url`) — the only LLM this feature can call.
+ * model (`ai_summary.provider_id`) — the only LLM this feature can call.
  * Returns an empty object otherwise, which the dialog treats as "no button".
  *
  * Errors surface as a toast (the dialog's generic generate handler only logs),

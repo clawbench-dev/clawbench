@@ -142,6 +142,39 @@ describe('ChatMessageRail — gutter gate', () => {
     await w.vm.refresh()
     expect(w.find('.msg-rail').classes()).toContain('msg-rail--visible')
   })
+
+  it('re-reads the gate when the pane is widened, without a remount', async () => {
+    // The regression: the gate was measured once at mount, so a pane stretched
+    // from narrow to wide kept the rail hidden until the panel was remounted
+    // (which is what switching sessions does). Nothing about the rail itself
+    // changes size here — only the gutter does, which is why a resize listener
+    // is required on top of the observer.
+    const scroller = scrollerWithPadding(0)
+    const w = mountRail({ getScroller: () => scroller })
+    await w.vm.refresh()
+    expect(w.find('.msg-rail').classes()).not.toContain('msg-rail--visible')
+
+    scroller.style.paddingInlineStart = '100px'
+    window.dispatchEvent(new Event('resize'))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    expect(w.find('.msg-rail').classes()).toContain('msg-rail--visible')
+  })
+
+  it('re-reads the gate when the UI scale changes', async () => {
+    // Scaling the UI changes designToCss and the pane's usable width without
+    // firing `resize`, so the gate must listen for that event too.
+    const scroller = scrollerWithPadding(100)
+    const w = mountRail({ getScroller: () => scroller })
+    await w.vm.refresh()
+    expect(w.find('.msg-rail').classes()).toContain('msg-rail--visible')
+
+    scroller.style.paddingInlineStart = '0px'
+    window.dispatchEvent(new Event('clawbench-ui-scale-change'))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    expect(w.find('.msg-rail').classes()).not.toContain('msg-rail--visible')
+  })
 })
 
 describe('ChatMessageRail — interaction', () => {
@@ -327,16 +360,18 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     expect(w.emitted('select-pending')).toHaveLength(1)
   })
 
-  it('keeps the pending slot inside the axis while a reply streams', async () => {
-    // The regression: while generating, the axis tracked the ACTIVE message —
-    // the last FINALIZED one, whose row then sits on the bottom edge, putting
-    // the pending slot exactly one row lower: outside the clip box, so it was
-    // invisible AND unclickable (`elementFromPoint` at its centre hit the panel
-    // behind it). With the reader on the tail, the slot must stay on screen.
-    const w = mountWithTrack(40, { activeId: 39, generating: true })
+  it('keeps the pending slot inside the axis while the reader is on it', async () => {
+    // The regression: while generating, the axis used to track the ACTIVE
+    // message — the last FINALIZED one, whose row then sits on the bottom edge,
+    // putting the pending slot exactly one row lower: outside the clip box, so
+    // it was invisible AND unclickable (`elementFromPoint` at its centre hit the
+    // panel behind it). With the reader on the tail, the slot must stay on
+    // screen.
+    const w = mountWithTrack(40, { activeId: 40 })
     await w.vm.refresh()
-    // 40 is the last message, i.e. the row right before the pending slot.
-    await w.setProps({ activeId: 40 })
+    // The pending slot only exists once the turn starts, and it is appended
+    // BELOW the visible band — the axis must follow it.
+    await w.setProps({ generating: true, pendingActive: true })
     await w.vm.$nextTick()
 
     const railHeight = parseFloat(
@@ -353,11 +388,12 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     expect(centre - 11).toBeGreaterThanOrEqual(0)
   })
 
-  it('marks the pending slot as the active node while a reply streams', () => {
-    // While streaming, the tail IS the position the axis is showing, so the mark
-    // belongs on the slot. Leaving it unmarked made it the only node without the
-    // highlight — it read as "not a real message" instead of "being written".
-    const w = mountRail({ generating: true, activeId: 5 })
+  it('marks the pending slot as the active node while the reader is on it', () => {
+    // While streaming AND at the bottom, the tail IS the position the axis is
+    // showing, so the mark belongs on the slot. Leaving it unmarked made it the
+    // only node without the highlight — it read as "not a real message" instead
+    // of "being written".
+    const w = mountRail({ generating: true, pendingActive: true, activeId: 5 })
     expect(w.find('.msg-rail-node--pending').classes()).toContain('active')
     // …and the finished row it replaced gives the mark up: exactly one node ever
     // carries it, or the cue stops meaning anything.
@@ -365,6 +401,16 @@ describe('ChatMessageRail — pending (in-flight reply) node', () => {
     expect(marked).toHaveLength(1)
     // Both layers agree, or the number is lit while its row is not.
     expect(w.find('.msg-rail-row--pending').classes()).toContain('active')
+  })
+
+  it('hands the mark to the reading position when the reader scrolls away mid-turn', () => {
+    // A turn can stream for minutes; pinning the mark to the tail while the
+    // reader scrolled up left the highlight frozen at the bottom. Off the tail,
+    // the slot stays on the axis (it is still clickable) but is not "here".
+    const w = mountRail({ generating: true, pendingActive: false, activeId: 2 })
+    expect(w.find('.msg-rail-node--pending').classes()).not.toContain('active')
+    expect(w.findAll('.msg-rail-node')[1].classes()).toContain('active')
+    expect(w.findAll('.msg-rail-node').filter(n => n.classes().includes('active'))).toHaveLength(1)
   })
 
   it('hands the mark back to the message once the turn ends', () => {

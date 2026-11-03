@@ -325,9 +325,9 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
 // target path, so the stub exposes that as an attribute.
 vi.mock('@/components/file/ShareLinkDialog.vue', () => ({
   default: defineComponent({
-    props: ['open', 'file'],
+    props: ['open', 'file', 'isDir'],
     emits: ['close'],
-    template: '<div v-if="open" class="share-link-dialog-stub" :data-path="file && file.path" />',
+    template: '<div v-if="open" class="share-link-dialog-stub" :data-path="file && file.path" :data-isdir="String(!!isDir)" />',
   }),
 }))
 
@@ -560,6 +560,13 @@ beforeEach(() => {
   mockLocalConfig.fileView = 'list'
   mockLocalConfig.filePreviewMode = false
 })
+
+// A dragstart without a matching dragend leaves the drag ghost (and its 5s
+// safety timer) alive in `document.body`. The timer then fires while a LATER
+// test — or no test at all — owns the DOM, which surfaces as an unhandled error
+// attributed to whatever ran last. Clearing after every case keeps that timer
+// inside the case that created it.
+afterEach(() => { cleanupDragGhost() })
 
 // ── Rendering ──
 
@@ -1611,6 +1618,58 @@ describe('FileManagerContent — resident search', () => {
     expect(wrapper.vm.ctxMenu.entry.path).toBe('cmd/main.go')
   })
 
+  // Search results have no browsed-directory background: the empty-area menu
+  // (paste / new file / new folder) is suppressed there, so any pixel that is
+  // not part of the entry falls through to nothing at all. The whole row must
+  // therefore open the entry menu — the parent-directory line, the size column
+  // and the reveal button included.
+  it('right-clicking anywhere on a search result row opens the entry menu', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    for (const sel of ['.file-parent-dir', '.file-meta', '.fs-result-dir-btn']) {
+      wrapper.vm.closeCtxMenu()
+      await nextTick()
+      const target = wrapper.find(`.file-item ${sel}`)
+      expect(target.exists(), sel).toBe(true)
+      await target.trigger('contextmenu')
+      await nextTick()
+      expect(wrapper.vm.ctxMenu.visible, sel).toBe(true)
+      expect(wrapper.vm.ctxMenu.entry?.path, sel).toBe('cmd/main.go')
+    }
+  })
+
+  it('right-clicking a grid search result outside the name opens the entry menu', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    await wrapper.find('.grid-item .grid-parent-dir').trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('cmd/main.go')
+  })
+
+  it('still shows no menu when right-clicking empty space in the search results', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-list').trigger('contextmenu')
+    await nextTick()
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
+  })
+
   it('Escape clears the query and returns to the listing', async () => {
     searchState.query = 'main'
     searchState.results = [
@@ -1971,14 +2030,29 @@ describe('FileManagerContent — context menu', () => {
       expect(item).toBeTruthy()
     })
 
-    it('hides the share-link item for a directory (directories cannot be shared)', async () => {
+    it('renders the share-link item for a directory too', async () => {
       const wrapper = mountContent()
       wrapper.vm.ctxMenu.visible = true
       wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
       await nextTick()
 
       const item = wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))
-      expect(item).toBeFalsy()
+      expect(item).toBeTruthy()
+    })
+
+    it('marks a directory target so the dialog can word itself for a folder', async () => {
+      const wrapper = mountContent()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'docs', path: 'docs' }
+      await nextTick()
+
+      wrapper.vm.doShareLink()
+      await nextTick()
+
+      expect(wrapper.vm.shareTarget).toEqual({ name: 'docs', path: 'docs', isDir: true })
+      const dialog = wrapper.find('.share-link-dialog-stub')
+      expect(dialog.exists()).toBe(true)
+      expect(dialog.attributes('data-isdir')).toBe('true')
     })
 
     it('opens the dialog with the context-menu entry, then closes the menu', async () => {
@@ -1994,7 +2068,7 @@ describe('FileManagerContent — context menu', () => {
       expect(wrapper.vm.shareDialogOpen).toBe(true)
       // The menu entry, NOT the currently open file (null here) — sharing must
       // work for a file the user never opened.
-      expect(wrapper.vm.shareTarget).toEqual({ name: 'other.md', path: 'docs/other.md' })
+      expect(wrapper.vm.shareTarget).toEqual({ name: 'other.md', path: 'docs/other.md', isDir: false })
       // …and the dialog really receives it (catches a template binding that
       // passes the wrong object even when the state is right).
       const dialog = wrapper.find('.share-link-dialog-stub')
@@ -2079,10 +2153,12 @@ describe('FileManagerContent — context menu hit zone', () => {
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
   })
 
-  it('treats the parent-dir line of a search hit as outside the name zone', async () => {
-    // Search results have no "current directory", so an outside-zone
-    // right-click cannot show the empty-area menu — it dismisses instead of
-    // opening an entry menu for the row it happens to sit on.
+  it('treats the whole search-result row as the entry zone, parent-dir line included', async () => {
+    // Search results have no "current directory", so a right-click that falls
+    // through to the empty-area menu would do nothing at all (that menu targets
+    // the browsed directory). Search rows therefore belong to the entry in
+    // full — the parent-dir line, the meta column and the reveal button
+    // included — so the menu opens for the row the click sits on.
     searchState.query = 'main'
     searchState.recursive = true
     searchState.results = [
@@ -2095,8 +2171,8 @@ describe('FileManagerContent — context menu hit zone', () => {
     expect(target).toBeTruthy()
     await wrapper.vm.handleCtxMenu({ clientX: 10, clientY: 20, target })
     await nextTick()
-    expect(wrapper.vm.ctxMenu.visible).toBe(false)
-    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry?.path).toBe('cmd/main.go')
   })
 
   it('grid: opens the entry menu on the tile name', async () => {

@@ -103,6 +103,64 @@ func TestAgentVisibleInProject(t *testing.T) {
 	assert.False(t, agentVisibleInProject(nil, proj), "nil agent is not visible")
 }
 
+// TestAgentDelete_TakeoverTargetRespectsProjectScope verifies the takeover
+// target is chosen from the agents visible in the CALLER's project. The
+// configured default may be scoped to another project; handing the sessions to
+// it would leave them on an agent this project's GET /api/agents does not
+// return, so the picker and model list could not resolve it.
+func TestAgentDelete_TakeoverTargetRespectsProjectScope(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	projA := "/tmp/agent-takeover-scope-a"
+	projB := "/tmp/agent-takeover-scope-b"
+	idA, err := store.ProjectIDForPath(projA)
+	require.NoError(t, err)
+	_, err = store.ProjectIDForPath(projB)
+	require.NoError(t, err)
+
+	// The configured default is scoped to project A, so project B cannot see it.
+	scopedDefault := model.Agents["codebuddy"]
+	scopedDefault.ProjectID = &idA
+	model.Agents["codebuddy"] = scopedDefault
+	for i, a := range model.AgentList {
+		if a.ID == "codebuddy" {
+			model.AgentList[i] = scopedDefault
+		}
+	}
+	origDefault := model.GetDefaultAgentID()
+	model.SetDefaultAgentID("codebuddy")
+	defer model.SetDefaultAgentID(origDefault)
+
+	// A global agent project B can see: this must become the takeover target.
+	helper := &model.Agent{ID: "global-helper", Name: "GlobalHelper", Backend: "claude"}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), helper))
+	model.AddAgent(helper)
+
+	_, err = store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
+		                            model, transport, external_session_id, context_state, archived)
+		 VALUES ('s-scope', 1, 'claude', 'chat', 'claude', 'chat',
+		         'claude-sonnet-4-6', 'cli', '', '{}', 0)`)
+	require.NoError(t, err)
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	req = withAuthCookie(req, model.SessionToken)
+	req = withProjectCookie(req, projB)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "global-helper", resp["replacementAgentId"],
+		"the takeover target must be visible in the caller's project, not the default scoped elsewhere")
+
+	var agentID string
+	require.NoError(t, store.UnsafeDBForTest().
+		QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 's-scope'").Scan(&agentID))
+	assert.Equal(t, "global-helper", agentID)
+}
+
 // TestServeAgentsPatch_ProjectScopeRefusedForDefault verifies the default agent
 // cannot be scoped to a single project.
 func TestServeAgentsPatch_ProjectScopeRefusedForDefault(t *testing.T) {

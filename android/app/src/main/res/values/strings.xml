@@ -113,6 +113,14 @@
     <string name="notif_listening">Listening for messages</string>
     <string name="notif_service_stopping">Background service stopping</string>
     <string name="notif_service_starting">Background service starting…</string>
+    <!-- Screen sharing (桌面共享): the ongoing notification shown while the
+         device screen is being captured. Required by the mediaProjection
+         foreground service type, and it is also the user's only visible reminder
+         that the screen is still being shared. -->
+    <string name="notif_channel_screen_share">Screen sharing</string>
+    <string name="notif_channel_screen_share_desc">Shown while the screen is being shared</string>
+    <string name="notif_screen_share_title">Sharing screen</string>
+    <string name="notif_screen_share_text">The screen is visible to everyone who has the link</string>
     <!-- Share feature -->
     <string name="share_file_failed">Failed to share file</string>
     <string name="share_multiple_files">Share multiple files</string>

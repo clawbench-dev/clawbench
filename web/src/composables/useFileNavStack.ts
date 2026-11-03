@@ -1,5 +1,6 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import { recordRecentFile } from '@/composables/useRecentFiles'
+import { noteMeetingFileClosed, noteMeetingFileOpened } from '@/utils/meetingFileTracker'
 import type { FileScrollEntry } from '@/utils/fileScrollCache'
 
 const MAX_STACK_DEPTH = 20
@@ -50,6 +51,9 @@ export function useFileNavStack() {
     _overlayOpen.value = true
     // Record to recent files — single entry point for all file opens
     recordRecentFile(path)
+    // The meeting timeline uses the same chokepoint: every preview, from the
+    // file manager, a chat link or the resources tab, passes through here.
+    noteMeetingFileOpened(path, 'preview')
     const nextLocation = { path, ...location }
     const current = _currentLocation.value
     // Consecutive opens of the same destination update metadata without adding
@@ -99,12 +103,14 @@ export function useFileNavStack() {
   function goBack(): string | null {
     if (!_canGoBack.value) return null
     _historyIndex.value--
+    noteMeetingFileOpened(_currentFilePath.value ?? '', 'preview')
     return _currentFilePath.value
   }
 
   function goForward(): string | null {
     if (!_canGoForward.value) return null
     _historyIndex.value++
+    noteMeetingFileOpened(_currentFilePath.value ?? '', 'preview')
     return _currentFilePath.value
   }
 
@@ -112,6 +118,7 @@ export function useFileNavStack() {
     _overlayOpen.value = false
     _history.value = []
     _historyIndex.value = -1
+    noteMeetingFileClosed()
   }
 
   /**
@@ -127,6 +134,7 @@ export function useFileNavStack() {
     if (!current) return
     recordRecentFile(path)
     _history.value[_historyIndex.value] = { ...current, path }
+    noteMeetingFileOpened(path, 'preview')
   }
 
   function removePath(path: string) {
@@ -138,7 +146,12 @@ export function useFileNavStack() {
     // If the history is now empty, close overlay
     if (_history.value.length === 0) {
       _overlayOpen.value = false
+      noteMeetingFileClosed()
+      return
     }
+    // The removed entry may have been the one on screen; the visit that
+    // replaces it is what the meeting timeline should record next.
+    noteMeetingFileOpened(_currentFilePath.value ?? '', 'preview')
   }
 
   return {

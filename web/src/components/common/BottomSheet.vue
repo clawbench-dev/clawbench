@@ -454,6 +454,13 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  /* Scroll the actions when they do not fit instead of wrapping/squashing.
+     `safe` keeps the leftmost action reachable on overflow (see
+     modal-card.css for the same rule on the centered modal). */
+  justify-content: safe flex-end;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;

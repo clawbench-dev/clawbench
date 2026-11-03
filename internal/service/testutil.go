@@ -25,6 +25,13 @@ func InitInMemoryDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Model providers: agent PATCH validates the binding and the delete guard
+	// counts references, so the table must exist in the shared fixture.
+	if _, err := db.ExecContext(context.Background(), ProvidersDDL); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	// The projects registry: agent project-scope resolution (ProjectIDForPath /
 	// ProjectIDByPath) reads it, so handler tests that exercise scoping need it.
 	if _, err := db.ExecContext(context.Background(), store.ProjectsDDL); err != nil {
@@ -43,11 +50,18 @@ func InitInMemoryDB() (*sql.DB, error) {
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			agent_name TEXT NOT NULL DEFAULT '',
+			agent_source TEXT NOT NULL DEFAULT 'default',
+			agent_takeover_from TEXT NOT NULL DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			transport TEXT NOT NULL DEFAULT '',
+			external_session_id TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			disabled INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
+			compacted INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -57,7 +71,8 @@ func InitInMemoryDB() (*sql.DB, error) {
 			cron_expr TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
 			prompt TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'active'
+			status TEXT NOT NULL DEFAULT 'active',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`); err != nil {
 		_ = db.Close()

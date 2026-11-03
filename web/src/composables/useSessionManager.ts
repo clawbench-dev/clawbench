@@ -188,7 +188,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   }
 
   /**
-   * Edit the text of a still-queued message, in place.
+   * Edit a still-queued message, in place: its text and, optionally, its
+   * attachments.
+   *
+   * `files` is optional and omitted from the request when not supplied, because
+   * the endpoint reads an ABSENT key as "keep the stored attachments" and an
+   * empty array as "remove them all". A text-only save must therefore not send
+   * `files` at all — sending `[]` would silently wipe the user's images.
    *
    * Deliberately NOT optimistic. The drain loop can claim the row at any
    * moment; updating locally first would show the new text and then snap back
@@ -200,18 +206,29 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    * for its own broadcast). A 409 means the message is already a real turn sent
    * with the OLD text: the entry is dropped locally so the panel does not keep a
    * phantom, and the user is told why the edit did not apply.
+   *
+   * `sessionId` is the session the entry was QUEUED IN, and it addresses the
+   * PATCH. It defaults to the active session, but callers that hold a draft
+   * across a session switch must pass the original one: re-reading the active
+   * session would address a queue that does not contain the queueId, and the
+   * server's 409 ("already drained") would silently discard the edit.
    */
-  async function editQueuedMessage(queueId: string, text: string): Promise<boolean> {
+  async function editQueuedMessage(
+    queueId: string,
+    text: string,
+    files?: FileEntry[],
+    sessionId = identity.currentSessionId.value,
+  ): Promise<boolean> {
     if (!queueId) return false
-    const sessionId = identity.currentSessionId.value
     if (!sessionId) return false
 
     try {
       await apiPatch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, {
         queueId,
         message: text,
+        ...(files === undefined ? {} : { files }),
       })
-      updateQueuedText(sessionId, queueId, text)
+      updateQueuedText(sessionId, queueId, text, files)
       return true
     } catch (err) {
       const status = (err as { status?: number })?.status

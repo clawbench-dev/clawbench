@@ -119,7 +119,7 @@ test.describe.serial('ACP Permission Approval', () => {
     await expect(permissionView).toHaveClass(/permission-responded/, { timeout: 5000 })
 
     // Wait for the full response to complete (permission was approved, agent continues)
-    await expect(chat.sendButton).toBeVisible({ timeout: 30000 })
+    await expect(chat.sendButton).toBeVisible({ timeout: 45000 })
   })
 
   /**

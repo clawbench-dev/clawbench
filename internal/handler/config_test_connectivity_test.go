@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,7 @@ func TestSTTConnectivity(t *testing.T) {
 			t.Fatalf("model = %q, want Qwen3-ASR-1.7B", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
@@ -70,6 +71,79 @@ func TestSTTConnectivity(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
 	}
+	// The recognized text is the proof that the probe really ran ASR.
+	if !strings.Contains(res.Message, "你好") {
+		t.Fatalf("message = %q, want the recognized text", res.Message)
+	}
+}
+
+// A 200 that carries no text means the endpoint accepted the upload but
+// recognized nothing: a broken configuration, not a working engine.
+func TestSTTConnectivity_EmptyTranscriptFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"   "}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "m",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "empty transcription")
+}
+
+// A server error is a failure. The probe used to treat any non-auth/non-404
+// status as "reachable", which reported a broken backend as green.
+func TestSTTConnectivity_ServerErrorFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "m",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "500")
+}
+
+// The probe must upload the embedded "你好" clip through the same multipart
+// shape real transcription uses, otherwise it would not test the feature.
+func TestSTTConnectivity_UploadsEmbeddedClip(t *testing.T) {
+	var gotAudio []byte
+	var gotFilename, gotModel, gotLanguage, gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotModel = r.FormValue("model")
+		gotLanguage = r.FormValue("language")
+		f, header, err := r.FormFile("file")
+		require.NoError(t, err)
+		defer func() { _ = f.Close() }()
+		gotFilename = header.Filename
+		gotAudio, err = io.ReadAll(f)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": srv.URL,
+		"stt.model":    "Qwen3-ASR-1.7B",
+		"stt.api_key":  "k-1",
+		"stt.language": "zh",
+	})
+	assert.True(t, res.Success, res.Message)
+	assert.Equal(t, sttProbeAudio, gotAudio, "probe must upload the real speech clip")
+	assert.Equal(t, "probe.mp3", gotFilename, "the mp3 must keep its extension: some gateways pick the decoder from it")
+	assert.Equal(t, "Qwen3-ASR-1.7B", gotModel)
+	assert.Equal(t, "zh", gotLanguage)
+	assert.Equal(t, "Bearer k-1", gotAuth)
 }
 
 func TestSTTConnectivity_AuthFailure(t *testing.T) {
@@ -471,107 +545,6 @@ func TestTestTTS_DefaultEdge(t *testing.T) {
 		"tts.engine": "",
 	})
 	// With empty engine, it defaults to "edge" — just verify it doesn't panic
-	_ = result
-}
-
-func TestTestTTS_PiperNoBinary(t *testing.T) {
-	result := testTTSPiper(map[string]any{})
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "Piper binary not found")
-}
-
-func TestTestTTS_PiperModelPathNotConfigured(t *testing.T) {
-	// When piper binary is not found, it fails before checking model path.
-	// This test verifies the function handles missing model path correctly.
-	result := testTTSPiper(map[string]any{
-		"tts.voice":            "",
-		"tts.piper.model_path": "",
-	})
-	assert.False(t, result.Success)
-}
-
-func TestTestTTS_PiperModelNotFound(t *testing.T) {
-	// When piper binary is not found, it fails before checking model file.
-	result := testTTSPiper(map[string]any{
-		"tts.voice":            "test-voice",
-		"tts.piper.model_path": "/nonexistent/model.onnx",
-	})
-	assert.False(t, result.Success)
-}
-
-func TestTestTTS_PiperSuccess(t *testing.T) {
-	tmpDir := t.TempDir()
-	modelFile := filepath.Join(tmpDir, "model.onnx")
-	require.NoError(t, os.WriteFile(modelFile, []byte("fake model"), 0o644))
-
-	result := testTTSPiper(map[string]any{
-		"tts.voice":            "test-voice",
-		"tts.piper.model_path": modelFile,
-	})
-	// May still fail if piper binary not found, but model check passes
-	if result.Success {
-		assert.Contains(t, result.Message, "Piper ready")
-	}
-}
-
-func TestTestTTS_KokoroMultipleErrors(t *testing.T) {
-	result := testTTSKokoro(map[string]any{
-		"tts.kokoro.model_path":  "/nonexistent/model.onnx",
-		"tts.kokoro.voices_path": "/nonexistent/voices.bin",
-	})
-	assert.False(t, result.Success)
-	// Should report model and voices file errors
-	assert.Contains(t, result.Message, "Kokoro model file not found")
-	assert.Contains(t, result.Message, "Kokoro voices file not found")
-}
-
-func TestTestTTS_KokoroModelNotFound(t *testing.T) {
-	result := testTTSKokoro(map[string]any{
-		"tts.kokoro.model_path":  "/nonexistent/model.onnx",
-		"tts.kokoro.voices_path": "/nonexistent/voices.bin",
-	})
-	assert.False(t, result.Success)
-}
-
-func TestTestTTS_KokoroVoicesNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	modelFile := filepath.Join(tmpDir, "kokoro.onnx")
-	require.NoError(t, os.WriteFile(modelFile, []byte("fake"), 0o644))
-
-	result := testTTSKokoro(map[string]any{
-		"tts.kokoro.model_path":  modelFile,
-		"tts.kokoro.voices_path": "/nonexistent/voices.bin",
-	})
-	assert.False(t, result.Success)
-}
-
-func TestTestTTS_NanoNoBinary(t *testing.T) {
-	result := testTTSNano(map[string]any{
-		"tts.moss_nano.model_dir": "",
-	})
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "MOSS-Nano binary not found")
-}
-
-func TestTestTTS_NanoNoModelDir(t *testing.T) {
-	// Without model dir, binary may be found — just check it doesn't panic
-	result := testTTSNano(map[string]any{
-		"tts.moss_nano.model_dir": "/nonexistent/models",
-	})
-	// Binary probably not found in CI
-	_ = result
-}
-
-func TestTestTTS_NanoInvalidModelDir(t *testing.T) {
-	// Point to a file instead of directory
-	tmpDir := t.TempDir()
-	notDir := filepath.Join(tmpDir, "not-a-dir")
-	require.NoError(t, os.WriteFile(notDir, []byte("file"), 0o644))
-
-	result := testTTSNano(map[string]any{
-		"tts.moss_nano.model_dir": notDir,
-	})
-	// May fail on binary not found first, or model dir invalid
 	_ = result
 }
 

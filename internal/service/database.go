@@ -230,6 +230,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: providers.wire_api. The CREATE TABLE is a no-op on an
+	// existing database, so the column would never appear there; a fresh one
+	// gets it from the DDL. Existing rows default to "responses", which is what
+	// the codex block always wrote before the column existed.
+	var providersExists int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='providers'").Scan(&providersExists)
+	if providersExists > 0 {
+		var hasWireAPI int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='wire_api'").Scan(&hasWireAPI)
+		if hasWireAPI == 0 {
+			if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN wire_api TEXT NOT NULL DEFAULT 'responses'"); err != nil {
+				return fmt.Errorf("failed to add providers.wire_api: %w", err)
+			}
+		}
+	}
+
 	// Pre-migration: make sure file_shares carries project_id before createTables
 	// indexes it. A database can hold file_shares WITHOUT any project-scoped
 	// chat table (an install that only ever used file sharing), in which case the
@@ -947,25 +963,88 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 	// AI 听记 transcripts and generated minutes for live shares. Defined in
 	// live_notes.go so the handler tests can create the same schema.
-	if _, err := store.WriteExec(LiveNotesDDL); err != nil {
+	//
+	// Tables first, indexes after the column migration below: one of the
+	// indexes covers started_at, a column an upgraded database only gains from
+	// that migration. Creating it here would fail on every existing install.
+	if _, err := store.WriteExec(LiveNotesTablesDDL); err != nil {
 		return fmt.Errorf("failed to create live_notes tables: %w", err)
 	}
-	// Migrate: live_notes gained file_path (the Markdown copy written into the
-	// project). CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a
-	// database that ran the previous build only gets the column from here.
-	{
-		var hasFilePath int
+	// Migrate: live_notes grew the artifact columns. CREATE TABLE IF NOT EXISTS
+	// is a no-op on an existing table, so a database that ran an earlier build
+	// only gets them from here. Probed one by one (rather than recording a
+	// schema_migrations row) because a column probe is self-healing.
+	// Remember whether this database predates the meeting-record columns: the
+	// one-time cleanup below must run exactly once, on the upgrade that adds
+	// them. A row without a start time is a pre-record-model row — invisible to
+	// the list, never cleaned by anything else, so it would linger forever.
+	var hadStartedAt int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name = 'started_at'",
+	).Scan(&hadStartedAt)
+
+	for col, stmt := range map[string]string{
+		"file_path": "ALTER TABLE live_notes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
+		"dir_path":  "ALTER TABLE live_notes ADD COLUMN dir_path TEXT NOT NULL DEFAULT ''",
+		"revised":   "ALTER TABLE live_notes ADD COLUMN revised TEXT NOT NULL DEFAULT ''",
+		// Matches the DDL default: an untouched share has never been proofread.
+		"revise_status": "ALTER TABLE live_notes ADD COLUMN revise_status TEXT NOT NULL DEFAULT 'idle'",
+		"revise_error":  "ALTER TABLE live_notes ADD COLUMN revise_error TEXT NOT NULL DEFAULT ''",
+		// The meeting-record columns. INTEGER, not TEXT: these are epoch
+		// milliseconds and SQLite would happily store "0" as text, which then
+		// breaks every comparison against a bound integer.
+		"started_at": "ALTER TABLE live_notes ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
+		"ended_at":   "ALTER TABLE live_notes ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0",
+		"dir_name":   "ALTER TABLE live_notes ADD COLUMN dir_name TEXT NOT NULL DEFAULT ''",
+		// What the room carried ("voice"/"video"). Empty on records written
+		// before the column existed — the UI shows no type tag for those rather
+		// than guessing from the artifacts.
+		"kind": "ALTER TABLE live_notes ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+		// hidden marks a row the meeting list must not show. Only the
+		// pre-record rows described below are hidden; everything the current
+		// model writes stays visible. A column (rather than a delete) keeps the
+		// transcript recoverable — see the note on the one-time pass.
+		"hidden": "ALTER TABLE live_notes ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+	} {
+		var present int
 		_ = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name='file_path'",
-		).Scan(&hasFilePath)
-		if hasFilePath == 0 {
-			if _, err := store.WriteExec(
-				"ALTER TABLE live_notes ADD COLUMN file_path TEXT NOT NULL DEFAULT ''",
-			); err != nil {
-				return fmt.Errorf("failed to add live_notes.file_path column: %w", err)
-			}
+			"SELECT COUNT(*) FROM pragma_table_info('live_notes') WHERE name = ?", col,
+		).Scan(&present)
+		if present > 0 {
+			continue
+		}
+		if _, err := store.WriteExec(stmt); err != nil {
+			return fmt.Errorf("failed to add live_notes.%s column: %w", col, err)
 		}
 	}
+	if hadStartedAt == 0 {
+		// Rows that predate the meeting-record model have no start time, so the
+		// list can never place them on a timeline. They used to be DELETEd here
+		// together with their live_notes_segments — irreversible, silent, and
+		// the transcript is not recoverable from the Markdown artifacts (those
+		// are written only on success, and the user may have removed the
+		// folder). Hide them instead: nothing is lost, and the meeting list
+		// filters on hidden = 0 (ListMeetingRecords / GetMeetingRecord).
+		//
+		// The pass stays gated on "this database had no started_at column":
+		// started_at = 0 is also the value of a share whose publisher has not
+		// attached yet (EnsureLiveNote), so running this on every startup would
+		// hide live meetings.
+		res, err := store.WriteExec(`UPDATE live_notes SET hidden = 1 WHERE started_at = 0 AND hidden = 0`)
+		if err != nil {
+			return fmt.Errorf("failed to hide pre-record live_notes rows: %w", err)
+		}
+		if n, rowsErr := res.RowsAffected(); rowsErr == nil && n > 0 {
+			slog.Info("hid pre-record live notes rows instead of deleting them",
+				slog.Int64("rows", n))
+		}
+	}
+	// Only now are every indexed column guaranteed to exist, on both a fresh
+	// database and one upgraded by the ALTERs above.
+	if _, err := store.WriteExec(LiveNotesIndexesDDL); err != nil {
+		return fmt.Errorf("failed to create live_notes indexes: %w", err)
+	}
+
 	// Migrate: session shares no longer freeze a JSON snapshot. The DDL above is
 	// a no-op on an existing database, so the probe has to run AFTER it — the
 	// table is guaranteed to exist by this point, and the rebuild below is the
@@ -994,6 +1073,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// tests share one source of truth for the schema.
 	if _, err := store.WriteExec(NotificationsDDL); err != nil {
 		return fmt.Errorf("failed to create notifications table: %w", err)
+	}
+	// notifications.meeting_token: the subject of a kind=meeting row (the share
+	// token, i.e. live_notes.token). The CREATE TABLE above is a no-op on an
+	// existing database, so the column would never appear there.
+	var hasMeetingToken int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name='meeting_token'",
+	).Scan(&hasMeetingToken)
+	if hasMeetingToken == 0 {
+		if _, err := store.WriteExec(
+			"ALTER TABLE notifications ADD COLUMN meeting_token TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("failed to add notifications.meeting_token: %w", err)
+		}
+	}
+	// Model providers (endpoint + credential shared by agents). Defined in
+	// providers.go as a constant so tests share one source of truth.
+	if _, err := store.WriteExec(ProvidersDDL); err != nil {
+		return fmt.Errorf("failed to create providers table: %w", err)
 	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
 	//
@@ -1374,6 +1472,27 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasSessionAgentAvatar == 0 {
 		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN agent_avatar TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add agent_avatar column: %w", err)
+		}
+	}
+
+	// Migrate: add agent_takeover_from column — the DISPLAY NAME snapshot of the
+	// agent this session was taken over FROM when that agent was deleted (see
+	// DeleteAgentWithTakeover). It is not a display-only field: BuildChatRequest
+	// uses it (together with an empty external_session_id) to force a FRESH
+	// native session on the first turn after the swap. Without that, CLI backends
+	// whose resume fallback is "--continue" (deepseek/codewhale, pi) would attach
+	// the new agent to whatever session that CLI last ran in the working
+	// directory — an unrelated transcript, silently.
+	//
+	// Empty means "never taken over". It stays set after the new agent captures
+	// its own session id, so the same flag that drives the turn branch also
+	// drives the "已接管" badge; the ext id alone decides whether the rebuild is
+	// still pending.
+	var hasAgentTakeoverFrom int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='agent_takeover_from'").Scan(&hasAgentTakeoverFrom)
+	if hasAgentTakeoverFrom == 0 {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN agent_takeover_from TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add agent_takeover_from column: %w", err)
 		}
 	}
 
@@ -1947,6 +2066,43 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasAgentProjectID == 0 {
 		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
 			return fmt.Errorf("failed to add project_id column to agents: %w", err)
+		}
+	}
+
+	// Migrate: add preset_id to providers — the models.dev id the row was
+	// created from, used to fall back to the authoritative catalog when the
+	// endpoint does not expose /models. Existing rows default to '' (unknown).
+	var hasProviderPresetID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='preset_id'").Scan(&hasProviderPresetID)
+	if hasProviderPresetID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN preset_id TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add preset_id to providers: %w", err)
+		}
+	}
+
+	// Migrate: providers own the model list their endpoint serves. Existing
+	// rows get an empty list, which means "not curated" (discovery decides).
+	for _, col := range []struct{ name, ddl string }{
+		{"models", "ALTER TABLE providers ADD COLUMN models TEXT NOT NULL DEFAULT '[]'"},
+		{"default_model", "ALTER TABLE providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''"},
+	} {
+		var has int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name=?", col.name).Scan(&has)
+		if has == 0 {
+			if _, err := store.WriteExec(col.ddl); err != nil {
+				return fmt.Errorf("failed to add %s to providers: %w", col.name, err)
+			}
+		}
+	}
+
+	// Migrate: add provider_id column to agents. NULL = use the CLI's own
+	// configuration (no injection); a value points at a row in providers.
+	// Existing agents default to NULL, so nothing changes after the upgrade.
+	var hasAgentProviderID int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='provider_id'").Scan(&hasAgentProviderID)
+	if hasAgentProviderID == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN provider_id INTEGER DEFAULT NULL"); err != nil {
+			return fmt.Errorf("failed to add provider_id column to agents: %w", err)
 		}
 	}
 

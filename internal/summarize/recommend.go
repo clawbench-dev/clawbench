@@ -71,23 +71,33 @@ func AskAboutContext(ctx context.Context, s Summarizer, systemPrompt, contextBlo
 }
 
 // NewAISummarizer builds an LLM summarizer from the shared AISummaryConfig.
-// Returns nil if ai_summary.api.base_url is empty. The format is resolved from
-// the explicit format field, or auto-detected from the URL when empty.
+// Returns nil when no provider is bound (or the legacy endpoint is empty). The
+// format comes from the provider's protocol; a legacy config with no format is
+// auto-detected from the URL.
 func NewAISummarizer(cfg model.AISummaryConfig) Summarizer {
-	baseURL := cfg.API.BaseURL
-	if baseURL == "" {
+	baseURL, key, format, ok := cfg.SummaryEndpoint()
+	if !ok {
 		return nil
 	}
-	switch cfg.Format {
-	case "anthropic":
-		return NewAnthropic(baseURL, cfg.API.Key, cfg.Model)
-	case "openai":
-		return NewOpenAI(baseURL, cfg.API.Key, cfg.Model)
+	if ResolveFormat(baseURL, format) == "anthropic" {
+		return NewAnthropic(baseURL, key, cfg.Model)
+	}
+	return NewOpenAI(baseURL, key, cfg.Model)
+}
+
+// ResolveFormat returns the wire format a summarizer will speak for the given
+// endpoint: an explicit "anthropic"/"openai" wins, otherwise the URL decides.
+// Exported so callers that only report the configuration (the startup log)
+// cannot describe a different endpoint than the one actually called.
+func ResolveFormat(baseURL, format string) string {
+	switch format {
+	case "anthropic", "openai":
+		return format
 	}
 	if IsAnthropicURL(baseURL) {
-		return NewAnthropic(baseURL, cfg.API.Key, cfg.Model)
+		return "anthropic"
 	}
-	return NewOpenAI(baseURL, cfg.API.Key, cfg.Model)
+	return "openai"
 }
 
 // RecommendNextStep generates a concise next-step suggestion based on the

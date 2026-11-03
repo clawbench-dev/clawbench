@@ -122,6 +122,11 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 		schemaType = "Conversation"
 		desc = "A conversation shared from ClawBench."
 	}
+	if d.Kind == shareKindDir {
+		// A folder share's data URL is a listing, not a document.
+		schemaType = "CollectionPage"
+		desc = "A folder shared from ClawBench."
+	}
 
 	var b strings.Builder
 	b.WriteString("\n    <!-- Machine-readable discovery (injected by the server).\n")

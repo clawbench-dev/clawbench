@@ -4,6 +4,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Unit tests for the shared event-notification id formula.
@@ -97,5 +98,22 @@ public class EventNotificationIdsTest {
     @Test
     public void baseMatchesServiceConstant() {
         assertEquals(3, EventNotificationIds.BASE);
+    }
+
+    /**
+     * A meeting lives in its OWN band. It carries neither a session nor a task
+     * id, so forEvent would fall back to BASE — every meeting (and any
+     * blank-id session) would then replace the previous notification in the
+     * shade instead of stacking.
+     */
+    @Test
+    public void meetingIdsUseTheirOwnBand() {
+        int meeting = EventNotificationIds.forMeeting("tok-1");
+        assertTrue(meeting >= EventNotificationIds.BASE + 2 * EventNotificationIds.BAND);
+        assertTrue(meeting < EventNotificationIds.BASE + 3 * EventNotificationIds.BAND);
+        assertEquals(meeting, EventNotificationIds.forMeeting("tok-1"));
+        assertNotEquals(EventNotificationIds.forSession(""), EventNotificationIds.forMeeting("tok-1"));
+        assertEquals(EventNotificationIds.BASE, EventNotificationIds.forMeeting(""));
+        assertEquals(EventNotificationIds.BASE, EventNotificationIds.forMeeting(null));
     }
 }

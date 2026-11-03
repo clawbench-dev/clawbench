@@ -10,7 +10,7 @@ const TAG = 'NotificationsApi'
 
 export const NOTIFICATIONS_TIMEOUT_MS = 20_000
 
-export type NotificationKind = 'session' | 'task' | 'forge' | 'usage'
+export type NotificationKind = 'session' | 'task' | 'forge' | 'usage' | 'meeting'
 
 /** One row of the notification log. */
 export interface NotificationItem {
@@ -26,6 +26,11 @@ export interface NotificationItem {
     taskId?: string
     executionId?: string
     forgeItemKey?: string
+    /**
+     * The meeting a kind='meeting' row belongs to (the share token). Clicking
+     * the row opens that meeting's record, so this is its navigation key.
+     */
+    meetingToken?: string
     agentId?: string
     createdAt: string
     /**

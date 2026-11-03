@@ -5,6 +5,7 @@
 import { highlightCode } from './globals.ts'
 import { escapeHtml } from './html.ts'
 import { detectLang, highlightLine } from './diff.ts'
+import { buildThumbUrl, isThumbExtension, THUMB_DEFAULT_WIDTH } from '@/utils/chatRenderUtils.ts'
 import { resolveFilePath, fileOpenButtonHtml } from '@/composables/useFilePathAnnotation.ts'
 import { localhostOpenButtonHtml, parseLocalhostUrl } from '@/composables/useLocalhostAnnotation.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -302,6 +303,172 @@ function renderWritePreview(input: ToolInput): string {
 }
 
 /**
+ * Served URL for a local image, mirroring the markdown pipeline's rules
+ * (chatRenderUtils.resolveMediaSrc): a project-relative path uses the
+ * `/api/fs/raw/<rel>` form, an absolute one the `?target=` form, which the same
+ * endpoint resolves against the allowed roots — so screenshots outside the
+ * project (`/tmp/...`) still load.
+ */
+function localImageSrc(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  if (/^(?:[a-zA-Z]:)?\//.test(normalized)) {
+    return `/api/fs/raw/?target=${encodeURIComponent(normalized)}`
+  }
+  return `/api/fs/raw/${encodeImagePath(normalized)}`
+}
+
+/** Segment-encode a path so it survives both a URL path and a query value. */
+function encodeImagePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
+/**
+ * Preview URL for the drawer. Raster formats go through the thumbnail endpoint
+ * exactly like inline markdown images — a full-size phone screenshot is
+ * megabytes, and the drawer only ever shows it a few hundred dp wide. Other
+ * formats (svg/gif/webp) have no thumbnail path and keep the original.
+ */
+function imagePreviewSrc(path: string): string {
+  if (isThumbExtension(path)) return buildThumbUrl(encodeImagePath(path.replace(/\\/g, '/')), THUMB_DEFAULT_WIDTH)
+  return localImageSrc(path)
+}
+
+/** ViewImage input keys that carry the image path, in priority order. */
+const VIEW_IMAGE_PATH_KEYS = ['image_path', 'file_path', 'path', 'imagePath']
+
+function viewImagePath(input: ToolInput): string {
+  for (const key of VIEW_IMAGE_PATH_KEYS) {
+    const value = str(input[key])
+    if (value) return value
+  }
+  return ''
+}
+
+/**
+ * Render the ViewImage (CodeBuddy) tool call: the file it was asked to look at
+ * and the question it was asked about that file.
+ *
+ * The RESULT is not text at all — CodeBuddy returns the image as an
+ * `[{type:"image_url",…}]` content block, which is why the picture lives in the
+ * OUTPUT section (see renderViewImageOutput) while this view only describes what
+ * was requested.
+ */
+function renderViewImage(input: ToolInput): string {
+  const imagePath = viewImagePath(input)
+  const query = str(input.query) || str(input.prompt)
+
+  if (!imagePath && !query) return renderJsonFallback(input)
+
+  const projectRoot = store.state.projectRoot || ''
+  const homeDir = store.state.homeDir || ''
+  const resolvedPath = imagePath ? resolveFilePath(imagePath, projectRoot, homeDir) : null
+  const displayPath = resolvedPath || imagePath.replace(/^\.\//, '')
+
+  let html = '<div class="image-view-view">'
+
+  if (imagePath) {
+    // Same header as Read/Write: path + open button (the file viewer is where
+    // the image can be zoomed).
+    html += `<div class="tool-file-header" ${ANNOTATION_SKIP_ATTR}>`
+    html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) html += fileOpenButtonHtml(resolvedPath)
+    html += '</div>'
+  }
+
+  if (query) {
+    html += '<div class="image-view-query">'
+    html += `<span class="image-view-label">${escapeHtml(gt('tool.viewImage.query'))}</span>`
+    html += `<div class="image-view-query-text">${escapeHtml(query)}</div>`
+    html += '</div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Whether a tool output is an image content-block payload — either the JSON
+ * array/object CodeBuddy returns or a bare data URL.
+ *
+ * The test must survive TRUNCATION: the payload is capped at 50 KB, so
+ * `JSON.parse` fails on every real call and the closing brackets never arrive.
+ */
+function isImagePayload(text: string): boolean {
+  if (/^data:image\//i.test(text)) return true
+  if (!/^[[{]/.test(text)) return false
+  return /"type"\s*:\s*"image(?:_url)?"/.test(text) || /"url"\s*:\s*"data:image\//i.test(text)
+}
+
+/**
+ * The image as a complete data URL, or '' when the payload was clipped (the
+ * normal case) or is not an image at all.
+ *
+ * `JSON.parse` is the completeness test: a truncated payload cannot parse, so a
+ * successful parse means the whole base64 arrived (only images under the 50 KB
+ * cap fit). A BARE data URL is deliberately not accepted — nothing about the
+ * string says whether it was clipped, and a half-length base64 renders as a
+ * broken image.
+ */
+function completeImageDataUrl(text: string): string {
+  const trimmed = text.trim()
+  if (!/^[[{]/.test(trimmed)) return ''
+  try {
+    const parsed = JSON.parse(trimmed)
+    const blocks = Array.isArray(parsed) ? parsed : [parsed]
+    for (const block of blocks) {
+      if (!block || typeof block !== 'object') continue
+      const b = block as ToolInput
+      const url = str((b.image_url as ToolInput | undefined)?.url) || str(b.url)
+      if (/^data:image\//i.test(url)) return url
+    }
+  } catch {
+    // Clipped payload — no complete data URL.
+  }
+  return ''
+}
+
+/**
+ * Render the ViewImage result — the picture itself, which is what the tool
+ * actually returns.
+ *
+ * The payload is clipped at the backend's 50 KB output cap, so every real
+ * screenshot arrives cut mid-base64 and cannot be decoded. The preview therefore
+ * comes from the input's `image_path` (the same file the tool read); the data
+ * URL is only used when it happens to be complete. Printing the clipped base64
+ * — what the JSON fallback used to do — buries the answer under 50 KB of noise.
+ *
+ * Non-image output (an argument-validation error, "file not found") is the only
+ * part the user can act on, so it is rendered as-is.
+ */
+function renderViewImageOutput(output: string, ctx?: ToolOutputCtx): string {
+  const trimmed = output.trim()
+  if (!trimmed) return ''
+  if (!isImagePayload(trimmed)) return renderStatusOutput(trimmed)
+
+  const imagePath = viewImagePath((ctx?.input || {}) as ToolInput)
+  const projectRoot = store.state.projectRoot || ''
+  const homeDir = store.state.homeDir || ''
+  const resolvedPath = imagePath ? resolveFilePath(imagePath, projectRoot, homeDir) : null
+
+  // A plain <img>, deliberately NOT the markdown `.lightbox-img` marker: the
+  // lightbox only reacts to a click in touch mode (on desktop it needs its own
+  // view button), while here a click routes through the tool action handler to
+  // the file viewer on every platform.
+  if (imagePath) {
+    return '<div class="image-view-preview">'
+      + `<img class="image-view-img" src="${escapeHtml(imagePreviewSrc(resolvedPath || imagePath))}"`
+      + ` data-file-path="${escapeHtml(resolvedPath || imagePath)}" alt="" loading="lazy">`
+      + '</div>'
+  }
+
+  const dataUrl = completeImageDataUrl(trimmed)
+  if (dataUrl) {
+    return `<div class="image-view-preview"><img class="image-view-img" src="${escapeHtml(dataUrl)}" alt=""></div>`
+  }
+  return ''
+}
+
+/**
  * Classification of an AskUserQuestion tool input.
  *  - 'valid':     carries at least one renderable question (question text or
  *                 non-empty options), so the card is genuinely answerable.
@@ -358,10 +525,10 @@ export function hasRenderableAskQuestions(input: unknown): boolean {
  * easily as "submit". The words match the labels the shortcut help dialog
  * already uses, so the two surfaces agree.
  *
- * Both halves are localized (`tool.askUser.submitHint` = "提交（{key}）" /
- * "Submit ({key})"), so the hint follows the UI language like every other
- * string on the card — a hardcoded English "Submit" would sit next to a
- * Chinese 提交 button.
+ * Both halves are localized (`tool.askUser.submitHint` renders as
+ * "Submit ({key})" in English and as the equivalent Chinese sentence in zh),
+ * so the hint follows the UI language like every other string on the card —
+ * a hardcoded English "Submit" would sit next to a localized button label.
  *
  * Read from the shared platform axis rather than re-deriving "is this a Mac"
  * here: a local copy of that judgement is exactly what drifted when four
@@ -1594,7 +1761,19 @@ function annotateLocalhostInEscapedText(text: string): string {
 
 // ── Tool output renderer registry ──
 
-type ToolOutputRenderer = (output: string) => string
+/**
+ * Extra context for output renderers.
+ *
+ * `input` exists because some results only make sense next to their request:
+ * ViewImage's result is a (clipped) image payload whose preview has to be
+ * loaded from the input's `image_path`. Callers that have the tool input must
+ * pass it; renderers that don't need it ignore the argument.
+ */
+export interface ToolOutputCtx {
+  input?: ToolInput
+}
+
+type ToolOutputRenderer = (output: string, ctx?: ToolOutputCtx) => string
 const TOOL_OUTPUT_RENDERERS: Record<string, ToolOutputRenderer> = {}
 
 /**
@@ -1751,8 +1930,12 @@ function renderSmartOutput(output: string): string {
  * The default is `true` rather than `false` so a forgotten call site
  * over-annotates rather than silently losing the feature; every streaming call
  * site is pinned by a test.
+ *
+ * `input` is forwarded to the renderer (see ToolOutputCtx) — pass the tool's
+ * input whenever it is known, or results that reference their request (the
+ * ViewImage preview) cannot be rendered.
  */
-export function formatToolOutput(output: string, toolName?: string, { annotate = true }: { annotate?: boolean } = {}): string {
+export function formatToolOutput(output: string, toolName?: string, { annotate = true, input }: { annotate?: boolean; input?: ToolInput } = {}): string {
   if (!output) return ''
   // Clear pending output annotations from any previous render
   _pendingOutputPaths = []
@@ -1760,7 +1943,7 @@ export function formatToolOutput(output: string, toolName?: string, { annotate =
   // Check for a registered output renderer
   const renderer = toolName ? TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()] : undefined
   // Fallback: smart output (detect JSON vs plain text)
-  const html = renderer ? renderer(output) : renderSmartOutput(output)
+  const html = renderer ? renderer(output, { input }) : renderSmartOutput(output)
   return annotate ? annotateAndCollect(html, 'output') : html
 }
 
@@ -1803,6 +1986,9 @@ registerToolOutputRenderer('skillmanage', renderMarkdownOutput)
 registerToolOutputRenderer('todowrite', renderStatusOutput)
 registerToolOutputRenderer('todoread', renderCodeOutput)
 registerToolOutputRenderer('deepthink', renderDeepThinkOutput)
+
+// ViewImage's output is the image payload itself (see renderViewImageOutput)
+registerToolOutputRenderer('viewimage', renderViewImageOutput)
 
 // ── Tool registrations ──
 
@@ -1864,12 +2050,26 @@ registerToolRenderer('ImageGen', renderImageGen)
 registerToolRenderer('Monitor', renderMonitor)
 registerToolRenderer('LSP', renderLSP)
 registerToolRenderer('Git', renderGit)
+registerToolRenderer('ViewImage', renderViewImage)
 
 // Terminal alias
 registerToolRenderer('PowerShell', renderBashTerminal)
 
 TOOL_AUTO_EXPAND.add('askuserquestion')
 TOOL_AUTO_EXPAND.add('permissionapproval')
+
+// ── ViewImage action handler ──
+
+// Clicking the preview opens the same file the header's open button does, so
+// the image can be zoomed in the file viewer. The path rides on the <img>
+// because the drawer body is rebuilt from an HTML string (no component refs).
+registerToolActionHandler('ViewImage', (event, emit) => {
+  const img = (event.target as HTMLElement).closest('.image-view-img') as HTMLElement | null
+  if (!img) return false
+  const filePath = img.getAttribute('data-file-path')
+  if (filePath) emit('file-open', { path: filePath })
+  return true
+})
 
 // ── AskUserQuestion action handler ──
 

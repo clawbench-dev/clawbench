@@ -24,7 +24,7 @@
         <div class="share-notice share-notice-info">
           <Info :size="15" class="share-notice-icon" />
           <div class="share-notice-content">
-            <span class="share-notice-text">{{ linkUrl ? t('shareDialog.active') : t('shareDialog.explain') }}</span>
+            <span class="share-notice-text">{{ noticeText }}</span>
             <div class="share-notice-divider" />
             <span class="share-notice-warning">{{ t('shareDialog.securityHint') }}</span>
           </div>
@@ -87,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ExternalLink, Info, Link2, RefreshCw, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -107,6 +107,9 @@ import { buildShareLinks } from '@/composables/useShareLinks'
 const props = defineProps({
   open: Boolean,
   file: Object,
+  /** The target is a folder: the wording switches from "this file" to
+   *  "this folder" (a folder link opens a browsable listing, not a preview). */
+  isDir: Boolean,
 })
 
 const { t } = useI18n()
@@ -120,6 +123,14 @@ const errorMsg = ref('')
 const linkUrl = ref('')
 /** Every address this share can be opened on; linkUrl is the primary. */
 const shareLinks = ref([])
+
+/** The notice under the file identity: wording depends on whether this link
+ *  opens a file preview or a browsable folder. */
+const noticeText = computed(() =>
+  linkUrl.value
+    ? t(props.isDir ? 'shareDialog.activeDir' : 'shareDialog.active')
+    : t(props.isDir ? 'shareDialog.explainDir' : 'shareDialog.explain'),
+)
 
 // Build the absolute link from the server-returned path.
 /**

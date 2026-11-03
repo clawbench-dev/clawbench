@@ -14,7 +14,7 @@ const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(chann
 // preload cannot require() local files ("module not found"). Importing it
 // would throw at preload load time and take down the ENTIRE ClawBenchNative
 // bridge, not just notifications. `notification.test.ts` guards the copy.
-const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge', 'clawbench-open-usage-meter']
+const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge', 'clawbench-open-usage-meter', 'clawbench-open-meeting']
 
 for (const channel of NAV_CHANNELS) {
   ipcRenderer.on(channel, (_e, detail: unknown) => {
@@ -90,8 +90,41 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   setPendingCaptureSource: (sourceId: string, systemAudio: boolean) =>
     ipcRenderer.invoke('native:set-pending-capture-source', sourceId, systemAudio) as Promise<void>,
   getAudioCaptureSupport: () => ipcRenderer.invoke('native:get-audio-capture-support') as Promise<string>,
+  // Remote control (desktop only; false when the input-injection module is not
+  // installed — the renderer shows "not available" rather than a dead button).
+  remoteControl: (ev: {
+    kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
+    x?: number
+    y?: number
+    button?: number
+    key?: string
+    delta?: number
+    text?: string
+    modifiers?: string[]
+  }) => ipcRenderer.invoke('native:remote-control', ev) as Promise<{ ok: boolean; supported: boolean }>,
+  openShareLink: (url: string) => ipcRenderer.invoke('native:open-share', url) as Promise<boolean>,
+  remoteControlSupported: () => ipcRenderer.invoke('native:remote-control-supported') as Promise<boolean>,
+  remoteControlGrant: (viewerId: string) =>
+    ipcRenderer.invoke('native:remote-control-grant', viewerId) as Promise<void>,
+  remoteControlRevoke: () => ipcRenderer.invoke('native:remote-control-revoke') as Promise<void>,
   setPublishingActive: (active: boolean) =>
     ipcRenderer.invoke('native:set-publishing-active', active) as Promise<void>,
+  // Annotation overlay: a transparent window over the shared display. The main
+  // process decides whether strokes travel as control frames (see
+  // main/annotateOverlay.ts) — the renderer only relays what it is given.
+  openAnnotateOverlay: () =>
+    ipcRenderer.invoke('native:annotate-open') as Promise<{ opened: boolean; inkViaControl: boolean }>,
+  closeAnnotateOverlay: () => ipcRenderer.invoke('native:annotate-close') as Promise<void>,
+  onAnnotateInk: (cb: (msg: string) => void) => {
+    const handler = (_e: unknown, msg: string) => cb(msg)
+    ipcRenderer.on('native:annotate-ink', handler)
+    return () => ipcRenderer.removeListener('native:annotate-ink', handler)
+  },
+  onAnnotateClosed: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('native:annotate-closed', handler)
+    return () => ipcRenderer.removeListener('native:annotate-closed', handler)
+  },
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
   // The desktop shell DOES have a splash overlay (a native WebContentsView
   // floating above the app while it connects and boots — see main/splash.ts).
@@ -142,6 +175,11 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   /** 'ssh' | 'h2' — the transport that carried the last successful connect. */
   getActiveTunnelTransport: () => invoke('native:get-active-tunnel-transport'),
   getPendingNavigation: () => invoke('native:get-pending-navigation'),
+  /**
+   * Drop every remembered self-signed certificate (Settings → Security).
+   * Resolves with how many entries were removed; the next connection asks again.
+   */
+  forgetTrustedCerts: () => invoke('native:forget-trusted-certs'),
 
   // async writes
   saveServer: (u: string, p: string) => invoke('native:save-server', u, p),

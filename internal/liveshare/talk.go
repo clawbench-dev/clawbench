@@ -59,9 +59,10 @@ func (v *Viewer) talkStateLocked() TalkState {
 
 // SetTalking turns one viewer's microphone on or off.
 //
-// Turning it on requires the room-level switch: that is the whole authorisation
-// model. Turning it off is always allowed, so a viewer can silence itself even
-// after the publisher disabled the room switch.
+// Turning it on requires the room-level switch AND that the publisher has not
+// muted this viewer: the switch is the room's permission, the per-viewer mute
+// is the publisher's. Turning it off is always allowed, so a viewer can silence
+// itself even after the publisher disabled the room switch.
 func (r *Room) SetTalking(viewerID string, talking bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -74,9 +75,40 @@ func (r *Room) SetTalking(viewerID string, talking bool) error {
 		return ErrTalkNotAllowed
 	}
 	v.mu.Lock()
+	if talking && v.muted {
+		v.mu.Unlock()
+		return ErrTalkMuted
+	}
 	v.talking = talking
 	v.mu.Unlock()
 	return nil
+}
+
+// SetMuted blocks or unblocks one viewer's microphone.
+//
+// Muting also turns the microphone off in the same breath: leaving `talking`
+// set would keep that viewer's audio flowing while the publisher's list says
+// they are muted. Unmuting only clears the block — it does not turn anything
+// on, because the viewer's own switch is still off.
+//
+// Returns whether the viewer was speaking, so the caller can push the new state
+// to the publisher without a second round trip.
+func (r *Room) SetMuted(viewerID string, muted bool) (wasTalking bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	v := r.viewers[viewerID]
+	if v == nil {
+		return false, ErrRoomNotFound
+	}
+	v.mu.Lock()
+	wasTalking = v.talking
+	v.muted = muted
+	if muted {
+		v.talking = false
+	}
+	v.mu.Unlock()
+	return wasTalking, nil
 }
 
 // MuteAll turns every viewer's microphone off. Returns the ids that were

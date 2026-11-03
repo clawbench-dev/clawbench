@@ -492,7 +492,7 @@ watch(
     if (data === null || !toolDetailIsOpen.value) return
     const { formatToolInput } = chatRender
     const hasInput = data.input && Object.keys(data.input).length > 0
-    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name, { annotate: !!data.done }) : toolDetailData.value.outputHtml
+    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name, { annotate: !!data.done, input: data.input }) : toolDetailData.value.outputHtml
     toolDetailData.value.status = data.status || ''
     toolDetailData.value.done = !!data.done
     toolDetailData.value.inputHtml = hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailData.value.inputHtml
@@ -897,12 +897,15 @@ onUnmounted(() => {
 /* Fixed bottom action bar */
 .exec-detail-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .actions-spacer {

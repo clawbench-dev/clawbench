@@ -398,6 +398,10 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 			"path": "src/a.go", "kind": "quote", "id": "quote-1",
 			"text": "x := 1", "note": "为什么这样写？", "language": "go",
 			"startLine": 3, "endLine": 3,
+			// The queue endpoint is the other inbound decoder for file entries;
+			// it runs the same validatedQuoteEntry, so a locator dropped there
+			// makes a queued meeting quote unjumpable the moment it drains.
+			"meetingToken": "tok-9",
 		}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
@@ -423,6 +427,7 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 	assert.Equal(t, "go", got.Language)
 	assert.Equal(t, "src/a.go", got.Path, "the label must be preserved verbatim, not resolved")
 	assert.Equal(t, 3, got.StartLine)
+	assert.Equal(t, "tok-9", got.MeetingToken, "the meeting locator must survive the queue path too")
 
 	service.CancelSession(sessionID)
 }
@@ -699,7 +704,8 @@ func TestQueueHandler_Enqueue_CrossProject_403(t *testing.T) {
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -724,7 +730,8 @@ func TestQueueHandler_Get_CrossProject_403(t *testing.T) {
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -748,7 +755,8 @@ func TestQueueHandler_Delete_CrossProject_403(t *testing.T) {
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -1450,7 +1458,8 @@ func TestQueueMergeHandler_CrossProject_403(t *testing.T) {
 
 	sessionID := "q-merge-cross-project"
 	_, err := store.UnsafeDBForTest().Exec(
-		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`,
+	)
 	require.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
@@ -1986,4 +1995,430 @@ func TestQueueUpdate_ReadFailureIs500(t *testing.T) {
 	w := callHandler(QueueHandler, req)
 
 	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+// --- PATCH /api/ai/queue (attachments) --------------------------------------
+
+// TestQueueUpdate_ReplacesAttachments: `files` is a full replacement, and the
+// replacement is what the drain loop will later read. The queue position must
+// not move — the whole point of editing in place.
+func TestQueueUpdate_ReplacesAttachments(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-files"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	for _, name := range []string{"keep.md", "old.png", "new.pdf"} {
+		require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, name), []byte("x"), 0o644))
+	}
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "look", []model.FileEntry{
+		{Path: filepath.Join(env.ProjectDir, "old.png")},
+		{Path: filepath.Join(env.ProjectDir, "keep.md")},
+	}, "q-1", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "later", nil, "q-2", "")
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"queueId": "q-1",
+		"message": "look at these",
+		"files": []map[string]any{
+			{"path": filepath.Join(env.ProjectDir, "keep.md")},
+			{"path": filepath.Join(env.ProjectDir, "new.pdf")},
+		},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 2, "an attachment edit must not add or remove queue rows")
+	assert.Equal(t, "q-1", queued[0].QueueID, "position is preserved")
+	require.Len(t, queued[0].Files, 2)
+	assert.Equal(t, filepath.Join(env.ProjectDir, "keep.md"), queued[0].Files[0].Path)
+	assert.Equal(t, filepath.Join(env.ProjectDir, "new.pdf"), queued[0].Files[1].Path,
+		"the removed attachment must be gone and the new one stored")
+}
+
+// TestQueueUpdate_EmptyFilesArrayRemovesAttachments: `[]` means "remove them
+// all", which must stay distinguishable from omitting the key (keep them).
+func TestQueueUpdate_EmptyFilesArrayRemovesAttachments(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-clear-files"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "shot.png"), []byte("png"), 0o644))
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "with a file", []model.FileEntry{
+		{Path: filepath.Join(env.ProjectDir, "shot.png")},
+	}, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{"queueId": "q-1", "message": "text only now", "files": []map[string]any{}}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Empty(t, queued[0].Files)
+	assert.Equal(t, "text only now", queued[0].Text)
+}
+
+// TestQueueUpdate_RejectsPathOutsideProject: the update endpoint accepts paths
+// from the client, so it must apply the same containment check as enqueue. A
+// traversal must be refused outright, not stored and resolved later.
+func TestQueueUpdate_RejectsPathOutsideProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-traversal"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "keep me", nil, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"queueId": "q-1",
+		"message": "keep me",
+		"files":   []map[string]any{{"path": "../../etc/passwd"}},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Empty(t, queued[0].Files, "a rejected edit must leave the row untouched")
+}
+
+// TestQueueUpdate_RejectsMissingAttachment: a path that no longer exists would
+// make the drain fail (or send a dangling reference), so it is a 404 like the
+// enqueue path.
+func TestQueueUpdate_RejectsMissingAttachment(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-missing-file"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "keep me", nil, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{
+		"queueId": "q-1",
+		"message": "keep me",
+		"files":   []map[string]any{{"path": filepath.Join(env.ProjectDir, "nope.png")}},
+	}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestQueueUpdate_EmptyTextWithEmptyFilesRejected: removing the text AND every
+// attachment leaves nothing to send — the entry would drain into an empty turn.
+func TestQueueUpdate_EmptyTextWithEmptyFilesRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-empty-both"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "shot.png"), []byte("png"), 0o644))
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "text", []model.FileEntry{
+		{Path: filepath.Join(env.ProjectDir, "shot.png")},
+	}, "q-1", "")
+	require.NoError(t, err)
+
+	body := map[string]any{"queueId": "q-1", "message": "   ", "files": []map[string]any{}}
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Equal(t, "text", queued[0].Text)
+	assert.Len(t, queued[0].Files, 1, "a rejected edit must not clear the attachments either")
+}
+
+// ── Guard and failure branches ─────────────────────────────────────────────
+//
+// Each of these is a distinct status code the queued-bubble UI branches on:
+// 400 = the caller forgot a parameter, 403 = wrong project, 404 = the session
+// is gone, 409 = benign race (nothing lost), 500 = the server failed and the
+// caller should retry. They are pinned one by one so a refactor cannot merge
+// two of them without a test going red.
+
+// assertQueueErrorKey pins the status and the localized message key.
+func assertQueueErrorKey(t *testing.T, w *httptest.ResponseRecorder, status int, key string) {
+	t.Helper()
+	require.Equal(t, status, w.Code, w.Body.String())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+	assert.Equal(t, key, body["msgKey"], w.Body.String())
+}
+
+func TestQueueInjectHandler_RequiresProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	_ = env
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/inject?session_id=s1&queueId=q1", nil)
+	w := callHandler(QueueInjectHandler, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestQueueInjectHandler_RequiresSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/inject?queueId=q1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInjectHandler, req)
+	assertQueueErrorKey(t, w, http.StatusBadRequest, "SessionIdRequired")
+}
+
+// A token-free request for a session in another project must be refused before
+// anything is claimed: injection mutates the queue.
+func TestQueueInjectHandler_CrossProject_403(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-inject-foreign"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-foreign", "")
+	require.NoError(t, err)
+
+	other, err := os.MkdirTemp("", "other-project")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(other) })
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/inject?session_id="+sessionID+"&queueId=q-foreign", nil)
+	req = withProjectCookie(req, other)
+	w := callHandler(QueueInjectHandler, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1, "a refused request must not touch the queue")
+}
+
+func TestQueueInterruptHandler_RequiresProject(t *testing.T) {
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id=s&queueId=q", nil)
+	w := callHandler(QueueInterruptHandler, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestQueueInterruptHandler_RequiresSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?queueId=q", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInterruptHandler, req)
+	assertQueueErrorKey(t, w, http.StatusBadRequest, "SessionIdRequired")
+}
+
+func TestQueueInterruptHandler_CrossProject_403(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-interrupt-foreign"
+	createQueueSession(t, env, sessionID)
+
+	other, err := os.MkdirTemp("", "other-project")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(other) })
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id="+sessionID+"&queueId=q", nil)
+	req = withProjectCookie(req, other)
+	w := callHandler(QueueInterruptHandler, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// Reading the queue can fail on its own (the table is gone) while the session
+// lookup still works: that is an outage, not a permission problem.
+func TestQueueInterruptHandler_QueueReadFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-interrupt-read-error"
+	createQueueSession(t, env, sessionID)
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE queued_messages")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id="+sessionID+"&queueId=q", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInterruptHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "QueueReadFailed")
+}
+
+func TestQueueMergeHandler_MergeFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-merge-write-error"
+	createQueueSession(t, env, sessionID)
+	breakWrites(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/merge?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueMergeHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "QueueMergeFailed")
+}
+
+// A row that passes the ownership check but cannot be resolved into a session
+// (a NULL column the scan cannot fill) is reported as "no such session" rather
+// than falling through to a default backend and running the turn wrongly.
+func TestQueueHandler_Enqueue_UnresolvableSessionIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-null-model"
+	createQueueSession(t, env, sessionID)
+	_, err := store.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET model = NULL WHERE id = ?`, sessionID)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, map[string]any{"message": "hi"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestQueueHandler_Enqueue_PersistFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-write-error"
+	createQueueSession(t, env, sessionID)
+	breakWrites(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, map[string]any{"message": "hi"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "EnqueueFailed")
+}
+
+// The group branch persists through EnqueueGroupMessage; a failure there must
+// be reported as such, not answered with "ok" and a message that never runs.
+func TestQueueHandler_GroupEnqueueFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	breakWrites(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+groupID, map[string]any{"message": "群消息"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "EnqueueFailed")
+}
+
+func TestQueueHandler_Get_QueueReadFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-get-read-error"
+	createQueueSession(t, env, sessionID)
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE queued_messages")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/queue?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "QueueReadFailed")
+}
+
+// A text-only edit has to read the stored row to decide whether anything would
+// be left to send. That read failing is a server error, not "already drained".
+func TestQueueUpdate_TextOnlyReadFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-text-read-error"
+	createQueueSession(t, env, sessionID)
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE queued_messages")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, map[string]any{
+		"queueId": "q-gone",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "QueueUpdateFailed")
+}
+
+// Clearing the text of a row that no longer exists must not pretend to have
+// saved it: the caller has to learn the message already ran.
+func TestQueueUpdate_EmptyTextForDrainedMessageIs409(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-update-text-drained"
+	createQueueSession(t, env, sessionID)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/queue?session_id="+sessionID, map[string]any{
+		"queueId": "q-never-existed",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusConflict, "QueueAlreadyDrained")
+}
+
+func TestQueueHandler_Delete_MissingSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusBadRequest, "SessionIdRequired")
+}
+
+func TestQueueHandler_Delete_QueueIDWriteFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-delete-write-error"
+	createQueueSession(t, env, sessionID)
+	breakWrites(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID+"&queueId=q-1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "QueueDeleteFailed")
+}
+
+func TestQueueHandler_Delete_ClearAllWriteFailureIs500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-clear-write-error"
+	createQueueSession(t, env, sessionID)
+	breakWrites(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertQueueErrorKey(t, w, http.StatusInternalServerError, "QueueClearFailed")
 }

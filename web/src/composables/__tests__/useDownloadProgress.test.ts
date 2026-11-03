@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import {
   beginDownload, cancelDownload, endDownload, isCurrentDownload,
   nextDownloadId, reportDownloadProgress, setDownloadCancel,
@@ -112,5 +112,95 @@ describe('useDownloadProgress', () => {
 
   it('cancelDownload is a no-op when nothing is running', () => {
     expect(() => cancelDownload()).not.toThrow()
+  })
+})
+
+describe('download speed', () => {
+  beforeEach(() => {
+    cancelDownload()
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('stays 0 until two samples have arrived', () => {
+    const { downloadSpeed } = useDownloadProgress()
+    const id = nextDownloadId()
+    beginDownload(id, 'big.bin', 10_000_000)
+
+    expect(downloadSpeed.value).toBe(0)
+    reportDownloadProgress(id, 1_000_000)
+    expect(downloadSpeed.value).toBe(0)
+  })
+
+  it('reports bytes per second between samples', () => {
+    const { downloadSpeed } = useDownloadProgress()
+    const id = nextDownloadId()
+    beginDownload(id, 'big.bin', 10_000_000)
+
+    vi.setSystemTime(1000)
+    reportDownloadProgress(id, 1_000_000)
+    expect(downloadSpeed.value).toBeCloseTo(1_000_000, 0)
+
+    vi.setSystemTime(2000)
+    reportDownloadProgress(id, 3_000_000)
+    expect(downloadSpeed.value).toBeCloseTo(1_500_000, 0)
+  })
+
+  it('averages over the recent window instead of the last instant', () => {
+    const { downloadSpeed } = useDownloadProgress()
+    const id = nextDownloadId()
+    beginDownload(id, 'big.bin', 100_000_000)
+
+    vi.setSystemTime(1000)
+    reportDownloadProgress(id, 1_000_000)
+    vi.setSystemTime(2000)
+    reportDownloadProgress(id, 2_000_000)
+    // Four seconds later only one 1 MB step arrived. Samples older than the
+    // window are dropped, but the newest one before the boundary stays as the
+    // baseline, so the rate is 1 MB over those 4 s rather than a spike.
+    vi.setSystemTime(6000)
+    reportDownloadProgress(id, 3_000_000)
+
+    expect(downloadSpeed.value).toBeCloseTo(250_000, 0)
+  })
+
+  it('ignores stale ids and resets when the transfer ends', () => {
+    const { downloadSpeed } = useDownloadProgress()
+    const id = nextDownloadId()
+    beginDownload(id, 'big.bin', 10_000_000)
+
+    vi.setSystemTime(1000)
+    reportDownloadProgress(id, 1_000_000)
+    expect(downloadSpeed.value).toBeCloseTo(1_000_000, 0)
+
+    vi.setSystemTime(5000)
+    reportDownloadProgress(id - 1, 9_000_000)
+    expect(downloadSpeed.value).toBeCloseTo(1_000_000, 0)
+
+    endDownload(id)
+    expect(downloadSpeed.value).toBe(0)
+  })
+
+  it('restarts the measurement when the byte count goes backwards', () => {
+    const { downloadSpeed } = useDownloadProgress()
+    const id = nextDownloadId()
+    beginDownload(id, 'big.bin', 10_000_000)
+
+    vi.setSystemTime(1000)
+    reportDownloadProgress(id, 5_000_000)
+    expect(downloadSpeed.value).toBeCloseTo(5_000_000, 0)
+
+    // A superseded/restarted counter must not yield a negative rate.
+    vi.setSystemTime(2000)
+    reportDownloadProgress(id, 0)
+    expect(downloadSpeed.value).toBe(0)
+
+    vi.setSystemTime(3000)
+    reportDownloadProgress(id, 1_000_000)
+    expect(downloadSpeed.value).toBeCloseTo(1_000_000, 0)
   })
 })

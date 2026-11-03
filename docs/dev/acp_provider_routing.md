@@ -79,8 +79,10 @@ go test -tags integration -v -run 'TestACPProviderRoutingProbe' -timeout 900s ./
    - 传 `id` → `-32602 providerId: Invalid input: expected string, received undefined`
    - **`conn.UnstableSetProvider(...)` typed 方法直接失败** ⇒ 接 claude 必须走
      `ACPConn.CallRaw`（生产代码已有，`internal/ai/acp_raw_rpc.go`）。
-2. **codex `wire_api` 写死 `"responses"`** ⇒ 只接 Responses API 厂商。DeepSeek 这类
-   只有 OpenAI-chat 端点的接不了；claude 走 Anthropic 兼容端点可接。
+2. **codex `wire_api` 由 provider 的 `wire_api` 决定**（`responses` 默认 / `chat`）。
+   早期写死 `"responses"`，DeepSeek 这类只有 OpenAI-chat 端点的网关每轮 404；现在
+   在提供商表单里选「Chat Completions」即可（写入托管块的 `wire_api`）。claude 走
+   Anthropic 兼容端点，不受此项影响。
 3. **claude `providers/set` 是进程级**：只对「调用之后创建或加载的会话」生效 ⇒
    顺序必须是 spawn → set provider → NewSession/LoadSession。换 provider 要重启进程
    （换模型不用）。

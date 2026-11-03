@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	agent_name TEXT NOT NULL DEFAULT '',
 	agent_id TEXT DEFAULT '',
 	agent_source TEXT DEFAULT 'default',
+	agent_takeover_from TEXT NOT NULL DEFAULT '',
 	model TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	group_id TEXT DEFAULT '',
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	transport TEXT DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
+	compacted INTEGER NOT NULL DEFAULT 0,
 	title_renamed INTEGER NOT NULL DEFAULT 0,
 	title_source TEXT NOT NULL DEFAULT '',
 	pinned INTEGER NOT NULL DEFAULT 0,
@@ -1800,7 +1802,7 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 		"a reply that landed after the user last read it must be unread — otherwise the completion popup shows with no badge")
 }
 
-// TestGetLiveRunState_ResolvesQuestionByIdOrder guards the subscribe-time
+// TestGetLiveRunStates_ResolvesQuestionByIdOrder guards the subscribe-time
 // recovery lookup. A client that subscribes mid-flight is handed the question
 // row plus the stream_start that anchors the reply under it; the question is
 // found by ID ORDER (greatest user id below the streaming row), because in this
@@ -1808,7 +1810,7 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 //
 // Regression: the previous implementation resolved it through the answered
 // queue id, which also failed for rows whose queue_id was empty.
-func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
+func TestGetLiveRunStates_ResolvesQuestionByIdOrder(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Live Run State")
 
@@ -1829,7 +1831,9 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	}
 	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
-	msgID, qID, qContent, speaker := service.GetLiveRunState(sid)
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 1, "the streaming row must be reported")
+	msgID, qID, qContent, speaker := states[0].MessageID, states[0].QuestionID, states[0].QuestionContent, states[0].SpeakerID
 	require.NotZero(t, msgID, "the streaming row must be reported")
 	require.NotZero(t, qID, "the question must be found by id order")
 	assert.Equal(t, "what is 2+2?", qContent)
@@ -1843,16 +1847,14 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
 	require.NoError(t, err)
-	idleMsgID, idleQID, _, _ := service.GetLiveRunState(sid)
-	assert.Zero(t, idleMsgID, "nothing streaming → no live run state")
-	assert.Zero(t, idleQID)
+	assert.Empty(t, service.GetLiveRunStates(sid), "nothing streaming → no live run state")
 }
 
-// TestGetLiveRunState_CarriesGroupSpeaker guards the group-chat switch-back
+// TestGetLiveRunStates_CarriesGroupSpeaker guards the group-chat switch-back
 // path: the streaming row's agent_id (member row id) must be returned so the
 // subscribe-time re-emitted stream_start carries it. Without it a returning
 // client creates a speakerless placeholder and the speaker header stays missing.
-func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
+func TestGetLiveRunStates_CarriesGroupSpeaker(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "codebuddy", "Group Live Run State")
 
@@ -1872,8 +1874,9 @@ func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
 	}
 	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
-	_, _, _, speaker := service.GetLiveRunState(sid)
-	assert.Equal(t, "member-row-7", speaker, "the streaming row's speaker must be reported")
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 1)
+	assert.Equal(t, "member-row-7", states[0].SpeakerID, "the streaming row's speaker must be reported")
 }
 
 // TestGetLiveRunStates_ReturnsAllConcurrentStreams guards the parallel-speaking
@@ -1918,6 +1921,40 @@ func TestGetLiveRunStates_ReturnsAllConcurrentStreams(t *testing.T) {
 		assert.Equal(t, "q", st.QuestionContent, "each stream anchors to the shared question")
 		assert.NotZero(t, st.QuestionID)
 	}
+}
+
+// TestGetLiveRunStates_CarriesQuestionFiles pins the attachments of the question
+// row. The subscribe-time recovery user_message is built from this state, and it
+// is the ONLY source of the question bubble for a client that was on another
+// session when the turn started (the hub drops the live user_message with
+// reason=no_subscribers). Without the files, a message queued with an image
+// renders as text with no attachment card — permanently, because the frontend
+// keeps the recovered bubble instead of the DB row.
+func TestGetLiveRunStates_CarriesQuestionFiles(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "codebuddy", "Queued image")
+	pid := store.ProjectIDForTest(t, "/project")
+
+	filesJSON := `[{"path":"/project/.clawbench/uploads/image_25.png","isDir":false}]`
+	_, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming) VALUES (?, 'codebuddy', ?, 'user', '这个显示异常', ?, 0)",
+		pid, sid, filesJSON)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'assistant', '', 1)",
+		pid, sid)
+	require.NoError(t, err)
+
+	if _, created := service.TryClaimSessionRun(sid); !created {
+		t.Fatal("setup: expected to win the claim")
+	}
+	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
+
+	states := service.GetLiveRunStates(sid)
+	require.Len(t, states, 1)
+	require.Len(t, states[0].QuestionFiles, 1,
+		"the recovery question must carry the row's attachments")
+	assert.Equal(t, "/project/.clawbench/uploads/image_25.png", states[0].QuestionFiles[0].Path)
 }
 
 // TestGetLiveRunStates_IgnoresOrphanStreamingRow pins the fix for "the session
@@ -4021,6 +4058,7 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 	agent_name TEXT NOT NULL DEFAULT '',
 		agent_id TEXT DEFAULT '',
 		agent_source TEXT DEFAULT 'default',
+		agent_takeover_from TEXT NOT NULL DEFAULT '',
 		model TEXT DEFAULT '',
 		session_type TEXT NOT NULL DEFAULT 'chat',
 		group_id TEXT DEFAULT '',

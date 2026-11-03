@@ -190,6 +190,32 @@ export function pipelineDragPayload(run: {
   }
 }
 
+/**
+ * Build the payload for a meeting record.
+ *
+ * The drag carries the IDENTITY only: `dragstart` has to write the DataTransfer
+ * synchronously, and a list row holds no minutes text. The drop handler fills
+ * `text` in from the artifact endpoint before staging the card, so dragging a
+ * row and pressing the detail page's quote button produce the same quote.
+ */
+export function meetingDragPayload(record: {
+  token?: string
+  /** Human-readable label, built by the caller with i18n (`meetingQuoteLabel`). */
+  label?: string
+} | null): QuoteDragPayload | null {
+  const token = (record?.token || '').trim()
+  if (!token) return null
+  return {
+    text: '',
+    filePath: record?.label || token,
+    language: 'meeting',
+    startLine: 0,
+    endLine: 0,
+    sourceKind: 'meeting',
+    meetingToken: token,
+  }
+}
+
 /** `owner/repo#123` — the shared label shape for a forge item. */
 function forgeLabel(item: { number?: number; slug?: string; title?: string }): string {
   if (item.slug && item.number) return `${item.slug}#${item.number}`

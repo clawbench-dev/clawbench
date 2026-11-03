@@ -2,24 +2,26 @@
 
 ## 概述
 
-通知中心把所有**已发生的事件**汇聚成一张**可回溯的日志**：会话完成 / 取消 / 待审批、任务开始 / 完成 / 失败 / 取消、仓库（GitHub/GitLab）六类动态，都记一行，按时间倒序排列，可按项目 / 类型 / 时间段筛选。它回答的问题是「**过去发生过什么**」。
+通知中心把所有**已发生的事件**汇聚成一张**可回溯的日志**：会话完成 / 取消 / 待审批、任务开始 / 完成 / 失败 / 取消、仓库（GitHub/GitLab）六类动态、用量提醒、会议里的五件事（远程控制请求 / 成员加入 / 成员共享屏幕 / 纪要生成成功 / 失败），都记一行，按时间倒序排列，可按项目 / 类型 / 时间段筛选。它回答的问题是「**过去发生过什么**」。
 
 这与既有的三个角标（会话未读、任务未读、仓库未读）**刻意分工**：角标回答「**现在有什么要处理**」，是即时、可清零的状态；通知中心回答「发生过什么」，是只追加、不可清零（除手动清空）的历史。二者是两组独立的数，**互不联动**——通知中心既没有角标，也没有已读/未读概念（见下文「设计要点」）。它是此前「完成弹窗 / 系统通知 / IM 推送」这三条**瞬时**通道之外的**持久**通道：那三条推送完即消失（`pending_events` 是回放日志，推送成功即删、有 TTL），通知中心则留痕。
 
 ## 流程图
 
-### 写入：三类事件各写一行
+### 写入：五类事件各写一行
 
 ```mermaid
 flowchart TD
     A["会话事件<br/>completed / cancelled / permission_pending"] --> S["StoreNotification<br/>（独立门控）"]
     B["任务事件<br/>running / completed / failed / cancelled"] --> S
     C["仓库事件<br/>opened / merged / commented / pipeline_done …"] --> S
+    F["用量提醒<br/>over / full"] --> S
+    G["会议事件<br/>control_request / viewer_joined / screen_share / minutes_ready / minutes_failed"] --> S
     S --> D[("notifications 表<br/>event_id UNIQUE 去重")]
     D --> E["保留策略：30 天 且 最多 500 条"]
 ```
 
-三条写入路径分别挂在会话终态（`pushSessionTerminal`，正常完成与排队逐条通知的共同出口）与会话状态事件（`emitSessionEvent`，覆盖 cancelled / permission_pending）、任务事件（`emitTaskEvent`）、仓库事件（`ForgeNotificationRecorder` sink，与现有 dispatcher / 任务触发并列注册）。三处都以 `event_id` 作 `INSERT OR IGNORE` 去重键。
+写入路径分别挂在会话终态（`pushSessionTerminal`，正常完成与排队逐条通知的共同出口）与会话状态事件（`emitSessionEvent`，覆盖 cancelled / permission_pending）、任务事件（`emitTaskEvent`）、仓库事件（`ForgeNotificationRecorder` sink，与现有 dispatcher / 任务触发并列注册）、用量提醒（`usage_meter`）、会议事件（`EmitMeetingEvent`，见 `docs/spec/features/live-share.md` 的「会议通知」）。每处都以 `event_id` 作 `INSERT OR IGNORE` 去重键。
 
 ### 读取：单表查询 + 源存在性探测
 
@@ -57,7 +59,7 @@ flowchart TD
 
 ### 功能清单
 
-- **统一时间线**：会话 / 任务 / 仓库三类事件按发生时间倒序混排成一张扁平卡片列表。每条卡片是「类别图标 + 标题 + 时间 → 摘要（最多两行）→ 事件类型 chip + 项目 + 源状态」的信息层次。用户不必再在三个角标、完成弹窗、钉钉/飞书之间拼凑「今天到底发生了什么」。
+- **统一时间线**：会话 / 任务 / 仓库 / 用量 / 会议五类事件按发生时间倒序混排成一张扁平卡片列表。每条卡片是「类别图标 + 标题 + 时间 → 摘要（最多两行）→ 事件类型 chip + 项目 + 源状态」的信息层次。用户不必再在三个角标、完成弹窗、钉钉/飞书之间拼凑「今天到底发生了什么」。
 - **筛选与分页**：一行三个下拉（项目 / 类型 / 时间段）复用 `MenuSelect` + `PopupMenu`，右侧显示当前筛选结果条数。列表按 `(created_at, id)` 复合游标翻页（**亚秒精度时间戳**，保证同一秒内产生的多条事件稳定排序、翻页不重不漏）。
 - **点击跳转**：点有源的通知复用既有三个 CustomEvent（`clawbench-open-session` / `clawbench-open-task` / `clawbench-open-forge`）跳转到事件源。**同项目**跳转带 `fromNotificationCenter` 让 `App.vue` 记下来源，Back（顶部返回键 / 边缘内划 / Android 硬件返回共用同一状态机）回到日志；**跨项目**先弹确认框（点名目标项目），确认后热切换——跨项目**不**记来源，因为该路径会丢弃上一项目的导航上下文。**不标记任何已读状态**（无此概念）。
 - **外部项目标识**：只有「其他项目」的行在元信息行右端显示项目名（与元信息同色、无底色无边框、靠右对齐），当前项目的行**什么都不显示**——「没有名字」即判据；项目名悬停提示"点击将切换项目"。项目路径比较必须**规范化**（去尾斜杠 / `./`、大小写与分隔符归一），否则用户粘贴带尾斜杠的路径后，自己项目的每一行都会被判成「其他项目」而挂上项目名。
@@ -72,4 +74,6 @@ flowchart TD
 - **写入不复用 `pending_events` 的任何门控**：`StoreNotifiableEvent` 受 `push_mode != "disabled"` 与「有客户端订阅」双重门控——通知中心必须无视这两条（**推送关 ≠ 不记录，没人在看也要记录**）。这是「日志」与「推送」两种语义的分野：推送是尽力而为的实时投递，日志是无条件的事实记录。三个 `Record*` 适配器还都先查 `store.DBReady()` 再碰 DB（无 DB 的测试路径下不得 panic）。
 - **`created_at` 用亚秒精度文本而非秒级 `CURRENT_TIMESTAMP`**：一次仓库轮询会 drain 一批事件、同一秒内产生多条通知，秒级时间戳会让它们无法稳定排序，翻页时可能重复或漏行。分页游标用 `(created_at, id)` 复合条件。
 - **源存在性靠「渲染时批量探测」而非「删除时挂钩子」**：删除路径有硬删、归档、项目删除、清理 worker 等多条，逐条挂钩子必漏；反过来，只在列表渲染时对当页去重 id 各查一次，就天然覆盖所有删除路径、零新增钩子。代价是每页 2 次 `IN (...)` 查询——以通知量级（≤500 条）计可忽略。
+- **会议通知带自己的身份列，源探测也走自己的表**：会议没有会话，身份是分享 token，所以 `notifications` 多一列 `meeting_token`，点击走 `clawbench-open-meeting`。`sourceMissing` 探测 `live_notes` 而**不是**内存里的房间——房间随发布端 socket 消失，拿它当判据会让每一行在会议结束后立刻变成「源已删除」；记录行只在用户删记录时才消失，那才是「点不开了」。
+- **会议事件不进 `pending_events`**：一次远程控制请求只在会议还活着时有意义，而房间是内存对象、进程重启即消失。持久副本是通知中心那一行；客户端重新打开应用后看到的是日志，不是一条迟到两小时的「有人请求远程控制」弹窗。
 - **群聊通知的 session_id 必须解析到群时间线（三层修复）**：群成员的 ACP 连接以**隐藏成员行**为键，权限回调把 member id 交给 `EmitSessionEvent`，通知里存的就是 member id——点开是一条空的单聊。三层都要修：①回调处 `ResolveGroupTimelineID`（同时覆盖 WS 广播与 `pending_events`）；②`RecordSessionNotification` 写入时解析；③`MarkMissingSources` 读取时**修复已落盘的旧行**（保留期 30 天，只修写入要等过期才自愈）。

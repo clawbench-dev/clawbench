@@ -140,7 +140,8 @@ Updating an agent (PATCH /api/agents):
 - "acp_command" is only accepted for a custom ACP agent (its "backend" is "custom-acp"). A built-in backend's command is owned by auto-discovery and is refused with 400 (AcpCommandManagedByDiscovery); do not try to repoint a built-in agent at another binary this way.
 
 Deleting an agent (DELETE /api/agents):
-- Deletion is destructive and only allowed when the agent is unused: if it still has sessions, tasks, or active group memberships the call returns 409 (AgentInUse) with the counts in "detail". Relay those counts to the user instead of forcing the delete.
+- Deletion is allowed even while the agent owns conversations: its 1:1 chats, group memberships and scheduled tasks are handed to the DEFAULT agent, which is what the response's "sessions" / "tasks" / "groups" counts report. Tell the user those conversations will keep their history but continue under the default agent.
+- The only refusal is a live turn: 409 (AgentHasRunningSessions) while any conversation of that agent is running. Ask the user to stop it first; never retry in a loop.
 - The default agent cannot be deleted (CannotDeleteDefaultAgent) and cannot be disabled (CannotDisableDefaultAgent).
 - NEVER delete without explicit user confirmation of which agent.
 

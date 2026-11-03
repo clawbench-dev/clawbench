@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { getModelProvider, getProviderIcon, extractSvgInner, extractViewBox, getProviderSvgHtml, getProviderViewBox, getProviderFullSvg } from '@/utils/providerIcons'
+import { getModelProvider, getProviderIcon, extractSvgInner, extractViewBox, getProviderSvgHtml, getProviderViewBox, getProviderFullSvg, resolveProviderIconId } from '@/utils/providerIcons'
 
 describe('providerIcons', () => {
     describe('getModelProvider', () => {
@@ -172,6 +172,55 @@ describe('providerIcons', () => {
             expect(getModelProvider('CLAUDE-SONNET-4-6')).toBe('claude')
             expect(getModelProvider('GPT-4O')).toBe('openai')
             expect(getModelProvider('DeepSeek-Chat')).toBe('deepseek')
+        })
+    })
+
+    describe('resolveProviderIconId', () => {
+        // The catalogue lists the same brand under a region/plan suffix
+        // (`alibaba`, `alibaba-cn`, `alibaba-coding-plan-cn`, …). All of them
+        // must land on one icon — that is what the user sees as "same company,
+        // different name".
+        it('maps every region/plan variant of a family onto one icon', () => {
+            // The invariant is "same brand → same picture", not "same slug":
+            // `github-copilot` is itself a registry key pointing at Copilot.
+            const families: Record<string, string[]> = {
+                alibaba: ['alibaba', 'alibaba-cn', 'alibaba-coding-plan', 'alibaba-coding-plan-cn', 'alibaba-token-plan', 'alibaba-token-plan-cn'],
+                minimax: ['minimax', 'minimax-cn', 'minimax-coding-plan', 'minimax-cn-coding-plan'],
+                kimi: ['moonshotai', 'moonshotai-cn', 'kimi', 'kimi-code-plan-global', 'kimi-code-plan-cn'],
+                zhipu: ['zai', 'zai-coding-plan', 'zhipuai', 'zhipuai-coding-plan'],
+                xiaomi: ['xiaomi', 'xiaomi-token-plan-cn', 'xiaomi-token-plan-ams'],
+                stepfun: ['stepfun', 'stepfun-ai', 'stepfun-step-plan', 'stepfun-ai-step-plan'],
+                tencent: ['tencent', 'tencent-coding-plan', 'tencent-tokenhub'],
+                volcengine: ['volcengine', 'volcengine-coding-plan'],
+                siliconflow: ['siliconflow', 'siliconflow-cn'],
+                copilot: ['github-copilot'],
+                google: ['google', 'google-vertex'],
+                bedrock: ['bedrock', 'amazon-bedrock'],
+            }
+            for (const [canonical, ids] of Object.entries(families)) {
+                const anchor = resolveProviderIconId(canonical)
+                expect(anchor, `canonical "${canonical}" has no icon`).not.toBeNull()
+                const raw = getProviderIcon(anchor!)!.raw
+                for (const id of ids) {
+                    const resolved = resolveProviderIconId(id)
+                    expect(resolved, `provider "${id}" has no icon`).not.toBeNull()
+                    expect(getProviderIcon(resolved!)!.raw, `provider "${id}"`).toBe(raw)
+                }
+            }
+        })
+
+        it('resolves provider display names, not only catalogue ids', () => {
+            // A hand-made provider has no presetId, so the card hands its name
+            // to the same resolver.
+            expect(resolveProviderIconId('Moonshot AI')).toBe('kimi')
+            expect(resolveProviderIconId('MiniMax (minimax.io)')).toBe('minimax')
+            expect(resolveProviderIconId('DeepSeek')).toBe('deepseek')
+        })
+
+        it('returns null when nothing matches', () => {
+            expect(resolveProviderIconId('')).toBeNull()
+            expect(resolveProviderIconId('3')).toBeNull()
+            expect(resolveProviderIconId('some-private-gateway')).toBeNull()
         })
     })
 
@@ -365,6 +414,15 @@ describe('providerIcons', () => {
             const svg = getProviderFullSvg('openai', 16)
             expect(svg).not.toBeNull()
             expect(svg!).toContain('provider-icon-bg')
+        })
+
+        // A caller that draws its own tile must not get the per-SVG backdrop:
+        // it would paint a second, smaller rounded square inside the tile.
+        it('drops the backdrop class when the caller supplies its own tile', () => {
+            const svg = getProviderFullSvg('openai', 16, [], 'openai', { background: false })
+            expect(svg).not.toBeNull()
+            expect(svg!).not.toContain('provider-icon-bg')
+            expect(svg!).toContain('mono-openai')
         })
 
         it('includes monoCssClass for monochrome icons', () => {

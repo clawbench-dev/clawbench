@@ -24,9 +24,15 @@ const displayHandler = vi.hoisted(() => ({
   value: null as null | ((req: unknown, cb: (s: unknown) => void) => void),
 }))
 const recorded = vi.hoisted(() => ({ value: [] as string[] }))
+const failCombined = vi.hoisted(() => ({ value: false }))
+const ipcHandlers = vi.hoisted(() => ({ value: {} as Record<string, (...a: unknown[]) => unknown> }))
 
 vi.mock('electron', () => ({
-  ipcMain: { handle: () => undefined },
+  ipcMain: {
+    handle: (channel: string, fn: (...a: unknown[]) => unknown) => {
+      ipcHandlers.value[channel] = fn
+    },
+  },
   session: {
     defaultSession: {
       setDisplayMediaRequestHandler: (fn: unknown) => {
@@ -35,7 +41,12 @@ vi.mock('electron', () => ({
     },
   },
   desktopCapturer: {
-    getSources: async () => sources.value,
+    getSources: async (opts: { types: string[] }) => {
+      // An X11 session without a window manager answers the combined query with
+      // nothing, even though the screens are fine.
+      if (failCombined.value && opts.types.includes('window')) return []
+      return sources.value
+    },
   },
 }))
 
@@ -49,10 +60,13 @@ import {
   _pendingCaptureForTest,
   _resetCaptureForTest,
   _setPendingCaptureForTest,
+  arePlaceholderSources,
   audioCaptureSupport,
+  currentCaptureDisplayId,
   decideCapture,
   installDisplayMediaHandler,
   listCaptureSources,
+  registerCaptureHandlers,
 } from './capture'
 
 function fakeSource(id: string, name = id, empty = true) {
@@ -75,6 +89,7 @@ beforeEach(() => {
   sources.value = [fakeSource('screen:1:0'), fakeSource('window:2:0')]
   displayHandler.value = null
   recorded.value = []
+  ipcHandlers.value = {}
   _resetCaptureForTest()
   installDisplayMediaHandler()
 })
@@ -107,6 +122,44 @@ describe('decideCapture', () => {
     expect(decideCapture({ sourceId: 'screen:1:0', systemAudio: false }, true, true, available)?.withAudio).toBe(false)
     // Platform cannot do loopback: forwarding it would fail the whole capture.
     expect(decideCapture(want, true, false, available)?.withAudio).toBe(false)
+  })
+
+  it('uses the fresh listing when the ids are per-call placeholders (Wayland)', () => {
+    // Wayland hands out `window:<n>:0:s` with an incrementing n, so the id the
+    // renderer saw can never appear in the re-enumeration. Refusing here is what
+    // made every Linux/Wayland share fail.
+    const answer = decideCapture(
+      { sourceId: 'window:1:0:s', systemAudio: false },
+      false,
+      false,
+      [{ id: 'window:2:0:s' }],
+      true,
+    )
+    expect(answer).toEqual({ sourceId: 'window:2:0:s', withAudio: false })
+  })
+
+  it('still refuses a vanished source when the ids are stable', () => {
+    // On X11/Windows the id is a real handle: a mismatch means the window closed,
+    // and capturing whatever happens to be first would share the wrong thing.
+    expect(
+      decideCapture({ sourceId: 'screen:9:0', systemAudio: false }, false, false, [{ id: 'screen:1:0' }], false),
+    ).toBeNull()
+    // Placeholder mode with nothing to fall back on also refuses.
+    expect(decideCapture({ sourceId: 'window:1:0:s', systemAudio: false }, false, false, [], true)).toBeNull()
+  })
+})
+
+describe('arePlaceholderSources', () => {
+  it('detects the nameless Wayland stand-in', () => {
+    expect(arePlaceholderSources([{ name: '' }])).toBe(true)
+    expect(arePlaceholderSources([{ name: '' }, { name: '' }])).toBe(true)
+  })
+
+  it('treats named sources and an empty list as real', () => {
+    expect(arePlaceholderSources([{ name: 'Entire screen' }])).toBe(false)
+    expect(arePlaceholderSources([{ name: '' }, { name: 'Firefox' }])).toBe(false)
+    // An empty list is "nothing to capture", not "ids are unstable".
+    expect(arePlaceholderSources([])).toBe(false)
   })
 })
 
@@ -141,6 +194,28 @@ describe('listCaptureSources', () => {
     sources.value = [fakeSource('screen:1:0', 'screen', false)]
     const list = await listCaptureSources()
     expect(list[0].thumbnail).toContain('data:image/png')
+  })
+
+  it('falls back to screens when window enumeration returns nothing', async () => {
+    // No window manager: the combined query comes back empty while the screen
+    // is perfectly capturable. Sharing must still be possible.
+    sources.value = [fakeSource('screen:1:0', 'screen', false)]
+    failCombined.value = true
+    try {
+      const list = await listCaptureSources()
+      expect(list.map((s) => s.id)).toEqual(['screen:1:0'])
+      expect(recorded.value.some((r) => r.includes('retrying with screens only'))).toBe(true)
+    } finally {
+      failCombined.value = false
+    }
+  })
+
+  it('reads a nameless Wayland placeholder as a screen', async () => {
+    // Its id starts with `window:` but the portal asks which *screen* to share,
+    // so the picker must not offer it as "share one window".
+    sources.value = [fakeSource('window:1:0:s', '')]
+    const list = await listCaptureSources()
+    expect(list[0]).toMatchObject({ kind: 'screen', name: '' })
   })
 })
 
@@ -187,8 +262,59 @@ describe('display media handler', () => {
     expect(recorded.value.join()).toContain('unavailable')
   })
 
+  it('answers a Wayland placeholder listing even though its id changed', async () => {
+    // The declaration was made from one listing; the handler re-enumerates and
+    // gets a different index. Without the placeholder path this refused every
+    // Linux/Wayland share.
+    sources.value = [fakeSource('window:2:0:s', '')]
+    _setPendingCaptureForTest({ sourceId: 'window:1:0:s', systemAudio: false })
+
+    const answer = await requestCapture()
+
+    expect(answer.video).toMatchObject({ id: 'window:2:0:s' })
+    expect(recorded.value.join()).not.toContain('unavailable')
+  })
+
   it('does not leak the pending declaration across installs', () => {
     installDisplayMediaHandler()
     expect(_pendingCaptureForTest()).toBeNull()
+  })
+})
+
+describe('captured display', () => {
+  /** A source that names the monitor it mirrors, as a real screen source does. */
+  function screenSource(id: string, displayId: string) {
+    return {
+      id,
+      name: id,
+      display_id: displayId,
+      thumbnail: { isEmpty: () => true, toDataURL: () => '' },
+    }
+  }
+
+  it('forgets which screen was shared once publishing stops', async () => {
+    // Nothing else ever overwrote the id, so a stale value survived the session
+    // and sent the next annotation overlay to the monitor shared last — on a
+    // multi-monitor host that reads as "my ink went to the other screen".
+    registerCaptureHandlers(() => null)
+    sources.value = [screenSource('screen:2:0', '2')]
+    _setPendingCaptureForTest({ sourceId: 'screen:2:0', systemAudio: false })
+    await requestCapture()
+
+    const setPublishing = ipcHandlers.value['native:set-publishing-active']
+
+    // The overlay can only be opened while publishing, so nothing is reported
+    // before the renderer says the session started.
+    expect(currentCaptureDisplayId()).toBe('')
+
+    await setPublishing({}, true)
+    expect(currentCaptureDisplayId()).toBe('2')
+
+    await setPublishing({}, false)
+    expect(currentCaptureDisplayId()).toBe('')
+
+    // A second session that never captured anything must not inherit the id.
+    await setPublishing({}, true)
+    expect(currentCaptureDisplayId()).toBe('')
   })
 })

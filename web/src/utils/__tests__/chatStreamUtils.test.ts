@@ -1483,6 +1483,42 @@ describe('duplicate message root causes (regression)', () => {
     expect(tools[0].id).toBe('tool-1')
   })
 
+  it('rebuildFromDb does not duplicate a tool_use the DB flush and the live stream both carry (switch-back, pure-tool stretch)', () => {
+    // Reported: an Agent card rendered twice in a row at the bottom of a
+    // running turn (session bfc2d185, 2026-11-01 10:11). The user switched into
+    // the session mid-stream: the re-created placeholder received only the
+    // newest tool event (the Agent call), while the DB flush already carried the
+    // whole turn including that same Agent block. With NO text on either side
+    // and an earlier DB tool the live placeholder lacks, case 2 (prepend the DB
+    // prefix) was taken and prepended the DB's copy of the Agent block on top of
+    // the live one. Cases 0/1 already dedupe tool ids via mergeOrderedBlocks;
+    // case 2 filtered thinking markers only.
+    const agent = {
+      type: 'tool_use', name: 'Agent', id: 'call_00_ET_WwJrbMDCJ1UW09G8DHr65599',
+      summary: 'Independent review of meeting implementation', done: false,
+    }
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 67899, content: '', blocks: [{ ...agent }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 67899, content: '', blocks: [
+        { type: 'tool_use', name: 'Bash', id: 'call_00_bash1', done: true },
+        { type: 'thinking', text: 'reasoned', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'call_00_bash2', done: true },
+        { ...agent },
+      ], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 67899)
+    // The pre-switch history is still prepended…
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['call_00_bash1', 'call_00_bash2', agent.id])
+    // …and the Agent card exists exactly once.
+    expect((reply.blocks || []).filter((b: any) => b.name === 'Agent')).toHaveLength(1)
+  })
+
   it('rebuildFromDb dedupes a text seam re-emitted by both the DB flush and the live stream', () => {
     // The DB flush happened mid-word; the re-subscribed stream re-emits the
     // partial token boundary, so the DB text tail equals the live text head.
@@ -1857,6 +1893,34 @@ describe('duplicate message root causes (regression)', () => {
     expect(users[0].id).toBe(100)
     expect(users[0]._remote).toBeUndefined()
     expect(users[0]._remoteQueueId).toBeUndefined()
+  })
+
+  it('rebuildFromDb fills a _remote bubble\'s attachments from the DB row (fill-only)', () => {
+    // A queued message carries NO optimistic bubble, so its bubble is built from
+    // whatever the WS event says. The subscribe-time recovery user_message used
+    // to omit `files` (a client that was on another session when the turn began
+    // never gets the live one), which left the bubble with no attachment card at
+    // all. This branch keeps the live object instead of the DB row, so the DB's
+    // attachments are the ONLY chance to repair it.
+    const dbFiles = [{ path: '/proj/.clawbench/uploads/image_25.png', isDir: false }]
+    const messages: any[] = [
+      { role: 'user', id: 100, content: '这个显示异常', blocks: [{ type: 'text', text: '这个显示异常' }], files: [], _remote: true, _remoteQueueId: 'q-1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 100, content: '这个显示异常', blocks: [{ type: 'text', text: '这个显示异常' }], files: dbFiles },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].files).toEqual(dbFiles)
+    expect((merged[0] as any)._remote).toBeUndefined()
+
+    // Fill-only, never overwrite: a snapshot fetched before the send committed
+    // is OLDER than the live bubble, so its empty list must not wipe real files.
+    const live: any[] = [
+      { role: 'user', id: 100, content: 'x', blocks: [], files: dbFiles, _remote: true },
+    ]
+    const stale: any[] = [{ role: 'user', id: 100, content: 'x', blocks: [], files: [] }]
+    expect(rebuildFromDb(live, stale as any)[0].files).toEqual(dbFiles)
   })
 
   it('RC4: queue_drain does not materialize the user message; the user_message event lands it once', () => {

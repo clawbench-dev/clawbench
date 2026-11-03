@@ -316,13 +316,17 @@ watch(() => props.active, (val) => {
 
 .settings-page__footer {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
+  justify-content: safe flex-end;
   padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
   gap: var(--space-4);
   padding-bottom: calc(8 * var(--dp) + env(safe-area-inset-bottom, 0));
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Restart footer button — layout + pulse only; pill visuals come from .fbtn. */

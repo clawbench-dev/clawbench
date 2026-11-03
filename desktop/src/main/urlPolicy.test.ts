@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyUrl } from './urlPolicy'
+import { classifyUrl, isAppPopup, shouldBlockPopupNavigation } from './urlPolicy'
 
 describe('classifyUrl', () => {
   it('treats http links as external when outside the server origin', () => {
@@ -41,5 +41,31 @@ describe('classifyUrl', () => {
 
   it('blocks unparseable URLs', () => {
     expect(classifyUrl('not a url', 'https://clawbench.local')).toBe('block')
+  })
+})
+describe('isAppPopup', () => {
+  it('recognises the app\'s own about:blank popup', () => {
+    // `window.open('')` — the member's screen in a window of its own.
+    expect(isAppPopup('')).toBe(true)
+    expect(isAppPopup('about:blank')).toBe(true)
+  })
+
+  it('does not exempt anything that could navigate somewhere', () => {
+    expect(isAppPopup('about:blank#x')).toBe(false)
+    expect(isAppPopup('https://example.com/')).toBe(false)
+    expect(isAppPopup('file:///etc/passwd')).toBe(false)
+    expect(isAppPopup('javascript:alert(1)')).toBe(false)
+  })
+})
+
+describe('shouldBlockPopupNavigation', () => {
+  it('keeps the popup on its blank document', () => {
+    // The popup inherits this window's preload, so following a navigation would
+    // hand the native bridge to whatever origin it lands on.
+    expect(shouldBlockPopupNavigation('https://evil.example/')).toBe(true)
+    expect(shouldBlockPopupNavigation('file:///etc/passwd')).toBe(true)
+    expect(shouldBlockPopupNavigation('javascript:alert(1)')).toBe(true)
+    expect(shouldBlockPopupNavigation('about:blank')).toBe(false)
+    expect(shouldBlockPopupNavigation('')).toBe(false)
   })
 })

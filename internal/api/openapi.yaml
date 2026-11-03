@@ -661,9 +661,10 @@ paths:
         `PATCH` 段）。这是服务端开关而非每设备偏好：轮询与凭据都在服务端，同一服务器
         的所有客户端必须一致。
 
-        `chat.user_nickname` 是群聊中人类用户的保留显示名（默认 `User`）。它被
-        写进路由标签的 `targets` 属性，故不能包含引号 / 尖括号 / 逗号 / 控制字符，
-        且不得与任何智能体同名（与智能体命名双向校验）。
+        `user` 是用户本人的一级身份配置：`user.nickname` 是智能体称呼你的名字（留空则
+        回退静态字面量 `User`；群聊路由与会议显示名共用，不能含引号 / 尖括号 / 逗号 /
+        控制字符，且不得与智能体同名）；`user.profile` 是你的自述，注入每个智能体的系统
+        提示词（上限 4000 字符）。
 
         `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`），
         含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
@@ -707,9 +708,9 @@ paths:
         （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
         （`port_forward.transport must be a string`）。
 
-        `chat.user_nickname`（群聊用户昵称）非法值（含引号 / 尖括号 / 逗号 / 控制
-        字符，或长度超 32）返回 400；与现有智能体同名返回 **409**
-        （`msgKey=UserNicknameTaken`）。
+        `user.nickname` 非法值返回 400，与智能体同名返回 **409**
+        （`msgKey=UserNicknameTaken`）；`user.profile` 超 4000 字符返回 400
+        （`msgKey=InvalidUserProfile`）。
 
         `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
         `auto` / `sse` / `audio`，其他值返回 400
@@ -774,7 +775,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: |
-            `chat.user_nickname` 与现有智能体同名（`msgKey=UserNicknameTaken`）。
+            `user.nickname` 与现有智能体同名（`msgKey=UserNicknameTaken`）。
             这是冲突而非格式错误，故用 409 而非 400。
 
   /api/config/test:
@@ -1836,9 +1837,15 @@ paths:
             完整成员名单（含已禁用）见 `GET /api/group/members`。
 
             每行还带 `agentName`（智能体显示名，注册表可解析时返回）。本端点按调用方
-            当前项目取数，智能体通常能由客户端自行反查，`agentName` 主要覆盖「智能体已被
-            删除但会话仍在」——此时行仍显示人名而不是裸 id。`agentAvatar` 只在调用方无法
+            当前项目取数，智能体通常能由客户端自行反查，`agentName` 覆盖的是客户端反查
+            不到的情况（会话的 `agentId` 已不在注册表里，例如 #606 之前删除智能体留下的
+            历史行）——此时行仍显示人名而不是裸 id。`agentAvatar` 只在调用方无法
             自行解析该智能体时才返回（见 `GET /api/ai/sessions/overview` 的同名字段）。
+
+            每行还带 `agentTakeoverFrom`（旧智能体的显示名；省略 = 从未被接管）。#606 起
+            删除智能体会把它的会话交给默认智能体（不再让会话悬空），本字段记录被删除者的
+            名字，供客户端渲染「由 X 接管」徽标；服务端也据它判断下一轮能否 resume 原生的
+            外部会话。
     post:
       tags: [Sessions]
       summary: 新建会话
@@ -1912,10 +1919,16 @@ paths:
         - `agentAvatar`：**仅**当调用方无法自行解析该智能体（即它在调用方当前项目
           不可见）时返回，避免给正常行附上数 KB 的 SVG。
         注册表查不到的 id 两者都省略，交由客户端既有兜底处理。
+
+        每行同样带 `agentTakeoverFrom`（旧智能体的显示名；省略 = 从未被接管），
+        语义与 `GET /api/ai/sessions` 的同名字段一致：智能体被删除后会话由默认智能体
+        接管，本字段记录被删除者的名字，供客户端渲染「由 X 接管」徽标。
       operationId: sessionsOverview
       responses:
         "200":
-          description: 各项目会话概览
+          description: |
+            各项目会话概览（`{projects: [{name, sessions}], total}`）。每行携带
+            `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
 
   /api/ai/session/settings:
     get:
@@ -2552,16 +2565,19 @@ paths:
           $ref: "#/components/responses/Error"
     patch:
       tags: [Queue]
-      summary: 修改排队消息正文
+      summary: 修改排队消息（正文 / 附件）
       description: |
-        就地改写一条**仍在排队**的消息的正文，不改变它的队列位置（`id` 顺序即队列顺序）。
+        就地改写一条**仍在排队**的消息，不改变它的队列位置（`id` 顺序即队列顺序）。
 
         之所以是「就地修改」而不是「撤回输入框再重发」：排队消息可能等待十几分钟，
-        撤回重发会把它排到队尾，用户等待的时间白费。本端点只写 `content`，
-        队列 id、创建时间、附件全部保持不变。
+        撤回重发会把它排到队尾，用户等待的时间白费。本端点不改队列 id 与创建时间。
 
-        **只支持正文**。附件不在本端点可编辑范围内——改写 `files` 需要与入队路径
-        相同的身份去重与路径校验，而 UI 也不提供该入口。
+        可改内容：
+
+        - `message`：正文，去除首尾空白后写入。
+        - `files`：**全量替换**的附件列表。请求体省略该键时附件保持不变（纯文本编辑）；
+          显式传 `[]` 表示删除全部附件。每个条目都会走与入队相同的校验
+          （路径必须存在于项目内、`quote`/`url` 条目不做路径解析），并按身份去重。
 
         若该消息已被 drain 取走（或已被取消），返回 **409 `QueueAlreadyDrained`**：
         消息已经以**旧正文**发出，必须让调用方能区分「已保存」与「太晚了」。
@@ -2587,13 +2603,21 @@ paths:
                   description: 要修改的排队消息 id（`GET /api/ai/queue` 返回的 `queueId`）。
                 message:
                   type: string
-                  description: 新正文。会去除首尾空白；留空仅在保留附件时允许。
+                  description: |
+                    新正文。会去除首尾空白。留空仅在**有效附件列表非空**时允许
+                    （传了非空 `files`，或省略 `files` 时该条已有附件）。
+                files:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FileEntry"
+                  description: |
+                    全量替换的附件列表。省略该键 = 附件不变；传 `[]` = 删除全部附件。
       responses:
         "200":
           description: |
             修改成功。响应体为 `{"ok": true, "queue": <更新后的排队消息>}`，
             并会向该会话广播 `queue_added`（客户端按 `queueId` upsert，
-            因此其他设备与发起设备都会收敛到新正文）。
+            因此其他设备与发起设备都会收敛到新正文与新附件）。
         "400":
           $ref: "#/components/responses/Error"
         "403":
@@ -2785,14 +2809,16 @@ paths:
       summary: 列出通知中心的日志
       description: |
         通知中心是一张**只追加的事件日志**：记录会话（completed/cancelled/
-        permission_pending）、任务（running/completed/failed/cancelled）与仓库
-        （forge 六种）事件。**没有已读/未读概念**，也没有角标——它回答「发生过
-        什么」，不回答「有什么待处理」（后者由 chat/tasks/forge 三个既有角标负责）。
+        permission_pending）、任务（running/completed/failed/cancelled）、仓库
+        （forge 六种）、用量提醒（over/full）与会议事件（远程控制请求、成员加入、
+        成员共享屏幕、纪要生成成功/失败）事件。**没有已读/未读概念**，也没有角标——
+        它回答「发生过什么」，不回答「有什么待处理」（后者由 chat/tasks/forge 三个
+        既有角标负责）。
 
         筛选参数均可选，缺省即不过滤——**默认范围是全局（所有项目）**，`project`
         是收窄项而非隐含默认。`project` 传**项目路径**（与其它项目作用域端点一致）；
-        未知项目返回空列表而非错误。每行带 `sourceMissing`：其指向的会话/任务已不
-        存在时为 true（forge 行永不标记，因为条目在上游、本地无删除语义）。
+        未知项目返回空列表而非错误。每行带 `sourceMissing`：其指向的会话/任务/会议
+        记录已不存在时为 true（forge 行永不标记，因为条目在上游、本地无删除语义）。
 
         分页用 keyset：把上一页最后一行的 `created_at`/`id` 回传为
         `before_at`/`before_id`。不要用 offset——日志持续追加，offset 会在翻页时
@@ -2809,7 +2835,7 @@ paths:
           description: 事件类别
           schema:
             type: string
-            enum: [session, task, forge]
+            enum: [session, task, forge, usage, meeting]
         - name: range
           in: query
           description: 时间范围；未知或为空表示不限
@@ -2848,7 +2874,7 @@ paths:
                           type: integer
                         kind:
                           type: string
-                          enum: [session, task, forge]
+                          enum: [session, task, forge, usage, meeting]
                         eventType:
                           type: string
                         title:
@@ -2867,6 +2893,9 @@ paths:
                           type: string
                         forgeItemKey:
                           type: string
+                        meetingToken:
+                          type: string
+                          description: kind=meeting 行的会议标识（分享 token）；点击用它打开该会议记录
                         agentId:
                           type: string
                         createdAt:
@@ -3763,6 +3792,16 @@ paths:
       description: |
         为本项目创建（或复用）一个直播房间。同一项目重复调用返回同一个 token，
         避免用户双击或重试时让已复制的链接失效。房间只存在于内存，进程重启即失效。
+
+        **请求体里的字段只是房间的初始状态**：房间已有发布端（含已预留）或已有观众时，
+        `title` / `video` / `camera` / `screen` / `allowTalk` / `allowMemberScreen` 一律忽略——
+        它们缺席即 `false`（`title` 缺席时是日期占位），照写会在第二次 POST 时给会议改名、
+        收走所有观众的麦克风、掐断正在共享的屏幕。响应里的 `talkEnabled` / `screenEnabled`
+        是房间的**当前**状态。
+        `notes` 与它们同组：房间已在运行时会中开关听记请用 `set-notes`，否则另一台设备
+        未勾选听记的创建页会把房间标记改成 false 且不广播，后进场的观众会被告知「听记已停止」。
+        会中改这些开关请用发布端控制帧（`set-talk-enabled` / `set-screen-enabled` /
+        `set-picture` / `set-notes`）。
       operationId: liveShareCreate
       requestBody:
         required: false
@@ -3773,10 +3812,50 @@ paths:
               properties:
                 title:
                   type: string
-                  description: 分享页标题；省略时取项目目录名
+                  description: |
+                    会议标题。省略时用会议开始时间（`MM-DD HH:mm`）占位，
+                    纪要生成后由摘要模型据此改写；用户填写的标题不会被覆盖。
+                    与其他字段一样只是**初始值**：房间已在运行时（有发布端或观众）
+                    本次的 title 被忽略，正在进行的会议不会被另一台设备改名。
+                notes:
+                  type: boolean
+                  description: 是否开启 AI 听记（观众据此显示转写入口）
+                video:
+                  type: boolean
+                  default: true
+                  description: |
+                    `false` = 语音会议（不共享屏幕）。观众端据此渲染「语音会议」占位，
+                    而不是等一条永远不会到达的视频轨。省略时按 `true` 处理。
+                    若同时传了 `camera` / `screen`，该字段由服务端按两者推导，传什么都不作数。
+                camera:
+                  type: boolean
+                  description: |
+                    视频会议是否采集发布端摄像头。摄像头作为第二条视频轨发送，
+                    观众端渲染成叠在主画面上的小窗。
+                screen:
+                  type: boolean
+                  description: |
+                    发布端是否共享屏幕。与 `camera` 正交：两者都为 `true` 即「摄像头 + 屏幕」
+                    同时在线（摄像头小窗叠在屏幕画面上）。观众端据此决定是否提供
+                    标注与远程控制——这两项对摄像头画面没有意义。
+                    省略 `camera` 与 `screen` 时按老客户端处理：`screen = video`、`camera = false`。
+                allowTalk:
+                  type: boolean
+                  default: false
+                  description: |
+                    房间级「允许观众发言」开关的**初始状态**。创建页默认勾选，
+                    会中「会议管理」页签可随时再改（`set-talk-enabled` 控制帧）。
+                    省略时按 `false`：不认识该字段的老客户端保持原来的封闭房间。
+                allowMemberScreen:
+                  type: boolean
+                  default: false
+                  description: |
+                    房间级「允许成员共享屏幕」开关的**初始状态**。与 `allowTalk` 同为创建页
+                    默认勾选的权限，会中可随时再改（`set-screen-enabled` 控制帧）。
+                    省略时按 `false`。
       responses:
         "200":
-          description: 房间 token 与分享路径
+          description: 房间 token、分享路径，以及两个权限开关的当前状态
           content:
             application/json:
               schema:
@@ -3786,6 +3865,14 @@ paths:
                     type: string
                   path:
                     type: string
+                  talkEnabled:
+                    type: boolean
+                    description: |
+                      回显房间的「允许观众发言」开关。发布端是唯一收不到 `joined` 帧的客户端，
+                      不回显就会把会中的两个勾选框画成关闭，而房间其实是开着的。
+                  screenEnabled:
+                    type: boolean
+                    description: 回显房间的「允许成员共享屏幕」开关（理由同上）
         "503":
           description: 并发房间数已达上限
     get:
@@ -3808,7 +3895,8 @@ paths:
       tags: [LiveShare]
       summary: 结束共享
       description: |
-        断开全部观众。token 不存在时返回 200（重复结束不是错误）；
+        断开全部观众，**并关闭发布端自己的信令 socket**（发布端页面由 socket 生命周期
+        驱动，只删房间会让它一直显示「共享中」）。token 不存在时返回 200（重复结束不是错误）；
         token 属于其他项目时返回 404（与「不存在」同样的响应，不泄露房间存在性）。
       operationId: liveShareEnd
       parameters:
@@ -3860,7 +3948,7 @@ paths:
         `id`）：转写完成顺序与说话顺序不同，晚到的分段可能带更早的 `startedAt`，
         客户端拿到后按 `startedAt` 重排即可。
 
-        房间结束后仍可读：转写行按 token 持久化（保留 7 天），鉴权只校验项目归属。
+        房间结束后仍可读：记录与分段都是永久的，鉴权只校验项目归属。
       operationId: liveShareNotes
       parameters:
         - name: token
@@ -3888,6 +3976,16 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/LiveNoteSegment"
+                  files:
+                    type: array
+                    description: 会议期间打开的文件区间（发布端含完整 path）
+                    items:
+                      $ref: "#/components/schemas/LiveNoteFile"
+                  screens:
+                    type: array
+                    description: 屏幕共享区间（谁在什么时候共享）
+                    items:
+                      $ref: "#/components/schemas/LiveNoteScreenShare"
                   minutes:
                     $ref: "#/components/schemas/LiveNoteMinutes"
         "404":
@@ -3899,11 +3997,21 @@ paths:
       summary: 上传一段音频并转写
       description: |
         发布端按**信道**分别上传：`system`（系统声音）、`mic`（发布端麦克风）、
-        `viewer:<id>`（某个观众的麦克风）。服务端用配置的 STT provider 同步转写后落库，
-        返回文本供发布端即时显示字幕。
+        `viewer:<id>`（某个观众的麦克风）、`mix`（整场会议的混音轨，仅存档）。
+        服务端用配置的 STT provider 同步转写后落库，返回文本供发布端即时显示字幕。
 
         信道分离是说话人标注的来源：发布端物理上持有每个参与者独立的音轨，
         不需要说话人分离模型。静音段（转写结果为空）返回 `id: 0`，不落库。
+
+        **音频在转写之前就写进项目目录**（`<项目>/.clawbench/notes/<场次>/audio/`），
+        因为录音是唯一无法再生的产物：转写失败仍可用它重跑。落盘失败只记日志，
+        不影响本次转写。`title` 只在第一段时用于给会议目录命名，后续忽略。
+
+        传 `archive=1` 时只存档、不转写（`mix` 轨就是这样上传的：它没有单一
+        说话人，转写只会得到一份丢失说话人标注的重复文本）。
+
+        鉴权依据是**会议记录行**（发布端连上信令时就已创建），因此共享刚结束那几秒
+        的在途上传仍然落地。
       operationId: liveShareNoteSegment
       requestBody:
         required: true
@@ -3917,10 +4025,13 @@ paths:
                   type: string
                 channel:
                   type: string
-                  description: "`system` | `mic` | `viewer:<id>`"
+                  description: "`system` | `mic` | `mix` | `viewer:<id>`"
                 speaker:
                   type: string
                   description: 展示用说话人标签（发布端已本地化）
+                title:
+                  type: string
+                  description: 会议标题，用于命名会议目录（仅第一段有效）
                 startedAt:
                   type: integer
                   format: int64
@@ -3928,18 +4039,63 @@ paths:
                 durationMs:
                   type: integer
                   format: int64
+                archive:
+                  type: string
+                  description: 传 `1` 时只写盘、不转写（混音轨用）
                 file:
                   type: string
                   format: binary
       responses:
         "200":
-          description: "转写结果（`id: 0` 表示静音，未落库）"
+          description: "转写结果（`id: 0` 表示静音或仅存档，未落库）"
         "400":
           $ref: "#/components/responses/Error"
         "404":
           description: token 不存在或不属于当前项目
         "502":
           description: STT 转写失败（该段留空，不影响共享）
+
+  /api/live-share/notes/audio/merge:
+    post:
+      tags: [LiveShare]
+      summary: 把会议录音合并成整场文件
+      description: |
+        把 `audio/` 里的分段按信道分组，重封装成每信道一个文件，混音轨写成
+        `audio/meeting.webm`（整场会议），然后删除分段文件。
+
+        这是**容器重封装而不是转码**：同一信道的分段来自同一套编码参数，把各段的
+        cluster 复制进一个 Segment、并把时间码平移到会议时间轴上即可，音频数据一个
+        字节都不改。平移同时保留了静音间隔（时间码留空档，而不是补静音音频）。
+
+        幂等：已经合并过的信道直接跳过，所以重试不会产出只含残余分段的不完整文件。
+
+        由发布端在**上传队列排空之后**调用——那是唯一能确定「不会再有音频」的时刻。
+      operationId: liveShareNotesAudioMerge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: 合并后的产物列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  artifacts:
+                    $ref: "#/components/schemas/LiveNotesArtifacts"
+        "404":
+          description: token 不存在或不属于当前项目
+        "500":
+          $ref: "#/components/responses/Error"
 
   /api/live-share/notes/minutes:
     post:
@@ -3949,6 +4105,8 @@ paths:
         异步生成：立即返回 `status: generating`，调用方轮询
         `GET /api/live-share/notes` 取结果。已生成或生成中时幂等返回当前状态，
         传 `regenerate: true` 才重新生成。转写为空时返回 `status: idle`。
+
+        生成成功后把纪要写进会议目录（`minutes.md`），并把聊天归档成 `chat.md`。
       operationId: liveShareNotesMinutes
       requestBody:
         required: true
@@ -3974,12 +4132,273 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/chat:
+    post:
+      tags: [LiveShare]
+      summary: 落库一条会议聊天
+      description: |
+        发布端是唯一的写入点：观众的消息经它中转，它自己的消息也走这里。
+        `id` 是聊天帧自带的 id，作为**幂等键**——重试不会产生重复行。
+        返回服务端行 id（重复提交返回既有行 id）。
+      operationId: liveShareNoteChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, id, text]
+              properties:
+                token: { type: string }
+                id:
+                  type: string
+                  description: 客户端消息 id（幂等键，≤64 字）
+                speaker:
+                  type: string
+                  description: 服务端认定的称谓（发布端用 viewerId → 称谓覆盖）
+                viewerId:
+                  type: string
+                text:
+                  type: string
+                  description: 单条 ≤ 2000 字
+      responses:
+        "200":
+          description: 行 id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
+  /api/live-share/notes/files:
+    post:
+      tags: [LiveShare]
+      summary: 上报会议期间打开的文件
+      description: |
+        发布端批量上报「谁在什么时间打开了哪个文件」。以**区间**为单位：同一
+        (token, owner, path, openedAt) 重复上报是幂等的，`closedAt` 只会向后推进。
+
+        会议结束时服务端会把仍未关闭的区间按结束时间补上，因此客户端崩掉也不会留下
+        一条永远开着的记录。单批最多 200 条；单条缺 `path` 或 `openedAt` 会被跳过，
+        不影响同批其它条目。
+      operationId: liveShareNoteFiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, files]
+              properties:
+                token: { type: string }
+                files:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: [path, openedAt]
+                    properties:
+                      owner: { type: string, description: "默认 host" }
+                      ownerName: { type: string }
+                      path: { type: string, description: 发布端完整路径，≤1024 字 }
+                      openedAt: { type: integer, format: int64, description: Unix 毫秒 }
+                      closedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示仍打开 }
+                      source: { type: string }
+      responses:
+        "200":
+          description: 已入库
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
+  /api/live-share/notes/screen:
+    post:
+      tags: [LiveShare]
+      summary: 上报屏幕共享人变化
+      description: |
+        发布端上报**变化**而不是状态：`sharer` 为空表示「现在没人共享」。服务端在
+        同一事务里关掉上一段区间、开启下一段，因此时间线永远不会同时出现两个共享人。
+
+        身份与房间一致：`host` 或 `viewer:<id>`；`sharerName` 是展示用的称谓。
+        重复上报同一个人只刷新称谓，不会把区间拆成两段。
+      operationId: liveShareNoteScreen
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, sharer]
+              properties:
+                token: { type: string }
+                sharer:
+                  type: string
+                  description: "host / viewer:<id> / 空字符串（没人共享）"
+                sharerName:
+                  type: string
+                  description: 展示用称谓（主持人留空，服务端用「主持人」）
+                at:
+                  type: integer
+                  format: int64
+                  description: Unix 毫秒，0 表示由服务端取当前时间
+      responses:
+        "200":
+          description: 已入库
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
+  /api/live-share/notes/sessions:
+    get:
+      tags: [LiveShare]
+      summary: 列出项目的会议记录
+      description: |
+        按会议开始时间倒序返回，最多 200 条。
+
+        **数据源是数据库**：记录在发布端连上信令时创建，与「有没有录到东西」无关——
+        没开听记、全程静音的会议同样在列表里。记录与其转写、聊天同生共死，
+        只有删除记录（或删除项目）才会消失。
+      operationId: liveShareNotesSessions
+      responses:
+        "200":
+          description: 会议列表（最新在前）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MeetingRecord"
+        "403":
+          description: 缺少项目上下文
+    delete:
+      tags: [LiveShare]
+      summary: 删除一场会议
+      description: |
+        删除记录行、转写分段、聊天，以及会议目录（纪要 / 转写 / 录音 / 聊天归档）。
+        **不可恢复**。
+
+        两种 409：房间仍在发布（先结束会议），或纪要/校对任务正在运行
+        （它的后台 goroutine 会把目录和行重建出来）。
+      operationId: liveShareNotesDelete
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已删除
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: 会议仍在进行，或纪要正在生成
+
+  /api/live-share/notes/sessions/artifact:
+    get:
+      tags: [LiveShare]
+      summary: 读取一场会议的文本产物
+      description: |
+        按 **token** 寻址：目录名由服务端从记录行解析，客户端不传任何路径。
+        `kind` 为 `minutes`（默认）/ `transcript` / `revised` / `chat`。
+        会议没有任何产物（`dir` 为空）时返回 404。
+      operationId: liveShareNotesArtifact
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [minutes, transcript, revised, chat]
+      responses:
+        "200":
+          description: 产物正文
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kind: { type: string }
+                  content: { type: string }
+                  file: { type: string }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: 会议或该产物不存在
+
+  /api/live-share/notes/sessions/chat:
+    get:
+      tags: [LiveShare]
+      summary: 读取一场会议的聊天
+      description: |
+        按服务端行 id 升序返回（不按客户端时间排序：观众的时钟可能偏）。
+        `since` 是增量游标。
+      operationId: liveShareNotesChat
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: 聊天消息与总数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LiveNoteChatMessage"
+                  count:
+                    type: integer
+        "404":
+          description: token 不存在或不属于当前项目
+
   # ── Share ─────────────────────────────────────────────────────────────────
   /api/share:
     post:
       tags: [Share]
       summary: 创建分享链接
-      description: 需要目标路径（请求体 `{path}`）。
+      description: |
+        需要目标路径（请求体 `{path}`）。文件与**目录**都可分享：文件链接打开只读预览，
+        目录链接打开可浏览的文件列表（`{token}/list`）。已存在分享时重新生成并旋转 token，
+        旧链接立即失效。
       operationId: shareCreate
       requestBody:
         required: true
@@ -4035,7 +4454,7 @@ paths:
         `selectedIds` 为已有分享链接**冻结**的消息 id 列表（未分享时缺省）：链接一旦
         存在，选择就固化在链接里，对话框据此把列表转为**只读**并标出链接实际包含的
         消息，而不是继续提供勾选框与「取消全选」这种不生效的交互。
-        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。群成员身份现额外携带 `agentName`（底层**真实**智能体显示名；当成员昵称被自动派生——内置名池名或「本名 序号」——时与 `name` 不同，供 UI 在昵称后披露），且头像**优先**取成员自身的头像快照（`agent_avatar`），无快照时回退智能体头像。
+        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。群成员身份现额外携带 `agentName`（底层**真实**智能体显示名；当成员称谓被自动派生——内置名池名或「本名 序号」——时与 `name` 不同，供 UI 在称谓后披露），且头像**优先**取成员自身的头像快照（`agent_avatar`），无快照时回退智能体头像。
       operationId: sessionShareStatus
       parameters:
         - name: session_id
@@ -4198,11 +4617,21 @@ paths:
       tags: [Share]
       summary: 公开分享数据（token 即凭证）
       description: |
-        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/content?path=`
+        免鉴权。子路径分派：`{token}`（文件返回 FileContent JSON；**目录返回列举 JSON**）、
+        `{token}/file`（原文件）、`{token}/list[?path=]`（目录列举）、`{token}/content?path=`
         （文档内引用的文件，同样返回 FileContent JSON）、`{token}/download`（强制下载，
         支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）、
         `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
         零信息暴露。
+
+        **目录分享（`{token}/list`）**返回 `{kind, name, path, root, parent, atRoot,
+        crumbs, entries}`：`kind` 为 `dir` 时 `entries` 是 `{name, type, size, modified}`
+        数组（目录在前，再按名称不区分大小写排序，**不隐藏点文件**），`kind` 为 `file`
+        时只标识目标（`?path=` 指向目录内的文件，分享页据此切换到文件预览）。`root` 是
+        创建时快照的分享根，`parent` 为 `null` 表示上一级就是 `{token}` 本身，`crumbs`
+        是根到当前的绝对路径链（服务端拼接，客户端不处理平台分隔符）。越界路径、越界
+        符号链接（列举时直接略过）与不可读目录一律 404，与「不存在」不可区分。**列举仅
+        对目录分享开放**：文件分享的根是项目根，列举会泄漏整个项目，故返回 404。
 
         **`{token}/doc/{dirKey}/{rel}` 是唯一会返回 `text/html` 的公开端点**，供分享页
         在 iframe 里以**真实 URL** 渲染被分享的 HTML：`{dirKey}` 是文档所在**目录**的
@@ -4218,18 +4647,37 @@ paths:
         实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
         `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
 
-        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` 或
-        `session`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
+        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` / `dir` /
+        `session` / `live`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
         会话 JSON）。两者同样免鉴权、token 不存在一律 404。
 
         **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
         （AI 听记时间线 + 纪要状态，`?since=` 增量）。`{token}/notes` 只在房间存活期间
         可读：共享结束后房间销毁，token 立即失效，不会留下可长期读取的转写。
 
+        `{token}/signal` **必须带 `?name=`（观众称谓）**：去掉首尾空白、剔除控制字符
+        （换行会被替换成空格并压缩连续空白，因为它要逐字写进归档的 chat.md 与通知正文），
+        清洗后为空或超过 32 个字符时在**升级之前**返回 **400**（`msgKey` 为
+        `ViewerNameRequired`），客户端据此提示「填写称谓后再加入」而不是一个开了又断的
+        socket。token 不存在或房间已无发布端一律 **404**，且先于称谓校验。
+
         `{token}/signal` 的观众控制帧含 `talk-start` / `talk-end`（麦克风）与
         `screen-start` / `screen-stop`（共享自己的屏幕，需房间开关已打开且当前无人共享）。
         服务端以 `screen-state` 广播谁在共享；被拒时回 `screen-denied`（`disabled` / `busy` /
         `revoked`）。屏幕采集要求安全上下文（HTTPS），HTTP 页面里浏览器不提供该 API。
+
+        发布端控制帧另有 `set-picture`（`{type, video, camera, screen}`），服务端以
+        `picture-state` 广播给全部观众：会议没有类型，画面可以随时开关，三种状态一次带全。
+        开关共享屏幕、开关摄像头都只对已协商的 m-line 做 `replaceTrack`（不重协商）；摄像头轨
+        在关闭时仍挂在 m-line 上（只切 `track.enabled`），这个帧只告诉观众端该渲染什么。
+        观众加入时的 `joined` 帧同样带 `video`（此刻有没有画面）、`camera`（发布端摄像头是否
+        开着）与 `hostScreen`（画面是否为屏幕共享）三个独立标志，取值是**当前**状态而非创建时；
+        远程控制与标注只在 `hostScreen` 为真时有意义。
+
+        **会中开关 AI 听记**用发布端帧 `set-notes`（`{type, enabled}`），服务端以
+        `notes-enabled`（`{type, notesEnabled}`）广播给全部观众。`notesEnabled` 在
+        `notes-enabled` 帧里**总是存在**（关闭时是显式的 `false`，不能省略）：观众端据此
+        显示/收起听记页签，省略会让它在主持人关闭后继续轮询一份不再增长的转写。
 
         会话 JSON 另附身份信息供分享页渲染真实智能体图标：`sessionAgent`（会话级智能体，
         单聊用）、`speakers`（群聊成员行 id → 身份，供每条消息解析发言人）与 `groupMembers`
@@ -4259,11 +4707,22 @@ paths:
         降级为下载入口；`{token}/download` 与 `{token}/local/...` 流式返回，无大小上限。
 
         `?path=` 仅接受落在**该分享自身范围**内的绝对路径，范围在创建分享时确定并
-        随分享记录持久化（文件在所选项目内 → 项目根；否则 → 该文件所在目录）。
-        范围之外的路径返回 404，与 `RootPaths` 无关。`{token}/content` 对目录返回 404
-        （token 端点不提供目录列举能力）。
+        随分享记录持久化（目录分享 → 该目录本身；文件在所选项目内 → 项目根；否则 →
+        该文件所在目录）。范围之外的路径返回 404，与 `RootPaths` 无关。`{token}/content`
+        对目录返回 404；目录内容请用 `{token}/list`。
       operationId: sharePublic
       security: []
+      parameters:
+        - name: name
+          in: query
+          required: false
+          description: |
+            观众称谓，**仅 `{token}/signal` 必填**（其余子路径忽略）。
+            清洗后为空或超过 32 个字符时，`{token}/signal` 在升级前返回 400
+            （`msgKey: ViewerNameRequired`）。
+          schema:
+            type: string
+            maxLength: 32
       responses:
         "200":
           description: |
@@ -4273,6 +4732,13 @@ paths:
           description: |
             `{token}/session` 专用：`If-None-Match` 与当前 `ETag` 匹配，内容未变。
             无响应体，仍带 `ETag`。
+        "400":
+          description: |
+            `{token}/signal` 专用：`?name=` 缺失、清洗后为空或超过 32 个字符。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: |
             `{token}/session` 专用：装配并发已达上限且排队超过服务端窗口。
@@ -5049,7 +5515,7 @@ paths:
           模型等能力由该 agent 首次连接后上报，此前 `models` 为空。
 
         **名称全局唯一**（决策 #50）：重名 `409` + `AgentNameTaken`；等于群聊
-        用户昵称返回 `409` + `AgentNameReserved`。
+        用户称谓返回 `409` + `AgentNameReserved`。
       operationId: agentsCreate
       responses:
         "200":
@@ -5057,7 +5523,7 @@ paths:
         "400":
           description: 名称非法（`InvalidAgentName`），或命令为空 / 过长（`InvalidAcpCommand`）
         "409":
-          description: 名称已被占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
+          description: 名称已被占用（`AgentNameTaken`），或等于群聊用户称谓（`AgentNameReserved`）
     patch:
       tags: [Agents]
       summary: 更新 agent
@@ -5066,7 +5532,7 @@ paths:
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
         `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`。
+        `mcp_servers`、`provider_id`。
         `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
@@ -5084,7 +5550,7 @@ paths:
         `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
-        `AgentNameTaken`；改成群聊用户昵称返回 `409` + `AgentNameReserved`。
+        `AgentNameTaken`；改成群聊用户称谓返回 `409` + `AgentNameReserved`。
       operationId: agentsUpdate
       responses:
         "200":
@@ -5092,23 +5558,37 @@ paths:
         "400":
           description: 请求非法，或试图禁用默认智能体（`CannotDisableDefaultAgent`）、把默认智能体限定到单个项目（`CannotScopeDefaultAgent`）、在未选择项目时开启 `project_scope`（`NoProjectSelected`）
         "409":
-          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户昵称（`AgentNameReserved`）
+          description: 名称已被其它 agent 占用（`AgentNameTaken`），或等于群聊用户称谓（`AgentNameReserved`）
     delete:
       tags: [Agents]
-      summary: 删除 agent
+      summary: 删除 agent（会话由默认智能体接管）
       description: |
-        删除一个 agent。**仅当该 agent 不再被使用时才允许删除**：只要还存在该 agent
-        参与的会话（1:1 聊天 `chat`，含归档；或它作为活跃成员的群聊
-        `group_member`）、定时任务，就返回 `409` + `msgKey=AgentInUse`，并在
-        `detail` 中给出 `{SessionCount, TaskCount, MembershipCount}`
-        （`MembershipCount` 是 `SessionCount` 的子集）。默认智能体不可删除
+        删除一个 agent。**不再因为「还有会话/任务/群成员」而拒绝**（issue #606）：
+        它名下的会话、群成员关系与定时任务在**同一个事务**里转交给**默认智能体**，
+        响应中的 `sessions` / `tasks` / `groups` 是实际转交的数量。
+
+        转交会重写每个会话行的执行身份：`agent_id` 与 `backend` 换成默认智能体的，
+        `model` / `transport` 清空（旧值只对旧后端有效），
+        `external_session_id` **仅在后端不同时清空**——后端、ACP 命令与传输都一致时原生会话
+        仍然有效，直接沿用（并置 `compacted=1`，让新 agent 的系统提示在下一轮重播一次）；
+        带会话级 transport 覆盖的行与跨后端的行都清空，由下一轮重建，
+        `context_state` 里的 `mode` / `thinkingEffort` / `usage` 一并清掉（旧 agent
+        的能力集与上下文窗口）。会话行本身与 `chat_history` **一条都不删**：历史照常
+        可读，只是下一轮会以「全新原生会话 + 历史作为背景注入」的方式继续
+        （`agent_takeover_from` 记录旧 agent 的显示名，同时充当该分支的开关）。
+
+        群行（`session_type='group'`）的 `agent_id` / `backend` 按新成员行重算
+        （主持人模式取主持人、自由模式取第一个成员），否则群会继续指向已删除的 agent。
+
+        唯一的拒绝是**有会话正在运行**：`409` + `msgKey=AgentHasRunningSessions`
+        （包括它作为发言成员的群回合）。默认智能体不可删除
         （`CannotDeleteDefaultAgent`）。
       operationId: agentsDelete
       responses:
         "200":
-          description: 结果
+          description: 删除结果（`deleted`、`sessions`、`tasks`、`groups`、`replacementAgentId`、`replacementName`）
         "409":
-          description: 该 agent 仍在使用中（`AgentInUse`）
+          description: 该 agent 有会话正在运行（`AgentHasRunningSessions`）
 
   /api/agents/{id}:
     get:
@@ -5220,6 +5700,177 @@ paths:
         "200":
           description: 操作结果
 
+  /api/catalog:
+    get:
+      tags: [Providers]
+      summary: 权威模型目录状态
+      description: |
+        返回 `{fetchedAt, source, stale, providers:[{id,name,protocol,modelCount}]}`。
+        目录来自 models.dev 快照，仅用于「ACP 尚未上报模型」时的默认模型配置与
+        摘要模型选择；ACP 上报的模型始终优先。
+      operationId: catalogStatus
+      responses:
+        "200":
+          description: 目录状态（快照不存在时 providers 为空、stale=true）
+    post:
+      tags: [Providers]
+      summary: 刷新权威模型目录
+      description: 立即重新下载并替换快照（约 6 MB，超时 90 秒）。失败返回 502 与原因，旧快照保持不变。
+      operationId: catalogRefresh
+      responses:
+        "200":
+          description: 刷新后的目录状态
+        "502":
+          description: 下载或解析失败
+
+  /api/providers:
+    get:
+      tags: [Providers]
+      summary: 列出模型提供商
+      description: |
+        返回 `{providers:[...]}`。每项含 `id/name/protocol/baseUrl/authMode/
+        wireApi/presetId/models/defaultModel/hasKey/agentCount/agents`（`agents` 为引用
+        该提供商的智能体名称）。**列表不返回 API Key**，只给出 `hasKey`；
+        明文密钥只在 `GET /api/providers/{id}?reveal=1` 返回。
+      operationId: providersList
+      responses:
+        "200":
+          description: 提供商列表
+    post:
+      tags: [Providers]
+      summary: 新建模型提供商
+      description: |
+        body：`{name, protocol, baseUrl, apiKey, authMode, wireApi, presetId, models, defaultModel}`。
+        `protocol` 为 `anthropic` / `openai` / `gemini`；`authMode` 为
+        `auto` / `x-api-key` / `bearer`（省略即 `auto`）；`wireApi` 为
+        `responses`（默认）/ `chat`，只影响 codex 托管配置块里的 `wire_api`
+        （只提供 `/chat/completions` 的网关须选 `chat`）。名称唯一。
+      operationId: providersCreate
+      responses:
+        "201":
+          description: 已创建
+        "400":
+          description: 字段非法（`ProviderInvalid`）
+        "409":
+          description: 名称已被占用（`ProviderNameTaken`）
+
+  /api/providers/presets:
+    get:
+      tags: [Providers]
+      summary: 内置提供商预设目录
+      description: |
+        返回 `{presets:[{id,name,protocol,baseUrl}]}`，来源为 models.dev 快照，
+        只用于新建时预填，不携带任何密钥。
+      operationId: providersPresets
+      responses:
+        "200":
+          description: 预设列表
+
+  /api/providers/test:
+    post:
+      tags: [Providers]
+      summary: 探测提供商端点，或实测某个模型
+      description: |
+        body：`{id, model?, protocol?, baseUrl?, apiKey?, authMode?}`。**只是诊断**，
+        不修改任何状态。
+
+        - 不带 `model`：对提供商发起一次 `GET {baseUrl}/models`（必要时补 `/v1`），
+          返回 `{ok, status, models?|error?}`。部分网关不暴露模型列表，失败不代表聊天不可用。
+        - 带 `model`：按该提供商的协议真实发送一次最小对话请求（openai →
+          `/chat/completions`，anthropic → `/messages`，gemini →
+          `/v1beta/models/{model}:generateContent`），返回
+          `{ok, model, status, latencyMs, reply?|error?}`。这是唯一能回答
+          「这个模型在这套端点 + 密钥下能不能用」的方式：网关可能列出了却服务不了，
+          也可能服务得了却没列出。
+
+        `protocol`/`baseUrl`/`apiKey`/`authMode` 为可选的未保存值，用于编辑弹窗
+        「保存前先测」；为空时取已保存的配置。`protocol`/`authMode` 取值非法时返回 `400`。
+      operationId: providersTest
+      responses:
+        "200":
+          description: 探测结果
+        "400":
+          description: 覆盖字段非法（`ProviderInvalid`）
+        "404":
+          description: 不存在（`ProviderNotFound`）
+
+  /api/providers/{id}:
+    get:
+      tags: [Providers]
+      summary: 单个模型提供商
+      description: |
+        返回 `{id,name,protocol,baseUrl,authMode,wireApi,presetId,models,
+        defaultModel,hasKey,agentCount,agents}`。
+        加 `reveal=1` 时额外返回 `apiKey`（明文）。这是编辑弹窗「查看密钥」的
+        唯一来源：鉴权后仍需显式索取，列表与任何写操作的回显都不带密钥。
+      operationId: providersGet
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: reveal
+          in: query
+          required: false
+          description: 传 `1` 时在响应里带上明文 `apiKey`
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: 提供商详情（含 `agents` 名称列表；`reveal=1` 时含 `apiKey`）
+        "404":
+          description: 不存在（`ProviderNotFound`）
+    put:
+      tags: [Providers]
+      summary: 更新模型提供商
+      description: |
+        部分更新：`name` / `protocol` / `baseUrl` / `apiKey` / `authMode` / `wireApi` /
+        `presetId` / `models` / `defaultModel`。
+        `apiKey` 省略或为空表示保持不变，`clearApiKey=true` 显式清除。
+        改 `protocol` 时若已绑定的智能体不支持新协议，返回 `409`
+        `ProviderProtocolConflict`（`detail.Agents` 列出这些智能体）。
+      operationId: providersUpdate
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 更新结果
+        "404":
+          description: 不存在（`ProviderNotFound`）
+        "409":
+          description: 名称冲突（`ProviderNameTaken`）或协议与已绑定智能体冲突（`ProviderProtocolConflict`）
+    delete:
+      tags: [Providers]
+      summary: 删除模型提供商
+      description: 仍被智能体引用时拒绝删除（`409` + `ProviderInUse`）。
+      operationId: providersDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: 已删除
+        "404":
+          description: 不存在（`ProviderNotFound`）
+        "409":
+          description: 仍被引用（`ProviderInUse`）
+
+  /api/providers/{id}/models:
+    get:
+      tags: [Providers]
+      summary: 提供商的模型列表
+      description: |
+        返回该提供商可用的模型。始终以端点实测为准（必要时补 `/v1`），失败再用权威目录兜底
+        （`source: "live" | "catalog"`）；同时返回用户已保存的清单 `curated`。
+        返回 `{models:[...], curated:[...], source, status?, error?}`。
+        已保存清单不覆盖实测列表——它只表示「用户选了哪些」，选择器要靠实测列表才能继续添加模型；
+        网关不暴露列表时返回空数组与原因，前端退化为手动输入，不阻塞配置。
+      operationId: providersModels
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 模型列表（可能为空）
+        "404":
+          description: 不存在（`ProviderNotFound`）
+
   /api/agents/{id}/self-test:
     post:
       tags: [Agents]
@@ -5318,6 +5969,58 @@ paths:
       responses:
         "200":
           description: 音频
+
+  /api/tts/generate/pcm:
+    post:
+      tags: [TTS]
+      summary: 合成裸 PCM 语音（供嵌入式设备）
+      description: |
+        与 `/api/tts/generate` 相同的摘要与缓存链路，但**同步返回音频字节**而不是
+        job id，并且输出无容器头的裸 PCM（16-bit 小端、单声道），供无法解码
+        MP3 的嵌入式设备直接写入 I2S。
+
+        实现方式：先按既有链路合成并缓存 MP3（与网页端共用同一份缓存），再用纯
+        Go 解码器转成 PCM 并缓存为 `.pcm`。采样率跟随源 MP3（Edge TTS 为
+        24 kHz），不做重采样。
+
+        响应 `Content-Type` 为
+        `audio/L16; rate=<采样率>; channels=<声道数>; endianness=little`，
+        采样位深见 `X-Audio-Bits`。`endianness=little` 是必须声明的：RFC 3551 的
+        `L16` 定义为**大端**，而本端点返回的负载是小端，按裸媒体类型解码的客户端
+        会得到满量程噪声。PCM 缓存文件名内嵌采样参数，命中时无需解码。
+      operationId: ttsGeneratePcm
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                language:
+                  type: string
+                  description: 语言代码（如 zh / en），缺省 zh。
+                messageId:
+                  type: integer
+                  description: 关联的 chat_history.id，用于 TTS 摘要缓存。
+                speakerName:
+                  type: string
+                  description: 群聊发言人显示名；设置后朗读音频带「<名>说：」前缀。
+      responses:
+        "200":
+          description: 裸 PCM 音频流
+          content:
+            audio/L16:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: 文本为空或超长
+        "500":
+          description: 解码或缓存写入失败（`InternalError`）。该端点对任何能产出 MP3 的语音提供方都成立，不存在「不支持裸 PCM」的独立状态码。
+        "502":
+          description: 摘要或语音合成失败（`SummarizeFailed` / `SynthesizeFailed`）
 
   /api/tts/stream/{jobId}:
     get:
@@ -7118,16 +7821,125 @@ components:
         text: { type: string }
       required: [id, channel, startedAt, text]
 
+    LiveNoteScreenShare:
+      type: object
+      description: |
+        一段屏幕共享：`sharer` 是 `host` 或 `viewer:<id>`，`sharerName` 是展示用称谓。
+        `endedAt` 为 0 表示会议结束时仍共享（服务端在收尾时补上）。
+
+        时间线是一条首尾相接的区间链：下一段开始时上一段就结束了，因此不会重叠。
+      properties:
+        id: { type: integer, format: int64 }
+        sharer: { type: string }
+        sharerName: { type: string }
+        startedAt: { type: integer, format: int64, description: Unix 毫秒 }
+        endedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示未结束 }
+      required: [id, sharer, startedAt]
+
+    LiveNoteFile:
+      type: object
+      description: |
+        会议期间打开过的一个文件，以**区间**表示：`openedAt` 到 `closedAt`。
+        `closedAt` 为 0 表示会议结束时仍开着（服务端在会议收尾时按结束时间补上）。
+
+        `path` 只在发布端响应里有值；观众端拿到的是空 `path` 与始终存在的 `name`，
+        即只知道打开了哪个文件，不知道发布端的目录结构。
+      properties:
+        id: { type: integer, format: int64 }
+        owner: { type: string, description: "host 或参会人标识" }
+        ownerName: { type: string }
+        path: { type: string }
+        name: { type: string, description: 文件名（basename），始终有值 }
+        openedAt: { type: integer, format: int64, description: Unix 毫秒 }
+        closedAt: { type: integer, format: int64, description: Unix 毫秒，0 表示未关闭 }
+        source: { type: string, description: "preview / editor 等来源" }
+      required: [id, owner, path, name, openedAt]
+
     LiveNoteMinutes:
       type: object
       description: |
-        会议纪要。`status` 为 `idle`（尚未生成）/ `generating` / `ready` / `failed`；
-        `markdown` 仅在 `ready` 时有值，`error` 仅在 `failed` 时有值。
+        会议纪要及其产物。`status` 为 `idle`（尚未生成）/ `generating` / `ready` /
+        `failed`；`markdown` 仅在 `ready` 时有值，`error` 仅在 `failed` 时有值。
+
+        `revise` 是生成纪要**之前**的上下文校对阶段：结合项目文档（AGENTS.md /
+        README.md 等）修正听写错误与专有名词，纪要由校对后的转写生成。它失败时
+        纪要改用原始转写，因此 `revise.status` 与 `status` 可以不同。
+
+        `filePath` 与 `artifacts` 只对发布端返回：它们是发布端磁盘上的路径。
       properties:
         status: { type: string }
         markdown: { type: string }
         error: { type: string }
+        filePath:
+          type: string
+          description: 纪要 Markdown 的绝对路径（仅发布端）
+        revise:
+          type: object
+          properties:
+            status: { type: string }
+            error: { type: string }
+          required: [status]
+        artifacts:
+          $ref: "#/components/schemas/LiveNotesArtifacts"
       required: [status]
+
+    LiveNotesArtifacts:
+      type: object
+      description: |
+        这场会留在项目目录里的文件（仅发布端，未生成时为空）。
+
+        `audioMeeting` 是合并后的**整场会议**录音（`audio/meeting.webm`），
+        `audio` 是分声道录音所在的目录、`audioFiles` 是其中的文件数。
+        合并没有跑过的旧会议只有 `audio` + `audioFiles`（一堆分段）。
+      properties:
+        dir: { type: string }
+        minutes: { type: string }
+        transcript: { type: string }
+        revised: { type: string }
+        audio: { type: string }
+        audioMeeting: { type: string }
+        audioFiles: { type: integer }
+
+    MeetingRecord:
+      type: object
+      description: |
+        一场会议。**身份是 token**（数据库记录），不是目录：记录在发布端连上信令
+        时创建，与「有没有录到东西」无关。`dir` 只在第一次写出产物（录音 /
+        聊天归档 / 纪要）后才存在，此时 `dirPath` 才有值。
+        `hasMinutes` / `hasTranscript` / `hasRevised` / `audioFiles` 直接反映文件
+        是否存在——目录探测的结果，不是缓存。`hasMeetingAudio` 表示录音已经合并成
+        `audio/meeting.webm`；为 false 而 `audioFiles > 0` 说明还是一次性的分段录音。
+      properties:
+        token: { type: string }
+        title: { type: string }
+        startedAt: { type: integer, format: int64, description: Unix 毫秒（服务端时钟） }
+        endedAt: { type: integer, format: int64, description: Unix 毫秒；0 表示还在进行 }
+        dir: { type: string, description: 目录名；空表示没有产物 }
+        dirPath: { type: string, description: 绝对路径，仅发布端使用 }
+        hasMinutes: { type: boolean }
+        hasTranscript: { type: boolean }
+        hasRevised: { type: boolean }
+        hasMeetingAudio: { type: boolean }
+        audioFiles: { type: integer }
+        chatCount: { type: integer }
+        status:
+          type: string
+          enum: [idle, generating, ready, failed]
+          description: 纪要生成状态
+        updatedAt: { type: integer, format: int64, description: 记录最后写入时间，Unix 毫秒 }
+      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, status, updatedAt]
+
+    LiveNoteChatMessage:
+      type: object
+      description: 一条落库的会议聊天。`id` 是服务端行 id（排序依据），`clientId` 是客户端消息 id（幂等键）。
+      properties:
+        id: { type: integer, format: int64 }
+        clientId: { type: string }
+        speaker: { type: string }
+        viewerId: { type: string }
+        text: { type: string }
+        at: { type: integer, format: int64, description: 服务端落库时间，Unix 毫秒 }
+      required: [id, clientId, speaker, text, at]
 
     WeChatLogin:
       type: object
@@ -7212,11 +8024,12 @@ components:
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
         sourceKind:
           type: string
-          enum: [file, url, message, selection, terminal]
+          enum: [file, url, message, selection, terminal, meeting]
           description: |
             仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
             `selection` 无来源地址的自由选区、`terminal` 终端选区（与 `selection` 同形，
-            分开是为了能标成「终端」而非泛化的「选中内容」）。
+            分开是为了能标成「终端」而非泛化的「选中内容」）、`meeting` 会议（听记/纪要/转写，
+            定位键为 `meetingToken`）。
             该字段会随 `files` 持久化：`selection`/`terminal` 与 `message` 都没有 path 与 url，
             不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
             缺省（旧数据）由前端按 url/path 推断。
@@ -7236,8 +8049,14 @@ components:
           type: string
           description: |
             仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
+        meetingToken:
+          type: string
+          description: |
+            仅 `kind=quote`：来源会议 token，用于跳转回该会议；会议名在 `path` 中。
+            仅在会议仍存活时可用（会议是内存态，结束即失效）。
 
-            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` 均为**来源定位键**：
+            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` /
+            `meetingToken` 均为**来源定位键**：
             客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quote 1/1] 名称 (task: 12)`），
             以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
 

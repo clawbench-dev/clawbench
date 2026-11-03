@@ -75,6 +75,9 @@
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
       <template v-else-if="type === 'action'">
+        <!-- Action rows are usually pure navigation, but a picker-style action
+             shows its current value here (e.g. the summary model). -->
+        <span v-if="modelValue !== undefined && modelValue !== ''" class="settings-item__value">{{ displayValue }}</span>
       </template>
       <template v-else-if="type === 'info'">
         <!-- info value shown in description area below, nothing on the right -->
@@ -203,6 +206,7 @@
           class="settings-item__textarea-input"
           :value="editValue as string | number | readonly string[] | null | undefined"
           :placeholder="placeholder"
+          :maxlength="maxLength"
           rows="6"
           @input="editValue = ($event.target as HTMLTextAreaElement).value"
         ></textarea>
@@ -247,10 +251,8 @@
            same fields the chat model drawer matches on. Sticky so it stays put
            while the (possibly very long) model list scrolls underneath. -->
       <div v-if="isModelSelect" class="settings-item__search-row">
-        <input
+        <SearchInput
           v-model="searchQuery"
-          class="settings-item__search-input"
-          type="text"
           :placeholder="t('chat.sessionSetting.searchPlaceholder')"
         />
       </div>
@@ -355,6 +357,7 @@ import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette, Check, Aler
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ModelRow from '@/components/common/ModelRow.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import TerminalPreviewCard from '@/components/common/TerminalPreviewCard.vue'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
@@ -397,6 +400,9 @@ interface Props {
   min?: number
   max?: number
   step?: number
+  /** Hard input limit for text/textarea editors (server-enforced limits are
+   *  surfaced here so the user cannot type a value that will be rejected). */
+  maxLength?: number
   placeholder?: string
   needsRestart?: boolean
   disabled?: boolean
@@ -1166,27 +1172,6 @@ function confirmEdit() {
   background: var(--bg-secondary);
   border-bottom: 0.5px solid var(--border-color);
   flex-shrink: 0;
-}
-
-.settings-item__search-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: var(--space-3) var(--space-5);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-  outline: none;
-  transition: border-color var(--duration-base);
-}
-
-.settings-item__search-input:focus {
-  border-color: var(--accent-color);
-}
-
-.settings-item__search-input::placeholder {
-  color: var(--text-muted);
 }
 
 .settings-item__option-empty {

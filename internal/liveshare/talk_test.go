@@ -186,3 +186,114 @@ func TestTalkState_String(t *testing.T) {
 		}
 	}
 }
+
+// closingSink records what it was sent and whether the transport was hung up.
+// `kick` is only a removal if BOTH happen, so the test sink has to expose the
+// same Close the websocket sink does.
+type closingSink struct {
+	fakeSink
+	closed bool
+}
+
+func (c *closingSink) Close() error {
+	c.closed = true
+	return nil
+}
+
+func TestSetMuted_BlocksTalkingUntilUnmuted(t *testing.T) {
+	room, v := newTalkRoom(t)
+	room.SetTalkEnabled(true)
+
+	if _, err := room.SetMuted(v.ID, true); err != nil {
+		t.Fatalf("SetMuted: %v", err)
+	}
+	// The room switch is still on, so the ONLY thing refusing this is the
+	// per-viewer block — the client has to be able to tell those apart.
+	if err := room.SetTalking(v.ID, true); !errors.Is(err, ErrTalkMuted) {
+		t.Fatalf("want ErrTalkMuted, got %v", err)
+	}
+	if v.Talking() || !v.Muted() {
+		t.Fatalf("viewer must be muted and not speaking, got talking=%v muted=%v", v.Talking(), v.Muted())
+	}
+
+	if _, err := room.SetMuted(v.ID, false); err != nil {
+		t.Fatalf("SetMuted(false): %v", err)
+	}
+	if err := room.SetTalking(v.ID, true); err != nil {
+		t.Fatalf("after unmute the viewer may speak again, got %v", err)
+	}
+}
+
+func TestSetMuted_TurnsOffCurrentSpeech(t *testing.T) {
+	room, v := newTalkRoom(t)
+	room.SetTalkEnabled(true)
+	if err := room.SetTalking(v.ID, true); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	wasTalking, err := room.SetMuted(v.ID, true)
+	if err != nil {
+		t.Fatalf("SetMuted: %v", err)
+	}
+	// Leaving the microphone flag set would keep audio flowing while the
+	// publisher's list says "muted".
+	if !wasTalking {
+		t.Fatal("muting a speaking viewer must report that it was talking")
+	}
+	if v.Talking() {
+		t.Fatal("muting must also switch the microphone off")
+	}
+}
+
+func TestSetMuted_UnknownViewerIsRoomNotFound(t *testing.T) {
+	room, _ := newTalkRoom(t)
+	if _, err := room.SetMuted("nope", true); !errors.Is(err, ErrRoomNotFound) {
+		t.Fatalf("want ErrRoomNotFound, got %v", err)
+	}
+}
+
+func TestKickViewer_RemovesSendsAndCloses(t *testing.T) {
+	g := NewRegistry()
+	g.SetLimits(10, 0)
+	room, _ := g.Create("/proj/a", "A")
+
+	sink := &closingSink{}
+	v, err := room.AddViewer("小明", sink)
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+	room.SetScreenEnabled(true)
+	if err := room.ClaimScreen(v.ID); err != nil {
+		t.Fatalf("ClaimScreen: %v", err)
+	}
+
+	wasSharing := room.KickViewer(v.ID)
+	if !wasSharing {
+		t.Fatal("kick must report that the removed viewer was sharing a screen")
+	}
+	if room.Viewer(v.ID) != nil || room.ViewerCount() != 0 {
+		t.Fatal("kicked viewer must be gone from the room")
+	}
+	if room.ScreenSharer() != "" {
+		t.Fatalf("a kicked sharer must release the screen, got %q", room.ScreenSharer())
+	}
+	// The page has to be able to say WHY it was disconnected, and the socket has
+	// to actually go away — otherwise the viewer keeps sending frames under an
+	// id the room has forgotten.
+	if !sink.closed {
+		t.Fatal("kick must close the transport")
+	}
+	if sink.count() == 0 {
+		t.Fatal("kick must send the notice before closing")
+	}
+	if got, ok := sink.msgs[len(sink.msgs)-1].(ViewerMessage); !ok || got.Type != MsgKicked {
+		t.Fatalf("want a kicked frame, got %#v", sink.msgs[len(sink.msgs)-1])
+	}
+}
+
+func TestKickViewer_UnknownIdIsNoop(t *testing.T) {
+	room, _ := newTalkRoom(t)
+	if room.KickViewer("nope") {
+		t.Fatal("unknown id must not report a screen to release")
+	}
+}

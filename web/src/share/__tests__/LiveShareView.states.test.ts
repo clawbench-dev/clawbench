@@ -30,12 +30,23 @@ vi.mock('@/share/liveViewer', () => ({
     stopTalking(): Promise<void> {
       return Promise.resolve()
     }
+    // The component calls these on `playing`; without them the watcher throws
+    // and the failure is swallowed by Vue.
+    viewerId = 'v-test'
+    sendControl(): boolean {
+      return true
+    }
+    getStats() {
+      return Promise.resolve({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null })
+    }
   },
 }))
 let shareToken: string | null = 'tok'
 vi.mock('@/share/shareMode', () => ({ getShareToken: () => shareToken }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
+import { passJoinGate } from './joinGateTestHelper'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const i18n = createI18n({
   legacy: false,
@@ -51,6 +62,13 @@ const i18n = createI18n({
           micOnHint: '其他人可以听到你说话',
           micOffHint: '点击打开麦克风发言',
           statusConnecting: '连接中…',
+          joinSubtitle: '主持人邀请你加入会议。填一个称谓，发布端与其他观众会看到它。',
+          joinNick: '你的称谓',
+          joinNickPlaceholder: '例如：小明',
+          joinNickHint: '称谓会记住，下次加入不用再填。',
+          joinEnter: '加入会议',
+          noPictureTitle: '暂未共享画面',
+          noPictureDesc: '主持人可以随时打开屏幕共享或摄像头',
           statusLive: '直播中',
           statusNegotiating: '协商中…',
           statusEnded: '已结束',
@@ -82,15 +100,29 @@ beforeEach(() => {
     writable: true,
     value: vi.fn(async () => undefined),
   })
+  // The microphone switch is gated on getUserMedia being reachable, so these
+  // tests need a viewer that can actually talk. The gate itself is covered by
+  // LiveShareView.dock.test.ts; here it would only stop every mic test from
+  // reaching the state machine they are about.
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: vi.fn() },
+  })
 })
 
 afterEach(() => {
   // @ts-expect-error -- jsdom has no real implementation to restore to.
   delete HTMLMediaElement.prototype.play
+  // Undo the microphone-capability override from the talking-state test: a
+  // leftover `mediaDevices` would decide the gate for every later test here.
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 })
 
 function mountView() {
-  return mount(LiveShareView, { global: { plugins: [i18n] } })
+  const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+  passJoinGate(w)
+  return w
 }
 
 describe('LiveShareView overlay states', () => {
@@ -204,6 +236,66 @@ describe('LiveShareView overlay states', () => {
     expect(toggle.exists()).toBe(true)
     expect(toggle.attributes('aria-checked')).toBe('false')
     w.unmount()
+  })
+})
+
+/**
+ * The "no picture yet" placeholder and the status overlay are ONE slot: both are
+ * `inset: 0` and centre their content, so whichever pair of conditions is true
+ * renders two sets of copy on top of each other.
+ *
+ * The realistic sequence that produced the bug: the host stops its picture
+ * (`picture-state { video: false }` leaves `videoEnabled` false) and then ends
+ * the meeting. Nothing rolls `videoEnabled` back, so "not sharing yet" and
+ * "sharing has ended" were both true and their titles/descriptions interleaved.
+ */
+describe('LiveShareView overlay slot exclusivity', () => {
+  it('hides the no-picture placeholder whenever a status overlay is up', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onStateChange?.('playing')
+    cb.onVideoMode?.(false)
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+
+    // Host stops sharing, then the room ends.
+    cb.onStateChange?.('ended')
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+    expect(w.find('.live-overlay-title').text()).toContain('直播已结束')
+
+    // Same for a retry that lands back in `connecting`, and for a failure.
+    await w.find('.live-retry').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+
+    cb.onStateChange?.('failed', { reason: 'ice' })
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+
+    // ...and it comes back once the meeting is live again with no picture.
+    cb.onStateChange?.('playing')
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('paints the status overlay opaquely so nothing underneath can bleed through', () => {
+    // Belt and braces for the same defect: even if some future block lands in
+    // this slot, the overlay must not be see-through. A transparent overlay was
+    // half the bug — the copy interleaved instead of one covering the other.
+    const src = readWebFile('src/share/LiveShareView.vue')
+    const style = src.match(/<style scoped>([\s\S]*)<\/style>/)?.[1]
+    expect(style).toBeTruthy()
+
+    const rule = (style as string)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .match(/(^|\})\s*\.live-overlay\s*\{([^}]*)\}/)
+    expect(rule).not.toBeNull()
+    expect((rule as RegExpMatchArray)[2]).toMatch(/(^|;)\s*background:\s*var\(--bg-primary/)
   })
 })
 
@@ -343,6 +435,95 @@ describe('LiveShareView sound unlock', () => {
     await flushPromises()
 
     expect(video.muted).toBe(false)
+    w.unmount()
+  })
+
+  it('does not ask again after a re-attach, when the sound is already on', async () => {
+    const w = mountView()
+    await flushPromises()
+    const audioStream = { getAudioTracks: () => [{}] } as unknown as MediaStream
+    lastViewer?.opts?.callbacks?.onStream?.(audioStream)
+    await flushPromises()
+
+    await w.find('[data-action="enable-sound"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+
+    // The publisher swapping its picture source re-attaches a stream, and the
+    // prompt used to come back on "this stream has audio" alone — over audio
+    // that is already playing, so pressing it changed nothing.
+    lastViewer?.opts?.callbacks?.onStream?.(audioStream)
+    await flushPromises()
+
+    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+    expect((w.find('video').element as HTMLVideoElement).muted).toBe(false)
+    w.unmount()
+  })
+})
+
+/**
+ * Chat is relayed to everybody and never stored on the viewer's side, so the
+ * only bound on it is this one. Without it a long meeting — or one attendee
+ * sending frames in a loop — grows memory and per-frame render cost until a
+ * phone stalls.
+ */
+describe('LiveShareView chat bounds', () => {
+  // 600 frames each re-render the mounted panel, so this case is deterministic
+  // but heavy: under full-suite load it outran the 5s default and failed with a
+  // timeout that said nothing about the bound it is testing.
+  it('keeps only the newest lines when the meeting floods the chat', { timeout: 30000 }, async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    for (let i = 0; i < 600; i++) {
+      cb.onControl?.({
+        t: 'chat',
+        id: `m${i}`,
+        from: 'v2',
+        name: '小明',
+        text: `第 ${i} 句`,
+        at: i,
+      })
+    }
+    await flushPromises()
+
+    const msgs = (w.vm as unknown as { $: { setupState: { chatMessages: Array<{ id: string }> } } }).$.setupState
+      .chatMessages
+    expect(msgs).toHaveLength(500)
+    // The newest 500, in order: the reader is following the conversation, not
+    // its beginning.
+    expect(msgs[0].id).toBe('m100')
+    expect(msgs[499].id).toBe('m599')
+    w.unmount()
+  })
+})
+
+describe('LiveShareView remote-control grant addressing', () => {
+  it('ignores a grant with no viewer id instead of granting everybody', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    // A grant is addressed to ONE viewer. An empty id is a malformed frame, not
+    // a broadcast: treating it as one put every viewer into "controlling", and
+    // their keydown handler then swallowed typing in the chat box.
+    cb.onControl?.({ t: 'ctrl-grant', viewerId: '', granted: true })
+    await flushPromises()
+
+    expect(w.find('[data-role="control-banner"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('still honours a grant addressed to this viewer', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onControl?.({ t: 'ctrl-grant', viewerId: 'v-test', granted: true })
+    await flushPromises()
+
+    expect(w.find('[data-role="control-banner"]').exists()).toBe(true)
     w.unmount()
   })
 })

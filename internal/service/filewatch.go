@@ -56,12 +56,20 @@ const (
 	watchPushChSize = 16
 	watchDebounceMs = 200
 
+	// defaultWatchRepairInterval is how often the watcher verifies that every
+	// directory it believes it holds is still watched. See repairWatches.
+	defaultWatchRepairInterval = 10 * time.Second
+
 	// MaxMediaWatchPaths caps the extra files a single client may ask to watch
 	// (images rendered in a preview). Each distinct parent directory costs one
 	// inotify watch, so an unbounded list would let one client exhaust the
 	// process-wide limit.
 	MaxMediaWatchPaths = 200
 )
+
+// watchRepairInterval is how often repairWatches runs. A var rather than a
+// const so tests can shrink it.
+var watchRepairInterval = defaultWatchRepairInterval
 
 // InitFileWatcher creates the global FileWatcher and starts its event loop.
 // Returns error if fsnotify watcher creation fails.
@@ -399,12 +407,59 @@ func (fw *FileWatcher) cancelClientTimers(clientID string) {
 	}
 }
 
+// repairWatches re-issues the fsnotify Add for every directory this watcher
+// still believes it holds but fsnotify no longer does.
+//
+// inotify silently drops a watch when the watched directory is deleted or moved
+// (IN_DELETE_SELF / IN_MOVE_SELF), and fsnotify prunes its own bookkeeping
+// without telling us. The refcount cannot notice: it tracks INTENT, not the
+// kernel's state. A directory that is deleted and recreated — the normal shape
+// for generated output, a build dir, or an extracted archive — therefore stays
+// unwatched, and every file created inside it afterwards goes unreported until
+// some client happens to re-target the watch (open another file, navigate).
+//
+// WatchList() is the authority on what is actually watched, so only genuinely
+// missing directories are re-added. Re-adding a healthy one would be wasted
+// work, and on Windows it would open a second handle for the same directory.
+//
+// A directory that no longer exists cannot be watched: the reference is kept
+// (the client still wants it) and the next tick retries, so a recreate is
+// picked up within one interval.
+func (fw *FileWatcher) repairWatches() {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+
+	if len(fw.watchedDirs) == 0 {
+		return
+	}
+	held := make(map[string]struct{}, len(fw.watchedDirs))
+	for dir := range fw.watchedDirs {
+		held[filepath.Clean(dir)] = struct{}{}
+	}
+	for _, p := range fw.watcher.WatchList() {
+		delete(held, filepath.Clean(p))
+	}
+	for dir := range held {
+		if err := fw.watcher.Add(dir); err != nil {
+			slog.Debug("failed to repair directory watch", slog.String("path", dir), slog.String("err", err.Error()))
+			continue
+		}
+		slog.Debug("repaired dropped directory watch", slog.String("path", dir))
+	}
+}
+
 // eventLoop reads fsnotify events and routes them to clients with debounce.
 func (fw *FileWatcher) eventLoop() {
+	repair := time.NewTicker(watchRepairInterval)
+	defer repair.Stop()
+
 	for {
 		select {
 		case <-fw.done:
 			return
+
+		case <-repair.C:
+			fw.repairWatches()
 
 		case event, ok := <-fw.watcher.Events:
 			if !ok {

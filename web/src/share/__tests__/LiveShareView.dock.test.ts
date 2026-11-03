@@ -31,11 +31,21 @@ vi.mock('@/share/liveViewer', () => ({
     stopTalking(): Promise<void> {
       return Promise.resolve()
     }
+    // Control channel + stats: the real viewer has these, and the component
+    // now touches them on `playing`.
+    viewerId = 'v-test'
+    sendControl(): boolean {
+      return true
+    }
+    getStats() {
+      return Promise.resolve({ rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null })
+    }
   },
 }))
 vi.mock('@/share/shareMode', () => ({ getShareToken: () => 'tok' }))
 
 import LiveShareView from '@/share/LiveShareView.vue'
+import { passJoinGate } from './joinGateTestHelper'
 
 const i18n = createI18n({
   legacy: false,
@@ -50,13 +60,22 @@ const i18n = createI18n({
           micOff: '麦克风已关',
           micOnHint: '其他人可以听到你说话',
           micOffHint: '点击打开麦克风发言',
+          micNeedsHttps: '需要 HTTPS 才能使用麦克风',
           statusConnecting: '连接中…',
+          joinSubtitle: '主持人邀请你加入会议。填一个称谓，发布端与其他观众会看到它。',
+          joinNick: '你的称谓',
+          joinNickPlaceholder: '例如：小明',
+          joinNickHint: '称谓会记住，下次加入不用再填。',
+          joinEnter: '加入会议',
+          noPictureTitle: '暂未共享画面',
+          noPictureDesc: '主持人可以随时打开屏幕共享或摄像头',
           statusLive: '直播中',
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
           notes: '听记',
           notesTitle: 'AI 听记',
           notesWaiting: '等待转写…',
+          notesWaitingDesc: '有人说话后，这里会实时出现转写。',
           shareScreen: '共享屏幕',
           stopSharing: '停止共享',
           shareScreenHint: '把你的屏幕共享给所有人',
@@ -117,10 +136,16 @@ afterEach(() => {
     configurable: true,
     get: () => null,
   })
+  // The microphone tests override both probes; leaving them overridden would
+  // decide the gate for every later test in the file.
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 })
 
 function mountView() {
-  return mount(LiveShareView, { global: { plugins: [i18n] } })
+  const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+  passJoinGate(w)
+  return w
 }
 
 describe('LiveShareView control dock', () => {
@@ -143,10 +168,11 @@ describe('LiveShareView control dock', () => {
     await w.find('[data-action="fullscreen"]').trigger('click')
     await flushPromises()
 
-    // The root, because the dock lives inside it: going fullscreen on the
-    // <video> alone would hide the only way back out.
+    // The shell, because the dock and the side panel live inside it: going
+    // fullscreen on the <video> alone would hide the only way back out, and on
+    // the picture column alone would drop the open chat panel.
     expect(requestFullscreen).toHaveBeenCalledTimes(1)
-    expect((requestFullscreen.mock.contexts[0] as Element).className).toContain('live-share-view')
+    expect((requestFullscreen.mock.contexts[0] as Element).className).toContain('live-shell')
 
     w.unmount()
   })
@@ -282,10 +308,11 @@ describe('LiveShareView control dock', () => {
     await flushPromises()
     expect(w.find('[data-action="notes"]').exists()).toBe(true)
 
-    // Turning it off (or the share ending) removes the button again.
+    // Switching 听记 off mid-meeting stops the transcription but does not take
+    // away what it already wrote: the entry stays reachable.
     lastViewer?.opts?.callbacks?.onNotesEnabled?.(false)
     await flushPromises()
-    expect(w.find('[data-action="notes"]').exists()).toBe(false)
+    expect(w.find('[data-action="notes"]').exists()).toBe(true)
 
     w.unmount()
   })
@@ -303,6 +330,25 @@ describe('LiveShareView control dock', () => {
     // situation of an http:// LAN page. The button must explain, not vanish.
     expect(btn.attributes('disabled')).toBeDefined()
     expect(btn.attributes('title')).toContain('HTTPS')
+
+    w.unmount()
+  })
+
+  it('tells a browser user what only the client can do', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onScreenEnabled?.(true)
+    await flushPromises()
+
+    // jsdom has no capture API, which is exactly the plain-HTTP browser case:
+    // the button stays disabled and a hint points at the desktop client.
+    expect(w.find('[data-action="screen-share"]').attributes('disabled')).toBeDefined()
+    const hint = w.find('[data-role="client-hint"]')
+    expect(hint.exists()).toBe(true)
+
+    await hint.find('.live-client-hint__close').trigger('click')
+    expect(w.find('[data-role="client-hint"]').exists()).toBe(false)
 
     w.unmount()
   })
@@ -327,6 +373,152 @@ describe('LiveShareView control dock', () => {
 
     // A refusal must not leave the UI claiming to be fullscreen.
     expect(w.find('[data-action="fullscreen"]').text()).toContain('全屏')
+
+    w.unmount()
+  })
+
+  it('disables the microphone switch when the page cannot reach getUserMedia', async () => {
+    // A plain http://LAN page: `navigator.mediaDevices` does not exist, so
+    // startTalking() can only fail. A live-looking switch that silently flips
+    // back is worse than a disabled one that says why.
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false })
+    const w = mountView()
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onTalkEnabled?.(true)
+    await flushPromises()
+
+    const btn = w.find('[data-action="mic-toggle"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toContain('HTTPS')
+
+    w.unmount()
+  })
+
+  it('enables the microphone switch on a secure origin', async () => {
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn() },
+    })
+    const w = mountView()
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onTalkEnabled?.(true)
+    await flushPromises()
+
+    const btn = w.find('[data-action="mic-toggle"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('title')).toBe('点击打开麦克风发言')
+
+    w.unmount()
+  })
+})
+
+/**
+ * The publisher's camera as a picture-in-picture tile.
+ *
+ * The tile only exists when the meeting shows a screen AND a camera; a
+ * camera-only meeting puts the camera on the main picture instead, and a
+ * camera image must not offer remote control — there is no desktop behind it.
+ */
+describe('LiveShareView camera tile', () => {
+  it('shows the camera tile next to a screen, and hides it when the camera goes off', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    // Default state: screen share, no camera — the element is mounted but not
+    // shown, so a later stream needs no re-render to attach.
+    expect(w.find('[data-role="camera-pip"]').attributes('style')).toContain('display: none')
+
+    cb.onHostScreen?.(true)
+    cb.onCameraMode?.(true)
+    cb.onCameraStream?.({ id: 'cam' } as unknown as MediaStream)
+    await flushPromises()
+
+    expect(w.find('[data-role="camera-pip"]').attributes('style') ?? '').not.toContain('display: none')
+    // The camera must never take over the main <video>: that element carries
+    // the screen and the mixed audio.
+    expect((w.find('video.live-video').element as HTMLVideoElement).srcObject).toBeFalsy()
+
+    cb.onCameraMode?.(false)
+    await flushPromises()
+    expect(w.find('[data-role="camera-pip"]').attributes('style')).toContain('display: none')
+
+    w.unmount()
+  })
+
+  it('keeps remote control off a camera-only meeting', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    cb.onHostScreen?.(false)
+    await flushPromises()
+    // A pointer mapped onto a camera image would inject clicks at nonsense
+    // coordinates, so the button is not offered at all.
+    expect(w.find('[data-action="request-control"]').exists()).toBe(false)
+
+    cb.onHostScreen?.(true)
+    await flushPromises()
+    expect(w.find('[data-action="request-control"]').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('says there is no picture instead of leaving a black rectangle', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+
+    // Camera-only meeting with the camera switched off: no picture at all. The
+    // placeholder does not name a kind of meeting — it says the host can turn
+    // one on at any moment. It only exists while the meeting is live, so the
+    // fixture has to be live: the placeholder and the status overlay occupy the
+    // same slot and are mutually exclusive.
+    cb.onStateChange?.('playing')
+    cb.onVideoMode?.(false)
+    cb.onHostScreen?.(false)
+    cb.onCameraMode?.(false)
+    await flushPromises()
+
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+    expect(w.find('[data-role="camera-off"]').exists()).toBe(false)
+    expect(w.find('[data-role="voice-stage"]').exists()).toBe(false)
+
+    // The picture coming back mid-meeting removes it again.
+    cb.onVideoMode?.(true)
+    cb.onCameraMode?.(true)
+    await flushPromises()
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('stops painting the last frame once the host stops sharing the screen', async () => {
+    const w = mountView()
+    await flushPromises()
+    const cb = lastViewer?.opts?.callbacks ?? {}
+    const mainVideo = () => w.find('video.live-video')
+
+    // The meeting is running: the <video> is on screen with the host's picture.
+    cb.onStateChange?.('playing')
+    cb.onVideoMode?.(true)
+    await flushPromises()
+    expect(mainVideo().classes()).not.toContain('live-video--hidden')
+
+    // The host stops the screen and has no camera. The m-line stays up (the
+    // meeting goes on with audio) and only stops carrying frames, so the
+    // element would otherwise keep painting the final screen behind the
+    // transparent placeholder.
+    cb.onVideoMode?.(false)
+    cb.onHostScreen?.(false)
+    cb.onCameraMode?.(false)
+    await flushPromises()
+
+    expect(w.find('[data-role="no-picture"]').exists()).toBe(true)
+    expect(mainVideo().classes()).toContain('live-video--hidden')
 
     w.unmount()
   })

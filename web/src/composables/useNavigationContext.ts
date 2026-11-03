@@ -5,7 +5,7 @@ import type { FileScrollEntry } from '@/utils/fileScrollCache'
 // directory in the file manager, and Back must return to the terminal. It needs
 // no SURFACE_TAB entry — surfaceToTab() already resolves it through PANEL_TABS,
 // which lists every panel tab id (terminal included).
-export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal' | 'settings' | 'proxy' | 'notifications'
+export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal' | 'settings' | 'proxy' | 'notifications' | 'live'
 
 export interface NavigationOrigin {
   surface: NavigationSurface
@@ -21,6 +21,10 @@ export interface NavigationOrigin {
   scrollEntry?: FileScrollEntry
   dirPath?: string
   sessionId?: string
+  /** Meeting record a `live` jump came from, so Back restores the detail. */
+  meetingToken?: string
+  /** Meeting tab that was open when the jump started. */
+  meetingTab?: string
 }
 
 export interface NavigationContextState {
@@ -58,6 +62,8 @@ function normalize(origin: NavigationOrigin): NavigationOrigin {
   }
   if (origin.dirPath !== undefined) next.dirPath = origin.dirPath
   if (origin.sessionId !== undefined) next.sessionId = origin.sessionId
+  if (origin.meetingToken !== undefined) next.meetingToken = origin.meetingToken
+  if (origin.meetingTab !== undefined) next.meetingTab = origin.meetingTab
   return next
 }
 
@@ -106,6 +112,9 @@ const SURFACE_TAB = new Map<NavigationSurface, string>([
   // recorded whatever tab preceded the jump, so the user landed somewhere they
   // had never been.
   ['notifications', 'notifications'],
+  // The meeting panel: opening a file/record from its detail must return to
+  // that detail, not to whatever tab happened to precede the jump.
+  ['live', 'live'],
 ])
 
 /** Tab ids that are already panel identifiers, so they map to themselves. */

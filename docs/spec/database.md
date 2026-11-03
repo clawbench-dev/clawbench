@@ -407,23 +407,84 @@ UNIQUE：`(session_id, tag_id)`
 | duration_ms | INTEGER | NOT NULL | 0 | 段长 |
 | text | TEXT | NOT NULL | — | 转写文本（静音段不落库） |
 
-索引：`idx_live_note_segments_token(token, started_at)`。保留 7 天，由房间回收器每小时清理。
+索引：`idx_live_note_segments_token(token, started_at)`。**永久保留**：随会议记录一起删除（删除记录或删除项目时）。
 
-### live_notes（直播共享的会议纪要）
+### live_notes（会议记录 + 纪要内容）
+
+**一条 = 一场会议**，身份是 token。发布端连上信令时创建，断开时收尾；与「有没有录到东西」无关——没开听记、全程静音的会议同样有一行。**永久保留**，删除记录（或删除项目）是唯一的删除路径。
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
-| token | TEXT | PRIMARY KEY | — | 分享 token |
+| token | TEXT | PRIMARY KEY | — | 会议 token（房间在内存里，故无外键） |
 | project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
 | title | TEXT | NOT NULL | `''` | 会议标题 |
 | status | TEXT | NOT NULL | `idle` | `idle` / `generating` / `ready` / `failed` |
 | minutes | TEXT | NOT NULL | `''` | 生成的 Markdown 纪要 |
 | error | TEXT | NOT NULL | `''` | 失败原因（仅 `failed`） |
-| file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径（`<项目>/.clawbench/notes/…`）；项目不可用时为空 |
+| file_path | TEXT | NOT NULL | `''` | 纪要 Markdown 在项目内的落盘路径 |
+| dir_path | TEXT | NOT NULL | `''` | **已停用**：绝对路径，项目改名后失效；目录改由 `dir_name` 表达 |
+| revised | TEXT | NOT NULL | `''` | 校对版转写（结合项目上下文修正听写错误与专有名词） |
+| revise_status | TEXT | NOT NULL | `idle` | 校对阶段状态 |
+| revise_error | TEXT | NOT NULL | `''` | 校对失败原因 |
+| started_at | INTEGER | NOT NULL | 0 | 会议开始（Unix 毫秒，**服务端时钟**） |
+| ended_at | INTEGER | NOT NULL | 0 | 会议结束；0 表示还在进行 |
+| dir_name | TEXT | NOT NULL | `''` | 会议目录**名**（不是路径）；空表示还没有产物 |
+| hidden | INTEGER | NOT NULL | 0 | 1 = 升级清理时判定为「上一版遗留、无法归属」的记录，列表与单条查询都不再返回；行与转写片段保留，不物理删除 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | |
-| updated_at | DATETIME | | CURRENT_TIMESTAMP | 保留期判定依据 |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | |
 
-索引：`idx_live_notes_updated(updated_at)`。
+索引：`idx_live_notes_updated(updated_at)`、`idx_live_notes_project_started(project_id, started_at)`。
+
+### live_notes_files（会议期间打开的文件区间）
+
+发布端按「打开 / 关闭」两帧上报，同一 `(token, owner, path, opened_at)` 唯一，重复上报不会产生重复行。会议结束与项目删除都会清理。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序 |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| owner | TEXT | NOT NULL | `'host'` | 打开者：`host` 或 viewer id |
+| owner_name | TEXT | NOT NULL | `''` | 打开者称谓（归档时渲染用） |
+| path | TEXT | NOT NULL | — | 文件路径（可为项目外绝对路径） |
+| opened_at | INTEGER | NOT NULL | — | 打开时刻（Unix 毫秒，服务端时钟） |
+| closed_at | INTEGER | NOT NULL | 0 | 关闭时刻；0 表示会中一直开着 |
+| source | TEXT | NOT NULL | `''` | 来源（工具 / 用户点开等） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+
+UNIQUE：`UNIQUE(token, owner, path, opened_at)`。
+
+### live_notes_screen（会议期间屏幕共享人区间）
+
+记录「谁在哪段时间共享着屏幕」，用于归档时在转写里插入画面归属。会议结束与项目删除都会清理。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序 |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| sharer | TEXT | NOT NULL | — | 共享者 id |
+| sharer_name | TEXT | NOT NULL | `''` | 共享者称谓 |
+| started_at | INTEGER | NOT NULL | — | 开始共享（Unix 毫秒） |
+| ended_at | INTEGER | NOT NULL | 0 | 结束共享；0 表示仍在共享 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+
+### live_notes_chat（会议聊天，永久）
+
+发布端是唯一写入点（观众的消息经它中转，它自己的消息也走同一条路径）。`client_msg_id` 是幂等键：重试不会产生重复行。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 服务端顺序（读取与排序依据；客户端时钟可能偏） |
+| token | TEXT | NOT NULL | — | 会议 token |
+| project_id | INTEGER | NOT NULL | 0 | 发布端项目 |
+| client_msg_id | TEXT | NOT NULL | — | 客户端消息 id（聊天帧自带），`UNIQUE(token, client_msg_id)` |
+| speaker | TEXT | NOT NULL | `''` | 服务端认定的称谓（发布端用 viewerId → 称谓覆盖自报值） |
+| viewer_id | TEXT | NOT NULL | `''` | 观众 id；发布端自己发的为空 |
+| text | TEXT | NOT NULL | — | 单条 ≤ 2000 字 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | |
+
+索引：`idx_live_note_chat_token(token, id)`。永久保留；会议结束时另存一份 `chat.md` 到会议目录。
 
 ### project_forges（项目↔代码托管绑定）
 
@@ -692,6 +753,21 @@ UNIQUE：`(type, key_id)`
 | command | TEXT | NOT NULL | — | 快捷命令 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
 | project_id | INTEGER | | `NULL` | 项目作用域（NULL=全局） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
+
+### providers（模型提供商）
+
+用户配置的端点 + 凭据，智能体通过 `agents.provider_id` 引用。定义集中在一行（与 `mcp.servers` 同一取舍：轮换密钥只改一处），智能体只存引用。`api_key` 只写不读回（接口只返回 `hasKey`）。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| name | TEXT | NOT NULL, UNIQUE（NOCASE） | — | 显示名，唯一 |
+| protocol | TEXT | NOT NULL | `anthropic` | `anthropic` / `openai` / `gemini` |
+| base_url | TEXT | NOT NULL | `''` | 端点；空表示只注入密钥 |
+| api_key | TEXT | NOT NULL | `''` | 凭据，永不回显 |
+| auth_mode | TEXT | NOT NULL | `auto` | `auto` / `x-api-key` / `bearer` |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 

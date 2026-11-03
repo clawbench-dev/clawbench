@@ -113,6 +113,31 @@ type SummaryUpdateData struct {
 	SessionID    string              `json:"sessionID,omitempty"`
 }
 
+// MeetingEventData is the data payload for "live_event" events: one thing that
+// happened in a running meeting — a viewer asked for remote control, someone
+// joined, a member started sharing, or the minutes finished.
+//
+// It carries the FINISHED wording (Title + Body), like usage_meter_update: the
+// producer is a background job or a socket handler with no request in scope, so
+// it localizes from the configured UI language once, and every client renders
+// the same text. That keeps the notification-center row (which stores Body) and
+// the OS notification from drifting.
+//
+// Deliberately NOT persisted to pending_events: a meeting event is only
+// meaningful while the meeting is alive, and the room dies with the publisher's
+// socket. The durable copy is the notification-center row.
+type MeetingEventData struct {
+	Token     string `json:"token"`
+	EventType string `json:"event_type"` // "control_request" | "viewer_joined" | "screen_share" | "minutes_ready" | "minutes_failed"
+	Title     string `json:"title"`      // meeting title
+	Body      string `json:"body"`       // one sentence, already localized
+	ViewerID  string `json:"viewer_id,omitempty"`
+	// ViewerName is who did it. Empty for the minutes events, which have no
+	// actor — the body already reads as a statement about the meeting.
+	ViewerName  string `json:"viewer_name,omitempty"`
+	ProjectPath string `json:"project_path,omitempty"`
+}
+
 // ChatRecommendationData is the data payload for "chat_recommendation" events.
 type ChatRecommendationData struct {
 	SessionID      string `json:"session_id"`

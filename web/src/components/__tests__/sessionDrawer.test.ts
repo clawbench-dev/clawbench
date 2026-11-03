@@ -227,7 +227,7 @@ describe('SessionDrawer', () => {
 
   it('shows no results message when search has no matches', async () => {
     const wrapper = mountDrawer()
-    const searchInput = wrapper.find('.model-search-input')
+    const searchInput = wrapper.find('.model-search-row .search-pill input')
     await searchInput.setValue('nonexistent')
     await nextTick()
 

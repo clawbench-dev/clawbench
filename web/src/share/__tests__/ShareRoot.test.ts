@@ -10,6 +10,9 @@ vi.mock('@/share/ShareView.vue', () => ({
 vi.mock('@/share/SessionShareView.vue', () => ({
   default: { name: 'SessionShareView', template: '<div class="session-view-stub" />' },
 }))
+vi.mock('@/share/DirShareView.vue', () => ({
+  default: { name: 'DirShareView', template: '<div class="dir-view-stub" />' },
+}))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', props: ['size'], template: '<div class="loading-stub" />' },
 }))
@@ -85,6 +88,13 @@ describe('ShareRoot', () => {
     const wrapper = await mountRoot('/share/tokabc')
     expect(wrapper.find('.file-view-stub').exists()).toBe(true)
     expect(wrapper.find('.session-view-stub').exists()).toBe(false)
+  })
+
+  it('dispatches a folder share to DirShareView', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ kind: 'dir' }) } as Response)) as unknown as typeof fetch
+    const wrapper = await mountRoot('/share/tokabc')
+    expect(wrapper.find('.dir-view-stub').exists()).toBe(true)
+    expect(wrapper.find('.file-view-stub').exists()).toBe(false)
   })
 
   // An unrecognised kind must fall back to the file view rather than rendering

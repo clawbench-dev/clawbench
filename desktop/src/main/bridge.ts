@@ -4,6 +4,8 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { getStore, initStore } from './store'
+import { registerRemoteControlHandlers } from './remoteControl'
+import { openShareWindow } from './shareWindow'
 import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
   migratePasswords, getServersForRenderer, saveServerName,
@@ -25,14 +27,24 @@ import type { NotificationNav } from '../shared/types'
 import { markRendererReady } from './navReady'
 import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
-import { resetCertificateTrust } from './certificate'
+import { forgetTrustedCertificates } from './certificate'
 import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { registerFloatingIpc, updateFloatingColors } from './floating'
+import { registerAnnotateIpc } from './annotateOverlay'
 
 export function registerBridge(): void {
   initStore()
+  // Remote control IPC lives with the bridge because it is the same surface:
+  // one `native:*` handler set registered once at startup.
+  registerRemoteControlHandlers(ipcMain)
+  // Annotation overlay: same surface as remote control — a desktop-only verb
+  // set registered once at startup.
+  registerAnnotateIpc()
+  // Opens a share link in its own window so the viewer gets the desktop
+  // capabilities (native capture, remote control) instead of the browser's.
+  ipcMain.handle('native:open-share', (_e, url: string) => openShareWindow(url))
   // Absorb credentials written by older builds into the per-URL map before any
   // handler can read them. Idempotent.
   migratePasswords()
@@ -89,10 +101,10 @@ export function registerBridge(): void {
   ipcMain.handle('native:set-ssh-password', (_e, p: string) => savePassword(p))
   ipcMain.handle('native:connect-to-server', (_e, url: string, password: string) => {
     getStore().set('serverUrl', url)
-    // Forget any certificate the user trusted on the PREVIOUS connection, so
-    // this connect prompts afresh. The answer is deliberately per-connection
-    // (matching Android), not persisted.
-    resetCertificateTrust()
+    // NOTE: the accepted certificate is deliberately NOT cleared here. It is
+    // remembered per origin and bound to its fingerprint (see certificate.ts),
+    // so reconnecting to the same server does not re-ask; a changed certificate
+    // still does. Settings → Security has the explicit "forget" action.
     // Always mirror the password into this URL's slot. An empty value must
     // CLEAR it: the login page calls this when switching to a cookie-only
     // server, and keeping the previous server's password would let the tunnel
@@ -148,6 +160,9 @@ export function registerBridge(): void {
   ipcMain.handle('native:remove-reverse-forwarded-port', (_e, s: number) => rmReverseFwd(s))
   ipcMain.handle('native:reconnect-tunnel', () => reconnectTunnel())
   ipcMain.handle('native:get-pending-navigation', () => getPendingNavigationJson())
+  // Settings → Security: drop every remembered self-signed certificate, so the
+  // next connection asks again. Resolves with how many entries were removed.
+  ipcMain.handle('native:forget-trusted-certs', () => forgetTrustedCertificates())
 
   // Legacy: plain download, no progress events.
   ipcMain.handle('native:download-file', (_e, filePath: string) => downloadFileByPath(filePath))

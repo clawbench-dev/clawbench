@@ -3,6 +3,7 @@ import {
   LiveNotesCapture,
   groupNoteSegments,
   mergeNoteSegments,
+  withMeetingFileEvents,
   type LiveNoteSegment,
   type NotesUploadArgs,
 } from '../liveNotes'
@@ -55,6 +56,38 @@ describe('groupNoteSegments', () => {
   it('skips empty text', () => {
     expect(groupNoteSegments([seg(1, 'mic', '我', 1_000, '   ')])).toHaveLength(0)
   })
+
+  it('never merges two file events into one line', () => {
+    const blocks = groupNoteSegments([
+      { id: -1, channel: 'file', speaker: '文件', startedAt: 1_000, durationMs: 0, text: '打开 a.md', kind: 'file' },
+      { id: -2, channel: 'file', speaker: '文件', startedAt: 2_000, durationMs: 0, text: '关闭 a.md', kind: 'file' },
+    ])
+    expect(blocks).toHaveLength(2)
+    expect(blocks.map((b) => b.text)).toEqual(['打开 a.md', '关闭 a.md'])
+  })
+})
+
+describe('withMeetingFileEvents', () => {
+  it('interleaves open/close rows with the speech by time', () => {
+    const out = withMeetingFileEvents([seg(1, 'mic', '我', 10_000, '先看文档')], [
+      { path: 'docs/a.md', openedAt: 12_000, closedAt: 20_000 },
+    ])
+    expect(out.map((s) => s.text)).toEqual(['先看文档', 'docs/a.md', 'docs/a.md'])
+    expect(out.map((s) => s.fileAction)).toEqual([undefined, 'open', 'close'])
+    expect(out[1].kind).toBe('file')
+  })
+
+  it('uses the redacted name when the viewer has no path', () => {
+    const out = withMeetingFileEvents([], [{ path: '', name: 'a.md', openedAt: 12_000, closedAt: 0 }])
+    expect(out[0].text).toBe('a.md')
+    expect(out[0].fileAction).toBe('open')
+    expect(out).toHaveLength(1) // an open interval has no close row
+  })
+
+  it('returns the original list untouched when nothing was opened', () => {
+    const segments = [seg(1, 'mic', '我', 1_000, '内容')]
+    expect(withMeetingFileEvents(segments, [])).toBe(segments)
+  })
 })
 
 // ── capture ─────────────────────────────────────────────────────────────────
@@ -92,15 +125,24 @@ function fakeStream(): MediaStream {
 /** Current loudness fed to the fake analyser (0 = silence, 1 = speech). */
 let fakeLevel = 0
 
+/** Every source node handed out, so a test can inspect the routing. */
+let fakeSources: Array<{ connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = []
+/** Every destination node handed out, in creation order. */
+let fakeDests: Array<{ stream: MediaStream; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = []
+
 function fakeCtx(): AudioContext {
   return {
     destination: {},
-    createMediaStreamSource: () => ({ connect: vi.fn(), disconnect: vi.fn() }),
-    createMediaStreamDestination: () => ({
-      stream: fakeStream(),
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-    }),
+    createMediaStreamSource: () => {
+      const node = { connect: vi.fn(), disconnect: vi.fn() }
+      fakeSources.push(node)
+      return node
+    },
+    createMediaStreamDestination: () => {
+      const node = { stream: fakeStream(), connect: vi.fn(), disconnect: vi.fn() }
+      fakeDests.push(node)
+      return node
+    },
     createAnalyser: () => ({
       fftSize: 512,
       connect: vi.fn(),
@@ -121,6 +163,8 @@ describe('LiveNotesCapture', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     FakeRecorder.instances = []
+    fakeSources = []
+    fakeDests = []
     fakeLevel = 1
     vi.stubGlobal('MediaRecorder', FakeRecorder)
   })
@@ -130,6 +174,61 @@ describe('LiveNotesCapture', () => {
     vi.unstubAllGlobals()
   })
 
+  it('records the whole meeting on a shared mix bus', async () => {
+    const uploads: NotesUploadArgs[] = []
+    const archives: NotesUploadArgs[] = []
+    const capture = new LiveNotesCapture(
+      fakeCtx(),
+      async (args) => {
+        uploads.push(args)
+        return null
+      },
+      {
+        segmentMs: 1000,
+        archiveUpload: async (args) => {
+          archives.push(args)
+          return null
+        },
+      },
+    )
+
+    capture.addChannel('mic', () => '我', fakeStream())
+    await vi.advanceTimersByTimeAsync(1000)
+
+    // Every channel keeps its own track (that is where the speaker label comes
+    // from) AND feeds the mix, which is the file the user listens to.
+    expect(uploads.map((u) => u.channel)).toEqual(['mic'])
+    expect(archives.map((u) => u.channel)).toEqual(['mix'])
+    expect(archives[0].speaker).toBe('')
+
+    // The mix recorder's own source must not be wired back into the bus, or the
+    // mix would feed itself. The bus is the first destination created: the
+    // capture makes it before it builds any recorder.
+    const mixBus = fakeDests[0]
+    expect(fakeSources[0].connect).not.toHaveBeenCalledWith(mixBus)
+    expect(fakeSources[1].connect).toHaveBeenCalledWith(mixBus)
+
+    capture.stop()
+    await capture.drainUploads(1000)
+  })
+
+  it('records no mix track when no archive uploader is given', async () => {
+    const uploads: NotesUploadArgs[] = []
+    const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
+      uploads.push(args)
+      return null
+    }, { segmentMs: 1000 })
+
+    capture.addChannel('mic', () => '我', fakeStream())
+    expect(FakeRecorder.instances).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(uploads.map((u) => u.channel)).toEqual(['mic'])
+    expect(fakeDests).toHaveLength(1)
+    capture.stop()
+    await capture.drainUploads(1000)
+  })
+
   it('uploads a segment per interval and flushes the last one on stop', async () => {
     const uploads: NotesUploadArgs[] = []
     const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
@@ -137,7 +236,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 1000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     expect(FakeRecorder.instances).toHaveLength(1)
 
     await vi.advanceTimersByTimeAsync(1000)
@@ -151,6 +250,29 @@ describe('LiveNotesCapture', () => {
     expect(uploads).toHaveLength(2)
   })
 
+  // A viewer's nickname arrives with the join frame, which can land after its
+  // first audio track. Resolving the label per segment is what lets the stored
+  // transcript (and the minutes) carry the real name.
+  it('resolves the speaker label per segment, not once per channel', async () => {
+    const uploads: NotesUploadArgs[] = []
+    let name = ''
+    const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
+      uploads.push(args)
+      return null
+    }, { segmentMs: 1000 })
+
+    capture.addChannel('viewer:v1', () => name || '观众 1', fakeStream())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(uploads[0].speaker).toBe('观众 1')
+
+    name = '张三'
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(uploads[1].speaker).toBe('张三')
+
+    capture.stop()
+    await capture.drainUploads(1000)
+  })
+
   it('cuts a segment at a pause instead of on a fixed clock', async () => {
     const uploads: NotesUploadArgs[] = []
     const capture = new LiveNotesCapture(fakeCtx(), async (args) => {
@@ -158,7 +280,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 20_000, minSegmentMs: 1_000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     // Still speaking well past the minimum: the segment must stay open.
     await vi.advanceTimersByTimeAsync(2_000)
     expect(uploads).toHaveLength(0)
@@ -183,7 +305,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 5_000, minSegmentMs: 1_000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     await vi.advanceTimersByTimeAsync(3_000)
     // Silence is pure overhead: nothing to transcribe, so nothing is uploaded
     // while the channel stays quiet (it still cycles its recorders).
@@ -199,7 +321,7 @@ describe('LiveNotesCapture', () => {
 
   it('ignores channels with no audio track', () => {
     const capture = new LiveNotesCapture(fakeCtx(), async () => null, { segmentMs: 1000 })
-    capture.addChannel('system', '系统声音', { getAudioTracks: () => [] } as unknown as MediaStream)
+    capture.addChannel('system', () => '系统声音', { getAudioTracks: () => [] } as unknown as MediaStream)
     expect(capture.size).toBe(0)
     expect(FakeRecorder.instances).toHaveLength(0)
   })
@@ -221,7 +343,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 1000, maxPending: 1 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     // Three segments: the first is in flight, the second queues, the third is
     // dropped (backlog = 1).
     await vi.advanceTimersByTimeAsync(1000)
@@ -243,7 +365,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 60_000 })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     // The only segment is produced when the recorder stops.
     await capture.stopAndFlush(1000)
     expect(attempts).toBe(1)
@@ -262,7 +384,7 @@ describe('LiveNotesCapture', () => {
       throw new Error('backend down')
     }, { segmentMs: 60_000, onSegmentLost: (channel) => lost.push(channel) })
 
-    capture.addChannel('mic', '我', fakeStream())
+    capture.addChannel('mic', () => '我', fakeStream())
     await capture.stopAndFlush(1000)
     await vi.advanceTimersByTimeAsync(14_000)
     await capture.drainUploads(1000)
@@ -277,7 +399,7 @@ describe('LiveNotesCapture', () => {
       return null
     }, { segmentMs: 1000 })
 
-    capture.addChannel('viewer:v1', '观众 1', fakeStream())
+    capture.addChannel('viewer:v1', () => '观众 1', fakeStream())
     await vi.advanceTimersByTimeAsync(1000)
     capture.removeChannel('viewer:v1')
     await capture.drainUploads(1000)

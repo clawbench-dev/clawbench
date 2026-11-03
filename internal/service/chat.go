@@ -1458,14 +1458,14 @@ const unreadCountSubquery = `CASE
 // the backend filter and ORDER BY. Package-level so the query-plan test can
 // EXPLAIN the query production actually runs — asserting on unreadCountSubquery
 // alone would miss a caller that switched back to the grouped-join form.
-const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
+const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at, s.agent_takeover_from,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
 // overviewSessionsQuery is GetOverviewSessions' full query. Package-level for
 // the same reason as sessionsQueryBase.
-const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, COALESCE(p.path, ''),
+const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, COALESCE(p.path, ''), s.agent_takeover_from,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
@@ -1475,7 +1475,7 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 // pagedSessionsQueryBase is the prefix of GetSessionsPaged' query, up to (not
 // including) the backend/tag/cursor filters and ORDER BY/LIMIT. Package-level
 // for the same reason as sessionsQueryBase.
-const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
+const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at, s.agent_takeover_from,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
@@ -1514,7 +1514,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.AgentTakeoverFrom, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1547,7 +1547,7 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.ProjectPath, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.ProjectPath, &s.AgentTakeoverFrom, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1662,7 +1662,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.SortOrder, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.AgentTakeoverFrom, &s.UnreadCount); err != nil {
 			return nil, false, err
 		}
 		if lastRead.Valid {
@@ -3463,50 +3463,32 @@ func GetStreamingMessageID(sessionID string) int64 {
 	return id
 }
 
-// GetLiveRunState returns the state a client that just subscribed needs in order
-// to render a run already in flight: the streaming assistant row's id, the
-// question it answers (the nearest preceding user row), and the streaming row's
-// speaker (group-member row id; empty for ordinary single-agent turns). Backs
-// ws.StreamHub.EmitLiveRunStateToClient.
-//
-// Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
-// the caller's whole purpose is "a turn is running, hand me its state", and
-// emitting a stream_start for an idle session would open a phantom placeholder.
-// messageID is 0 when nothing is streaming.
-//
-// The question is resolved by id order (the greatest user id below the
-// streaming row), NOT by a queue id: in this model a queued message is
-// materialized into chat_history immediately before the reply it produces, so
-// id order IS the conversation order. The old queue-id lookup also broke for
-// rows whose queue_id was empty. questionID is 0 for a run with no preceding
-// user row (e.g. some scheduled runs).
-//
-// speakerID MUST travel with the re-emitted stream_start: the subscribe-time
-// recovery is how a client that switched away and back learns about a live
-// turn, and without the speaker the placeholder it creates is speakerless —
-// the group speaker header then stays missing for the rest of the turn (the
-// frontend's db_load merge can heal it only because it also adopts agentId;
-// see rebuildFromDb).
-//
-// Returns the NEWEST stream only. Callers that must recover a session with
-// several concurrent streams (parallel group speaking) use
-// GetLiveRunStates instead.
-func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string) {
-	states := GetLiveRunStates(sessionID)
-	if len(states) == 0 {
-		return 0, 0, "", ""
-	}
-	st := states[0]
-	return st.MessageID, st.QuestionID, st.QuestionContent, st.SpeakerID
-}
-
 // GetLiveRunStates returns EVERY in-flight stream for a session, newest row
 // first. A session normally has one, but a group turn can run several members
 // CONCURRENTLY on one timeline (parallel speaking), and a client that subscribes
 // mid-flight must be told about all of them or it recovers only one bubble.
 //
+// Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
+// the caller's whole purpose is "a turn is running, hand me its state", and
+// emitting a stream_start for an idle session would open a phantom placeholder.
+// An empty result means nothing is streaming.
+//
 // Each entry resolves its own question (the greatest user id below that
 // streaming row), so each recovered bubble is anchored to the right question.
+// The question is resolved by id order, NOT by a queue id: a queued message is
+// materialized into chat_history immediately before the reply it produces, so
+// id order IS the conversation order (the old queue-id lookup also broke for
+// rows whose queue_id was empty). QuestionID is 0 for a run with no preceding
+// user row (e.g. some scheduled runs).
+//
+// SpeakerID MUST travel with the re-emitted stream_start: the subscribe-time
+// recovery is how a client that switched away and back learns about a live
+// turn, and without the speaker the placeholder it creates is speakerless —
+// the group speaker header then stays missing for the rest of the turn (the
+// frontend's db_load merge can heal it only because it also adopts agentId;
+// see rebuildFromDb). QuestionFiles is filled for the same reason: the
+// recovery user_message is the only payload a late subscriber gets for the
+// question bubble.
 func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
 	states := queryLiveStreamRows(sessionID)
 
@@ -3532,12 +3514,22 @@ func GetLiveRunStates(sessionID string) []ws.LiveStreamState {
 	for i := range states {
 		var qID int64
 		var qContent string
+		var qFilesJSON sql.NullString
+		// `files` is read here because the recovery user_message is the ONLY
+		// thing a late subscriber gets for the question bubble: a client that
+		// was on another session when the turn started never sees the live
+		// user_message (the hub drops it with reason=no_subscribers), so this
+		// payload is what builds the bubble. Without the attachments a queued
+		// image message rendered as text only.
 		if qErr := store.ReadDB().QueryRow(
-			"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
+			"SELECT id, content, files FROM chat_history WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
 			sessionID, states[i].MessageID,
-		).Scan(&qID, &qContent); qErr == nil {
+		).Scan(&qID, &qContent, &qFilesJSON); qErr == nil {
 			states[i].QuestionID = qID
 			states[i].QuestionContent = qContent
+			if qFilesJSON.Valid && qFilesJSON.String != "" {
+				states[i].QuestionFiles = unmarshalFilesJSON(qFilesJSON.String)
+			}
 		}
 	}
 	return states
@@ -3599,6 +3591,24 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 // ACP connection pool's GetOrCreateConn pre-population logic.
 func ClearExternalSessionID(sessionID string) {
 	_, _ = store.WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
+}
+
+// GetAgentTakeoverFrom returns the display name of the agent this session was
+// taken over FROM when that agent was deleted (empty = never taken over).
+//
+// Read by BuildChatRequest: together with an empty external_session_id it means
+// "the replacement agent has not established its own native session yet", so the
+// turn must start a FRESH one instead of resuming (see the takeover branch
+// there). Deliberately a small dedicated read rather than a field on the session
+// row — the value is only needed on the rare turn that has no external id.
+func GetAgentTakeoverFrom(sessionID string) string {
+	var name string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(agent_takeover_from, '') FROM chat_sessions WHERE id = ?", sessionID,
+	).Scan(&name); err != nil {
+		return ""
+	}
+	return name
 }
 
 // MarkSessionCompacted flags a session whose context was just compacted by the

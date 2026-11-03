@@ -29,25 +29,25 @@ describe('buildRenameGenerateOptions', () => {
     expect(buildRenameGenerateOptions('s1')).toEqual({})
   })
 
-  it('returns no options when ai_summary exists but has no api block', () => {
+  it('returns no options when ai_summary exists but has no provider', () => {
     holder.serverConfig.value = { ai_summary: { model: 'gpt-4o-mini' } }
     expect(buildRenameGenerateOptions('s1')).toEqual({})
   })
 
-  it('returns no options when the base_url is an empty string', () => {
-    holder.serverConfig.value = { ai_summary: { api: { base_url: '' } } }
+  it('returns no options when provider_id is 0', () => {
+    holder.serverConfig.value = { ai_summary: { provider_id: 0 } }
     expect(buildRenameGenerateOptions('s1')).toEqual({})
   })
 
-  it('offers the button when the base_url is configured', () => {
-    holder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+  it('offers the button when a provider is configured', () => {
+    holder.serverConfig.value = { ai_summary: { provider_id: 7 } }
     const opts = buildRenameGenerateOptions('s1')
     expect(opts.generateText).toBe('chat.sessionRename.generate')
     expect(typeof opts.onGenerate).toBe('function')
   })
 
   it('resolves the generated title for the requested session', async () => {
-    holder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+    holder.serverConfig.value = { ai_summary: { provider_id: 7 } }
     holder.generateSessionTitle.mockResolvedValue('Generated Title')
     const opts = buildRenameGenerateOptions('s1')
 
@@ -57,7 +57,7 @@ describe('buildRenameGenerateOptions', () => {
   })
 
   it('toasts and resolves null when generation yields nothing', async () => {
-    holder.serverConfig.value = { ai_summary: { api: { base_url: 'https://summary.example.com' } } }
+    holder.serverConfig.value = { ai_summary: { provider_id: 7 } }
     holder.generateSessionTitle.mockResolvedValue(null)
     const opts = buildRenameGenerateOptions('s1')
 

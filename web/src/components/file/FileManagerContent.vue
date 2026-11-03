@@ -227,6 +227,7 @@
       :progress="dirUploadProgress"
       :done="dirUploadDone"
       :total="dirUploadTotal"
+      :speed="dirUploadSpeed"
       @cancel="cancelDirUpload"
     />
 
@@ -267,7 +268,7 @@
       <template v-if="searchHasQuery">
         <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="list" :rows="8" :meta="false" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
-          <FileX :size="56" class="fs-search-empty-icon" />
+          <FileX class="fs-search-empty-icon empty-state__icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
@@ -277,7 +278,7 @@
            swapping them for grey blocks would read as a navigation). -->
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" :size="48" />
+        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" class="empty-state__icon" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -344,13 +345,13 @@
       <template v-if="searchHasQuery">
         <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('file.search.searching')" />
         <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
-          <FileX :size="56" class="fs-search-empty-icon" />
+          <FileX class="fs-search-empty-icon empty-state__icon" />
           <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
         </div>
       </template>
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" :size="48" />
+        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" class="empty-state__icon" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -505,7 +506,7 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
-          <div class="context-menu-item" data-menu-item="share-link" v-if="ctxMenu.entry.type !== 'dir'" @click.stop="doShareLink">
+          <div class="context-menu-item" data-menu-item="share-link" @click.stop="doShareLink">
             <ScreenShare :size="14" />
             {{ t('file.context.shareLink') }}
           </div>
@@ -561,7 +562,12 @@
     <!-- Public share link for the context-menu entry. Mounted here rather than
          in App.vue because the dialog is owned by the file manager's own menu:
          the target file is the menu entry, not necessarily the open file. -->
-    <ShareLinkDialog :open="shareDialogOpen" :file="shareTarget" @close="shareDialogOpen = false" />
+    <ShareLinkDialog
+      :open="shareDialogOpen"
+      :file="shareTarget"
+      :is-dir="!!shareTarget?.isDir"
+      @close="shareDialogOpen = false"
+    />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
     <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
@@ -625,7 +631,7 @@ const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
 // File upload to current directory
-const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded, downloadDirAsTree } = useFileUpload()
+const { dirUploading, dirUploadProgress, dirUploadSpeed, dirUploadTotal, dirUploadDone, cancelDirUpload, handleFileSelectToDir, handleFileDropToDir, handleFolderSelect, handleFolderDropExpanded, downloadDirAsTree } = useFileUpload()
 const uploadInputRef = ref(null)
 const folderInputRef = ref(null)
 
@@ -1908,14 +1914,23 @@ function onContainerLongPress(e) {
 // The name label is `width: 100%` inside the info column, so the blank stretch
 // beside a short name is inside `.file-name` and therefore still part of the
 // entry; only the strip of the info column outside the label (and everything
-// else in the row) is background.
+// else in the row) is background. Search results opt out of this split — see
+// `resolveCtxEntry`.
 const CTX_ENTRY_ZONE_SELECTOR = '.file-icon-wrap, .grid-thumb, .file-name, .grid-name'
 
 /** The row/tile under `el`, or null when `el` is not in the entry's hit zone. */
 function resolveCtxEntry(el) {
     const zone = el?.closest?.(CTX_ENTRY_ZONE_SELECTOR)
-    if (!zone) return null
-    return zone.closest('.file-item, .grid-item') || null
+    if (zone) return zone.closest('.file-item, .grid-item') || null
+    // The narrow hit zone exists so the rest of a row falls through to the
+    // empty-area menu (paste / new file / new folder), matching Explorer. In
+    // search results there is no such menu — it targets the browsed directory,
+    // which the results view does not have — so a fall-through means the click
+    // is swallowed and nothing happens. Search rows therefore belong to the
+    // entry in full, including the parent-directory line, the size/meta column
+    // and the "reveal in directory" button, none of which are in the zone.
+    if (searchHasQuery.value) return el?.closest?.('.file-item, .grid-item') || null
+    return null
 }
 
 function handleCtxMenu(e) {
@@ -2520,7 +2535,12 @@ function doShareLink() {
     // same form the rest of the file API uses: project-relative entries stay
     // relative (resolved server-side against the project cookie), and entries
     // browsed outside the project are already absolute.
-    shareTarget.value = { name: entry.name || entry.path.split('/').pop() || '', path: entry.path }
+    shareTarget.value = {
+        name: entry.name || entry.path.split('/').pop() || '',
+        path: entry.path,
+        // Folders are shareable too: the public link opens a read-only listing.
+        isDir: entry.type === 'dir',
+    }
     shareDialogOpen.value = true
 }
 
@@ -3493,12 +3513,14 @@ function scrollSelectedIntoView(path) {
     color: var(--text-muted, #999);
 }
 
+/* The glyph's size/opacity come from `FileIcon`'s `--empty-icon-size` and the
+   global `.empty-state__icon` rule — `FileIcon` renders an `<img>`, so that
+   class has to be passed through explicitly (neither `svg` nor a bare
+   `.file-type-icon` matches the shared rule). Only the gap above the text is
+   local. */
 .empty-state .file-type-icon,
 .empty-state svg {
-    width: calc(48 * var(--dp));
-    height: calc(48 * var(--dp));
     margin-bottom: var(--space-6);
-    opacity: var(--opacity-muted);
 }
 
 /* Truncate hint */
@@ -3817,11 +3839,6 @@ function scrollSelectedIntoView(path) {
     gap: var(--space-5);
     padding: calc(40 * var(--dp)) calc(24 * var(--dp));
     text-align: center;
-}
-
-.fs-search-empty-icon {
-    color: var(--text-muted, #999);
-    opacity: var(--opacity-muted);
 }
 
 .fs-search-empty-text {

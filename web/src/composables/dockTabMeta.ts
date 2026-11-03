@@ -12,6 +12,7 @@ import {
   Inbox,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 
 /**
  * Icon half of the dock tab registry.
@@ -34,6 +35,10 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // and imply the unread state the log deliberately does not have.
   notifications: Inbox,
   terminal: TerminalIcon,
+  // A monitor with an outgoing arrow: the picture half of a meeting. See
+  // utils/meetingIcon.ts — the list header, the quote chip and this tab share
+  // one constant so they cannot drift apart.
+  live: MEETING_ICON,
   proxy: Network,
   stats: BarChart3,
   settings: Settings,

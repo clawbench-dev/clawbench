@@ -39,6 +39,9 @@ MethodNotAllowed: Method not allowed
 TokenRequired: token is required
 LiveShareAlreadyPublishing: another publisher is already sharing this room
 LiveShareTooManyRooms: too many concurrent screen shares
+ViewerNameRequired: a display name is required to join
+LiveNotesGenerating: the minutes are still being generated
+LiveNotesMeetingLive: the meeting is still in progress
 InvalidRequestBody: Invalid request body
 NotADirectory: Not a directory
 NotAFile: Not a file
@@ -130,9 +133,10 @@ InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
 AgentNameTaken: An agent with this name already exists
-AgentNameReserved: This name conflicts with the group-chat user nickname
-UserNicknameTaken: This nickname is already used by an agent
-InvalidUserNickname: Invalid nickname (1-32 characters, no quotes, angle brackets, commas or control characters)
+AgentNameReserved: This name conflicts with the group-chat user name
+UserNicknameTaken: This name is already used by an agent
+InvalidUserNickname: Invalid name (1-32 characters, no quotes, angle brackets, commas or control characters)
+InvalidUserProfile: Profile is too long (at most {{.Max}} characters)
 InvalidAgentName: Invalid agent name
 InvalidAcpCommand: Invalid ACP command (must be non-empty and at most 4096 bytes)
 AcpCommandManagedByDiscovery: The ACP command of a built-in backend is managed by auto-discovery and cannot be edited
@@ -141,12 +145,21 @@ InvalidAgentAvatar: Invalid avatar image
 InvalidSystemPrompt: System prompt too long
 SystemPromptOverride: System prompt contains unsafe override instructions
 InvalidSortOrder: Invalid sort order
-AgentInUse: "This agent is still in use ({{.SessionCount}} sessions, {{.TaskCount}} tasks, {{.MembershipCount}} group memberships); delete them first"
+AgentHasRunningSessions: This agent has a conversation running; stop it before deleting
 AgentDisabled: This agent is disabled
 CannotDisableDefaultAgent: The default agent cannot be disabled
 CannotDeleteDefaultAgent: The default agent cannot be deleted
 AgentNotInProject: This agent is only available in its own project
 CannotScopeDefaultAgent: The default agent cannot be limited to one project
+ProviderNotFound: Model provider not found
+ProviderNameTaken: A model provider with this name already exists
+ProviderInUse: This model provider is still referenced by agents; unbind it first
+ProviderUsedBySummary: This model provider is used by the AI summary model; pick another one in AI Summary first
+ProviderInvalid: "Invalid model provider: {{.Reason}}"
+ProviderUnsupported: Agent {{.Backend}} does not support the {{.Protocol}} protocol
+ProviderProtocolConflict: "These agents do not support this protocol: {{.Agents}}"
+ProviderConfigConflict: Agent(s) {{.Agents}} are bound to another provider; this backend shares one global config file and can only bind one
+ProviderConfigConsentRequired: "This agent needs a config file change to apply the provider: {{.Files}}. Confirm and retry"
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 ModelDiscoveryNotSupported: This agent does not support model discovery
@@ -300,6 +313,11 @@ GroupMemberEnabled: '{{.Name}} was enabled'
 GroupHostChanged: '{{.Name}} is now the host'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
+# Written after an agent is deleted: its conversations and group memberships are
+# handed to the default agent. Localized at write time, like the rows above.
+AgentTakeoverSessionNotice: 'Agent "{{.Old}}" was deleted. This conversation is now handled by "{{.New}}"; the earlier history was re-injected as background.'
+AgentTakeoverSessionNoticeResumed: 'Agent "{{.Old}}" was deleted. This conversation is now handled by "{{.New}}"; the native session was reused.'
+AgentTakeoverGroupNotice: 'The agent behind "{{.Member}}" was deleted; "{{.New}}" now drives it.'
 GroupMemberCompactionFailed: '{{.Name}} failed to compact its context'
 GroupMemberUnknown: Member
 GroupUnknownMention: '{{.Speaker}} @-mentioned a member who does not exist: {{.Names}} (ignored)'
@@ -386,3 +404,57 @@ RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart
 TLSCertNotSelfSigned: "The existing certificate is not self-signed (probably issued by a CA). Regenerating would overwrite it; pass force to confirm"
 TLSCertGenerateFailed: "Could not generate the certificate: {{.Error}}"
+# Files opened during a meeting: transcript cues, the files.md manifest and
+# archive skip reasons.
+MeetingFilesSpeaker: File
+MeetingFilesOpened: Opened {{.Path}}
+MeetingFilesClosed: Closed {{.Path}}{{.Stay}}
+MeetingFilesStaySeconds: "{{.N}}s"
+MeetingFilesStayMinutes: "{{.N}} min"
+MeetingFilesStayMinSec: "{{.Min}} min {{.Sec}}s"
+MeetingFilesStayHours: "{{.Hours}}h {{.Min}}m"
+MeetingFilesManifestTitle: Files opened during the meeting · {{.Time}}
+MeetingFilesManifestNote: Sorted by open time. Copies live under files/; identical content is stored once.
+MeetingFilesColumnTime: Time
+MeetingFilesColumnFile: File
+MeetingFilesColumnStay: Stay
+MeetingFilesColumnArchive: Archive
+MeetingFilesSince: since
+MeetingFilesReasonWrap: " ({{.Text}})"
+MeetingFilesReasonUnknownPath: path unknown
+MeetingFilesReasonTooMany: over the per-meeting archive limit
+MeetingFilesReasonDuplicate: identical to an already-archived file
+MeetingFilesReasonTooBig: over 5 MB, not archived
+MeetingFilesReasonMissing: file no longer exists
+MeetingFilesReasonPermission: permission denied
+MeetingFilesReasonUnreadable: read failed
+MeetingFilesStayWrap: " ({{.Text}})"
+MeetingFilesExcerptHeader: File excerpts (truncated)
+MeetingScreenVoice: Screen
+MeetingScreenStarted: "{{.Name}} started sharing the screen"
+MeetingScreenStopped: "{{.Name}} stopped sharing the screen{{.Stay}}"
+MeetingScreenHost: Host
+# Meeting notifications: the notification-center row and the OS notification
+# body. Produced server-side (the minutes job has no HTTP request), so they are
+# localized once from the configured UI language.
+MeetingUntitled: Untitled meeting
+MeetingEventSomeone: Someone
+MeetingEventControlRequest: "{{.Name}} asked to control your screen"
+MeetingEventViewerJoined: "{{.Name}} joined the meeting"
+MeetingEventScreenShare: "{{.Name}} started sharing their screen"
+MeetingEventMinutesReady: Meeting minutes are ready
+MeetingEventMinutesFailed: Meeting minutes failed to generate
+# Meeting artifacts written into the project (minutes.md, chat.md,
+# transcript-revised.md) and the transcript line format. Localized from the
+# configured UI language because the minutes job has no HTTP request in scope.
+MeetingTranscriptSeparator: ": "
+MeetingTranscriptRevised: Proofread transcript
+MeetingTranscriptRevisedNote: Dictation errors and proper nouns were corrected using the project context; timestamps, speakers and line order are unchanged.
+MeetingTranscriptFilesSection: Files opened during the meeting
+MeetingChatTitle: Meeting chat log
+MeetingChatAnonymous: Anonymous
+MeetingMinutesTitle: Meeting minutes · {{.Time}}
+MeetingMinutesArtifacts: Artifacts
+MeetingMinutesTranscript: Transcript
+MeetingMinutesRecording: Recording
+MeetingMinutesChannelRecordings: "Per-channel recordings: `audio/` ({{.N}} files)"

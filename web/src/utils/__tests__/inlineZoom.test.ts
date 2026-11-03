@@ -10,6 +10,7 @@ import {
   uninstallInlineZoom,
   zoomableMedia,
 } from '@/utils/inlineZoom'
+import { applyMediaMissingFallback } from '@/utils/localMediaFallback'
 
 /**
  * Inline zoom for media figures (pointer devices only).
@@ -909,6 +910,82 @@ describe('zoomableMedia', () => {
 
     document.body.appendChild(figure)
     expect(zoomableMedia(figure)?.tagName).toBe('svg')
+  })
+})
+
+/**
+ * Failed media is swapped for the shared placeholder card, and the failed
+ * `<img>` stays in the DOM (hidden) so the fallback is reversible. It still
+ * matches the structural content selector, which used to make the placeholder
+ * itself a zoom target — clicking "this media could not be loaded" grew the
+ * figure into a 60dvh viewport around a card with nothing to zoom.
+ *
+ * Driven through the REAL fallback rather than a hand-set class: the opt-out is
+ * only correct as long as it agrees with whatever `localMediaFallback` writes,
+ * and a literal here would keep passing after that module changed its marker.
+ */
+describe('inlineZoom — media that failed to load', () => {
+  beforeEach(() => { document.body.innerHTML = '' })
+  afterEach(() => {
+    uninstallInlineZoom()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  /** Mount a figure whose image failed, exactly as the render pipelines do. */
+  function mountFailedFigure(): { figure: HTMLElement; img: HTMLImageElement } {
+    const figure = mountFigure('img')
+    const img = figure.querySelector('img') as HTMLImageElement
+    img.setAttribute('src', '/api/fs/raw/docs/diagram.png')
+    expect(applyMediaMissingFallback(img), 'fixture must produce a placeholder').toBe(true)
+    return { figure, img }
+  }
+
+  it('is not a zoom target while the placeholder stands in for it', () => {
+    const { figure } = mountFailedFigure()
+    expect(figure.querySelector('.media-load-error')).not.toBeNull()
+    expect(zoomableMedia(figure)).toBeNull()
+  })
+
+  it('does not enter the zoom state when the placeholder is clicked', () => {
+    withPointerDevice(true)
+    installInlineZoom()
+    const { figure } = mountFailedFigure()
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+
+    click(figure.querySelector('.media-load-error') as HTMLElement)
+
+    expect(isZoomActive()).toBe(false)
+    expect(figure.classList.contains('is-zooming')).toBe(false)
+    expect(figure.classList.contains('is-zoom-active')).toBe(false)
+  })
+
+  it('does not enter the zoom state when the placeholder takes focus', () => {
+    // The keyboard path goes through the same gate, so Tab must not resurrect
+    // what the click path refuses.
+    withPointerDevice(true)
+    installInlineZoom()
+    const { figure } = mountFailedFigure()
+    stubIntrinsic(figure, 300, 200, 300, 200)
+    stubRect(figure, 0, 0, 300, 200)
+    figure.setAttribute('tabindex', '0')
+
+    figure.focus()
+
+    expect(isZoomActive()).toBe(false)
+  })
+
+  it('zooms again once a retry brings the image back', () => {
+    // The fallback is reversible: the file may be created after the message
+    // rendered, the browser retries, and the real image reappears. The opt-out
+    // must not outlive the failure.
+    const { figure, img } = mountFailedFigure()
+
+    img.dispatchEvent(new Event('load'))
+
+    expect(zoomableMedia(figure)?.tagName).toBe('IMG')
   })
 })
 

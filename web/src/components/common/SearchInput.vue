@@ -5,6 +5,7 @@
       ref="inputRef"
       type="text"
       :value="modelValue"
+      autocomplete="off"
       :placeholder="placeholder || t('search.defaultPlaceholder')"
       @input="$emit('update:modelValue', $event.target.value)"
       @focus="focused = true"

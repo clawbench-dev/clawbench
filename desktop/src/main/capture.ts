@@ -36,6 +36,30 @@ interface PendingCapture {
 
 let pending: PendingCapture | null = null
 
+/**
+ * Display the current capture is showing, as reported by desktopCapturer.
+ *
+ * The annotation overlay has to cover THAT screen, not the primary one — a
+ * two-monitor host would otherwise draw on the wrong desktop. Empty when the
+ * platform does not say (Wayland hands out a nameless placeholder).
+ *
+ * Cleared when publishing stops. Nothing else ever overwrites it, so a stale
+ * value would survive the session and send the next annotation overlay to a
+ * screen that is no longer being shared (visible only on a multi-monitor host,
+ * as "the ink went to the monitor I cannot see").
+ */
+let capturedDisplayId = ''
+
+/**
+ * Whether the renderer says it is publishing right now.
+ *
+ * `setDisplayMediaRequestHandler` gives no handle on the resulting stream, so
+ * the stream's end is not observable here. The publishing toggle the renderer
+ * already sends (it exists to keep background throttling off) is the signal
+ * that the session started and stopped.
+ */
+let publishing = false
+
 /** Thumbnail size for the picker. Small on purpose: this crosses IPC as base64. */
 const THUMB_SIZE = { width: 320, height: 180 }
 
@@ -52,18 +76,43 @@ export function audioCaptureSupport(): { systemAudio: boolean; reason: string } 
   return { systemAudio: false, reason: 'system audio capture is only supported on Windows' }
 }
 
+/**
+ * Sources the compositor will not describe, only stand in for.
+ *
+ * A Wayland client cannot enumerate other applications' windows, so Electron
+ * answers `getSources` with a single placeholder that has no name and no
+ * thumbnail. Its id is a per-call index (`window:1:0:s`, then `window:2:0:s`, …)
+ * rather than a handle, so it cannot be used to re-identify the same source
+ * later. The real choice happens in the desktop portal's own dialog when the
+ * stream is requested, which is why the id carries no meaning there.
+ */
+export function arePlaceholderSources(sources: Array<{ name: string }>): boolean {
+  return sources.length > 0 && sources.every((s) => !s.name)
+}
+
 /** List screens and windows for the picker. */
 export async function listCaptureSources(): Promise<CaptureSourceInfo[]> {
-  const sources = await desktopCapturer.getSources({
-    types: ['screen', 'window'],
+  const query = {
+    types: ['screen', 'window'] as Array<'screen' | 'window'>,
     thumbnailSize: THUMB_SIZE,
     fetchWindowIcons: false,
-  })
+  }
+  let sources = await desktopCapturer.getSources(query)
+  if (sources.length === 0) {
+    // Window enumeration can fail on its own — an X11 session without a window
+    // manager, or a locked-down desktop — and Electron then answers the WHOLE
+    // combined request with an empty list. The picker would say "no sources"
+    // while screens are perfectly capturable, so ask for the subset instead.
+    // Screens-only cannot mask a real permission problem: it is strictly less.
+    record('W', TAG, 'combined source query was empty; retrying with screens only')
+    sources = await desktopCapturer.getSources({ ...query, types: ['screen'] })
+  }
   return sources.map((s: DesktopCapturerSource) => ({
     id: s.id,
     name: s.name,
-    // `screen:` ids are monitors; everything else is a window.
-    kind: s.id.startsWith('screen:') ? 'screen' : 'window',
+    // `screen:` ids are monitors; everything else is a window. Placeholders are
+    // screens in practice (the portal asks which one), so they read as screens.
+    kind: s.id.startsWith('screen:') || !s.name ? 'screen' : 'window',
     thumbnail: s.thumbnail.isEmpty() ? '' : s.thumbnail.toDataURL(),
   }))
 }
@@ -98,10 +147,16 @@ export function registerCaptureHandlers(getWindow: () => WebContents | null): vo
   ipcMain.handle('native:get-audio-capture-support', () => JSON.stringify(audioCaptureSupport()))
 
   ipcMain.handle('native:set-publishing-active', (_e, active: boolean) => {
+    const isPublishing = active === true
+    publishing = isPublishing
+    // Stopping the share ends the session: forget which screen it was, so the
+    // annotation overlay falls back to the primary display instead of covering
+    // whatever monitor happened to be shared last.
+    if (!isPublishing) capturedDisplayId = ''
     const wc = getWindow()
     if (!wc) return
     try {
-      wc.setBackgroundThrottling(!(active === true))
+      wc.setBackgroundThrottling(!isPublishing)
     } catch (e) {
       record('W', TAG, `setBackgroundThrottling failed: ${String(e)}`)
     }
@@ -115,20 +170,40 @@ export function registerCaptureHandlers(getWindow: () => WebContents | null): vo
  * Electron: it takes the pending declaration, whether the platform supports
  * loopback, and the available sources, and returns either an empty answer (refuse)
  * or the chosen source plus whether to attach system audio.
+ *
+ * `volatileIds` says the source ids are per-call indexes (Wayland), so matching
+ * the declared id against a fresh listing can never succeed — the listing has to
+ * be trusted as-is. The declaration is still one-shot and still comes only from
+ * our own picker; on Wayland the portal picks the actual screen afterwards, so
+ * the id was never a handle to begin with.
  */
 export function decideCapture(
   choice: PendingCapture | null,
   audioRequested: boolean,
   platformSupportsLoopback: boolean,
   available: Array<{ id: string }>,
+  volatileIds = false,
 ): { sourceId: string; withAudio: boolean } | null {
   if (!choice) return null
-  if (!available.some((s) => s.id === choice.sourceId)) return null
+  const exact = available.find((s) => s.id === choice.sourceId)
+  const target = exact ?? (volatileIds ? available[0] : undefined)
+  if (!target) return null
   // Only forward loopback audio when the renderer asked, the platform allows it,
   // and the request actually wanted audio. Passing 'loopback' where it is
   // unsupported fails the whole capture, not just the audio track.
   const withAudio = audioRequested && choice.systemAudio && platformSupportsLoopback
-  return { sourceId: choice.sourceId, withAudio }
+  return { sourceId: target.id, withAudio }
+}
+
+/**
+ * Display id of the screen currently being captured ('' when unknown).
+ *
+ * Only meaningful while a share is running: after the session ends the id is
+ * cleared, and a consumer that asks in between gets '' rather than the last
+ * screen that happened to be shared.
+ */
+export function currentCaptureDisplayId(): string {
+  return publishing ? capturedDisplayId : ''
 }
 
 /** Test seam: read the pending declaration. */
@@ -144,6 +219,8 @@ export function _setPendingCaptureForTest(v: PendingCapture | null): void {
 /** Test seam: reset module state between tests. */
 export function _resetCaptureForTest(): void {
   pending = null
+  capturedDisplayId = ''
+  publishing = false
 }
 
 /**
@@ -176,6 +253,7 @@ export function installDisplayMediaHandler(): void {
             request.audioRequested,
             audioCaptureSupport().systemAudio,
             sources,
+            arePlaceholderSources(sources),
           )
           if (!decision) {
             record('W', TAG, `declared source ${choice.sourceId} is unavailable`)
@@ -183,6 +261,7 @@ export function installDisplayMediaHandler(): void {
             return
           }
           const match = sources.find((s) => s.id === decision.sourceId)!
+          capturedDisplayId = match.display_id ?? ''
           callback({
             video: match,
             // Cast: the typings accept the literal, but the union also allows a

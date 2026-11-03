@@ -24,7 +24,7 @@ import (
 var ErrAgentNameTaken = errors.New("agent name already taken")
 
 // ErrAgentNameReserved is returned when an agent name collides with the
-// configured group-chat user nickname (chat.user_nickname). The nickname is a
+// configured user nickname (user.nickname). The nickname is a
 // routing target, so an agent sharing it would be unreachable (and would shadow
 // the human in group routing). The collision is rejected in BOTH directions —
 // this sentinel covers the agent side; the config side rejects a nickname that
@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	disabled INTEGER NOT NULL DEFAULT 0,
 	project_id INTEGER DEFAULT NULL,  -- NULL = global; value = project-only (see model.Agent.ProjectID)
+	provider_id INTEGER DEFAULT NULL,  -- NULL = use the CLI's own config; value = row in providers
 	mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',  -- per-agent MCP policy (see model.MCPServerPolicy)
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -124,7 +125,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			thinking_effort_by_model, mcp_servers
+			provider_id, thinking_effort_by_model, mcp_servers
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -137,7 +138,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		a := &model.Agent{}
 		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
 		var modelsAutoDetected, autoApprove, disabled int
-		var projectID sql.NullInt64
+		var projectID, providerID sql.NullInt64
 
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
@@ -146,7 +147,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.CustomSystemPrompt, &a.Avatar, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove, &disabled, &projectID,
-			&effortByModelJSON, &mcpServersJSON,
+			&providerID, &effortByModelJSON, &mcpServersJSON,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -158,6 +159,10 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		if projectID.Valid {
 			id := projectID.Int64
 			a.ProjectID = &id
+		}
+		if providerID.Valid {
+			id := providerID.Int64
+			a.ProviderID = &id
 		}
 
 		parseAgentJSONColumns(a, modelsJSON, levelsJSON, effortByModelJSON)
@@ -210,65 +215,13 @@ func parseAgentJSONColumns(a *model.Agent, modelsJSON, levelsJSON, effortByModel
 // Writing it here is what let a stale copy of the shared prompt outlive the
 // template it came from and override later changes.
 func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
-	modelsJSON, err := json.Marshal(agent.Models)
+	cols, err := encodeAgentJSONColumns(agent)
 	if err != nil {
-		return fmt.Errorf("marshal models: %w", err)
-	}
-	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
-	if string(modelsJSON) == jsonNull {
-		modelsJSON = []byte("[]")
-	}
-	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
-	if err != nil {
-		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
-	}
-	// Normalize nil to "{}" so the column never holds the string "null".
-	effortByModelJSON, err := json.Marshal(agent.ThinkingEffortByModel)
-	if err != nil {
-		return fmt.Errorf("marshal thinking_effort_by_model: %w", err)
-	}
-	if string(effortByModelJSON) == jsonNull {
-		effortByModelJSON = []byte("{}")
+		return err
 	}
 
-	modelsAutoDetected := 0
-	if agent.ModelsAutoDetected {
-		modelsAutoDetected = 1
-	}
-
-	sortOrder := agent.SortOrder
-	transport := agent.Transport
-	if transport == "" {
-		if agent.AcpCommand != "" {
-			transport = transportACPStdio
-		} else {
-			transport = transportCLI
-		}
-	}
-
-	autoApprove := 0
-	if agent.AutoApprove {
-		autoApprove = 1
-	}
-
-	disabled := 0
-	if agent.Disabled {
-		disabled = 1
-	}
-
-	// NULL scopes the agent globally; a value scopes it to that project. Passed
-	// as any so a nil *int64 binds SQL NULL rather than 0 (0 is a real project
-	// id — the reserved global sentinel — but the column distinguishes NULL).
-	var projectID any
-	if agent.ProjectID != nil {
-		projectID = *agent.ProjectID
-	}
-
-	if IsUserNickname(agent.Name) {
-		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameReserved)
-	}
-	if AgentNameTaken(agent.Name, agent.ID) {
-		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameTaken)
+	if nameErr := ensureAgentNameFreeFor("save", agent.ID, agent.Name); nameErr != nil {
+		return nameErr
 	}
 
 	_, err = db.Exec(`
@@ -278,8 +231,8 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			thinking_effort_by_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider_id, thinking_effort_by_model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -300,19 +253,89 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			auto_approve = excluded.auto_approve,
 			disabled = excluded.disabled,
 			project_id = excluded.project_id,
+			provider_id = excluded.provider_id,
 			thinking_effort_by_model = excluded.thinking_effort_by_model,
 			updated_at = CURRENT_TIMESTAMP
-	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
-		agent.ThinkingEffort, string(levelsJSON),
-		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), modelsAutoDetected,
-		sortOrder,
-		transport, agent.AcpCommand, autoApprove, disabled, projectID,
-		string(effortByModelJSON))
+	`, agentInsertArgs(agent, cols)...)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}
 	return nil
+}
+
+// agentJSONColumns holds the three JSON-encoded agent columns as the exact
+// strings to bind.
+type agentJSONColumns struct {
+	models        string
+	levels        string
+	effortByModel string
+}
+
+// encodeAgentJSONColumns marshals the JSON-backed agent columns and normalizes
+// them so the table never stores the literal string "null".
+func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
+	modelsJSON, err := json.Marshal(agent.Models)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal models: %w", err)
+	}
+	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
+	if string(modelsJSON) == jsonNull {
+		modelsJSON = []byte("[]")
+	}
+	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal thinking_effort_levels: %w", err)
+	}
+	// Normalize nil to "{}" so the column never holds the string "null".
+	effortByModelJSON, err := json.Marshal(agent.ThinkingEffortByModel)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal thinking_effort_by_model: %w", err)
+	}
+	if string(effortByModelJSON) == jsonNull {
+		effortByModelJSON = []byte("{}")
+	}
+	return agentJSONColumns{
+		models:        string(modelsJSON),
+		levels:        string(levelsJSON),
+		effortByModel: string(effortByModelJSON),
+	}, nil
+}
+
+// agentInsertArgs binds the INSERT column order of SaveAgent.
+func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
+	return []any{
+		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
+		agent.ThinkingEffort, cols.levels,
+		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
+		agent.CustomSystemPrompt, agent.Avatar, cols.models, boolToInt(agent.ModelsAutoDetected),
+		agent.SortOrder,
+		agentTransportForSave(agent), agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
+		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
+	}
+}
+
+// agentTransportForSave resolves the persisted transport, defaulting by command
+// shape when the caller left it empty.
+func agentTransportForSave(agent *model.Agent) string {
+	if agent.Transport != "" {
+		return agent.Transport
+	}
+	if agent.AcpCommand != "" {
+		return transportACPStdio
+	}
+	return transportCLI
+}
+
+// nullableIDArg binds a *int64 as SQL NULL when nil.
+//
+// Passed as any so a nil pointer binds NULL rather than 0 (0 is a real project
+// id — the reserved global sentinel — but the column distinguishes NULL). Same
+// NULL semantics for the provider binding: nil = no provider.
+func nullableIDArg(id *int64) any {
+	if id == nil {
+		return nil
+	}
+	return *id
 }
 
 // DeleteAgent deletes an agent by ID (requires PRAGMA foreign_keys=ON).
@@ -501,6 +524,11 @@ type AgentPatch struct {
 	// distinguish "field not provided" (leave untouched) from "clear to NULL",
 	// so clearing gets its own flag. Mutually exclusive with ProjectID.
 	ClearProjectID bool
+	// ProviderID binds the agent to a model provider. Nil leaves the binding
+	// untouched; ClearProviderID removes it (same NULL-vs-absent split as the
+	// project scope above).
+	ProviderID      *int64
+	ClearProviderID bool
 }
 
 // ThinkingEffortModelPatch is a per-model effort write: ModelID is required;
@@ -586,6 +614,7 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 		addSet("mcp_servers", encoded)
 	}
 	setClauses, args = applyProjectScopeSet(patch, setClauses, args)
+	setClauses, args = applyProviderSet(patch, setClauses, args)
 	return setClauses, args, nil
 }
 
@@ -773,15 +802,33 @@ func applyProjectScopeSet(patch AgentPatch, setClauses []string, args []any) ([]
 	return setClauses, args
 }
 
+// applyProviderSet mirrors applyProjectScopeSet for the provider binding.
+func applyProviderSet(patch AgentPatch, setClauses []string, args []any) ([]string, []any) {
+	if patch.ClearProviderID {
+		return append(setClauses, "provider_id = NULL"), args
+	}
+	if patch.ProviderID != nil {
+		return append(setClauses, "provider_id = ?"), append(args, *patch.ProviderID)
+	}
+	return setClauses, args
+}
+
 // ensureAgentNameFree returns ErrAgentNameTaken (wrapped with the agent id)
 // when name is already used by a different agent. Split out of
 // PatchAgentFields to keep its branch count in budget.
 func ensureAgentNameFree(id, name string) error {
+	return ensureAgentNameFreeFor("patch", id, name)
+}
+
+// ensureAgentNameFreeFor is ensureAgentNameFree with the operation named in the
+// wrapped error (SaveAgent writes "save agent …", PatchAgentFields "patch
+// agent …").
+func ensureAgentNameFreeFor(op, id, name string) error {
 	if IsUserNickname(name) {
-		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameReserved)
+		return fmt.Errorf("%s agent %s: %w", op, id, ErrAgentNameReserved)
 	}
 	if AgentNameTaken(name, id) {
-		return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
+		return fmt.Errorf("%s agent %s: %w", op, id, ErrAgentNameTaken)
 	}
 	return nil
 }
@@ -871,6 +918,9 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		// mental model (the copy belongs where the original does); the caller
 		// can always clear it afterwards.
 		ProjectID: source.ProjectID,
+		// The provider binding IS copied for the same reason: the copy runs the
+		// same backend and should reach the same endpoint without re-picking it.
+		ProviderID: source.ProviderID,
 		// Disabled is deliberately NOT copied: a duplicate is a new, usable
 		// agent — inheriting "disabled" would hand the user a copy that is
 		// invisible in every picker with no hint why.

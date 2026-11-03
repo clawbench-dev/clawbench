@@ -109,6 +109,22 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		resume = forkResume
 	}
 
+	// Takeover rebuild: this session belonged to a deleted agent and was handed
+	// to the one running now (see DeleteAgentWithTakeover). Its native session id
+	// was cleared, and the history is injected as background by the fork path
+	// above — but resume must ALSO be false, which that path only guarantees for
+	// ACP. Several CLI backends (deepseek/codewhale, pi) fall back to
+	// "--continue" when asked to resume without an id, which attaches the NEW
+	// agent to whatever session that CLI last ran in the working directory: an
+	// unrelated transcript, silently. A fresh session is the only safe answer.
+	//
+	// The condition is self-clearing: once the replacement replies, its own id is
+	// captured into external_session_id and this branch stops firing. The `resume`
+	// guard keeps the extra read off brand-new sessions, which are already fresh.
+	if resume && resolvedExtID == "" && GetAgentTakeoverFrom(sessionID) != "" {
+		resume = false
+	}
+
 	// Inject media handling rules only when the user message carries attachments.
 	// These rules are omitted for text-only messages to save tokens.
 	if hasAttachments {
@@ -156,7 +172,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		prompt = BuildCruiseSingleAddendum() + "\n\n" + prompt
 	}
 
-	return ai.ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:                 prompt,
 		SessionID:              effectiveSessionID,
 		WorkDir:                fileDir,
@@ -173,6 +189,12 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		ForkContext:            forkContext,
 		Compacted:              compacted,
 	}
+
+	// The identity section rides the system prompt; on a resumed turn (which
+	// does not re-send it) the helper moves it into the prompt instead. See
+	// EnsureUserIdentityInPrompt for why the two paths are exclusive.
+	EnsureUserIdentityInPrompt(&req)
+	return req
 }
 
 // applySessionOverrides fills each empty override from the session's persisted
@@ -253,6 +275,9 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thi
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
 	}
+	// The human user's identity (nickname + self-description). Appended last so
+	// the user's own text is never subject to the placeholder replacement above.
+	systemPrompt = AppendUserIdentitySection(systemPrompt)
 	if modelOverride != "" {
 		agentModel = modelOverride
 	} else if !isACP || ai.HasConfirmedACPModels(agentID) {

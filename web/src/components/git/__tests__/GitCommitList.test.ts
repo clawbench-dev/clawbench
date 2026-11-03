@@ -34,6 +34,7 @@ vi.mock('lucide-vue-next', () => ({
   RotateCw: { template: '<svg />' },
   RotateCcw: { template: '<svg />' },
   GitBranch: { template: '<svg />' },
+  GitCommitHorizontal: { template: '<svg />' },
   GitFork: { template: '<svg />' },
   MoreVertical: { template: '<svg />' },
   LoaderCircle: { template: '<svg />' },

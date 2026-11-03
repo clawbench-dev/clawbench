@@ -23,7 +23,7 @@ vi.mock('@/utils/html', () => ({
 
 // Mock splitPath, dirName, baseName
 vi.mock('@/utils/path', () => ({
-  splitPath: (p: string) => p.split('/').filter(Boolean),
+  splitPath: (p: string) => p.split(/[/\\]/).filter(Boolean),
   dirName: (p: string) => {
     const parts = p.split('/')
     parts.pop()
@@ -428,6 +428,31 @@ describe('resolveRelativePath', () => {
 
   it('handles empty href segments', () => {
     expect(resolveRelativePath('././file.ts', 'src')).toBe('src/file.ts')
+  })
+
+  // The meeting minutes render with an ABSOLUTE document path, so a dropped
+  // leading separator turned every relative link into `<project>/home/…` and
+  // the file was reported missing (then the filename search could not find it).
+  it('keeps an absolute base directory absolute', () => {
+    expect(resolveRelativePath('transcript.vtt', '/home/u/proj/.clawbench/notes/m1'))
+      .toBe('/home/u/proj/.clawbench/notes/m1/transcript.vtt')
+  })
+
+  it('keeps the filesystem root when the base is root', () => {
+    expect(resolveRelativePath('a.md', '/')).toBe('/a.md')
+  })
+
+  it('keeps a Windows drive letter', () => {
+    expect(resolveRelativePath('a.md', 'E:\\git\\proj\\docs')).toBe('E:/git/proj/docs/a.md')
+  })
+
+  it('keeps the UNC share prefix', () => {
+    expect(resolveRelativePath('a.md', '//nas/media/docs')).toBe('//nas/media/docs/a.md')
+    expect(resolveRelativePath('a.md', '\\\\nas\\media\\docs')).toBe('//nas/media/docs/a.md')
+  })
+
+  it('still pops ../ above the base without escaping an absolute root', () => {
+    expect(resolveRelativePath('../../../etc/passwd', '/a/b')).toBe('/etc/passwd')
   })
 })
 

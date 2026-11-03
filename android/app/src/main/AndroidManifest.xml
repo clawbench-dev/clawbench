@@ -7,6 +7,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- Screen sharing (桌面共享) runs as a foreground service of type
+         mediaProjection: Android requires the service to be foreground with that
+         type BEFORE MediaProjectionManager.getMediaProjection() is called, and
+         the permission below is mandatory for apps targeting API 34+. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -18,10 +23,22 @@
         android:maxSdkVersion="28" />
     <!-- Camera permission for photo upload via file chooser -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Microphone permission for voice input (WebView getUserMedia).
+         Without this the WebView cannot open the mic no matter what
+         onPermissionRequest answers. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Normal (non-runtime) permission. Chromium's audio device module calls
+         AudioManager.setMode()/setSpeakerphoneOn() while starting capture; those
+         calls require this permission, and without it capture can fail with
+         NotReadableError even though RECORD_AUDIO is granted. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Install APK updates from within the app -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- RECORD_AUDIO implies a required microphone unless relaxed here; voice
+         input is optional, so devices without a mic must still be installable. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- Package visibility (API 30+): without this, resolveActivity() on the
          camera intent returns null even when a camera app is installed, and
@@ -69,6 +86,15 @@
             android:name=".BackgroundService"
             android:foregroundServiceType="dataSync|remoteMessaging"
             android:stopWithTask="false"
+            android:exported="false" />
+
+        <!-- Screen-share capture (MediaProjection). stopWithTask=false is wrong
+             here: sharing is tied to the app being alive, and a task that the
+             user swiped away must not leave the screen being captured. -->
+        <service
+            android:name=".ScreenShareService"
+            android:foregroundServiceType="mediaProjection"
+            android:stopWithTask="true"
             android:exported="false" />
 
         <!-- Sandbox browser for testing forwarded ports — runs in separate process for Cookie/Storage isolation.

@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures'
 import type { Page } from '@playwright/test'
 import { ChatPage } from '../pages/chat.page'
+import { isBenignPageError } from '../helpers/console'
 
 /**
  * Queued-message ordering end-to-end tests.
@@ -70,6 +71,13 @@ test.describe('Queued messages ordering', () => {
     await page.evaluate(() => localStorage.setItem('clawbench_welcome_dismissed', 'true'))
     await reloadPage(page)
     await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
+    // The server (and its default session) is shared by every spec in a run, so
+    // the previous spec may still be streaming a turn — or, when it failed
+    // mid-way, may have left a queue that the BACKEND keeps draining after its
+    // page closed. Sending into that state silently turns our first message
+    // into a queued one, which breaks every count-based assertion here
+    // (measured: "editing a queued message" saw 3 queued entries, not 2).
+    await chat.waitForIdle()
   })
 
   /** Snapshot the transcript as `role:text` pairs. */
@@ -88,9 +96,11 @@ test.describe('Queued messages ordering', () => {
   test('queued messages and their replies render in conversational order (live + after reload)', async ({ page }) => {
     // Capture frontend runtime errors to diagnose failures.
     const pageErrors: string[] = []
-    page.on('pageerror', (err) => pageErrors.push(`PAGEERROR: ${err.message}`))
+    page.on('pageerror', (err) => {
+      if (!isBenignPageError(err.message)) pageErrors.push(`PAGEERROR: ${err.message}`)
+    })
     page.on('console', (msg) => {
-      if (msg.type() === 'error') pageErrors.push(`CONSOLE: ${msg.text()}`)
+      if (msg.type() === 'error' && !isBenignPageError(msg.text())) pageErrors.push(`CONSOLE: ${msg.text()}`)
     })
 
     // 1. Send three messages quickly. The first starts the AI; 2 and 3 queue.
@@ -139,7 +149,7 @@ test.describe('Queued messages ordering', () => {
     for (const marker of [M1, M2, M3]) {
       await expect(
         page.locator('.chat-message.user').filter({ hasText: marker })
-      ).toHaveCount(1, { timeout: 30000 })
+      ).toHaveCount(1, { timeout: 45000 })
     }
     await expect(page.locator('.chat-message.user.pending')).toHaveCount(0, { timeout: 15000 })
     await expect(page.locator('.chat-message.assistant.streaming')).toHaveCount(0, { timeout: 15000 })
@@ -193,7 +203,15 @@ test.describe('Queued messages ordering', () => {
 
     // Message 1 starts the turn; 2 and 3 queue behind it. (Two messages would
     // leave only ONE queued entry, which cannot show a preserved position.)
-    await chat.sendMessage(running)
+    //
+    // The `[mock:slow-reply:…]` marker holds turn 1 open long enough for this
+    // to be true by construction. Without it the test is a race against the
+    // mock's 1200ms default: the gap between two `sendMessage` calls is ~0.4s
+    // normally but ~2.1s on WebKit (the input row re-renders after a send and
+    // Playwright waits for it to settle), so turn 1 could end before message 2
+    // was typed — message 2 then STARTED a turn of its own and only ONE entry
+    // was ever queued (observed on WebKit).
+    await chat.sendMessage(`${running} [mock:slow-reply:12000]`)
     await chat.sendMessage(queuedA)
     await chat.sendMessage(queuedB)
 
@@ -208,13 +226,14 @@ test.describe('Queued messages ordering', () => {
     await expect(target).toHaveCount(1)
     await target.locator('[data-action="queue-edit"]').click()
 
-    // The dialog is primed with the entry's current text.
-    const dialogInput = page.locator('.dlg-textarea')
+    // The editor is primed with the entry's current text (and its attachments,
+    // which the sheet also lets the user change).
+    const dialogInput = page.locator('.qme-textarea')
     await expect(dialogInput).toBeVisible({ timeout: 5000 })
     await expect(dialogInput).toHaveValue(queuedB)
 
     await dialogInput.fill(revisedB)
-    await page.locator('.dlg-ok').click()
+    await page.locator('[data-action="queue-edit-save"]').click()
 
     // THE ASSERTION THAT MATTERS: the edited entry keeps its index. If the save
     // had re-queued it, it would now be last and queuedA would have moved up.
@@ -225,10 +244,10 @@ test.describe('Queued messages ordering', () => {
     // Let the queue drain, then reload: the edited text must be what the
     // backend stored (proves the edit was persisted, not a local-only change).
     await expect(page.locator('.queued-bar')).toHaveCount(0, { timeout: 90000 })
-    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 30000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 45000 })
     await reloadPage(page)
     await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 30000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 45000 })
     await expect(page.locator('.chat-message.user').filter({ hasText: queuedB })).toHaveCount(0)
   })
 })

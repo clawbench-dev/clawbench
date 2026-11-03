@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 	execution_id   TEXT NOT NULL DEFAULT '',
 	forge_item_key TEXT NOT NULL DEFAULT '',
 	agent_id       TEXT NOT NULL DEFAULT '',
+	meeting_token  TEXT NOT NULL DEFAULT '',
 	created_at     TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_event ON notifications(event_id);
@@ -62,6 +63,12 @@ const (
 	// other three it has no subject row to navigate to: clicking it opens the
 	// meter itself (wide screen) or the settings page (narrow screen).
 	NotificationKindUsage = "usage"
+	// NotificationKindMeeting is one thing that happened in a running meeting:
+	// a remote-control request, a viewer joining, a member starting to share a
+	// screen, or the post-meeting minutes finishing. It has no session: the
+	// meeting is identified by its share token (live_notes.token), which is
+	// what the click opens.
+	NotificationKindMeeting = "meeting"
 )
 
 // notificationRetentionDays / notificationMaxRows are the two retention caps.
@@ -99,6 +106,9 @@ type Notification struct {
 	ExecutionID  string `json:"executionId,omitempty"`
 	ForgeItemKey string `json:"forgeItemKey,omitempty"`
 	AgentID      string `json:"agentId,omitempty"`
+	// MeetingToken identifies a kind=meeting row's meeting. The live_notes row
+	// is the subject: deleting the record is what makes the row stale.
+	MeetingToken string `json:"meetingToken,omitempty"`
 	CreatedAt    string `json:"createdAt"`
 	// SourceMissing is set by the API layer when the session/task this
 	// notification points at no longer exists. Forge items are never marked
@@ -119,6 +129,7 @@ type NotificationRecord struct {
 	ExecutionID  string
 	ForgeItemKey string
 	AgentID      string
+	MeetingToken string
 }
 
 // StoreNotification appends one notification to the log.
@@ -146,11 +157,11 @@ func StoreNotification(rec NotificationRecord) {
 	}
 	_, err := store.WriteExec(
 		`INSERT OR IGNORE INTO notifications
-			(event_id, kind, event_type, title, body, project_id, session_id, task_id, execution_id, forge_item_key, agent_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(event_id, kind, event_type, title, body, project_id, session_id, task_id, execution_id, forge_item_key, agent_id, meeting_token, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.EventID, rec.Kind, rec.EventType, rec.Title, rec.Body,
 		rec.ProjectID, rec.SessionID, rec.TaskID, rec.ExecutionID,
-		rec.ForgeItemKey, rec.AgentID, notificationTimestamp(time.Now()),
+		rec.ForgeItemKey, rec.AgentID, rec.MeetingToken, notificationTimestamp(time.Now()),
 	)
 	if err != nil {
 		slog.Warn("notifications: store failed", "error", err, "kind", rec.Kind)
@@ -198,7 +209,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 
 	query := `SELECT n.id, n.kind, n.event_type, n.title, n.body, n.project_id,
 			COALESCE(p.path, ''), n.session_id, n.task_id, n.execution_id,
-			n.forge_item_key, n.agent_id, n.created_at
+			n.forge_item_key, n.agent_id, n.meeting_token, n.created_at
 		FROM notifications n
 		LEFT JOIN projects p ON p.id = n.project_id
 		WHERE 1 = 1`
@@ -235,7 +246,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 		if err := rows.Scan(
 			&n.ID, &n.Kind, &n.EventType, &n.Title, &n.Body, &n.ProjectID,
 			&n.ProjectPath, &n.SessionID, &n.TaskID, &n.ExecutionID,
-			&n.ForgeItemKey, &n.AgentID, &n.CreatedAt,
+			&n.ForgeItemKey, &n.AgentID, &n.MeetingToken, &n.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -337,6 +348,11 @@ func CleanupNotifications() {
 // resumed), so it is reported as present — only a genuinely removed row counts
 // as missing. Forge items are skipped entirely: they live upstream and have no
 // local delete semantics, so a forge notification is never stale.
+//
+// A meeting row probes live_notes, not the room: the room is in-memory and dies
+// with the publisher's socket, so every meeting notification would look stale
+// the moment the meeting ended. The record row is what the click opens, and it
+// is deleted only when the user deletes the record.
 func MarkMissingSources(rows []Notification) {
 	if len(rows) == 0 || !store.ReadDBReady() {
 		return
@@ -344,7 +360,16 @@ func MarkMissingSources(rows []Notification) {
 	// Repair member-row targets first, so the presence probe below runs against
 	// the group id the row will actually navigate to.
 	repairGroupMemberTargets(rows)
+	markMissingSubjects(rows)
+}
 
+// markMissingSubjects probes each subject table ONCE for the whole page and
+// flags the rows whose subject is gone.
+//
+// Split out of MarkMissingSources to keep both functions inside the linter's
+// complexity budget; the split is also the honest shape, since "repair legacy
+// targets" and "probe presence" are two independent passes.
+func markMissingSubjects(rows []Notification) {
 	// Only collect the ids the probe will actually consult, so a task row's
 	// session id is never even queried.
 	sessionIDs := distinctNonEmpty(rows, func(n Notification) string {
@@ -359,9 +384,19 @@ func MarkMissingSources(rows []Notification) {
 		}
 		return n.TaskID
 	})
+	meetingIDs := distinctNonEmpty(rows, func(n Notification) string {
+		if n.Kind != NotificationKindMeeting {
+			return ""
+		}
+		return n.MeetingToken
+	})
 
-	presentSessions := existingIDs("chat_sessions", sessionIDs)
-	presentTasks := existingIDs("scheduled_tasks", taskIDs)
+	presentSessions := existingIDs("chat_sessions", "id", sessionIDs)
+	presentTasks := existingIDs("scheduled_tasks", "id", taskIDs)
+	// A meeting's record row (live_notes) is created when the publisher
+	// attaches and deleted with the record, so it is the meeting's presence
+	// probe. The in-memory room is irrelevant here: the log outlives it.
+	presentMeetings := existingIDs("live_notes", "token", meetingIDs)
 
 	for i := range rows {
 		n := &rows[i]
@@ -372,6 +407,10 @@ func MarkMissingSources(rows []Notification) {
 			}
 		case NotificationKindTask:
 			if n.TaskID != "" && !presentTasks[n.TaskID] {
+				n.SourceMissing = true
+			}
+		case NotificationKindMeeting:
+			if n.MeetingToken != "" && !presentMeetings[n.MeetingToken] {
 				n.SourceMissing = true
 			}
 		}
@@ -456,9 +495,14 @@ func distinctNonEmpty(rows []Notification, get func(Notification) string) []stri
 	return out
 }
 
-// existingIDs returns the subset of ids present in table (an allowlisted table
-// name — never user input). An empty id list short-circuits without a query.
-func existingIDs(table string, ids []string) map[string]bool {
+// existingIDs returns the subset of ids present in table.column. Both names are
+// allowlisted literals supplied by this file — never user input.
+//
+// The column is a parameter because the id-space differs per subject: sessions
+// and tasks are keyed by `id`, while a meeting is keyed by its share `token`
+// (live_notes has no id column at all). An empty id list short-circuits without
+// a query.
+func existingIDs(table, column string, ids []string) map[string]bool {
 	present := map[string]bool{}
 	if len(ids) == 0 || !store.ReadDBReady() {
 		return present
@@ -468,7 +512,7 @@ func existingIDs(table string, ids []string) map[string]bool {
 		args = append(args, id)
 	}
 	rows, err := store.ReadDB().Query(
-		"SELECT id FROM "+table+" WHERE id IN ("+sqlPlaceholders(len(ids))+")",
+		"SELECT "+column+" FROM "+table+" WHERE "+column+" IN ("+sqlPlaceholders(len(ids))+")",
 		args...,
 	)
 	if err != nil {

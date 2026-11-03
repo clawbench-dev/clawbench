@@ -116,7 +116,17 @@ export async function apiPut<T = unknown>(url: string, body: unknown, opts: ApiO
             signal,
         })
         const data = await resp.json().catch(() => ({})) as Record<string, unknown>
-        if (!resp.ok) throw new Error(data.error ? String(data.error) : resp.statusText)
+        if (!resp.ok) {
+            // Same typed fields as apiPost/apiGet: a handler that rejects a
+            // specific field (ProviderInvalid with detail.field) can only be
+            // explained by the caller if the code and detail survive here.
+            const err = new Error(data.error ? String(data.error) : resp.statusText)
+            const typedErr = err as Error & { status?: number; msgKey?: string; detail?: unknown }
+            typedErr.status = resp.status
+            if (data.msgKey) typedErr.msgKey = String(data.msgKey)
+            if (data.detail) typedErr.detail = data.detail
+            throw err
+        }
         return data as T
     } finally {
         cleanup()

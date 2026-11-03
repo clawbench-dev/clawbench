@@ -5,14 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +20,7 @@ import (
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
+	"clawbench/internal/stt"
 	"clawbench/internal/summarize"
 )
 
@@ -34,9 +33,6 @@ type ConnectivityTestResult struct {
 // JSON key constants for goconst compliance.
 const (
 	strMessages = "messages"
-	strPiper    = "piper"
-	strKokoro   = "kokoro"
-	strMossNano = "moss-nano"
 	strOpenAI   = "openai"
 	strReqError = "error"
 )
@@ -160,30 +156,62 @@ func resolveIntValue(values map[string]any, key string, defaultVal int) int {
 // feeds both voice summarization and conversation recommendation, so the test
 // always probes the ai_summary.api endpoint regardless of summarize.tts_backend.
 func testSummarizeVoice(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	baseURL := resolveStringValue(values, "ai_summary.api.base_url", model.ConfigInstance.AISummary.API.BaseURL)
-	apiKey := resolveStringValue(values, "ai_summary.api.key", model.ConfigInstance.AISummary.API.Key)
 	modelName := resolveStringValue(values, "ai_summary.model", model.ConfigInstance.AISummary.Model)
-
-	if baseURL == "" {
-		return ConnectivityTestResult{Success: false, Message: "AI summary API base URL is required"}
-	}
 	if modelName == "" {
 		modelName = "gpt-4o-mini"
 	}
 
-	return testAPISummarizer(ctx, baseURL, apiKey, modelName)
+	// The provider is the supported configuration: its protocol also decides the
+	// request shape, which a URL heuristic cannot recover for Anthropic-style
+	// gateways that do not contain "anthropic" in the host.
+	if p := model.GetProvider(summaryProviderID(values)); p != nil && p.BaseURL != "" {
+		if p.Protocol != model.ProviderProtocolAnthropic && p.Protocol != model.ProviderProtocolOpenAI {
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Provider %q uses the %s protocol, which the summary model does not support", p.Name, p.Protocol)}
+		}
+		format := model.ProviderProtocolOpenAI
+		if p.Protocol == model.ProviderProtocolAnthropic {
+			format = model.ProviderProtocolAnthropic
+		}
+		return testAPISummarizer(ctx, p.BaseURL, p.APIKey, modelName, format)
+	}
+
+	// Legacy shape, kept until the startup migration rewrites config.yaml.
+	baseURL := resolveStringValue(values, "ai_summary.api.base_url", model.ConfigInstance.AISummary.API.BaseURL)
+	apiKey := resolveStringValue(values, "ai_summary.api.key", model.ConfigInstance.AISummary.API.Key)
+	if baseURL == "" {
+		return ConnectivityTestResult{Success: false, Message: "AI summary provider is required"}
+	}
+	return testAPISummarizer(ctx, baseURL, apiKey, modelName, "")
+}
+
+// summaryProviderID reads the draft value first, then the saved config.
+func summaryProviderID(values map[string]any) int64 {
+	if raw, ok := values["ai_summary.provider_id"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			return int64(v)
+		case int64:
+			return v
+		case int:
+			return int64(v)
+		}
+	}
+	if pid := model.ConfigInstance.AISummary.ProviderID; pid != nil {
+		return *pid
+	}
+	return 0
 }
 
 // testAPISummarizer sends a minimal chat completion request to verify API connectivity.
 // The API format (OpenAI vs Anthropic) is auto-detected from the base URL:
 //   - URLs containing "anthropic.com" or ending with "/v1/messages" → Anthropic format
 //   - All other URLs → OpenAI format
-func testAPISummarizer(ctx context.Context, baseURL, apiKey, modelName string) ConnectivityTestResult {
+func testAPISummarizer(ctx context.Context, baseURL, apiKey, modelName, format string) ConnectivityTestResult {
 	url := strings.TrimRight(baseURL, "/")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	if summarize.IsAnthropicURL(url) {
+	if format == model.ProviderProtocolAnthropic || (format == "" && summarize.IsAnthropicURL(url)) {
 		return testAnthropicAPI(ctx, client, url, apiKey, modelName)
 	}
 	return testOpenAIAPI(ctx, client, url, apiKey, modelName)
@@ -326,8 +354,12 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // ── STT ──────────────────────────────────────────────────────
 
-// testSTT tests connectivity to the vLLM STT (Whisper) service.
+// testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	if resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider) == "doubao" {
+		return testDoubaoSTT(ctx, values)
+	}
+
 	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
 	sttModel := resolveStringValue(values, "stt.model", model.ConfigInstance.STT.Model)
 	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
@@ -340,78 +372,90 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		sttModel = "openai/whisper-large-v3"
 	}
 
-	// Probe with a real transcription request instead of relying on
-	// /v1/models. Gateways (e.g. OneAPI) often don't enumerate every model in
-	// the models list even though the transcription endpoint accepts them, so
-	// a direct probe against /v1/audio/transcriptions is authoritative for the
-	// exact endpoint + model + auth the feature will actually use.
-	body, contentType, err := buildSTTProbe(sttModel, language)
+	// Probe by transcribing the embedded "你好" clip through the same provider
+	// the feature uses, instead of only checking reachability: a 200 that
+	// carries no text means the endpoint accepted the request but recognized
+	// nothing, which is a broken configuration, not a working one. Going through
+	// the provider also keeps the probe on the exact endpoint/model/auth (and
+	// multipart shape) that real transcription uses.
+	provider := stt.NewVLLMProvider(baseURL, sttModel, apiKey, language)
+	provider.Filename = "probe.mp3"
+	provider.HTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
 	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to build probe: %v", err)}
+		return sttProbeFailure(baseURL, sttModel, err)
 	}
-
-	url := strings.TrimRight(baseURL, "/") + "/v1/audio/transcriptions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create request: %v", err)}
-	}
-	req.Header.Set("Content-Type", contentType)
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service unreachable at %s: %v", baseURL, err)}
-	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-
-	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable, transcription accepted for model '%s'", sttModel)}
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT auth failed (HTTP %d)", resp.StatusCode)}
-	case resp.StatusCode == http.StatusNotFound:
-		return ConnectivityTestResult{Success: false, Message: "STT endpoint or model not found (HTTP 404)"}
-	}
-
-	// Some servers reject an unknown model name with a 4xx body. Anything that
-	// isn't auth/404/model-not-found means the request reached the
-	// transcription handler with the model routed, which confirms connectivity.
-	if isSTTModelNotFound(respBody) {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
-	}
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("STT service reachable at %s (probe returned HTTP %d)", baseURL, resp.StatusCode)}
-}
-
-// buildSTTProbe builds a multipart transcription probe body (embedded "你好"
-// mp3 + model/language fields) and returns the body and its Content-Type
-// header.
-func buildSTTProbe(sttModel, language string) (*bytes.Buffer, string, error) {
-	audio := sttProbeAudio
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "probe.mp3")
-	if err != nil {
-		return nil, "", err
-	}
-	if _, err := part.Write(audio); err != nil {
-		return nil, "", err
-	}
-	if err := writer.WriteField("model", sttModel); err != nil {
-		return nil, "", err
-	}
-	if language != "" {
-		if err := writer.WriteField("language", language); err != nil {
-			return nil, "", err
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("STT returned an empty transcription for model '%s'", sttModel),
 		}
 	}
-	if err := writer.Close(); err != nil {
-		return nil, "", err
+	return ConnectivityTestResult{
+		Success: true,
+		Message: fmt.Sprintf("STT transcription succeeded: %q (model: %s)", text, sttModel),
 	}
-	return &body, writer.FormDataContentType(), nil
+}
+
+// sttProbeFailure names the cause of a failed STT probe: auth, endpoint, model
+// or transport. The provider reports non-2xx answers as *stt.APIError, so the
+// classification does not depend on the error text.
+func sttProbeFailure(baseURL, sttModel string, err error) ConnectivityTestResult {
+	var apiErr *stt.APIError
+	if errors.As(err, &apiErr) {
+		switch {
+		case apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden:
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT auth failed (HTTP %d)", apiErr.Status)}
+		case apiErr.Status == http.StatusNotFound:
+			return ConnectivityTestResult{Success: false, Message: "STT endpoint or model not found (HTTP 404)"}
+		case isSTTModelNotFound([]byte(apiErr.Body)):
+			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service reachable, but model '%s' not recognized", sttModel)}
+		}
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("STT probe failed (HTTP %d): %s", apiErr.Status, strings.TrimSpace(apiErr.Body)),
+		}
+	}
+
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT service unreachable at %s: %v", baseURL, err)}
+	}
+	return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("STT probe failed: %v", err)}
+}
+
+// doubaoSTTBaseURL is the doubao speech API root used by the connectivity
+// test. Overridable in tests; production always hits the real host.
+//
+//nolint:gochecknoglobals // test seam, mirrors dingtalkTokenURL
+var doubaoSTTBaseURL = stt.DoubaoBaseURL
+
+// testDoubaoSTT probes the Doubao (Volcano Engine) Seed-ASR endpoint with the
+// embedded "你好" clip. Auth is X-Api-Key plus the purchased resource ID, and
+// the response body carries the real status code — a reachable host with a
+// revoked key still answers HTTP 200, so the body is authoritative.
+func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
+	resourceID := resolveStringValue(values, "stt.resource_id", model.ConfigInstance.STT.ResourceID)
+
+	if apiKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Doubao API key is required"}
+	}
+
+	provider := stt.NewDoubaoProvider(apiKey, resourceID)
+	provider.BaseURL = doubaoSTTBaseURL
+	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Doubao transcription failed: %v", err)}
+	}
+	if strings.TrimSpace(text) == "" {
+		return ConnectivityTestResult{Success: false, Message: "Doubao transcription returned empty text"}
+	}
+	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Doubao transcription succeeded: %q", text)}
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.
@@ -598,12 +642,6 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	switch engine {
 	case "edge":
 		return testTTSEdge(ctx, values)
-	case strPiper:
-		return testTTSPiper(values)
-	case strKokoro:
-		return testTTSKokoro(values)
-	case strMossNano:
-		return testTTSNano(values)
 	case strOpenAI:
 		return testTTSOpenAI(ctx, values)
 	default:
@@ -623,93 +661,6 @@ func testTTSEdge(ctx context.Context, _ map[string]any) ConnectivityTestResult {
 	}
 	_ = conn.Close()
 	return ConnectivityTestResult{Success: true, Message: "Edge TTS service reachable"}
-}
-
-func testTTSPiper(values map[string]any) ConnectivityTestResult {
-	// Check piper binary
-	piperPath := resolvePiperBinary()
-	if piperPath == "" {
-		return ConnectivityTestResult{Success: false, Message: "Piper binary not found (checked .venv/bin/piper and $PATH)"}
-	}
-
-	// Check model file
-	voice := resolveStringValue(values, "tts.voice", model.ConfigInstance.TTS.Voice)
-	modelPath := resolveStringValue(values, "tts.piper.model_path", model.ConfigInstance.TTS.Piper.ModelPath)
-	resolvedModel := speech.ResolveModelPath(voice, modelPath)
-	if resolvedModel == "" {
-		return ConnectivityTestResult{Success: false, Message: "Piper model path not configured and voice not set"}
-	}
-	if _, err := os.Stat(resolvedModel); err != nil {
-		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Piper model file not found: %s", resolvedModel)}
-	}
-
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Piper ready (binary: %s, model: %s)", piperPath, resolvedModel)}
-}
-
-func testTTSKokoro(values map[string]any) ConnectivityTestResult {
-	modelPath := resolveStringValue(values, "tts.kokoro.model_path", model.ConfigInstance.TTS.Kokoro.ModelPath)
-	voicesPath := resolveStringValue(values, "tts.kokoro.voices_path", model.ConfigInstance.TTS.Kokoro.VoicesPath)
-
-	resolvedModel, resolvedVoices := speech.ResolveKokoroPaths(modelPath, voicesPath)
-
-	var errors []string
-
-	// Check Python interpreter
-	pythonPath := resolveKokoroPython()
-	if pythonPath == "" {
-		errors = append(errors, "Python interpreter not found (checked .venv/bin/python3)")
-	}
-
-	// Check model file
-	if resolvedModel == "" {
-		errors = append(errors, "Kokoro model path not configured")
-	} else if _, err := os.Stat(resolvedModel); err != nil {
-		errors = append(errors, fmt.Sprintf("Kokoro model file not found: %s", resolvedModel))
-	}
-
-	// Check voices file
-	if resolvedVoices == "" {
-		errors = append(errors, "Kokoro voices path not configured")
-	} else if _, err := os.Stat(resolvedVoices); err != nil {
-		errors = append(errors, fmt.Sprintf("Kokoro voices file not found: %s", resolvedVoices))
-	}
-
-	if len(errors) > 0 {
-		return ConnectivityTestResult{Success: false, Message: strings.Join(errors, "; ")}
-	}
-
-	return ConnectivityTestResult{Success: true, Message: "Kokoro ready (Python found, model and voices files exist)"}
-}
-
-func testTTSNano(values map[string]any) ConnectivityTestResult {
-	modelDir := resolveStringValue(values, "tts.moss_nano.model_dir", model.ConfigInstance.TTS.MossNano.ModelDir)
-	resolvedDir := speech.ResolveMossNanoModelDir(modelDir)
-
-	// Check binary
-	binPath, _ := exec.LookPath("moss-tts-nano")
-	if binPath == "" {
-		// Try relative to executable
-		if exePath, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(exePath), ".venv/bin/moss-tts-nano")
-			if _, err := os.Stat(candidate); err == nil {
-				binPath = candidate
-			}
-		}
-	}
-	if binPath == "" {
-		return ConnectivityTestResult{Success: false, Message: "MOSS-Nano binary not found (checked .venv/bin/moss-tts-nano and $PATH)"}
-	}
-
-	// Check model dir
-	if resolvedDir != "" {
-		if info, err := os.Stat(resolvedDir); err != nil || !info.IsDir() {
-			return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("MOSS-Nano model directory not found: %s", resolvedDir)}
-		}
-		return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("MOSS-Nano ready (binary: %s, model dir: %s)", binPath, resolvedDir)}
-	}
-
-	// No model dir configured but binary found — MOSS-Nano can auto-download
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("MOSS-Nano binary found (%s), model will auto-download on first use", binPath)}
 }
 
 // testTTSOpenAI probes an OpenAI-compatible /v1/audio/speech endpoint.
@@ -785,40 +736,6 @@ func testTTSOpenAI(ctx context.Context, values map[string]any) ConnectivityTestR
 		Success: true,
 		Message: fmt.Sprintf("OpenAI TTS ready (model: %s, voice: %s)", ttsModel, voice),
 	}
-}
-
-// resolvePiperBinary finds the piper binary path.
-func resolvePiperBinary() string {
-	// Check relative to executable first
-	if exePath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exePath), piperCmd)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	// Check $PATH
-	if p, err := exec.LookPath(strPiper); err == nil {
-		return p
-	}
-	return ""
-}
-
-const piperCmd = ".venv/bin/piper"
-
-// resolveKokoroPython finds the Python interpreter for Kokoro.
-func resolveKokoroPython() string {
-	// Check relative to executable first
-	if exePath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exePath), ".venv/bin/python3")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	// Check $PATH
-	if p, err := exec.LookPath("python3"); err == nil {
-		return p
-	}
-	return ""
 }
 
 // testMCP probes one MCP server: it performs the real MCP handshake and lists

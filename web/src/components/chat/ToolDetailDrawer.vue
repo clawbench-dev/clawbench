@@ -1537,6 +1537,63 @@ onUpdated(restoreAskStates)
   word-break: break-word;
 }
 
+/* ViewImage — the picture the model looked at, plus the question about it.
+   The preview is a plain <img> (no lightbox marker): a click opens the file
+   viewer, which is where zooming lives. */
+.tool-detail-body .image-view-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.tool-detail-body .image-view-preview {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+  background: var(--bg-tertiary);
+}
+
+.tool-detail-body .image-view-img {
+  display: block;
+  max-width: 100%;
+  /* Half the sheet, so the query below stays reachable without scrolling on a
+     phone while a tall screenshot still reads as a screenshot. */
+  max-height: calc(360 * var(--dp));
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+.tool-detail-body .image-view-query {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tool-detail-body .image-view-label {
+  align-self: flex-start;
+  font-size: var(--font-size-2xs);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: rgba(139, 92, 246, 0.12);
+  color: #7c3aed;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+:root[data-theme-base="dark"] .tool-detail-body .image-view-label {
+  background: rgba(167, 139, 250, 0.15);
+  color: #a78bfa;
+}
+
+.tool-detail-body .image-view-query-text {
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
 /* Image gen */
 .tool-detail-body .image-gen-view {
   display: flex;

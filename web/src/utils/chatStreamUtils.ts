@@ -1360,8 +1360,21 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   const liveThinkIDs = new Set(
     liveBlocks.filter((b) => b.type === 'thinking' && b.think_id).map((b) => b.think_id as string),
   )
+  // Same rule for tool_use: a DB block whose id the live placeholder already
+  // holds is the SAME call seen from two sides, so prepending it renders the
+  // card twice. Observed: switch back into a running session during a pure-tool
+  // stretch (no text on either side) — the re-subscribed stream delivered the
+  // newest tool (an Agent call) while the DB flush already carried it, and the
+  // turn's earlier tools made dbLiveMissingTool true. Case 2 then prepended the
+  // whole DB prefix, so the Agent card appeared twice in a row at the seam.
+  // mergeOrderedBlocks (cases 0/1) has always filtered on liveToolIds; this
+  // path did not.
+  const liveToolIDs = new Set(
+    liveBlocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id as string),
+  )
   const copy = dbBlocks
     .filter((b) => !(b.type === 'thinking' && b.think_id && liveThinkIDs.has(b.think_id as string)))
+    .filter((b) => !(b.type === 'tool_use' && b.id && liveToolIDs.has(b.id as string)))
     .map((b) => ({ ...b }))
   if (overlap > 0) {
     let remaining = overlap
@@ -1651,6 +1664,20 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       )
       if (remote) {
         used.add(remote)
+        // A user message's attachments are immutable after insert, so the DB row
+        // is authoritative — and for a bubble that arrived WITHOUT any (the
+        // subscribe-time recovery user_message used to omit `files`, which is
+        // how a queued image message ended up as text only) this is the only
+        // chance to repair it: this branch keeps the live object instead of the
+        // DB row, so a files-less bubble would otherwise stay files-less until a
+        // full reload.
+        //
+        // Fill-only, never overwrite: this snapshot may predate the row's commit
+        // (a loadHistory racing the send), in which case the live bubble is
+        // newer than `db` and its attachments must win.
+        if ((!remote.files || remote.files.length === 0) && db.files && db.files.length > 0) {
+          remote.files = db.files
+        }
         delete (remote as Record<string, unknown>)['_remote']
         delete (remote as Record<string, unknown>)['_remoteQueueId']
         merged.push(remote)

@@ -200,6 +200,22 @@ describe('SharedFilesDrawer', () => {
     expect(wrapper.emitted('selectFile')).toBeUndefined()
   })
 
+  // A folder has no in-app file preview: clicking its row must open the share
+  // page instead of asking the viewer to open a directory.
+  it('opens the share page for a folder row instead of emitting selectFile', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({
+      shares: [{ token: 'tokdir', name: 'docs', path: 'docs', createdAt: 'x', exists: true, isDir: true }],
+    }))
+    const wrapper = mountDrawer()
+    ;(wrapper.vm as any).open()
+    await flushPromises()
+    await nextTick()
+
+    await wrapper.find('.shared-file-row').trigger('click')
+    expect(wrapper.emitted('selectFile')).toBeUndefined()
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith('https://host.example/share/tokdir')
+  })
+
   it('provides a new-tab share link for existing files only', async () => {
     fetchMock.mockResolvedValue(jsonResponse({
       shares: [

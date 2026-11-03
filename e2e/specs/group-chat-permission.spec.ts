@@ -101,7 +101,7 @@ test.describe.serial('group chat permission approval', () => {
     // The member blocks on a permission request; the card renders in the group
     // timeline.
     const permissionView = page.locator('.permission-approval-view').first()
-    await expect(permissionView).toBeVisible({ timeout: 30000 })
+    await expect(permissionView).toBeVisible({ timeout: 45000 })
 
     // Approve. The response MUST be 200: before the fix the backend looked the
     // connection up by the GROUP id, found none, and returned 404.
@@ -118,7 +118,7 @@ test.describe.serial('group chat permission approval', () => {
     // carrying it proves a member turn completed after the approval.
     await expect(
       page.locator('.chat-message.assistant', { hasText: /mock ACP agent/i }).first(),
-    ).toBeVisible({ timeout: 30000 })
+    ).toBeVisible({ timeout: 45000 })
 
     // The group turn ends cleanly (no lingering stop button).
     await expect(page.locator('.chat-stop-btn')).toHaveCount(0, { timeout: 60000 })

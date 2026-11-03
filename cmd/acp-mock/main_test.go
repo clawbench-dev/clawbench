@@ -9,13 +9,24 @@ import (
 // carries ClawBench's host instruction it must emit a routing tag naming a real
 // member, so the group E2E can exercise the multi-agent loop.
 func TestGroupRoutingReply(t *testing.T) {
+	// The routing budget is per session, and these cases reuse one sid: reset it
+	// so a case that routes several times does not trip the discussion budget
+	// (the budget itself is covered by TestGroupRoutingReply_RoutingBudget).
+	resetRelayTurns := func() {
+		relayTurnsMu.Lock()
+		relayTurns = map[string]int{}
+		relayTurnsMu.Unlock()
+	}
+
 	t.Run("non_host_prompt_returns_empty", func(t *testing.T) {
+		resetRelayTurns()
 		if got := groupRoutingReply("s", "just a normal user message"); got != "" {
 			t.Fatalf("non-host prompt must not route, got %q", got)
 		}
 	})
 
 	t.Run("host_prompt_names_first_member", func(t *testing.T) {
+		resetRelayTurns()
 		prompt := "some context\n[群聊主持人] ...\n可选的成员名：Alice、Bob。\n"
 		got := groupRoutingReply("s", prompt)
 		if !strings.Contains(got, "<clawbench-mention targets=\"Alice\">") {
@@ -24,13 +35,38 @@ func TestGroupRoutingReply(t *testing.T) {
 	})
 
 	t.Run("comma_separated_list", func(t *testing.T) {
+		resetRelayTurns()
 		got := groupRoutingReply("s", "可选的成员名：A,B,C。\n")
 		if !strings.Contains(got, "<clawbench-mention targets=\"A\">") {
 			t.Fatalf("expected first comma-separated name, got %q", got)
 		}
 	})
 
+	// The roster renders "Name（specialty）". A specialty may contain a comma,
+	// and the parenthetical is not part of the name — taking the text up to the
+	// first comma yielded "ACP Mock Agent B（E2E Testing (ACP", a target no
+	// member answers to. The orchestrator then aborted the group turn after two
+	// consecutive unroutable host turns (see group-speaker-switch).
+	t.Run("specialty_with_comma_does_not_truncate_the_name", func(t *testing.T) {
+		resetRelayTurns()
+		prompt := "可选的成员名：ACP Mock Agent B（E2E Testing (ACP, member)）、User。\n"
+		got := groupRoutingReply("s", prompt)
+		if !strings.Contains(got, "<clawbench-mention targets=\"ACP Mock Agent B\">") {
+			t.Fatalf("expected the bare member name, got %q", got)
+		}
+	})
+
+	t.Run("specialty_without_comma_is_stripped_too", func(t *testing.T) {
+		resetRelayTurns()
+		prompt := "可选的成员名：Alice（代码）、Bob。\n"
+		got := groupRoutingReply("s", prompt)
+		if !strings.Contains(got, "<clawbench-mention targets=\"Alice\">") {
+			t.Fatalf("expected the bare member name, got %q", got)
+		}
+	})
+
 	t.Run("empty_list_ends_discussion", func(t *testing.T) {
+		resetRelayTurns()
 		got := groupRoutingReply("s", "可选的成员名：（暂无其他成员）\n")
 		if !strings.Contains(got, "<clawbench-group-end/>") {
 			t.Fatalf("empty member list must end the discussion, got %q", got)
@@ -130,5 +166,76 @@ func TestGroupRoutingReply_Cruise(t *testing.T) {
 	second := groupRoutingReply("cs", prompt)
 	if !strings.Contains(second, "<clawbench-group-end/>") {
 		t.Fatalf("second cruise host turn must emit the end tag, got %q", second)
+	}
+}
+
+// TestSlowReplyDelayMs: the per-turn reply-delay marker is opt-in and must
+// ignore malformed forms rather than silently producing a 0ms delay.
+func TestSlowReplyDelayMs(t *testing.T) {
+	cases := []struct {
+		name   string
+		prompt string
+		wantMs int
+		wantOK bool
+	}{
+		{"absent", "just a normal user message", 0, false},
+		{"valid", "run [mock:slow-reply:12000] please", 12000, true},
+		{"not_an_int", "[mock:slow-reply:abc]", 0, false},
+		{"unterminated", "[mock:slow-reply:12000", 0, false},
+		{"zero", "[mock:slow-reply:0]", 0, false},
+		{"negative", "[mock:slow-reply:-5]", 0, false},
+		{"other_marker_only", "[mock:omit-perm-rawinput]", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ms, ok := slowReplyDelayMs(tc.prompt)
+			if ms != tc.wantMs || ok != tc.wantOK {
+				t.Fatalf("slowReplyDelayMs(%q) = (%d, %v), want (%d, %v)", tc.prompt, ms, ok, tc.wantMs, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestEscapeMarkdownImageEmbeds: the echoed prompt must not create image
+// requests in the UI (the injected system prompt carries literal `![...](...)`
+// examples). Escaping only the image marker leaves ordinary links intact.
+func TestEscapeMarkdownImageEmbeds(t *testing.T) {
+	in := "image: ![desc](.clawbench/generated/img_chart.png) and [label](a.mp3)"
+	got := escapeMarkdownImageEmbeds(in)
+	if strings.Contains(got, "![") {
+		t.Fatalf("image embed must be escaped, got %q", got)
+	}
+	if !strings.Contains(got, `!\[desc](.clawbench/generated/img_chart.png)`) {
+		t.Fatalf("escaped form must keep the text readable, got %q", got)
+	}
+	if !strings.Contains(got, "[label](a.mp3)") {
+		t.Fatalf("plain links must be left alone, got %q", got)
+	}
+}
+
+// TestGroupRoutingReply_RoutingBudget pins the non-cruise terminator: a plain
+// discussion must END on its own after ACP_MOCK_GROUP_ROUTE_TURNS routing turns.
+// Without it the host routes forever (the speech cap is a per-turn budget and
+// every mention drains as its own turn), and any spec that leaves a discussion
+// running poisons every later spec that sends into the auto-selected session.
+func TestGroupRoutingReply_RoutingBudget(t *testing.T) {
+	prompt := "some context\n[群聊主持人] ...\n可选的成员名：Alice、Bob。\n"
+
+	relayTurnsMu.Lock()
+	relayTurns = map[string]int{}
+	relayTurnsMu.Unlock()
+
+	for turn := 1; turn <= 2; turn++ {
+		if got := groupRoutingReply("budget-sid", prompt); !strings.Contains(got, "<clawbench-mention") {
+			t.Fatalf("routing turn %d must mention a member, got %q", turn, got)
+		}
+	}
+	if got := groupRoutingReply("budget-sid", prompt); !strings.Contains(got, "<clawbench-group-end/>") {
+		t.Fatalf("routing turn 3 must end the discussion, got %q", got)
+	}
+
+	// A different session (i.e. a new discussion) starts with a fresh budget.
+	if got := groupRoutingReply("other-sid", prompt); !strings.Contains(got, "<clawbench-mention") {
+		t.Fatalf("a new session must get a fresh routing budget, got %q", got)
 	}
 }

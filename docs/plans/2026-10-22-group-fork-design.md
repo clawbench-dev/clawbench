@@ -138,7 +138,7 @@ PatchContextStateMerge(targetSessionID, map[string]string{
   这类不是对话内容）；
 - 用 `ListGroupMembers(groupID)` 建 `成员行 id → 显示名` 映射（含已离场成员，其发言仍在
   时间线上）；解析不到时回退为「成员」；
-- 用户消息渲染为 `User: ...`（复用 `groupUserTarget()` 的昵称）；
+- 用户消息渲染为 `User: ...`（复用 `groupUserTarget()` 的称谓）；
 - 成员发言的 `<clawbench-mention>` / `<clawbench-group-end/>` / 目标满足标签全部转可读
   文本或剥离（复用 `renderMentionsReadable` + `StripProtocolTags`）；
 - 跳过只有 ask-question 卡片、没有正文的行时保留问题文本（复用 `askQuestionTexts`）；

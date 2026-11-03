@@ -60,7 +60,7 @@
         </VueDraggable>
       </div>
       <div v-else class="qs-empty">
-        <SendIcon :size="32" class="qs-empty-icon" />
+        <SendIcon class="qs-empty-icon empty-state__icon" />
         <span>{{ t('chat.quickSend.emptyHint') }}</span>
       </div>
     </div>
@@ -354,10 +354,6 @@ async function onDragEnd() {
   padding: var(--space-8);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
-}
-
-.qs-empty-icon {
-  opacity: var(--opacity-disabled);
 }
 
 /* PopupMenu teleports to body — these styles must be unscoped */

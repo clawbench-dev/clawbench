@@ -25,6 +25,52 @@ export type AddForwardResult =
 
 /** Full bridge contract shared by Android and Electron. */
 export interface ClawBenchNative {
+  /**
+   * Injects one pointer/key event into the local desktop (remote control).
+   *
+   * Desktop only, and only when the input-injection module is installed: the
+   * main process answers `false` otherwise, which the UI reports instead of
+   * pretending the click landed.
+   */
+  remoteControl?(ev: {
+    kind: 'move' | 'down' | 'up' | 'wheel' | 'key' | 'text'
+    x?: number
+    y?: number
+    button?: number
+    key?: string
+    delta?: number
+    text?: string
+    modifiers?: string[]
+  }): Promise<{ ok: boolean; supported: boolean } | boolean> | void
+  /** Opens a share link in a dedicated client window (desktop only). */
+  openShareLink?(url: string): Promise<boolean> | boolean
+  /** Whether this client can inject input at all. */
+  remoteControlSupported?(): Promise<boolean> | boolean
+  /**
+   * Arms the injector for one viewer. The main process refuses events until a
+   * grant is active, so the renderer's check is not the only boundary.
+   */
+  remoteControlGrant?(viewerId: string): Promise<void> | void
+  /** Disarms it. Called on revoke and whenever the share ends. */
+  remoteControlRevoke?(): Promise<void> | void
+  /**
+   * Screen capture on Android (MediaProjection).
+   *
+   * The WebView has no `getDisplayMedia`, so the host owns the projection and
+   * exposes it as a pull-based stream: `startScreenCapture` opens the consent
+   * chain, the page polls `getScreenCaptureState` until it turns `running`, and
+   * afterwards pulls one JPEG frame and one PCM chunk per native tick. All of
+   * these are absent on Electron, which uses the capture IPC instead.
+   */
+  isScreenCaptureSupported?(): Promise<boolean> | boolean
+  startScreenCapture?(optionsJson: string): Promise<string> | string
+  stopScreenCapture?(): Promise<void> | void
+  /** JSON: `{ state, error, width, height, systemAudio }`. */
+  getScreenCaptureState?(): Promise<string> | string
+  /** Newest captured frame as base64 JPEG, or "" when none is pending. */
+  takeScreenFrame?(): Promise<string> | string
+  /** Queued 48 kHz stereo 16-bit PCM as base64, or "" when empty. */
+  takeSystemAudio?(): Promise<string> | string
   // Sync (preload / JS-interface local values)
   isNativeApp(): boolean
   /**
@@ -143,9 +189,30 @@ export interface ClawBenchNative {
    * minimized window throttles the encoder and the stream stalls.
    */
   setPublishingActive?(active: boolean): Promise<void>
+  /**
+   * Desktop only: a transparent, always-on-top window over the shared display,
+   * so annotation is drawn on the real screen instead of a preview.
+   *
+   * `inkViaControl` says whether the audience gets strokes as control frames.
+   * It is false on Linux, where the overlay is part of the captured picture —
+   * broadcasting there would draw every stroke twice.
+   */
+  openAnnotateOverlay?(): Promise<{ opened: boolean; inkViaControl: boolean }>
+  closeAnnotateOverlay?(): Promise<void> | void
+  /** Stroke/laser frames from the overlay, already JSON-encoded. */
+  onAnnotateInk?(cb: (msg: string) => void): () => void
+  /** The overlay window went away (its own close button or Esc). */
+  onAnnotateClosed?(cb: () => void): () => void
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>
+  /**
+   * Android only, diagnostic: opens an AudioRecord directly and reports the
+   * outcome ("ok recording=true", "init_failed state=-1", "SecurityException: …").
+   * Used to tell "the OS refuses this app the microphone" apart from "WebView's
+   * own audio stack failed" when getUserMedia throws NotReadableError.
+   */
+  probeMicrophone?(): Promise<string>
   getServerList(): Promise<string>
   getSavedServerConfig(): Promise<string>
   getServerUrl(): Promise<string>
@@ -189,6 +256,16 @@ export interface ClawBenchNative {
   /** Write the Android local h2 tunnel toggle (SharedPreferences). */
   setTunnelTransportH2Enabled?(enabled: boolean): Promise<void> | void
   getPendingNavigation(): Promise<string>
+  /**
+   * Forget every self-signed certificate the desktop shell remembered for a
+   * server, so the next connection asks again. Resolves with how many entries
+   * were dropped.
+   *
+   * Desktop-only: Android never persists its certificate answer (it re-asks on
+   * every connection), so its bridge has no counterpart and the settings row is
+   * hidden there.
+   */
+  forgetTrustedCerts?(): Promise<number>
 
   // Async writes / actions
   saveServer(url: string, password: string): Promise<void>
@@ -354,6 +431,13 @@ export interface NotificationNav {
    * branches both miss and the click is silently dropped.
    */
   usageMeter?: boolean
+  /**
+   * Set for meeting notifications (remote-control request, someone joining, a
+   * member sharing, the minutes finishing). A meeting has no session or task —
+   * its share token IS its identity — so the native shell needs this
+   * discriminator to route the click to the meeting tab.
+   */
+  meetingToken?: string
   /**
    * The forge item to open, so the click deep-links to the item rather than
    * only raising the tab. Carries the opaque read key because a pipeline's

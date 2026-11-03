@@ -1029,24 +1029,64 @@ describe('ChatPanelContent — queued message edit', () => {
   }
 
   it('saves through editQueuedMessage instead of recalling and resending', async () => {
-    const region = await sourceRegion('async function handleEditPending(queueId)', '/** Merge every queued message')
+    const region = await sourceRegion('function handleEditPending(queueId)', '/** Merge every queued message')
     expect(region).toMatch(/manager\.editQueuedMessage\(/)
     // Recall-and-resend is the rejected design: it would re-queue the message.
     expect(region).not.toMatch(/recallQueuedMessage|prefillInput|sendMessage\(/)
   })
 
-  it('primes the dialog with the current text and allows newlines', async () => {
-    const region = await sourceRegion('async function handleEditPending(queueId)', '/** Merge every queued message')
+  it('opens the sheet on the entry instead of prompting for text alone', async () => {
+    // The edit must carry ATTACHMENTS too, so a text-only prompt cannot express
+    // it: the sheet is seeded from the entry and owns the draft.
+    const region = await sourceRegion('function handleEditPending(queueId)', '/** Merge every queued message')
     expect(region).toMatch(/getQueue\(sessionId\)/)
-    expect(region).toMatch(/value:\s*entry\.text/)
-    // Without this the prompt's Enter-to-submit made a multi-line edit impossible.
-    expect(region).toMatch(/enterInsertsNewline:\s*true/)
+    // The session is captured WITH the entry: the save is addressed by it.
+    expect(region).toMatch(/editEntry\.value = \{ sessionId, entry \}/)
+
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source, 'the sheet must receive the entry being edited').toMatch(/:entry="editEntry \? editEntry\.entry : null"/)
+    expect(source, 'and be closed through the same state').toMatch(/:open="editEntry !== null"/)
   })
 
-  it('skips the request when the text is unchanged or blanked', async () => {
-    const region = await sourceRegion('async function handleEditPending(queueId)', '/** Merge every queued message')
-    expect(region).toMatch(/trimmed === entry\.text\.trim\(\)/)
-    expect(region).toMatch(/if \(!trimmed/)
+  it('saves into the session the draft was opened from', async () => {
+    // The queueId only exists in the session the entry was QUEUED IN. Re-reading
+    // the active session here is the bug: a programmatic switch (deep link,
+    // notification) retargets the PATCH, the server finds no such row and 409s,
+    // and the user's edit is silently dropped with a wrong "already sent" toast.
+    const region = await sourceRegion('async function handleEditSave({ text, files })', '/** Merge every queued message')
+    expect(region).not.toMatch(/identity\.currentSessionId/)
+    expect(region).toMatch(/manager\.editQueuedMessage\([^)]*,\s*sessionId\)/)
+  })
+
+  it('drops the draft when the active session changes', async () => {
+    // Belt to the braces above: a draft that is bound to another session's
+    // queue must not stay open over this one.
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const at = source.indexOf('setActiveQueueSession(sid')
+    expect(at, 'the queue-following watcher must exist').toBeGreaterThan(-1)
+    const watcher = source.slice(
+      source.lastIndexOf('watch(', at),
+      source.indexOf('const stream = useChatStream', at),
+    )
+    expect(watcher, 'a draft must not survive a session switch').toMatch(/editEntry\.value = null/)
+  })
+
+  it('skips the request when neither the text nor the attachments changed', async () => {
+    const region = await sourceRegion('function handleEditPending(queueId)', '/** Merge every queued message')
+    expect(region).toMatch(/textChanged = text !== entry\.text\.trim\(\)/)
+    // Identity, not structure: the same notion the send path dedupes by.
+    expect(region).toMatch(/fileEntryKey\(f\) !== fileEntryKey\(currentFiles\[i\]\)/)
+    expect(region).toMatch(/if \(!textChanged && !filesChanged\)/)
+  })
+
+  it('sends attachments only when they actually changed', async () => {
+    // An absent `files` key means "keep the stored attachments" server-side, so
+    // an unchanged list must not be sent: re-validating paths could fail a
+    // text-only edit if a file was deleted from disk meanwhile.
+    const region = await sourceRegion('function handleEditPending(queueId)', '/** Merge every queued message')
+    expect(region).toMatch(/filesChanged \? files : undefined/)
   })
 
   it('keeps a dedicated editBusy so other rows stay usable', async () => {

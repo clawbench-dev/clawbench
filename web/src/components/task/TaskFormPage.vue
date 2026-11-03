@@ -1206,13 +1206,17 @@ onMounted(() => {
 /* Fixed bottom bar */
 .form-footer {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
+  justify-content: safe flex-end;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Animations */

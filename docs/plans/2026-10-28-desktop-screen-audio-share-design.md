@@ -270,6 +270,10 @@ await tx.sender.replaceTrack(micTrack)   // 说
 await tx.sender.replaceTrack(null)       // 停
 ```
 
+**发布端（应答方）反过来不能预留 m-line。** 在 `setRemoteDescription(offer)` 之前用 `addTransceiver()` 建的 transceiver 永远 `mid === null`，浏览器会为 offer 里的每条 m-line **另建**一个 `recvonly` 的，于是 answer 全是 `recvonly`／`inactive`：观众端收得到 answer、ICE 也连得上，但永远等不到媒体，界面停在「协商中」。发布端必须在 `setRemoteDescription` 之后复用 `pc.getTransceivers()`，用 `replaceTrack` + `sender.setStreams()` 挂上本地轨道、把 direction 改成 `sendrecv`／`sendonly`，再 `createAnswer`。
+
+观众端 trickle 的 candidate 往往先于 offer 被处理，此时 `addIceCandidate` 会抛（还没有 remote description）。发布端必须先把它们排队、`setRemoteDescription` 之后再补加，否则 ICE 拿不到对端地址。
+
 
 **服务端对信令只做字段级转发**，不解析 SDP。这既是省事，也是安全边界：SDP 里塞不进可执行内容。
 
@@ -416,6 +420,14 @@ publisher-gone → ended
 1. **自动播放策略**：`<video>` 带音轨时，无用户手势的 `autoplay` 会被浏览器拦截。处理：先 `muted` 自动播放画面，页面顶部显示一个「点击开启声音」按钮（用户点一下 `video.muted = false`）。**不要**直接报错让用户重试。
 2. **发布端断开**：收到 `publisher-gone` 或 `pc.connectionState === 'failed'` 时，显示「共享已结束」并提供「刷新重试」（发布端可能重开同一 token？不会——每次 `POST` 都是新 token，所以只能提示重新索要链接）。
 3. **移动端横竖屏**：`<video>` 用 `object-fit: contain` + 全屏按钮。
+
+**Linux / X11 的三条边界**（Wayland 之外的另一种 Linux 会话）：
+
+1. `getSources(['screen','window'])` 在**没有窗口管理器**的会话里会整体返回空（窗口枚举失败会拖垮整个查询）。`listCaptureSources` 因此加了兜底：合并查询为空时改用仅屏幕查询，否则选择器会显示「没有可共享的源」而屏幕其实完全可采。
+2. 透明覆盖层需要**合成器**（GNOME/KDE 默认有）。裸 X11 + 无 compositor（例如 i3 不装 picom）时透明窗会渲染成黑块，把整块屏盖住且会被采集——Electron 侧没有查询合成状态的 API，只能在文档里说明。
+3. 覆盖层在无 WM 的环境下会被 Electron 调成「屏幕尺寸 −1px」（`setBounds` / `setContentSize` 都改不回来），最后一行/列画不到；有 WM 时通常就是屏幕尺寸。
+
+**控制通道（`cb-live` DataChannel）必须由观众创建。** answer 不能新增 offer 里没有的 m-line，所以发布端 `createDataChannel()` 得到的通道永远停在 `connecting`，聊天与「请求控制」两边都发不出去（表现就是按钮像坏了）。观众在 `createOffer` 之前建通道，发布端在 `ondatachannel` 里接管。
 
 ### 8.3 多人语音（观众 ↔ 观众，经发布端混音）
 

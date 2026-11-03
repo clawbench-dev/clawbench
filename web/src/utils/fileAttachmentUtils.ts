@@ -32,7 +32,7 @@ export interface FileEntry {
    * quote correctly after a reload — inference alone cannot distinguish a
    * terminal quote from a chat quote (both carry no url and no path).
    */
-  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting'
   /**
    * Quote-only source locators. Each is a MACHINE-readable key that both the
    * jump handler and the AI prompt use to find the origin; the human-readable
@@ -52,6 +52,8 @@ export interface FileEntry {
   messageId?: number
   /** Task execution id, when the quote came from one run's detail view. */
   executionId?: string
+  /** Meeting token, when the quote came from a meeting record. */
+  meetingToken?: string
 }
 
 /** Whether an entry is a quoted snippet rather than a file or URL. */
@@ -114,6 +116,7 @@ export function normalizeFileEntry(f: string | FileEntry): FileEntry {
     ...(f.sessionId ? { sessionId: f.sessionId } : {}),
     ...(f.messageId ? { messageId: f.messageId } : {}),
     ...(f.executionId ? { executionId: f.executionId } : {}),
+    ...(f.meetingToken ? { meetingToken: f.meetingToken } : {}),
   }
 }
 
@@ -134,7 +137,16 @@ export function isImageFile(path: string | null | undefined): boolean {
 
 /** Composite identity of an entry: a path can carry multiple independent
  *  line-range references, so dedupe/merge by (path, startLine ?? 0, endLine ?? 0). */
-function entryKey(f: FileEntry): string {
+/**
+ * Stable identity of an attachment entry, as used for dedupe and for deciding
+ * whether two attachment lists describe the same thing.
+ *
+ * Exported because the queue editor has to answer "did the user change the
+ * attachments?" and must use exactly the same notion of identity as the send
+ * path — two different notions would report a change for a list the dedupe
+ * considers identical (and vice versa).
+ */
+export function fileEntryKey(f: FileEntry): string {
   // URL entries dedupe by their address; local entries by path + line range.
   if (isUrlEntry(f)) return `url|${f.url}`
   // Quotes dedupe by their stable id. Two quotes of the SAME range with
@@ -152,7 +164,7 @@ export function dedupeFiles(files: FileEntry[]): FileEntry[] {
   const result: FileEntry[] = []
   const seen = new Set<string>()
   for (const f of files) {
-    const key = entryKey(normalizeFileEntry(f))
+    const key = fileEntryKey(normalizeFileEntry(f))
     if (seen.has(key)) continue
     seen.add(key)
     result.push(normalizeFileEntry(f))

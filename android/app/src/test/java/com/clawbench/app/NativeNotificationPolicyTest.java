@@ -242,4 +242,29 @@ public class NativeNotificationPolicyTest {
         assertTrue(NativeNotificationPolicy.shouldNotifyLive(
                 "usage_meter_update", "over", false, false));
     }
+
+    /**
+     * A meeting event (remote-control request, someone joining, a member
+     * sharing, the minutes finishing) notifies but must NEVER advance the
+     * cursor: it is not persisted to pending_events (a meeting event is only
+     * meaningful while the room is alive), and advancing to an id the server
+     * cannot resolve makes GetPendingEvents return an EMPTY list forever.
+     */
+    @Test
+    public void meetingEventNotifiesWithoutAdvancingCursor() {
+        for (String type : new String[]{"control_request", "viewer_joined", "screen_share",
+                "minutes_ready", "minutes_failed"}) {
+            assertTrue("live_event must notify: " + type,
+                    NativeNotificationPolicy.isNotifiableEvent("live_event", type));
+            assertFalse("live_event is never persisted, so it must not move the cursor: " + type,
+                    NativeNotificationPolicy.advancesCursor("live_event", type));
+        }
+
+        // Replay suppression still applies (the 10s reconnect buffer can carry
+        // one even though the durable log is elsewhere).
+        assertFalse(NativeNotificationPolicy.shouldNotifyLive(
+                "live_event", "control_request", true, false));
+        assertTrue(NativeNotificationPolicy.shouldNotifyLive(
+                "live_event", "control_request", false, false));
+    }
 }

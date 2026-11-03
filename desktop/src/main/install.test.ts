@@ -38,14 +38,20 @@ vi.mock('node:child_process', () => ({
 // `download` is the control: return a Buffer to serve it as a 200 body, or
 // throw to simulate an unreachable host (which downloadFirstAvailable must
 // report for every candidate).
-const { download, downloadSpy } = vi.hoisted(() => ({
+const { download, downloadSpy, downloadOptsSpy, redirect } = vi.hoisted(() => ({
   downloadSpy: vi.fn(),
+  downloadOptsSpy: vi.fn(),
+  // One-shot 302 target, so a redirect chain can be exercised (and cannot loop).
+  redirect: { to: '' },
   download: { impl: (() => Buffer.alloc(0)) as (url: string) => Buffer },
 }))
 
 function makeGetMock() {
-  const get = (url: string, cb: (res: unknown) => void) => {
+  const get = (url: string, optsOrCb: unknown, maybeCb?: unknown) => {
+    // `httpGetBuffer` may pass node's optional options argument.
+    const cb = (typeof optsOrCb === 'function' ? optsOrCb : maybeCb) as (res: unknown) => void
     downloadSpy(url)
+    downloadOptsSpy(url, typeof optsOrCb === 'function' ? undefined : optsOrCb)
     const handlers: Record<string, Array<(arg?: unknown) => void>> = {}
     const req = {
       on(ev: string, fn: (arg?: unknown) => void) {
@@ -62,9 +68,11 @@ function makeGetMock() {
       })
       return req
     }
+    const location = redirect.to
+    redirect.to = ''
     const res = {
-      statusCode: 200,
-      headers: {},
+      statusCode: location ? 302 : 200,
+      headers: location ? { location } : {},
       resume: () => {},
       on(ev: string, fn: (arg?: unknown) => void) {
         ;(handlers[ev] ||= []).push(fn)
@@ -94,7 +102,14 @@ import {
   pointerPath,
   versionDir,
   downloadFirstAvailable,
+  httpGetBuffer,
   downloadAndInstall,
+  localNpmRegistryBase,
+  npmTarballPath,
+  mirrorFallbackUrls,
+  isSecureDownloadUrl,
+  packumentUrl,
+  fetchNpmIntegrity,
   selectStartupVersion,
   handOffToPointedVersion,
   installPayload,
@@ -572,6 +587,241 @@ describe('downloadFirstAvailable', () => {
   })
 })
 
+describe('httpGetBuffer TLS options', () => {
+  afterEach(() => {
+    downloadOptsSpy.mockReset()
+    download.impl = () => Buffer.from('ok')
+  })
+
+  it('disables chain verification only for a pinned request', async () => {
+    // The server's own certificate may be self-signed: the window was told to
+    // trust it, but Node's TLS stack would still reject /api/desktop/latest,
+    // making the upgrade check read as "nothing to offer". The pin (checked in
+    // httpGet.test.ts) is what keeps that from accepting ANY certificate.
+    await httpGetBuffer('https://192.168.1.50:20000/api/desktop/latest', { pinnedFingerprint: 'sha256/AAAA' })
+    expect(downloadOptsSpy).toHaveBeenLastCalledWith(
+      'https://192.168.1.50:20000/api/desktop/latest',
+      { rejectUnauthorized: false },
+    )
+
+    await httpGetBuffer('https://github.com/x.zip')
+    expect(downloadOptsSpy).toHaveBeenLastCalledWith('https://github.com/x.zip', {})
+  })
+
+  it('keeps the pin across a redirect within the same origin', async () => {
+    // A self-signed server that redirects (http → https, or a host alias) must
+    // not lose the pin on the hop, or the follow-up request fails exactly
+    // where the first one succeeded.
+    redirect.to = 'https://192.168.1.50:20000/login'
+    download.impl = () => Buffer.from('ok')
+    await httpGetBuffer('https://192.168.1.50:20000/api/desktop/latest', { pinnedFingerprint: 'sha256/AAAA' })
+    expect(downloadOptsSpy).toHaveBeenLastCalledWith('https://192.168.1.50:20000/login', { rejectUnauthorized: false })
+  })
+})
+
+describe('download transport', () => {
+  beforeEach(() => downloadSpy.mockReset())
+
+  afterEach(() => {
+    downloadSpy.mockReset()
+    download.impl = () => Buffer.alloc(0)
+  })
+
+  it('refuses a plaintext candidate instead of installing its body', async () => {
+    // Everything installed here is executable content; a http mirror URL can be
+    // rewritten by anyone on the path and the archive carries no signature.
+    download.impl = () => makeZip([{ name: 'clawbench-desktop', content: 'BIN' }])
+    await expect(downloadFirstAvailable(['http://mirror.example/x.zip'], '')).rejects.toThrow(
+      /refused \(not https\)/,
+    )
+    // It never even reached the network.
+    expect(downloadSpy).not.toHaveBeenCalled()
+  })
+
+  it('still allows loopback, where the transport is this machine', async () => {
+    download.impl = () => makeZip([{ name: 'clawbench-desktop', content: 'BIN' }])
+    const buf = await downloadFirstAvailable(['http://127.0.0.1:4873/x.zip'], '')
+    expect(buf.length).toBeGreaterThan(0)
+  })
+
+  it('falls through a plaintext candidate to an https one', async () => {
+    download.impl = () => makeZip([{ name: 'clawbench-desktop', content: 'BIN' }])
+    const buf = await downloadFirstAvailable(['http://mirror.example/x.zip', 'https://github.com/x.zip'], '')
+    expect(buf.length).toBeGreaterThan(0)
+    expect(downloadSpy).toHaveBeenCalledTimes(1)
+    expect(downloadSpy).toHaveBeenCalledWith('https://github.com/x.zip')
+  })
+
+  it('classifies schemes by whether the transport is protected', () => {
+    expect(isSecureDownloadUrl('https://github.com/x.zip')).toBe(true)
+    expect(isSecureDownloadUrl('http://localhost:4873/x.zip')).toBe(true)
+    expect(isSecureDownloadUrl('http://[::1]:4873/x.zip')).toBe(true)
+    expect(isSecureDownloadUrl('http://mirror.example/x.zip')).toBe(false)
+    expect(isSecureDownloadUrl('file:///etc/passwd')).toBe(false)
+  })
+})
+
+describe('npm integrity lookup', () => {
+  const TARBALL = 'https://registry.npmjs.org/@xulongzhe/p/-/p-1.2.3.tgz'
+
+  it('derives the packument URL from a tarball URL', () => {
+    expect(packumentUrl(TARBALL)).toBe('https://registry.npmjs.org/@xulongzhe/p')
+    expect(packumentUrl('https://github.com/x/y.zip')).toBe('')
+  })
+
+  it('returns the published dist.integrity for the version', async () => {
+    const get = vi.fn(async () =>
+      Buffer.from(JSON.stringify({ versions: { '1.2.3': { dist: { integrity: 'sha512-abc' } } } })),
+    )
+    expect(await fetchNpmIntegrity([TARBALL], 'v1.2.3', get)).toBe('sha512-abc')
+    expect(get).toHaveBeenCalledWith('https://registry.npmjs.org/@xulongzhe/p')
+  })
+
+  it('returns empty rather than throwing when the registry cannot answer', async () => {
+    const get = vi.fn(async () => {
+      throw new Error('ECONNREFUSED')
+    })
+    expect(await fetchNpmIntegrity([TARBALL], '1.2.3', get)).toBe('')
+    // A URL that is not an npm tarball has no packument to ask about.
+    expect(await fetchNpmIntegrity(['https://github.com/x.zip'], '1.2.3', get)).toBe('')
+  })
+
+  it('gives up instead of blocking the upgrade on a hung registry', async () => {
+    // The lookup runs before the download: a registry that accepts the
+    // connection and never answers must not leave the dialog spinning forever.
+    //
+    // The late reply carries a VALID integrity on purpose. With an empty one,
+    // "returned '' because we timed out" and "returned '' because the document
+    // had no versions" would be indistinguishable — the test would pass with no
+    // timeout at all. Here the only way to get '' is to stop waiting.
+    const late = Buffer.from(JSON.stringify({ versions: { '1.2.3': { dist: { integrity: 'sha512-abc' } } } }))
+    const get = vi.fn(() => new Promise<Buffer>((resolve) => setTimeout(() => resolve(late), 60)))
+    expect(await fetchNpmIntegrity([TARBALL], '1.2.3', get, 20)).toBe('')
+    // And the same document, arriving in time, IS accepted — proving the ''
+    // above came from the deadline rather than from the payload.
+    const quick = vi.fn(async () => late)
+    expect(await fetchNpmIntegrity([TARBALL], '1.2.3', quick, 20)).toBe('sha512-abc')
+    // Let the abandoned request settle so the test leaves no pending promise.
+    await new Promise((r) => setTimeout(r, 80))
+  })
+
+  it('never asks for metadata over plaintext', async () => {
+    // The value decides whether the archive is accepted, so it is fetched under
+    // the same transport rule as the archive itself.
+    const get = vi.fn(async () => Buffer.from('{}'))
+    const plaintext = 'http://mirror.example/@xulongzhe/p/-/p-1.2.3.tgz'
+    expect(await fetchNpmIntegrity([plaintext], '1.2.3', get)).toBe('')
+    expect(get).not.toHaveBeenCalled()
+  })
+})
+
+describe('npm mirror fallback', () => {
+  const NPMJS = 'https://registry.npmjs.org/@xulongzhe/clawbench-desktop-linux-x64-payload'
+  const TARBALL = `${NPMJS}/-/clawbench-desktop-linux-x64-payload-1.2.3.tgz`
+  const MIRROR = 'https://registry.npmmirror.com'
+
+  afterEach(() => {
+    downloadSpy.mockReset()
+    download.impl = () => Buffer.alloc(0)
+  })
+
+  it('re-points the tarball path at the mirror, keeping scope and filename', () => {
+    expect(mirrorFallbackUrls([TARBALL], MIRROR)).toEqual([
+      `${MIRROR}/@xulongzhe/clawbench-desktop-linux-x64-payload/-/clawbench-desktop-linux-x64-payload-1.2.3.tgz`,
+    ])
+  })
+
+  it('does not duplicate a candidate the server already produced', () => {
+    // The common case: server and client are both in mainland China, so the
+    // server's own candidate IS the mirror. Retrying it would download the same
+    // dead tarball twice.
+    const already = `${MIRROR}/@xulongzhe/p/-/p-1.2.3.tgz`
+    expect(mirrorFallbackUrls([already], MIRROR)).toEqual([])
+  })
+
+  it('leaves release zips and their prefix mirrors alone', () => {
+    // Only npm tarballs carry the `/-/` segment; a GitHub zip must never be
+    // re-pointed at a registry host, which would 404 and waste a timeout.
+    const zip = 'https://gh-proxy.example/https://github.com/o/r/releases/download/v1/a.zip'
+    expect(npmTarballPath(zip)).toBe('')
+    expect(mirrorFallbackUrls([zip], MIRROR)).toEqual([])
+  })
+
+  it('leaves a tarball that did not come from a registry alone', () => {
+    // `.../releases/app-1.2.3.tgz` is a .tgz but has no `/-/` marker; retrying
+    // it under a registry prefix would point at a package that does not exist.
+    expect(npmTarballPath('https://example.com/releases/app-1.2.3.tgz')).toBe('')
+    expect(mirrorFallbackUrls(['https://example.com/releases/app-1.2.3.tgz'], MIRROR)).toEqual([])
+  })
+
+  it('retries through the mirror after the server candidate fails', async () => {
+    const body = gzipSync(Buffer.from('payload'))
+    download.impl = (url) => {
+      if (url === TARBALL) throw new Error('ETIMEDOUT')
+      if (url.startsWith(MIRROR)) return body
+      throw new Error(`unexpected url ${url}`)
+    }
+    const buf = await downloadFirstAvailable([TARBALL], MIRROR)
+    expect(buf.equals(body)).toBe(true)
+    expect(downloadSpy).toHaveBeenLastCalledWith(
+      `${MIRROR}/@xulongzhe/clawbench-desktop-linux-x64-payload/-/clawbench-desktop-linux-x64-payload-1.2.3.tgz`,
+    )
+  })
+
+  it('still reports the original failure when the mirror fails too', async () => {
+    download.impl = () => {
+      throw new Error('ECONNREFUSED')
+    }
+    await expect(downloadFirstAvailable([TARBALL], MIRROR)).rejects.toThrow(
+      /registry\.npmjs\.org[\s\S]*registry\.npmmirror\.com/,
+    )
+  })
+
+  it('does not retry at all when no registry is configured', async () => {
+    download.impl = () => {
+      throw new Error('ECONNREFUSED')
+    }
+    await expect(downloadFirstAvailable([TARBALL], '')).rejects.toThrow(/all download sources failed/)
+    expect(downloadSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('localNpmRegistryBase', () => {
+  it('prefers NPM_CONFIG_REGISTRY over the npmrc file', () => {
+    fs.writeFileSync(path.join(tmpRoot, '.npmrc'), 'registry=https://from-file.example/\n')
+    expect(
+      localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'https://from-env.example/npm/' }, tmpRoot),
+    ).toBe('https://from-env.example/npm')
+  })
+
+  it('falls back to the registry= line in ~/.npmrc', () => {
+    fs.writeFileSync(
+      path.join(tmpRoot, '.npmrc'),
+      '# comment\n; other\n@scope:registry=https://scoped.example/\nregistry=https://mirror.example/\n',
+    )
+    expect(localNpmRegistryBase({}, tmpRoot)).toBe('https://mirror.example')
+  })
+
+  it('rejects non-http values and missing files', () => {
+    // npm allows `registry=default`; that is not a URL and must not become one.
+    fs.writeFileSync(path.join(tmpRoot, '.npmrc'), 'registry=default\n')
+    expect(localNpmRegistryBase({}, tmpRoot)).toBe('')
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'not a url' }, tmpRoot)).toBe('')
+  })
+
+  it('refuses a plaintext registry unless it is this machine', () => {
+    // The payload archive (~3MB of resources/, i.e. the whole app) is fetched
+    // from here with no checksum of its own; `registry=http://…` is a real
+    // historical spelling, and anyone on the path could replace the body.
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'http://registry.npmmirror.com' }, tmpRoot)).toBe('')
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'http://192.168.1.7:4873' }, tmpRoot)).toBe('')
+    // A proxy on this machine is the user's own.
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'http://localhost:4873' }, tmpRoot)).toBe('http://localhost:4873')
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'http://127.0.0.1:4873/' }, tmpRoot)).toBe('http://127.0.0.1:4873')
+    expect(localNpmRegistryBase({ NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org' }, tmpRoot)).toBe('https://registry.npmjs.org')
+  })
+})
+
 describe('pointer file', () => {
   it('round-trips a version and leaves no temp file behind', () => {
     const spy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
@@ -847,6 +1097,26 @@ describe('installPayload', () => {
     expect(fs.readFileSync(path.join(dest, 'resources/login.html'), 'utf8')).toBe('NEW-LOGIN')
     // The manifest is metadata, not part of the install.
     expect(fs.existsSync(path.join(dest, PAYLOAD_MANIFEST))).toBe(false)
+  })
+
+  it('refuses a payload whose body does not match the registry checksum', async () => {
+    // The payload IS the app, so an archive substituted in transit is a
+    // substituted application. Nothing may be unpacked when the checksum fails.
+    const shell = makeShell('shell-integrity')
+    const body = payloadZip()
+    download.impl = () => body
+    const good = 'sha512-' + createHash('sha512').update(body).digest('base64')
+    const bad = 'sha512-' + createHash('sha512').update('something else').digest('base64')
+
+    await expect(installPayload(['https://m/p.zip'], '2.0.0', shell, '44.4.3', bad)).rejects.toThrow(
+      /integrity verification failed/,
+    )
+    expect(fs.existsSync(versionDir('2.0.0'))).toBe(false)
+
+    // The same archive with the matching checksum installs.
+    await expect(installPayload(['https://m/p.zip'], '2.0.0', shell, '44.4.3', good)).resolves.toBe(
+      versionDir('2.0.0'),
+    )
   })
 
   it('carries the shell fingerprint forward so the next payload can verify', async () => {

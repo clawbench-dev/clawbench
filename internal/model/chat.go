@@ -80,6 +80,12 @@ type FileEntry struct {
 	MessageID int64 `json:"messageId,omitempty"`
 	// ExecutionID is the task execution a run-detail quote came from.
 	ExecutionID string `json:"executionId,omitempty"`
+	// MeetingToken is the live-share room token a meeting quote (a quoted line
+	// of minutes or transcript) came from. It is the only route back to that
+	// meeting: the quoted text names the meeting, but a name is not
+	// addressable, so without the token the jump handler silently no-ops and
+	// the AI cannot tell which meeting the snippet came from.
+	MeetingToken string `json:"meetingToken,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.
@@ -362,6 +368,11 @@ type ChatSession struct {
 	// payload unchanged.
 	AgentName   string `json:"agentName,omitempty"`
 	AgentAvatar string `json:"agentAvatar,omitempty"`
+	// AgentTakeoverFrom is the display name of the agent this session was taken
+	// over FROM when that agent was deleted (empty = never taken over). The
+	// client renders it as a badge; the server ALSO branches on it when deciding
+	// whether the next turn may resume a native session (see BuildChatRequest).
+	AgentTakeoverFrom string `json:"agentTakeoverFrom,omitempty"`
 	// Tags is populated by the session list / overview endpoints (batch-loaded,
 	// not stored on the session row itself). Always omitted when empty so the
 	// payload for untagged sessions is unchanged.

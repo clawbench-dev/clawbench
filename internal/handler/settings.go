@@ -72,7 +72,8 @@ var hotReloadFields = map[string]bool{
 	"chat.auto_continue_max_retries":     true,
 	"chat.restart_resume_window_minutes": true,
 	"chat.auto_rename_enabled":           true,
-	"chat.user_nickname":                 true,
+	"user.nickname":                      true,
+	"user.profile":                       true,
 	"chat.group_max_speeches":            true,
 	"language":                           true,
 	"session.max_count":                  true,
@@ -93,38 +94,34 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// TTS engine + sub-configs — recreate provider
-	"tts.engine":                 true,
-	"tts.tts_model":              true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
-	"tts.format":                 true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.piper.model_path":       true,
-	"tts.piper.noise_scale":      true,
-	"tts.piper.length_scale":     true,
-	"tts.piper.sentence_silence": true,
-	"tts.kokoro.model_path":      true,
-	"tts.kokoro.voices_path":     true,
-	"tts.kokoro.lang":            true,
-	"tts.moss_nano.model_dir":    true,
-	"tts.moss_nano.backend":      true,
-	"tts.openai.base_url":        true,
-	"tts.openai.api_key":         true,
-	"tts.openai.model":           true,
-	"tts.openai.voice":           true,
-	"tts.openai.stream_mode":     true,
+	"tts.engine":             true,
+	"tts.tts_model":          true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":             true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.openai.base_url":    true,
+	"tts.openai.api_key":     true,
+	"tts.openai.model":       true,
+	"tts.openai.voice":       true,
+	"tts.openai.stream_mode": true,
 	// STT — speech-to-text config, hot-reloadable
-	"stt.base_url":     true,
-	"stt.api_key":      true,
-	"stt.model":        true,
-	"stt.language":     true,
-	"stt.streaming":    true,
-	"stt.chunk_ms":     true,
-	"stt.shortcut_key": true,
+	"stt.provider":          true,
+	"stt.base_url":          true,
+	"stt.api_key":           true,
+	"stt.model":             true,
+	"stt.resource_id":       true,
+	"stt.language":          true,
+	"stt.streaming":         true,
+	"stt.chunk_ms":          true,
+	"stt.shortcut_key":      true,
+	"stt.enable_itn":        true,
+	"stt.enable_punc":       true,
+	"stt.enable_ddc":        true,
+	"stt.output_zh_variant": true,
+	"stt.end_window_size":   true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
 	"summarize.tts_backend":     true,
 	"summarize.auto_junk_ratio": true,
 	"ai_summary.model":          true,
-	"ai_summary.format":         true,
-	"ai_summary.api.base_url":   true,
-	"ai_summary.api.key":        true,
+	"ai_summary.provider_id":    true,
 	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded.
 	// port_forward.transport is accepted but has no effect: it is pinned to
 	// "both" (see applyConfigPatch), so listing it here only avoids reporting a
@@ -278,6 +275,7 @@ type configResponse struct {
 	Version        string               `json:"version"`
 	HasPassword    bool                 `json:"has_password"` // true when a password is configured
 	DefaultAgent   string               `json:"default_agent"`
+	User           configUser           `json:"user"`
 	Chat           configChat           `json:"chat"`
 	Session        configSession        `json:"session"`
 	RecentProjects configRecentProjects `json:"recent_projects"`
@@ -400,18 +398,25 @@ type configUsageMeter struct {
 }
 
 type configChat struct {
-	InitialMessages          int    `json:"initial_messages"`
-	PageSize                 int    `json:"page_size"`
-	SystemPromptInterval     int    `json:"system_prompt_interval"`
-	RecommendEnabled         bool   `json:"recommend_enabled"`
-	RecommendContextMessages int    `json:"recommend_context_messages"`
-	ForkContextBudget        int    `json:"fork_context_budget"`
-	AutoContinueEnabled      bool   `json:"auto_continue_enabled"`
-	AutoContinueMaxRetries   int    `json:"auto_continue_max_retries"`
-	RestartResumeWindowMin   int    `json:"restart_resume_window_minutes"`
-	AutoRenameEnabled        bool   `json:"auto_rename_enabled"`
-	UserNickname             string `json:"user_nickname"`
-	GroupMaxSpeeches         int    `json:"group_max_speeches"`
+	InitialMessages          int  `json:"initial_messages"`
+	PageSize                 int  `json:"page_size"`
+	SystemPromptInterval     int  `json:"system_prompt_interval"`
+	RecommendEnabled         bool `json:"recommend_enabled"`
+	RecommendContextMessages int  `json:"recommend_context_messages"`
+	ForkContextBudget        int  `json:"fork_context_budget"`
+	AutoContinueEnabled      bool `json:"auto_continue_enabled"`
+	AutoContinueMaxRetries   int  `json:"auto_continue_max_retries"`
+	RestartResumeWindowMin   int  `json:"restart_resume_window_minutes"`
+	AutoRenameEnabled        bool `json:"auto_rename_enabled"`
+	GroupMaxSpeeches         int  `json:"group_max_speeches"`
+}
+
+// configUser is the human user's identity as sent to the client. It is a
+// top-level section (not under chat): the nickname is also the meeting display
+// name and the profile is injected into every agent prompt.
+type configUser struct {
+	Nickname string `json:"nickname"`
+	Profile  string `json:"profile"`
 }
 
 type configSession struct {
@@ -445,9 +450,6 @@ type configTTS struct {
 	Speed         float64          `json:"speed"`
 	Voice         string           `json:"voice"`
 	MaxCacheFiles int              `json:"max_cache_files"`
-	Piper         *configPiper     `json:"piper,omitempty"`
-	Kokoro        *configKokoro    `json:"kokoro,omitempty"`
-	MossNano      *configMossNano  `json:"moss_nano,omitempty"`
 	OpenAI        *configOpenAITTS `json:"openai,omitempty"`
 }
 
@@ -459,37 +461,21 @@ type configOpenAITTS struct {
 	StreamMode string `json:"stream_mode"`
 }
 
-type configPiper struct {
-	ModelPath       string  `json:"model_path"`
-	NoiseScale      float64 `json:"noise_scale"`
-	LengthScale     float64 `json:"length_scale"`
-	SentenceSilence float64 `json:"sentence_silence"`
-}
-
-type configKokoro struct {
-	ModelPath  string `json:"model_path"`
-	VoicesPath string `json:"voices_path"`
-	Lang       string `json:"lang"`
-}
-
-type configMossNano struct {
-	ModelDir string `json:"model_dir"`
-	Backend  string `json:"backend"`
-}
-
-type configAPI struct {
-	BaseURL string `json:"base_url"`
-	Key     string `json:"key"`
-}
-
 type configSTT struct {
-	BaseURL     string `json:"base_url"`
-	APIKey      string `json:"api_key"`
-	Model       string `json:"model"`
-	Language    string `json:"language"`
-	Streaming   bool   `json:"streaming"`
-	ChunkMs     int    `json:"chunk_ms"`
-	ShortcutKey string `json:"shortcut_key"`
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"base_url"`
+	APIKey          string `json:"api_key"`
+	Model           string `json:"model"`
+	ResourceID      string `json:"resource_id"`
+	Language        string `json:"language"`
+	Streaming       bool   `json:"streaming"`
+	ChunkMs         int    `json:"chunk_ms"`
+	ShortcutKey     string `json:"shortcut_key"`
+	EnableITN       bool   `json:"enable_itn"`
+	EnablePunc      bool   `json:"enable_punc"`
+	EnableDDC       bool   `json:"enable_ddc"`
+	OutputZHVariant string `json:"output_zh_variant"`
+	EndWindowSize   int    `json:"end_window_size"`
 }
 
 type configRAG struct {
@@ -517,9 +503,10 @@ type configSummarize struct {
 }
 
 type configAISummary struct {
-	Model  string     `json:"model"`
-	Format string     `json:"format"`
-	API    *configAPI `json:"api,omitempty"`
+	// ProviderID is the providers row that supplies the endpoint, key and wire
+	// format. nil = the shared summary model is unconfigured.
+	ProviderID *int64 `json:"provider_id,omitempty"`
+	Model      string `json:"model"`
 }
 
 type configDingTalk struct {
@@ -843,7 +830,8 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.auto_continue_max_retries":     true,
 	"chat.restart_resume_window_minutes": true,
 	"chat.auto_rename_enabled":           true,
-	"chat.user_nickname":                 true,
+	"user.nickname":                      true,
+	"user.profile":                       true,
 	"chat.group_max_speeches":            true,
 	"language":                           true,
 	"session.max_count":                  true,
@@ -864,27 +852,25 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.speed":                          true,
 	"tts.voice":                          true,
 	"tts.max_cache_files":                true,
-	"tts.piper.model_path":               true,
-	"tts.piper.noise_scale":              true,
-	"tts.piper.length_scale":             true,
-	"tts.piper.sentence_silence":         true,
-	"tts.kokoro.model_path":              true,
-	"tts.kokoro.voices_path":             true,
-	"tts.kokoro.lang":                    true,
-	"tts.moss_nano.model_dir":            true,
-	"tts.moss_nano.backend":              true,
 	"tts.openai.base_url":                true,
 	"tts.openai.api_key":                 true,
 	"tts.openai.model":                   true,
 	"tts.openai.voice":                   true,
 	"tts.openai.stream_mode":             true,
+	"stt.provider":                       true,
 	"stt.base_url":                       true,
 	"stt.api_key":                        true,
 	"stt.model":                          true,
+	"stt.resource_id":                    true,
 	"stt.language":                       true,
 	"stt.streaming":                      true,
 	"stt.chunk_ms":                       true,
 	"stt.shortcut_key":                   true,
+	"stt.enable_itn":                     true,
+	"stt.enable_punc":                    true,
+	"stt.enable_ddc":                     true,
+	"stt.output_zh_variant":              true,
+	"stt.end_window_size":                true,
 	"rag.vector_enabled":                 true,
 	"rag.base_url":                       true,
 	"rag.model":                          true,
@@ -902,9 +888,7 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.tts_backend":              true,
 	"summarize.auto_junk_ratio":          true,
 	"ai_summary.model":                   true,
-	"ai_summary.format":                  true,
-	"ai_summary.api.base_url":            true,
-	"ai_summary.api.key":                 true,
+	"ai_summary.provider_id":             true,
 	"dingtalk.enabled":                   true,
 	"dingtalk.app_key":                   true,
 	"dingtalk.app_secret":                true,
@@ -948,7 +932,14 @@ var PatchableConfigPaths = map[string]bool{
 
 // validTTSEngines is the set of valid TTS engine values.
 var validTTSEngines = map[string]bool{
-	"edge": true, "piper": true, "kokoro": true, "moss-nano": true, strOpenAI: true,
+	"edge": true, strOpenAI: true,
+}
+
+// validSTTProviders is the set of valid STT engine values. An unknown value
+// must be rejected rather than falling back to vLLM, otherwise a typo silently
+// sends recordings to a service the user did not configure.
+var validSTTProviders = map[string]bool{
+	"vllm": true, "doubao": true,
 }
 
 // validUILanguages is the set of UI languages the bundled i18n tables carry
@@ -967,11 +958,6 @@ var validSummarizeBackends = map[string]bool{
 // Empty string is accepted separately (means "use default"), not as a format value.
 var validTTSFormats = map[string]bool{
 	"mp3": true, "wav": true, "pcm": true,
-}
-
-// validMossNanoBackends is the set of valid MOSS-Nano inference backend values.
-var validMossNanoBackends = map[string]bool{
-	"onnx": true, "pytorch": true,
 }
 
 // validOpenAIStreamModes is the set of valid OpenAI TTS stream modes.
@@ -1006,6 +992,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Version:      getBuildVersion(),
 		HasPassword:  model.SessionToken != "",
 		DefaultAgent: cfg.DefaultAgent,
+		User: configUser{
+			Nickname: cfg.User.Nickname,
+			Profile:  cfg.User.Profile,
+		},
 		Chat: configChat{
 			InitialMessages:          cfg.Chat.InitialMessages,
 			PageSize:                 cfg.Chat.PageSize,
@@ -1017,7 +1007,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
 			RestartResumeWindowMin:   cfg.Chat.RestartResumeWindowMinutes,
 			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
-			UserNickname:             cfg.Chat.UserNickname,
 			GroupMaxSpeeches:         cfg.Chat.GroupMaxSpeeches,
 		},
 		Session: configSession{
@@ -1049,13 +1038,20 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
 		},
 		STT: configSTT{
-			BaseURL:     cfg.STT.BaseURL,
-			APIKey:      cfg.STT.APIKey,
-			Model:       cfg.STT.Model,
-			Language:    cfg.STT.Language,
-			Streaming:   cfg.STT.Streaming,
-			ChunkMs:     cfg.STT.ChunkMs,
-			ShortcutKey: cfg.STT.ShortcutKey,
+			Provider:        cfg.STT.Provider,
+			BaseURL:         cfg.STT.BaseURL,
+			APIKey:          cfg.STT.APIKey,
+			Model:           cfg.STT.Model,
+			ResourceID:      cfg.STT.ResourceID,
+			Language:        cfg.STT.Language,
+			Streaming:       cfg.STT.Streaming,
+			ChunkMs:         cfg.STT.ChunkMs,
+			ShortcutKey:     cfg.STT.ShortcutKey,
+			EnableITN:       cfg.STT.EnableITN,
+			EnablePunc:      cfg.STT.EnablePunc,
+			EnableDDC:       cfg.STT.EnableDDC,
+			OutputZHVariant: cfg.STT.OutputZHVariant,
+			EndWindowSize:   cfg.STT.EndWindowSize,
 		},
 		RAG: configRAG{
 			VectorEnabled:  cfg.RAG.VectorEnabled,
@@ -1088,8 +1084,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AutoJunkRatio: cfg.Summarize.AutoJunkRatio,
 		},
 		AISummary: configAISummary{
-			Model:  cfg.AISummary.Model,
-			Format: cfg.AISummary.Format,
+			ProviderID: cfg.AISummary.ProviderID,
+			Model:      cfg.AISummary.Model,
 		},
 		DingTalk: configDingTalk{
 			Enabled:   cfg.DingTalk.Enabled,
@@ -1137,35 +1133,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		},
 	}
 
-	// Conditionally populate AISummary API sub-config when a base URL is set
-	if cfg.AISummary.API.BaseURL != "" {
-		resp.AISummary.API = &configAPI{
-			BaseURL: cfg.AISummary.API.BaseURL,
-			Key:     cfg.AISummary.API.Key,
-		}
-	}
-
 	// Conditionally populate engine-specific sub-configs
-	switch cfg.TTS.Engine {
-	case "piper":
-		resp.TTS.Piper = &configPiper{
-			ModelPath:       cfg.TTS.Piper.ModelPath,
-			NoiseScale:      cfg.TTS.Piper.NoiseScale,
-			LengthScale:     cfg.TTS.Piper.LengthScale,
-			SentenceSilence: cfg.TTS.Piper.SentenceSilence,
-		}
-	case "kokoro":
-		resp.TTS.Kokoro = &configKokoro{
-			ModelPath:  cfg.TTS.Kokoro.ModelPath,
-			VoicesPath: cfg.TTS.Kokoro.VoicesPath,
-			Lang:       cfg.TTS.Kokoro.Lang,
-		}
-	case "moss-nano":
-		resp.TTS.MossNano = &configMossNano{
-			ModelDir: cfg.TTS.MossNano.ModelDir,
-			Backend:  cfg.TTS.MossNano.Backend,
-		}
-	case strOpenAI:
+	if cfg.TTS.Engine == strOpenAI {
 		resp.TTS.OpenAI = &configOpenAITTS{
 			BaseURL:    cfg.TTS.OpenAI.BaseURL,
 			APIKey:     cfg.TTS.OpenAI.APIKey,
@@ -1203,11 +1172,11 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Normalize the nickname BEFORE validation so the validated value, the
-	// stored value and the YAML write all see the same (trimmed) string. This
-	// is a mutation of the request patch, so it must happen before the rollback
-	// snapshot/apply below.
-	normalizeUserNicknameInPatch(patch)
+	// Normalize the identity strings BEFORE validation so the validated value,
+	// the stored value and the YAML write all see the same (trimmed) string.
+	// This is a mutation of the request patch, so it must happen before the
+	// rollback snapshot/apply below.
+	normalizeUserIdentityInPatch(patch)
 
 	if err := validatePatchValues(patch); err != nil {
 		writePatchValueError(w, r, err)
@@ -1401,12 +1370,12 @@ func hasPatchableDescendant(path string) bool {
 	return false
 }
 
-// errUserNicknameTaken is the sentinel for a chat.user_nickname that collides
+// errUserNicknameTaken is the sentinel for a user.nickname that collides
 // with an existing agent's name. serveConfigPatch maps it to 409 (a conflict),
 // unlike a malformed value which stays a 400.
 var errUserNicknameTaken = errors.New("user nickname is already used by an agent")
 
-// errInvalidUserNickname is the sentinel for a chat.user_nickname that fails the
+// errInvalidUserNickname is the sentinel for a user.nickname that fails the
 // format check. serveConfigPatch maps it to a localized 400 (InvalidUserNickname)
 // rather than echoing the raw English message.
 var errInvalidUserNickname = errors.New("invalid user nickname")
@@ -1443,35 +1412,49 @@ func (e *configValueError) templateData() map[string]any {
 	return out
 }
 
-// normalizeUserNicknameInPatch trims the nickname IN PLACE, before validation,
-// storage and the YAML write. The nickname is a routing target and the parser
-// trims each target, so a value like "  User  " would key the byName map
-// differently from how it is looked up — the user would become unaddressable.
-// Trimming here makes the validated value, the stored value, the on-disk value
-// and the frontend all agree. An all-whitespace value trims to "" and is then
-// rejected by validUserNickname.
-func normalizeUserNicknameInPatch(patch map[string]any) {
-	chat, ok := patch["chat"].(map[string]any)
-	if !ok {
-		return
-	}
-	if v, ok := chat["user_nickname"].(string); ok {
-		chat["user_nickname"] = strings.TrimSpace(v)
+// aiSummaryProviderError reports a rejected ai_summary provider binding.
+//
+// These used to be bare fmt.Errorf values, which serveConfigPatch turned into
+// the generic `invalid_value` body — and the API helper surfaces only `error`,
+// so the user saw "invalid_value" and could not tell that the provider (not the
+// model, not the backend) was the problem.
+func aiSummaryProviderError(field, reason string) error {
+	return &configValueError{
+		MsgKey: "ProviderInvalid",
+		Field:  field,
+		Data:   map[string]any{"Reason": reason},
 	}
 }
 
-// maxUserNicknameRunes bounds the group-chat user nickname. It is written into
-// <clawbench-mention targets="..."> and shown in routing chips, so it must stay
-// short; 32 leaves generous room for CJK names.
-const maxUserNicknameRunes = 32
+// normalizeUserIdentityInPatch trims the identity strings IN PLACE, before
+// validation, storage and the YAML write. The nickname is a routing target and
+// the parser trims each target, so a value like "  User  " would key the byName
+// map differently from how it is looked up — the user would become
+// unaddressable. Trimming here makes the validated value, the stored value, the
+// on-disk value and the frontend all agree. An all-whitespace nickname trims to
+// "" and is then rejected by validUserNickname.
+func normalizeUserIdentityInPatch(patch map[string]any) {
+	user, ok := patch["user"].(map[string]any)
+	if !ok {
+		return
+	}
+	if v, ok := user["nickname"].(string); ok {
+		user["nickname"] = strings.TrimSpace(v)
+	}
+	if v, ok := user["profile"].(string); ok {
+		user["profile"] = strings.TrimSpace(v)
+	}
+}
 
-// validUserNickname reports whether s is a usable group-chat user nickname. It
-// is written verbatim into the routing tag's targets attribute, so the protocol
+// validUserNickname reports whether s is a usable user nickname. An EMPTY
+// value is valid: it means "not configured", and the fallback literal is
+// applied where the name is used (group routing / UI). The rest is written
+// verbatim into the group-routing tag's targets attribute, so the protocol
 // delimiters (double quote, angle brackets, comma) and control characters are
 // rejected — the parser splits targets on commas and closes the attribute on a
 // quote. Internal spaces are allowed.
 func validUserNickname(s string) bool {
-	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > maxUserNicknameRunes {
+	if utf8.RuneCountInString(s) > model.MaxUserNicknameRunes {
 		return false
 	}
 	for _, r := range s {
@@ -1480,6 +1463,12 @@ func validUserNickname(s string) bool {
 		}
 	}
 	return true
+}
+
+// validUserProfile reports whether s fits the prompt-injection budget. The
+// profile is optional, so an empty value is valid.
+func validUserProfile(s string) bool {
+	return utf8.RuneCountInString(strings.TrimSpace(s)) <= model.MaxUserProfileRunes
 }
 
 // validateUsageMeterRule checks a usage-meter rule that has already been merged
@@ -1546,19 +1535,30 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			return fmt.Errorf("language must be one of: zh,en")
 		}
 	}
-	if chat, ok := patch["chat"].(map[string]any); ok {
-		if v, ok := chat["user_nickname"].(string); ok {
+	if user, ok := patch["user"].(map[string]any); ok {
+		if v, ok := user["nickname"].(string); ok {
 			if !validUserNickname(v) {
 				return errInvalidUserNickname
 			}
 			// Bidirectional uniqueness: the nickname must not shadow an existing
 			// agent (the agent-side guard rejects the reverse). Exact match, to
 			// mirror AgentNameTaken. v is already trimmed by
-			// normalizeUserNicknameInPatch.
-			if service.AgentNameTaken(v, "") {
+			// normalizeUserIdentityInPatch. An empty value means "use the
+			// fallback", which is the reserved "User" name — no collision check
+			// is needed for the empty string itself.
+			if v != "" && service.AgentNameTaken(v, "") {
 				return errUserNicknameTaken
 			}
 		}
+		if v, ok := user["profile"].(string); ok && !validUserProfile(v) {
+			return &configValueError{
+				MsgKey: "InvalidUserProfile",
+				Field:  "user.profile",
+				Data:   map[string]any{"Max": model.MaxUserProfileRunes},
+			}
+		}
+	}
+	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["group_max_speeches"].(float64); ok && v < 1 {
 			return fmt.Errorf("chat.group_max_speeches must be a positive integer")
 		}
@@ -1567,7 +1567,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if ok {
 		if engine, ok := tts["engine"].(string); ok {
 			if !validTTSEngines[engine] {
-				return fmt.Errorf("tts.engine must be one of: edge,piper,kokoro,moss-nano,openai")
+				return fmt.Errorf("tts.engine must be one of: edge,openai")
 			}
 		}
 		if format, ok := tts["format"].(string); ok {
@@ -1581,29 +1581,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			}
 		}
 		// Validate engine-specific sub-configs
-		if piper, ok := tts["piper"].(map[string]any); ok {
-			if v, ok := piper["noise_scale"].(float64); ok && (v < 0 || v > 1) {
-				return fmt.Errorf("tts.piper.noise_scale must be between 0 and 1")
-			}
-			if v, ok := piper["length_scale"].(float64); ok && v <= 0 {
-				return fmt.Errorf("tts.piper.length_scale must be positive")
-			}
-			if v, ok := piper["sentence_silence"].(float64); ok && v < 0 {
-				return fmt.Errorf("tts.piper.sentence_silence must be non-negative")
-			}
-		}
-		if kokoro, ok := tts["kokoro"].(map[string]any); ok {
-			if v, ok := kokoro["lang"].(string); ok && v == "" {
-				return fmt.Errorf("tts.kokoro.lang must not be empty")
-			}
-		}
-		if mossNano, ok := tts["moss_nano"].(map[string]any); ok {
-			if v, ok := mossNano["backend"].(string); ok {
-				if !validMossNanoBackends[v] {
-					return fmt.Errorf("tts.moss_nano.backend must be one of: onnx,pytorch")
-				}
-			}
-		}
 		if openai, ok := tts["openai"].(map[string]any); ok {
 			if v, ok := openai["base_url"].(string); ok && v != "" {
 				if _, err := url.ParseRequestURI(v); err != nil {
@@ -1619,6 +1596,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
+		if v, ok := sttVal["provider"].(string); ok && v != "" {
+			if !validSTTProviders[v] {
+				return fmt.Errorf("stt.provider must be one of: vllm,doubao")
+			}
+		}
 		if v, ok := sttVal["base_url"].(string); ok && v != "" {
 			if _, err := url.ParseRequestURI(v); err != nil {
 				return fmt.Errorf("stt.base_url must be a valid URL")
@@ -1763,6 +1745,59 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	// 1b. When summarize.tts_backend is "api", ai_summary.api.base_url must not be empty.
 	effectiveTTSBackend := cfg.Summarize.TTSBackend
 	ttsBackendSwitchedToAPI := false
+	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
+		// Validate the pair the patch would produce, not just the changed key:
+		// a model edit is only meaningful against its provider's list.
+		providerID := int64(0)
+		if pid := cfg.AISummary.ProviderID; pid != nil {
+			providerID = *pid
+		}
+		if raw, present := aiSummary["provider_id"]; present {
+			if raw == nil {
+				providerID = 0
+			} else {
+				n, ok := raw.(float64)
+				if !ok || n <= 0 {
+					return aiSummaryProviderError("ai_summary.provider_id", "must be a positive provider id")
+				}
+				providerID = int64(n)
+			}
+		}
+		if providerID > 0 {
+			provider := model.GetProvider(providerID)
+			if provider == nil {
+				return aiSummaryProviderError("ai_summary.provider_id",
+					fmt.Sprintf("provider %d not found", providerID))
+			}
+			if provider.Protocol != model.ProviderProtocolAnthropic && provider.Protocol != model.ProviderProtocolOpenAI {
+				return aiSummaryProviderError("ai_summary.provider_id",
+					fmt.Sprintf("provider %q speaks %s, but the summary model only supports openai/anthropic", provider.Name, provider.Protocol))
+			}
+			// A provider without a base_url only injects credentials into an
+			// agent's environment (see docs/spec/features/model-providers.md);
+			// it has nowhere to send a completion request. Binding one here
+			// used to succeed and then leave every summary feature silently
+			// disabled, because SummaryEndpoint reports "not configured".
+			if provider.BaseURL == "" {
+				return aiSummaryProviderError("ai_summary.provider_id",
+					fmt.Sprintf("provider %q has no API endpoint, so it cannot back the summary model", provider.Name))
+			}
+			// When the provider curates its models, the summary model must be
+			// one of them — otherwise the picker offers what the endpoint
+			// rejects.
+			if len(provider.Models) > 0 {
+				effective := cfg.AISummary.Model
+				if m, ok := aiSummary["model"].(string); ok {
+					effective = m
+				}
+				if effective != "" && !modelContains(provider.Models, effective) {
+					return aiSummaryProviderError("ai_summary.model",
+						fmt.Sprintf("%q is not in the model list of provider %q", effective, provider.Name))
+				}
+			}
+		}
+	}
+
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
 		if v, ok := summarize["tts_backend"].(string); ok {
 			if v == "api" && cfg.Summarize.TTSBackend != "api" {
@@ -1772,16 +1807,19 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 	if effectiveTTSBackend == "api" && !ttsBackendSwitchedToAPI {
-		effectiveTTSBaseURL := cfg.AISummary.API.BaseURL
+		configured := cfg.AISummary.SummaryConfigured()
 		if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
-			if api, ok := aiSummary["api"].(map[string]any); ok {
-				if v, ok := api["base_url"].(string); ok {
-					effectiveTTSBaseURL = v
+			if raw, present := aiSummary["provider_id"]; present {
+				if n, ok := raw.(float64); ok && n > 0 {
+					configured = true
+				} else if raw == nil {
+					configured = false
 				}
 			}
 		}
-		if effectiveTTSBaseURL == "" {
-			return fmt.Errorf("ai_summary.api.base_url is required when summarize.tts_backend is \"api\"")
+		if !configured {
+			return aiSummaryProviderError("ai_summary.provider_id",
+				`is required when summarize.tts_backend is "api"`)
 		}
 	}
 
@@ -1800,49 +1838,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 	switch effectiveEngine {
-	case "piper":
-		if engineSwitched {
-			break // will be validated after user fills in sub-config
-		}
-		effectiveModelPath := cfg.TTS.Piper.ModelPath
-		if tts, ok := patch["tts"].(map[string]any); ok {
-			if piper, ok := tts["piper"].(map[string]any); ok {
-				if v, ok := piper["model_path"].(string); ok {
-					effectiveModelPath = v
-				}
-			}
-		}
-		if effectiveModelPath == "" {
-			return fmt.Errorf("tts.piper.model_path is required when tts.engine is \"piper\"")
-		}
-	case "kokoro":
-		if engineSwitched {
-			break // will be validated after user fills in sub-config
-		}
-		effectiveKokoroModel := cfg.TTS.Kokoro.ModelPath
-		effectiveVoicesPath := cfg.TTS.Kokoro.VoicesPath
-		if tts, ok := patch["tts"].(map[string]any); ok {
-			if kokoro, ok := tts["kokoro"].(map[string]any); ok {
-				if v, ok := kokoro["model_path"].(string); ok {
-					effectiveKokoroModel = v
-				}
-				if v, ok := kokoro["voices_path"].(string); ok {
-					effectiveVoicesPath = v
-				}
-			}
-		}
-		if effectiveKokoroModel == "" {
-			return fmt.Errorf("tts.kokoro.model_path is required when tts.engine is \"kokoro\"")
-		}
-		if effectiveVoicesPath == "" {
-			return fmt.Errorf("tts.kokoro.voices_path is required when tts.engine is \"kokoro\"")
-		}
-	case "moss-nano":
-		if engineSwitched {
-			break // will be validated after user fills in sub-config
-		}
-		// model_dir is optional — empty value is valid (ResolveMossNanoModelDir
-		// auto-detects the default dir or lets the CLI auto-download models).
 	case strOpenAI:
 		if engineSwitched {
 			break // will be validated after user fills in sub-config
@@ -1908,22 +1903,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := summarize["auto_junk_ratio"].(float64); ok {
 			if v <= 0 || v > 1 {
 				return fmt.Errorf("summarize.auto_junk_ratio must be between 0 (exclusive) and 1")
-			}
-		}
-	}
-
-	// Validate ai_summary section
-	if aiSummary, ok := patch["ai_summary"].(map[string]any); ok {
-		if v, ok := aiSummary["format"].(string); ok && v != "" {
-			if v != "openai" && v != "anthropic" {
-				return fmt.Errorf("ai_summary.format must be one of: openai, anthropic (empty = auto-detect)")
-			}
-		}
-		if api, ok := aiSummary["api"].(map[string]any); ok {
-			if v, ok := api["base_url"].(string); ok && v != "" {
-				if _, err := url.ParseRequestURI(v); err != nil {
-					return fmt.Errorf("ai_summary.api.base_url must be a valid URL")
-				}
 			}
 		}
 	}
@@ -2133,6 +2112,31 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
+	if user, ok := patch["user"].(map[string]any); ok {
+		if v, ok := user["nickname"].(string); ok {
+			// Pending private notes are keyed by the user's ADDRESSABLE name,
+			// which is the fallback literal when the config is empty. Compare
+			// those effective targets, not the raw strings: clearing a nickname
+			// changes the target from the old name to "User" (and setting one
+			// changes it from "User" to the new name).
+			oldTarget := model.UserNickname
+			if oldTarget == "" {
+				oldTarget = model.DefaultUserNickname
+			}
+			newTarget := v
+			if newTarget == "" {
+				newTarget = model.DefaultUserNickname
+			}
+			if oldTarget != newTarget {
+				service.RenameUserPendingBcc(oldTarget, newTarget)
+			}
+			cfg.User.Nickname = v
+		}
+		if v, ok := user["profile"].(string); ok {
+			cfg.User.Profile = v
+		}
+	}
+
 	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["initial_messages"].(float64); ok {
 			cfg.Chat.InitialMessages = int(v)
@@ -2163,16 +2167,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := chat["auto_rename_enabled"].(bool); ok {
 			cfg.Chat.AutoRenameEnabled = v
-		}
-		if v, ok := chat["user_nickname"].(string); ok {
-			// The group's pending private notes are keyed by the user's name;
-			// migrate them so a rename does not orphan an undelivered note
-			// (delivered on the target's next turn). Old value is the one still
-			// in memory before this assignment.
-			if old := model.ChatUserNickname; old != "" && old != v {
-				service.RenameUserPendingBcc(old, v)
-			}
-			cfg.Chat.UserNickname = v
 		}
 		if v, ok := chat["group_max_speeches"].(float64); ok {
 			cfg.Chat.GroupMaxSpeeches = int(v)
@@ -2246,42 +2240,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := tts["max_cache_files"].(float64); ok {
 			cfg.TTS.MaxCacheFiles = int(v)
 		}
-		// Piper sub-config
-		if piper, ok := tts["piper"].(map[string]any); ok {
-			if v, ok := piper["model_path"].(string); ok {
-				cfg.TTS.Piper.ModelPath = v
-			}
-			if v, ok := piper["noise_scale"].(float64); ok {
-				cfg.TTS.Piper.NoiseScale = v
-			}
-			if v, ok := piper["length_scale"].(float64); ok {
-				cfg.TTS.Piper.LengthScale = v
-			}
-			if v, ok := piper["sentence_silence"].(float64); ok {
-				cfg.TTS.Piper.SentenceSilence = v
-			}
-		}
-		// Kokoro sub-config
-		if kokoro, ok := tts["kokoro"].(map[string]any); ok {
-			if v, ok := kokoro["model_path"].(string); ok {
-				cfg.TTS.Kokoro.ModelPath = v
-			}
-			if v, ok := kokoro["voices_path"].(string); ok {
-				cfg.TTS.Kokoro.VoicesPath = v
-			}
-			if v, ok := kokoro["lang"].(string); ok {
-				cfg.TTS.Kokoro.Lang = v
-			}
-		}
-		// MossNano sub-config
-		if mossNano, ok := tts["moss_nano"].(map[string]any); ok {
-			if v, ok := mossNano["model_dir"].(string); ok {
-				cfg.TTS.MossNano.ModelDir = v
-			}
-			if v, ok := mossNano["backend"].(string); ok {
-				cfg.TTS.MossNano.Backend = v
-			}
-		}
 		// OpenAI TTS sub-config
 		if openai, ok := tts["openai"].(map[string]any); ok {
 			if v, ok := openai["base_url"].(string); ok {
@@ -2303,6 +2261,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
+		if v, ok := sttVal["provider"].(string); ok {
+			cfg.STT.Provider = v
+		}
 		if v, ok := sttVal["base_url"].(string); ok {
 			cfg.STT.BaseURL = v
 		}
@@ -2311,6 +2272,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["model"].(string); ok {
 			cfg.STT.Model = v
+		}
+		if v, ok := sttVal["resource_id"].(string); ok {
+			cfg.STT.ResourceID = v
 		}
 		if v, ok := sttVal["language"].(string); ok {
 			cfg.STT.Language = v
@@ -2323,6 +2287,21 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok {
 			cfg.STT.ShortcutKey = v
+		}
+		if v, ok := sttVal["enable_itn"].(bool); ok {
+			cfg.STT.EnableITN = v
+		}
+		if v, ok := sttVal["enable_punc"].(bool); ok {
+			cfg.STT.EnablePunc = v
+		}
+		if v, ok := sttVal["enable_ddc"].(bool); ok {
+			cfg.STT.EnableDDC = v
+		}
+		if v, ok := sttVal["output_zh_variant"].(string); ok {
+			cfg.STT.OutputZHVariant = v
+		}
+		if v, ok := sttVal["end_window_size"].(float64); ok {
+			cfg.STT.EndWindowSize = int(v)
 		}
 	}
 
@@ -2395,15 +2374,15 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := aiSummary["model"].(string); ok {
 			cfg.AISummary.Model = v
 		}
-		if v, ok := aiSummary["format"].(string); ok {
-			cfg.AISummary.Format = v
-		}
-		if api, ok := aiSummary["api"].(map[string]any); ok {
-			if v, ok := api["base_url"].(string); ok {
-				cfg.AISummary.API.BaseURL = v
-			}
-			if v, ok := api["key"].(string); ok {
-				cfg.AISummary.API.Key = v
+		// provider_id is the only way to point the summary model at an
+		// endpoint; null clears it. The legacy format/api fields are no longer
+		// writable (they survive only until the startup migration runs).
+		if raw, present := aiSummary["provider_id"]; present {
+			if raw == nil {
+				cfg.AISummary.ProviderID = nil
+			} else if n, ok := raw.(float64); ok && n > 0 {
+				pid := int64(n)
+				cfg.AISummary.ProviderID = &pid
 			}
 		}
 	}
@@ -2593,7 +2572,8 @@ func applyHotReloadGlobals() {
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
 	model.ChatRestartResumeWindowMinutes = cfg.Chat.RestartResumeWindowMinutes
 	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
-	model.ChatUserNickname = cfg.Chat.UserNickname
+	model.UserNickname = cfg.User.Nickname
+	model.UserProfile = cfg.User.Profile
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
@@ -2613,11 +2593,6 @@ func applyHotReloadGlobals() {
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
 			p.Voice = cfg.TTS.Voice
 		}
-		if p, ok := curProvider.(*speech.KokoroProvider); ok {
-			p.Voice = cfg.TTS.Voice
-		}
-		// Piper: voice is embedded in model_path, not a standalone field
-		// MOSS-Nano: uses tts.voice (shared with Edge/Kokoro)
 		// OpenAI: uses its own tts.openai.voice, applied below
 	}
 	if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
@@ -2638,19 +2613,9 @@ func applyHotReloadGlobals() {
 				p.Rate = "+0%"
 			}
 		}
-		if p, ok := curProvider.(*speech.KokoroProvider); ok {
-			p.Speed = cfg.TTS.Speed
-		}
-		if p, ok := curProvider.(*speech.PiperProvider); ok {
-			// Only update if no explicit length_scale is set
-			if cfg.TTS.Piper.LengthScale <= 0 {
-				p.LengthScale = 1.0 / cfg.TTS.Speed
-			}
-		}
 		if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
 			p.Speed = cfg.TTS.Speed
 		}
-		// MOSS-Nano: speed not supported
 	}
 
 	// Reconfigure subsystems (TTS engine swap, summarize reconstruction,
@@ -2718,6 +2683,10 @@ func writeConfigYAML(patch map[string]any) error {
 	// Merge patch into raw map (only touched fields are modified)
 	mergePatchIntoRaw(raw, patch)
 
+	// One-time cleanup of the legacy chat.user_nickname key (see
+	// dropLegacyChatNickname).
+	dropLegacyChatNickname(raw)
+
 	data, err := yaml.Marshal(raw)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
@@ -2735,6 +2704,40 @@ func writeConfigYAML(patch map[string]any) error {
 	}
 
 	return nil
+}
+
+// dropLegacyChatNickname migrates the legacy chat.user_nickname key into
+// user.nickname and removes it, in place on the generic config map. The value
+// was migrated at startup, but the write path merges into the existing file, so
+// without this the old key would survive forever and a hand-edit of it would
+// look effective while being ignored.
+//
+// The old ApplyDefaults materialized the fallback literal into every config.
+// Carrying that over would make an unconfigured install look configured, so it
+// is dropped instead: empty now means "not configured". An existing
+// user.nickname always wins.
+func dropLegacyChatNickname(raw map[string]any) {
+	chatMap, ok := raw["chat"].(map[string]any)
+	if !ok {
+		return
+	}
+	legacy, exists := chatMap["user_nickname"]
+	if !exists {
+		return
+	}
+
+	userMap, _ := raw["user"].(map[string]any)
+	if userMap == nil {
+		userMap = make(map[string]any, 2)
+		raw["user"] = userMap
+	}
+	if _, hasNew := userMap["nickname"]; !hasNew {
+		legacyStr, _ := legacy.(string)
+		if strings.TrimSpace(legacyStr) != model.DefaultUserNickname {
+			userMap["nickname"] = legacy
+		}
+	}
+	delete(chatMap, "user_nickname")
 }
 
 // backupConfigYAML copies the current config.yaml to bakPath before it is
@@ -3122,4 +3125,15 @@ func mergeUsageMeterStateIntoPatch(patch map[string]any) map[string]any {
 	}
 	out["usage_meter"] = merged
 	return out
+}
+
+// modelContains is a tiny helper kept local to avoid importing slices just for
+// one call site.
+func modelContains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

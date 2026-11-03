@@ -27,6 +27,16 @@ extraResources:
     to: logo.png
   - from: assets/url-utils.js
     to: url-utils.js
+  # Full-screen annotation overlay (transparent window over the shared screen).
+  # Same placement rule as floating.html: tsc only emits JS, an .html under src/
+  # would never reach dist/.
+  - from: assets/annotate.html
+    to: annotate.html
+  # Remote-control helper (Go, pure syscall). Built by scripts/build-input-helper.mjs
+  # before every package; present in all platforms' builds so the config stays
+  # uniform, but only Windows actually injects input.
+  - from: assets/input-helper.exe
+    to: input-helper.exe
 files:
   - dist/
   - package.json
@@ -55,6 +65,7 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: ClawBench uses the microphone for voice input and live audio sharing.
     NSScreenCaptureUsageDescription: ClawBench captures your screen when you start a live share.
+    NSCameraUsageDescription: ClawBench uses the camera when you start a video meeting.
 linux:
   target: dir
   icon: build/icon.png

@@ -247,7 +247,38 @@ func gateUnconfirmedACPModels(a *model.Agent) *model.Agent {
 	clone := *a
 	clone.CLIModels = a.Models
 	clone.Models = []model.AgentModel{}
+	clone.CatalogModels = catalogModelsForAgent(a)
 	return &clone
+}
+
+// catalogModelsForAgent resolves the catalog list for an agent that has not
+// reported models yet. It requires a bound provider created from a preset: the
+// catalog is keyed by models.dev provider ids, and a hand-written endpoint
+// has no reliable way to say which entry it corresponds to.
+// providerModelsForAgent turns the provider's curated list into picker entries.
+// It is nil when the agent is unbound or the provider has not curated models,
+// in which case discovery (and the catalog fallback) still applies.
+func providerModelsForAgent(a *model.Agent) []model.AgentModel {
+	p := a.Provider()
+	if p == nil || len(p.Models) == 0 {
+		return nil
+	}
+	out := make([]model.AgentModel, 0, len(p.Models))
+	for _, id := range p.Models {
+		out = append(out, model.AgentModel{ID: id, Name: id, Default: id == p.DefaultModel})
+	}
+	return out
+}
+
+func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
+	if a.ProviderID == nil {
+		return nil
+	}
+	provider := model.GetProvider(*a.ProviderID)
+	if provider == nil || provider.PresetID == "" {
+		return nil
+	}
+	return model.CatalogModelsForPreset(provider.PresetID)
 }
 
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +321,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	// next refresh would treat ACP-only models as CLI-discovered.
 	for i, a := range agents {
 		if !a.SupportsACP() {
+			// CLI agents inherit the curated list too: the endpoint is custom,
+			// so the CLI's own discovery is not authoritative for it.
+			if pm := providerModelsForAgent(a); pm != nil {
+				clone := *a
+				clone.CLIModels = a.Models
+				clone.Models = pm
+				agents[i] = &clone
+			}
 			continue
 		}
 		// Use BackendSpec.ACPLoadSession as the authoritative source —
@@ -305,7 +344,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 			// No ACP data at all yet (the fresh-install path). The agent's own
 			// Models are the CLI list, which must not be presented as runnable
 			// over ACP.
-			agents[i] = gateUnconfirmedACPModels(a)
+			gated := gateUnconfirmedACPModels(a)
+			if pm := providerModelsForAgent(a); pm != nil {
+				clone := *gated
+				clone.Models = pm
+				clone.CatalogModels = nil
+				gated = &clone
+			}
+			agents[i] = gated
 			continue
 		}
 
@@ -326,7 +372,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 			// The ACP list (when concrete) dropped every CLI model, or there is
 			// nothing to merge. Still gate: without ACP-confirmed models this
 			// would fall through to the raw CLI list.
-			agents[i] = gateUnconfirmedACPModels(a)
+			gated := gateUnconfirmedACPModels(a)
+			if pm := providerModelsForAgent(a); pm != nil {
+				clone := *gated
+				clone.Models = pm
+				clone.CatalogModels = nil
+				gated = &clone
+			}
+			agents[i] = gated
 			continue
 		}
 
@@ -568,44 +621,99 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refuse deletion while the agent is still in use: any interactive session,
-	// scheduled task, or active group membership blocks it. The user must clean
-	// those up first (that is the whole point of the guard — deleting the agent
-	// would otherwise strand its sessions/tasks on a dangling agent_id). Checked
-	// BEFORE closing ACP connections so a refused delete does not kill live
-	// connections.
-	usage, err := service.GetAgentUsage(req.ID)
-	if err != nil {
-		slog.Error("failed to check agent usage before delete", "agent", req.ID, "error", err)
+	// Deleting an agent is allowed even while it owns conversations: they are
+	// handed to the DEFAULT agent (issue #606). The only hard stop is a live
+	// turn — rewriting a running session's identity would strand its executor on
+	// a half-swapped row. Checked BEFORE closing ACP connections so a refused
+	// delete does not kill live connections.
+	//
+	// The takeover target is the default AS SEEN FROM THE CALLER'S PROJECT, not
+	// the raw configured default: that one may be scoped to another project
+	// (PATCH refuses to scope the default, but it can be scoped BEFORE becoming
+	// default). Handing the sessions to it would leave them on an agent this
+	// project's GET /api/agents does not return, so the picker and model list
+	// could not resolve it. Same rule as every other "which default" entry
+	// point; the agent being deleted is excluded so the fallback can never pick
+	// the row that is about to disappear.
+	projectPath := middleware.GetProjectFromCookie(r)
+	visible := visibleAgentsInProject(model.GetAgentList(), projectPath)
+	candidates := make([]*model.Agent, 0, len(visible))
+	for _, a := range visible {
+		if a.ID != req.ID {
+			candidates = append(candidates, a)
+		}
+	}
+	replacement := model.GetAgent(visibleDefaultAgent(model.GetDefaultAgentID(), candidates, projectPath))
+	if replacement == nil {
+		// Nothing visible is left here (the deleted agent was the only one this
+		// project could see). Handing the sessions to the configured default
+		// anyway beats refusing the delete: the rows stay valid and the project
+		// can re-scope or add an agent afterwards, whereas a dangling agent_id
+		// strands every session and a 500 blocks the delete entirely.
+		replacement = model.GetAgent(model.GetDefaultAgentID())
+	}
+	if replacement == nil {
+		// Cannot happen in practice (the default is refused above only when the
+		// caller names it), but deleting without a takeover target would strand
+		// every session on a dangling agent_id.
+		slog.Error("failed to resolve default agent for takeover", "deleting", req.ID)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	if usage.Total() > 0 {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "AgentInUse", map[string]any{
-			"SessionCount":    usage.Sessions,
-			"TaskCount":       usage.Tasks,
-			"MembershipCount": usage.Memberships,
-		})
+	running, err := service.AgentHasRunningSessions(req.ID)
+	if err != nil {
+		slog.Error("failed to check running sessions before delete", "agent", req.ID, "error", err)
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	if running {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "AgentHasRunningSessions")
 		return
 	}
 
-	// Close ACP connections for this agent before deleting
-	if agent.SupportsACP() {
-		mgr := ai.GetACPConnManager()
-		mgr.CloseConnsByAgentID(req.ID)
-		slog.Info("closed ACP connections before agent delete", "agent", req.ID)
-	}
-
-	if err := service.DeleteAgent(req.ID); err != nil {
+	res, err := service.DeleteAgentWithTakeover(agent, replacement)
+	if err != nil {
+		if errors.Is(err, service.ErrAgentHasRunningSessions) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentHasRunningSessions")
+			return
+		}
 		slog.Error("failed to delete agent", "agent", req.ID, "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
+	// Close the ACP connections AFTER the commit, never before: the transaction
+	// re-checks for a live turn and may still refuse, and closing first would kill
+	// the very turn that refusal is protecting. Closing is required either way —
+	// every connection is bound to the deleted agent (its process, its MCP
+	// servers), so the replacement must build its own; when the backend matches,
+	// that new connection resumes the stored acpSID instead of starting over
+	// (CloseConnsByAgentID matches on the conn's own agent snapshot, so it keeps
+	// working after the in-memory entry is gone).
+	if agent.SupportsACP() {
+		mgr := ai.GetACPConnManager()
+		mgr.CloseConnsByAgentID(req.ID)
+		slog.Info("closed ACP connections after agent delete", "agent", req.ID)
+	}
+
 	// Remove from in-memory maps
 	model.DeleteAgent(req.ID)
 
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": req.ID})
+	slog.Info("agent deleted with takeover",
+		"agent", req.ID,
+		"replacement", replacement.ID,
+		"sessions", res.Sessions,
+		"tasks", res.Tasks,
+		"groups", res.Groups)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":            req.ID,
+		"sessions":           res.Sessions,
+		"tasks":              res.Tasks,
+		"groups":             res.Groups,
+		"replacementAgentId": replacement.ID,
+		"replacementName":    replacement.Name,
+	})
 }
 
 // serveAgentsPatch handles PATCH /api/agents — updates an agent's configurable fields.
@@ -803,7 +911,11 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 					}
 				}
 			}
-			if !found {
+			// A bound provider makes the model list advisory: the endpoint is
+			// user-chosen (often a BYOK gateway) and may serve ids neither the
+			// CLI discovery nor the ACP runtime has listed. Without one, the
+			// list stays authoritative so a typo cannot be saved.
+			if !found && agent.ProviderID == nil {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidModelForAgent")
 				return
 			}
@@ -1085,6 +1197,73 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 	}
 
+	// Model-provider binding. null clears the binding (back to the CLI's own
+	// configuration); a number points at a providers row.
+	//
+	// Validation lives here rather than in the service because it needs the
+	// agent's backend, and because a config-file backend additionally requires
+	// the caller to acknowledge that ClawBench will modify a file outside its
+	// data directory.
+	if v, exists := patch["provider_id"]; exists {
+		if v == nil {
+			ap.ClearProviderID = true
+		} else {
+			num, ok := v.(float64)
+			if !ok || num <= 0 {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderNotFound")
+				return
+			}
+			providerID := int64(num)
+			provider, err := service.GetProvider(providerID)
+			if err != nil {
+				writeProviderError(w, r, err)
+				return
+			}
+			if !model.ProviderEnvSupportedProvider(agent.Backend, provider) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderUnsupported",
+					map[string]any{"Backend": agent.Backend, "Protocol": provider.Protocol})
+				return
+			}
+			// A provider row can predate the auth-mode rule (or be edited by
+			// hand), so the binding is the last place to catch a combination
+			// the CLI cannot express — otherwise the agent saves and then fails
+			// every turn with nothing pointing at the auth mode.
+			if aerr := model.ProviderAuthModeError(agent.Backend, provider.Protocol, provider.AuthMode); aerr != nil {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
+					map[string]any{"Reason": aerr.Error(), "field": "authMode"})
+				return
+			}
+			if model.ProviderUsesConfigFile(agent.Backend) {
+				conflicts, cerr := service.ProviderBindingConflict(agent.Backend, agentID, providerID)
+				if cerr != nil {
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+				if len(conflicts) > 0 {
+					writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderConfigConflict",
+						map[string]any{"Agents": strings.Join(conflicts, ", ")})
+					return
+				}
+				if confirmed, _ := patch["confirm_config_write"].(bool); !confirmed {
+					files := service.ProviderConfigPaths(agent.Backend)
+					writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderConfigConsentRequired",
+						map[string]any{"Files": strings.Join(files, ", ")})
+					return
+				}
+				// Write the file BEFORE persisting the binding: a failed write
+				// must not leave an agent pointing at a provider the CLI never
+				// learned about.
+				if werr := service.ApplyProviderConfigToBackend(agent.Backend, provider); werr != nil {
+					slog.Error("apply provider config failed",
+						"agent_id", agentID, "backend", agent.Backend, "error", werr)
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+			}
+			ap.ProviderID = &providerID
+		}
+	}
+
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		if errors.Is(err, service.ErrAgentNameReserved) {
@@ -1160,6 +1339,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			pid := *ap.ProjectID
 			agent.ProjectID = &pid
 		}
+		if ap.ClearProviderID {
+			agent.ProviderID = nil
+		} else if ap.ProviderID != nil {
+			pid := *ap.ProviderID
+			agent.ProviderID = &pid
+		}
 	})
 
 	if updated == nil {
@@ -1183,6 +1368,15 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			reason = "acp command changed"
 		}
 		slog.Info("closed ACP connections", "agent", agentID, "reason", reason)
+	}
+
+	// A cleared binding must also undo the config-file edit — but only when no
+	// other agent of the same backend still needs it. Reconcile covers both
+	// directions (restore when unbound, re-apply when bound).
+	if _, touched := patch["provider_id"]; touched && model.ProviderUsesConfigFile(agent.Backend) {
+		if rerr := service.ReconcileProviderConfigs(); rerr != nil {
+			slog.Warn("reconcile provider configs failed", "agent_id", agentID, "error", rerr)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, updated)

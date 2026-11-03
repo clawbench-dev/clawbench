@@ -3815,6 +3815,18 @@ public class BackgroundService extends Service {
                     return;
                 }
 
+            } else if ("live_event".equals(eventType)) {
+                // Meeting event. Wording comes from the server for the same
+                // reason as usage_meter: it owns the meeting title and the
+                // actor's name, and the minutes job runs with no request in
+                // scope, so it renders once in the configured UI language.
+                title = data.optString("title", "");
+                alert = data.optString("body", "");
+                if (title.isEmpty() || alert.isEmpty()) {
+                    AppLog.i(TAG, "NativeWS: live_event without title/body, skipping");
+                    return;
+                }
+
             } else {
                 AppLog.i(TAG, "NativeWS: postEventNotification - unhandled eventType=" + eventType + ", skipping");
                 return;
@@ -3834,6 +3846,13 @@ public class BackgroundService extends Service {
             } else if ("usage_meter_update".equals(eventType)) {
                 // Global event: no session/task to deep-link to.
                 intent.putExtra("event_type", "usage_meter");
+            } else if ("live_event".equals(eventType)) {
+                // A meeting is identified by its share token — there is no
+                // session or task behind it, so without the token the tap would
+                // open the app and go nowhere.
+                intent.putExtra("event_type", "meeting");
+                String meetingToken = data.optString("token", "");
+                if (!meetingToken.isEmpty()) intent.putExtra("meeting_token", meetingToken);
             } else {
                 intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
@@ -3851,8 +3870,11 @@ public class BackgroundService extends Service {
 
             // Deterministic per-subject id (shared with the cancel path — see
             // EventNotificationIds). A task event carries both ids and must
-            // resolve to the task band.
-            int notifId = EventNotificationIds.forEvent(taskId, sessionId);
+            // resolve to the task band. A meeting has neither, and its own band
+            // keeps two meetings from replacing each other in the shade.
+            int notifId = "live_event".equals(eventType)
+                    ? EventNotificationIds.forMeeting(data.optString("token", ""))
+                    : EventNotificationIds.forEvent(taskId, sessionId);
 
             Notification notification = new NotificationCompat.Builder(this, EVENTS_CHANNEL_ID)
                     .setContentTitle(title)

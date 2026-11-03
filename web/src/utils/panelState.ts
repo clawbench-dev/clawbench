@@ -371,6 +371,14 @@ const entries: PanelEntry<unknown>[] = [
   {
     id: 'leftTab', key: 'left-tab', scope: 'project', followsLayoutMemory: false, default: null,
     ...stringCodec(null),
+    // Value migration: the two old tabs (听记 / 桌面共享) became one (会议). A
+    // remembered 'notes' would otherwise fall through resolvePanelTab's
+    // isDockTabId check and land the user on the layout default (browse/chat),
+    // which reads as "my tab disappeared".
+    parse: (raw) => {
+      const value = stringCodec(null).parse(raw)
+      return value === 'notes' ? 'live' : value
+    },
   },
 ]
 

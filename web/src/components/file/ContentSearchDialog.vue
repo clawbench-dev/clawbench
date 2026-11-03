@@ -124,7 +124,7 @@
 
         <template v-else-if="!hasQuery">
           <div class="cs-empty">
-            <SearchCode :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <SearchCode class="cs-empty-icon empty-state__icon" />
             <p class="cs-empty-text">{{ t('file.contentSearch.hint') }}</p>
           </div>
         </template>
@@ -146,14 +146,14 @@
           <!-- Stopped before anything matched. "No files found" would be a lie:
                the walk never finished, so the absence of hits proves nothing. -->
           <div class="cs-empty">
-            <SearchX :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <SearchX class="cs-empty-icon empty-state__icon" />
             <p class="cs-empty-text">{{ t('file.contentSearch.stoppedEmpty') }}</p>
           </div>
         </template>
 
         <template v-else-if="search.state.results.length === 0">
           <div class="cs-empty">
-            <SearchX :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <SearchX class="cs-empty-icon empty-state__icon" />
             <p class="cs-empty-text">{{ t('file.search.noResults') }}</p>
             <p class="cs-empty-hint">{{ t('file.contentSearch.noResultsHint') }}</p>
           </div>
@@ -609,11 +609,6 @@ defineExpose({
   gap: var(--space-5);
   padding: calc(40 * var(--dp)) var(--space-8);
   text-align: center;
-}
-
-.cs-empty-icon {
-  color: var(--text-muted, #999);
-  opacity: var(--opacity-muted);
 }
 
 .cs-empty-text {

@@ -9,6 +9,7 @@
         v-for="cat in group.items"
         :key="cat.id"
         class="settings-index__row"
+        :data-category="cat.id"
         @click="$emit('navigate', cat.id)"
       >
         <div class="settings-index__left">
@@ -39,11 +40,12 @@ import {
   Bug,
   Info,
   Gauge,
-  Sparkles,
   Wand2,
   Plug,
+  Boxes,
   ChevronRight,
   Github,
+  UserRound,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
@@ -74,11 +76,14 @@ const groupDefs = [
   {
     id: 'aiChat',
     items: [
+      // 身份 first: the nickname and self-description are the context every
+      // agent sees, and they are not specific to chat or group chat.
+      { id: 'identity', icon: UserRound },
       { id: 'chat', icon: MessageSquare },
       { id: 'agents', icon: Bot },
+      { id: 'providers', icon: Boxes },
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
-      { id: 'aiSummary', icon: Sparkles },
       { id: 'rag', icon: Brain },
       { id: 'tts', icon: Volume2 },
       { id: 'stt', icon: Mic },

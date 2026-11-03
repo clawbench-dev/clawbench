@@ -27,7 +27,7 @@ vi.mock('lucide-vue-next', () => ({
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: {
     name: 'BottomSheet',
-    template: '<div class="bottom-sheet" :data-open="open"><slot name="header" /><slot /></div>',
+    template: '<div class="bottom-sheet" :data-open="open"><slot name="header" /><slot /><footer class="bs-footer"><slot name="footer" /></footer></div>',
     props: ['open', 'closeGuard', 'auto', 'title'],
     emits: ['close'],
   },
@@ -148,6 +148,11 @@ vi.mock('@/utils/fileManager', () => ({
 
 vi.mock('@/utils/fileAttachmentUtils', () => ({
   isImageFile: () => false,
+  // The footer renders AttachmentTags (which splits URL/quote chips from file
+  // chips), so the drawer's mock has to answer for those predicates too.
+  isUrlEntry: () => false,
+  isQuoteEntry: () => false,
+  isSafeExternalUrl: () => false,
 }))
 
 vi.mock('@/utils/format', () => ({
@@ -207,7 +212,7 @@ const i18n = createI18n({
           forgetUploadConfirm: 'Remove "{name}" from recent uploads? The file stays in your project.',
         },
       },
-      common: { remove: 'Remove', delete: 'Delete' },
+      common: { remove: 'Remove', delete: 'Delete', cancel: 'Cancel', confirm: 'OK' },
     },
   },
 })
@@ -305,9 +310,10 @@ describe('AttachDrawer', () => {
     expect(wrapper.props('recentReferencedFiles')).toEqual([{ path: 'src/foo.ts', count: 3 }])
   })
 
-  it('attaches a referenced directory with isDir=true', async () => {
+  it('selects a referenced directory in the draft, applied on OK with isDir=true', async () => {
     // A referenced directory must carry its isDir flag, otherwise it is attached
-    // as a file and shows a file icon instead of a folder.
+    // as a file and shows a file icon instead of a folder. Selection is local,
+    // so the flag has to survive until OK — not just until the click.
     const wrapper = mountDrawer({
       recentReferencedFiles: [{ path: 'src/utils', count: 2, isDir: true }],
     })
@@ -316,10 +322,15 @@ describe('AttachDrawer', () => {
     const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('utils'))
     expect(row).toBeTruthy()
     await row!.trigger('click')
+    // Nothing reaches the composer before OK.
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(row!.classes()).toContain('ad-file-attached')
+
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')![0]).toEqual(['src/utils', true])
   })
 
-  it('attaches a referenced file with isDir=false', async () => {
+  it('selects a referenced file in the draft, applied on OK with isDir=false', async () => {
     const wrapper = mountDrawer({
       recentReferencedFiles: [{ path: 'src/foo.ts', count: 1 }],
     })
@@ -328,27 +339,30 @@ describe('AttachDrawer', () => {
     const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('foo.ts'))
     expect(row).toBeTruthy()
     await row!.trigger('click')
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')![0]).toEqual(['src/foo.ts', false])
   })
 
-  it('emits add-attached when clicking unattached file', async () => {
+  it('clicking an unselected row only marks it selected (no emit)', async () => {
     const wrapper = mountDrawer({
       currentDir: 'src',
       attachedFiles: [],
     })
     await wrapper.find('.ad-current-item').trigger('click')
-    expect(wrapper.emitted('add-attached')).toBeTruthy()
-    expect(wrapper.emitted('add-attached')![0]).toEqual(['src', true])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.find('.ad-current-item').classes()).toContain('ad-file-attached')
   })
 
-  it('emits remove-attached when clicking attached file', async () => {
+  it('clicking a selected row only unmarks it (no emit)', async () => {
     const wrapper = mountDrawer({
       currentDir: 'src',
       attachedFiles: [{ path: 'src', isDir: true }],
     })
     await wrapper.find('.ad-current-item').trigger('click')
-    expect(wrapper.emitted('remove-attached')).toBeTruthy()
-    expect(wrapper.emitted('remove-attached')![0]).toEqual([{ path: 'src', isDir: true }])
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.find('.ad-current-item').classes()).not.toContain('ad-file-attached')
   })
 
   it('emits file-open when clicking external link on current dir row', async () => {
@@ -534,25 +548,30 @@ describe('AttachDrawer', () => {
     expect(state.activeTab.value).toBe('current')
   })
 
-  it('onFileSelect closes the drawer as soon as files were picked', async () => {
-    // Choosing a file ends the drawer's job: the upload continues in the
-    // background and the input bar shows its progress, so leaving the sheet
-    // open would just delay the user.
+  it('onFileSelect keeps the sheet open and puts the upload in the draft', async () => {
+    // Selection is local now: a pick joins the draft and the sheet stays up
+    // until OK. Uploading is not a reason to bypass the commit step.
     mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer()
     await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
-    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(wrapper.emitted('close')).toBeFalsy()
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
+      .toEqual(['a.png'])
   })
 
-  it('onFileSelect closes the drawer before the upload finishes', async () => {
-    // The close must not wait for the transfer: a slow upload would otherwise
-    // keep the sheet (and its closeGuard) up for the whole transfer.
+  it('onFileSelect shows the uploads tab while the transfer is still running', async () => {
+    // The sheet no longer closes on pick, so the in-flight rows (and the
+    // terminate button) are the only feedback the user gets — the tab switch
+    // has to happen before the await, not after it.
     let resolveUpload: (v: string[]) => void = () => {}
     mockHandleFileSelect.mockReturnValue(new Promise<string[]>((r) => { resolveUpload = r }))
     const wrapper = mountDrawer()
-    void getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    const state = getRawState(wrapper)
+    void state.onFileSelect({ target: { files: [{ name: 'a.png' }] } })
     await nextTick()
-    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(state.activeTab.value).toBe('uploads')
+    expect(wrapper.emitted('close')).toBeFalsy()
     resolveUpload([])
   })
 
@@ -568,10 +587,10 @@ describe('AttachDrawer', () => {
   it('onFileSelect reads the picked count BEFORE handleFileSelect clears the input', async () => {
     // The ordering contract: handleFileSelect clears `input.value`, and a real
     // <input type=file> empties its FileList when that happens. If the drawer
-    // read the count afterwards it would always see 0 and never close after a
-    // real pick. The read now goes through the composable's readPickedCount,
-    // but the CALL ORDER is still the drawer's responsibility — that is what
-    // this pins.
+    // read the count afterwards it would always see 0 and never switch to the
+    // uploads tab for a real pick. The read goes through the composable's
+    // readPickedCount, but the CALL ORDER is still the drawer's responsibility
+    // — that is what this pins.
     const seen: string[] = []
     let fileCount = 1
     const target = {
@@ -589,32 +608,42 @@ describe('AttachDrawer', () => {
       return []
     })
     const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
 
-    await getRawState(wrapper).onFileSelect({ target } as any)
+    await state.onFileSelect({ target } as any)
 
-    // The count was observed as 1 (i.e. before the clear), so the drawer closed.
+    // The count was observed as 1 (i.e. before the clear), so the uploads tab
+    // was chosen.
     expect(seen[0]).toBe('handle:1')
-    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(state.activeTab.value).toBe('uploads')
   })
 
-  it('onFileSelect auto-selects each freshly uploaded file', async () => {
+  it('onFileSelect auto-selects each freshly uploaded file in the draft', async () => {
     mockHandleFileSelect.mockResolvedValue([
       '.clawbench/uploads/a.png',
       '.clawbench/uploads/b.png',
     ])
     const wrapper = mountDrawer({ attachedFiles: [] })
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
-    const added = wrapper.emitted('add-attached')!
-    expect(added).toEqual([
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
+      .toEqual(['a.png', 'b.png'])
+
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+    expect(wrapper.emitted('add-attached')).toEqual([
       ['.clawbench/uploads/a.png', false],
       ['.clawbench/uploads/b.png', false],
     ])
   })
 
-  it('onFileSelect does not re-emit add-attached for an already-attached upload', async () => {
+  it('onFileSelect does not duplicate an upload that is already selected', async () => {
     mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/a.png' }] })
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    // …and OK has nothing to add, because it was already there.
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')).toBeFalsy()
   })
 
@@ -971,18 +1000,20 @@ describe('AttachDrawer', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
-  it('toggleAttached emits add-attached for unattached path', () => {
+  it('toggleAttached adds to the draft without touching the composer', () => {
     const wrapper = mountDrawer({ attachedFiles: [] })
     const state = getRawState(wrapper)
     state.toggleAttached('src/foo.ts')
-    expect(wrapper.emitted('add-attached')!.length).toBeGreaterThan(0)
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(state.isAttached('src/foo.ts')).toBe(true)
   })
 
-  it('toggleAttached emits remove-attached for attached path', () => {
+  it('toggleAttached removes from the draft without touching the composer', () => {
     const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/foo.ts' }] })
     const state = getRawState(wrapper)
     state.toggleAttached('src/foo.ts')
-    expect(wrapper.emitted('remove-attached')!.length).toBeGreaterThan(0)
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(state.isAttached('src/foo.ts')).toBe(false)
   })
 
   it('currentDirDisplayName shows baseName for non-root dir', () => {
@@ -1353,5 +1384,160 @@ describe('AttachDrawer clear-all (最近上传 / 最近分享 顶部一键清空
 
     await state.handleClearUploads()
     expect(state.clearing.value).toBeNull()
+  })
+})
+
+describe('AttachDrawer footer actions', () => {
+  beforeEach(() => {
+    sharedRecentShares.value = []
+    sharedRecentUploads.value = []
+    mockDialogConfirm.mockReset()
+  })
+
+  it('renders the shared .fbtn pair even with nothing attached', () => {
+    // The footer used to appear only once something was attached, which left
+    // the sheet with no explicit exit at all (the narrow header tap is the
+    // only close affordance and is not discoverable).
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const buttons = wrapper.findAll('.ad-footer-actions button')
+    expect(buttons.map(b => b.text())).toEqual(['Cancel', 'OK'])
+    // Same pill language as every other dialog footer — not a bespoke button.
+    expect(buttons[0].classes()).toContain('fbtn')
+    expect(buttons[1].classes()).toContain('fbtn')
+    expect(buttons[1].classes()).toContain('fbtn-primary')
+  })
+
+  it('seeds the draft from the CALLER’s list, not the global chat draft', () => {
+    // The footer is the "selected so far" area and the row check marks read the
+    // same draft. It must describe the list the caller is editing: the
+    // queued-message editor passes its own draft, and the composable's
+    // `attachedFiles` (the global chat draft) used to shadow that prop — so a
+    // file picked there was attached but never showed up in the footer, while
+    // the same pick in the chat input did.
+    sharedAttachedFiles.value = [{ path: 'src/chat-draft.ts' }]
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/queued-edit.ts' }] })
+
+    const names = wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text())
+    expect(names).toEqual(['queued-edit.ts'])
+    expect(names).not.toContain('chat-draft.ts')
+  })
+
+  it('shows a pick in the footer immediately, without touching the composer', async () => {
+    sharedAttachedFiles.value = []
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+
+    await getRawState(wrapper).toggleAttached('src/picked.ts')
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
+      .toEqual(['picked.ts'])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('OK commits the draft as a delta and closes', async () => {
+    // Selection is local, so OK is the single point where the composer learns
+    // about it — one add and one remove for a swap, nothing for untouched rows.
+    const wrapper = mountDrawer({
+      attachedFiles: [{ path: 'src/keep.ts' }, { path: 'src/removed-dir', isDir: true }],
+    })
+    const state = getRawState(wrapper)
+    state.toggleAttached('src/removed-dir', true)   // deselect
+    state.toggleAttached('src/added.ts')            // select
+
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+
+    expect(wrapper.emitted('add-attached')).toEqual([['src/added.ts', false]])
+    expect(wrapper.emitted('remove-attached')).toEqual([[{ path: 'src/removed-dir', isDir: true }]])
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('OK is a plain close when the selection was not touched', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('cancel discards the draft without emitting anything', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/keep.ts' }] })
+    const state = getRawState(wrapper)
+    state.toggleAttached('src/added.ts')
+    state.toggleAttached('src/keep.ts')
+
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('re-opening after a cancel starts from the composer again', async () => {
+    // The draft is seeded on open, so a discarded selection must not leak into
+    // the next session.
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).toggleAttached('src/added.ts')
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+
+    await wrapper.setProps({ open: false })
+    await nextTick()
+    await wrapper.setProps({ open: true })
+    await nextTick()
+
+    expect(getRawState(wrapper).isAttached('src/added.ts')).toBe(false)
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+  })
+
+  it('deleting a selected file removes it from the composer at once, not on OK', async () => {
+    // The file is gone from disk: leaving it attached (even in the draft) would
+    // make the next message reference a path that no longer exists, so this is
+    // the one action that bypasses the commit step.
+    mockDialogConfirm.mockResolvedValue(true)
+    const wrapper = mountDrawer({
+      attachedFiles: [{ path: '.clawbench/uploads/a.png' }],
+    })
+    await getRawState(wrapper).handleDeleteUpload({ path: '.clawbench/uploads/a.png', origin: 'uploads' })
+
+    expect(wrapper.emitted('remove-attached')).toEqual([[{ path: '.clawbench/uploads/a.png' }]])
+    expect(getRawState(wrapper).isAttached('.clawbench/uploads/a.png')).toBe(false)
+  })
+})
+
+describe('AttachDrawer chrome (compact source strip, borderless clear-all)', () => {
+  const source = readFileSync(join(__dirname, '..', 'AttachDrawer.vue'), 'utf8')
+
+  /** Declarations of the first `<selector> {` rule in the SFC. */
+  function declsOf(selector: string): string {
+    const m = source.match(
+      new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'),
+    )
+    expect(m, `${selector} rule must exist in AttachDrawer.vue`).not.toBeNull()
+    return m![1]
+  }
+
+  it('the three source entries are single-line pills, not stacked blocks', () => {
+    // "Compact but keep the icon and the label": icon and text side by side on
+    // one short row. A column layout with 44px min-height is what made the
+    // strip eat a fifth of the sheet on a phone.
+    const decls = declsOf('.ad-source-btn')
+    expect(decls).not.toMatch(/flex-direction\s*:\s*column/)
+    expect(decls).toMatch(/height\s*:\s*calc\(34 \* var\(--dp\)\)/)
+    expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
+  })
+
+  it('clear-all is a borderless icon+label button like the other clear-alls', () => {
+    // The bordered pill made it the loudest thing in the sheet while every
+    // other clear-all in the app is a plain text button.
+    const decls = declsOf('.ad-clear-btn')
+    expect(decls).toMatch(/border\s*:\s*none/)
+    expect(decls).toMatch(/background\s*:\s*transparent/)
+    expect(decls).not.toMatch(/--radius-full/)
+  })
+
+  it('clear-all stays muted at rest and only turns red on interaction', () => {
+    expect(declsOf('.ad-clear-btn')).toMatch(/color\s*:\s*var\(--text-muted\)/)
+    const hover = source.match(/\.ad-clear-btn:hover:not\(:disabled\)\s*\{([^}]*)\}/)
+    expect(hover, 'the hover rule must exist').not.toBeNull()
+    expect(hover![1]).toMatch(/--color-red/)
   })
 })

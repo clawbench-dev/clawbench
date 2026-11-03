@@ -1385,7 +1385,20 @@ export function useFilePathAnnotation() {
 
 /**
  * Resolve a relative href against a base directory.
- * Returns the resolved project-relative path.
+ *
+ * The result keeps the base directory's own root: an absolute base stays
+ * absolute. `splitPath` splits on separators and therefore yields an EMPTY
+ * leading segment for a rooted path; the loop below drops it, so without the
+ * explicit root re-attach `/proj/docs` + `a.md` came back as `proj/docs/a.md`.
+ * Every consumer reads that as project-relative, so it resolved to
+ * `<project>/proj/docs/a.md` and the file was reported missing. The meeting
+ * minutes are the visible case — their document path is absolute
+ * (`.clawbench/notes/<meeting>/minutes.md`), so every relative link and image
+ * in them was dead.
+ *
+ * A drive letter needs no special handling: `C:` is a non-empty segment and
+ * survives the join. A UNC share does — both leading separators are dropped,
+ * and collapsing them to one would turn the share into a POSIX path.
  */
 export function resolveRelativePath(href: string, baseDir: string): string {
     if (!baseDir) return href
@@ -1396,7 +1409,8 @@ export function resolveRelativePath(href: string, baseDir: string): string {
         if (part === '..') { normalized.pop(); continue }
         normalized.push(part)
     }
-    return normalized.join('/')
+    const root = /^[\\/]{2}/.test(baseDir) ? '//' : (/^[\\/]/.test(baseDir) ? '/' : '')
+    return root + normalized.join('/')
 }
 
 /**

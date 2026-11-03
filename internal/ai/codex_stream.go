@@ -475,6 +475,19 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 	cmd.Dir = req.WorkDir
 	cmd.Env = os.Environ() // inherit current environment
 
+	// Model provider injection (see providerEnvForRequest). Codex is a
+	// config-file backend: the environment only carries the secret its
+	// config.toml references, plus any env-level override when supported.
+	if providerEnv, perr := providerEnvForRequest(req, "codex"); perr != nil {
+		return nil, perr
+	} else if len(providerEnv) > 0 {
+		cmd.Env = append(cmd.Env, providerEnv...)
+		slog.Info("cli: injected model provider environment",
+			slog.String("backend", "codex"),
+			slog.String("agent_id", req.AgentID),
+			slog.Any("env", model.RedactProviderEnv(providerEnv)))
+	}
+
 	isResume := req.Resume && req.SessionID != ""
 
 	// For resume mode, codex outputs the formatted transcript (with role markers

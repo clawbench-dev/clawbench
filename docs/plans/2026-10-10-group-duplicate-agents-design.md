@@ -1,4 +1,4 @@
-# 群聊支持同一智能体多实例（临时昵称）设计
+# 群聊支持同一智能体多实例（临时称谓）设计
 
 日期：2026-10-10
 状态：已实施（分支 `feat/group-duplicate-agents`）
@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-允许**同一个智能体被加进同一个群多次**，每次是一个独立「实例」，自动获得唯一临时昵称（`Claude`、`Claude 2`、`Claude 3`…），使 AI 之间的 @ 路由与用户 @ 提及都能精确点名到某个实例。
+允许**同一个智能体被加进同一个群多次**，每次是一个独立「实例」，自动获得唯一临时称谓（`Claude`、`Claude 2`、`Claude 3`…），使 AI 之间的 @ 路由与用户 @ 提及都能精确点名到某个实例。
 
 ## 2. 背景：现状与为什么要改
 
@@ -34,7 +34,7 @@
 `speakerFromAgent`（`internal/service/speaker_identity.go:66-79`）的逻辑是「只要 `agents` 表里还有该 agent，就用它的当前 `name` 覆盖 `title`，`title` 仅作兜底」。由此产生两个问题：
 
 - **缺陷 1（既有 bug）**：用户改了智能体的 `name`，群里历史发言在**分享/导出快照**里的发言人名会追溯性改变，而应用内（前端直接读 `m.name`，来自成员行存储的名字）显示的是建群快照 → 同一份对话，应用内外名字不一致。（注：改智能体名**不会**改动任何 `chat_sessions` 行——`PatchAgentFields` 只写 `agents` 表；不一致纯粹来自分享路径读了实时 `agents.name`。）
-- **缺陷 2（会阻断本需求）**：临时昵称 `Claude 2` 存下来后，`speakerFromAgent` 会用 `agents.name`（`Claude`）覆盖它 → 分享快照里两个实例都叫 `Claude`，昵称失效。
+- **缺陷 2（会阻断本需求）**：临时称谓 `Claude 2` 存下来后，`speakerFromAgent` 会用 `agents.name`（`Claude`）覆盖它 → 分享快照里两个实例都叫 `Claude`，称谓失效。
 
 因此本设计必须**把「成员显示名以什么为准」定死**：新增专用列 `agent_name` 作为唯一权威，读取端不再回退 `agents.name`。
 
@@ -42,8 +42,8 @@
 
 | # | 决策 | 选择 |
 |---|---|---|
-| D1 | 选人交互 | 行内**计数步进器** `− N +`，只显示计数徽标，**不预览昵称** |
-| D2 | 昵称规则 | 首个实例用原名 `Claude`；后续实例优先取名池名（`Alice`/`Bob`/…），池尽回退 `Claude 2`、`Claude 3`…；**永不出现 `Claude 1`**（名池为 2026-10-10 后续演进，见 §4.1） |
+| D1 | 选人交互 | 行内**计数步进器** `− N +`，只显示计数徽标，**不预览称谓** |
+| D2 | 称谓规则 | 首个实例用原名 `Claude`；后续实例优先取名池名（`Alice`/`Bob`/…），池尽回退 `Claude 2`、`Claude 3`…；**永不出现 `Claude 1`**（名池为 2026-10-10 后续演进，见 §4.1） |
 | D3 | 单实例 | 保持原名，不带序号 |
 | D4 | 主持人 | 仅**第一实例**可当主持；主持人仍是**行级**（agent id）操作 |
 | D5 | 成员上限 | 按**实例总数**计，上限 **10 → 12** |
@@ -57,11 +57,11 @@
 
 - **不复用 `title`**：`title` 本是会话标题语义，成员行借用它属于"一列两用"。新增 `agent_name` 让"成员显示名"有独立、无歧义的归属。
 - **成员行 `title` 留空**：成员行是隐藏会话，`title` 对它无意义；写入时置空串（列是 `NOT NULL`），显示名只走 `agent_name`。已核实 `title` 的成员读点仅 5 处（全在 `group_store.go`），且 `speaker_identity.go:43` 读的是**群行**的 `title`（非成员行），故留空安全。
-- **修掉缺陷 1、2**：`agent_name` 为快照值，读取端**不再回退** `agents.name`，改智能体名不影响群历史名；多实例昵称（`Claude 2`）也因此稳定。
+- **修掉缺陷 1、2**：`agent_name` 为快照值，读取端**不再回退** `agents.name`，改智能体名不影响群历史名；多实例称谓（`Claude 2`）也因此稳定。
 - 迁移：一次 `ALTER TABLE chat_sessions ADD COLUMN agent_name TEXT NOT NULL DEFAULT ''`；存量成员行 `agent_name` 从现有 `title` 回填、`title` 置空（一次性数据迁移）。
 - 备选（已否决）：方案 A（复用 `title`，语义不纯）；独立 `group_members` 表（成员行 id 是 ACP 池 key + 历史署名 + 7 个共享访问器入参，搬表需数据迁移与重接连接层，代价与风险高一个数量级）。
 
-## 4. 昵称生成（后端，唯一真源）
+## 4. 称谓生成（后端，唯一真源）
 
 命名逻辑从 handler **下移到 service**（需要按群 + agent 查历史行数，只有 service 能访问 DB）。
 
@@ -88,8 +88,8 @@ if candidate == "" or collides(candidate, G):
 - **永不出现 `base + " 1"`**：池耗尽 / 冲突回退时编号从 2 起。
 - **池优先**：多实例从代码内置的英文名池 `groupNamePool`（`internal/service/group_name_pool.go`：`Alice`/`Bob`/…）取第一个未被占用的名字；名池刻意不可配置、无设置 UI。池耗尽才回退 `base + " " + m`。
 - **真名预留**（2026-10-11）：池名**永不取**与本批次任一实例本名、或群内已有智能体本名相同的名字。这样真实智能体名**恒被保留**、池确定性避让，且**与 specs 顺序无关**——否则「一组重复实例先取走池名 `Alice`、而另一个 agent 恰好叫 `Alice`」会把后者挤成 `Alice 2`。
-- **递增不复用**：`n` 含已离场（archived）行，且 D9 决定一律新建，故回退序号单调递增、历史消息中的昵称永远指向同一个实例。
-- **唯一性兜底**：与群内任一成员名、或用户昵称（`IsUserNickname` / `groupUserTarget()`）冲突时继续取下一个未占用池名（池尽则序号 +1），直到唯一。
+- **递增不复用**：`n` 含已离场（archived）行，且 D9 决定一律新建，故回退序号单调递增、历史消息中的称谓永远指向同一个实例。
+- **唯一性兜底**：与群内任一成员名、或用户称谓（`IsUserNickname` / `groupUserTarget()`）冲突时继续取下一个未占用池名（池尽则序号 +1），直到唯一。
 
 ### 4.2 唯一性的意义
 
@@ -110,7 +110,7 @@ if candidate == "" or collides(candidate, G):
 - **名字"固化"≠"永不变"**：固化只挡住"智能体改名"；若将来加"成员改名"，或用户手改输入框里的标签，名字路由会解析失败，id 不会。
 - **避免"一物两用"**：名字是显示标识、id 是身份标识，分开与 §3.1 的取舍一致。
 
-**对本需求的意义**：AI 之间用名字 ⇒ 名字必须唯一（否则 `byName` 覆盖、成员不可达），这正是当前去重的根因，也是昵称方案（`Claude` / `Claude 2`）解锁多实例的关键；用户侧本就是 id 路由，**天然支持多实例、前端无需改**。
+**对本需求的意义**：AI 之间用名字 ⇒ 名字必须唯一（否则 `byName` 覆盖、成员不可达），这正是当前去重的根因，也是称谓方案（`Claude` / `Claude 2`）解锁多实例的关键；用户侧本就是 id 路由，**天然支持多实例、前端无需改**。
 
 ### 4.3 主持人的实例归属
 
@@ -184,7 +184,7 @@ if candidate == "" or collides(candidate, G):
 
 - **线格式不变**。仅语义扩展：`memberAgentIds[]` / `agentIds[]` 允许重复元素代表多实例；`hostAgentId` 仍为 agent id；成员的 `name` 字段语义不变。
 - `internal/api/openapi.yaml`：更新 `/api/group/create`、`/api/group/members` 的字段描述（说明可含重复、上限 12）；无字段增删。
-- `docs/spec/features/group-chat.md`：更新成员上限（12）、昵称规则、去重移除说明、成员显示名权威来源改为 `agent_name`；更新数据模型表（`chat_sessions.agent_name`）。
+- `docs/spec/features/group-chat.md`：更新成员上限（12）、称谓规则、去重移除说明、成员显示名权威来源改为 `agent_name`；更新数据模型表（`chat_sessions.agent_name`）。
 
 ## 8. 边界与影响
 
@@ -192,12 +192,12 @@ if candidate == "" or collides(candidate, G):
 - **资源**：每个实例 = 一个独立 ACP 子进程；上限 12 即最多 12 个。
 - **上限语义变化**：`Claude ×3 + GPT ×2` 现在计 5（此前按去重 agent 计 2）。
 - **一次 schema 迁移**：新增 `agent_name` 列 + 存量成员行回填（`agent_name = title, title = ''`）。迁移须幂等、可重入，且对无成员的旧库是 no-op。
-- **既有测试需改**：`TestCreateGroupWithMembers_DedupesAgents`（`group_store_test.go:1122-1154`）等钉住去重行为的用例须改为钉住「多实例 + 唯一昵称」；读成员名的用例改断言 `agent_name`。
+- **既有测试需改**：`TestCreateGroupWithMembers_DedupesAgents`（`group_store_test.go:1122-1154`）等钉住去重行为的用例须改为钉住「多实例 + 唯一称谓」；读成员名的用例改断言 `agent_name`。
 
 ## 9. 测试计划
 
 **Go**
-- 昵称：首实例原名 / 第二实例 `2` / 批量创建递增 / 离场后再加仍递增（不复用）/ 与用户昵称或其它成员名冲突时兜底。
+- 称谓：首实例原名 / 第二实例 `2` / 批量创建递增 / 离场后再加仍递增（不复用）/ 与用户称谓或其它成员名冲突时兜底。
 - 上限：按实例数触发 12；`Claude ×13` 被拒。
 - 建群：同 agent 多次出现在 `memberAgentIds` 生成多个成员行。
 - 加成员：同 agent 可再加（新建实例，非 rejoin）。
@@ -219,7 +219,7 @@ if candidate == "" or collides(candidate, G):
 ## 10. 实施顺序（建议）
 
 1. **schema**：`database.go` 新增 `agent_name` 列迁移 + 存量成员行回填（幂等）。
-2. service：`validateGroupSpecs` + 昵称生成 + `MaxGroupMembers=12` + 去重/rejoin 移除；成员显示名读写全部切到 `agent_name`。
+2. service：`validateGroupSpecs` + 称谓生成 + `MaxGroupMembers=12` + 去重/rejoin 移除；成员显示名读写全部切到 `agent_name`。
 3. `speaker_identity`：成员名以 `agent_name` 为权威（修缺陷 1、2）。
 4. handler：specs 不再填名；错误映射与上限；`session_type` 守卫。
 5. 前端：`AgentSelectorDrawer` 步进器 + `GroupSettingsSheet` 去排除。

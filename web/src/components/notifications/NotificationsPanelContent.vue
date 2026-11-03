@@ -93,7 +93,7 @@
       </div>
 
       <div v-else-if="items.length === 0" class="notif-state">
-        <Inbox :size="30" />
+        <Inbox class="empty-state__icon" />
         <span>{{ isFiltered ? t('notifications.emptyFiltered') : t('notifications.empty') }}</span>
         <span v-if="!isFiltered" class="notif-state-hint">{{ t('notifications.emptyHint') }}</span>
       </div>
@@ -185,7 +185,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Video, Hand,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -280,6 +280,7 @@ const kindOptions = computed<MenuSelectOption[]>(() => [
   { value: 'task', label: t('notifications.kind.task') },
   { value: 'forge', label: t('notifications.kind.forge') },
   { value: 'usage', label: t('notifications.kind.usage') },
+  { value: 'meeting', label: t('notifications.kind.meeting') },
 ])
 
 const rangeOptions = computed<MenuSelectOption[]>(() => [
@@ -341,6 +342,7 @@ function kindIcon(n: NotificationItem) {
     case 'task': return Clock
     case 'forge': return GitMerge
     case 'usage': return Gauge
+    case 'meeting': return Video
     default: return Bot
   }
 }
@@ -349,6 +351,13 @@ function kindIcon(n: NotificationItem) {
 function eventTone(n: NotificationItem): string {
   const s = n.eventType
   if (n.kind === 'usage') return s === 'full' ? 'danger' : 'warning'
+  if (n.kind === 'meeting') {
+    // A remote-control request is the one meeting event that needs an answer,
+    // so it reads like permission_pending rather than like a completion.
+    if (s === 'control_request') return 'warning'
+    if (s === 'minutes_failed') return 'danger'
+    return 'success'
+  }
   if (s === 'failed' || s === 'cancelled') return 'danger'
   if (s === 'permission_pending') return 'warning'
   if (n.kind === 'forge') return 'purple'
@@ -359,6 +368,12 @@ function eventTone(n: NotificationItem): string {
 function eventIcon(n: NotificationItem) {
   const s = n.eventType
   if (n.kind === 'usage') return Gauge
+  if (n.kind === 'meeting') {
+    if (s === 'control_request') return Hand
+    if (s === 'minutes_failed') return X
+    if (s === 'minutes_ready') return Check
+    return Video
+  }
   if (s === 'failed' || s === 'cancelled') return X
   if (s === 'permission_pending') return ShieldAlert
   if (n.kind === 'forge') return GitMerge
@@ -380,6 +395,11 @@ function eventLabel(n: NotificationItem): string {
     pipeline_done: 'notifications.event.forgePipelineDone',
     over: 'notifications.event.usageOver',
     full: 'notifications.event.usageFull',
+    control_request: 'notifications.event.meetingControlRequest',
+    viewer_joined: 'notifications.event.meetingViewerJoined',
+    screen_share: 'notifications.event.meetingScreenShare',
+    minutes_ready: 'notifications.event.meetingMinutesReady',
+    minutes_failed: 'notifications.event.meetingMinutesFailed',
   }
   const key = map[n.eventType]
   // Fall back to the raw event type rather than an empty chip: an unknown event
@@ -442,6 +462,7 @@ function fallbackTitle(n: NotificationItem): string {
   if (n.kind === 'forge') return n.forgeItemKey || t('notifications.kind.forge')
   if (n.kind === 'task') return t('notifications.kind.task')
   if (n.kind === 'usage') return t('notifications.kind.usage')
+  if (n.kind === 'meeting') return t('notifications.kind.meeting')
   return t('notifications.kind.session')
 }
 
@@ -519,6 +540,16 @@ async function onOpen(n: NotificationItem) {
         jumpTo('clawbench-open-forge', {
           projectPath: n.projectPath,
           target: forgeTargetFromItemKey(n.forgeItemKey),
+        })
+      }
+      return
+    case 'meeting':
+      // The share token IS the meeting's identity; the record it opens lives in
+      // the row's project, so the path travels with it.
+      if (n.meetingToken) {
+        jumpTo('clawbench-open-meeting', {
+          token: n.meetingToken,
+          projectPath: n.projectPath,
         })
       }
       return

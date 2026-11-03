@@ -298,6 +298,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"acp_config_options":   true, "acp_mcp_http": true, "acp_mcp_sse": true,
 		"auto_approve": true, "disabled": true,
 		"project_id": true,
+		// Model-provider binding (NULL = use the CLI's own configuration).
+		"provider_id": true,
 		// Per-agent MCP enablement policy (JSON). The definitions live in
 		// config.yaml, not here — see model.MCPServerPolicy.
 		"mcp_servers": true,
@@ -675,9 +677,9 @@ func TestSaveAgent_RejectsNameTakenByOtherID(t *testing.T) {
 // agent sharing it would shadow the human.
 func TestAgentName_RejectsUserNickname(t *testing.T) {
 	db := setupTestDBForAgents(t)
-	orig := model.ChatUserNickname
-	t.Cleanup(func() { model.ChatUserNickname = orig })
-	model.ChatUserNickname = "老板"
+	orig := model.UserNickname
+	t.Cleanup(func() { model.UserNickname = orig })
+	model.UserNickname = "老板"
 
 	// Create path.
 	err := service.SaveAgent(db, &model.Agent{ID: "claude", Name: "老板", Backend: "claude"})
@@ -694,7 +696,7 @@ func TestAgentName_RejectsUserNickname(t *testing.T) {
 	assert.ErrorIs(t, err, service.ErrAgentNameReserved)
 
 	// The reserved name is released once the nickname changes.
-	model.ChatUserNickname = "Boss"
+	model.UserNickname = "Boss"
 	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{Name: &name}))
 }
 

@@ -30,7 +30,7 @@
         </div>
 
         <div v-else-if="search.state.results.length === 0" class="ip-empty">
-          <FileQuestion :size="56" :stroke-width="1.25" class="ip-empty-icon" />
+          <FileQuestion class="ip-empty-icon empty-state__icon" />
           <p class="ip-empty-text">
             <i18n-t keypath="file.search.inertNoResults" tag="span">
               <template #name>
@@ -235,11 +235,6 @@ watch(
      the result names). */
   padding: var(--space-10) var(--space-5);
   text-align: center;
-}
-
-.ip-empty-icon {
-  color: var(--text-muted, #999);
-  opacity: var(--opacity-muted);
 }
 
 .ip-empty-text {

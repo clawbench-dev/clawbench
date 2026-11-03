@@ -30,6 +30,32 @@ describe('settingsFieldMap', () => {
     }
   })
 
+  // The user's identity is a first-class settings category, not a row under
+  // 群聊: the nickname is also the meeting display name and the profile is
+  // injected into every agent prompt. Guard both halves of the extraction so a
+  // later refactor cannot silently put the nickname back under chat.
+  it('identity category owns the user nickname and profile', () => {
+    const identity = categoryItems['identity']
+    expect(identity).toBeDefined()
+
+    const nick = identity.find(e => e.type === 'item' && e.spec.key === 'user.nickname')
+    expect(nick).toBeDefined()
+    if (nick!.type !== 'item') throw new Error('expected item entry for user.nickname')
+    expect(nick!.spec.type).toBe('text')
+    expect(nick!.spec.source).toBe('server')
+
+    const profile = identity.find(e => e.type === 'item' && e.spec.key === 'user.profile')
+    expect(profile).toBeDefined()
+    if (profile!.type !== 'item') throw new Error('expected item entry for user.profile')
+    expect(profile!.spec.type).toBe('textarea')
+    expect(profile!.spec.source).toBe('server')
+
+    const chatKeys = categoryItems['chat']
+      .filter(e => e.type === 'item')
+      .map(e => (e as { spec: { key: string } }).spec.key)
+    expect(chatKeys).not.toContain('chat.user_nickname')
+  })
+
   it('does not map local-only settings', () => {
     const map = getServerFieldToLabelKey()
 
@@ -95,9 +121,9 @@ describe('settingsFieldMap', () => {
   it('includes TTS sub-config keys', () => {
     const map = getServerFieldToLabelKey()
 
-    expect(map['tts.piper.model_path']).toBeTruthy()
-    expect(map['tts.kokoro.model_path']).toBeTruthy()
-    expect(map['tts.moss_nano.model_dir']).toBeTruthy()
+    expect(map['tts.openai.base_url']).toBeTruthy()
+    expect(map['tts.openai.model']).toBeTruthy()
+    expect(map['tts.openai.voice']).toBeTruthy()
   })
 
   it('includes previously missing rag.search_pool_size', () => {
@@ -265,7 +291,7 @@ describe('settingsFieldMap', () => {
     const expectedCategories = [
       'appearance', 'agents', 'project', 'files', 'chat', 'debug', 'security', 'about',
       'notification',
-      'terminal', 'tts', 'tts_engine', 'aiSummary', 'rag', 'portForward',
+      'terminal', 'tts', 'tts_engine', 'rag', 'portForward',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -304,7 +330,6 @@ describe('settingsFieldMap', () => {
   it('categoryHasPanels identifies panel categories', () => {
     expect(categoryHasPanels('terminal')).toBe(true)
     expect(categoryHasPanels('tts')).toBe(false)
-    expect(categoryHasPanels('aiSummary')).toBe(true)
     expect(categoryHasPanels('rag')).toBe(true)
     expect(categoryHasPanels('portForward')).toBe(true)
 
@@ -317,7 +342,6 @@ describe('settingsFieldMap', () => {
   it('isPanelOnlyCategory identifies panel-only categories', () => {
     expect(isPanelOnlyCategory('terminal')).toBe(true)
     expect(isPanelOnlyCategory('tts')).toBe(false)
-    expect(isPanelOnlyCategory('aiSummary')).toBe(true)
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
 
@@ -364,23 +388,10 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('tts.engine')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(5)
-    expect(cfg.entrySelector!.options!.map(o => o.value)).toContain('openai')
+    expect(cfg.entrySelector!.options!.length).toBe(2)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai'])
     expect(cfg.commonFields.length).toBe(3)
-    expect(cfg.optionSubFields!.length).toBe(4)
-
-    const piperSub = cfg.optionSubFields!.find(osf => osf.when === 'piper')
-    expect(piperSub).toBeDefined()
-    expect(piperSub!.fields.length).toBe(4)
-    expect(piperSub!.fields[0].key).toBe('tts.piper.model_path')
-
-    const kokoroSub = cfg.optionSubFields!.find(osf => osf.when === 'kokoro')
-    expect(kokoroSub).toBeDefined()
-    expect(kokoroSub!.fields.length).toBe(3)
-
-    const mossNanoSub = cfg.optionSubFields!.find(osf => osf.when === 'moss-nano')
-    expect(mossNanoSub).toBeDefined()
-    expect(mossNanoSub!.fields.length).toBe(2)
+    expect(cfg.optionSubFields!.length).toBe(1)
 
     const openaiSub = cfg.optionSubFields!.find(osf => osf.when === 'openai')
     expect(openaiSub).toBeDefined()
@@ -403,9 +414,6 @@ describe('settingsFieldMap', () => {
     expect(streamField.options!.map(o => o.value)).toEqual(['auto', 'sse', 'audio'])
 
     expect(cfg.requiredFields).toEqual([
-      'tts.piper.model_path',
-      'tts.kokoro.model_path',
-      'tts.kokoro.voices_path',
       'tts.openai.base_url',
       'tts.openai.model',
       'tts.openai.voice',
@@ -423,12 +431,11 @@ describe('settingsFieldMap', () => {
 
     expect(voiceField.dependsOn).toEqual({
       key: 'tts.engine',
-      values: ['edge', 'piper', 'kokoro', 'moss-nano'],
+      value: 'edge',
     })
 
     const getValue = (engine: string) => (key: string) => (key === 'tts.engine' ? engine : undefined)
     expect(isDependsOnMet(voiceField.dependsOn, getValue('edge'))).toBe(true)
-    expect(isDependsOnMet(voiceField.dependsOn, getValue('moss-nano'))).toBe(true)
     expect(isDependsOnMet(voiceField.dependsOn, getValue('openai'))).toBe(false)
   })
 
@@ -442,13 +449,18 @@ describe('settingsFieldMap', () => {
     expect(toggleSpec.type).toBe('switch')
     expect(toggleSpec.source).toBe('server')
 
-    // The jump to the shared AI summary panel is offered only when the toggle
-    // is on — the feature has nothing to call without that model.
-    const jump = items.find(e => e.type === 'item' && e.spec.key === 'navigateAiSummaryForRename')
-    expect(jump).toBeDefined()
-    const jumpSpec = (jump as { type: 'item'; spec: ItemSpec }).spec
-    expect(jumpSpec.navigateTo).toBe('aiSummary')
-    expect(jumpSpec.disableUnless).toEqual({ key: 'chat.auto_rename_enabled', value: true })
+    // The model picker is offered only when the toggle is on — the feature has
+    // nothing to call without that model. It selects in place instead of
+    // navigating to a separate page.
+    const picker = items.find(
+      e => e.type === 'item' && e.spec.key === 'summaryModel'
+        && (e.spec.disableUnless as { key?: string } | undefined)?.key === 'chat.auto_rename_enabled',
+    )
+    expect(picker).toBeDefined()
+    const pickerSpec = (picker as { type: 'item'; spec: ItemSpec }).spec
+    expect(pickerSpec.type).toBe('summaryModel')
+    expect(pickerSpec.navigateTo).toBeUndefined()
+    expect(pickerSpec.disableUnless).toEqual({ key: 'chat.auto_rename_enabled', value: true })
   })
 
   // ── Summarization (语音摘要) ──
@@ -465,11 +477,12 @@ describe('settingsFieldMap', () => {
     const values = (spec.options ?? []).map(o => o.value)
     expect(values).toEqual(['simple', 'api', 'auto'])
 
-    // Jump link to the top-level aiSummary panel
-    const jump = items.find(e => e.type === 'item' && e.spec.key === 'navigateAiSummary')
-    expect(jump).toBeDefined()
-    const jumpSpec = (jump as { type: 'item'; spec: ItemSpec }).spec
-    expect(jumpSpec.navigateTo).toBe('aiSummary')
+    // In-place model picker (no jump to a separate panel)
+    const picker = items.find(e => e.type === 'item' && e.spec.key === 'summaryModel')
+    expect(picker).toBeDefined()
+    const pickerSpec = (picker as { type: 'item'; spec: ItemSpec }).spec
+    expect(pickerSpec.type).toBe('summaryModel')
+    expect(pickerSpec.navigateTo).toBeUndefined()
   })
 
   it('auto_junk_ratio is a server slider shown only when the backend is auto', () => {
@@ -483,32 +496,6 @@ describe('settingsFieldMap', () => {
     expect(ratio.spec.dependsOn).toEqual({ key: 'summarize.tts_backend', value: 'auto' })
     expect(ratio.spec.min).toBe(0.1)
     expect(ratio.spec.max).toBe(0.9)
-  })
-
-  it('ai_summary panel has shared model fields', () => {
-    const panels = getCategoryPanels('aiSummary')
-    expect(panels.length).toBe(1)
-    const cfg = panels[0]
-    expect(cfg.panelId).toBe('ai_summary')
-
-    const baseUrl = cfg.commonFields.find(f => f.key === 'ai_summary.api.base_url')
-    expect(baseUrl).toBeDefined()
-    expect(baseUrl!.type).toBe('text')
-
-    const model = cfg.commonFields.find(f => f.key === 'ai_summary.model')
-    expect(model).toBeDefined()
-
-    const format = cfg.commonFields.find(f => f.key === 'ai_summary.format')
-    expect(format).toBeDefined()
-    expect(format!.type).toBe('select')
-
-    const apiKey = cfg.commonFields.find(f => f.key === 'ai_summary.api.key')
-    expect(apiKey).toBeDefined()
-    expect(apiKey!.type).toBe('password')
-
-    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({ 'ai_summary.api.base_url': 'https://x' })).toBe(true)
-    expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 
   // ── RAG panel ──
@@ -933,7 +920,7 @@ describe('section grouping invariant', () => {
     const recommendKeys = items
       .filter(i => i.sectionHeader === 'settings.items.recommendSectionHeader')
       .map(i => i.key)
-    expect(recommendKeys).toContain('navigateAiSummary')
+    expect(recommendKeys).toContain('summaryModel')
     // The recommend block must be one contiguous run, so its rows are adjacent
     // members of the same card rather than scattered across two.
     const indices = items
@@ -943,65 +930,51 @@ describe('section grouping invariant', () => {
   })
 })
 
-describe('AI summary model jump rows', () => {
+describe('AI summary model picker rows', () => {
   /**
-   * All three rows are the SAME destination (`navigateTo: 'aiSummary'`) reached
-   * from three different features. They used to carry two different label/desc
-   * key pairs, so the naming drifted: two said "模型详情" and one said
-   * "配置 AI 摘要模型". Sharing one key pair is the fix, and this pins it.
+   * All three rows are the SAME control reached from three features. They used
+   * to jump to a separate aiSummary panel; now they pick the model in place, so
+   * the invariant is the shared type/label and the absence of navigation.
    */
-  const JUMP_ROWS: Array<[category: string, key: string]> = [
-    ['chat', 'navigateAiSummary'], // 推荐回复
-    ['chat', 'navigateAiSummaryForRename'], // 自动命名
-    ['tts', 'navigateAiSummary'], // 语音摘要
+  const PICKER_ROWS: Array<[category: string, index: number]> = [
+    ['chat', 0], // 推荐回复
+    ['chat', 1], // 自动命名
+    ['tts', 0], // 语音摘要
   ]
 
-  function findSpec(category: string, key: string) {
-    const entry = categoryItems[category].find(e => e.type === 'item' && e.spec.key === key)
-    expect(entry, `${category}.${key} must exist`).toBeDefined()
-    return (entry as { type: 'item'; spec: ItemSpec }).spec
+  function pickerSpecs(category: string): ItemSpec[] {
+    return categoryItems[category]
+      .filter(e => e.type === 'item' && e.spec.key === 'summaryModel')
+      .map(e => (e as { type: 'item'; spec: ItemSpec }).spec)
   }
 
-  it('all three jump to the aiSummary panel', () => {
-    for (const [category, key] of JUMP_ROWS) {
-      expect(findSpec(category, key).navigateTo).toBe('aiSummary')
+  it('renders one in-place picker per feature, with no navigation', () => {
+    for (const [category] of PICKER_ROWS) {
+      const specs = pickerSpecs(category)
+      expect(specs.length).toBeGreaterThan(0)
+      for (const spec of specs) {
+        expect(spec.type).toBe('summaryModel')
+        expect(spec.navigateTo).toBeUndefined()
+      }
     }
   })
 
-  it('share one label/description key pair so the naming cannot drift', () => {
-    for (const [category, key] of JUMP_ROWS) {
-      const spec = findSpec(category, key)
-      expect(spec.labelKey).toBe('settings.items.aiSummaryRef')
-      expect(spec.descriptionKey).toBe('settings.items.aiSummaryRefDesc')
+  it('shares one label/description key pair so the naming cannot drift', () => {
+    for (const [category] of PICKER_ROWS) {
+      for (const spec of pickerSpecs(category)) {
+        expect(spec.labelKey).toBe('settings.items.summaryModelRow')
+        expect(spec.descriptionKey).toBe('settings.items.summaryModelRowDesc')
+      }
     }
   })
 
   it('all opt into the shared-model config status pill', () => {
-    for (const [category, key] of JUMP_ROWS) {
-      expect(findSpec(category, key).showSummaryModelStatus).toBe(true)
+    for (const [category] of PICKER_ROWS) {
+      for (const spec of pickerSpecs(category)) {
+        expect(spec.showSummaryModelStatus).toBe(true)
+      }
     }
   })
-
-  it('gives each skill concern its own section (and therefore card)', () => {
-    // One card per concern: master switch / local directories / git repos /
-    // discovered listing. A shared section renders into ONE card, which is what
-    // made the read-only listing and the two configuration lists look glued
-    // together.
-    const entries = categoryItems['skills']
-    const sections = entries
-      .map((e) => (e.type === 'item' ? e.spec.sectionHeader : undefined))
-      .filter(Boolean)
-    for (const s of [
-      'settings.items.skillsSection',
-      'settings.items.skillsDirs',
-      'settings.items.skillsRepos',
-      'settings.items.skillsDiscoveredSection',
-    ]) {
-      expect(sections).toContain(s)
-    }
-    expect(new Set(sections).size).toBe(4)
-  })
-
 })
 
 describe('placeholder items (section openers)', () => {

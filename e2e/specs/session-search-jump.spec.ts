@@ -26,6 +26,29 @@ import { ChatPage } from '../pages/chat.page'
 test.describe.serial('Session search jump', () => {
   const chat = (page: Parameters<typeof ChatPage>[0]) => new ChatPage(page)
 
+  // The indexer polls on a 5s cycle, so waitForIndexed's own 40s budget has to
+  // fit inside the test budget. Playwright's default is 30s, which made the
+  // inner deadline unreachable: a slow index surfaced as "Test timeout of
+  // 30000ms exceeded" inside page.waitForTimeout instead of the assertion that
+  // says what actually went wrong.
+  test.setTimeout(120000)
+
+  /**
+   * The id of the session the chat panel currently shows.
+   *
+   * Read from GET /api/ai/chat, NOT from `/api/ai/sessions[0]`: that list is
+   * ordered by pinned / sort_order / created_at, so any session pinned or
+   * re-ordered by an earlier spec sorts above the one this test just used. The
+   * search is then scoped to a stranger's session and can never match.
+   */
+  async function currentSessionId(page: Parameters<typeof ChatPage>[0]): Promise<string> {
+    return page.evaluate(async () => {
+      const resp = await fetch('/api/ai/chat')
+      const data = await resp.json()
+      return data.sessionId as string
+    })
+  }
+
   /**
    * Wait until the indexer has caught up, then poll the search API.
    *
@@ -84,11 +107,7 @@ test.describe.serial('Session search jump', () => {
     await chat(page).fillInput(body)
     const countBefore = await chat(page).sendMessage(body)
     await chat(page).waitForReply(30000, countBefore)
-    const sessionId = await page.evaluate(async () => {
-      const resp = await fetch('/api/ai/sessions')
-      const data = await resp.json()
-      return data.sessions?.[0]?.id ?? null
-    })
+    const sessionId = await currentSessionId(page)
     expect(sessionId, 'a session must exist after sending').toBeTruthy()
 
     // The indexer polls asynchronously; wait for the chunk to appear rather
@@ -160,11 +179,7 @@ test.describe.serial('Session search jump', () => {
     const countBefore = await chat(page).sendMessage(`archived probe ${token}`)
     await chat(page).waitForReply(30000, countBefore)
 
-    const sessionId = await page.evaluate(async () => {
-      const resp = await fetch('/api/ai/sessions')
-      const data = await resp.json()
-      return data.sessions?.[0]?.id ?? null
-    })
+    const sessionId = await currentSessionId(page)
     expect(sessionId).toBeTruthy()
 
     const indexed = await waitForIndexed(page, sessionId!, token)

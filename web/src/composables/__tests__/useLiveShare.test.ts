@@ -15,16 +15,31 @@ const bridge = vi.hoisted(() => ({
   setPendingCaptureSource: vi.fn(async () => undefined),
   getAudioCaptureSupport: vi.fn(async () => JSON.stringify({ systemAudio: false, reason: 'test' })),
   setPublishingActive: vi.fn(async () => undefined),
+  remoteControlGrant: vi.fn(async () => undefined),
+  remoteControlRevoke: vi.fn(async () => undefined),
+  // Absent on the desktop shell; the Android host is the only one that has it,
+  // so tests opt in by assigning a function.
+  startScreenCapture: undefined as undefined | (() => string),
 }))
 
 vi.mock('@/utils/clawbenchNative', () => ({
   getNative: () => bridge,
 }))
 
+const androidCapture = vi.hoisted(() => ({
+  startAndroidScreenCapture: vi.fn(),
+}))
+
+vi.mock('@/composables/androidScreenCapture', () => ({
+  startAndroidScreenCapture: androidCapture.startAndroidScreenCapture,
+}))
+
 class FakeTrack {
   kind: string
   id: string
   stopped = false
+  /** What the browser reports about the surface it captured (displaySurface). */
+  settings: Record<string, unknown> = {}
   private endedHandlers: Array<() => void> = []
   constructor(kind: string, id: string) {
     this.kind = kind
@@ -32,6 +47,9 @@ class FakeTrack {
   }
   stop() {
     this.stopped = true
+  }
+  getSettings() {
+    return this.settings
   }
   addEventListener(ev: string, fn: () => void) {
     if (ev === 'ended') this.endedHandlers.push(fn)
@@ -56,30 +74,78 @@ class FakeStream {
   getAudioTracks() {
     return this.tracks.filter((t) => t.kind === 'audio')
   }
+  addTrack(track: FakeTrack) {
+    if (!this.tracks.includes(track)) this.tracks.push(track)
+  }
 }
 
 class FakeSender {
   track: FakeTrack | null = null
+  streams: unknown[] = []
+  /** What getStats() reports. Tests set this to 'cpu' to simulate pressure. */
+  qualityLimitationReason: string | null = 'none'
+  /** The live RTCRtpSendParameters this sender is encoding with. */
+  params: { encodings: Array<Record<string, unknown>>; degradationPreference?: string } = {
+    encodings: [{}],
+  }
   replaceTrack = vi.fn(async (t: FakeTrack | null) => {
     this.track = t
+  })
+  setStreams = vi.fn((...s: unknown[]) => {
+    this.streams = s
+  })
+  getParameters = vi.fn(() => this.params as unknown as RTCRtpSendParameters)
+  setParameters = vi.fn(async (p: RTCRtpSendParameters) => {
+    this.params = p as unknown as typeof this.params
+  })
+  getStats = vi.fn(async () => {
+    const report = new Map<string, Record<string, unknown>>()
+    report.set('out-1', {
+      type: 'outbound-rtp',
+      qualityLimitationReason: this.qualityLimitationReason ?? 'none',
+    })
+    return report as unknown as RTCStatsReport
   })
 }
 
 class FakeTransceiver {
   sender = new FakeSender()
   receiver = { track: null as FakeTrack | null }
+  setCodecPreferences = vi.fn()
   constructor(public direction: string) {}
+}
+
+class FakeDataChannel {
+  static instances: FakeDataChannel[] = []
+  readyState = 'open'
+  sent: string[] = []
+  onmessage: ((ev: { data: string }) => void) | null = null
+  constructor(public label: string) {
+    FakeDataChannel.instances.push(this)
+  }
+  send(data: string) {
+    this.sent.push(data)
+  }
+  /** Push a frame as if the remote peer sent it. */
+  emit(msg: unknown) {
+    this.onmessage?.({ data: JSON.stringify(msg) })
+  }
+  sentJSON(): Record<string, unknown>[] {
+    return this.sent.map((x) => JSON.parse(x) as Record<string, unknown>)
+  }
 }
 
 class FakePC {
   static instances: FakePC[] = []
   ontrack: ((ev: { track: FakeTrack; streams: FakeStream[] }) => void) | null = null
+  ondatachannel: ((ev: { channel: FakeDataChannel }) => void) | null = null
   onicecandidate: ((ev: { candidate: { toJSON: () => unknown } | null }) => void) | null = null
   onconnectionstatechange: (() => void) | null = null
   connectionState = 'new'
   transceivers: FakeTransceiver[] = []
   tracks: FakeTrack[] = []
   remoteDescriptions: unknown[] = []
+  remoteDescription: unknown = null
   localDescription: unknown = null
   addedCandidates: unknown[] = []
   closed = false
@@ -104,12 +170,40 @@ class FakePC {
     this.transceivers.push(tx)
     return tx
   }
+  channelsDelivered = false
+  /** The publisher must NEVER create a channel: an answer cannot add an m-line. */
+  createDataChannel = vi.fn((label: string) => new FakeDataChannel(label) as unknown as RTCDataChannel)
+  getTransceivers() {
+    return this.transceivers
+  }
   createAnswer = vi.fn(async () => ({ type: 'answer', sdp: 'v=0-answer' }))
   setLocalDescription = vi.fn(async (d: unknown) => {
     this.localDescription = d
   })
   setRemoteDescription = vi.fn(async (d: unknown) => {
     this.remoteDescriptions.push(d)
+    this.remoteDescription = d
+    // Chrome creates one transceiver per offered m-line when the offer is
+    // applied, and only THOSE end up in the answer with a send direction. A
+    // transceiver created by addTransceiver() beforehand keeps `mid === null`
+    // and the browser answers with a second, recvonly set instead — the bug
+    // this fake has to be able to reproduce.
+    if ((d as { type?: string } | null)?.type === 'offer') {
+      if (this.transceivers.length === 0) {
+        const kinds = offerCameraLine ? ['audio', 'video', 'video', 'video'] : ['audio', 'video', 'video']
+        for (const kind of kinds) {
+          const tx = new FakeTransceiver('recvonly')
+          tx.receiver.track = new FakeTrack(kind, `rx-${kind}`)
+          this.transceivers.push(tx)
+        }
+      }
+      // The viewer's offer carries the control bus, so applying it is what
+      // delivers the channel. The publisher only adopts it.
+      if (!this.channelsDelivered) {
+        this.channelsDelivered = true
+        this.ondatachannel?.({ channel: new FakeDataChannel('cb-live') })
+      }
+    }
   })
   addIceCandidate = vi.fn(async (c: unknown) => {
     this.addedCandidates.push(c)
@@ -118,6 +212,16 @@ class FakePC {
     this.closed = true
   })
 }
+
+/**
+ * When the socket opens, not before.
+ *
+ * `send()` drops frames on a socket that is not OPEN, and `start()` starts the
+ * recorder BEFORE it opens the publisher socket (so the first viewer's audio is
+ * never missed). The two facts together mean the most common path — 会议一开就
+ * 打开听记 — would tell the room nothing at all.
+ */
+let holdSocketOpen = false
 
 class FakeWS {
   static instances: FakeWS[] = []
@@ -130,11 +234,15 @@ class FakeWS {
 
   constructor(public url: string) {
     FakeWS.instances.push(this)
-    // Open on the next microtask, mirroring a real socket.
-    void Promise.resolve().then(() => {
-      this.readyState = 1
-      this.onopen?.()
-    })
+    // Open on the next microtask, mirroring a real socket. A test that needs to
+    // act during the closed window holds it and calls `open()` itself.
+    if (holdSocketOpen) return
+    void Promise.resolve().then(() => this.open())
+  }
+  /** Complete the handshake (the real socket does this on its own). */
+  open() {
+    this.readyState = 1
+    this.onopen?.()
   }
   send(d: string) {
     this.sent.push(d)
@@ -159,10 +267,38 @@ class FakeDest {
   disconnect() {}
 }
 
+/** Level the fake analyser reports; 0 = silence, 1 = full scale. */
+let fakeMicLevel = 0
+
+class FakeAnalyser {
+  fftSize = 256
+  connect() {}
+  disconnect() {}
+  getByteTimeDomainData(buf: Uint8Array) {
+    // A constant waveform whose RMS equals the requested level.
+    buf.fill(128 + Math.round(Math.min(fakeMicLevel, 0.9) * 128))
+  }
+}
+
+/**
+ * Whether `AudioContext.resume()` never settles, which is what a host with no
+ * audio output device does (the context stays `suspended` and the promise is
+ * left pending rather than rejected). Default false so every pre-existing test
+ * keeps the normal path.
+ */
+let audioResumeHangs = false
+/** Resolver of the never-settling `resume()` above, released at the end of the test. */
+let releaseAudioResume: (() => void) | null = null
+
 class FakeAudioCtx {
   state = 'running'
   dests: FakeDest[] = []
-  resume = vi.fn(async () => undefined)
+  resume = vi.fn(() => {
+    if (!audioResumeHangs) return Promise.resolve()
+    // Stays pending until the test releases it: the caller must not wait for it.
+    this.state = 'suspended'
+    return new Promise<void>((resolve) => { releaseAudioResume = resolve })
+  })
   close = vi.fn(async () => undefined)
   createMediaStreamDestination() {
     const d = new FakeDest(String(this.dests.length))
@@ -172,10 +308,54 @@ class FakeAudioCtx {
   createMediaStreamSource() {
     return { connect: () => undefined, disconnect: () => undefined }
   }
+  createAnalyser() {
+    return new FakeAnalyser()
+  }
 }
 
-const displayStream = new FakeStream([new FakeTrack('video', 'v1'), new FakeTrack('audio', 'sys1')])
-const micStream = new FakeStream([new FakeTrack('audio', 'mic1')])
+/**
+ * Just enough MediaRecorder for the real 听记 capture to run.
+ *
+ * The notes tests in this file are about WHICH requests the share makes when it
+ * ends, not about transcription, so the recorder produces no audio at all: no
+ * `dataavailable` means no upload, which keeps the assertion on the request
+ * list exact.
+ */
+class FakeMediaRecorder {
+  state = 'inactive'
+  mimeType = 'audio/webm;codecs=opus'
+  ondataavailable: ((ev: { data: Blob }) => void) | null = null
+  onstop: (() => void) | null = null
+  constructor(public stream: unknown) {}
+  start() {
+    this.state = 'recording'
+  }
+  stop() {
+    if (this.state === 'inactive') return
+    this.state = 'inactive'
+    this.onstop?.()
+  }
+}
+
+/**
+ * Fresh streams for every test.
+ *
+ * These used to be module-level singletons, which quietly made "stop() stops
+ * the tracks" unfalsifiable: once any earlier test had stopped them the flag
+ * stayed true for the rest of the file, so the assertion passed even if stop()
+ * did nothing.
+ */
+let displayStream: FakeStream
+let micStream: FakeStream
+let cameraStream: FakeStream
+/**
+ * Whether the simulated viewer offers the fourth (camera) m-line.
+ *
+ * A page served from an older bundle offers three; the publisher has to keep
+ * answering it. Default false so every pre-existing test keeps asserting that
+ * path.
+ */
+let offerCameraLine = false
 
 /** jsdom's MediaStream rejects plain objects; the code only wraps tracks. */
 class FakeMediaStream {
@@ -200,16 +380,29 @@ class FakeMediaStream {
 function installGlobals() {
   FakePC.instances = []
   FakeWS.instances = []
+  FakeDataChannel.instances = []
+  holdSocketOpen = false
   vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket)
   vi.stubGlobal('RTCPeerConnection', FakePC as unknown as typeof RTCPeerConnection)
   vi.stubGlobal('AudioContext', FakeAudioCtx as unknown as typeof AudioContext)
+  vi.stubGlobal('MediaRecorder', FakeMediaRecorder as unknown as typeof MediaRecorder)
+  audioResumeHangs = false
+  releaseAudioResume = null
+  fakeMicLevel = 0
   // `new MediaStream([track])` runs on every viewer join; without this stub it
   // throws and silently aborts the rest of that handler (no ICE, no state hook).
   vi.stubGlobal('MediaStream', FakeMediaStream as unknown as typeof MediaStream)
+  displayStream = new FakeStream([new FakeTrack('video', 'v1'), new FakeTrack('audio', 'sys1')])
+  micStream = new FakeStream([new FakeTrack('audio', 'mic1')])
+  cameraStream = new FakeStream([new FakeTrack('video', 'cam1')])
+  offerCameraLine = false
   vi.stubGlobal('navigator', {
     mediaDevices: {
       getDisplayMedia: vi.fn(async () => displayStream),
-      getUserMedia: vi.fn(async () => micStream),
+      getUserMedia: vi.fn(async (constraints?: { video?: unknown }) =>
+        constraints?.video ? cameraStream : micStream,
+      ),
+      enumerateDevices: vi.fn(async () => [{ kind: 'videoinput', deviceId: 'cam1' }]),
     },
   })
 }
@@ -227,25 +420,49 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', fetchMock)
   bridge.setPendingCaptureSource.mockClear()
   bridge.setPublishingActive.mockClear()
+  bridge.remoteControlRevoke.mockClear()
+  bridge.remoteControlGrant.mockClear()
+  bridge.startScreenCapture = undefined
+  androidCapture.startAndroidScreenCapture.mockReset()
 
   const mod = await import('../useLiveShare')
   mod._resetLiveShareForTest()
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // Tear the module down too, not just the globals: a test that starts a share
+  // without stopping it leaves the level-metering interval running, which
+  // vitest reports as an async leak at the end of the file.
+  const mod = await import('../useLiveShare')
+  mod._resetLiveShareForTest()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
-async function startSharing() {
+async function startSharing(opts: { micDeviceId?: string } = {}) {
   const { useLiveShare } = await import('../useLiveShare')
   const share = useLiveShare()
-  const ok = await share.start({ sourceId: 'screen:1:0', systemAudio: true, microphone: true })
+  const ok = await share.start({ sourceId: 'screen:1:0', microphone: true, ...opts })
   return { share, ok }
 }
 
 function lastWS(): FakeWS {
   return FakeWS.instances[FakeWS.instances.length - 1]
+}
+
+/**
+ * Attach a viewer and drive its offer.
+ *
+ * The publisher ANSWERS, so the m-lines only exist once the offer is applied —
+ * a viewer that never offers has no transceivers and no control channel.
+ */
+async function joinAndOffer(viewerId: string, name?: string): Promise<FakePC> {
+  lastWS().emit({ type: 'viewer-join', viewerId, ...(name ? { name } : {}) })
+  lastWS().emit({ type: 'offer', viewerId, sdp: `v=0-offer-${viewerId}` })
+  await vi.waitFor(() =>
+    expect(lastWS().sentJSON().filter((m) => m.type === 'answer' && m.viewerId === viewerId)).toHaveLength(1),
+  )
+  return FakePC.instances[FakePC.instances.length - 1]
 }
 
 describe('start', () => {
@@ -268,30 +485,180 @@ describe('start', () => {
     await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'publish')).toBe(true))
   })
 
+  /**
+   * A host with no audio output device (headless Firefox, a kiosk, a machine
+   * whose audio server is down) leaves the AudioContext `suspended` and its
+   * `resume()` promise PENDING FOREVER — it neither resolves nor rejects.
+   * Awaiting it hung the whole meeting after the room had already been created
+   * on the server: no stage, no chat, and no way to end it. Audio is optional,
+   * so startup must not depend on the context ever running.
+   */
+  it('starts the room even when the audio context never resumes', async () => {
+    audioResumeHangs = true
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(share.state.value).toBe('publishing')
+    // The room is on the wire, so the meeting is usable: picture/chat do not
+    // need the audio graph.
+    await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'publish')).toBe(true))
+    // Proof the resume really was still pending: `start()` got this far without it.
+    expect(releaseAudioResume).not.toBeNull()
+
+    await share.stop()
+    // Release the pending promise so the leak detector stays quiet.
+    releaseAudioResume?.()
+  })
+
+  /**
+   * 听记 needs `MediaRecorder`, which some engines do not have (the WebKit build
+   * Playwright ships has none). `new MediaRecorder` used to throw straight out
+   * of `start()` and the room never came up at all — the picture, the
+   * microphone and the chat have nothing to do with the recorder and must not
+   * go down with it.
+   */
+  it('starts the room without 听记 when the engine has no MediaRecorder', async () => {
+    vi.stubGlobal('MediaRecorder', undefined)
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+
+    const ok = await share.start({ sourceId: 'screen:1:0', microphone: true, notes: true })
+
+    expect(ok).toBe(true)
+    expect(share.state.value).toBe('publishing')
+
+    const notes = (await import('../useLiveNotes')).useLiveNotes()
+    expect(notes.phase.value).toBe('idle')
+
+    await share.stop()
+    // `finishUploads()` is fired without awaiting it, so give its microtasks a
+    // turn before checking that it was not fired at all.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // Nothing was recorded, so the end-of-meeting merge must not go looking for
+    // audio files that were never written.
+    const mergeCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/notes/audio/merge'))
+    expect(mergeCalls).toHaveLength(0)
+  })
+
+  it('carries the host nickname so the audience can name the host row', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true, hostName: '  泷泽  ' })
+
+    const frame = lastWS().sentJSON().find((m) => m.type === 'publish')
+    // Trimmed: the audience list prints this verbatim.
+    expect(frame).toMatchObject({ type: 'publish', name: '泷泽' })
+  })
+
   it('keeps the renderer unthrottled while publishing', async () => {
     await startSharing()
     // A minimized window throttles timers, which stalls the encoder.
     expect(bridge.setPublishingActive).toHaveBeenCalledWith(true)
   })
 
-  it('fails cleanly when the room cannot be created', async () => {
+  it('captures through MediaProjection when the host offers it (Android)', async () => {
+    const stopAndroid = vi.fn()
+    const androidStream = new FakeStream([new FakeTrack('video', 'android-1')])
+    androidCapture.startAndroidScreenCapture.mockResolvedValue({
+      stream: androidStream,
+      width: 1080,
+      height: 2400,
+      systemAudio: false,
+      stop: stopAndroid,
+    })
+    bridge.startScreenCapture = vi.fn(() => '{"state":"requesting"}')
+
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(androidCapture.startAndroidScreenCapture).toHaveBeenCalledTimes(1)
+    // Android has no getDisplayMedia, and there is no source to declare either:
+    // touching either path would fail the capture on a real device. (The reset
+    // helper clears the declaration with '', so only a real id would count.)
+    expect(navigator.mediaDevices.getDisplayMedia).not.toHaveBeenCalled()
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
+    expect(share.captureKind.value).toBe('screen')
+    expect(share.previewStream.value).toBe(androidStream)
+
+    await share.stop()
+    // Stopping the tracks alone would leave the native foreground service
+    // capturing with nobody reading it.
+    expect(stopAndroid).toHaveBeenCalled()
+  })
+
+  it('captures before it asks the server for a room', async () => {
+    // getDisplayMedia needs a transient user activation, which a slow round
+    // trip can outlive — the browser then refuses a request the user did make.
+    // Reversing these two steps is a real regression on Firefox and Safari, not
+    // a style choice, so the order itself is what gets asserted.
+    const order: string[] = []
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockImplementationOnce(async () => {
+      order.push('capture')
+      return displayStream
+    })
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (url === '/api/live-share' && init?.method === 'POST') order.push('room')
+      return { ok: true, json: async () => ({ token: 'tok-1', path: '/share/tok-1' }) }
+    })
+
+    const { ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(order).toEqual(['capture', 'room'])
+  })
+
+  it('releases the capture when the room cannot be created', async () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
     const { share, ok } = await startSharing()
 
     expect(ok).toBe(false)
     expect(share.state.value).toBe('idle')
-    // No real source was ever declared (the teardown path clears with '').
-    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
+    // The picture is already live by the time the room request fails. Leaving
+    // it on would keep the browser's "sharing" indicator lit with nowhere to
+    // publish, and the mic would stay open.
+    expect(displayStream.tracks.every((t) => t.stopped)).toBe(true)
+    expect(micStream.tracks.every((t) => t.stopped)).toBe(true)
+    expect(FakeWS.instances).toHaveLength(0)
   })
 
-  it('fails when the host cannot declare a capture source', async () => {
+  it('captures through the browser picker when the host has no capture bridge', async () => {
+    // A plain web page: no IPC at all. The browser's own picker replaces both
+    // the source list and the declaration step.
     const native = await import('@/utils/clawbenchNative')
     const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    const track = new FakeTrack('video', 'browser-1')
+    track.settings = { displaySurface: 'monitor' }
+    const stream = new FakeStream([track, new FakeTrack('audio', 'sys-1')])
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockResolvedValueOnce(stream)
+
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(true)
+    expect(share.state.value).toBe('publishing')
+    expect(gdm).toHaveBeenCalledTimes(1)
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalledWith('screen:1:0', expect.anything())
+    // The source id is meaningless here; the captured surface is what decides
+    // whether remote control could ever map the pointer onto the desktop.
+    expect(share.captureKind.value).toBe('screen')
+    spy.mockRestore()
+  })
+
+  it('fails when the page has no getDisplayMedia (insecure origin or mobile browser)', async () => {
+    const native = await import('@/utils/clawbenchNative')
+    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    // `mediaDevices` exists for the microphone on Android Chrome, but screen
+    // capture was never implemented there — the method is the real gate.
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn() } })
 
     const { share, ok } = await startSharing()
 
     expect(ok).toBe(false)
     expect(share.state.value).toBe('idle')
+    expect(share.error.value).toContain('screen capture is unavailable')
     spy.mockRestore()
   })
 
@@ -314,36 +681,169 @@ describe('start', () => {
 
   it('is a no-op when already publishing', async () => {
     const { share } = await startSharing()
-    const again = await share.start({ sourceId: 'x', systemAudio: false, microphone: false })
+    const again = await share.start({ sourceId: 'x', microphone: false })
 
     expect(again).toBe(false)
     expect(FakeWS.instances).toHaveLength(1)
   })
+
+  // A machine with a headset and a built-in mic: the host picks one, and that
+  // choice has to reach the capture constraint or the picker is decorative.
+  it('captures the microphone the host chose', async () => {
+    const { share, ok } = await startSharing({ micDeviceId: 'mic-b' })
+
+    expect(ok).toBe(true)
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const audio = gum.mock.calls.find((c) => !c[0].video)?.[0].audio
+    expect(audio).toMatchObject({ deviceId: { exact: 'mic-b' } })
+    expect(share.state.value).toBe('publishing')
+  })
+
+  it('leaves the input to the system default when none was chosen', async () => {
+    await startSharing()
+
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const audio = gum.mock.calls.find((c) => !c[0].video)?.[0].audio
+    // No `deviceId` at all — `{exact: ''}` would fail on every machine.
+    expect(audio).not.toHaveProperty('deviceId')
+  })
+
+  // Putting a headset on mid-call: the audience must not hear a gap, and the
+  // device the host stopped using must be released (the OS indicator stays lit
+  // otherwise).
+  it('moves the capture to another input device mid-meeting', async () => {
+    const { share, ok } = await startSharing()
+    expect(ok).toBe(true)
+    const oldTrack = micStream.getAudioTracks()[0] as unknown as FakeTrack
+
+    const nextStream = new FakeStream([new FakeTrack('audio', 'mic2')])
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockImplementationOnce(async () => nextStream)
+
+    const switched = await share.switchMicDevice('mic-b')
+
+    expect(switched).toBe(true)
+    expect(oldTrack.stopped).toBe(true)
+    const audio = gum.mock.calls[gum.mock.calls.length - 1][0].audio
+    expect(audio).toMatchObject({ deviceId: { exact: 'mic-b' } })
+    expect(share.state.value).toBe('publishing')
+  })
+
+  it('keeps the running microphone when the new device cannot be opened', async () => {
+    const { share } = await startSharing()
+    const oldTrack = micStream.getAudioTracks()[0] as unknown as FakeTrack
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockRejectedValueOnce(new Error('NotFoundError'))
+
+    const switched = await share.switchMicDevice('unplugged')
+
+    // Acquire before release: a device that refuses to open must never leave
+    // the meeting without the microphone it already had.
+    expect(switched).toBe(false)
+    expect(oldTrack.stopped).toBe(false)
+    expect(share.error.value).toBeTruthy()
+    expect(share.state.value).toBe('publishing')
+  })
 })
 
 describe('viewers', () => {
-  it('builds one PeerConnection per viewer with video and mixed audio', async () => {
+  // The server accepts the nickname and forwards it; the publisher's audience
+  // list and the persisted chat both use it. It must be written AFTER the row
+  // exists — `updateViewer` only patches existing rows.
+  it('keeps the nickname the server accepted for the viewer', async () => {
+    const { share } = await startSharing()
+
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1', name: 'Alex' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    expect(share.viewers.value[0].name).toBe('Alex')
+  })
+
+  it('builds one PeerConnection per viewer and wires its m-lines on the offer', async () => {
     const { share } = await startSharing()
 
     lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
     await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
 
     const pc = FakePC.instances[0]
+    // Nothing is reserved before the offer. A transceiver created by
+    // addTransceiver() this early keeps `mid === null` and the browser answers
+    // the offered m-lines with a second, recvonly set instead — which is what
+    // left every viewer stuck on "协商中".
+    expect(pc.transceivers).toHaveLength(0)
+    expect(share.viewers.value).toHaveLength(1)
+
+    lastWS().emit({ type: 'offer', viewerId: 'v1', sdp: 'v=0-offer' })
+    await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'answer')).toBe(true))
+
     // m-line order is a contract with the viewer: audio, then video, then the
     // relay m-line. The audio track comes first because it is the viewer's
     // microphone slot.
-    expect(pc.tracks.map((t) => t.kind)).toEqual(['audio', 'video'])
+    expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv', 'sendrecv', 'sendonly'])
+    expect(pc.transceivers[0].sender.track?.kind).toBe('audio')
+    expect(pc.transceivers[1].sender.track?.kind).toBe('video')
     // CRITICAL: both tracks must belong to the SAME MediaStream. The viewer
     // assigns `srcObject` per received stream, so two streams would mean the
     // second assignment replaces the first — the viewer would get either video
     // or audio, never both.
-    expect(pc.addedStreams).toHaveLength(2)
-    expect(pc.addedStreams[0]).toBe(pc.addedStreams[1])
-    // Three m-lines: audio (mic up), video (our picture down / their screen
-    // up), video (relayed member screen down). All reserved up front so that
-    // sharing never renegotiates.
+    const audioStreams = pc.transceivers[0].sender.streams
+    const videoStreams = pc.transceivers[1].sender.streams
+    expect(audioStreams).toHaveLength(1)
+    expect(audioStreams[0]).toBe(videoStreams[0])
+    expect((audioStreams[0] as unknown as FakeMediaStream).getTracks().map((t) => t.kind)).toEqual([
+      'video',
+      'audio',
+    ])
+  })
+
+  it('answers every offered m-line with a direction that actually sends', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    lastWS().emit({ type: 'offer', viewerId: 'v1', sdp: 'v=0-offer' })
+    await vi.waitFor(() => expect(lastWS().sentJSON().some((m) => m.type === 'answer')).toBe(true))
+
+    const pc = FakePC.instances[0]
+    // The answer is built from the transceivers the offer created: all three
+    // must be reused (not duplicated) and carry our media outwards.
+    expect(pc.transceivers).toHaveLength(3)
     expect(pc.transceivers.map((t) => t.direction)).toEqual(['sendrecv', 'sendrecv', 'sendonly'])
+    // The control bus rides the same answer, so it has to exist before it.
+    expect(FakeDataChannel.instances).toHaveLength(1)
+    expect(pc.remoteDescription).toEqual({ type: 'offer', sdp: 'v=0-offer' })
+  })
+
+  it('holds a viewer candidate until its offer has been applied', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+
+    // Trickled right after the offer, so it routinely overtakes it. Applying it
+    // before a remote description exists throws, and a dropped candidate leaves
+    // ICE with nowhere to send.
+    lastWS().emit({ type: 'ice', viewerId: 'v1', candidate: { candidate: 'early' } })
+    expect(FakePC.instances[0].addedCandidates).toHaveLength(0)
+
+    lastWS().emit({ type: 'offer', viewerId: 'v1', sdp: 'v=0-offer' })
+    await vi.waitFor(() =>
+      expect(FakePC.instances[0].addedCandidates).toContainEqual({ candidate: 'early' }),
+    )
     expect(share.viewers.value).toHaveLength(1)
+  })
+
+  it("adopts the viewer's control channel instead of creating one", async () => {
+    const { share } = await startSharing()
+    const pc = await joinAndOffer('v1')
+
+    // An answer may not introduce an m-line, so a channel created here would
+    // stay `connecting` forever — chat and "request control" would look dead.
+    expect(pc.createDataChannel).not.toHaveBeenCalled()
+    expect(FakeDataChannel.instances).toHaveLength(1)
+
+    const seen: Array<Record<string, unknown>> = []
+    share.onControl((m) => seen.push(m as unknown as Record<string, unknown>))
+    FakeDataChannel.instances[0].emit({ t: 'ctrl-req' })
+    expect(seen).toEqual([{ t: 'ctrl-req', from: 'v1' }])
   })
 
   it('answers an offer and forwards ICE both ways', async () => {
@@ -403,6 +903,130 @@ describe('viewers', () => {
   })
 })
 
+describe('encode budget', () => {
+  it('caps the capture instead of taking whatever the display reports', async () => {
+    await startSharing()
+
+    // `video: true` would hand back the display's native surface, which is then
+    // encoded once per viewer. The cap is the only lever that applies before any
+    // encoder runs, so it is asserted on the request itself.
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    expect(gdm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: { width: { max: 1920 }, height: { max: 1200 }, frameRate: { max: 30 } },
+      }),
+    )
+  })
+
+  it('hints the captured screen as text so the encoder skips static blocks', async () => {
+    await startSharing()
+
+    const track = displayStream.getVideoTracks()[0] as unknown as { contentHint?: string }
+    expect(track.contentHint).toBe('text')
+  })
+
+  it('bounds every video m-line a viewer receives', async () => {
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+
+    // One encoder per m-line, per viewer — the reason four viewers used to pin
+    // every core. Both the picture line and the relay line must be bounded.
+    const picture = pc.transceivers[1].sender.params.encodings[0]
+    // The budget is pushed from a promise chain, so wait for it rather than
+    // assuming the microtask ran before the answer went out.
+    await vi.waitFor(() => expect(picture.maxBitrate).toBe(4_000_000))
+    expect(picture.maxFramerate).toBe(30)
+    expect(picture.scaleResolutionDownBy).toBe(1)
+    expect(pc.transceivers[1].sender.params.degradationPreference).toBe('maintain-resolution')
+
+    const relay = pc.transceivers[2].sender.params.encodings[0]
+    await vi.waitFor(() => expect(relay.maxBitrate).toBe(2_500_000))
+    expect(relay.maxFramerate).toBe(24)
+  })
+
+  /**
+   * A camera-only meeting must not pay for a screen encoder.
+   *
+   * The main m-line carries the screen when there is one and the camera
+   * otherwise, and the budget is applied when the sender is REGISTERED. Waiting
+   * for `applyPicture()` to correct it does not work: that only runs when the
+   * picture changes, so a meeting that is nothing but a camera encoded at
+   * 4 Mbps / 30 fps for its whole length.
+   */
+  it('gives a camera-only picture the camera budget, not the screen one', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: '', microphone: true })
+    expect(await share.setCameraDevice('default')).toBe(true)
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+
+    // The camera IS the main picture here.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    const picture = pc.transceivers[1].sender.params.encodings[0]
+    await vi.waitFor(() => expect(picture.maxBitrate).toBe(1_500_000))
+    expect(picture.maxFramerate).toBe(20)
+  })
+
+  it('steps every sender down together when the browser reports cpu pressure', async () => {
+    const mod = await import('../useLiveShare')
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+    const governor = mod._liveGovernorForTest()
+    expect(governor?.size).toBe(2)
+
+    for (const tx of pc.transceivers) tx.sender.qualityLimitationReason = 'cpu'
+    // One sample is not enough: a single busy window (a scroll, a keyframe
+    // burst) would otherwise cost everyone a resolution drop.
+    await governor?.sample()
+    expect(pc.transceivers[1].sender.params.encodings[0].scaleResolutionDownBy).toBe(1)
+
+    await governor?.sample()
+    expect(governor?.currentLevel).toBe(1)
+    expect(pc.transceivers[1].sender.params.encodings[0].scaleResolutionDownBy).toBe(2)
+    expect(pc.transceivers[1].sender.params.encodings[0].maxBitrate).toBe(2_000_000)
+    // The relay m-line is governed by the same level: CPU is machine-wide.
+    expect(pc.transceivers[2].sender.params.encodings[0].scaleResolutionDownBy).toBe(2)
+  })
+
+  it('recovers to full quality after sustained clean samples', async () => {
+    const mod = await import('../useLiveShare')
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+    const governor = mod._liveGovernorForTest()
+
+    for (const tx of pc.transceivers) tx.sender.qualityLimitationReason = 'cpu'
+    await governor?.sample()
+    await governor?.sample()
+    expect(governor?.currentLevel).toBe(1)
+
+    for (const tx of pc.transceivers) tx.sender.qualityLimitationReason = 'none'
+    for (let i = 0; i < 3; i++) await governor?.sample()
+    // Still degraded: recovering on the first clean sample would flap between
+    // levels on a machine hovering at its limit.
+    expect(governor?.currentLevel).toBe(1)
+
+    await governor?.sample()
+    expect(governor?.currentLevel).toBe(0)
+    expect(pc.transceivers[1].sender.params.encodings[0].scaleResolutionDownBy).toBe(1)
+  })
+
+  it('forgets a departed viewer so its encoder cannot hold the room down', async () => {
+    const mod = await import('../useLiveShare')
+    await startSharing()
+    const pc = await joinAndOffer('v1')
+    const governor = mod._liveGovernorForTest()
+    expect(governor?.size).toBe(2)
+
+    pc.connectionState = 'failed'
+    pc.onconnectionstatechange?.()
+
+    expect(governor?.size).toBe(0)
+  })
+})
+
 describe('talk authorisation', () => {
   it('relays the room-level switch', async () => {
     const { share } = await startSharing()
@@ -457,6 +1081,40 @@ describe('talk authorisation', () => {
     expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-mute-all' })
     expect(share.viewers.value.every((v) => v.talk === 'muted')).toBe(true)
   })
+
+  it('blocks one viewer and shows it before the server confirms', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    share.setViewerMuted('v1', true)
+
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-mute', viewerId: 'v1', enabled: true })
+    expect(share.viewers.value[0]).toMatchObject({ muted: true, talk: 'muted' })
+  })
+
+  it('treats an explicit muted:false as "the block was lifted"', async () => {
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
+    await vi.waitFor(() => expect(share.viewers.value).toHaveLength(1))
+
+    lastWS().emit({ type: 'talk-state', viewerId: 'v1', talking: false, muted: true })
+    expect(share.viewers.value[0].muted).toBe(true)
+
+    // The server sends the field on every talk-state frame precisely because
+    // `false` is the meaningful "unmuted" answer; an omitted field must not be
+    // read as "still blocked".
+    lastWS().emit({ type: 'talk-state', viewerId: 'v1', talking: false, muted: false })
+    expect(share.viewers.value[0].muted).toBe(false)
+  })
+
+  it('removes a viewer through the server', async () => {
+    const { share } = await startSharing()
+
+    share.kickViewer('v1')
+
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'kick', viewerId: 'v1' })
+  })
 })
 
 describe('stop', () => {
@@ -496,14 +1154,18 @@ describe('stop', () => {
     expect(deletes).toHaveLength(1)
   })
 
-  it('stops when the user ends capture from the browser banner', async () => {
+  it('stops the SCREEN, not the meeting, when the user ends capture from the banner', async () => {
     const { share } = await startSharing()
 
     // The video track ending is what Chromium fires when the user clicks the
-    // "Stop sharing" bar; ignoring it would leave the app publishing a dead feed.
+    // "Stop sharing" bar. Meetings have no type, so losing the picture is not a
+    // reason to hang up — the call continues without one.
     displayStream.getVideoTracks()[0].emitEnded()
 
-    await vi.waitFor(() => expect(share.state.value).toBe('idle'))
+    await vi.waitFor(() => expect(share.captureKind.value).toBeNull())
+    expect(share.state.value).toBe('publishing')
+    expect(share.videoEnabled.value).toBe(false)
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-picture', video: false, camera: false, screen: false })
   })
 
   it('stops when the publisher socket closes', async () => {
@@ -513,6 +1175,81 @@ describe('stop', () => {
     lastWS().onclose?.()
 
     await vi.waitFor(() => expect(share.state.value).toBe('idle'))
+  })
+})
+
+describe('listAudioInputs', () => {
+  it('returns only the input devices, with their labels', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: 'audioinput', deviceId: 'mic-a', label: 'Built-in Microphone' },
+          { kind: 'videoinput', deviceId: 'cam-a', label: 'FaceTime HD' },
+          { kind: 'audioinput', deviceId: 'mic-b', label: 'Headset Microphone' },
+        ]),
+      },
+    })
+    const { listAudioInputs } = await import('../useLiveShare')
+
+    const list = await listAudioInputs()
+
+    expect(list.map((d) => d.id)).toEqual(['mic-a', 'mic-b'])
+    expect(list[1].name).toBe('Headset Microphone')
+  })
+
+  it('numbers the devices the browser will not name yet', async () => {
+    // Labels are empty until the page has microphone permission, which is the
+    // normal state on a first visit — hiding them would leave the picker empty.
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: 'audioinput', deviceId: 'mic-a', label: '' },
+          { kind: 'audioinput', deviceId: 'mic-b', label: '' },
+        ]),
+      },
+    })
+    const { listAudioInputs } = await import('../useLiveShare')
+
+    const list = await listAudioInputs()
+
+    expect(list.map((d) => d.name)).toEqual(['Microphone 1', 'Microphone 2'])
+    expect(list[0].id).toBe('mic-a')
+  })
+
+  it('returns an empty list when enumeration is unavailable or fails', async () => {
+    vi.stubGlobal('navigator', { mediaDevices: {} })
+    const { listAudioInputs } = await import('../useLiveShare')
+    expect(await listAudioInputs()).toEqual([])
+
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => {
+          throw new Error('boom')
+        }),
+      },
+    })
+    expect(await listAudioInputs()).toEqual([])
+  })
+})
+
+describe('listVideoInputs', () => {
+  it('returns only the cameras, numbered when the browser hides their names', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        enumerateDevices: vi.fn(async () => [
+          { kind: 'audioinput', deviceId: 'mic-a', label: 'Built-in Microphone' },
+          { kind: 'videoinput', deviceId: 'cam-a', label: '' },
+          { kind: 'videoinput', deviceId: 'cam-b', label: 'USB Camera' },
+        ]),
+      },
+    })
+    const { listVideoInputs } = await import('../useLiveShare')
+
+    const list = await listVideoInputs()
+
+    expect(list.map((d) => d.id)).toEqual(['cam-a', 'cam-b'])
+    expect(list[0].name).toBe('Camera 1')
+    expect(list[1].name).toBe('USB Camera')
   })
 })
 
@@ -527,6 +1264,20 @@ describe('listCaptureSources', () => {
 
     expect(list).toHaveLength(1)
     expect(list[0].kind).toBe('screen')
+  })
+
+  it('labels a nameless source instead of rendering a blank tile', async () => {
+    // Wayland lists one placeholder with no name; the system dialog does the
+    // real picking. An empty label would render an unclickable-looking tile.
+    bridge.listCaptureSources.mockResolvedValueOnce(
+      JSON.stringify([{ id: 'window:1:0:s', name: '', kind: 'screen', thumbnail: '' }]),
+    )
+    const { listCaptureSources } = await import('../useLiveShare')
+
+    const list = await listCaptureSources()
+
+    expect(list[0].name).not.toBe('')
+    expect(list[0].id).toBe('window:1:0:s')
   })
 
   it('returns an empty list when the host fails', async () => {
@@ -546,30 +1297,11 @@ describe('listCaptureSources', () => {
   })
 })
 
-describe('getAudioCaptureSupport', () => {
-  it('reports what the host says', async () => {
-    bridge.getAudioCaptureSupport.mockResolvedValueOnce(JSON.stringify({ systemAudio: true }))
-    const { getAudioCaptureSupport } = await import('../useLiveShare')
-
-    expect(await getAudioCaptureSupport()).toBe(true)
-  })
-
-  it('defaults to false when unsupported', async () => {
-    const native = await import('@/utils/clawbenchNative')
-    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
-    const { getAudioCaptureSupport } = await import('../useLiveShare')
-
-    expect(await getAudioCaptureSupport()).toBe(false)
-    spy.mockRestore()
-  })
-})
-
 describe('audience screen relay', () => {
   it('forwards a viewer screen to everyone else and never back to the sharer', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
 
     const [pc1, pc2] = FakePC.instances
     const screen = new FakeTrack('video', 'screen-1')
@@ -588,9 +1320,8 @@ describe('audience screen relay', () => {
 
   it('detaches the relayed screen from every viewer when the share ends', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
 
     const [pc1, pc2] = FakePC.instances
     lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
@@ -605,14 +1336,12 @@ describe('audience screen relay', () => {
 
   it('relays to a viewer that joins after the share started', async () => {
     const { share } = await startSharing()
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v1' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(1))
+    await joinAndOffer('v1')
     const screen = new FakeTrack('video', 'screen-1')
     lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
     FakePC.instances[0].ontrack?.({ track: screen, streams: [] })
 
-    lastWS().emit({ type: 'viewer-join', viewerId: 'v2' })
-    await vi.waitFor(() => expect(FakePC.instances).toHaveLength(2))
+    await joinAndOffer('v2')
 
     // The late joiner gets the already-running screen attached at join time.
     expect(FakePC.instances[1].transceivers[2].sender.replaceTrack).toHaveBeenCalledWith(screen)
@@ -626,5 +1355,945 @@ describe('audience screen relay', () => {
 
     share.revokeScreen('v1')
     expect(lastWS().sentJSON()).toContainEqual({ type: 'screen-revoke', viewerId: 'v1' })
+  })
+
+  it('records the screen-sharer timeline as the sharer changes', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1', '张三')
+
+    const screenCalls = () =>
+      fetchMock.mock.calls
+        .filter(([url]) => url === '/api/live-share/notes/screen')
+        .map(([, init]) => JSON.parse((init as { body: string }).body) as Record<string, unknown>)
+
+    // The host is sharing from the start, so the first transition is "host".
+    await vi.waitFor(() => expect(screenCalls().length).toBeGreaterThan(0))
+    expect(screenCalls()[0]).toMatchObject({ token: 'tok-1', sharer: 'host' })
+
+    // A participant takes the screen: the timeline must follow the change.
+    lastWS().emit({ type: 'screen-state', screenEnabled: true, viewerId: 'v1', sharing: true })
+    await vi.waitFor(() =>
+      expect(screenCalls().at(-1)).toMatchObject({ sharer: 'viewer:v1', sharerName: '张三' }),
+    )
+
+    // Ending the meeting closes the interval while the token is still valid.
+    await share.stop()
+    await vi.waitFor(() => expect(screenCalls().at(-1)).toMatchObject({ sharer: '' }))
+  })
+})
+
+describe('control channel', () => {
+  it('relays a viewer frame to the others, tagged with the real sender', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
+
+    const [dc1, dc2] = FakeDataChannel.instances
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    // A viewer cannot name itself: whatever `from` it sends is replaced.
+    dc1.emit({ t: 'chat', id: 'c1', from: 'v2', name: '主持人', text: 'hi', at: 1 })
+
+    expect(seen).toHaveLength(1)
+    expect((seen[0] as { from: string }).from).toBe('v1')
+    // The sharer does not get its own frame back.
+    expect(dc1.sentJSON()).toHaveLength(0)
+    expect(dc2.sentJSON()).toEqual([expect.objectContaining({ t: 'chat', from: 'v1' })])
+  })
+
+  it('replaces a viewer-supplied chat name with the one the server accepted', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1', '小明')
+    await joinAndOffer('v2', '小红')
+
+    const [dc1, dc2] = FakeDataChannel.instances
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    // A viewer can put anything in `name`; other viewers render it verbatim, so
+    // without the roster rewrite it could label itself as the host.
+    dc1.emit({ t: 'chat', id: 'c1', from: 'v1', name: '主持人', text: 'hi', at: 1 })
+
+    expect((seen[0] as { name: string }).name).toBe('小明')
+    expect(dc2.sentJSON()).toEqual([expect.objectContaining({ t: 'chat', from: 'v1', name: '小明' })])
+  })
+
+  it('drops frames a viewer is not allowed to send', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    const dc = FakeDataChannel.instances[0]
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    // `talk` is publisher→viewer only; a viewer must not be able to fake it.
+    dc.emit({ t: 'talk', viewerId: 'v1', level: 1 })
+    expect(seen).toHaveLength(0)
+  })
+
+  it('hands a history request to the UI without relaying it to other viewers', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
+
+    const [dc1, dc2] = FakeDataChannel.instances
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    dc1.emit({ t: 'chat-history-req' })
+
+    // The publisher answers; the other viewers have no transcript to hand out.
+    expect(seen).toEqual([expect.objectContaining({ t: 'chat-history-req', from: 'v1' })])
+    expect(dc2.sentJSON()).toHaveLength(0)
+  })
+
+  it('addresses a grant to one viewer instead of broadcasting it', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
+    const [dc1, dc2] = FakeDataChannel.instances
+
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+
+    expect(dc1.sentJSON()).toEqual([{ t: 'ctrl-grant', viewerId: 'v1', granted: true }])
+    // Broadcasting would put every viewer into "controlling" and swallow their
+    // typing, so v2 must see nothing.
+    expect(dc2.sentJSON()).toHaveLength(0)
+  })
+})
+
+describe('remote control grantee', () => {
+  it('revokes control when the granted viewer disappears', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+    const seen: Array<Record<string, unknown>> = []
+    share.onControl((m) => seen.push(m as unknown as Record<string, unknown>))
+
+    lastWS().emit({ type: 'viewer-leave', viewerId: 'v1' })
+
+    // The main process must not stay armed for a viewer that is gone: it holds
+    // the real capability (`grantedViewer`), the panel only shows it.
+    expect(bridge.remoteControlRevoke).toHaveBeenCalled()
+    // The panel owns `controlledBy`, so it clears it from the frame it already
+    // handles — a viewer's own release — rather than a second event type.
+    expect(seen).toContainEqual({ t: 'ctrl-release', from: 'v1' })
+  })
+
+  it('leaves an unrelated viewer departure alone', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    await joinAndOffer('v2')
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    lastWS().emit({ type: 'viewer-leave', viewerId: 'v2' })
+
+    // v1 still holds control: revoking here would stop a working session.
+    expect(bridge.remoteControlRevoke).not.toHaveBeenCalled()
+    expect(seen).toHaveLength(0)
+  })
+
+  it('forgets the grantee once the panel revokes it', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: false })
+
+    lastWS().emit({ type: 'viewer-leave', viewerId: 'v1' })
+
+    // A revoked grant must not fire a second revoke when that viewer leaves.
+    expect(bridge.remoteControlRevoke).not.toHaveBeenCalled()
+  })
+})
+
+describe('switchSource', () => {
+  it('swaps the track on every peer and stops the old capture', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+
+    const oldTrack = displayStream.getVideoTracks()[0]
+    const nextTrack = new FakeTrack('video', 'screen-2')
+    const nextStream = new FakeMediaStream([nextTrack])
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockResolvedValueOnce(nextStream)
+
+    const ok = await share.switchSource('window:2:0')
+
+    expect(ok).toBe(true)
+    expect(FakePC.instances[0].transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(nextTrack)
+    expect(oldTrack.stopped).toBe(true)
+    expect(share.previewStream.value).toBe(nextStream)
+    // The new stream must become the session's stream, otherwise resetSession()
+    // never stops it and the capture indicator stays on after "end share".
+    expect(share.captureKind.value).toBe('window')
+    // The live picker marks the tile that is actually on the wire.
+    expect(share.captureSourceId.value).toBe('window:2:0')
+  })
+
+  it('re-opens the browser picker when there is no source list to choose from', async () => {
+    const native = await import('@/utils/clawbenchNative')
+    const spy = vi.spyOn(native, 'getNative').mockReturnValue({} as never)
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+
+    const nextTrack = new FakeTrack('video', 'browser-2')
+    nextTrack.settings = { displaySurface: 'window' }
+    const nextStream = new FakeMediaStream([nextTrack])
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockResolvedValueOnce(nextStream)
+    // The reset helper clears the declaration with '', so start counting after.
+    bridge.setPendingCaptureSource.mockClear()
+
+    const ok = await share.switchSource('')
+
+    expect(ok).toBe(true)
+    // Nothing to declare: the second picker call IS the switch.
+    expect(bridge.setPendingCaptureSource).not.toHaveBeenCalled()
+    expect(FakePC.instances[0].transceivers[1].sender.replaceTrack).toHaveBeenCalledWith(nextTrack)
+    expect(share.captureKind.value).toBe('window')
+    // A browser pick has no id of its own; the panel maps the empty id onto its
+    // synthetic "共享屏幕" tile.
+    expect(share.captureSourceId.value).toBe('')
+    spy.mockRestore()
+  })
+
+  it('clears the one-shot capture declaration when the switch fails', async () => {
+    const { share } = await startSharing()
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockRejectedValueOnce(new Error('cancelled'))
+
+    const ok = await share.switchSource('screen:0:0')
+
+    expect(ok).toBe(false)
+    // Leaving the declaration armed would let the NEXT getDisplayMedia capture
+    // that source without a picker.
+    expect(bridge.setPendingCaptureSource).toHaveBeenLastCalledWith('', false)
+  })
+})
+
+
+describe('speaking indicator', () => {
+  it('broadcasts the publisher level when it crosses the speaking threshold', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    const dc = FakeDataChannel.instances[0]
+
+    fakeMicLevel = 0.6
+    await vi.waitFor(
+      () =>
+        expect(dc.sentJSON()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ t: 'talk', viewerId: 'host', level: expect.any(Number) }),
+          ]),
+        ),
+      { timeout: 2000 },
+    )
+    expect(share.levels.value.host).toBeGreaterThan(0.05)
+
+    // Falling silent is also a state change: the chip has to disappear.
+    fakeMicLevel = 0
+    await vi.waitFor(
+      () =>
+        expect(dc.sentJSON()).toEqual(
+          expect.arrayContaining([expect.objectContaining({ t: 'talk', viewerId: 'host', level: 0 })]),
+        ),
+      { timeout: 2000 },
+    )
+  })
+})
+
+describe('camera', () => {
+  /** Start a meeting with an explicit source / camera combination. */
+  async function startMeeting(opts: { sourceId?: string; camera?: boolean; cameraDeviceId?: string }) {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const ok = await share.start({
+      sourceId: opts.sourceId ?? '',
+      microphone: true,
+      cameraDeviceId: opts.cameraDeviceId ?? (opts.camera ? 'default' : ''),
+    })
+    return { share, ok }
+  }
+
+  it('captures the camera and reports it to the room', async () => {
+    const { share, ok } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    expect(ok).toBe(true)
+    expect(share.cameraEnabled.value).toBe(true)
+    expect(share.previewCameraStream.value).toBe(cameraStream)
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as { body?: string }).body))
+    expect(body).toMatchObject({ video: true, camera: true, screen: true })
+  })
+
+  it('puts the camera on the main picture when there is no screen', async () => {
+    const { share, ok } = await startMeeting({ sourceId: '', camera: true })
+
+    expect(ok).toBe(true)
+    // No screen: the camera IS the picture. captureKind stays null so annotate,
+    // switch-source and remote control stay hidden.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.videoEnabled.value).toBe(true)
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    // Main picture carries the camera; the tile m-line carries nothing, or the
+    // viewer would render the same face twice.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    expect(pc.transceivers[3].sender.track).toBeNull()
+  })
+
+  it('sends the camera on its own m-line and stream when a screen is shared', async () => {
+    await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+
+    expect(pc.transceivers.map((t) => t.direction)).toEqual([
+      'sendrecv',
+      'sendrecv',
+      'sendonly',
+      'sendonly',
+    ])
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+
+    // CRITICAL: the camera must NOT share the main stream. The viewer assigns
+    // `srcObject` per received stream, so the camera would replace the screen.
+    const mainStreams = pc.transceivers[1].sender.streams
+    const cameraStreams = pc.transceivers[3].sender.streams
+    expect(cameraStreams).toHaveLength(1)
+    expect(cameraStreams[0]).not.toBe(mainStreams[0])
+    expect((cameraStreams[0] as unknown as FakeMediaStream).getTracks().map((t) => t.id)).toEqual(['cam1'])
+  })
+
+  it('still answers a viewer that offers only three m-lines', async () => {
+    await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    // A stale bundle: no camera m-line offered. Refusing would break the whole
+    // share for that viewer; it simply gets no tile.
+    const pc = await joinAndOffer('v1')
+
+    expect(pc.transceivers).toHaveLength(3)
+    expect(lastWS().sentJSON().some((m) => m.type === 'answer')).toBe(true)
+  })
+
+  it('toggles the camera with track.enabled and tells the viewers', async () => {
+    const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+
+    await share.setCameraDevice('')
+    expect(share.cameraEnabled.value).toBe(false)
+    expect(cameraStream.getVideoTracks()[0].stopped).toBe(false)
+    // Muting, not removing: removing would need a renegotiation, and the
+    // publisher is the answerer. The screen is still up, so there IS still a
+    // picture — only the camera tile goes away.
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-picture', video: true, camera: false, screen: true })
+  })
+
+  it('leaves the camera alone when the screen source is switched', async () => {
+    const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+
+    const next = new FakeStream([new FakeTrack('video', 'v2')])
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(next)
+    await share.switchSource('screen:1:1')
+
+    expect(pc.transceivers[1].sender.track?.id).toBe('v2')
+    // The camera must survive a source swap: it is a different m-line, and
+    // stopping it here would silently kill the tile.
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+    expect(cameraStream.getVideoTracks()[0].stopped).toBe(false)
+  })
+
+  it('releases the camera on stop()', async () => {
+    const { share } = await startMeeting({ sourceId: 'screen:1:0', camera: true })
+    expect(share.cameraEnabled.value).toBe(true)
+
+    await share.stop()
+
+    // A camera left running is a privacy problem, not just a leak: the
+    // indicator light stays on with nobody receiving the frames.
+    expect(cameraStream.getVideoTracks()[0].stopped).toBe(true)
+    expect(share.cameraEnabled.value).toBe(false)
+    expect(share.previewCameraStream.value).toBeNull()
+  })
+})
+
+describe('picture changes mid-meeting', () => {
+  /** Start with nothing but the microphone. */
+  async function startEmpty() {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const ok = await share.start({ sourceId: '', microphone: true })
+    return { share, ok }
+  }
+
+  it('adds a screen without renegotiating and tells the room', async () => {
+    const { share, ok } = await startEmpty()
+    expect(ok).toBe(true)
+    expect(share.videoEnabled.value).toBe(false)
+    expect(share.captureKind.value).toBeNull()
+
+    const pc = await joinAndOffer('v1')
+    // No picture yet: the m-line exists (it was negotiated) but carries nothing.
+    expect(pc.transceivers[1].sender.track).toBeNull()
+    const negotiations = pc.setRemoteDescription.mock.calls.length
+
+    expect(await share.startScreen('screen:2:0')).toBe(true)
+
+    // replaceTrack on the already-negotiated m-line: no second offer/answer.
+    expect(pc.setRemoteDescription).toHaveBeenCalledTimes(negotiations)
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+    expect(share.videoEnabled.value).toBe(true)
+    expect(share.captureKind.value).toBe('screen')
+    expect(share.captureSourceId.value).toBe('screen:2:0')
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: true,
+      camera: false,
+      screen: true,
+    })
+  })
+
+  it('hands the main picture back to the camera when the screen stops', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true, cameraDeviceId: 'default' })
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+    expect(pc.transceivers[3].sender.track?.id).toBe('cam1')
+
+    await share.stopScreen()
+
+    // The screen's m-line falls back to the camera, and the tile m-line is
+    // emptied: one picture, no duplicate face.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    expect(pc.transceivers[3].sender.track).toBeNull()
+    // Still a meeting, still a picture.
+    expect(share.state.value).toBe('publishing')
+    expect(share.videoEnabled.value).toBe(true)
+    expect(share.captureKind.value).toBeNull()
+    // Nothing is on the wire, so no tile is selected either.
+    expect(share.captureSourceId.value).toBe('')
+    expect(displayStream.getVideoTracks()[0].stopped).toBe(true)
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: true,
+      camera: true,
+      screen: false,
+    })
+  })
+
+  it('goes to the no-picture state when the screen stops and no camera is on', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true })
+
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[1].sender.track?.id).toBe('v1')
+
+    await share.stopScreen()
+
+    expect(pc.transceivers[1].sender.track).toBeNull()
+    expect(share.state.value).toBe('publishing')
+    expect(share.videoEnabled.value).toBe(false)
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: false,
+      camera: false,
+      screen: false,
+    })
+  })
+
+  it('turns the camera on after the meeting started', async () => {
+    const { share } = await startEmpty()
+
+    offerCameraLine = true
+    const pc = await joinAndOffer('v1')
+    expect(pc.transceivers[1].sender.track).toBeNull()
+
+    expect(await share.setCameraDevice('default')).toBe(true)
+
+    // No screen: the camera IS the picture, on the main m-line.
+    expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
+    expect(pc.transceivers[3].sender.track).toBeNull()
+    expect(share.videoEnabled.value).toBe(true)
+    expect(share.previewCameraStream.value).toBe(cameraStream)
+    expect(lastWS().sentJSON()).toContainEqual({
+      type: 'set-picture',
+      video: true,
+      camera: true,
+      screen: false,
+    })
+  })
+
+  // One entry point for "mute" and "pick a device", so the card the host sees
+  // and the stream being published cannot disagree.
+  it('mutes and unmutes through the same choice, without reopening the device', async () => {
+    const { share } = await startSharing()
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const callsAfterStart = gum.mock.calls.length
+
+    expect(await share.setMicChoice('')).toBe(true)
+    expect(share.micEnabled.value).toBe(false)
+    expect(await share.setMicChoice('default')).toBe(true)
+    expect(share.micEnabled.value).toBe(true)
+    // Same device as the live stream: unmuting must not churn the capture.
+    expect(gum.mock.calls.length).toBe(callsAfterStart)
+  })
+
+  it('moves the camera to another device mid-meeting', async () => {
+    const { share } = await startEmpty()
+    expect(await share.setCameraDevice('default')).toBe(true)
+    const oldTrack = cameraStream.getVideoTracks()[0]
+    const next = new FakeStream([new FakeTrack('video', 'cam2')])
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockImplementationOnce(async () => next)
+
+    expect(await share.setCameraDevice('cam-b')).toBe(true)
+
+    // The old device is released, and the self-view follows the new stream.
+    expect(oldTrack.stopped).toBe(true)
+    expect(share.previewCameraStream.value).toBe(next)
+    const video = gum.mock.calls[gum.mock.calls.length - 1][0].video
+    expect(video).toMatchObject({ deviceId: { exact: 'cam-b' } })
+  })
+
+  it('reports a camera that cannot start instead of pretending it is on', async () => {
+    const { share } = await startEmpty()
+    ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
+    )
+
+    expect(await share.setCameraDevice('default')).toBe(false)
+    expect(share.cameraEnabled.value).toBe(false)
+    expect(share.videoEnabled.value).toBe(false)
+    expect(share.error.value).toBeTruthy()
+  })
+
+  it('stays pictureless when the late capture is cancelled', async () => {
+    const { share } = await startEmpty()
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('cancelled'),
+    )
+
+    expect(await share.startScreen('screen:2:0')).toBe(false)
+
+    // Nothing was captured, so nothing may be reported as shared: the panel
+    // routes the NEXT click by this value, and a phantom screen sends it down
+    // the "swap the source" path — which can only fail, because there is no
+    // stream to swap.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.captureSourceId.value).toBe('')
+    expect(share.videoEnabled.value).toBe(false)
+    expect(lastWS().sentJSON().some((m) => m.type === 'set-picture')).toBe(false)
+  })
+
+  it('surfaces a refused Android projection instead of throwing', async () => {
+    bridge.startScreenCapture = vi.fn(() => '{"state":"requesting"}')
+    androidCapture.startAndroidScreenCapture.mockRejectedValueOnce(new Error('已拒绝录制屏幕'))
+    const { share } = await startEmpty()
+
+    // startAndroidScreenCapture throws (consent denied) where the desktop path
+    // returns null; the click must still end with a message.
+    await expect(share.startScreen('android:screen')).resolves.toBe(false)
+    expect(share.error.value).toBe('已拒绝录制屏幕')
+    expect(share.captureKind.value).toBeNull()
+  })
+
+  it('does not report an earlier failure when the next capture is cancelled', async () => {
+    const { share } = await startEmpty()
+    ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
+    )
+    expect(await share.setCameraDevice('default')).toBe(false)
+    expect(share.error.value).toBeTruthy()
+
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('cancelled'),
+    )
+    expect(await share.startScreen('screen:2:0')).toBe(false)
+
+    // The toast is the only place a failure is shown now, and it reads this
+    // value: the camera's message must not be offered as the reason the screen
+    // did not start.
+    expect(share.error.value).toBe('')
+  })
+})
+
+/**
+ * Remote control is advertised by the PUBLISHER, because only it knows the two
+ * facts that decide it: whether the shell has an input injector, and whether the
+ * picture on the wire is a whole screen (a window capture has no desktop to map
+ * the pointer onto). Viewers grey their button on what the room says.
+ */
+describe('remote control capability', () => {
+  /** The last frame the publisher sent about the capability. */
+  function lastCapability(): Record<string, unknown> | undefined {
+    return lastWS()
+      .sentJSON()
+      .filter((m) => m.type === 'set-control-enabled')
+      .at(-1)
+  }
+
+  it('stays unavailable until the host has a whole screen on the wire', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: '', microphone: true })
+
+    // The injector exists, but there is no screen yet — nothing to drive.
+    share.setControlSupported(true)
+    expect(share.controlEnabled.value).toBe(false)
+
+    expect(await share.startScreen('screen:2:0')).toBe(true)
+    expect(share.controlEnabled.value).toBe(true)
+    expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: true })
+
+    // Stopping the screen takes the button away from every viewer, without
+    // ending the meeting.
+    await share.stopScreen()
+    expect(share.controlEnabled.value).toBe(false)
+    expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: false })
+  })
+
+  it('never advertises a window capture', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'window:7:0', microphone: true })
+    share.setControlSupported(true)
+
+    expect(share.captureKind.value).toBe('window')
+    expect(share.controlEnabled.value).toBe(false)
+    expect(lastCapability()).not.toEqual({ type: 'set-control-enabled', enabled: true })
+  })
+
+  it('withdraws the capability when the injector goes away', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true })
+    share.setControlSupported(true)
+    expect(share.controlEnabled.value).toBe(true)
+
+    share.setControlSupported(false)
+    expect(share.controlEnabled.value).toBe(false)
+    expect(lastCapability()).toEqual({ type: 'set-control-enabled', enabled: false })
+  })
+})
+
+/**
+ * A capture that resolves after the meeting ended.
+ *
+ * Every one of these entry points awaits something the OS controls (a picker
+ * that can stay open for minutes, a camera or microphone that takes a second to
+ * start). The meeting can end in that window — the stop button, a socket close,
+ * a revoked Android projection — and the continuation then wrote the stream
+ * into module state nobody owns any more: the camera/microphone/screen
+ * indicator stays lit with no UI left to turn it off.
+ */
+describe('captures that arrive after the meeting ended', () => {
+  /** A promise the test resolves by hand, so the await is genuinely in flight. */
+  function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+    let resolve: (v: T) => void = () => {}
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
+  }
+
+  async function startEmpty() {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const ok = await share.start({ sourceId: '', microphone: true })
+    return { share, ok }
+  }
+
+  it('releases a screen capture that lands after the meeting ended', async () => {
+    const { share } = await startEmpty()
+    const late = new FakeStream([new FakeTrack('video', 'late'), new FakeTrack('audio', 'late-audio')])
+    const gate = deferred<FakeStream>()
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => gate.promise,
+    )
+
+    const pending = share.startScreen('screen:2:0')
+    await share.stop()
+    gate.resolve(late)
+
+    expect(await pending).toBe(false)
+    // The device is the whole point: nothing else holds this stream.
+    expect(late.tracks.every((t) => t.stopped)).toBe(true)
+    expect(share.state.value).toBe('idle')
+    expect(share.previewStream.value).toBeNull()
+    // ...and the module must not claim a picture it no longer has: the panel
+    // routes the next click by this value.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.captureSourceId.value).toBe('')
+  })
+
+  it('releases a camera that opens after the meeting ended', async () => {
+    const { share } = await startEmpty()
+    const late = new FakeStream([new FakeTrack('video', 'late-cam')])
+    const gate = deferred<FakeStream>()
+    ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => gate.promise,
+    )
+
+    const pending = share.setCameraDevice('default')
+    await share.stop()
+    gate.resolve(late)
+
+    expect(await pending).toBe(false)
+    expect(late.tracks.every((t) => t.stopped)).toBe(true)
+    expect(share.previewCameraStream.value).toBeNull()
+    expect(share.cameraEnabled.value).toBe(false)
+  })
+
+  it('releases a microphone that opens after the meeting ended', async () => {
+    const { share } = await startSharing()
+    const late = new FakeStream([new FakeTrack('audio', 'late-mic')])
+    const gate = deferred<FakeStream>()
+    ;(navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => gate.promise,
+    )
+
+    const pending = share.switchMicDevice('mic-b')
+    await share.stop()
+    gate.resolve(late)
+
+    expect(await pending).toBe(false)
+    expect(late.tracks.every((t) => t.stopped)).toBe(true)
+    // The switch never happened, so the recorded choice must not move either.
+    expect(share.activeMicDevice.value).toBe('')
+  })
+
+  it('releases a source switch that lands after the meeting ended', async () => {
+    const { share } = await startSharing()
+    const late = new FakeStream([new FakeTrack('video', 'late-swap')])
+    const gate = deferred<FakeStream>()
+    ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => gate.promise,
+    )
+
+    const pending = share.switchSource('window:3:0')
+    await share.stop()
+    gate.resolve(late)
+
+    expect(await pending).toBe(false)
+    expect(late.tracks.every((t) => t.stopped)).toBe(true)
+    expect(share.previewStream.value).toBeNull()
+    expect(share.captureKind.value).toBeNull()
+  })
+
+  /**
+   * The capture must not touch the module's picture state before the caller has
+   * checked the generation.
+   *
+   * A meeting's picker can resolve after the host already started ANOTHER
+   * meeting. If the capture writes `captureKind`/`captureSourceId` itself, the
+   * new meeting inherits them: `hasScreen` turns true (annotate, member screen
+   * sharing), the source grid highlights a tile that is not on the wire, and an
+   * Android handle gets replaced and then dropped without being stopped.
+   */
+  it('does not let a late capture overwrite the next meeting’s picture', async () => {
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    await share.start({ sourceId: 'screen:1:0', microphone: true })
+
+    const late = new FakeStream([new FakeTrack('video', 'late-window')])
+    const gate = deferred<FakeStream>()
+    const gdm = navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>
+    gdm.mockImplementationOnce(() => gate.promise) // meeting A's switch, still open
+
+    const pending = share.switchSource('window:9:0')
+    await share.stop()
+
+    // Meeting B starts and has its own picture before A's picker resolves.
+    const bStream = new FakeStream([new FakeTrack('video', 'b1'), new FakeTrack('audio', 'b2')])
+    gdm.mockImplementationOnce(async () => bStream)
+    await share.start({ sourceId: 'screen:2:0', microphone: true })
+    expect(share.captureSourceId.value).toBe('screen:2:0')
+
+    gate.resolve(late)
+    expect(await pending).toBe(false)
+
+    expect(late.tracks.every((t) => t.stopped)).toBe(true)
+    // B's picture is intact — the whole point of moving the writes out of the
+    // capture and behind the generation check.
+    expect(share.captureKind.value).toBe('screen')
+    expect(share.captureSourceId.value).toBe('screen:2:0')
+    expect(share.previewStream.value).toBe(bStream)
+    await share.stop()
+  })
+})
+
+/**
+ * 听记 across a pause.
+ *
+ * Turning the recorder off mid-meeting must not throw away what was already
+ * transcribed, and must not summarize the first half either — the minutes are
+ * generated once, when the meeting is actually over.
+ */
+describe('听记 lifecycle across the end of a meeting', () => {
+  function calls(path: string): number {
+    return fetchMock.mock.calls.filter(([url]) => url === path).length
+  }
+
+  it('summarizes the whole meeting once, and only after it ends', async () => {
+    const { share } = await startSharing()
+    const notes = (await import('../useLiveNotes')).useLiveNotes()
+
+    expect(share.startNotes()).toBe(true)
+    notes.segments.value = [
+      { id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '前半段' },
+      { id: 2, channel: 'mic', speaker: '我', startedAt: 2, durationMs: 1, text: '还是前半段' },
+    ]
+
+    await share.stopNotes()
+
+    // Pausing drains the queue; it must NOT summarize a meeting that is still
+    // running (that produced a minutes covering only the first half).
+    expect(calls('/api/live-share/notes/minutes')).toBe(0)
+    expect(calls('/api/live-share/notes/audio/merge')).toBe(0)
+
+    await share.stop()
+
+    await vi.waitFor(() => expect(calls('/api/live-share/notes/minutes')).toBe(1))
+    // ...and the recording is folded before the minutes, which link to it.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls.indexOf('/api/live-share/notes/audio/merge')).toBeLessThan(
+      urls.indexOf('/api/live-share/notes/minutes'),
+    )
+  })
+
+  /**
+   * The audience has to learn about a mid-meeting toggle: the room's flag was
+   * write-once at create time, so a viewer that joined later read a stale value
+   * and its transcript pane either never appeared or kept polling one that had
+   * stopped growing.
+   */
+  it('tells the audience when 听记 is switched on and off', async () => {
+    const { share } = await startSharing()
+
+    expect(share.startNotes()).toBe(true)
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: true })
+
+    await share.stopNotes()
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: false })
+
+    // Switching it back on says so again — a viewer that arrived during the
+    // pause only ever hears the frames sent after it joined.
+    expect(share.startNotes()).toBe(true)
+    const frames = lastWS().sentJSON().filter((m) => m.type === 'set-notes')
+    expect(frames).toEqual([
+      { type: 'set-notes', enabled: true },
+      { type: 'set-notes', enabled: false },
+      { type: 'set-notes', enabled: true },
+    ])
+
+    // Leave the recorder stopped: a live one keeps a 20 s segment timer.
+    await share.stop()
+  })
+
+  /**
+   * The recorder starts BEFORE the publisher socket (step 4 vs step 6 of
+   * `start()`), and `send()` drops frames on a socket that is not OPEN. So the
+   * most common path of all — 会议一开就打开听记 — would tell the room nothing
+   * unless `onopen` re-states it.
+   */
+  it('re-states 听记 on the room when the socket opens after the recorder started', async () => {
+    holdSocketOpen = true
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const started = share.start({ sourceId: '', microphone: true })
+
+    // Wait for the socket to exist (still handshaking) and switch 听记 on then.
+    await vi.waitFor(() => expect(FakeWS.instances).toHaveLength(1))
+    expect(share.startNotes()).toBe(true)
+    expect(lastWS().sentJSON()).toHaveLength(0)
+
+    lastWS().open()
+    expect(await started).toBe(true)
+
+    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: true })
+    await share.stop()
+  })
+
+  it('does not claim 听记 is running when it was switched off before the socket opened', async () => {
+    holdSocketOpen = true
+    const { useLiveShare } = await import('../useLiveShare')
+    const share = useLiveShare()
+    const started = share.start({ sourceId: '', microphone: true })
+
+    await vi.waitFor(() => expect(FakeWS.instances).toHaveLength(1))
+    expect(share.startNotes()).toBe(true)
+    await share.stopNotes()
+
+    lastWS().open()
+    expect(await started).toBe(true)
+
+    // The room must learn the CURRENT state. Re-stating "on" here would leave
+    // every viewer polling a transcript that will never grow again.
+    expect(lastWS().sentJSON().some((m) => m.type === 'set-notes')).toBe(false)
+    await share.stop()
+  })
+
+  it('leaves the previous meeting alone when this one never used 听记', async () => {
+    const notes = (await import('../useLiveNotes')).useLiveNotes()
+    // A finished meeting leaves its segments and token behind (the module is a
+    // singleton); the next meeting starts without notes.
+    notes.start({ token: 'tok-old', ctx: new FakeAudioCtx() as unknown as AudioContext, micStream: null })
+    notes.segments.value = [{ id: 1, channel: 'mic', speaker: '我', startedAt: 1, durationMs: 1, text: '上一场' }]
+
+    const { share } = await startSharing()
+    await share.stop()
+
+    // The room DELETE is the last thing stop() awaits, and the notes work is
+    // started before it — so by now a fold/summarize would already have been
+    // requested. Folding the OLD meeting here would regenerate its minutes from
+    // its own (stale) transcript.
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    expect(urls.some((u) => u.startsWith('/api/live-share?token='))).toBe(true)
+    expect(calls('/api/live-share/notes/audio/merge')).toBe(0)
+    expect(calls('/api/live-share/notes/minutes')).toBe(0)
+    // ...and the old transcript is left exactly as it was.
+    expect(notes.segments.value.map((s) => s.text)).toEqual(['上一场'])
+  })
+})
+
+/**
+ * A meeting that starts with no picture at all.
+ *
+ * The running panel routes a click on the picture grid by `captureKind`:
+ * non-null means "a screen is on the wire, swap it", null means "capture one".
+ * So the value the module STARTS with decides what the first click does, before
+ * any capture has happened — which is why this block needs a module instance
+ * that no reset helper has touched.
+ */
+describe('a meeting with no picture', () => {
+  it('does not claim a screen is on the wire on a fresh page load', async () => {
+    vi.resetModules()
+    const mod = await import('../useLiveShare')
+    const share = mod.useLiveShare()
+
+    expect(share.captureKind.value).toBeNull()
+
+    expect(await share.start({ sourceId: '', microphone: true })).toBe(true)
+
+    // Still no screen: none was captured. A non-null kind here makes the first
+    // click on the grid take the "switch source" path, which has nothing to
+    // swap and reports 「切换失败」.
+    expect(share.captureKind.value).toBeNull()
+    expect(share.videoEnabled.value).toBe(false)
+
+    await share.stop()
   })
 })

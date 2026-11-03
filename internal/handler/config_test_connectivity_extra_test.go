@@ -2,10 +2,10 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +13,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
+	"clawbench/internal/service"
+	"clawbench/internal/ssh"
 )
 
 // TestServeConfigTest_STTCategory covers the "stt" branch of the
@@ -21,7 +25,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/audio/transcriptions", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
@@ -33,7 +37,8 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var result ConnectivityTestResult
 	_ = json.NewDecoder(w.Body).Decode(&result)
-	assert.True(t, result.Success)
+	assert.True(t, result.Success, result.Message)
+	assert.Contains(t, result.Message, "你好")
 }
 
 // TestSTTConnectivity_EmptyBaseURL covers the missing base URL guard in testSTT.
@@ -52,14 +57,14 @@ func TestSTTConnectivity_DefaultModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "openai/whisper-large-v3", r.FormValue("model"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
 		"stt.base_url": srv.URL,
 	})
-	assert.True(t, res.Success)
+	assert.True(t, res.Success, res.Message)
 }
 
 // TestSTTConnectivity_WithAPIKey covers setting the Authorization header
@@ -68,7 +73,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"text":""}`))
+		_, _ = w.Write([]byte(`{"text":"你好"}`))
 	}))
 	defer srv.Close()
 
@@ -77,7 +82,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 		"stt.model":    "m",
 		"stt.api_key":  "test-api-key",
 	})
-	assert.True(t, res.Success)
+	assert.True(t, res.Success, res.Message)
 }
 
 // TestSTTConnectivity_Unreachable covers the client.Do network error path.
@@ -90,91 +95,15 @@ func TestSTTConnectivity_Unreachable(t *testing.T) {
 	assert.Contains(t, res.Message, "unreachable")
 }
 
-// TestSTTConnectivity_NewRequestError covers the http.NewRequest error branch
-// by providing a base URL that produces an invalid URL.
+// TestSTTConnectivity_NewRequestError covers the invalid-URL branch: the probe
+// must report it rather than panicking or reporting success.
 func TestSTTConnectivity_NewRequestError(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
 		"stt.base_url": ":",
 		"stt.model":    "m",
 	})
 	assert.False(t, res.Success)
-	assert.Contains(t, res.Message, "Failed to create request")
-}
-
-// TestSTTConnectivity_ProbeOtherStatus covers the fall-through success result
-// when the server returns a non-2xx status that is neither auth, 404, nor
-// model-not-found (i.e. the request reached the transcription handler).
-func TestSTTConnectivity_ProbeOtherStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"internal server error"}`))
-	}))
-	defer srv.Close()
-
-	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
-	})
-	assert.True(t, res.Success)
-	assert.Contains(t, res.Message, "probe returned HTTP 500")
-}
-
-// TestBuildSTTProbe verifies the multipart probe body contains the expected
-// fields and a valid Content-Type, and returns no error.
-func TestBuildSTTProbe(t *testing.T) {
-	body, contentType, err := buildSTTProbe("Qwen3-ASR-1.7B", "zh")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, contentType)
-	assert.True(t, strings.HasPrefix(contentType, "multipart/form-data"))
-
-	// Parse the multipart body to verify fields.
-	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
-	form, err := mr.ReadForm(1 << 20)
-	assert.NoError(t, err)
-	defer func() { _ = form.RemoveAll() }()
-
-	assert.Len(t, form.File["file"], 1, "probe should include one audio file part")
-	assert.Equal(t, []string{"Qwen3-ASR-1.7B"}, form.Value["model"])
-	assert.Equal(t, []string{"zh"}, form.Value["language"])
-}
-
-// TestBuildSTTProbe_FilePartMp3 verifies the probe's audio file part is the
-// embedded "你好" mp3 asset under the filename "probe.mp3".
-func TestBuildSTTProbe_FilePartMp3(t *testing.T) {
-	body, contentType, err := buildSTTProbe("Qwen3-ASR-1.7B", "zh")
-	assert.NoError(t, err)
-
-	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
-	form, err := mr.ReadForm(1 << 20)
-	assert.NoError(t, err)
-	defer func() { _ = form.RemoveAll() }()
-
-	fileHeaders := form.File["file"]
-	require.Len(t, fileHeaders, 1)
-	assert.Equal(t, "probe.mp3", fileHeaders[0].Filename)
-
-	f, err := fileHeaders[0].Open()
-	require.NoError(t, err)
-	defer func() { _ = f.Close() }()
-	got, err := io.ReadAll(f)
-	require.NoError(t, err)
-	assert.Equal(t, sttProbeAudio, got)
-}
-
-// TestBuildSTTProbe_NoLanguage verifies that omitting language skips the
-// language field entirely.
-func TestBuildSTTProbe_NoLanguage(t *testing.T) {
-	body, contentType, err := buildSTTProbe("m", "")
-	assert.NoError(t, err)
-
-	mr := multipart.NewReader(body, strings.TrimPrefix(contentType, "multipart/form-data; boundary="))
-	form, err := mr.ReadForm(1 << 20)
-	assert.NoError(t, err)
-	defer func() { _ = form.RemoveAll() }()
-
-	_, ok := form.Value["language"]
-	assert.False(t, ok, "language field should be absent when empty")
-	assert.Equal(t, []string{"m"}, form.Value["model"])
+	assert.Contains(t, res.Message, "create request")
 }
 
 // TestIsSTTModelNotFound covers both the true (keyword-matched) and false
@@ -200,4 +129,353 @@ func TestIsSTTModelNotFound(t *testing.T) {
 	for _, fc := range falseCases {
 		assert.False(t, isSTTModelNotFound([]byte(fc)), "expected false for %q", fc)
 	}
+}
+
+// ── Doubao (Volcano Engine Seed-ASR) branch ───────────────────
+
+// withDoubaoTestServer points the doubao connectivity probe at srv and restores
+// the production host afterwards.
+func withDoubaoTestServer(t *testing.T, h http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	prev := doubaoSTTBaseURL
+	doubaoSTTBaseURL = srv.URL
+	t.Cleanup(func() {
+		doubaoSTTBaseURL = prev
+		srv.Close()
+	})
+}
+
+// TestSTTConnectivity_DoubaoSuccess asserts the probe really sends the embedded
+// speech clip with the X-Api-Key / resource headers, and reports the recognized
+// text. A silence-only probe would pass auth but prove nothing about ASR.
+func TestSTTConnectivity_DoubaoSuccess(t *testing.T) {
+	var gotKey, gotResource string
+	var gotAudio []byte
+	withDoubaoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("X-Api-Key")
+		gotResource = r.Header.Get("X-Api-Resource-Id")
+		var body struct {
+			Audio struct {
+				Format string `json:"format"`
+				Data   string `json:"data"`
+			} `json:"audio"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "mp3", body.Audio.Format)
+		decoded, err := base64.StdEncoding.DecodeString(body.Audio.Data)
+		require.NoError(t, err)
+		gotAudio = decoded
+		_, _ = w.Write([]byte(`{"header":{"code":20000000,"message":"OK"},"result":{"text":"你好"}}`))
+	})
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":    "doubao",
+		"stt.api_key":     "key-123",
+		"stt.resource_id": "volc.seedasr.sauc.duration",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "key-123", gotKey)
+	assert.Equal(t, "volc.seedasr.sauc.duration", gotResource)
+	assert.Equal(t, sttProbeAudio, gotAudio, "probe must upload the real speech clip")
+}
+
+// TestSTTConnectivity_DoubaoRequiresAPIKey covers the missing-key guard.
+func TestSTTConnectivity_DoubaoRequiresAPIKey(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider": "doubao",
+		"stt.api_key":  "",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "API key")
+}
+
+// TestSTTConnectivity_DoubaoBodyErrorIsFailure covers the failure path: the API
+// answers HTTP 200 with a non-success body code, which must not read as success.
+func TestSTTConnectivity_DoubaoBodyErrorIsFailure(t *testing.T) {
+	withDoubaoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"header":{"code":45000030,"message":"requested resource not granted"}}`))
+	})
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":    "doubao",
+		"stt.api_key":     "key-123",
+		"stt.resource_id": "volc.bigasr.auc",
+	})
+
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "45000030")
+}
+
+// TestSTTConnectivity_DoubaoEmptyTranscriptIsFailure covers a 200/OK response
+// that carries no text — that is a broken probe, not a working engine.
+func TestSTTConnectivity_DoubaoEmptyTranscriptIsFailure(t *testing.T) {
+	withDoubaoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"header":{"code":20000000},"result":{"text":"  "}}`))
+	})
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider": "doubao",
+		"stt.api_key":  "key-123",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "empty")
+}
+
+// TestServeConfigTest_STTDoubaoDispatches covers provider dispatch through the
+// HTTP entry point rather than calling testSTT directly.
+func TestServeConfigTest_STTDoubaoDispatches(t *testing.T) {
+	withDoubaoTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"header":{"code":20000000},"result":{"text":"你好"}}`))
+	})
+
+	body := `{"category":"stt","values":{"stt.provider":"doubao","stt.api_key":"k"}}`
+	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	ServeConfigTest(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var result ConnectivityTestResult
+	_ = json.NewDecoder(w.Body).Decode(&result)
+	assert.True(t, result.Success, result.Message)
+}
+
+// ── Summarize Voice: provider branch ────────────────────────
+
+// The provider branch of testSummarizeVoice: its protocol decides the request
+// shape, and a protocol the summarizer cannot speak must be refused by name
+// (a URL heuristic cannot recover that).
+func TestTestSummarizeVoice_UsesBoundProviderProtocol(t *testing.T) {
+	prevCfg := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	t.Cleanup(func() { model.ConfigInstance = prevCfg; model.ReplaceProviders(nil) })
+
+	var gotPath, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get("x-api-key")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer srv.Close()
+
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 7, Name: "Anthropic GW", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: srv.URL, APIKey: "sk-p", AuthMode: model.ProviderAuthAuto,
+	}})
+
+	res := testSummarizeVoice(context.Background(), map[string]any{
+		"ai_summary.provider_id": float64(7),
+		"ai_summary.model":       "claude-haiku",
+	})
+	assert.True(t, res.Success, res.Message)
+	assert.Equal(t, "/v1/messages", gotPath, "the provider protocol must pick the request shape")
+	assert.Equal(t, "sk-p", gotKey)
+}
+
+func TestTestSummarizeVoice_RejectsGeminiProvider(t *testing.T) {
+	prevCfg := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	t.Cleanup(func() { model.ConfigInstance = prevCfg; model.ReplaceProviders(nil) })
+
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 8, Name: "Gem", Protocol: model.ProviderProtocolGemini,
+		BaseURL: "https://gem.example", APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	}})
+
+	res := testSummarizeVoice(context.Background(), map[string]any{
+		"ai_summary.provider_id": float64(8),
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "gemini")
+	assert.Contains(t, res.Message, "Gem", "the message must name the provider")
+}
+
+// summaryProviderID accepts every numeric shape JSON can produce plus the saved
+// config, and 0 when nothing is configured.
+func TestSummaryProviderID(t *testing.T) {
+	prevCfg := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	t.Cleanup(func() { model.ConfigInstance = prevCfg })
+
+	assert.Equal(t, int64(0), summaryProviderID(map[string]any{}))
+	assert.Equal(t, int64(3), summaryProviderID(map[string]any{"ai_summary.provider_id": float64(3)}))
+	assert.Equal(t, int64(4), summaryProviderID(map[string]any{"ai_summary.provider_id": int64(4)}))
+	assert.Equal(t, int64(5), summaryProviderID(map[string]any{"ai_summary.provider_id": 5}))
+
+	// A non-numeric draft value falls through to the saved config.
+	saved := int64(9)
+	model.ConfigInstance.AISummary.ProviderID = &saved
+	assert.Equal(t, int64(9), summaryProviderID(map[string]any{"ai_summary.provider_id": "not-a-number"}))
+}
+
+// ── OpenAI / Anthropic probe: error envelopes ───────────────
+
+// The vendor's message is the whole point of the test button; a body without
+// one must fall back to the status code instead of printing an empty reason.
+func TestTestOpenAIAPI_ErrorWithMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer srv.Close()
+
+	res := testOpenAIAPI(context.Background(), &http.Client{}, srv.URL, "k", "m")
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "401")
+	assert.Contains(t, res.Message, "invalid api key")
+}
+
+// A 2xx is success even when the body is unparseable: the probe only asks
+// whether the endpoint accepts the request.
+func TestTestAnthropicAPI_AcceptsEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	res := testAnthropicAPI(context.Background(), &http.Client{}, srv.URL, "k", "m")
+	assert.True(t, res.Success, res.Message)
+}
+
+// ── Port forwarding: SSH listener that is not actually listening ──
+
+// A server object whose port nobody is bound to: the dial fails, so the answer
+// must be "not listening on port N" rather than an SSH success.
+func TestTestPortForward_ServerPortClosed(t *testing.T) {
+	origSSH := sshServerRef
+	origRegistry := service.ProxyService
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	sshServerRef = ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: port}, 20000, "pw", nil)
+	service.ProxyService = nil
+	defer func() { sshServerRef = origSSH; service.ProxyService = origRegistry }()
+
+	res := testPortForward(context.Background(), map[string]any{})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, fmt.Sprintf("port %d", port))
+}
+
+// A transport failure names the endpoint so the user can tell a typo in the
+// base URL from a wrong key.
+func TestSTTConnectivity_UnreachableNamesEndpoint(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.base_url": "http://127.0.0.1:1",
+		"stt.model":    "m",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "127.0.0.1:1")
+}
+
+// A body that mentions the model but is not a known-model phrase must not be
+// mistaken for one; the status code is reported instead.
+func TestSTTConnectivity_UnclassifiedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal failure"}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{"stt.base_url": srv.URL, "stt.model": "m"})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "500")
+	assert.Contains(t, res.Message, "internal failure")
+}
+
+// ── HTTP entry-point dispatch ──────────────────────────────
+
+// The category switch must reach the summarize_voice and port_forward probes
+// through the real handler, not only through a direct call.
+func TestServeConfigTest_DispatchesSummarizeAndPortForward(t *testing.T) {
+	prevCfg := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	t.Cleanup(func() { model.ConfigInstance = prevCfg; model.ReplaceProviders(nil) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	cases := []struct {
+		category string
+		values   map[string]any
+	}{
+		{"summarize_voice", map[string]any{"ai_summary.api.base_url": srv.URL, "ai_summary.api.key": "k"}},
+		{"port_forward", map[string]any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.category, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"category": tc.category, "values": tc.values})
+			require.NoError(t, err)
+			r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(string(body)))
+			w := httptest.NewRecorder()
+			ServeConfigTest(w, r)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var result ConnectivityTestResult
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&result))
+			if tc.category == "summarize_voice" {
+				assert.True(t, result.Success, result.Message)
+			} else {
+				// The outcome depends on the host's listeners; the point is
+				// that the category is dispatched at all.
+				assert.NotContains(t, result.Message, "Unknown category")
+			}
+		})
+	}
+}
+
+// A value that is neither a number nor a numeric string falls back to the
+// default instead of being coerced to 0.
+func TestResolveIntValue_NonNumericTypesFallBack(t *testing.T) {
+	assert.Equal(t, 7, resolveIntValue(map[string]any{"k": true}, "k", 7))
+	assert.Equal(t, 7, resolveIntValue(map[string]any{"k": []any{1}}, "k", 7))
+}
+
+// An endpoint that cannot even be turned into a request is reported by both API
+// probes, so the settings page shows the reason instead of a bare failure.
+func TestAPISummarizer_UnbuildableRequests(t *testing.T) {
+	client := &http.Client{}
+
+	openai := testOpenAIAPI(context.Background(), client, ":", "k", "m")
+	assert.False(t, openai.Success)
+	assert.Contains(t, openai.Message, "Failed to create request")
+
+	anthropic := testAnthropicAPI(context.Background(), client, ":", "k", "m")
+	assert.False(t, anthropic.Success)
+	assert.Contains(t, anthropic.Message, "Failed to create request")
+
+	tts := testTTSOpenAI(context.Background(), map[string]any{
+		"tts.openai.base_url": ":", "tts.openai.model": "m", "tts.openai.voice": "alloy",
+	})
+	assert.False(t, tts.Success)
+	assert.Contains(t, tts.Message, "Failed to create request")
+}
+
+// Same for the IM probes: a malformed token URL must be reported as a request
+// error, not as a connection failure.
+func TestIMProbes_UnbuildableRequests(t *testing.T) {
+	origDing := dingtalkTokenURL
+	dingtalkTokenURL = ":"
+	t.Cleanup(func() { dingtalkTokenURL = origDing })
+
+	ding := testDingTalk(context.Background(), map[string]any{
+		"dingtalk.app_key": "k", "dingtalk.app_secret": "s",
+	})
+	assert.False(t, ding.Success)
+	assert.Contains(t, ding.Message, "Failed to create request")
+
+	origFeishu := feishuTokenURL
+	feishuTokenURL = ":"
+	t.Cleanup(func() { feishuTokenURL = origFeishu })
+
+	feishu := testFeishu(context.Background(), map[string]any{
+		"feishu.app_id": "id", "feishu.app_secret": "s",
+	})
+	assert.False(t, feishu.Success)
+	assert.Contains(t, feishu.Message, "Failed to create request")
 }

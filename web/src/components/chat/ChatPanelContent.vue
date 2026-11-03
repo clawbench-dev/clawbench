@@ -175,6 +175,7 @@
       :get-scroller="messageListRef.getMessagesEl"
       :bottom-inset="railBottomInset"
       :generating="railGenerating"
+      :pending-active="railPendingActive"
       @select="handleRailSelect"
       @select-pending="handleRailSelectPending"
     />
@@ -275,6 +276,15 @@
     :block-ask-questions="render.blockAskQuestions"
     :static-block-cache="render.staticBlockCache"
   />
+
+  <!-- Queued-message editor: text plus attachments, saved in place. -->
+  <QueuedMessageEditSheet
+    :open="editEntry !== null"
+    :entry="editEntry ? editEntry.entry : null"
+    :saving="editBusy !== ''"
+    @close="closeEditPending"
+    @save="handleEditSave"
+  />
 </template>
 
 <script setup>
@@ -295,6 +305,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
+import QueuedMessageEditSheet from './QueuedMessageEditSheet.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
 import BusyBar from '@/components/common/BusyBar.vue'
@@ -326,7 +337,7 @@ import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRout
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
-import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
+import { buildSendPayload, fileEntryKey } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -414,6 +425,17 @@ const mergeBusy = ref(false)
  * controls while one row is saving — a silent UI regression with no error.
  */
 const editBusy = ref('')
+/**
+ * The queue entry currently open in the edit sheet (null = closed).
+ *
+ * Holds `{ sessionId, entry }`, not just the entry: the sheet seeds its draft
+ * from the text and attachments on open, the diff on save compares against this
+ * snapshot, and the PATCH is addressed by the session the entry was QUEUED IN.
+ * Capturing that session here (rather than re-reading the active one on save)
+ * keeps a draft bound to its own queue: a programmatic session switch (deep
+ * link, notification) must not retarget the request at whatever is on screen.
+ */
+const editEntry = ref(null)
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -795,7 +817,16 @@ async function jumpToQuoteSource(q) {
         return
     }
 
-    // 3. Session + message: switch to the session and scroll to the message.
+    // 3. Meeting: switch to the 会议 tab and open that record. The panel owns
+    //    the view state, so the request travels as an event rather than a prop.
+    if (q.meetingToken) {
+        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', {
+            detail: { token: q.meetingToken },
+        }))
+        return
+    }
+
+    // 4. Session + message: switch to the session and scroll to the message.
     //    The request is parked in module state because the session may still
     //    have to load (and may be a different project) — see useMessageNavigation.
     if (q.sessionId) {
@@ -812,6 +843,11 @@ async function jumpToQuoteSource(q) {
         return
     }
 
+    // A meeting quote whose token did not survive (an old message) has no
+    // addressable source: opening the label as a path would 404 and look like
+    // a broken file.
+    if (q.language === 'meeting' && !q.meetingToken) return
+
     // 5. A file: open it at its line range.
     if (!q.filePath) return
     const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
@@ -820,13 +856,13 @@ async function jumpToQuoteSource(q) {
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
-// The configured group-chat user nickname (chat.user_nickname, default "User").
-// Server-side and global, so it is read from the shared serverConfig singleton
-// rather than threaded through props. Falls back to the built-in reserved name
-// before config loads so @-chips never render blank.
+// The configured user nickname (user.nickname, default "User"). Server-side and
+// global, so it is read from the shared serverConfig singleton rather than
+// threaded through props. Falls back to the built-in reserved name before config
+// loads so @-chips never render blank.
 const userNickname = computed(() => {
-  const chat = serverConfig.value?.chat
-  const v = chat && typeof chat === 'object' ? chat.user_nickname : undefined
+  const user = serverConfig.value?.user
+  const v = user && typeof user === 'object' ? user.nickname : undefined
   return typeof v === 'string' && v !== '' ? v : GROUP_USER_TARGET_NAME
 })
 
@@ -1046,9 +1082,20 @@ watch(loading, (newVal, oldVal) => {
 // The queue panel reads from a module-level store keyed by session; point it at
 // the session this panel is showing. Immediate so a remount (project switch,
 // drawer reopen) restores the right queue without waiting for a change.
+//
+// The edit draft is dropped on the same edge: it belongs to the queue it was
+// opened from, and the sheet is a modal over a view that can switch sessions
+// underneath it (deep link, notification — the BottomSheet only blocks
+// pointers). Leaving it open would show session A's draft while the save is
+// addressed at B, where the queueId does not exist.
 watch(
   () => identity.currentSessionId.value,
-  (sid) => setActiveQueueSession(sid || ''),
+  (sid) => {
+    setActiveQueueSession(sid || '')
+    editEntry.value = null
+    editBusy.value = ''
+    mergeBusy.value = false
+  },
   { immediate: true },
 )
 
@@ -1244,7 +1291,7 @@ watch(
     if (data === null || !toolDetailIsOpen.value) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
-    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name, { annotate: !!data.done }) : toolDetailData.value.outputHtml
+    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name, { annotate: !!data.done, input: data.input }) : toolDetailData.value.outputHtml
     toolDetailData.value.status = data.status || ''
     toolDetailData.value.done = !!data.done
     toolDetailData.value.inputHtml = hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailData.value.inputHtml
@@ -1557,6 +1604,18 @@ function handleRailSelectPending() {
  */
 const railGenerating = computed(() =>
   identity.runningSessions.value.has(identity.currentSessionId.value),
+)
+
+/**
+ * Whether the in-flight slot owns the rail's "you are here" mark.
+ *
+ * Only while the reader is actually watching the reply: a real turn can stream
+ * for minutes, and pinning the mark to the tail meant scrolling up to read
+ * history left the highlight stuck at the bottom — it looked frozen. Once they
+ * scroll away the mark follows the reading position like it does when idle.
+ */
+const railPendingActive = computed(() =>
+  railGenerating.value && messageListRef.value?.railAtBottom === true,
 )
 
 /**
@@ -2285,44 +2344,78 @@ async function handlePendingAction(queueId, mode) {
 }
 
 /**
- * Edit a queued message's text in place.
+ * Open the edit sheet for a queued message.
  *
- * The dialog is primed with the current text and opts into Enter-inserts-newline:
- * a queued message is often a multi-line requirement, and the prompt's default
- * Enter-to-submit made a second line impossible to type.
- *
- * Saving does NOT resend: the row keeps its queue position, so a message that
- * has been waiting fifteen minutes is still next in line after the edit.
+ * In-place editing (not "recall into the input box and resend"): the row keeps
+ * its queue position, so a message that has been waiting fifteen minutes is
+ * still next in line after the edit. The sheet is primed with the current text
+ * and attachments; it saves through PATCH /api/ai/queue.
  */
-async function handleEditPending(queueId) {
+function handleEditPending(queueId) {
     if (!queueId || editBusy.value) return
     const sessionId = identity.currentSessionId.value
     const entry = getQueue(sessionId).find(m => m.queueId === queueId)
     if (!entry) return
+    // The session travels WITH the entry: it is what addresses the save, and it
+    // is the only thing that keeps a draft valid if the view switches sessions.
+    editEntry.value = { sessionId, entry }
+}
 
-    const next = await dialog.prompt(t('chat.pending.editPrompt'), {
-        title: t('chat.pending.editTitle'),
-        value: entry.text,
-        placeholder: t('chat.pending.editPlaceholder'),
-        confirmText: t('common.save'),
-        cancelText: t('common.cancel'),
-        enterInsertsNewline: true,
-    })
-    if (next === null) return
-    const trimmed = String(next).trim()
-    // An unchanged or emptied body is not an edit. Emptying an attachment-only
-    // message is rejected server-side too, so declining here is consistent.
-    if (!trimmed || trimmed === entry.text.trim()) return
+/** Close the sheet. Ignored while a save is in flight (the draft must not be
+ *  discarded mid-request; the caller closes it when the request settles). */
+function closeEditPending() {
+    if (editBusy.value) return
+    editEntry.value = null
+}
 
-    editBusy.value = queueId
+/**
+ * Save the sheet's draft in place: text and, when it changed, attachments.
+ *
+ * `files` is only sent when the user actually changed the list. The endpoint
+ * reads an absent key as "keep the stored attachments", so sending an unchanged
+ * list would re-validate paths for no reason — and a file deleted from disk in
+ * the meantime would then fail a text-only edit.
+ */
+async function handleEditSave({ text, files }) {
+    const target = editEntry.value
+    if (!target || editBusy.value) return
+    // The session captured when the sheet opened, NOT the active one: the
+    // queueId only exists in that session's queue, so re-reading the active
+    // session after a switch would 409 and silently drop the edit.
+    const { sessionId, entry } = target
+    const textChanged = text !== entry.text.trim()
+    // Compare by attachment IDENTITY, the same notion the send path dedupes by.
+    // A structural (JSON) comparison reports a change for lists the backend
+    // considers identical, which would re-send — and re-validate — attachments
+    // the user never touched.
+    const currentFiles = entry.files || []
+    const filesChanged = files.length !== currentFiles.length
+        || files.some((f, i) => fileEntryKey(f) !== fileEntryKey(currentFiles[i]))
+    // Nothing to send: the sheet only allows an empty text when attachments
+    // remain, and an unchanged draft is not an edit at all.
+    if (!textChanged && !filesChanged) {
+        editEntry.value = null
+        return
+    }
+
+    editBusy.value = entry.queueId
     try {
-        await manager.editQueuedMessage(queueId, trimmed)
+        const ok = await manager.editQueuedMessage(entry.queueId, text, filesChanged ? files : undefined, sessionId)
+        // Close on success. On failure, close only when the entry is gone (the
+        // 409 path drops it and explains why); otherwise keep the sheet open
+        // with the draft so the user can retry.
+        if (ok || !getQueue(sessionId).some(m => m.queueId === entry.queueId)) {
+            editEntry.value = null
+        }
     } finally {
-        editBusy.value = ''
+        // Guarded: a session switch clears editBusy while this request is in
+        // flight, and an unconditional reset could clobber a newer save's state.
+        if (editBusy.value === entry.queueId) editBusy.value = ''
     }
 }
 
-/** Merge every queued message of this session into one (queue-wide action). */async function handleMergeQueue() {
+/** Merge every queued message of this session into one (queue-wide action). */
+async function handleMergeQueue() {
     if (mergeBusy.value) return
     mergeBusy.value = true
     try {
@@ -2674,6 +2767,38 @@ defineExpose({
 :root[data-webview-mode] .chat-panel-content {
   will-change: transform;
   contain: paint;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Breathing room above the stacked cards (plan / team / queued)
+
+   The scroller's own bottom padding is --space-6 (12px) while two messages
+   are separated by the list's --space-8 (20px) gap, so the first card ended
+   up CLOSER to the last bubble than two bubbles are to each other — it read
+   as glued to the message area. --space-4 on top restores the 20px rhythm
+   (12 + 8) without touching the scroller, whose padding is symmetric with
+   its top edge.
+
+   Only the FIRST visible card gets it. The cards carry a bottom margin
+   (`margin: 0 var(--chat-content-card-gutter) var(--space-4)`, guarded by
+   chatContentMeasure.css.test.ts) and this column is a flex container, so
+   margins never collapse — giving every card a top margin would double the
+   gap between two stacked cards from 8px to 16px.
+
+   `div.` is load-bearing: the child's own scoped `.plan-panel` rule has the
+   same class-level weight, so without the extra type selector which rule
+   wins would depend on stylesheet order.
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.chat-panel-content > div.plan-panel,
+.chat-panel-content > div.team-panel,
+.chat-panel-content > div.queued-bar {
+  margin-top: var(--space-4);
+}
+
+.chat-panel-content > .plan-panel ~ div.team-panel,
+.chat-panel-content > .plan-panel ~ div.queued-bar,
+.chat-panel-content > .team-panel ~ div.queued-bar {
+  margin-top: 0;
 }
 
 /* Session swipe indicator — floats at top of message area */

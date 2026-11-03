@@ -34,6 +34,17 @@ var projectScopedDeleteTables = []string{
 	tableSessionTags,
 	"scheduled_tasks",
 	tableTerminalQuickCommands,
+	// Meeting records and everything hanging off them. Without these the rows
+	// become unreachable orphans: project_id no longer resolves after the
+	// project is gone, so nothing can list or delete them again.
+	"live_notes",
+	"live_notes_segments",
+	"live_notes_chat",
+	// The file timeline and the screen-share log are keyed by the share token
+	// and scoped by project_id like the rest of the meeting tables; omitting
+	// them left them behind for good (no other statement deletes from either).
+	"live_notes_files",
+	"live_notes_screen",
 }
 
 // sessionLinkedDeleteTables carry BOTH session_id and project_id. They are

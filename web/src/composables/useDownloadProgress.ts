@@ -14,13 +14,20 @@
  * `downloadTotal` of 0 means "unknown size" — the server sent no Content-Length
  * (e.g. the streamed archive endpoint). The bar renders an indeterminate state
  * then, rather than sitting at a misleading 0%.
+ *
+ * `downloadSpeed` is derived from the progress reports themselves (no timer),
+ * so it costs nothing while idle and resets with each transfer.
  */
 import { ref } from 'vue'
+import { createTransferSpeedMeter } from '@/utils/transferSpeed'
 
 const downloadVisible = ref(false)
 const downloadFileName = ref('')
 const downloadReceived = ref(0)
 const downloadTotal = ref(0)
+/** Bytes per second over the recent window; 0 until two samples exist. */
+const speedMeter = createTransferSpeedMeter()
+const downloadSpeed = speedMeter.speed
 
 /** Monotonic id source; the first download gets 1 (0 means "none"). */
 let downloadSeq = 0
@@ -52,6 +59,7 @@ export function beginDownload(id: number, fileName: string, total: number): bool
   downloadFileName.value = fileName
   downloadReceived.value = 0
   downloadTotal.value = total > 0 ? total : 0
+  speedMeter.reset()
   downloadVisible.value = true
   return true
 }
@@ -67,6 +75,7 @@ export function reportDownloadProgress(id: number, received: number, total?: num
   if (!isCurrentDownload(id)) return
   if (typeof total === 'number' && total > 0) downloadTotal.value = total
   downloadReceived.value = received
+  speedMeter.sample(received)
 }
 
 /** Register the cancellation callback for the in-flight transfer. */
@@ -83,6 +92,7 @@ export function endDownload(id: number): void {
   downloadTotal.value = 0
   downloadFileName.value = ''
   activeCancel = null
+  speedMeter.reset()
 }
 
 /** Cancel the in-flight download (user pressed the bar's cancel button). */
@@ -94,6 +104,7 @@ export function cancelDownload(): void {
   downloadReceived.value = 0
   downloadTotal.value = 0
   downloadFileName.value = ''
+  speedMeter.reset()
   try {
     cancel?.()
   } catch {
@@ -107,6 +118,7 @@ export function useDownloadProgress() {
     downloadFileName,
     downloadReceived,
     downloadTotal,
+    downloadSpeed,
     cancelDownload,
   }
 }

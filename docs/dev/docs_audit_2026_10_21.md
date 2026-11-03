@@ -1654,7 +1654,7 @@ AI 群聊的两种模式（主持人/自由）、自动巡航、@ 成员卡与�
 **② 有没有引用了已经不存在的文件或函数**
 
 - ⚠️ **发现过时线索**：
-  - 文档描述「设置 → 聊天 → 群聊 → 用户昵称」路径，实际 key 为 `chat.user_nickname`，sectionHeader 为 `groupChatSectionHeader`，"群聊"是 section 标题而非独立子页签，但功能位置一致，不构成严重过时。
+  - 文档描述「设置 → 聊天 → 群聊 → 用户称谓」路径，实际 key 为 `chat.user_nickname`，sectionHeader 为 `groupChatSectionHeader`，"群聊"是 section 标题而非独立子页签，但功能位置一致，不构成严重过时。
 
 **③ 建议怎么改**
 
@@ -3171,7 +3171,7 @@ AI 群聊的 A–M 基线 + N/O 阶段的实施计划（编排器、成员存储
 #### `docs/plans/2026-10-10-group-duplicate-agents-design.md`
 
 - **行数**：228 ｜ **类别**：实施计划（历史）
-- **标题**：群聊支持同一智能体多实例（临时昵称）设计
+- **标题**：群聊支持同一智能体多实例（临时称谓）设计
 
 **① 这份文档讲什么**
 

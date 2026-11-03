@@ -41,15 +41,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { defineAsyncComponent, ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, CalendarX } from 'lucide-vue-next'
 import TaskListPage from '@/components/task/TaskListPage.vue'
 import TaskDetailPage from '@/components/task/TaskDetailPage.vue'
 import TaskExecDetail from '@/components/task/TaskExecDetail.vue'
-import TaskFormPage from '@/components/task/TaskFormPage.vue'
+// The form pulls the CodeMirror editor (1.4MB). It is only shown after the
+// user opens "new task" / "edit", so it must not sit in the first-screen
+// bundle — a static import here was what put the whole editor stack there.
+const TaskFormPage = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('@/components/task/TaskFormPage.vue') }),
+)
 import TaskCreateHintDialog from '@/components/task/TaskCreateHintDialog.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { isTaskCreateHintDismissed } from '@/composables/useTaskCreateHint'

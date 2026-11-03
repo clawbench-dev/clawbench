@@ -13,8 +13,23 @@
  * TURN relay later needs no change here.
  */
 import { appLog } from '@/utils/appLog'
+import { parseControlMessage, type ControlMessage } from './liveControl'
+import {
+  GUEST_SCREEN_BUDGET,
+  applyContentHint,
+  applyEncodeBudget,
+  screenCaptureConstraints,
+} from '@/composables/liveMediaPolicy'
 
 const TAG = 'LiveViewer'
+
+/** One health reading, as shown by the quality badge. */
+export interface LiveStats {
+  rttMs: number | null
+  lossPct: number | null
+  bitrateKbps: number | null
+  jitterMs: number | null
+}
 
 export type LiveViewerState =
   | 'idle'
@@ -36,6 +51,14 @@ interface ServerMessage {
   talkEnabled?: boolean
   /** Whether the publisher is running AI 听记 for this share. */
   notesEnabled?: boolean
+  /** Whether the publisher sends a picture (false = voice meeting). */
+  video?: boolean
+  /** Whether the publisher's camera is on (video meetings). */
+  camera?: boolean
+  /** Whether the publisher's picture is a screen share (not a camera). */
+  hostScreen?: boolean
+  /** Whether the publisher can accept remote-control requests right now. */
+  controlEnabled?: boolean
   /** Room-level switch for audience screen sharing. */
   screenEnabled?: boolean
   /** Viewer id currently sharing a screen ('' when nobody is). */
@@ -44,6 +67,25 @@ interface ServerMessage {
   sharing?: boolean
   reason?: string
   message?: string
+  /** Participant list, on `joined` and on every `roster` frame. */
+  roster?: RosterMember[]
+}
+
+/**
+ * One participant, as the server reports them.
+ *
+ * `id` is "host" for the publisher and the room's viewer id for everybody else;
+ * comparing it with `viewer.viewerId` is how the page marks "you".
+ */
+export interface RosterMember {
+  id: string
+  name: string
+  /** The publisher row: pinned first and labelled with the role. */
+  host?: boolean
+  /** That viewer's microphone is on. */
+  talking?: boolean
+  /** The publisher blocked that viewer's microphone. */
+  muted?: boolean
 }
 
 export interface LiveViewerCallbacks {
@@ -55,6 +97,27 @@ export interface LiveViewerCallbacks {
   onTalkEnabled?: (enabled: boolean) => void
   /** Whether the publisher is running AI 听记 (shows the transcript panel). */
   onNotesEnabled?: (enabled: boolean) => void
+  /**
+   * Whether the publisher sends a picture. A voice meeting has none, so the
+   * page renders a placeholder instead of waiting for a track that will never
+   * arrive — and must not offer the remote-control button.
+   */
+  onVideoMode?: (video: boolean) => void
+  /**
+   * Whether the publisher's picture is a SCREEN. Remote control and annotation
+   * only make sense then — a camera image has no desktop to inject into.
+   */
+  onHostScreen?: (screen: boolean) => void
+  /**
+   * Whether the publisher can accept a remote-control request (it has an input
+   * injector and is sharing a whole screen). The viewer greys its button on
+   * this; asking and being refused is the failure mode it prevents.
+   */
+  onControlEnabled?: (enabled: boolean) => void
+  /** Whether the publisher's camera tile should be shown. */
+  onCameraMode?: (camera: boolean) => void
+  /** The publisher's camera picture (the picture-in-picture tile). */
+  onCameraStream?: (stream: MediaStream | null) => void
   /** The room-level screen-sharing switch changed. */
   onScreenEnabled?: (enabled: boolean) => void
   /** Who is sharing a screen ('' = nobody). */
@@ -63,12 +126,22 @@ export interface LiveViewerCallbacks {
   onMemberScreenStream?: (stream: MediaStream | null) => void
   /** The room refused our screen share (switch off, or someone else is sharing). */
   onScreenDenied?: (reason: string) => void
+  /** A control frame arrived (laser, ink, chat, presence, remote control). */
+  onControl?: (msg: ControlMessage) => void
   /** The publisher muted us, or the room switch was turned off. */
   onTalkRevoked?: (reason: string) => void
+  /** The publisher blocked (true) or released (false) our microphone. */
+  onTalkMuted?: (muted: boolean) => void
+  /** Our own viewer id, once the room has accepted us. */
+  onJoined?: (viewerId: string) => void
+  /** The full participant list, on join and on every change. */
+  onRoster?: (roster: RosterMember[]) => void
 }
 
 export interface LiveViewerOptions {
   token: string
+  /** The viewer's nickname (required by the server; shown to the publisher). */
+  name: string
   callbacks?: LiveViewerCallbacks
   /** Injected for tests; defaults to the global WebSocket. */
   wsFactory?: (url: string) => WebSocket
@@ -79,11 +152,19 @@ export interface LiveViewerOptions {
 }
 
 /** ws(s):// URL for the signalling socket of a share token. */
-export function liveSignalUrl(token: string, origin?: { protocol: string; host: string }): string {
+export function liveSignalUrl(
+  token: string,
+  origin?: { protocol: string; host: string },
+  name?: string,
+): string {
   const proto =
     (origin?.protocol ?? window.location.protocol) === 'https:' ? 'wss' : 'ws'
   const host = origin?.host ?? window.location.host
-  return `${proto}://${host}/api/share/${encodeURIComponent(token)}/signal`
+  const base = `${proto}://${host}/api/share/${encodeURIComponent(token)}/signal`
+  // The nickname is REQUIRED by the server: it is what the publisher's audience
+  // list and the persisted chat call this viewer by. Encoded because it is free
+  // text (Chinese, emoji, spaces).
+  return name ? `${base}?name=${encodeURIComponent(name)}` : base
 }
 
 export class LiveViewer {
@@ -106,6 +187,14 @@ export class LiveViewer {
   private screenTx: RTCRtpTransceiver | null = null
   /** Video m-line carrying ANOTHER viewer's screen, forwarded by the host. */
   private relayRxTx: RTCRtpTransceiver | null = null
+  /**
+   * Video m-line carrying the host's CAMERA (the picture-in-picture tile).
+   *
+   * Only present while the host shares a screen AND a camera. A camera-only
+   * meeting puts the camera on `screenTx` instead, so this line carries
+   * nothing and no tile is rendered.
+   */
+  private cameraRxTx: RTCRtpTransceiver | null = null
 
   private _state: LiveViewerState = 'idle'
   private _talkEnabled = false
@@ -113,6 +202,8 @@ export class LiveViewer {
   private _notesEnabled = false
   private _screenEnabled = false
   private _screenSharer = ''
+  private _viewerId = ''
+  private _roster: RosterMember[] = []
   /** Our own screen track while we are sharing (null when we are not). */
   private screenTrack: MediaStreamTrack | null = null
   /**
@@ -125,7 +216,36 @@ export class LiveViewer {
    */
   private relayTrack: MediaStreamTrack | null = null
   private memberScreenStream: MediaStream | null = null
+  /** Control bus opened by the publisher. */
+  private dc: RTCDataChannel | null = null
+  /**
+   * The track carrying the host's picture.
+   *
+   * Up to three video m-lines arrive (host picture, a forwarded member screen,
+   * the camera tile) and `getStats()` reports one `inbound-rtp` entry per line.
+   * Without an identity for the main one the quality badge would read whichever
+   * entry happened to be iterated last — typically the camera tile.
+   */
+  private mainVideoTrack: MediaStreamTrack | null = null
+  /** Previous byte counter, for turning cumulative bytes into a bitrate. */
+  private lastStats: { at: number; bytes: number } | null = null
   private _closed = false
+  /**
+   * Whether a picture is expected. Defaults to true so a room that predates the
+   * flag (or an older server) keeps behaving exactly as before.
+   */
+  private _videoEnabled = true
+  /** Whether the host's picture is a screen (remote control / annotation). */
+  private _hostScreen = false
+  /**
+   * Whether the publisher can be driven (input injector present AND a whole
+   * screen shared). Defaults to false: the capability is the publisher's to
+   * advertise, and a viewer that assumes it offers a button the host can only
+   * refuse.
+   */
+  private _controlEnabled = false
+  /** Whether the host's camera tile should be shown. */
+  private _cameraEnabled = false
 
   constructor(opts: LiveViewerOptions) {
     this.opts = opts
@@ -134,6 +254,26 @@ export class LiveViewer {
 
   get state(): LiveViewerState {
     return this._state
+  }
+
+  /** Whether a picture is expected from the publisher. */
+  get videoEnabled(): boolean {
+    return this._videoEnabled
+  }
+
+  /** Whether the publisher's picture is a screen share. */
+  get hostScreen(): boolean {
+    return this._hostScreen
+  }
+
+  /** Whether the publisher can accept a remote-control request. */
+  get controlEnabled(): boolean {
+    return this._controlEnabled
+  }
+
+  /** Whether the publisher's camera tile should be shown. */
+  get cameraEnabled(): boolean {
+    return this._cameraEnabled
   }
 
   get talkEnabled(): boolean {
@@ -147,6 +287,16 @@ export class LiveViewer {
   /** Whether this share is transcribing (AI 听记). */
   get notesEnabled(): boolean {
     return this._notesEnabled
+  }
+
+  /** Our own viewer id, assigned by the server on `joined`. */
+  get viewerId(): string {
+    return this._viewerId
+  }
+
+  /** The participant list as the server last reported it. */
+  get roster(): RosterMember[] {
+    return this._roster
   }
 
   /** Whether the room allows audience screen sharing. */
@@ -173,7 +323,7 @@ export class LiveViewer {
       this.opts.wsFactory ?? ((url: string) => new WebSocket(url))
     let ws: WebSocket
     try {
-      ws = factory(liveSignalUrl(this.opts.token))
+      ws = factory(liveSignalUrl(this.opts.token, undefined, this.opts.name))
     } catch (e) {
       appLog.e(TAG, 'failed to open signalling socket', e)
       this.setState('failed', { reason: 'socket' })
@@ -224,6 +374,17 @@ export class LiveViewer {
         this.setState('ended', { reason: msg.reason })
         this.teardown()
         break
+      case 'kicked':
+        // Removed by the host. A distinct reason so the page can say "you were
+        // removed" instead of the generic "the share ended".
+        this.setState('ended', { reason: 'kicked' })
+        this.teardown()
+        break
+      case 'roster':
+        // Full snapshot, not a delta: the list is at most nine rows, and a
+        // missed delta would leave the panel wrong until the page reloaded.
+        this.applyRoster(msg.roster ?? [])
+        break
       case 'talk-enabled':
         // The room-level switch changed after we joined. `joined` carries the
         // state at attach time, so this is the only way an already-connected
@@ -232,18 +393,25 @@ export class LiveViewer {
         this.cb.onTalkEnabled?.(this._talkEnabled)
         break
       case 'talk-revoked':
-        // Two different meanings share this frame: the publisher muted THIS
-        // viewer ('revoked'/'muted'), or the room switch went off ('disabled').
-        // Only the latter means the microphone toggle itself should disappear —
-        // clearing it on a personal mute would take away the button the viewer
-        // is still entitled to use.
+        // Three meanings share this frame: the publisher silenced THIS viewer
+        // for the moment ('revoked'/'muted'), the publisher blocked them
+        // outright ('host'), or the room switch went off ('disabled').
+        // Only 'disabled' means the microphone toggle itself should disappear —
+        // the other two are about the microphone, not about permission to have
+        // one, and the viewer stays entitled to the button.
         this._talking = false
         void this.detachMic()
         if (msg.reason === 'disabled') {
           this._talkEnabled = false
           this.cb.onTalkEnabled?.(false)
         }
+        if (msg.reason === 'host') this.cb.onTalkMuted?.(true)
         this.cb.onTalkRevoked?.(msg.reason ?? '')
+        break
+      case 'talk-unmuted':
+        // The block is gone; the microphone stays off until the viewer turns it
+        // back on themselves.
+        this.cb.onTalkMuted?.(false)
         break
       case 'talk-disabled':
         // We asked to speak while the room switch was off. Flip the toggle back
@@ -262,6 +430,33 @@ export class LiveViewer {
         if (this._screenSharer) this.emitMemberScreen()
         else this.cb.onMemberScreenStream?.(null)
         break
+      case 'picture-state':
+        // Meetings have no type: the host can start or stop a screen share and
+        // turn the camera on or off at any moment. All three flags arrive
+        // together because they describe one picture — applying them one at a
+        // time would render a combination that never existed.
+        this._videoEnabled = Boolean(msg.video)
+        this._hostScreen = Boolean(msg.hostScreen)
+        this._cameraEnabled = Boolean(msg.camera)
+        this.cb.onVideoMode?.(this._videoEnabled)
+        this.cb.onHostScreen?.(this._hostScreen)
+        this.cb.onCameraMode?.(this._cameraEnabled)
+        break
+      case 'control-enabled':
+        // The publisher's own capability (injector + whole-screen picture), not
+        // a viewer setting: it flips whenever the host swaps between a screen
+        // and a window, or starts/stops sharing.
+        this._controlEnabled = Boolean(msg.controlEnabled)
+        this.cb.onControlEnabled?.(this._controlEnabled)
+        break
+      case 'notes-enabled':
+        // The publisher turned AI 听记 on (or off) after we joined. `joined`
+        // only carries the state at attach time, so without this frame a
+        // viewer that arrived earlier would never learn about a mid-meeting
+        // toggle — the transcript pane would stay hidden for the whole meeting.
+        this._notesEnabled = Boolean(msg.notesEnabled)
+        this.cb.onNotesEnabled?.(this._notesEnabled)
+        break
       case 'screen-denied':
         // The room refused: either the switch is off or somebody else got
         // there first. Release the local capture immediately — leaving it live
@@ -277,9 +472,28 @@ export class LiveViewer {
     }
   }
 
+  /** Store one roster snapshot and hand it to the page. */
+  private applyRoster(list: RosterMember[]): void {
+    this._roster = list
+    this.cb.onRoster?.(list)
+  }
+
   private onJoined(msg: ServerMessage): void {
     this._talkEnabled = Boolean(msg.talkEnabled)
+    this._videoEnabled = msg.video !== false
+    this.cb.onVideoMode?.(this._videoEnabled)
+    // Absent means "an older publisher": its picture was always a screen, and
+    // it never had a camera. Both defaults keep such a share fully usable.
+    this._hostScreen = msg.hostScreen !== false
+    this.cb.onHostScreen?.(this._hostScreen)
+    this._cameraEnabled = Boolean(msg.camera)
+    this.cb.onCameraMode?.(this._cameraEnabled)
+    this._controlEnabled = Boolean(msg.controlEnabled)
+    this.cb.onControlEnabled?.(this._controlEnabled)
     this.cb.onTalkEnabled?.(this._talkEnabled)
+    this._viewerId = msg.viewerId ?? ''
+    this.cb.onJoined?.(this._viewerId)
+    if (msg.roster) this.applyRoster(msg.roster)
     this._notesEnabled = Boolean(msg.notesEnabled)
     this.cb.onNotesEnabled?.(this._notesEnabled)
     this._screenEnabled = Boolean(msg.screenEnabled)
@@ -294,12 +508,40 @@ export class LiveViewer {
     const pc = pcFactory({ iceServers: msg.iceServers ?? [] })
     this.pc = pc
 
+    // Control bus. The OFFERER creates it: an answer may not introduce an
+    // m-line the offer did not have, so a channel created by the publisher
+    // stays `connecting` forever and every chat/control frame is dropped —
+    // which is indistinguishable from the buttons being dead. The publisher
+    // adopts it through its own `ondatachannel`.
+    const dc = pc.createDataChannel('cb-live', { ordered: true })
+    this.dc = dc
+    dc.onmessage = (e) => {
+      const msg = parseControlMessage(String(e.data))
+      if (msg) this.cb.onControl?.(msg)
+    }
+    dc.onopen = () => {
+      // Ask for the transcript so far. Chat is never stored on this side, so
+      // without the replay a viewer that joins late — or drops out and comes
+      // back — sees an empty panel while the publisher still holds every line.
+      // Sent on open, not at construction: the reply comes back on this same
+      // channel, which is only usable once both ends agree it is open.
+      this.sendControl({ t: 'chat-history-req' })
+    }
+
     pc.ontrack = (ev) => {
       // Two video m-lines arrive here: the host's picture (with the mixed
       // audio, one stream) and — only while somebody is presenting — another
       // viewer's screen forwarded by the host. They are told apart by the
       // transceiver, not by kind.
       const stream = ev.streams[0] ?? new MediaStream([ev.track])
+      if (ev.transceiver === this.cameraRxTx) {
+        // The picture-in-picture tile. It must NOT reach onStream: that assigns
+        // the main <video>, so the camera would replace the screen — and it
+        // carries no audio, which would also clear the "tap to unmute" prompt.
+        this.cb.onCameraStream?.(stream)
+        ev.track.addEventListener('ended', () => this.cb.onCameraStream?.(null))
+        return
+      }
       if (ev.transceiver === this.relayRxTx) {
         this.relayTrack = ev.track
         ev.track.addEventListener('ended', () => {
@@ -314,7 +556,12 @@ export class LiveViewer {
       // The publisher sends video plus one mixed audio track. Wrap whatever
       // arrives into a single stream so the <video> element has one srcObject.
       this.cb.onStream?.(stream)
-      if (ev.track.kind === 'video') this.setState('playing')
+      if (ev.track.kind === 'video') this.mainVideoTrack = ev.track
+      // A voice meeting never sends video: the audio track IS the connection.
+      // Without this the page would sit on "connecting" forever.
+      if (ev.track.kind === 'video' || (ev.track.kind === 'audio' && !this._videoEnabled)) {
+        this.setState('playing')
+      }
     }
     pc.onicecandidate = (ev) => {
       if (ev.candidate) this.send({ type: 'ice', candidate: ev.candidate.toJSON() })
@@ -336,11 +583,16 @@ export class LiveViewer {
     // transceiver later would require a second offer.
     this.talkTx = pc.addTransceiver('audio', { direction: 'sendrecv' })
 
-    // m-line order is a contract with the publisher (it adds the same three in
+    // m-line order is a contract with the publisher (it wires the same lines in
     // the same order): 1 audio, 2 video (host picture down + our screen up),
-    // 3 video (a forwarded member screen, down only).
+    // 3 video (a forwarded member screen, down only), 4 video (the host's
+    // camera tile, down only).
     this.screenTx = pc.addTransceiver('video', { direction: 'sendrecv' })
     this.relayRxTx = pc.addTransceiver('video', { direction: 'recvonly' })
+    // Added here, at join, and never later: a transceiver created mid-call
+    // needs a second offer, and the publisher is the answerer. An older
+    // publisher simply ignores the extra line.
+    this.cameraRxTx = pc.addTransceiver('video', { direction: 'recvonly' })
 
     void this.sendOffer()
   }
@@ -434,7 +686,10 @@ export class LiveViewer {
     if (!gdm) return false
     try {
       const stream = await gdm.call(navigator.mediaDevices, {
-        video: { frameRate: 15 },
+        // Capped for the same reason the host caps its own capture: this picture
+        // is decoded and re-encoded on the host once per other viewer. 15 fps is
+        // the ceiling because a member's screen is a secondary picture here.
+        video: { ...screenCaptureConstraints(), frameRate: { max: 15 } },
         // No audio: the audio m-line already carries our microphone, and a
         // second audio track would need another transceiver (another
         // renegotiation) for a marginal gain.
@@ -446,8 +701,13 @@ export class LiveViewer {
         for (const t of stream.getTracks()) t.stop()
         return false
       }
+      applyContentHint(track, 'text')
       this.screenTrack = track
       await this.screenTx.sender.replaceTrack(track)
+      // The host re-encodes this, so the uplink has to be bounded on the side
+      // that owns the encoder. Best effort: a rejected budget still leaves a
+      // working share.
+      void applyEncodeBudget(this.screenTx.sender, GUEST_SCREEN_BUDGET)
       // The browser's own "stop sharing" bar ends the track without telling us
       // through a socket, so it has to be handled here.
       track.addEventListener('ended', () => {
@@ -463,6 +723,116 @@ export class LiveViewer {
       this.releaseScreenTrack()
       return false
     }
+  }
+
+  /**
+   * Pick the stat entry that belongs to the host's picture.
+   *
+   * A meeting can carry three video m-lines at once (host picture, a forwarded
+   * member screen, the camera tile), and `getStats()` reports one entry per
+   * line. The badge must describe the picture the viewer is actually watching:
+   * reading the camera tile's numbers would report a stuttering screen as
+   * "good" — or the reverse.
+   *
+   * Matched by `mid` first (the m-line's identity, which we know from the
+   * transceiver we reserved for the picture), then by `trackIdentifier` (the
+   * track `ontrack` handed us). Both are optional in the spec, so a browser
+   * that reports neither falls back to the FIRST entry — arbitrary, but stable,
+   * unlike "last one wins".
+   */
+  private pickMainVideoStat(
+    videos: Array<Record<string, unknown>>,
+  ): Record<string, unknown> | null {
+    if (videos.length === 0) return null
+    if (videos.length === 1) return videos[0]
+    const mid = this.screenTx?.mid
+    if (mid) {
+      const byMid = videos.find((v) => v.mid === mid)
+      if (byMid) return byMid
+    }
+    const trackId = this.mainVideoTrack?.id
+    if (trackId) {
+      const byTrack = videos.find((v) => v.trackIdentifier === trackId)
+      if (byTrack) return byTrack
+    }
+    return videos[0]
+  }
+
+  /**
+   * One reading of the connection's health.
+   *
+   * Bitrate needs two samples, so the first call returns null for it and the
+   * second one is meaningful — callers poll, they do not call this once.
+   */
+  async getStats(): Promise<LiveStats> {
+    const pc = this.pc
+    if (!pc) return { rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null }
+    try {
+      const report = await pc.getStats()
+      let rttMs: number | null = null
+      let lossPct: number | null = null
+      let jitterMs: number | null = null
+      let bytes = 0
+      let lost = 0
+      let received = 0
+
+      const videos: Array<Record<string, unknown>> = []
+      report.forEach((s: Record<string, unknown>) => {
+        if (s.type === 'candidate-pair' && s.state === 'succeeded') {
+          const rtt = s.currentRoundTripTime
+          if (typeof rtt === 'number') rttMs = Math.round(rtt * 1000)
+        }
+        if (s.type === 'inbound-rtp' && s.kind === 'video') videos.push(s)
+      })
+
+      const main = this.pickMainVideoStat(videos)
+      if (main) {
+        if (typeof main.bytesReceived === 'number') bytes = main.bytesReceived
+        if (typeof main.jitter === 'number') jitterMs = Math.round(main.jitter * 1000)
+        if (typeof main.packetsLost === 'number') lost = main.packetsLost
+        if (typeof main.packetsReceived === 'number') received = main.packetsReceived
+      }
+
+      if (received + lost > 0) lossPct = Math.round((lost / (received + lost)) * 1000) / 10
+
+      const now = Date.now()
+      let bitrateKbps: number | null = null
+      if (this.lastStats && now > this.lastStats.at && bytes > this.lastStats.bytes) {
+        const seconds = (now - this.lastStats.at) / 1000
+        bitrateKbps = Math.round(((bytes - this.lastStats.bytes) * 8) / seconds / 1000)
+      }
+      this.lastStats = { at: now, bytes }
+      return { rttMs, lossPct, bitrateKbps, jitterMs }
+    } catch (e) {
+      appLog.d(TAG, 'getStats failed', e)
+      return { rttMs: null, lossPct: null, bitrateKbps: null, jitterMs: null }
+    }
+  }
+
+  /** Send one control frame (laser, ink, chat, remote-control event). */
+  sendControl(msg: ControlMessage): boolean {
+    if (this.dc?.readyState !== 'open') return false
+    try {
+      this.dc.send(JSON.stringify(msg))
+      return true
+    } catch (e) {
+      appLog.d(TAG, 'control send failed', e)
+      return false
+    }
+  }
+
+  /**
+   * Tell the SERVER that we asked for remote control.
+   *
+   * The request itself travels over the control channel (`ctrl-req`) — that is
+   * what the publisher's UI answers, and it must not wait for a round trip.
+   * This is the server's copy, and it exists for one reason: the server is the
+   * only party that can notify a host who is not looking at the meeting page.
+   * It changes no room state, so it is safe to send even when the host has the
+   * capability switched off (the publisher still sees the request and refuses).
+   */
+  requestControl(): void {
+    this.send({ type: 'control-request' })
   }
 
   /** Stop sharing and tell the room. */
@@ -544,6 +914,9 @@ export class LiveViewer {
   private teardown(): void {
     void this.stopTalking()
     this.releaseScreenTrack()
+    this.dc = null
+    this.lastStats = null
+    this.mainVideoTrack = null
     this.relayTrack = null
     this.memberScreenStream = null
     if (this.micTrack) {
@@ -561,6 +934,7 @@ export class LiveViewer {
     this.talkTx = null
     this.screenTx = null
     this.relayRxTx = null
+    this.cameraRxTx = null
     if (this.ws) {
       try {
         this.ws.close()

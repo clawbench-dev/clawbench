@@ -59,7 +59,7 @@ sequenceDiagram
 - **桌面窗口**：主窗口默认 1280×800，连接配置的服务器地址；首次启动或服务器不可达时展示内置登录页供选择服务器，避免出现空白窗口
 - **无边框窗口与自绘窗口控制（Windows / Linux）**：这两个平台去掉原生标题栏，改在 AppHeader 最右侧画最小化 / 最大化-还原 / 关闭三个按钮；**macOS 保留原生帧**，其左上角交通灯不动，Android / 浏览器不显示。平台判定只有一份（`desktop/src/main/windowChrome.ts`，纯模块、无 electron import、可单测），经同步 IPC 回答渲染层"是否自绘控制"——渲染层**不得按 UA 自行推断**（sandboxed preload 拿不到 UA，且第二份平台表会静默漂移）。未知平台一律回退原生帧：无边框却没有可用控制簇的窗口无法关闭或移动，是最坏结果。窗口是否最大化以**窗口本身为权威**，中间按钮只做 toggle 而非自行维护状态（`maximize`/`unmaximize` 事件回推给渲染层），避免两侧状态分歧
 - **登录/启动加载屏**：窗口创建后先展示一个原生加载屏（对齐 Android 的 splash），覆盖在页面之上，等页面加载成功（`did-finish-load`）后再淡出——用户看到的不是一片空白或半成品页面。**页面加载成功必须取消连接超时**，否则一次成功的加载也会被上一轮的超时计时器误判；**复用同一个浮层页面时必须清除上一次的淡出类**，否则第二次连接时浮层整层透明、看起来像没显示。**登录页的装饰背景层必须排在所有交互浮层之前**：无边框窗口的 `<body>` 是 `-webkit-app-region: drag`，装饰层继承 drag，而 Chromium 取 DOM 顺序**最后**覆盖该点的元素——装饰层若排在 splash / 版本 gate 之后会吃掉整屏点击（按钮全部无响应，但 `elementsFromPoint` 仍报告命中的是按钮），详见 [design-guide 红线 3](design-guide.md)。**加载页必须每次显示都重读原生主题/语言**：其 `<head>` 脚本只执行一次，否则主题会冻结在首次加载值（实测同一时刻 web 页是 gruvbox-dark 而加载页仍是 github-dark）
-- **自签名证书可「信任并继续」**：连接使用自签名证书的自建服务器时，Chromium 默认拒绝、桌面端此前直接弹回登录页只显示一行错误——用户无法连接。现改为在主进程 `app.on('certificate-error')` 弹出**原生对话框**（信任并继续 / 取消连接），确认后放行。**信任按每次连接重置、不持久化**（对齐 Android 的 `conn_ssl_*` 流程），localhost 隧道（证书必然不匹配）自动信任，子帧失败不提示。决策逻辑是纯模块 `certificatePolicy.ts`（可单测），electron 胶水在 `certificate.ts`
+- **自签名证书可「信任并继续」**：连接使用自签名证书的自建服务器时，Chromium 默认拒绝、桌面端此前直接弹回登录页只显示一行错误——用户无法连接。现改为在主进程 `app.on('certificate-error')` 弹出**原生对话框**（信任并继续 / 取消连接），确认后放行并**按 origin 记住该证书的指纹**（electron-store `trustedCertificates`，重启后仍有效；Android 侧仍是每次连接都问）：指纹一致直接放行，**证书换了（重装/轮换/中间人）会重新弹窗**，因此「记住」不会退化成「以后不校验这台机器」；设置 → 安全 →「已信任的证书」可一键清除。localhost 隧道（证书必然不匹配）自动信任；**信任覆盖该 origin 的全部请求**——证书校验按 socket 进行，WebSocket 与每个新连接的 `fetch` 都会各自触发 `certificate-error`（`isMainFrame=false`），只放行主框架导航会出现「界面能打开、随后大部分接口失败」；第三方子资源失败仍不提示（交给 Chromium 默认拒绝，绝不弹阻塞对话框）。决策逻辑是纯模块 `certificatePolicy.ts`（可单测），electron 胶水在 `certificate.ts`
 - **原生上下文菜单**：Electron 原生右键菜单覆盖可编辑输入框（剪切/复制/粘贴）、文本选择（复制）、链接（复制链接）、图片（复制图片）。剪切/复制/粘贴使用 Electron role 由操作系统自动本地化，仅复制链接/复制图片两个自定义项按当前应用语言提供文案
 - **外部链接默认浏览器打开**：白名单协议（`http`/`https`/`mailto`/`tel`）中，指向服务器 Origin 之外的链接交给系统默认浏览器打开；同服务器 Origin 的链接在窗口内导航；白名单之外的协议一律阻止
 - **JS Bridge**：通过 IPC（`native:*`）暴露原生能力——服务器列表与凭据管理、SSH 端口映射、文件下载（保存对话框 + 下载后定位）、分享、系统通知、主题、语言、日志捕获、屏幕常亮。与 Android WebView 共用同一套前端接口（`web/src/utils/clawbenchNative.ts`）
@@ -134,6 +134,8 @@ flowchart TD
 桌面端**全量包因此不再发布到 npm**（`npm/desktop-main/` 已移除）；服务端的 `publish-npm` 只发 CLI `@xulongzhe/clawbench`，与桌面端无关。但 `publish-npm-desktop` 仍然存在——它只发**载荷包**（`clawbench-desktop-<plat>-payload`，约 3MB，远低于 npm 上限），这也是载荷的唯一分发渠道。
 
 每个平台返回**候选 URL 列表**：国内镜像优先、直连 github.com 始终兜底，客户端与前端都按序取首个可用项——一个镜像失效不致命。`tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、前端隐藏下载入口——这是正常状态，不是错误。
+
+**npm 镜像源由客户端兜底，不由服务端读取**。服务端拼载荷 URL 时只用 `getRegistryBase()`（按服务端自身区域二选一：npmmirror / npmjs.org），**刻意不读服务端的 `~/.npmrc` / `NPM_CONFIG_REGISTRY`**——那些配置属于服务器这台机器，通常指向客户端不可达的私有源，写进响应等于给每个客户端一个死候选。反过来，服务端在海外而用户在境内的情形，响应里的 `registry.npmjs.org` 会很慢甚至不通，所以客户端在服务端候选全部失败后，再用**本机**的 `NPM_CONFIG_REGISTRY` / `npm_config_registry` / `~/.npmrc` 的 `registry=` 重写同一条 tarball path 重试（`install.ts` 的 `mirrorFallbackUrls`）。三条约束：只对 npm tarball 生效（path 含 `/-/` 且以 `.tgz` 结尾），GitHub Release zip 及其前缀镜像绝不改写到 registry 上；改写结果与已有候选相同时去重（服务端与客户端都在国内时两者本就相同，否则会把同一个死 tarball 下两遍）；全量包不参与此重试，它只有 GitHub 候选。CLI 自升级读的是**本机** npmrc（`internal/service/upgrade.go` 的 `registryCandidates`），两条链路的取值位置因此相反，这不是不一致。
 
 ### 设计要点
 

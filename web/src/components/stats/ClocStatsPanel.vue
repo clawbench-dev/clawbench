@@ -21,7 +21,7 @@
           :label="t('common.loading')"
         />
         <div v-else-if="clocLanguages.length === 0" class="stats-empty">
-          <FileCode2 :size="30" class="stats-empty-icon" />
+          <FileCode2 class="stats-empty-icon empty-state__icon" />
           <span>{{ t('gitStats.clocNoData') }}</span>
         </div>
         <template v-else>
@@ -279,10 +279,6 @@ onMounted(() => {
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
-.stats-empty-icon {
-  opacity: var(--opacity-muted);
-}
-
 .cloc-totals {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(calc(100 * var(--dp)), 1fr));

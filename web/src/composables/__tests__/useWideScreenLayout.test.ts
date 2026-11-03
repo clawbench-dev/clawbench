@@ -444,6 +444,26 @@ describe('dock tab registry (single source of truth)', () => {
     expect(rendered.indexOf('notifications')).toBeLessThan(rendered.indexOf('settings'))
   })
 
+  it('renders the sharing tab immediately before port mapping', () => {
+    // The user asked for that exact slot: both tabs are "connections this
+    // machine offers", and port mapping must stay the last of the pair.
+    const rendered = secondaryDockTabs()
+    expect(rendered.indexOf('live')).toBe(rendered.indexOf('proxy') - 1)
+  })
+
+  it('keeps the meeting tab visible on every host', () => {
+    // 会议 is no longer gated on capture: the record list is readable
+    // everywhere, and a voice meeting only needs a microphone. What the host
+    // cannot do is explained inside the create page.
+    expect(secondaryDockTabs()).toContain('live')
+    expect(secondaryDockTabs({ portForwardUnavailable: true })).toContain('live')
+  })
+
+  it('has no separate notes tab any more', () => {
+    // 听记 and 桌面共享 were two entries for one pipeline; they are now one.
+    expect(DOCK_TAB_IDS).not.toContain('notes')
+  })
+
   it('every registry entry carries an i18n title key', () => {
     for (const tab of DOCK_TABS) {
       expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)

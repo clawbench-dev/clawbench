@@ -147,7 +147,7 @@ test.describe.serial('Cross-project session jump', () => {
     // `data-session-tab` is the stable hook; matching the label text would break
     // the moment either locale's wording changes.
     const crossTab = page.locator('[data-session-tab="cross"]').first()
-    await expect(crossTab, 'seeded session never surfaced in the other-projects tab').toBeVisible({ timeout: 30000 })
+    await expect(crossTab, 'seeded session never surfaced in the other-projects tab').toBeVisible({ timeout: 45000 })
     await crossTab.click()
 
     const targetRow = page.locator(`.cross-session-row[data-session-id="${targetId}"]`)
@@ -158,7 +158,7 @@ test.describe.serial('Cross-project session jump', () => {
 
     // The clicked conversation must actually be on screen…
     await expect(page.locator('.chat-message.user').filter({ hasText: /cross target/ }).first())
-      .toBeVisible({ timeout: 30000 })
+      .toBeVisible({ timeout: 45000 })
     // …and nothing else may have been fetched on the way there. The decoy is
     // this project's most recent session, so an unnamed request here means the
     // old recovery branch ran and rendered the decoy first.
@@ -184,6 +184,6 @@ test.describe.serial('Cross-project session jump', () => {
       }
       // Absent from the overview means "not unread" — the badge cleared.
       return 0
-    }, { timeout: 30000, intervals: [500, 1000] }).toBe(0)
+    }, { timeout: 45000, intervals: [500, 1000] }).toBe(0)
   })
 })

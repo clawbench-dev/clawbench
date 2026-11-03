@@ -1397,6 +1397,70 @@ func TestStreamHub_EmitLiveRunState_NoSpeakerOmitsKey(t *testing.T) {
 	assert.False(t, has, "an empty speaker must omit the key entirely")
 }
 
+// TestStreamHub_EmitLiveRunState_CarriesQuestionFiles pins the recovery
+// user_message's ATTACHMENTS.
+//
+// The recovery payload is the only thing a late subscriber gets for the
+// question bubble: a client that was on another session when a turn started
+// never receives the live user_message (the hub drops it with
+// reason=no_subscribers — see the 2026-11-02 log for a real occurrence). That
+// payload used to be hand-built with messageId+content only, so a message
+// QUEUED with an image rendered as text with no attachment card at all, and
+// nothing repaired it afterwards: the frontend's rebuildFromDb keeps the
+// _remote bubble instead of the DB row. Direct sends were immune because their
+// optimistic bubble already carried the files and won the id dedupe.
+func TestStreamHub_EmitLiveRunState_CarriesQuestionFiles(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-files", "")
+	hub.Subscribe("client-files", "session-files")
+
+	files := []model.FileEntry{{Path: "/proj/.clawbench/uploads/image_25.png"}}
+	hub.SetStreamStateLookupFunc(func(string) []LiveStreamState {
+		return []LiveStreamState{{
+			MessageID:       51660,
+			QuestionID:      51659,
+			QuestionContent: "这个显示异常",
+			QuestionFiles:   files,
+		}}
+	})
+
+	hub.EmitLiveRunStateToClient("client-files", "session-files")
+
+	buffered := sub.GetBufferedEvents()
+	require.Len(t, buffered, 2)
+
+	question := buffered[0].Data.(ChatStreamData)
+	require.Equal(t, "user_message", question.EventType)
+	payload := question.Payload.(map[string]any)
+	assert.Equal(t, int64(51659), payload["messageId"])
+	assert.Equal(t, "这个显示异常", payload["content"])
+	assert.Equal(t, files, payload["files"],
+		"the recovery user_message must carry the question's attachments, or a queued image message loses them for good")
+}
+
+// TestStreamHub_EmitLiveRunState_NoQuestionFilesOmitsKey keeps the payload shape
+// unchanged for the overwhelming majority of turns (no attachments): an empty
+// `files` array would make the frontend render an empty attachment strip.
+func TestStreamHub_EmitLiveRunState_NoQuestionFilesOmitsKey(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-plain", "")
+	hub.Subscribe("client-plain", "session-plain")
+
+	hub.SetStreamStateLookupFunc(func(string) []LiveStreamState {
+		return []LiveStreamState{{MessageID: 10, QuestionID: 9, QuestionContent: "plain question"}}
+	})
+
+	hub.EmitLiveRunStateToClient("client-plain", "session-plain")
+
+	payload := sub.GetBufferedEvents()[0].Data.(ChatStreamData).Payload.(map[string]any)
+	_, has := payload["files"]
+	assert.False(t, has, "an attachment-less question must omit the key entirely")
+}
+
 func TestSimpleTextPayload_CarriesThinkID(t *testing.T) {
 	// A thinking event carries the block's identity so the client can key the
 	// block from the moment it appears, instead of inferring it from a later DB

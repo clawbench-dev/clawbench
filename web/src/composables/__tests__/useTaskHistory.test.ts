@@ -701,7 +701,7 @@ describe('useTaskHistory', () => {
       await history.markAllRead()
 
       expect(history.executions.value[0].isUnread).toBe(true)
-      expect(mockToastShow).toHaveBeenCalledWith('task.exec.actionFailed', expect.objectContaining({ type: 'error' }))
+      expect(mockToastShow).toHaveBeenCalledWith('task.actionFailed', expect.objectContaining({ type: 'error' }))
       expect(mockLoadTasks).not.toHaveBeenCalled()
     })
   })

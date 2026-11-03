@@ -3,7 +3,7 @@
     :visible="visible"
     :label="label"
     :detail="`${done}/${total}`"
-    :value="progress + '%'"
+    :value="valueLabel"
     :percent="progress"
     :cancel-title="t('common.cancel')"
     @cancel="emit('cancel')"
@@ -14,6 +14,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TransferProgressBar from '@/components/common/TransferProgressBar.vue'
+import { formatByteRate } from '@/utils/fileType'
 
 /**
  * Adapter: aggregate progress for a multi-item upload.
@@ -23,6 +24,9 @@ import TransferProgressBar from '@/components/common/TransferProgressBar.vue'
  * byte percentage still while the item count advances — showing only one of
  * them reads as "stuck".
  *
+ * `speed` is appended to the right-hand value ("45% · 1.2 MB/s") rather than
+ * taking the detail slot, which the item counts already own.
+ *
  * Shared by the file manager (directory upload) and the terminal (dropped
  * files). The state lives in the module-level singletons in `useFileUpload`, so
  * both hosts observe the same upload; they are never visible simultaneously
@@ -30,11 +34,13 @@ import TransferProgressBar from '@/components/common/TransferProgressBar.vue'
  *
  * All visuals come from `TransferProgressBar`, which downloads use too.
  */
-defineProps<{
+const props = defineProps<{
   visible: boolean
   progress: number
   done: number
   total: number
+  /** Bytes per second, as measured by `useFileUpload`. */
+  speed: number
 }>()
 
 const emit = defineEmits<{
@@ -46,4 +52,9 @@ const { t } = useI18n()
 // The aggregate label: an upload is many files, so the "which file" slot that
 // downloads fill with a name instead states the operation.
 const label = computed(() => t('file.uploading'))
+
+const valueLabel = computed(() => {
+  const pct = `${props.progress}%`
+  return props.speed > 0 ? `${pct} · ${formatByteRate(props.speed)}` : pct
+})
 </script>

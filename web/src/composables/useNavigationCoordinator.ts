@@ -21,6 +21,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useDirectoryReturn } from '@/composables/useDirectoryReturn'
 import { useFileBackTarget } from '@/composables/useFileBackTarget'
 import { useNavigationStateMachine } from '@/composables/useNavigationStateMachine'
+import { getMeetingView, setMeetingReturn, type MeetingDetailTab } from '@/composables/useMeetingViewState'
 
 const TAG = 'Navigation'
 
@@ -145,6 +146,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'settings') return t('file.nav.backToSettings')
     if (surface === 'proxy') return t('file.nav.backToPortForward')
     if (surface === 'notifications') return t('file.nav.backToNotifications')
+    if (surface === 'live') return t('file.nav.backToMeeting')
     return t('common.back')
   }
 
@@ -206,6 +208,22 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     navigation.consume()
   }
 
+  /**
+   * Park the meeting view a Back press must restore.
+   *
+   * The panel's `active` watcher runs a tick after `switchTab()`, by which time
+   * `returnToOrigin` has already consumed the origin. This one-shot hand-off is
+   * what survives that ordering (see useMeetingViewState).
+   */
+  function parkMeetingReturn(surface: NavigationSurface | string, target: Partial<NavigationOrigin>): void {
+    if (surface !== 'live') return
+    const current = getMeetingView()
+    const token = target.meetingToken ?? current.token
+    if (!token) return
+    const tab = (target.meetingTab ?? current.tab) as MeetingDetailTab
+    setMeetingReturn(token, tab)
+  }
+
   function beginExternalJump(surface: NavigationSurface | string, label: string, target: Partial<NavigationOrigin> = {}): void {
     browseFileSession.value = false
     const normSurface = (surface === 'tasks' ? 'task' : surface) as NavigationSurface
@@ -223,10 +241,18 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     // Callers start jumps from chat/task/history/forge/terminal surfaces; a
     // jump from the file view is a file-stack push (see handleOpenFileOverlay),
     // so there is deliberately no 'file' branch here.
-    if (navigation.start(origin)) return
+    if (navigation.start(origin)) {
+      parkMeetingReturn(normSurface, target)
+      return
+    }
     if (!isSameVisit(navigation.origin.value, origin)) {
       directoryReturn.clear()
       navigation.replace(origin)
+      parkMeetingReturn(normSurface, target)
+    } else {
+      // Same visit (e.g. a second file opened from the same meeting tab): the
+      // return target is still this meeting, and the tab may have changed.
+      parkMeetingReturn(normSurface, target)
     }
   }
 
@@ -480,9 +506,14 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
-    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings' || surface === 'notifications') {
+    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings' || surface === 'notifications' || surface === 'live') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
-      beginExternalJump(normSurface, surfaceLabel(normSurface), normSurface === 'chat' ? { tab: 'chat' } : {})
+      const extra: Partial<NavigationOrigin> = normSurface === 'chat'
+        ? { tab: 'chat' }
+        : normSurface === 'live'
+          ? { meetingToken: getMeetingView().token || undefined, meetingTab: getMeetingView().tab }
+          : {}
+      beginExternalJump(normSurface, surfaceLabel(normSurface), extra)
     }
 
     const originTab = surfaceToTab(surface)
@@ -682,7 +713,19 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       const fromTask = source === 'task' || panelIsActive('tasks')
       const fromHistory = source === 'history' || panelIsActive('history')
       const fromForge = source === 'forge' || panelIsActive('forge')
-      if (fromChat) {
+      // The meeting panel is a left-column surface like tasks/history: opening
+      // a file from its minutes or resource list must record a return target.
+      // Only infer it when the caller did not name a surface — a file opened
+      // from the notification log while the meeting tab happens to be active
+      // is not a meeting jump.
+      const fromLive = source === 'live' || (!source && panelIsActive('live'))
+      if (fromLive) {
+        const view = getMeetingView()
+        beginExternalJump('live', surfaceLabel('live'), {
+          meetingToken: view.token || undefined,
+          meetingTab: view.tab,
+        })
+      } else if (fromChat) {
         beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
       } else if (fromTask) {
         beginExternalJump('task', surfaceLabel('task'))

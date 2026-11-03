@@ -46,7 +46,7 @@
 
 ### 第二层：`web/src/assets/*.css` — 全局但按需引入
 
-组件里 `import '@/assets/x.css'` 或 `@import`，**不加 scoped**，所以同样是全局作用域。放的是**成组的基础设施样式**：`modal-card.css`、`modal-footer-btn.css`（`.fbtn`）、`refresh-spin.css`、`search-bar.css`、`theme-picker.css`、`resize-divider.css`、`code-link-preview.css` 等。
+组件里 `import '@/assets/x.css'` 或 `@import`，**不加 scoped**，所以同样是全局作用域。放的是**成组的基础设施样式**：`modal-card.css`、`modal-footer-btn.css`（`.fbtn`）、`meeting-form.css`（会议表单原语：分组标题 / 输入框 / 提示行 / 勾选行，创建页与会中会议管理共用）、`refresh-spin.css`、`search-bar.css`、`theme-picker.css`、`resize-divider.css`、`code-link-preview.css` 等。
 
 判断标准：这套样式是**一个原语**（按钮语言、弹窗外壳、刷新动效），且被多个组件用 → 放这里。
 
@@ -181,6 +181,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - 用户气泡：`--user-msg-color`
 - 阴影：`--shadow-sm` / `--shadow-md` / `--shadow-lg`（**每套主题都必须定义全三档**，`designTokens.css.test.ts:176` 钉死）
 - 字号以外还有 `--font-ui` / `--font-mono`（用户可在设置里改，运行时覆盖到 `<html>` 内联样式）
+- 空状态图标：`--empty-icon-size`（56 设计 px）/ `--empty-icon-stroke`（1.25）。**全站空状态只用一个字形尺寸**，由全局 `.empty-state__icon`（`css/components.css`）消费——调用方只加这个类，**不得再传 `:size`**（曾经漂到 24/26/30/32/34/36/40/48/56 九个尺寸）。守卫：`components/common/__tests__/emptyStateIcon.test.ts`（含全站空状态清单）。
 
 ---
 
@@ -315,6 +316,16 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   scoped 块里只留布局（`flex-shrink` / `flex` / `margin`），形状与配色全交给 `.fbtn`。
   **组件若独立使用 `.fbtn`（而非经 ModalDialog 继承），必须自己 `import '@/assets/modal-footer-btn.css'`**，
   不能依赖祖先恰好导入过。
+
+**页签/面板底部的动作条（`*.vue` 里的 footer 动作区）也是同一套药丸按钮**，不要为某个页签另造按钮形状。定时任务的任务详情动作条（`.detail-actions`）与任务表单页脚（`.form-footer`）是基准，会议页签的列表 / 创建 / 加入 / 会议中 / 详情五个页脚照此办理。
+
+- **条本身**：`display: flex` + `gap: var(--space-3)` + `padding: var(--space-3) var(--space-4)` + `border-top: 1px solid var(--border-color)` + `background: var(--bg-primary)` + `flex-shrink: 0`。
+  底色**跟面板一致**（`--bg-primary`），不要铺 `--bg-secondary`：页脚是被一条发丝线分开的操作区，不是第二种底色（会议页签曾铺 `--bg-secondary`，看起来像另一块面板）。
+  对齐方式由页签自己定：左对齐（任务详情，动作按重要性排列）、右对齐（表单类，取消在左、确认在右）、或用 spacer 两端分列（会议详情，删除在左、复制/打开在右）。
+  **放不下时左右滚动，不要换行**：`flex-wrap: nowrap` + `overflow-x: auto`（左栏最窄 320px，三个药丸按钮就放不下了）。右对齐的条用 `justify-content: safe flex-end`：放得下时贴右，溢出时自动退回起点，最左边那个按钮仍能滚动到；只写 `flex-end` 会让溢出的一侧落在滚动起点之外，最左按钮永久不可达。`.fbtn` 自带 `flex-shrink: 0`，按钮保持自身宽度，由条来滚。**滚动条本身不显示**：`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`（集中在 `modal-footer-btn.css` 的 footer 选择器列表里），否则经典滚动条会吃掉 Footer 高度、看起来像多出来的一排控件。
+- **按钮**：主操作 `.fbtn fbtn-primary`、破坏性 `.fbtn fbtn-danger`、其余 `.fbtn`；页脚按钮里的图标用 14px。**不要新建 `.xxx-btn` 局部类**——会议页签曾各写一份 28px / 圆角 6 的 `.meeting-btn`，和任务页签的药丸按钮并排就是两套语言。
+- **只有正文里的行内小动作**才允许更小的局部类（会议详情的「复制路径」、共享面板的「静音」）：**页脚里不放小按钮，正文里不放 `.fbtn` 大按钮**。
+- 守卫：`components/live/__tests__/meetingFooterButtons.test.ts`（页脚条逐声明对比任务动作条、页脚里只能是 `.fbtn`、组件自己 import 样式表）。
 
 ### 设置面板控件（`.settings-item__switch` / `__slider*`）
 
@@ -673,6 +684,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts` | 快捷发送 / 快捷指令弹层标题 `.quick-send-title` 在 `components.css` 全局声明（sticky + 不透明 `--bg-secondary` + `z-index`），两个宿主不得各自重声明，且两个菜单的 `:max-height` 一致且 ≥400 |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
+| `components/live/__tests__/meetingFooterButtons.test.ts` | 会议页脚动作条与任务动作条逐声明一致（`padding` / `background` / `border-top` / `flex-shrink`）、页脚里只能用 `.fbtn`（不得回退 `.meeting-btn`）、每个组件自己 import `modal-footer-btn.css` |
+| `components/live/__tests__/meetingFormParity.test.ts` | 创建会议与会中「会议管理」是同一套表单：原语只在 `assets/meeting-form.css` 声明一次（组件不得各写一份）、画面都是 `CaptureSourceGrid`（含「不共享」格子，不得回退屏幕勾选框）、摄像头/麦克风都是 `DeviceChoiceGrid`、分组标题都是 `meeting.create.av`、勾选行都是 `.meeting-check`；会中 tab 页不得给 `.live-panel__body.live-dialog` 设 `max-width`/`width`/`margin`（内容随面板宽度铺满） |
 | `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |

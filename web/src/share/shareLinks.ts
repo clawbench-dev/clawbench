@@ -18,8 +18,10 @@
  *   (those need the auth-protected batch-exists endpoint and would misfire);
  * - external links, in-page anchors, `data:`/`javascript:` hrefs and absolute
  *   paths are left untouched;
- * - directories are NOT supported: the token API exposes no listing endpoint, so
- *   a link to a directory simply fails to load and is reported in place.
+ * - directories are NOT resolved to a listing here: a folder share has its own
+ *   browsing view (DirShareView), but a relative link inside a document is
+ *   resolved without any stat, so a link to a directory simply fails to load
+ *   through /content and is reported in place.
  */
 
 import { isAbsolutePath, isWindowsAbsolutePath, splitPath, uncShareRoot } from '@/utils/path.ts'

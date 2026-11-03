@@ -6,12 +6,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让群聊里同一个智能体的多个实例各自拥有唯一昵称（内置英文名池）与各自生成的头像（按名做种子、落库），并在消息里显示该成员底层的真实智能体名。
+**Goal:** 让群聊里同一个智能体的多个实例各自拥有唯一称谓（内置英文名池）与各自生成的头像（按名做种子、落库），并在消息里显示该成员底层的真实智能体名。
 
 **Architecture:**
 - **命名**：`assignMemberNames` 改为——第一个实例保留智能体本名；重复实例（第 2 个及以后）从**代码内置的英文名池**里取第一个未占用的名字；池耗尽则回退现行 `本名 + 序号`。名池不做配置、无设置 UI。
 - **头像**：`chat_sessions` 新增 `agent_avatar` 列（仅群成员行有意义）。前端用 DiceBear（随机风格 + 成员名种子）生成 SVG，经新端点写回。后端 `speakerFromMember` **优先**成员自己的头像，缺失时回退智能体头像。**存量群不回填**——只在建群/加成员时生成。
-- **真实名**：`SpeakerIdentity` 增加 `agentName`（底层智能体名），前端在消息的「头像 + 昵称」之后、当昵称 ≠ 真实名时，以弱化样式显示真实名。分享/导出走同一 `SpeakerIdentity`，自动一致。
+- **真实名**：`SpeakerIdentity` 增加 `agentName`（底层智能体名），前端在消息的「头像 + 称谓」之后、当称谓 ≠ 真实名时，以弱化样式显示真实名。分享/导出走同一 `SpeakerIdentity`，自动一致。
 
 **Tech Stack:** Go（`internal/service`、`internal/handler`、`internal/store`、SQLite）、Vue 3 + TS（`web/src`）、DiceBear（`@dicebear/core`）、Vitest、Playwright。
 
@@ -24,13 +24,13 @@
 | 名池来源 | **代码内置英文名列表**，不可配置、无设置 UI |
 | 名池适用范围 | **只喂重复实例**（第 2 个及以后）；第一个实例保留智能体本名 |
 | 池耗尽回退 | `本名 + 序号`（如 `Claude 2`） |
-| 名池唯一性 | 组内全局唯一，且避开用户昵称 / 已有成员名 |
+| 名池唯一性 | 组内全局唯一，且避开用户称谓 / 已有成员名 |
 | 头像来源 | **所有新成员**按成员名生成；**忽略并覆盖**智能体原头像 |
 | 头像风格 | **随机**，建成员时定一次并**冻结进 SVG**（落库） |
 | 头像落库 | 新增 `chat_sessions.agent_avatar` 列；分享/导出读同一份 |
-| 存量群 | **不回填**（旧群成员保持旧头像；旧群昵称不变） |
-| 真实名显示 | **仅当昵称 ≠ 真实名**时显示；位置在昵称之后 |
-| 判定口径 | 昵称与真实名比较（天然覆盖池名与序号名两种情况） |
+| 存量群 | **不回填**（旧群成员保持旧头像；旧群称谓不变） |
+| 真实名显示 | **仅当称谓 ≠ 真实名**时显示；位置在称谓之后 |
+| 判定口径 | 称谓与真实名比较（天然覆盖池名与序号名两种情况） |
 
 ---
 
@@ -237,7 +237,7 @@ func assignMemberNames(specs []GroupMemberSpec, existingCounts map[string]int, t
 	assertNames(t, active, "Claude", groupNamePool[1], groupNamePool[2])
 ```
 
-同时把 `TestAddGroupMembers_AssignsUniqueNames` 的注释里 `" 2", " 3"` 说法改为“池名”。`TestAddGroupMembers_NameCollisionWithUserNickname` **不变**（k=1 撞用户昵称 → 回退 `Claude 2`，仍成立）。
+同时把 `TestAddGroupMembers_AssignsUniqueNames` 的注释里 `" 2", " 3"` 说法改为“池名”。`TestAddGroupMembers_NameCollisionWithUserNickname` **不变**（k=1 撞用户称谓 → 回退 `Claude 2`，仍成立）。
 
 - [ ] **Step 6: 运行测试**
 
@@ -973,7 +973,7 @@ git commit -m "feat(group): 头像堆叠与成员行改用成员自身头像"
 ```ts
 it('shows the real agent name after the nickname when they differ', async () => {
   // speaker = { name:'Alice', backend:'claude', avatar:'', agentName:'Claude' }
-  // 断言渲染出 "Alice" 与 "Claude" 两段（真实名以弱化样式出现在昵称之后）。
+  // 断言渲染出 "Alice" 与 "Claude" 两段（真实名以弱化样式出现在称谓之后）。
 })
 it('hides the real agent name when it equals the nickname', async () => {
   // speaker = { name:'Claude', backend:'claude', avatar:'', agentName:'Claude' }
@@ -1024,7 +1024,7 @@ Expected: PASS。
 
 ```bash
 git add web/src/components/chat/ChatMessageItem.vue web/src/i18n/locales/zh.ts web/src/i18n/locales/en.ts web/src/share/SessionShareView.vue web/src/components/session/SessionShareDialog.vue web/src/components/chat/__tests__/ChatMessageItem.test.ts
-git commit -m "feat(group): 消息在昵称后显示真实智能体名"
+git commit -m "feat(group): 消息在称谓后显示真实智能体名"
 ```
 
 ---

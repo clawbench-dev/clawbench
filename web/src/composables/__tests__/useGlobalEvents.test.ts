@@ -11,6 +11,14 @@ vi.mock('@/composables/useNotificationSound', () => ({
     playNotificationSound: () => mockPlayNotificationSound(),
 }))
 
+// The in-app surface for meeting events. Mocked rather than driven through the
+// real composable so the assertion is "the toast was raised", not "some module
+// state changed" — the real one also arms an auto-dismiss timer.
+const mockToastShow = vi.fn()
+vi.mock('@/composables/useToast', () => ({
+    useToast: () => ({ show: (...args: unknown[]) => mockToastShow(...args) }),
+}))
+
 vi.mock('@/composables/useLocale', () => ({
     gt: (key: string) => key, // Return key itself for test assertions
 }))
@@ -85,6 +93,11 @@ import {
     _seedLastSeenEventIdForTesting,
     _getLastSeenEventIdForTesting,
 } from '@/composables/useGlobalEvents'
+import {
+    setHostedMeetingToken,
+    setVisibleMeetingToken,
+    _resetMeetingVisibilityForTest,
+} from '@/utils/meetingVisibility'
 
 // Mock WebSocket that captures constructor calls
 let mockWsInstances: MockWebSocket[] = []
@@ -150,6 +163,8 @@ describe('useGlobalEvents', () => {
         mockPlayNotificationSound.mockReset()
         mockUpdateLastSeenEventId.mockReset()
         mockDismissEventNotification.mockReset()
+        mockToastShow.mockReset()
+        _resetMeetingVisibilityForTest()
         appModeState.value = false  // Default to browser mode
         desktopAppState.value = false  // Default to non-desktop (Android/web)
         originalWebSocket = globalThis.WebSocket
@@ -162,6 +177,13 @@ describe('useGlobalEvents', () => {
         events.destroy()
         events2?.destroy()
         globalThis.WebSocket = originalWebSocket
+        // Several cases below redefine `document.visibilityState` to 'hidden'
+        // and the DOM offers no way to reset it. Without this every later case
+        // sees a permanently hidden document, which silently disables every
+        // "is the user looking at it" gate (the meeting notifications are the
+        // first feature to depend on one, and they failed exactly here).
+        // Deleting the own property restores jsdom's prototype getter.
+        delete (document as unknown as Record<string, unknown>).visibilityState
     })
 
     function connectAndGetWs(): MockWebSocket {
@@ -2017,4 +2039,97 @@ describe('useGlobalEvents', () => {
             expect(_getLastSeenEventIdForTesting()).toBe('evt_offline2')
         })
     })
+    // ── Meeting events (live_event) ────────────────────────────────────────
+    //
+    // The gate is deliberately NOT the terminal-event one. A session completion
+    // is suppressed whenever the page has focus; a meeting event must reach a
+    // host who is using the app on ANOTHER tab, so it is gated on "am I the
+    // host" + "is the meeting page the thing on screen" instead.
+    describe('meeting events', () => {
+        function receiveMeeting(ws: MockWebSocket, data: Record<string, unknown>) {
+            ws.receive({ type: 'event', id: nextId(), event: 'live_event', data })
+        }
+
+        const controlRequest = {
+            token: 'tok-1',
+            event_type: 'control_request',
+            title: 'Weekly sync',
+            body: '张三 asked to control your screen',
+            viewer_id: 'v3',
+            viewer_name: '张三',
+            project_path: '/proj',
+        }
+
+        it('raises a toast and an OS notification for the host', () => {
+            setHostedMeetingToken('tok-1')
+            const ws = connectAndGetWs()
+
+            receiveMeeting(ws, controlRequest)
+
+            expect(mockToastShow).toHaveBeenCalledTimes(1)
+            expect(mockToastShow.mock.calls[0][0]).toContain('Weekly sync')
+            expect(mockToastShow.mock.calls[0][0]).toContain('asked to control')
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // The native click needs the token: a meeting has no session/task
+            // id, so without it the tap opens the app and stops.
+            const opts = mockShowBrowserNotification.mock.calls[0][1] as { nav?: { meetingToken?: string } }
+            expect(opts.nav?.meetingToken).toBe('tok-1')
+            expect(mockPlayNotificationSound).toHaveBeenCalledTimes(1)
+        })
+
+        it('stays silent while the host is looking at the meeting page', () => {
+            setHostedMeetingToken('tok-1')
+            setVisibleMeetingToken('tok-1')
+            const ws = connectAndGetWs()
+
+            receiveMeeting(ws, controlRequest)
+
+            expect(mockToastShow).not.toHaveBeenCalled()
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('stays silent for a viewer (this client hosts a different meeting)', () => {
+            setHostedMeetingToken('tok-other')
+            const ws = connectAndGetWs()
+
+            receiveMeeting(ws, controlRequest)
+
+            expect(mockToastShow).not.toHaveBeenCalled()
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('does not notify for a replayed event', () => {
+            setHostedMeetingToken('tok-1')
+            const ws = connectAndGetWs()
+
+            ws.receive({ type: 'event', id: nextId(), event: 'live_event', data: controlRequest, replayed: true })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('keeps the sound for ambient events but still shows them', () => {
+            setHostedMeetingToken('tok-1')
+            const ws = connectAndGetWs()
+
+            receiveMeeting(ws, {
+                ...controlRequest,
+                event_type: 'viewer_joined',
+                body: '张三 joined the meeting',
+            })
+
+            expect(mockToastShow).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockPlayNotificationSound).not.toHaveBeenCalled()
+        })
+
+        it('ignores a payload without a token or body', () => {
+            setHostedMeetingToken('tok-1')
+            const ws = connectAndGetWs()
+
+            receiveMeeting(ws, { event_type: 'control_request', title: 'Weekly sync' })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+    })
+
 })

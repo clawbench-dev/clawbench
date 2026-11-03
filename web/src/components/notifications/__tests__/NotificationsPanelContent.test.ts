@@ -12,6 +12,7 @@ vi.mock('lucide-vue-next', () => {
   const names = [
     'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
     'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert', 'Gauge',
+    'Video', 'Hand',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })
@@ -170,6 +171,38 @@ describe('NotificationsPanelContent', () => {
 
     expect(events).toHaveLength(1)
     expect(events[0].detail.sessionId).toBe('sess-42')
+  })
+
+  it('clicking a meeting row dispatches clawbench-open-meeting with its token', async () => {
+    // A meeting has no session/task: the share token is the whole navigation
+    // key, and the project path travels with it so a cross-project row can
+    // rebuild the right project first.
+    items.value = [
+      notif({
+        kind: 'meeting',
+        eventType: 'control_request',
+        meetingToken: 'tok-9',
+        sessionId: undefined,
+        projectPath: '/proj/other',
+      }),
+    ]
+    mockConfirm.mockResolvedValue(true)
+    const w = mountPanel()
+    // The chip must be the localized label, not the raw event type: a missing
+    // key renders `notifications.event.meetingControlRequest` verbatim.
+    expect(w.text()).toContain('Remote control requested')
+    expect(w.text()).not.toContain('control_request')
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-meeting', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-meeting', listener)
+
+    expect(events).toHaveLength(1)
+    expect(events[0].detail.token).toBe('tok-9')
+    expect(events[0].detail.projectPath).toBe('/proj/other')
+    expect(events[0].detail.fromNotificationCenter).toBe(true)
   })
 
   it('clicking a task row dispatches clawbench-open-task', async () => {

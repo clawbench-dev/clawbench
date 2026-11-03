@@ -285,6 +285,18 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		"utils/groupRouting.ts":     "mention-tag parser (mirrors internal/grouprouting)",
 		"utils/fontConfig.ts":       "CJK font-availability probe text",
 		"utils/doubleClickUtils.ts": "leading-marker stripper regex (CJK numerals/punctuation)",
+		// Not copy: the punctuation a dictation fragment may start with, used to
+		// decide whether the next fragment needs a joining space. Mirrors the
+		// backend transcript separator; nothing here is rendered.
+		"composables/useVoiceInput.ts": "dictation junction-space punctuation regex",
+		// Not copy: the separator between a speaker and their line, kept exactly
+		// as the stored transcript has always written it.
+		"utils/vtt.ts": "speaker separator in the transcript view (名字：内容)",
+		// Not copy either: this parses the proofread transcript the backend writes
+		// and re-emits the same `说话人：内容` shape when the user copies it. The
+		// Chinese tokens are the writer's localized speaker labels (文件 / 屏幕),
+		// so they have to be recognized verbatim.
+		"utils/revisedTranscript.ts": "proofread-transcript parser (localized speaker labels + separator)",
 		// Pre-existing ad-hoc bilingual strings: each already branches on the
 		// locale (zh ? '…' : '…'), so neither language is stuck with the other's
 		// text. Not the "Chinese-only, no English path" defect this guard

@@ -39,6 +39,9 @@ MethodNotAllowed: 方法不允许
 TokenRequired: 缺少 token
 LiveShareAlreadyPublishing: 已有发布端在共享这个房间
 LiveShareTooManyRooms: 同时进行的屏幕共享数量已达上限
+ViewerNameRequired: 请填写称谓后再加入
+LiveNotesGenerating: 纪要仍在生成中
+LiveNotesMeetingLive: 会议仍在进行中
 InvalidRequestBody: 请求体无效
 NotADirectory: 不是目录
 NotAFile: 不是文件
@@ -106,7 +109,6 @@ MissingPathOrDest: 缺少路径或目标
 ArchiveFailed: 打包失败
 MissingShaOrPath: 缺少sha或路径
 MissingSha: 缺少sha
-AlreadyGitRepo: 已经是Git仓库
 NotAGitRepoShort: 不是Git仓库
 InvalidPortNumber: "无效的端口号: {{.Port}}"
 InvalidPortInQuery: 查询中的端口号无效
@@ -131,9 +133,10 @@ InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
 AgentNameTaken: 已存在同名智能体
-AgentNameReserved: 该名称与群聊用户昵称冲突
-UserNicknameTaken: 该昵称已被某个智能体使用
-InvalidUserNickname: 昵称无效（1-32 个字符，且不能包含引号、尖括号、逗号或控制字符）
+AgentNameReserved: 该名称与群聊用户称谓冲突
+UserNicknameTaken: 该称谓已被某个智能体使用
+InvalidUserNickname: 称谓无效（1-32 个字符，且不能包含引号、尖括号、逗号或控制字符）
+InvalidUserProfile: 身份介绍过长（最多 {{.Max}} 个字符）
 InvalidAgentName: 无效的智能体名称
 InvalidAcpCommand: ACP 启动命令无效（不能为空，且长度不超过 4096 字节）
 AcpCommandManagedByDiscovery: 内置后端的 ACP 命令由自动发现管理，不能手动修改
@@ -142,12 +145,21 @@ InvalidAgentAvatar: 无效的头像图片
 InvalidSystemPrompt: 系统提示过长
 SystemPromptOverride: 系统提示包含不安全的覆盖指令
 InvalidSortOrder: 无效的排序值
-AgentInUse: "该智能体仍在使用中（{{.SessionCount}} 个会话、{{.TaskCount}} 个任务、{{.MembershipCount}} 个群成员关系），请先删除后再操作"
+AgentHasRunningSessions: 该智能体有会话正在运行，请先停止后再删除
 AgentDisabled: 该智能体已被禁用
 CannotDisableDefaultAgent: 默认智能体不能被禁用
 CannotDeleteDefaultAgent: 默认智能体不能被删除
 AgentNotInProject: 该智能体仅在其所属项目中可用
 CannotScopeDefaultAgent: 默认智能体不能仅限当前项目
+ProviderNotFound: 模型提供商未找到
+ProviderNameTaken: 已存在同名模型提供商
+ProviderInUse: 该模型提供商仍被智能体引用，请先解除引用
+ProviderUsedBySummary: 该模型提供商正被 AI 摘要使用，请先在「AI 摘要」里改选其他提供商
+ProviderInvalid: 模型提供商配置无效：{{.Reason}}
+ProviderUnsupported: 智能体 {{.Backend}} 不支持 {{.Protocol}} 协议的模型提供商
+ProviderProtocolConflict: 以下智能体不支持该协议：{{.Agents}}
+ProviderConfigConflict: 智能体 {{.Agents}} 已绑定其他提供商；该后端共用一份全局配置文件，只能绑定一个
+ProviderConfigConsentRequired: 该智能体需要修改配置文件才能生效：{{.Files}}。请确认后重试
 InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 ModelDiscoveryNotSupported: 该智能体不支持模型自动发现
@@ -297,6 +309,10 @@ GroupHostChanged: '{{.Name}} 成为了主持人'
 GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
 GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
 GroupMemberCompactionFailed: '{{.Name}} 的上下文压缩失败'
+# 智能体被删除后，它名下的会话/群成员转交给默认智能体。同样是「写入时」本地化。
+AgentTakeoverSessionNotice: '智能体「{{.Old}}」已删除，本会话由「{{.New}}」接管；此前的对话已作为背景重新注入。'
+AgentTakeoverSessionNoticeResumed: '智能体「{{.Old}}」已删除，本会话由「{{.New}}」接管；原生会话已沿用。'
+AgentTakeoverGroupNotice: '成员「{{.Member}}」的智能体已删除，现由「{{.New}}」驱动。'
 GroupMemberUnknown: 成员
 GroupUnknownMention: '{{.Speaker}} @ 了一个不存在的成员：{{.Names}}（已忽略）'
 GroupMemberListSeparator: 、
@@ -379,3 +395,54 @@ RestartFailed: 重启失败：{{.Error}}
 RestartUnavailable: 重启功能未初始化，无法重启服务端
 TLSCertNotSelfSigned: 现有证书不是自签名证书（可能来自 CA），重新生成会覆盖它；确认要覆盖请带上 force
 TLSCertGenerateFailed: 生成证书失败：{{.Error}}
+# 会议期间打开的文件：转写 cue、files.md 清单与归档原因。
+MeetingFilesSpeaker: 文件
+MeetingFilesOpened: 打开 {{.Path}}
+MeetingFilesClosed: 关闭 {{.Path}}{{.Stay}}
+MeetingFilesStaySeconds: "{{.N}} 秒"
+MeetingFilesStayMinutes: "{{.N}} 分钟"
+MeetingFilesStayMinSec: "{{.Min}} 分 {{.Sec}} 秒"
+MeetingFilesStayHours: "{{.Hours}} 小时 {{.Min}} 分"
+MeetingFilesManifestTitle: 会议期间打开的文件 · {{.Time}}
+MeetingFilesManifestNote: 按打开时间排序。归档副本在 files/ 下；同一内容的重复文件只保留一份。
+MeetingFilesColumnTime: 时间
+MeetingFilesColumnFile: 文件
+MeetingFilesColumnStay: 停留
+MeetingFilesColumnArchive: 归档
+MeetingFilesSince: 起
+MeetingFilesReasonWrap: （{{.Text}}）
+MeetingFilesReasonUnknownPath: 路径未知
+MeetingFilesReasonTooMany: 超过单场会议归档数量上限
+MeetingFilesReasonDuplicate: 内容与已有文件相同
+MeetingFilesReasonTooBig: 文件超过 5 MB，未归档
+MeetingFilesReasonMissing: 文件已不存在
+MeetingFilesReasonPermission: 没有读取权限
+MeetingFilesReasonUnreadable: 读取失败
+MeetingFilesStayWrap: （{{.Text}}）
+MeetingFilesExcerptHeader: 文件内容摘录（已截断）
+MeetingScreenVoice: 屏幕
+MeetingScreenStarted: "{{.Name}} 开始共享屏幕"
+MeetingScreenStopped: "{{.Name}} 停止共享屏幕{{.Stay}}"
+MeetingScreenHost: 主持人
+# 会议推送：通知中心的行文案与系统通知的正文。生产者在服务端（纪要任务没有
+# HTTP 请求），所以按配置的界面语言渲染一次，日志与弹窗共用同一句。
+MeetingUntitled: 未命名会议
+MeetingEventSomeone: 有人
+MeetingEventControlRequest: "{{.Name}} 请求远程控制你的屏幕"
+MeetingEventViewerJoined: "{{.Name}} 加入了会议"
+MeetingEventScreenShare: "{{.Name}} 开始共享屏幕"
+MeetingEventMinutesReady: 会议纪要已生成
+MeetingEventMinutesFailed: 会议纪要生成失败
+# 会议产物（minutes.md / chat.md / transcript-revised.md）与转写行格式。纪要
+# 任务没有 HTTP 请求在作用域内，所以按配置的界面语言渲染。
+MeetingTranscriptSeparator: "："
+MeetingTranscriptRevised: 校对版转写
+MeetingTranscriptRevisedNote: 已结合项目上下文修正听写错误与专有名词；时间戳、说话人、行序均未改动。
+MeetingTranscriptFilesSection: 会议期间打开的文件
+MeetingChatTitle: 会议聊天记录
+MeetingChatAnonymous: 匿名
+MeetingMinutesTitle: 会议纪要 · {{.Time}}
+MeetingMinutesArtifacts: 本次产物
+MeetingMinutesTranscript: 转写
+MeetingMinutesRecording: 录音
+MeetingMinutesChannelRecordings: "分声道录音：`audio/`（{{.N}} 个文件）"

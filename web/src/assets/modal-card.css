@@ -200,6 +200,14 @@
   background: color-mix(in srgb, var(--accent-color, #0066cc) 3%, var(--bg-tertiary, #f8f8f8));
   flex-shrink: 0;
   justify-content: flex-end;
+  /* `safe` falls back to flex-start when the buttons do not fit, so the
+     leftmost action stays reachable by scrolling instead of being clipped on
+     the unreachable side of flex-end. Older engines ignore the second
+     declaration and keep the plain flex-end above. */
+  justify-content: safe flex-end;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 

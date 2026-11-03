@@ -274,11 +274,11 @@ describe('ContentSearchDialog', () => {
     const icon = wrapper.find('.cs-empty-icon')
 
     // A large muted glyph anchors the empty state; without it the panel is a
-    // lone line of grey text. 56px matches the filename search's empty state
-    // in FileManagerContent so the two surfaces look alike.
+    // lone line of grey text. The size comes from `--empty-icon-size` through
+    // the shared `.empty-state__icon` class, not from a `:size` prop, so every
+    // empty state in the app stays the same size.
     expect(icon.exists()).toBe(true)
-    expect(icon.attributes('width')).toBe('56')
-    expect(icon.attributes('height')).toBe('56')
+    expect(icon.classes()).toContain('empty-state__icon')
     // The message must sit alongside the icon, not replace it.
     expect(wrapper.find('.cs-empty-text').text()).toContain('Type to search')
   })
@@ -289,7 +289,7 @@ describe('ContentSearchDialog', () => {
     const wrapper = await mountDialog()
 
     expect(wrapper.find('.cs-empty-icon').exists()).toBe(true)
-    expect(wrapper.find('.cs-empty-icon').attributes('width')).toBe('56')
+    expect(wrapper.find('.cs-empty-icon').classes()).toContain('empty-state__icon')
     expect(wrapper.find('.cs-empty-text').text()).toContain('No files found')
     // A dead-end "no results" is less useful than one that suggests widening
     // the search.

@@ -54,6 +54,20 @@ export const NOTES_SILENCE_RMS = 0.01
 const NOTES_VAD_INTERVAL_MS = 100
 
 /**
+ * Whether this engine can record audio at all.
+ *
+ * 听记 is built on `MediaRecorder`, which not every engine the app runs in
+ * implements (the WebKit build Playwright ships has none, and neither do some
+ * embedded WebViews). Every entry point uses this to DEGRADE instead of
+ * throwing: a meeting whose picture, microphone and chat work must still start
+ * when the notes recorder cannot — `new MediaRecorder(...)` used to escape
+ * `start()` as a raw ReferenceError and take the whole room down with it.
+ */
+export function notesRecordingSupported(): boolean {
+  return typeof MediaRecorder !== 'undefined'
+}
+
+/**
  * Hard memory guard, NOT a backpressure policy.
  *
  * Losing a segment loses part of the meeting forever, so the queue is allowed
@@ -71,6 +85,16 @@ export const NOTES_MAX_PENDING = 180
 export const NOTES_RETRY_DELAYS_MS = [1_000, 3_000, 9_000]
 
 export const NOTES_MIME = 'audio/webm;codecs=opus'
+
+/**
+ * Channel name of the archive-only mix track.
+ *
+ * Every per-channel recorder feeds the same mix bus, so this one track holds
+ * the whole meeting — all participants at once, at their real timing. It is
+ * never transcribed (it has no single speaker); it exists so the meeting can be
+ * listened to as one file instead of N simultaneous ones.
+ */
+export const NOTES_MIX_CHANNEL = 'mix'
 
 /** 32 kbps mono Opus is transparent for speech and keeps a 10s segment ~40 KB,
  *  which keeps both the upload and the STT round-trip short. */
@@ -93,6 +117,20 @@ export interface NoteBlock {
   speaker: string
   startedAt: number
   text: string
+  /**
+   * A file event rather than an utterance.
+   *
+   * It shares the timeline but not the speaker semantics: it has no avatar, and
+   * it must never be merged into a neighbouring line the way consecutive
+   * utterances from one speaker are.
+   */
+  kind?: 'file' | 'screen'
+  /**
+   * Which half of the interval this row is. Set only for live rows, whose text
+   * is a bare path that the view localizes; a stored transcript already carries
+   * a rendered sentence and leaves this undefined.
+   */
+  fileAction?: 'open' | 'close'
 }
 
 /** Merges incoming segments into the timeline, de-duplicated by id. */
@@ -118,13 +156,18 @@ const BLOCK_MERGE_GAP_MS = 4_000
  * segments; merging consecutive same-speaker lines keeps the panel readable
  * without hiding who said what.
  */
-export function groupNoteSegments(list: LiveNoteSegment[]): NoteBlock[] {
+export function groupNoteSegments(
+  list: Array<LiveNoteSegment & { kind?: 'file' | 'screen'; fileAction?: 'open' | 'close' }>,
+): NoteBlock[] {
   const out: NoteBlock[] = []
   let lastEnd = 0
   for (const s of list) {
     if (!s.text.trim()) continue
     const last = out[out.length - 1]
-    if (last && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS) {
+    // File events are timeline markers, not speech: merging two consecutive
+    // ones would produce "打开 a.md 关闭 a.md" as a single line.
+    const mergeable = last && !s.kind && !last.kind
+    if (mergeable && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS) {
       last.text = `${last.text} ${s.text}`.trim()
     } else {
       out.push({
@@ -133,10 +176,69 @@ export function groupNoteSegments(list: LiveNoteSegment[]): NoteBlock[] {
         speaker: s.speaker,
         startedAt: s.startedAt,
         text: s.text,
+        ...(s.kind ? { kind: s.kind } : {}),
+        ...(s.fileAction ? { fileAction: s.fileAction } : {}),
       })
     }
     lastEnd = s.startedAt + Math.max(0, s.durationMs)
   }
+  return out
+}
+
+/** A file interval as the transcript needs it (paths already redacted for viewers). */
+export interface NoteFileEvent {
+  path: string
+  /** Base name. Required for viewers, who never receive the path. */
+  name?: string
+  openedAt: number
+  closedAt: number
+}
+
+/**
+ * Folds file intervals into a segment timeline as `kind: 'file'` rows.
+ *
+ * Both live panels and the stored transcript show the same thing, so the
+ * conversion lives here rather than in each consumer. The rows carry no
+ * duration label: that is a detail of the durable transcript (where the reader
+ * is studying the meeting afterwards), and repeating the formatter on the
+ * client would be a second implementation of the same string.
+ */
+export function withMeetingFileEvents(
+  segments: LiveNoteSegment[],
+  files: NoteFileEvent[],
+): Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }> {
+  if (files.length === 0) return segments
+  const out: Array<LiveNoteSegment & { kind?: 'file'; fileAction?: 'open' | 'close' }> = segments.map((s) => ({
+    ...s,
+  }))
+  let id = -1
+  for (const f of files) {
+    const label = f.path || f.name || ''
+    if (!label || f.openedAt <= 0) continue
+    out.push({
+      id: id--,
+      channel: 'file',
+      speaker: '',
+      startedAt: f.openedAt,
+      durationMs: 0,
+      text: label,
+      kind: 'file',
+      fileAction: 'open',
+    })
+    if (f.closedAt > f.openedAt) {
+      out.push({
+        id: id--,
+        channel: 'file',
+        speaker: '',
+        startedAt: f.closedAt,
+        durationMs: 0,
+        text: label,
+        kind: 'file',
+        fileAction: 'close',
+      })
+    }
+  }
+  out.sort((a, b) => a.startedAt - b.startedAt)
   return out
 }
 
@@ -158,6 +260,11 @@ export interface LiveNotesCaptureOptions {
   minSegmentMs?: number
   maxPending?: number
   mimeType?: string
+  /**
+   * Uploader for the archive-only mix track. Supplying it turns the mix on: the
+   * capture then also records every channel mixed together into one file.
+   */
+  archiveUpload?: NotesUploader
   /** Called when a segment is lost after exhausting its retries. */
   onSegmentLost?: (channel: string, reason: string) => void
   /** Called when the memory guard drops a segment (backend down for ~30 min). */
@@ -202,9 +309,11 @@ class ChannelRecorder {
     ctx: AudioContext,
     stream: MediaStream,
     private readonly channel: string,
-    private readonly speaker: string,
+    private readonly speaker: () => string,
     private readonly upload: NotesUploader,
     opts: LiveNotesCaptureOptions,
+    /** Shared mix bus this channel should also feed (null for the mix itself). */
+    mixDest: MediaStreamAudioDestinationNode | null = null,
   ) {
     this.opts = opts
     this.segmentMs = opts.segmentMs ?? NOTES_SEGMENT_MS
@@ -216,6 +325,9 @@ class ChannelRecorder {
     this.source = ctx.createMediaStreamSource(stream)
     this.dest = ctx.createMediaStreamDestination()
     this.source.connect(this.dest)
+    // ...and the mix bus is what makes the meeting listenable as one file. The
+    // mix recorder itself passes null here: feeding it back would loop.
+    if (mixDest) this.source.connect(mixDest)
 
     // Level metering for pause detection. The analyser is pulled through a
     // muted gain so it keeps being processed without being heard (the
@@ -442,7 +554,10 @@ class ChannelRecorder {
   private async uploadWithRetry(seg: QueuedSegment): Promise<void> {
     const args = {
       channel: this.channel,
-      speaker: this.speaker,
+      // Resolved per segment, not when the channel was created: a viewer's
+      // nickname arrives with the join frame, which can land after the first
+      // audio track (the publisher's own label is constant, so nothing is lost).
+      speaker: this.speaker(),
       startedAt: seg.startedAt,
       durationMs: seg.durationMs,
       blob: seg.blob,
@@ -472,12 +587,24 @@ export class LiveNotesCapture {
   /** Recorders that are no longer live but may still have uploads queued. */
   private readonly retired: ChannelRecorder[] = []
   private stopped = false
+  /** Every channel also feeds this bus; the mix recorder captures it. */
+  private readonly mixDest: MediaStreamAudioDestinationNode | null
 
   constructor(
     private readonly ctx: AudioContext,
     private readonly upload: NotesUploader,
     private readonly opts: LiveNotesCaptureOptions = {},
-  ) {}
+  ) {
+    this.mixDest =
+      opts.archiveUpload && typeof ctx.createMediaStreamDestination === 'function'
+        ? ctx.createMediaStreamDestination()
+        : null
+    if (this.mixDest && opts.archiveUpload) {
+      const mix = new ChannelRecorder(ctx, this.mixDest.stream, NOTES_MIX_CHANNEL, () => '', opts.archiveUpload, opts)
+      this.channels.set(NOTES_MIX_CHANNEL, mix)
+      mix.start()
+    }
+  }
 
   get size(): number {
     return this.channels.size
@@ -493,10 +620,10 @@ export class LiveNotesCapture {
 
   /** Adds (or replaces) a channel. A null/empty stream is ignored: a muted
    *  microphone is normal and must not create a silent recorder. */
-  addChannel(channel: string, speaker: string, stream: MediaStream | null): void {
+  addChannel(channel: string, speaker: () => string, stream: MediaStream | null): void {
     if (this.stopped || !stream || stream.getAudioTracks().length === 0) return
     this.removeChannel(channel)
-    const rec = new ChannelRecorder(this.ctx, stream, channel, speaker, this.upload, this.opts)
+    const rec = new ChannelRecorder(this.ctx, stream, channel, speaker, this.upload, this.opts, this.mixDest)
     this.channels.set(channel, rec)
     rec.start()
   }

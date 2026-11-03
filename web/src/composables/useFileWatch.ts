@@ -3,6 +3,7 @@ import { store } from '@/stores/app.ts'
 import { refreshCurrentFile, wasRecentlySaved } from '@/composables/useFileRefresh.ts'
 import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
+import { onAppResume, useAppForeground } from './useAppForeground'
 import {
   bumpMediaVersion,
   ensureMediaObserver,
@@ -60,6 +61,14 @@ export function useFileWatch(options: UseFileWatchOptions) {
   let staleTimer: ReturnType<typeof setInterval> | null = null
   /** Last media-path list sent, so navigation-only updates don't re-send it. */
   let lastSentMedia: string[] = []
+  /**
+   * Whether this watcher has already completed a handshake.
+   *
+   * Distinguishes the FIRST connect (the panel just opened and everything was
+   * loaded from scratch) from a RECONNECT, where the gap may have swallowed
+   * changes that nothing will ever replay.
+   */
+  let hasConnectedBefore = false
 
   const reconnect = useReconnect({
     baseDelay: 2000,
@@ -101,6 +110,13 @@ export function useFileWatch(options: UseFileWatchOptions) {
         connected = true
         reconnect.reset()
         sendWatch()
+        // A re-target only tells the server WHAT to watch — it never replays
+        // what happened while the socket was down. Every disconnect (the app
+        // backgrounded, a half-open socket, a proxy dropping the connection)
+        // therefore loses changes until the user hits refresh, unless we
+        // re-read the surface once the channel is back.
+        if (hasConnectedBefore) catchUpAfterReconnect()
+        hasConnectedBefore = true
         break
 
       case 'dir_change':
@@ -205,16 +221,72 @@ export function useFileWatch(options: UseFileWatchOptions) {
 
   function disconnect() {
     reconnect.reset()
+    dropSocket()
+  }
+
+  /**
+   * Tear the current socket down WITHOUT scheduling a reconnect.
+   *
+   * `connect()` is always the next step at the call sites that use this
+   * (intentional teardown and the resume path), so the close handler must not
+   * race in with a second, delayed connection.
+   */
+  function dropSocket() {
     stopStaleCheck()
-    if (ws) {
-      // Suppress the close handler so an intentional teardown does not schedule
-      // a reconnect.
-      ws.onclose = null
-      ws.onerror = null
-      ws.close()
-      ws = null
-    }
     connected = false
+    const dead = ws
+    ws = null
+    if (dead) {
+      dead.onclose = null
+      dead.onerror = null
+      dead.close()
+    }
+  }
+
+  /**
+   * Re-read whatever is on screen after the socket came back.
+   *
+   * The server keeps no event history for this channel, so anything that
+   * happened while it was down is gone. Re-fetching the open file (which also
+   * reloads the listing) or the browsed directory is the only way to recover —
+   * otherwise the preview sits on stale content until the user hits refresh.
+   */
+  function catchUpAfterReconnect() {
+    if (currentFile.value?.path) {
+      // Same options as a file_change: a file deleted in the gap closes the
+      // viewer instead of showing an error, and the listing is refreshed too.
+      void refreshCurrentFile({ clearOnError: true, loadDir: true })
+      return
+    }
+    if (fileManagerOpen.value) {
+      void store.loadFiles(currentDir.value || '', false, 0, true)
+      void store.loadGitBranch()
+    }
+  }
+
+  /**
+   * On return to the foreground, reconnect immediately when the socket is gone
+   * or has been silent past the stale window.
+   *
+   * Waiting for the periodic stale check costs up to STALE_CHECK_MS plus the
+   * rest of the window, and every change made in that gap is lost for good
+   * (the server does not replay events). Android WebView freezes the page while
+   * paused, so a backgrounded app routinely comes back to a socket the server
+   * has already dropped without the client noticing.
+   */
+  function resyncOnResume() {
+    if (!shouldWatch()) return
+    const socketGone = !ws || ws.readyState !== WebSocket.OPEN
+    const silentMs = Date.now() - lastMessageAt
+    if (!socketGone && silentMs <= EVENT_STALE_MS) return
+
+    appLog.w(
+      'FileWatch',
+      socketGone ? 'resume: socket gone, reconnecting' : `resume: no message for ${silentMs}ms, reconnecting`,
+    )
+    dropSocket()
+    reconnect.reset()
+    connect()
   }
 
   function shouldWatch(): boolean {
@@ -259,7 +331,15 @@ export function useFileWatch(options: UseFileWatchOptions) {
     setMediaProjectRoot(root || '')
   }, { immediate: true })
 
+  // Install the foreground bridge (idempotent) and recover the channel on
+  // return: the socket may have died while the app was in the background, and
+  // the periodic stale check alone leaves a multi-second blind spot in which
+  // every change is silently lost.
+  useAppForeground()
+  const removeResumeListener = onAppResume(resyncOnResume)
+
   onUnmounted(() => {
+    removeResumeListener()
     disconnect()
   })
 

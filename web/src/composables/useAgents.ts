@@ -85,6 +85,21 @@ interface AgentRecord {
    * receives contains only agents visible here.
    */
   projectId?: number
+  /** Model-provider binding (providers.id); absent/null = use the CLI's own config. */
+  providerId?: number | null
+  /** Protocols this agent's backend can be pointed at (empty = cannot take a provider). */
+  providerProtocols?: string[]
+  /** Backend takes only a credential (no endpoint slot): any provider without
+   *  a base_url is a valid binding even though providerProtocols is empty. */
+  providerKeyOnly?: boolean
+  /** True when the provider is applied by editing the CLI's config file (needs consent). */
+  providerConfigBackend?: boolean
+  /**
+   * Catalogue models shown while the backend has not reported its own list
+   * (ACP before the first session). Configuration only — the turn keeps letting
+   * the agent pick until ACP confirms.
+   */
+  catalogModels?: Array<{ id: string; name: string; default: boolean }>
   /** Derived usage counts from GET /api/agents (not persisted). */
   sessionCount?: number
   taskCount?: number
@@ -853,13 +868,25 @@ async function createAcpAgent(name: string, acpCommand: string): Promise<string>
 /**
  * Delete an agent by ID.
  *
- * The backend refuses (409, msgKey=AgentInUse) while the agent still has
- * sessions, tasks, or active group memberships. The error is re-thrown with
- * its msgKey/detail intact so the caller can show the authoritative counts.
+ * Its conversations are NOT a blocker any more (issue #606): the backend hands
+ * every 1:1 chat, group membership and scheduled task to the DEFAULT agent and
+ * reports the counts. The only refusal is a live turn (409,
+ * msgKey=AgentHasRunningSessions), re-thrown with its msgKey intact.
  */
-async function deleteAgent(agentId: string): Promise<void> {
-    await apiDelete('/api/agents', { body: { id: agentId } })
+async function deleteAgent(agentId: string): Promise<AgentDeleteResult> {
+    const res = await apiDelete<AgentDeleteResult>('/api/agents', { body: { id: agentId } })
     await loadAgents(true)
+    return res
+}
+
+/** What a deletion moved to the default agent (see DELETE /api/agents). */
+export interface AgentDeleteResult {
+    deleted: string
+    sessions: number
+    tasks: number
+    groups: number
+    replacementAgentId: string
+    replacementName: string
 }
 
 /** Rescan all agents (re-run CLI discovery pipeline). */

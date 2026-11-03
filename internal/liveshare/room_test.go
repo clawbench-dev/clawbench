@@ -55,13 +55,49 @@ func TestRegistry_CreateIsIdempotentPerProject(t *testing.T) {
 	if first != second {
 		t.Fatal("second Create must return the same room instance")
 	}
-	// The retitled call must update the title: the publisher may rename while
-	// the room is live, and a stale title would show on the share page.
+	// Nobody is publishing yet (the create call runs before the publisher socket
+	// attaches), so the room still takes the new title: that is the window where
+	// a retry legitimately carries a corrected name.
 	if got := second.Title(); got != "屏幕 A（重命名）" {
-		t.Fatalf("title not updated: %q", got)
+		t.Fatalf("title not updated while the room is idle: %q", got)
 	}
 	if g.Len() != 1 {
 		t.Fatalf("want 1 room, got %d", g.Len())
+	}
+}
+
+// A room that is already publishing keeps its title. The create endpoint is
+// idempotent per project, so a retry — or a second device whose form has no
+// title at all, which falls back to a DATE PLACEHOLDER — would otherwise rename
+// the meeting under everybody who is watching it.
+func TestRegistry_CreateKeepsTheTitleOfALiveRoom(t *testing.T) {
+	g := newTestRegistry(t)
+
+	room, err := g.Create("/proj/a", "发版评审")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	room.SetPublisher(&fakeSink{})
+
+	again, err := g.Create("/proj/a", "11-03 01:12")
+	if err != nil {
+		t.Fatalf("Create again: %v", err)
+	}
+	if again != room {
+		t.Fatal("the live room must be reused, not replaced")
+	}
+	if got := room.Title(); got != "发版评审" {
+		t.Fatalf("a live room must keep its title, got %q", got)
+	}
+
+	// Once the publisher is gone the room is a leftover and may be renamed: the
+	// next meeting starts with whatever the create form says.
+	room.SetPublisher(nil)
+	if _, err := g.Create("/proj/a", "下一次"); err != nil {
+		t.Fatalf("Create after detach: %v", err)
+	}
+	if got := room.Title(); got != "下一次" {
+		t.Fatalf("an idle room must take the new title, got %q", got)
 	}
 }
 
@@ -126,6 +162,62 @@ func TestRegistry_DeleteUnknownTokenIsNoop(t *testing.T) {
 	g.Delete("nope") // must not panic
 	if g.Len() != 0 {
 		t.Fatal("no rooms expected")
+	}
+}
+
+// A room can be deleted by somebody other than its publisher: the host ends the
+// meeting from a second device, or a stale room is rotated out. Detaching the
+// sink alone left that publisher page showing "sharing" forever, because nothing
+// ever closed its socket and its teardown only runs on close.
+func TestRegistryDelete_HangsUpThePublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pub := &closingSink{}
+	room.SetPublisher(pub)
+
+	g.Delete(room.Token())
+
+	if !pub.closed {
+		t.Fatal("Delete must close the publisher socket so its page converges")
+	}
+	if room.HasPublisher() {
+		t.Fatal("a deleted room must not keep a publisher")
+	}
+}
+
+// A reservation is a socket that has not finished upgrading. Deleting the room
+// must drop it too, otherwise the room nobody can look up keeps a claim.
+func TestRegistryDelete_DropsAPendingReservation(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !room.ReservePublisher() {
+		t.Fatal("ReservePublisher")
+	}
+
+	g.Delete(room.Token())
+
+	if room.HasPublisher() {
+		t.Fatal("a deleted room must not keep a reservation")
+	}
+}
+
+// Deleting a publisher-less room must stay a harmless no-op: that is the path
+// createLiveShareRoom takes when it rotates a stale token out.
+func TestRegistryDelete_RoomWithoutPublisherIsFine(t *testing.T) {
+	g := newTestRegistry(t)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	g.Delete(room.Token()) // must not panic or block
+	if g.Get(room.Token()) != nil {
+		t.Fatal("room must be gone")
 	}
 }
 
@@ -590,6 +682,25 @@ func TestRoom_ScreenSwitchGettersAndSetters(t *testing.T) {
 	}
 }
 
+// Remote control starts UNAVAILABLE: a room nobody advertised for must not let a
+// viewer offer a button whose request the publisher could only refuse.
+func TestRoom_ControlEnabledStartsOffAndFollowsThePublisher(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	if room.ControlEnabled() {
+		t.Fatal("remote control must start unavailable")
+	}
+	room.SetControlEnabled(true)
+	if !room.ControlEnabled() {
+		t.Fatal("SetControlEnabled(true) must be observable")
+	}
+	room.SetControlEnabled(false)
+	if room.ControlEnabled() {
+		t.Fatal("SetControlEnabled(false) must be observable")
+	}
+}
+
 // Turning the switch off must report the viewer that was sharing so the caller
 // can send it an explicit denial — the browser keeps capturing otherwise.
 func TestRoom_SetScreenEnabledOffStopsSharer(t *testing.T) {
@@ -638,6 +749,40 @@ func TestRoom_ReleaseScreenUnknownSharerIsNoop(t *testing.T) {
 	room, _ := g.Create("/proj/a", "A")
 	if room.ReleaseScreen("ghost") {
 		t.Fatal("releasing a non-sharer must report false")
+	}
+}
+
+// The camera and host-screen flags say WHAT the picture is made of, so they are
+// independent of each other and of the video flag. A reused room must take the
+// new meeting's values, not the previous meeting's.
+func TestRoom_CameraAndHostScreenFlags(t *testing.T) {
+	g := newTestRegistry(t)
+	room, _ := g.Create("/proj/a", "A")
+
+	// Defaults mirror the pre-video-meeting world: the picture was a screen and
+	// there was no camera.
+	if !room.HostScreen() {
+		t.Fatal("a legacy room's picture must be a screen")
+	}
+	if room.CameraEnabled() {
+		t.Fatal("a legacy room must not claim a camera")
+	}
+
+	room.SetCameraEnabled(true)
+	room.SetHostScreen(false)
+	if !room.CameraEnabled() {
+		t.Fatal("SetCameraEnabled(true) must be observable")
+	}
+	if room.HostScreen() {
+		t.Fatal("SetHostScreen(false) must be observable")
+	}
+
+	// Both off is a real state: a video meeting whose camera was switched off
+	// and which shares no screen. The video flag is what says there is no
+	// picture, not these two.
+	room.SetCameraEnabled(false)
+	if room.CameraEnabled() {
+		t.Fatal("SetCameraEnabled(false) must be observable")
 	}
 }
 
@@ -692,5 +837,97 @@ func TestRoom_HasPublisherAndCreatedAt(t *testing.T) {
 	room.SetPublisher(nil)
 	if room.HasPublisher() {
 		t.Fatal("a detached publisher must be reported as gone")
+	}
+}
+
+func TestRoster_PublisherFirstThenJoinOrder(t *testing.T) {
+	g := NewRegistry()
+	g.SetLimits(10, 0)
+	room, err := g.Create("/proj/a", "A")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !room.ReservePublisher() {
+		t.Fatal("ReservePublisher")
+	}
+	room.AttachPublisher(&fakeSink{})
+	room.SetPublisherName("泷泽")
+
+	first, err := room.AddViewer("小明", &fakeSink{})
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+	second, err := room.AddViewer("小红", &fakeSink{})
+	if err != nil {
+		t.Fatalf("AddViewer: %v", err)
+	}
+
+	roster := room.Roster()
+	if len(roster) != 3 {
+		t.Fatalf("want host + 2 viewers, got %#v", roster)
+	}
+	// The host is pinned: the audience's list reads as "who is in this meeting",
+	// not "who is watching me".
+	if !roster[0].Host || roster[0].ID != "host" || roster[0].Name != "泷泽" {
+		t.Fatalf("host must be first with its nickname, got %#v", roster[0])
+	}
+	// Join order, not map order: a list that reshuffles every frame is unusable.
+	if roster[1].ID != first.ID || roster[2].ID != second.ID {
+		t.Fatalf("viewers must be in join order, got %q then %q", roster[1].ID, roster[2].ID)
+	}
+	if roster[1].Name != "小明" || roster[2].Name != "小红" {
+		t.Fatalf("names must survive, got %#v", roster[1:])
+	}
+}
+
+func TestRoster_KeepsJoinOrderAfterSomebodyLeaves(t *testing.T) {
+	g := NewRegistry()
+	g.SetLimits(10, 0)
+	room, _ := g.Create("/proj/a", "A")
+	room.ReservePublisher()
+	room.AttachPublisher(&fakeSink{})
+
+	first, _ := room.AddViewer("a", &fakeSink{})
+	second, _ := room.AddViewer("b", &fakeSink{})
+	room.RemoveViewer(first.ID)
+	third, _ := room.AddViewer("c", &fakeSink{})
+
+	roster := room.Roster()
+	if len(roster) != 3 { // host + b + c
+		t.Fatalf("want 3 entries, got %#v", roster)
+	}
+	if roster[1].ID != second.ID || roster[2].ID != third.ID {
+		t.Fatalf("a gap must not reorder the survivors, got %#v", roster[1:])
+	}
+}
+
+func TestRoster_ReflectsSpeechAndHostMute(t *testing.T) {
+	room, v := newTalkRoom(t)
+	room.SetTalkEnabled(true)
+	if err := room.SetTalking(v.ID, true); err != nil {
+		t.Fatalf("SetTalking: %v", err)
+	}
+	if _, err := room.SetMuted(v.ID, true); err != nil {
+		t.Fatalf("SetMuted: %v", err)
+	}
+
+	// Muting clears the microphone, so the snapshot must not claim both.
+	// newTalkRoom has no publisher, so the viewer is the only entry.
+	entry := room.Roster()[0]
+	if entry.Talking {
+		t.Fatal("a muted viewer must not read as talking")
+	}
+	if !entry.Muted {
+		t.Fatal("the block must be visible in the roster")
+	}
+}
+
+func TestRoster_EmptyRoomHasNoHost(t *testing.T) {
+	g := NewRegistry()
+	room, _ := g.Create("/proj/a", "A")
+
+	// No publisher attached: a host row would be a phantom.
+	if got := room.Roster(); len(got) != 0 {
+		t.Fatalf("want an empty roster, got %#v", got)
 	}
 }

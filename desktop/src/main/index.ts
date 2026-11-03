@@ -1,13 +1,42 @@
 import { app, Menu, session } from 'electron'
 import { initStore, getStore } from './store'
 import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
+import { stopRemoteControlHelper } from './remoteControl'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
 import { handOffToPointedVersion } from './install'
-import { flushFloatingBounds, hasFloatingTray, initFloating } from './floating'
+import { flushFloatingBounds, hasFloatingTray, initFloating, openMainWindow } from './floating'
 import { recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
+
+/**
+ * One process per machine, before anything else runs.
+ *
+ * Without this the shell happily starts a second copy, and every "one window"
+ * assumption behind it breaks at once:
+ *
+ * - a second tray icon and a second floating capsule, both drawn from the same
+ *   `floatingBounds` — drag one and the other stays behind, which is exactly how
+ *   "two capsules out of nowhere" looks;
+ * - two renderers holding the same `client_id`, so the server's subscription
+ *   replacement keeps kicking one of them and chat streams break at random;
+ * - two writers to the same `electron-store` file.
+ *
+ * It is easy to hit by accident: with the capsule feature on, closing the main
+ * window leaves only a tray icon, so the app looks closed and the shortcut gets
+ * clicked again.
+ *
+ * A second copy quits instead, and the copy that owns the lock brings its window
+ * forward — the same gesture the tray and the capsule use.
+ */
+if (!app.requestSingleInstanceLock()) {
+  // `quit()` before `ready` ends the process; the startup below never gets to
+  // observe a ready app. The `before-quit` flush is a no-op with nothing open.
+  app.quit()
+} else {
+  app.on('second-instance', () => openMainWindow())
+}
 
 /**
  * Last-resort safety net for the main process.
@@ -161,4 +190,10 @@ app.on('window-all-closed', () => {
 // flush races the exit; the renderer relay has the same property. Worth doing
 // because the entries most likely still buffered are the ones around whatever
 // caused the quit.
-app.on('before-quit', () => { flushFloatingBounds(); void flushOnShutdown() })
+app.on('before-quit', () => {
+  flushFloatingBounds()
+  // The input helper is a child process; leaving it behind would keep a process
+  // that can drive the desktop alive after the app is gone.
+  stopRemoteControlHelper()
+  void flushOnShutdown()
+})

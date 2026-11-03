@@ -67,7 +67,9 @@ const SHARED_CHROME = [
   'forge-row-chevron',
   'forge-state',
   'forge-empty-card',
-  'forge-empty-icon',
+  // No 'forge-empty-icon': the glyph's size/stroke/colour come from the app-wide
+  // `.empty-state__icon` rule (components.css), pinned by
+  // common/__tests__/emptyStateIcon.test.ts.
   'forge-empty-title',
   'forge-empty-hint',
   'forge-overview-count-badge',
