@@ -20,6 +20,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/store"
+	"clawbench/internal/summarize"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -618,12 +619,12 @@ func TestGenerateLiveNotesMinutes_NamesTheUserBehindTheSelfLabel(t *testing.T) {
 // text still says "我".
 func TestGenerateLiveNotesMinutes_ChunkPassAlsoKnowsTheUser(t *testing.T) {
 	long := strings.Repeat("很长的发言内容。", 400)
-	transcript := BuildLiveNotesTranscript([]LiveNoteSegment{
-		seg(int64(1), "mic", "我", 0, long),
-		seg(int64(2), "mic", "我", 60_000, long),
-		seg(int64(3), "mic", "我", 120_000, long),
-	})
-	require.Greater(t, len([]rune(transcript)), liveNotesChunkRunes,
+	segments := make([]LiveNoteSegment, 0, 8)
+	for i := range 8 {
+		segments = append(segments, seg(int64(i+1), "mic", "我", int64(i)*60_000, long))
+	}
+	transcript := BuildLiveNotesTranscript(segments)
+	require.Greater(t, len([]rune(transcript)), liveNotesMinutesChunkRunes,
 		"fixture must exceed one chunk or the chunk pass is not exercised")
 
 	bodies := captureSummaryBodies(t, "要点", "要点", "## 概要\n\n合并后的纪要")
@@ -705,12 +706,12 @@ func TestLiveNotesSelfLabel(t *testing.T) {
 // A meeting longer than the chunk budget is map-reduced: every chunk is
 // condensed first, and only the condensed text reaches the final pass.
 func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
-	segments := make([]LiveNoteSegment, 0, 3)
+	segments := make([]LiveNoteSegment, 0, 8)
 	long := strings.Repeat("很长的发言内容。", 400) // ~3200 runes per line
-	for i := range 3 {
+	for i := range 8 {
 		segments = append(segments, seg(int64(i+1), "mic", "我", int64(i)*60_000, long))
 	}
-	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesChunkRunes,
+	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesMinutesChunkRunes,
 		"fixture must exceed one chunk or the map-reduce path is not exercised")
 
 	var mu sync.Mutex
@@ -740,8 +741,30 @@ func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
 	require.Len(t, bodies, 3, "two chunk passes plus one final pass")
 	assert.Contains(t, bodies[0], "第 1/2 段", "chunk prompt carries its position")
 	assert.Contains(t, bodies[1], "第 2/2 段")
+	assert.Contains(t, bodies[0], `"max_tokens":4800`,
+		"the extraction budget must scale with the chunk size")
 	assert.Contains(t, bodies[2], "要点1", "the final pass sees the condensed chunks")
 	assert.Contains(t, bodies[2], "要点2")
+}
+
+// A meeting under the minutes budget goes to the model in one pass. This is
+// the point of the larger minutes chunk: re-chunking a 10k-rune transcript
+// would only cost an extra pass and drop cross-chunk context.
+func TestGenerateLiveNotesMinutes_ShortMeetingIsNotMapReduced(t *testing.T) {
+	long := strings.Repeat("很长的发言内容。", 400) // ~3200 runes per line
+	segments := make([]LiveNoteSegment, 0, 3)
+	for i := range 3 {
+		segments = append(segments, seg(int64(i+1), "mic", "我", int64(i)*60_000, long))
+	}
+	transcript := BuildLiveNotesTranscript(segments)
+	require.Greater(t, len([]rune(transcript)), liveNotesReviseChunkRunes,
+		"fixture must exceed the old budget or the test proves nothing")
+	require.Less(t, len([]rune(transcript)), liveNotesMinutesChunkRunes)
+
+	bodies := captureSummaryBodies(t, "## 概要\n\n一次生成。")
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", transcript, "", LiveNotesSpeaker{})
+	require.NoError(t, err)
+	require.Len(t, bodies(), 1, "a meeting this size must not be chunked")
 }
 
 func TestGenerateLiveNotesMinutes_ProviderError(t *testing.T) {
@@ -2586,7 +2609,7 @@ func TestReviseLiveNotesTranscript_ChunksALongTranscript(t *testing.T) {
 		seg(1, "mic", "我", 1_700_000_000_000, long),
 		seg(2, "mic", "我", 1_700_000_060_000, long),
 	}
-	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesChunkRunes,
+	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesReviseChunkRunes,
 		"fixture must exceed one chunk or the chunk path is not exercised")
 
 	bodies := captureSummaryBodies(t, "[00:00] 我：第一段", "[01:00] 我：第二段")
@@ -2616,6 +2639,24 @@ func TestReviseLiveNotesTranscript_ChunkErrorIsReported(t *testing.T) {
 	assert.Contains(t, err.Error(), "live notes: revise chunk")
 }
 
+// A reply that hit the output cap is a prefix, not a shorter proofread: the
+// tail lines are gone. It must fail the stage so the minutes fall back to the
+// raw transcript instead of summarizing a truncated copy.
+func TestReviseLiveNotesTranscript_TruncatedChunkIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[00:00] 我：内容"},"finish_reason":"length"}]}`))
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	_, err := ReviseLiveNotesTranscript(context.Background(), "", "", []LiveNoteSegment{
+		seg(1, "mic", "我", 1, "内容"),
+	}, LiveNotesSpeaker{})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, summarize.ErrOutputTruncated)
+}
+
 func TestGenerateLiveNotesMinutes_ChunkErrorIsReported(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
@@ -2624,10 +2665,11 @@ func TestGenerateLiveNotesMinutes_ChunkErrorIsReported(t *testing.T) {
 	withAISummary(t, srv.URL)
 
 	long := strings.Repeat("很长的发言内容。", 400)
-	_, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript([]LiveNoteSegment{
-		seg(1, "mic", "我", 1, long),
-		seg(2, "mic", "我", 60_000, long),
-	}), "", LiveNotesSpeaker{})
+	segments := make([]LiveNoteSegment, 0, 8)
+	for i := range 8 {
+		segments = append(segments, seg(int64(i+1), "mic", "我", int64(i)*60_000, long))
+	}
+	_, err := GenerateLiveNotesMinutes(context.Background(), "", BuildLiveNotesTranscript(segments), "", LiveNotesSpeaker{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live notes: chunk")
 }

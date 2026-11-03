@@ -57,7 +57,8 @@ type anthropicMessage struct {
 
 // anthropicResponse is the response body for the Anthropic Messages API.
 type anthropicResponse struct {
-	Content []anthropicContentBlock `json:"content"`
+	Content    []anthropicContentBlock `json:"content"`
+	StopReason string                  `json:"stop_reason"`
 }
 
 type anthropicContentBlock struct {
@@ -107,6 +108,14 @@ func (s *AnthropicSummarizer) DoRecommendPass(ctx context.Context, systemPrompt,
 // and AskAboutContext (the /btw path, which passes a larger cap). Anthropic's
 // max_tokens is a required field, so an explicit value is always sent.
 func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error) {
+	text, _, err := s.DoAskPassDetailed(ctx, systemPrompt, stable, rolling, maxTokens)
+	return text, err
+}
+
+// DoAskPassDetailed is DoAskPass plus whether the reply was cut off at
+// max_tokens. A caller that needs lossless output turns that into an error
+// instead of keeping the first half.
+func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, bool, error) {
 	if maxTokens <= 0 {
 		maxTokens = recommendMaxTokens
 	}
@@ -134,12 +143,12 @@ func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stabl
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("anthropic recommend request marshal: %w", err)
+		return "", false, fmt.Errorf("anthropic recommend request marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.BaseURL, bytes.NewReader(jsonBody))
 	if err != nil {
-		return "", fmt.Errorf("anthropic recommend request create: %w", err)
+		return "", false, fmt.Errorf("anthropic recommend request create: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -149,18 +158,18 @@ func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stabl
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("anthropic recommend request: %w", err)
+		return "", false, fmt.Errorf("anthropic recommend request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("anthropic API returned status %d: %s", resp.StatusCode, string(body))
+		return "", false, fmt.Errorf("anthropic API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp anthropicResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", fmt.Errorf("anthropic response decode: %w", err)
+		return "", false, fmt.Errorf("anthropic response decode: %w", err)
 	}
 
 	var resultBuilder strings.Builder
@@ -171,9 +180,9 @@ func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stabl
 	}
 	result := strings.TrimSpace(resultBuilder.String())
 	if result == "" {
-		return "", fmt.Errorf("anthropic returned empty recommendation output")
+		return "", false, fmt.Errorf("anthropic returned empty recommendation output")
 	}
-	return result, nil
+	return result, isTruncated(chatResp.StopReason), nil
 }
 
 // Summarize condenses text for voice output using the Anthropic Messages API.

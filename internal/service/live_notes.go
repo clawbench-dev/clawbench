@@ -2410,14 +2410,34 @@ const liveNotesChunkPrompt = `你是一名会议记录员。下面是一场长�
 - 待办事项（尽量标注负责人）
 不要展开叙述，不要输出转写原文，保留说话人姓名。使用与原文一致的语言。`
 
-// liveNotesChunkRunes is the per-chunk input budget for a long meeting. Kept
-// well below the model window so that prompt + output still fit.
-const liveNotesChunkRunes = 6000
+// liveNotesReviseChunkRunes is the per-chunk input budget for proofreading.
+//
+// It is deliberately small: proofreading is a 1:1 rewrite (every timestamp,
+// speaker and line must survive), so the binding limit is the OUTPUT cap, not
+// the model window. A chunk much larger than max_tokens would be truncated
+// mid-transcript.
+const liveNotesReviseChunkRunes = 6000
 
 // liveNotesReviseMaxTokens bounds one proofread chunk. The output is roughly
-// the same length as the input, so this is a ceiling against a runaway model
-// rather than a real limit.
-const liveNotesReviseMaxTokens = 4000
+// the same length as the input, and 6000 CJK runes can approach 6000 tokens,
+// so the cap sits above the chunk size: 4000 silently truncated Chinese
+// chunks. AskAboutContextLossless turns a hit cap into an error rather than a
+// prefix, and the caller falls back to the raw transcript.
+const liveNotesReviseMaxTokens = 8000
+
+// liveNotesMinutesChunkRunes is the per-chunk input budget for the minutes
+// map-reduce. Much larger than the proofreading chunk because the output is a
+// short extraction, not a rewrite: a long-context model can read a whole
+// meeting, and fewer chunks means fewer cross-chunk decisions lost in the
+// reduction. Sized so prompt + extraction still fit a 32k window (the smallest
+// summary model worth configuring).
+const liveNotesMinutesChunkRunes = 24000
+
+// liveNotesMinutesChunkMaxTokens bounds one extraction pass. It keeps roughly
+// the same 5:1 input:output ratio the old 6000-rune chunk had with 1200
+// tokens: holding it at 1200 for a 24000-rune chunk would compress 20:1 and
+// drop exactly the details the larger chunk was meant to preserve.
+const liveNotesMinutesChunkMaxTokens = liveNotesMinutesChunkRunes / 5
 
 // liveNotesRevisePrompt proofreads one chunk of the transcript.
 //
@@ -2488,7 +2508,7 @@ func ReviseLiveNotesTranscript(
 	if note := self.reviseNote(); note != "" {
 		systemPrompt += "\n\n" + note
 	}
-	chunks := splitRunes(transcript, liveNotesChunkRunes)
+	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
 	out := make([]string, 0, len(chunks))
 	for i, chunk := range chunks {
 		// The transcript always gets its own heading, even with no project
@@ -2503,7 +2523,7 @@ func ReviseLiveNotesTranscript(
 		if len(chunks) > 1 {
 			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), liveNotesReviseQuestion)
 		}
-		revised, err := summarize.AskAboutContext(ctx, summarizer, systemPrompt, block, question, liveNotesReviseMaxTokens)
+		revised, err := summarize.AskAboutContextLossless(ctx, summarizer, systemPrompt, block, question, liveNotesReviseMaxTokens)
 		if err != nil {
 			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
 		}
@@ -2725,7 +2745,7 @@ func GenerateLiveNotesMinutes(
 		}
 	}
 
-	chunks := splitRunes(transcript, liveNotesChunkRunes)
+	chunks := splitRunes(transcript, liveNotesMinutesChunkRunes)
 	contextBlock := transcript
 	if len(chunks) > 1 {
 		partials := make([]string, 0, len(chunks))
@@ -2733,7 +2753,7 @@ func GenerateLiveNotesMinutes(
 			out, err := summarize.AskAboutContext(
 				ctx, summarizer, self.withPrompt(liveNotesChunkPrompt),
 				fmt.Sprintf("第 %d/%d 段：\n%s", i+1, len(chunks), chunk),
-				"请提取这一段的关键信息。", 1200,
+				"请提取这一段的关键信息。", liveNotesMinutesChunkMaxTokens,
 			)
 			if err != nil {
 				return "", fmt.Errorf("live notes: chunk %d: %w", i+1, err)

@@ -69,6 +69,14 @@ func (s *OpenAISummarizer) DoRecommendPass(ctx context.Context, systemPrompt, st
 // the shared implementation behind DoRecommendPass (maxTokens = recommendMaxTokens)
 // and AskAboutContext (the /btw path, which passes a larger cap).
 func (s *OpenAISummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error) {
+	text, _, err := s.DoAskPassDetailed(ctx, systemPrompt, stable, rolling, maxTokens)
+	return text, err
+}
+
+// DoAskPassDetailed is DoAskPass plus whether the reply was cut off at
+// max_tokens. A caller that needs lossless output turns that into an error
+// instead of keeping the first half.
+func (s *OpenAISummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, bool, error) {
 	if maxTokens <= 0 {
 		maxTokens = recommendMaxTokens
 	}
@@ -88,41 +96,41 @@ func (s *OpenAISummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, 
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("openai recommend request marshal: %w", err)
+		return "", false, fmt.Errorf("openai recommend request marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.BaseURL, bytes.NewReader(jsonBody))
 	if err != nil {
-		return "", fmt.Errorf("openai recommend request create: %w", err)
+		return "", false, fmt.Errorf("openai recommend request create: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.Key)
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openai recommend request: %w", err)
+		return "", false, fmt.Errorf("openai recommend request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("openai API returned status %d: %s", resp.StatusCode, string(body))
+		return "", false, fmt.Errorf("openai API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp openaiChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", fmt.Errorf("openai response decode: %w", err)
+		return "", false, fmt.Errorf("openai response decode: %w", err)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("openai returned no choices")
+		return "", false, fmt.Errorf("openai returned no choices")
 	}
 
 	result := strings.TrimSpace(chatResp.Choices[0].Message.Content)
 	if result == "" {
-		return "", fmt.Errorf("openai returned empty recommendation output")
+		return "", false, fmt.Errorf("openai returned empty recommendation output")
 	}
-	return result, nil
+	return result, isTruncated(chatResp.Choices[0].FinishReason), nil
 }
 
 // openaiChatResponse is the response body for OpenAI Chat Completions API.
@@ -131,7 +139,8 @@ type openaiChatResponse struct {
 }
 
 type openaiChoice struct {
-	Message openaiChatMessage `json:"message"`
+	Message      openaiChatMessage `json:"message"`
+	FinishReason string            `json:"finish_reason"`
 }
 
 // Summarize condenses text for voice output using the OpenAI Chat Completions API.

@@ -380,3 +380,16 @@ func TestAnthropicDoAskPass_NonPositiveMaxTokensUsesDefault(t *testing.T) {
 	assert.Equal(t, "ok", out)
 	assert.Equal(t, recommendMaxTokens, received.MaxTokens)
 }
+
+// Anthropic spells the same condition stop_reason=max_tokens.
+func TestAnthropicAskAboutContextLossless_TruncatedIsAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"content":[{"type":"text","text":"前半段"}],"stop_reason":"max_tokens"}`)
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
+	_, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 8000)
+	assert.ErrorIs(t, err, ErrOutputTruncated)
+}

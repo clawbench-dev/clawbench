@@ -52,6 +52,58 @@ type askPassProvider interface {
 // message rather than a generic failure.
 var ErrOneShotUnsupported = errors.New("summarizer backend does not support one-shot questions")
 
+// finishReason* are the provider-specific spellings of "the reply hit the
+// output cap": OpenAI-compatible endpoints say "length" (a few say
+// "max_tokens"), Anthropic says "max_tokens".
+const (
+	finishReasonLength    = "length"
+	finishReasonMaxTokens = "max_tokens"
+)
+
+// isTruncated reports whether a finish/stop reason means the reply was cut off
+// at max_tokens. An empty or unknown reason is treated as complete: providers
+// that do not report one must keep the old behavior.
+func isTruncated(reason string) bool {
+	return reason == finishReasonLength || reason == finishReasonMaxTokens
+}
+
+// askPassDetailProvider is implemented by backends that can also report
+// whether the reply was truncated. Callers that need lossless output (the
+// transcript proofreader) use it to refuse a prefix instead of storing one.
+type askPassDetailProvider interface {
+	DoAskPassDetailed(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (text string, truncated bool, err error)
+}
+
+// ErrOutputTruncated is returned by AskAboutContextLossless when the model hit
+// max_tokens. The partial reply is discarded: a proofread transcript that lost
+// its tail is worse than no proofread at all, because the minutes would be
+// summarized from the truncated copy.
+var ErrOutputTruncated = errors.New("summarizer output hit max_tokens")
+
+// AskAboutContextLossless is AskAboutContext for callers that cannot accept a
+// prefix of the answer. A reply cut off at max_tokens is an error, not a
+// shorter answer.
+//
+// Backends that cannot report the finish reason fall back to the old
+// behavior: a wrong-but-silent success is not made worse here.
+func AskAboutContextLossless(ctx context.Context, s Summarizer, systemPrompt, contextBlock, question string, maxTokens int) (string, error) {
+	dp, ok := s.(askPassDetailProvider)
+	if !ok {
+		return AskAboutContext(ctx, s, systemPrompt, contextBlock, question, maxTokens)
+	}
+	if maxTokens <= 0 {
+		maxTokens = recommendMaxTokens
+	}
+	text, truncated, err := dp.DoAskPassDetailed(ctx, systemPrompt, contextBlock, question, maxTokens)
+	if err != nil {
+		return "", err
+	}
+	if truncated {
+		return "", fmt.Errorf("%w (max_tokens=%d)", ErrOutputTruncated, maxTokens)
+	}
+	return text, nil
+}
+
 // AskAboutContext answers a one-shot question from a pre-compressed context
 // block. It reuses the recommendation pass channel so the (potentially large)
 // stable context can hit provider prompt caching across repeated questions in

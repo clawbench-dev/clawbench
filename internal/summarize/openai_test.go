@@ -346,3 +346,30 @@ func TestOpenAIDoRecommendPass_ConnectionRefused(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "openai recommend request")
 }
+
+// A reply cut off at max_tokens is a prefix, not a shorter answer: callers that
+// need lossless output must be able to tell the difference.
+func TestOpenAIAskAboutContextLossless_TruncatedIsAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"前半段"},"finish_reason":"length"}]}`)
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	_, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 8000)
+	assert.ErrorIs(t, err, ErrOutputTruncated)
+}
+
+func TestOpenAIAskAboutContextLossless_CompletePasses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"完整回答"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	out, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 8000)
+	assert.NoError(t, err)
+	assert.Equal(t, "完整回答", out)
+}
