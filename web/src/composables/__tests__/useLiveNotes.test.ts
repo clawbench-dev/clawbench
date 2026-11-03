@@ -96,6 +96,11 @@ beforeEach(() => {
   _resetLiveNotesForTest()
   fetchMock = vi.fn()
   vi.stubGlobal('fetch', fetchMock)
+  // The capture is faked, so nothing here constructs a real MediaRecorder —
+  // but `start()` checks the capability before it does anything at all, and
+  // jsdom has no MediaRecorder. Without this every recording test would be
+  // exercising the "engine cannot record" branch.
+  vi.stubGlobal('MediaRecorder', class {})
 })
 
 afterEach(() => {
@@ -116,6 +121,23 @@ describe('useLiveNotes — recording', () => {
     // One channel: the system loopback would duplicate every remote voice into
     // a second line and transcribe whatever else the machine is playing.
     expect(cap.channels).toEqual([{ channel: 'mic', speaker: 'L:mic', stream: mic }])
+  })
+
+  /**
+   * 听记 is built on MediaRecorder, which some engines (the WebKit build
+   * Playwright ships, some embedded WebViews) do not implement. Recording must
+   * then simply not start — the meeting itself is not this module's business,
+   * and `new MediaRecorder` throwing out of `start()` used to take the whole
+   * room down with a raw ReferenceError.
+   */
+  it('records nothing and stays idle when the engine has no MediaRecorder', () => {
+    vi.stubGlobal('MediaRecorder', undefined)
+    const notes = useLiveNotes()
+
+    expect(() => notes.start({ token: 'tok', ctx, micStream: {} as MediaStream })).not.toThrow()
+
+    expect(h.instances).toHaveLength(0)
+    expect(notes.phase.value).toBe('idle')
   })
 
   it('falls back to the raw channel name when no labeller is given', () => {

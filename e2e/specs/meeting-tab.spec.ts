@@ -241,14 +241,6 @@ test.describe('Meeting flow', () => {
     // "the first row" ambiguous for the next run.
     const title = `E2E 语音会议 ${Date.now()}`
     await page.goto('/')
-    // The meeting always records its notes channel, and `liveNotes` builds it
-    // with `new MediaRecorder(...)`. Playwright's WebKit has no MediaRecorder at
-    // all (WebKitGTK/WPE do not ship it), so `share.start()` throws and the room
-    // never comes up — a capability of the ENGINE, not a product regression.
-    // Checked by capability rather than by browser name so the test starts
-    // running again the day the engine implements it.
-    const hasMediaRecorder = await page.evaluate(() => typeof MediaRecorder !== 'undefined')
-    test.skip(!hasMediaRecorder, 'this engine has no MediaRecorder, so the notes recorder cannot start')
     await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
 
     await page.locator('[data-action="meeting-create"]').click()

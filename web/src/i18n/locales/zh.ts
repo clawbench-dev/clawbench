@@ -4066,6 +4066,7 @@ export default {
       micOn: '会议开始后采集你的麦克风。',
       micOff: '不采集麦克风，转写只保留其他参与者。',
       notes: 'AI 听记',
+      notesUnsupported: '此浏览器不支持录音，本次会议不记录听记',
       start: '开始会议',
       startShare: '开始共享',
       starting: '正在开始…',
