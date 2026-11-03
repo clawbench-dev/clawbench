@@ -1172,7 +1172,7 @@ export function useLiveShare() {
           label: opts.notesLabel,
         })
       } else if (opts.notes) {
-        appLog.w(TAG, 'MediaRecorder unavailable: starting the meeting without 听记')
+        appLog.w(TAG, 'MediaRecorder unavailable: starting the meeting without notes')
       }
 
       // 5. Encode policy. One governor for the whole session (CPU is shared by
@@ -1302,7 +1302,7 @@ export function useLiveShare() {
     // Nothing to record with: report failure so the switch reverts and the
     // stage can say why, instead of showing 听记 as on with an empty transcript.
     if (!notesRecordingSupported()) {
-      appLog.w(TAG, 'MediaRecorder unavailable: 听记 cannot be turned on')
+      appLog.w(TAG, 'MediaRecorder unavailable: notes cannot be turned on')
       return false
     }
     useLiveNotes().start({

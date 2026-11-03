@@ -122,6 +122,36 @@ func modelConfigOption(current string) acp.SessionConfigOption {
 // permission e2e to verify the server recovers the input from the tool_call.
 const acpMockOmitPermRawInputMarker = "[mock:omit-perm-rawinput]"
 
+// acpMockSlowReplyPrefix starts a per-turn override of the reply delay, e.g.
+// "[mock:slow-reply:12000]" waits 12s before the first word of that turn.
+//
+// ACP_MOCK_REPLY_DELAY_MS is a single global value tuned so two messages typed
+// back to back still land in the queue — but the gap between two consecutive
+// `ChatPage.sendMessage` calls is not constant: measured 0.4s normally and
+// ~2.1s on WebKit right after a send (the input row re-renders and Playwright's
+// actionability checks wait it out). A spec that must still be streaming while
+// several more messages are typed and edited therefore cannot rely on the
+// global delay; it asks for a long turn explicitly instead.
+const acpMockSlowReplyPrefix = "[mock:slow-reply:"
+
+// slowReplyDelayMs reports the per-turn reply delay requested by the prompt.
+func slowReplyDelayMs(prompt string) (int, bool) {
+	i := strings.Index(prompt, acpMockSlowReplyPrefix)
+	if i < 0 {
+		return 0, false
+	}
+	rest := prompt[i+len(acpMockSlowReplyPrefix):]
+	end := strings.IndexByte(rest, ']')
+	if end < 0 {
+		return 0, false
+	}
+	ms, err := strconv.Atoi(rest[:end])
+	if err != nil || ms <= 0 {
+		return 0, false
+	}
+	return ms, true
+}
+
 func (a *mockACPAgent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
 	return acp.InitializeResponse{
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -522,7 +552,16 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		// user's own sentence at the end, so a head-only echo hides the sentence
 		// and a tail-only echo hides the injection. This thinking block is the
 		// E2E's only window into what the agent actually received.
-		Update: acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", headTail(userText, 120, 5000))),
+		//
+		// The echoed prefix includes the injected system prompt, whose Media
+		// Generation section carries literal examples such as
+		// `![desc](.clawbench/generated/img_chart.png)`. The UI renders thinking
+		// as Markdown, so an unescaped echo makes the page request those
+		// non-existent files; specs that treat console errors as failures then
+		// report a product failure that is really the mock's own echo. Escaping
+		// the image marker keeps the text readable while removing the side
+		// effect.
+		Update: acp.UpdateAgentThoughtText(fmt.Sprintf("Processing user request: %s", escapeMarkdownImageEmbeds(headTail(userText, 120, 5000)))),
 	}); err != nil {
 		return err
 	}
@@ -626,12 +665,21 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	// 5. Send the main response text word-by-word
 	// ACP_MOCK_REPLY_DELAY_MS (env) simulates a slow real AI agent: the delay is
 	// applied BEFORE the first word so queued messages pile up while the reply
-	// streams — reproducing real-world ordering conditions in E2E.
+	// streams — reproducing real-world ordering conditions in E2E. A prompt may
+	// override it for that one turn with `[mock:slow-reply:<ms>]` (see
+	// acpMockSlowReplyPrefix).
+	delayMs := 0
 	if d := os.Getenv("ACP_MOCK_REPLY_DELAY_MS"); d != "" {
 		if ms, err := strconv.Atoi(d); err == nil && ms > 0 {
-			if err := pause(ctx, time.Duration(ms)*time.Millisecond); err != nil {
-				return err
-			}
+			delayMs = ms
+		}
+	}
+	if ms, ok := slowReplyDelayMs(userText); ok {
+		delayMs = ms
+	}
+	if delayMs > 0 {
+		if err := pause(ctx, time.Duration(delayMs)*time.Millisecond); err != nil {
+			return err
 		}
 	}
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
@@ -950,6 +998,12 @@ func headTail(s string, headLen, tailLen int) string {
 		return s
 	}
 	return s[:headLen] + " … " + s[len(s)-tailLen:]
+}
+
+// escapeMarkdownImageEmbeds neutralises `![alt](src)` so an echoed prompt
+// cannot make the UI fetch images. See the call site in Prompt for why.
+func escapeMarkdownImageEmbeds(s string) string {
+	return strings.ReplaceAll(s, "![", `!\[`)
 }
 
 func main() {

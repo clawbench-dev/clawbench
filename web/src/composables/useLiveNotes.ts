@@ -193,7 +193,7 @@ export function useLiveNotes() {
     // No recorder on this engine: leave the module idle and say so once. The
     // meeting continues (picture / microphone / chat), it just has no 听记.
     if (!notesRecordingSupported()) {
-      appLog.w(TAG, 'MediaRecorder unavailable: 听记 stays off for this meeting')
+      appLog.w(TAG, 'MediaRecorder unavailable: notes stay off for this meeting')
       return
     }
     if (opts.resume === true && sessionToken === opts.token) {

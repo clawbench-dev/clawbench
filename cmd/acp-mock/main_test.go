@@ -132,3 +132,47 @@ func TestGroupRoutingReply_Cruise(t *testing.T) {
 		t.Fatalf("second cruise host turn must emit the end tag, got %q", second)
 	}
 }
+
+// TestSlowReplyDelayMs: the per-turn reply-delay marker is opt-in and must
+// ignore malformed forms rather than silently producing a 0ms delay.
+func TestSlowReplyDelayMs(t *testing.T) {
+	cases := []struct {
+		name   string
+		prompt string
+		wantMs int
+		wantOK bool
+	}{
+		{"absent", "just a normal user message", 0, false},
+		{"valid", "run [mock:slow-reply:12000] please", 12000, true},
+		{"not_an_int", "[mock:slow-reply:abc]", 0, false},
+		{"unterminated", "[mock:slow-reply:12000", 0, false},
+		{"zero", "[mock:slow-reply:0]", 0, false},
+		{"negative", "[mock:slow-reply:-5]", 0, false},
+		{"other_marker_only", "[mock:omit-perm-rawinput]", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ms, ok := slowReplyDelayMs(tc.prompt)
+			if ms != tc.wantMs || ok != tc.wantOK {
+				t.Fatalf("slowReplyDelayMs(%q) = (%d, %v), want (%d, %v)", tc.prompt, ms, ok, tc.wantMs, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestEscapeMarkdownImageEmbeds: the echoed prompt must not create image
+// requests in the UI (the injected system prompt carries literal `![...](...)`
+// examples). Escaping only the image marker leaves ordinary links intact.
+func TestEscapeMarkdownImageEmbeds(t *testing.T) {
+	in := "image: ![desc](.clawbench/generated/img_chart.png) and [label](a.mp3)"
+	got := escapeMarkdownImageEmbeds(in)
+	if strings.Contains(got, "![") {
+		t.Fatalf("image embed must be escaped, got %q", got)
+	}
+	if !strings.Contains(got, `!\[desc](.clawbench/generated/img_chart.png)`) {
+		t.Fatalf("escaped form must keep the text readable, got %q", got)
+	}
+	if !strings.Contains(got, "[label](a.mp3)") {
+		t.Fatalf("plain links must be left alone, got %q", got)
+	}
+}
