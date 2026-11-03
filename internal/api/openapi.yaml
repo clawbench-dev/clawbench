@@ -1410,6 +1410,12 @@ paths:
             agent 会在切换模型后上报该模型自己的默认档（OpenCode 多为 `low`），把它
             当作用户选择会让会话永远停在 low。客户端只在 `userPicked=true` 时把它
             当作权威值，否则回退到「该模型记住的偏好 > 全局默认」。见 issue #552。
+
+            `teamState`（仅 ACP 会话且存在 CodeBuddy Agent Team 时出现）：后端缓存的
+            团队快照，形状与 `chat_stream` 的 `team_update` 载荷一致
+            （`{type, teamName, isAutoTeam, hasLiveMembers, members}`）。`team_update`
+            是纯实时事件（只在团队变化时推送），中途打开或重连的客户端拿不到，团队
+            面板就会永远不出现；这里随历史响应补发缓存快照，与 `planState` 同一处理。
     post:
       tags: [Chat]
       summary: 发送聊天消息

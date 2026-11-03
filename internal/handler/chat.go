@@ -172,6 +172,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		modeState, thinkingEffortState, modelListState := st.Mode, st.Effort, st.ModelList
 		planState, usageState := st.Plan, st.Usage
 		commands, replayPending := st.Commands, st.ReplayPending
+		teamState := st.Team
 
 		// The queue is returned separately from messages: a queued message has no
 		// chat_history row yet, so it cannot appear in `messages`. `queue` is the
@@ -182,10 +183,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 
@@ -800,6 +801,7 @@ type sessionState struct {
 	ModelList     any
 	Plan          any
 	Usage         any
+	Team          any
 	Commands      []ai.AvailableCommandInfo
 	ReplayPending bool
 }
@@ -823,13 +825,14 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// settings drawer. Only an explicit "cli" opts out; empty falls through to
 	// the agent-level lookups below, which is where the real transport is
 	// resolved.
-	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.ReplayPending {
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.Team != nil || s.ReplayPending {
 		st.Mode = s.Mode
 		st.Effort = s.Effort
 		st.Commands = s.Commands
 		st.ModelList = s.ModelList
 		st.Plan = s.Plan
 		st.Usage = s.Usage
+		st.Team = s.Team
 		st.ReplayPending = s.ReplayPending
 	} else if sessionAgentID != "" {
 		// No session-level mapping yet (new session, never sent a message).

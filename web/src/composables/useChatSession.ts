@@ -13,7 +13,7 @@ import { updateAvailableModes, updateCommandState, updateAvailableThinkingEffort
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
-import { clearTeamState } from '@/composables/useTeamState'
+import { clearTeamState, updateTeamState } from '@/composables/useTeamState'
 import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { resolveModelSelection } from '@/utils/modelSelection'
 import { store } from '@/stores/app.ts'
@@ -259,6 +259,20 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
     if (sessionData.cruise !== undefined) {
       cruise.value = sessionData.cruise as boolean
+    }
+
+    // ── Agent Team roster ──
+    // Same reason as the two flags above: session-level live state, read back
+    // BEFORE the change-detection early return. team_update is a LIVE event
+    // (emitted only when the team changes), so a client that opens or
+    // reconnects mid-team never receives one and the panel stayed hidden for
+    // anyone who was not watching at that moment. The backend now ships its
+    // cached snapshot with the history response (same treatment as planState).
+    // `members` is checked because an empty roster means "no team" and must not
+    // create a panel.
+    const teamState = sessionData.teamState as { members?: Array<unknown> } | undefined
+    if (teamState && Array.isArray(teamState.members) && teamState.members.length > 0) {
+      updateTeamState(teamState as Parameters<typeof updateTeamState>[0])
     }
 
     // ── Change detection ──

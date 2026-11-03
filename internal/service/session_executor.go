@@ -651,6 +651,12 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// before forwarding because forwardEvent fans out to WS clients and must
 	// not run under e.mu.
 	e.mu.Lock()
+	// A tool call ends the parent's current reasoning (AccumulateBlock closes
+	// the block). Record it before mutating so the transition can be announced
+	// to live clients below — without that frame the frontend keeps the block
+	// spinning until the turn ends.
+	closedThinking := event.Type == eventTypeToolUse && event.Tool != nil &&
+		ai.HasOpenThinking(e.blocks, event.Tool.ParentToolCallID)
 	thinkID := ai.AccumulateBlock(&e.blocks, event)
 	// Queue tool-call upserts for the next flush window instead of writing per
 	// event — a burst of incremental tool_use updates would otherwise issue one
@@ -687,6 +693,24 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.mu.Lock()
 		e.flushPendingThinking()
 		e.mu.Unlock()
+	}
+
+	// A tool call just closed this parent's thinking block (AccumulateBlock).
+	// Announce it so a live client stops the spinner NOW instead of at turn
+	// end — "reason, then act" rounds emit no text chunk, so no thinking_done
+	// would ever arrive for them. Flush the block's text first, exactly like
+	// the explicit thinking_done branch above: the event is the client's cue to
+	// fetch the reasoning, and the rate-limited flush may not have written it.
+	if closedThinking {
+		e.mu.Lock()
+		e.flushPendingThinking()
+		e.mu.Unlock()
+		e.forwardEvent(ai.StreamEvent{
+			Type:             "thinking_done",
+			ParentToolCallID: event.Tool.ParentToolCallID,
+			MemberName:       event.MemberName,
+			MemberColor:      event.MemberColor,
+		})
 	}
 
 	// Forward event to WS clients via StreamHub

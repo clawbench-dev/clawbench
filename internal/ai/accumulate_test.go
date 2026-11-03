@@ -399,7 +399,9 @@ func TestAccumulateBlock_ThinkingDone(t *testing.T) {
 
 func TestAccumulateBlock_ThinkingDoneMarksLastOnly(t *testing.T) {
 	// If multiple thinking blocks exist (separated by tool_use), thinking_done
-	// only marks the last one
+	// only marks the last one. The FIRST block is already closed by the tool
+	// call in between (a tool call ends the reasoning that led to it — see
+	// TestAccumulateBlock_ToolUseClosesOpenThinking).
 	blocks := []model.ContentBlock{}
 	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "first"})
 	AccumulateBlock(&blocks, StreamEvent{
@@ -407,10 +409,84 @@ func TestAccumulateBlock_ThinkingDoneMarksLastOnly(t *testing.T) {
 		Tool: &ToolCall{Name: "Read", ID: "t1", Input: `{}`, Done: true},
 	})
 	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "second"})
+	assert.True(t, blocks[0].Done, "the tool call closed the first block")
+	assert.False(t, blocks[2].Done, "the second block is still open before thinking_done")
 
 	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done"})
-	assert.False(t, blocks[0].Done, "first thinking block should NOT be marked done")
+	assert.True(t, blocks[0].Done, "first thinking block stays done")
 	assert.True(t, blocks[2].Done, "last thinking block should be marked done")
+}
+
+// TestAccumulateBlock_ToolUseClosesOpenThinking pins the fix for the reported
+// "好多深度思考卡在那里不加载": a thinking block was only closed by a text chunk
+// (or a think-tool completion), so the most common agentic pattern —
+// think, then call a tool, with no prose in between — left every block
+// done=false until Finalize. The frontend renders done=false on a streaming
+// message as a perpetual "输出中" spinner with an empty body, and the
+// rate-limited flush persists it as `in_progress:true`, which a reload then
+// adopts as still-streaming. Measured on one real team turn: 105 of 1098
+// thinking blocks stuck open, EVERY one of them immediately followed by a
+// tool_use of the same parent.
+func TestAccumulateBlock_ToolUseClosesOpenThinking(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "reason"})
+	require.Len(t, blocks, 1)
+	assert.False(t, blocks[0].Done, "thinking block starts open")
+
+	AccumulateBlock(&blocks, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{Name: "Bash", ID: "t1", Input: `{}`},
+	})
+	assert.True(t, blocks[0].Done, "the tool call must close the reasoning that led to it")
+}
+
+// TestAccumulateBlock_ToolUseClosesOnlyItsOwnParent: with concurrent sub-agents
+// interleaving on the wire, agent A's tool call must not close agent B's open
+// thinking block — B's live output would then sit behind a "done" chip.
+func TestAccumulateBlock_ToolUseClosesOnlyItsOwnParent(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "A reasoning", ParentToolCallID: "A"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "B reasoning", ParentToolCallID: "B"})
+
+	AccumulateBlock(&blocks, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{Name: "Bash", ID: "t1", Input: `{}`, ParentToolCallID: "A"},
+	})
+
+	require.Len(t, blocks, 3)
+	assert.True(t, blocks[0].Done, "A called a tool — A's block closes")
+	assert.False(t, blocks[1].Done, "B is still thinking — its block must stay open")
+}
+
+// TestAccumulateBlock_ToolUseClosesEveryOpenBlockOfTheParent: a turn that ran
+// before this rule existed accumulated many open blocks for one parent (105 in
+// one real turn). The next tool call must close ALL of them, not just the
+// newest — otherwise the stale ones stay "输出中" until Finalize.
+func TestAccumulateBlock_ToolUseClosesEveryOpenBlockOfTheParent(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "a", ParentToolCallID: "A"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Read", ID: "t0", Input: `{}`, ParentToolCallID: "A"}})
+	// Simulate the legacy stuck state: an earlier block left open.
+	blocks[0].Done = false
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "b", ParentToolCallID: "A"})
+
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Read", ID: "t1", Input: `{}`, ParentToolCallID: "A"}})
+
+	require.Len(t, blocks, 4)
+	assert.True(t, blocks[0].Done, "the stale block must be healed by the next tool call")
+	assert.True(t, blocks[2].Done, "the block that led to this tool call must close")
+}
+
+func TestHasOpenThinking(t *testing.T) {
+	var blocks []model.ContentBlock
+	assert.False(t, HasOpenThinking(blocks, ""), "no blocks, nothing open")
+
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "x", ParentToolCallID: "A"})
+	assert.True(t, HasOpenThinking(blocks, "A"))
+	assert.False(t, HasOpenThinking(blocks, "B"), "another parent has no block here")
+
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done", ParentToolCallID: "A"})
+	assert.False(t, HasOpenThinking(blocks, "A"), "closed by thinking_done")
 }
 
 func TestAccumulateBlock_ThinkingDoneNoThinkingBlock(t *testing.T) {

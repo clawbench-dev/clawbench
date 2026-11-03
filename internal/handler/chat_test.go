@@ -4969,6 +4969,37 @@ func TestModeStateHasNoSelection(t *testing.T) {
 	assert.False(t, modeStateHasNoSelection("unexpected"), "an unknown type must not claim to be unset")
 }
 
+// TestSessionStateSnapshot_IncludesCachedTeam pins the fix for "打开会话看不到
+// 团队面板": the Agent Team snapshot lives only in the ACP connection's cache and
+// is re-emitted on turn start, so a client that opened or reconnected mid-team
+// never received a team_update. The snapshot now carries it out to the history
+// response (same treatment as planState).
+func TestSessionStateSnapshot_IncludesCachedTeam(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "team snapshot", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "team-snapshot", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := ai.NewACPConnForTest(agent, sessionID)
+	conn.SetCachedTeamState(&ai.TeamState{
+		Type:     "member_status_change",
+		TeamName: "Review Squad",
+		Members:  []ai.TeamMember{{Name: "e2e-q", Status: "running"}},
+	})
+	ai.GetACPConnManager().SetConnForTest(sessionID, conn)
+	defer ai.GetACPConnManager().CloseConn(sessionID)
+
+	st := sessionStateSnapshot(sessionID, agent.ID, "acp-stdio")
+
+	team, ok := st.Team.(*ai.TeamState)
+	require.True(t, ok, "the cached team snapshot must ride along, got %T", st.Team)
+	assert.Equal(t, "Review Squad", team.TeamName)
+	require.Len(t, team.Members, 1)
+	assert.Equal(t, "e2e-q", team.Members[0].Name)
+}
+
 // TestSessionStateSnapshot_FallsBackWhenCachedModeHasNoSelection reproduces the
 // blank-chip case end to end: the connection's cached mode carries the option
 // list but no selection, and context_state holds the real one.

@@ -443,6 +443,7 @@ import { store } from '@/stores/app.ts'
 import { chatMessageReducer, resetInFlightSendsForTest, trackInFlightSend, isInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { addQueued, getQueue, removeQueued, resetQueuesForTest, markSendCommitted } from '@/composables/useMessageQueue.ts'
 import { updatePlanEntries, clearPlanState, usePlanProgress } from '@/composables/usePlanProgress'
+import { clearTeamState, useTeamState } from '@/composables/useTeamState'
 import { registerChatPanelVisibility, _resetChatPanelVisibilityForTest } from '@/composables/sessionReadGate'
 
 // Get direct references to the mocked functions from useSessionIdentity
@@ -1096,6 +1097,56 @@ describe('onSessionEvent', () => {
     })
     expect(session.currentSessionId.value).toBe('current-s1')
     expect(mockToastFn).not.toHaveBeenCalled()
+  })
+
+  it('applies the history response teamState so the team panel shows without a live team_update', async () => {
+    // team_update is a live-only event (emitted when the team CHANGES), so a
+    // client that opens or reconnects mid-team never receives one and the
+    // panel stayed hidden for anyone who was not watching at that moment. The
+    // backend now ships its cached snapshot with the history response.
+    globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', sessionTitle: 'T', messages: [], total: 0, running: false,
+        teamState: {
+          type: 'member_status_change',
+          teamName: 'Review Squad',
+          members: [{ name: 'e2e-q', status: 'running' }],
+        },
+      }),
+    }))
+    clearTeamState()
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    session.currentSessionId.value = 'current-s1'
+    await session.loadHistory(false, false, true, true)
+
+    const { hasTeam, teamName, members } = useTeamState()
+    expect(hasTeam.value).toBe(true)
+    expect(teamName.value).toBe('Review Squad')
+    expect(members.value.map((m) => m.name)).toEqual(['e2e-q'])
+    clearTeamState()
+  })
+
+  it('does not create a team panel from an empty roster', async () => {
+    // An empty members array means "no team" — rendering a panel for it would
+    // occupy space with nothing to show.
+    globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', sessionTitle: 'T', messages: [], total: 0, running: false,
+        teamState: { type: 'team_deleted', teamName: '', members: [] },
+      }),
+    }))
+    clearTeamState()
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    session.currentSessionId.value = 'current-s1'
+    await session.loadHistory(false, false, true, true)
+
+    expect(useTeamState().hasTeam.value).toBe(false)
   })
 
   it('resets loading to false when session completes while loading=true (safety net)', () => {

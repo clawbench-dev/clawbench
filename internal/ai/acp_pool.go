@@ -716,6 +716,7 @@ type ACPCachedState struct {
 	ModelList     *ModelListState
 	Plan          *PlanState
 	Usage         *UsageState
+	Team          *TeamState
 	ReplayPending bool // true if LoadSession replay is still in progress (async goroutine)
 }
 
@@ -738,6 +739,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 	currentModelID := conn.currentModelID
 	planState := conn.cachedPlanState
 	usageState := conn.cachedUsageState
+	teamState := conn.cachedTeamState
 	conn.stateMu.Unlock()
 	replayPending := conn.loadSessionActive.Load()
 	agentID := ""
@@ -758,6 +760,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 		Config:        conn.SessionConfigState(),
 		Plan:          planState,
 		Usage:         usageState,
+		Team:          teamState,
 		ReplayPending: replayPending,
 	}
 }

@@ -1017,3 +1017,86 @@ func TestExecutor_ThinkingDoneWithoutDBDoesNotPanic(t *testing.T) {
 		executor.mu.Unlock()
 	})
 }
+
+// TestExecutor_ToolUseClosesOpenThinking pins the fix for "好多深度思考卡在那里
+// 不加载": "reason, then act" emits NO text chunk, so nothing ever produced a
+// thinking_done for the block that led to the tool call. The block stayed
+// done=false until Finalize — the frontend renders that as a perpetual "输出中"
+// spinner with an empty body, and the rate-limited flush persisted
+// `in_progress:true`, which a reload adopted as still-streaming.
+//
+// Two halves are asserted, because either alone leaves the bug visible:
+//   - the accumulated block is closed (what the DB marker follows), and
+//   - a thinking_done frame reaches the wire BEFORE the tool_use (what a live
+//     client follows — it never reads the DB).
+func TestExecutor_ToolUseClosesOpenThinking(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID := getStreamingMsgIDForTest(t, sid)
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: msgID,
+	})
+	defer executor.unregisterActiveStream()
+
+	var forwarded []ai.StreamEvent
+	executor.coalescer = &streamCoalescer{emit: func(ev ai.StreamEvent) {
+		forwarded = append(forwarded, ev)
+	}}
+
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "reasoning", ParentToolCallID: "call_agent"})
+	executor.flushCoalesced()
+
+	executor.mu.Lock()
+	require.Len(t, executor.blocks, 1)
+	assert.False(t, executor.blocks[0].Done, "the block is open before the tool call")
+	executor.mu.Unlock()
+
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Bash", ID: "close-1", Input: `{"command":"ls"}`, ParentToolCallID: "call_agent"},
+	})
+	executor.flushCoalesced()
+
+	executor.mu.Lock()
+	assert.True(t, executor.blocks[0].Done, "the tool call must close the reasoning that led to it")
+	executor.mu.Unlock()
+
+	// The live client only sees frames: thinking_done must precede the tool_use
+	// (the frontend closes the block when the frame arrives, so sending it after
+	// the tool card would still work, but before keeps the ordering intuitive).
+	var seq []string
+	for _, ev := range forwarded {
+		if ev.Type == "thinking_done" || ev.Type == "tool_use" {
+			seq = append(seq, ev.Type)
+		}
+	}
+	require.Equal(t, []string{"thinking_done", "tool_use"}, seq,
+		"a thinking_done must be announced for the parent that just acted")
+	for _, ev := range forwarded {
+		if ev.Type == "thinking_done" {
+			assert.Equal(t, "call_agent", ev.ParentToolCallID,
+				"the announcement must be parent-scoped, not global")
+		}
+	}
+
+	// A second tool_use must NOT re-announce (the block is already closed).
+	forwarded = nil
+	executor.handleNonTerminalEvent(ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Bash", ID: "close-2", Input: `{}`, ParentToolCallID: "call_agent"},
+	})
+	executor.flushCoalesced()
+	for _, ev := range forwarded {
+		assert.NotEqual(t, "thinking_done", ev.Type, "no duplicate announcement for an already-closed block")
+	}
+}

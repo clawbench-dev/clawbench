@@ -152,6 +152,21 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 		}
 	case "tool_use":
 		if event.Tool != nil {
+			// A tool call ends the current reasoning. The agent went
+			// thinking → tool, so the block that was open when it decided to
+			// call the tool is COMPLETE even though no text chunk follows it.
+			//
+			// Without this, only a text chunk (or a think-tool completion)
+			// closed a thinking block, so every "reason, then act" round left
+			// its block done=false: the frontend renders that as a perpetual
+			// "输出中" spinner with an empty body (`isThinkingStreaming` =
+			// !done && message.streaming), and the rate-limited flush persists
+			// it as `in_progress:true`, which the reload then adopts as a
+			// still-streaming block. Measured on one real team turn: 105 of
+			// 1098 thinking blocks stuck open, EVERY one of them immediately
+			// followed by a tool_use of the same parent.
+			closeOpenThinking(blocks, event.Tool.ParentToolCallID)
+
 			// Parse tool input JSON into map
 			var input map[string]any
 			if event.Tool.Input != "" {
@@ -295,6 +310,46 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 		})
 	}
 	return ""
+}
+
+// closeOpenThinking marks every still-open thinking block of `parent` as done
+// and reports how many it closed.
+//
+// ALL of them, not just the newest: at the moment a tool call arrives the agent
+// has demonstrably moved on, so any block of this parent that is still open is
+// complete. Closing only the newest would leave earlier ones stuck — exactly
+// the state a turn already accumulated before this rule existed (105 open
+// blocks in one real team turn), and nothing else would ever revisit them until
+// Finalize.
+func closeOpenThinking(blocks *[]model.ContentBlock, parent string) int {
+	closed := 0
+	for i := len(*blocks) - 1; i >= 0; i-- {
+		b := &(*blocks)[i]
+		if b.ParentToolCallID != parent || b.Type != "thinking" || b.Done {
+			continue
+		}
+		b.Done = true
+		closed++
+	}
+	return closed
+}
+
+// HasOpenThinking reports whether the newest thinking block of `parent` is
+// still open (i.e. closeOpenThinking would close one). Read-only so a caller
+// can decide whether to announce the transition without mutating the blocks.
+func HasOpenThinking(blocks []model.ContentBlock, parent string) bool {
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if blocks[i].ParentToolCallID != parent {
+			continue
+		}
+		switch blocks[i].Type {
+		case "thinking":
+			return !blocks[i].Done
+		case "tool_use":
+			return false
+		}
+	}
+	return false
 }
 
 // MarkAllThinkingDone flags every thinking block as complete. Call it on a
