@@ -33,51 +33,13 @@
             <Trash2 :size="13" />
           </button>
         </span>
-        <!-- The SAME figure a markdown image renders as: 1px frame + floating
-             view button, thumbnail inline, lightbox on click (touch opens from
-             the image body, desktop from the view button — the document-level
-             listener in Lightbox.vue drives both, so this component carries no
-             viewer logic of its own). `data-full-src` points at the viewing
-             size; the lightbox loads that instead of the thumbnail. The reset
-             button is hidden at rest and revealed by the shared stylesheet
-             while the figure holds an inline zoom — same as every markdown
-             image; the reset gesture itself is inlineZoom's delegated listener. -->
-        <div
-          class="transcript__shot image-block-wrapper image-block-wrapper--thumb"
-          data-role="shot-open"
-        >
-          <div class="image-block-header">
-            <span class="image-block-header-actions">
-              <button
-                class="image-block-view-btn"
-                type="button"
-                data-action="view"
-                :title="i18n.global.t('imageBlock.view')"
-                :aria-label="i18n.global.t('imageBlock.view')"
-              >
-                <Maximize :size="14" />
-              </button>
-              <button
-                class="image-block-reset-btn"
-                type="button"
-                data-action="reset-zoom"
-                :title="i18n.global.t('imageBlock.resetZoom')"
-                :aria-label="i18n.global.t('imageBlock.resetZoom')"
-              >
-                <Minimize2 :size="14" />
-              </button>
-            </span>
-          </div>
-          <span class="lightbox-img-wrap">
-            <img
-              class="lightbox-img"
-              :src="b.shot.thumbUrl"
-              :data-full-src="b.shot.fullUrl"
-              :alt="labelOf(b)"
-              loading="lazy"
-            />
-          </span>
-        </div>
+        <!-- The figure is produced by the SHARED media-block factory — the same
+             one that wraps markdown images — so the chrome (view + reset
+             buttons) cannot drift from markdown preview. Opening is the
+             Lightbox's document-level click handler (view button on desktop,
+             image body on touch); the reset gesture is inlineZoom's delegated
+             listener. `data-full-src` points at the viewing size. -->
+        <div class="transcript__shot" data-role="shot-open" v-html="shotFigure(b)" />
       </div>
       <span v-else class="transcript__text">{{ textOf(b) }}</span>
     </div>
@@ -104,9 +66,11 @@
  * here so the token is declared where it is read.
  */
 import { nextTick, ref, watch } from 'vue'
-import { FileText, ImageIcon, Maximize, Minimize2, MonitorUp, Trash2 } from 'lucide-vue-next'
+import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { shotLabel } from '@/utils/meetingShots'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory'
+import { escapeHtml } from '@/utils/html.ts'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
 
@@ -147,6 +111,31 @@ function speakerOf(b: NoteBlock): string {
 /** "打开 architecture.md" / "切换共享源" — why the frame was taken. */
 function labelOf(b: NoteBlock): string {
   return b.shot ? shotLabel(b.shot.reason, b.shot.ref) : ''
+}
+
+/** Figures already built for a (thumb, full, label) triple — the transcript
+ *  re-renders on every live poll, and each build pays a DOMParser round trip. */
+const figureCache = new Map<string, string>()
+
+/**
+ * One key frame as the shared media-block factory renders it — the SAME figure
+ * a markdown image gets, chrome included (view + reset buttons), so this list
+ * cannot drift from markdown preview. The `--thumb` modifier goes THROUGH the
+ * factory rather than being stamped onto a hand-copied wrapper.
+ */
+function shotFigure(b: NoteBlock): string {
+  const shot = b.shot
+  if (!shot) return ''
+  const label = labelOf(b)
+  const key = `${shot.thumbUrl}\n${shot.fullUrl}\n${label}`
+  let html = figureCache.get(key)
+  if (html === undefined) {
+    const src = `<img src="${escapeHtml(shot.thumbUrl)}" data-full-src="${escapeHtml(shot.fullUrl)}" alt="${escapeHtml(label)}" loading="lazy">`
+    html = annotateMediaBlocks(src, { wrapperClass: 'image-block-wrapper--thumb' })
+    if (figureCache.size > 200) figureCache.clear()
+    figureCache.set(key, html)
+  }
+  return html
 }
 
 /** A live file row carries a bare path; a stored transcript carries a sentence. */

@@ -96,10 +96,11 @@ describe('TranscriptList', () => {
         shot: { id: 4, thumbUrl: '/t/4', fullUrl: '/f/4', reason: 'manual' },
       },
     ])
-    const figure = w.find('[data-role="shot-open"]')
-    // Reusing the markdown image figure is the point: the same classes are what
-    // give it the frame, the floating view button and the lightbox behaviour.
-    expect(figure.classes()).toContain('image-block-wrapper')
+    const figure = w.find('[data-role="shot-open"] .image-block-wrapper')
+    // The markup comes from the SHARED media-block factory (the same producer
+    // markdown images go through), so the chrome cannot drift from markdown
+    // preview — the `--thumb` modifier is passed through the factory too.
+    expect(figure.exists()).toBe(true)
     expect(figure.classes()).toContain('image-block-wrapper--thumb')
     expect(figure.find('.image-block-view-btn').exists()).toBe(true)
     // Same chrome as a markdown figure: the reset button is hidden at rest by

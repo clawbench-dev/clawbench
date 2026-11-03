@@ -28,6 +28,17 @@ describe('annotateMediaBlocks', () => {
     expect(out).not.toMatch(/<p>\s*<\/p>/)
   })
 
+  it('carries a host-requested wrapper class through the factory', () => {
+    // Hosts that need a sizing variant (the meeting transcript's timeline rows)
+    // pass a modifier IN rather than hand-copying the markup — a copied figure
+    // is how the reset button once went missing on that surface.
+    const out = annotateMediaBlocks('<img src="x.png" alt="x">', { wrapperClass: 'image-block-wrapper--thumb' })
+    expect(out).toContain('<div class="image-block-wrapper image-block-wrapper--thumb">')
+    // The rest of the chrome is unchanged.
+    expect(out).toContain('image-block-view-btn')
+    expect(out).toContain('image-block-reset-btn')
+  })
+
   it('stamps the lightbox-img marker without duplicating it', () => {
     const html = '<p><img src="x.png" class="chat-img lightbox-img"></p>'
     const out = annotateMediaBlocks(html)

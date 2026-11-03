@@ -78,10 +78,10 @@ function stampLightboxImg(el: Element): void {
  * The wrapped img keeps the `lightbox-img` class and `data-attach-src` so PC drag
  * (mdImageDrag) and Lightbox image collection keep working; svg keeps `lightbox-svg`.
  */
-export function annotateMediaBlocks(html: string): string {
+export function annotateMediaBlocks(html: string, opts?: { wrapperClass?: string }): string {
     if (!html) return html
     const doc = new DOMParser().parseFromString(html, 'text/html')
-    annotateMediaBlocksIn(doc)
+    annotateMediaBlocksIn(doc, opts)
     return doc.body.innerHTML
 }
 
@@ -92,8 +92,14 @@ export function annotateMediaBlocks(html: string): string {
  * Split out so the markdown pipeline can run several annotation steps over ONE
  * parsed document instead of each step paying its own `parseFromString` +
  * `body.innerHTML` round trip.
+ *
+ * @param opts.wrapperClass  extra class(es) on the produced wrapper. The figure
+ *   markup lives here and nowhere else — a host that needs a sizing variant
+ *   (the meeting transcript's timeline rows) adds a modifier THROUGH the
+ *   factory rather than hand-copying the markup and drifting (the missing
+ *   reset button was exactly such a drift).
  */
-export function annotateMediaBlocksIn(doc: Document): void {
+export function annotateMediaBlocksIn(doc: Document, opts?: { wrapperClass?: string }): void {
 
     // Iterate a snapshot: each pass moves the element, so a live NodeList would skip.
     const media = Array.from(doc.querySelectorAll('img, svg.lightbox-svg'))
@@ -125,7 +131,9 @@ export function annotateMediaBlocksIn(doc: Document): void {
 
         // 1. Build the wrapper shell at the element's old position.
         const wrapper = doc.createElement('div')
-        wrapper.className = 'image-block-wrapper'
+        wrapper.className = opts?.wrapperClass
+            ? `image-block-wrapper ${opts.wrapperClass}`
+            : 'image-block-wrapper'
         // The source line the host block carried (markedConfig stamps paragraphs
         // with data-source-line) is transferred below — to the leading <p> when
         // the paragraph keeps leading content, otherwise to the figure. Keeping
