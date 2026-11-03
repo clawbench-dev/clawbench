@@ -659,6 +659,61 @@ describe('MeetingDetail regeneration', () => {
   })
 })
 
+describe('MeetingDetail status bar placement', () => {
+  it('keeps the bar on the resources tab, naming the minutes', async () => {
+    // The record opens on 资源 (main's default), so a bar that only existed on
+    // text tabs left the regeneration entry one click deep — and hid a running
+    // job entirely.
+    getMock.mockResolvedValue(record({
+      artifacts: {
+        minutes: artifact({ hasContent: false, contentAt: 0 }),
+        transcript: artifact(),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+    }))
+    artifactMock.mockResolvedValue(null)
+
+    const w = mountDetail()
+    await flushPromises()
+
+    expect(w.find('[data-tab="resources"]').classes()).toContain('meeting-tab--on')
+    const bar = w.find('.artifact-bar')
+    expect(bar.exists()).toBe(true)
+    expect(bar.find('.artifact-bar__kind').text()).toBe(enMessages.meeting.detail.tabMinutes)
+    expect(bar.text()).toContain(enMessages.meeting.detail.artifact.notGenerated)
+
+    await bar.find('[data-action="meeting-artifact-regenerate"]').trigger('click')
+    await flushPromises()
+    // The action is the minutes one: that is what the chip promised.
+    expect(regenPlanMock).toHaveBeenCalledWith('tok-1', 'minutes', true)
+    w.unmount()
+  })
+
+  it('shows the running step from a tab that owns no artifact', async () => {
+    getMock.mockResolvedValue(record({
+      artifacts: {
+        minutes: artifact({ hasContent: false, contentAt: 0 }),
+        transcript: artifact({ hasContent: false, jobStatus: 'running', contentAt: 0 }),
+        revised: artifact({ hasContent: false, contentAt: 0 }),
+      },
+      generation: { step: 'transcript', remaining: ['revised', 'minutes'], startedAt: Date.now() },
+    }))
+    artifactMock.mockResolvedValue(null)
+
+    const w = mountDetail()
+    await flushPromises()
+
+    const bar = w.find('.artifact-bar')
+    // The bar followed the step (a transcript re-recognition, so the ASR
+    // wording), not the minutes it falls back to when idle.
+    expect(bar.text()).toContain(enMessages.meeting.detail.artifact.runningAsr)
+    // The sentence names the step, so the chip must not repeat it.
+    expect(bar.find('.artifact-bar__kind').exists()).toBe(false)
+    expect(bar.find('[data-action="meeting-artifact-cancel"]').exists()).toBe(true)
+    w.unmount()
+  })
+})
+
 describe('MeetingDetail key frames', () => {
   it('merges frames into the transcript by offset and deletes one', async () => {
     shotsMock.mockResolvedValue([
