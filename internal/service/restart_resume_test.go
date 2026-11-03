@@ -916,6 +916,80 @@ func TestSessionsEndingOnRestartWarning_HonoursConfiguredWindow(t *testing.T) {
 	}
 }
 
+// The window must measure when the interruption HAPPENED, not when the turn
+// started.
+//
+// created_at is stamped at turn START (the streaming placeholder row is inserted
+// up front), so a turn that ran for hours was already "older than the window"
+// the instant the restart cut it off — the long-running sessions, i.e. exactly
+// the ones whose loss hurts most, were silently never resumed. completed_at is
+// stamped by the finalize that writes the restart warning, so it IS the
+// interruption time.
+//
+// Both directions are asserted, because either one alone passes for a wrong
+// implementation: a recent completion with an ancient start must qualify, and a
+// recent start with an old completion must NOT (the second rules out "the bound
+// was simply widened").
+func TestSessionsEndingOnRestartWarning_MeasuresCompletionTimeNotTurnStart(t *testing.T) {
+	prevWindow := model.ChatRestartResumeWindowMinutes
+	t.Cleanup(func() { model.ChatRestartResumeWindowMinutes = prevWindow })
+
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	defer store.Close()
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	model.ChatRestartResumeWindowMinutes = model.DefaultRestartResumeWindowMinutes
+	if err := InitDB(true); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+
+	warned := `{"blocks":[{"type":"warning","reason":"restart","text":"x"}]}`
+	// long-turn: started 11 hours ago (an agent working overnight), cut off by
+	// the restart two minutes ago.
+	// stale-completion: started 3 minutes ago but its warning was written 3 hours
+	// ago — impossible in production (the warning is written at finalize) and
+	// therefore the control that proves the anchor is completed_at.
+	for _, sessionID := range []string{"sess-long-turn", "sess-stale-completion"} {
+		if _, err := store.WriteExec(
+			`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived)
+			 VALUES (?, 1, 'claude', 't', 'chat', 0)`, sessionID,
+		); err != nil {
+			t.Fatalf("insert session %s: %v", sessionID, err)
+		}
+	}
+	insert := func(sessionID, createdAt, completedAt string) {
+		if _, err := store.WriteExec(
+			`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, created_at, completed_at)
+			 VALUES (1, 'assistant', ?, ?, 'claude', 0, datetime('now', ?), datetime('now', ?))`,
+			warned, sessionID, createdAt, completedAt,
+		); err != nil {
+			t.Fatalf("insert row for %s: %v", sessionID, err)
+		}
+	}
+	insert("sess-long-turn", "-11 hours", "-2 minutes")
+	insert("sess-stale-completion", "-3 minutes", "-3 hours")
+
+	got := sessionsEndingOnRestartWarning()
+	seen := map[string]bool{}
+	for _, id := range got {
+		seen[id] = true
+	}
+	if !seen["sess-long-turn"] {
+		t.Fatalf("a turn that ran longer than the window but was interrupted just now must be resumed, got %+v", got)
+	}
+	if seen["sess-stale-completion"] {
+		t.Fatalf("the window must be measured from completed_at, not created_at, got %+v", got)
+	}
+}
+
 // An archived session's orphan row must still be FINALIZED (streaming → 0) even
 // though the session itself is not resumed.
 //

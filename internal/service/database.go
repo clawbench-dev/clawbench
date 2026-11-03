@@ -3980,6 +3980,15 @@ func archivedSessionSet(msgs []orphanMsg) map[string]bool {
 // how long "just interrupted" lasts is a preference, not a fact. 0 means no age
 // bound.
 //
+// The timestamp the window measures against is completed_at, NOT created_at.
+// created_at is stamped when the turn STARTS (the streaming placeholder row is
+// inserted up front), so a turn that ran longer than the window — an agent
+// working for hours — looked older than the window the instant the restart cut
+// it off, and was silently never resumed. completed_at is stamped by the very
+// finalize that writes this warning, i.e. it IS the interruption time, which is
+// what "interrupted within the window" means. COALESCE keeps legacy rows that
+// predate the column working (they fall back to the old, weaker anchor).
+//
 // Archived sessions are excluded HERE rather than only in the per-session check
 // in ResumeInterruptedSession, so the recorded count reflects what will actually
 // be resumed — otherwise the startup log claims N sessions while the worker
@@ -4007,7 +4016,7 @@ func sessionsEndingOnRestartWarning() []string {
 		   AND h.session_id <> ''`
 	args := []any{}
 	if windowMinutes > 0 {
-		query += " AND h.created_at > datetime('now', ?)"
+		query += " AND COALESCE(h.completed_at, h.created_at) > datetime('now', ?)"
 		args = append(args, fmt.Sprintf("-%d minutes", windowMinutes))
 	}
 	rows, err := store.ReadDB().Query(query, args...)
