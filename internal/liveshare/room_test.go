@@ -1049,7 +1049,6 @@ func TestAddViewer_EmptyNamesDoNotCollide(t *testing.T) {
 	}
 }
 
-
 // newTestRoom builds a room the way the registry does, with a token the test
 // chooses so failures name the case.
 func newTestRoom(t *testing.T, token string) *Room {

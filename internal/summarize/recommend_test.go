@@ -350,7 +350,10 @@ func (s *stubSummarizer) DoAskPassDetailed(_ context.Context, _, _, _ string, ma
 // is what every non-OpenAI/Anthropic backend looks like.
 type plainSummarizer struct{ text string }
 
-func (s *plainSummarizer) Summarize(context.Context, string, string) (string, error) { return s.text, nil }
+func (s *plainSummarizer) Summarize(context.Context, string, string) (string, error) {
+	return s.text, nil
+}
+
 func (s *plainSummarizer) DoAskPass(context.Context, string, string, string, int) (string, error) {
 	return s.text, nil
 }
