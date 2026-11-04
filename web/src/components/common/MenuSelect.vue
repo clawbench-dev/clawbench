@@ -19,13 +19,14 @@
     :show="show"
     :target-element="anchorRef"
     :max-width="menuWidth"
+    :min-width="appSurface ? 0 : menuMinWidth"
     :max-height="maxHeight"
     :menu-items-count="options.length"
     :app-surface="appSurface"
     @update:show="onShowUpdate"
   >
-    <!-- min-width matches the trigger so the open menu lines up with the
-         control it belongs to instead of shrinking to its narrowest item. -->
+    <!-- The popup's min-width (the trigger width) keeps the menu lined up with
+         the control it belongs to instead of shrinking to its narrowest item. -->
     <div class="menu-select-list" :class="{ 'app-menu-column': appSurface }" :style="listStyle">
       <div v-if="menuTitle" class="app-menu-title">{{ menuTitle }}</div>
       <div :class="appSurface ? 'app-menu-scroll' : ''">
@@ -101,15 +102,20 @@ const selectedOption = computed(
 /**
  * Inline style for the popup body.
  *
- * The min-width only makes sense for the plain list (where the menu should line
- * up with its trigger). On the app-header surface the panel is a card with its
- * own padding; it still needs a floor, otherwise it shrinks to the width of the
- * widest row's *content* — and a stacked project row's path is clipped to a few
- * characters ("tmp/nr…") instead of being readable. `menuWidth` is the popup's
- * MAX width, so it doubles as a sensible target here.
+ * The min-width only makes sense for the app-header surface, which is a card
+ * with its own padding: it still needs a floor, otherwise it shrinks to the
+ * width of the widest row's *content* — and a stacked project row's path is
+ * clipped to a few characters ("tmp/nr…") instead of being readable.
+ * `menuWidth` is the popup's MAX width, so it doubles as a sensible target here.
+ *
+ * The plain list needs no width of its own: MenuSelect passes the trigger width
+ * to the popup ROOT as `min-width`. Putting it on the list instead made the list
+ * 2px wider than the root's content box (the root's border eats into its
+ * max-width under `box-sizing: border-box`), and the root — which is the scroll
+ * container — painted a horizontal scrollbar under the menu.
  */
 const listStyle = computed(() =>
-  props.appSurface ? { minWidth: `${props.menuWidth}px` } : { minWidth: `${menuMinWidth.value}px` },
+  props.appSurface ? { minWidth: `${props.menuWidth}px` } : undefined,
 )
 
 /**
@@ -141,14 +147,8 @@ function toggle() {
   claimOpenMenu(token)
   // Measure before the popup positions itself (it reads geometry on the next
   // animation frame), so the menu can never come out narrower than the
-  // trigger it drops out of.
-  //
-  // Clamped to `menuWidth`: the popup's max-width is that same number, so a
-  // wider trigger (a `block` field stretches to the form width) would push the
-  // list past the popup and the browser paints a horizontal scrollbar under
-  // the menu. Alignment with the trigger is already lost past this point —
-  // the popup simply cannot grow further.
-  menuMinWidth.value = Math.min(anchorRef.value?.offsetWidth ?? 0, props.menuWidth)
+  // trigger it drops out of. The popup clamps this to its own max width.
+  menuMinWidth.value = anchorRef.value?.offsetWidth ?? 0
   show.value = true
 }
 

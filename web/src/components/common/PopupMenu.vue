@@ -31,6 +31,8 @@ const props = defineProps({
   show: Boolean,
   targetElement: { type: Object }, // DOM element reference
   maxWidth: { type: Number, default: 220 },
+  /** Floor for the menu width (CSS px); 0 = shrink to content. */
+  minWidth: { type: Number, default: 0 },
   maxHeight: { type: Number, default: 320 },
   edgeMargin: { type: Number, default: 6 },
   menuItemsCount: { type: Number, default: 10 }, // for height estimation
@@ -88,6 +90,7 @@ function updatePosition() {
     : null) ?? undefined
   const measured = computeMenuStyle(rect, {
     maxWidth: props.maxWidth,
+    minWidth: props.minWidth,
     maxHeight: props.maxHeight,
     edgeMargin: props.edgeMargin,
     menuItemsCount: props.menuItemsCount,
@@ -104,6 +107,7 @@ function updatePosition() {
   if (containingBlock && !menuFitsViewport(measured)) {
     menuStyle.value = computeMenuStyle(rect, {
       maxWidth: props.maxWidth,
+      minWidth: props.minWidth,
       maxHeight: props.maxHeight,
       edgeMargin: props.edgeMargin,
       menuItemsCount: props.menuItemsCount,

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MenuSelect from '../MenuSelect.vue'
 
@@ -7,6 +7,15 @@ import MenuSelect from '../MenuSelect.vue'
 // covered by PopupMenu.test.ts.
 const global = {
   stubs: { Teleport: { template: '<div><slot/></div>' } },
+}
+
+// Stand-in for PopupMenu that exposes the width props it would receive. Used by
+// the sizing tests: the real component writes those onto the popup ROOT (the
+// scroll container) inside a requestAnimationFrame, which jsdom cannot measure.
+const PopupMenuStub = {
+  name: 'PopupMenu',
+  props: ['show', 'minWidth', 'maxWidth'],
+  template: '<div v-if="show"><slot/></div>',
 }
 
 const options = [
@@ -18,6 +27,13 @@ function mountSelect(props: Record<string, unknown> = {}) {
   return mount(MenuSelect, {
     props: { modelValue: '', options, ...props },
     global,
+  })
+}
+
+function mountWithPopupStub(props: Record<string, unknown> = {}) {
+  return mount(MenuSelect, {
+    props: { modelValue: '', options, ...props },
+    global: { stubs: { Teleport: { template: '<div><slot/></div>' }, PopupMenu: PopupMenuStub } },
   })
 }
 
@@ -89,26 +105,29 @@ describe('MenuSelect', () => {
   })
 
   // The menu is measured against the trigger so it cannot open narrower than
-  // the control it drops out of.
+  // the control it drops out of. The width goes on the popup ROOT (the scroll
+  // container), not on the list inside it — a child wider than the root's
+  // content box painted a horizontal scrollbar under the menu.
   it('sizes the menu to the trigger width', async () => {
-    const wrapper = mountSelect()
+    const wrapper = mountWithPopupStub()
     const trigger = wrapper.find('.menu-select')
     Object.defineProperty(trigger.element, 'offsetWidth', { value: 180, configurable: true })
     await trigger.trigger('click')
 
-    const list = wrapper.find('.menu-select-list')
-    expect(list.attributes('style')).toContain('min-width: 180px')
+    expect(wrapper.findComponent(PopupMenuStub).props('minWidth')).toBe(180)
+    expect(wrapper.find('.menu-select-list').attributes('style')).toBeUndefined()
   })
 
   // A `block` field stretches to the form width (600px), which is wider than the
-  // popup's max width. Feeding that straight into min-width pushed the list past
-  // the popup, and the browser painted a horizontal scrollbar under the menu.
-  it('clamps the min-width to the popup max width', async () => {
-    const wrapper = mountSelect({ block: true, menuWidth: 400 })
+  // popup's max width; the popup clamps the floor to that max width itself.
+  it('passes the raw trigger width and leaves the clamping to the popup', async () => {
+    const wrapper = mountWithPopupStub({ block: true, menuWidth: 400 })
     const trigger = wrapper.find('.menu-select')
     Object.defineProperty(trigger.element, 'offsetWidth', { value: 600, configurable: true })
     await trigger.trigger('click')
 
-    expect(wrapper.find('.menu-select-list').attributes('style')).toContain('min-width: 400px')
+    const popup = wrapper.findComponent(PopupMenuStub)
+    expect(popup.props('minWidth')).toBe(600)
+    expect(popup.props('maxWidth')).toBe(400)
   })
 })
