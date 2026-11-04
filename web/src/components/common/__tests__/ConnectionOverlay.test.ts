@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, type Ref } from 'vue'
 import ConnectionOverlay from '@/components/common/ConnectionOverlay.vue'
+import ServerSwitchDialog from '@/components/common/ServerSwitchDialog.vue'
 import type { ConnectionOverlayMode } from '@/composables/useConnectionOverlay'
 
 // Mock useConnectionOverlay so the component test focuses purely on RENDERING
@@ -25,6 +26,7 @@ const i18n = createI18n({
         zh: {
             systemResources: { overlayReconnecting: '连接断开，正在重连…' },
             settings: { restartingPleaseWait: '正在重启，请稍候…' },
+            login: { switchServer: '切换服务端' },
         },
     },
 })
@@ -57,6 +59,7 @@ describe('ConnectionOverlay', () => {
 
     afterEach(() => {
         document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
+        document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
         if (activeContainer?.parentNode) {
             document.body.removeChild(activeContainer)
             activeContainer = null
@@ -105,5 +108,41 @@ describe('ConnectionOverlay', () => {
         await nextTick()
         expect(second.wrapper.find('.connection-overlay').exists()).toBe(false)
         if (second.container.parentNode) document.body.removeChild(second.container)
+    })
+
+    // The mask covers the whole screen including the header's server button, so
+    // without this escape hatch a reconnect that never succeeds leaves the user
+    // with no way to reach another server.
+    it('offers a switch-server escape hatch while reconnecting', async () => {
+        mockMode.value = 'reconnect'
+        const wrapper = await mountAndWait()
+
+        const btn = $('.connection-overlay__switch')
+        expect(btn).not.toBeNull()
+        expect(btn?.textContent).toContain('切换服务端')
+
+        btn?.click()
+        await nextTick()
+
+        // The dialog is up and the mask is out of the way (it would otherwise
+        // paint above the dialog at --z-popover).
+        const modal = $('.modal-overlay')
+        expect(modal).not.toBeNull()
+        expect(modal!.style.display).not.toBe('none')
+        expect($('.connection-overlay')).toBeNull()
+
+        // Closing the dialog brings the mask back while still disconnected.
+        const dialog = wrapper.findComponent(ServerSwitchDialog)
+        dialog.vm.$emit('close')
+        await nextTick()
+        expect($('.modal-overlay')!.style.display).toBe('none')
+        expect($('.connection-overlay')).not.toBeNull()
+    })
+
+    it('does not offer the switch-server escape hatch while restarting', async () => {
+        mockMode.value = 'restart'
+        await mountAndWait()
+        expect($('.connection-overlay')).not.toBeNull()
+        expect($('.connection-overlay__switch')).toBeNull()
     })
 })
