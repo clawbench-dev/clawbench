@@ -997,7 +997,9 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 			}
 			return "no"
 		}()))
-	cmd.Env = os.Environ()
+	// Server environment, plus the user's shell startup exports when the
+	// opt-in shell_env.inherit setting is on (issue #619).
+	cmd.Env = agentProcessEnv()
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 
 	// Model provider environment. Resolved from the live agent (c.agent is a

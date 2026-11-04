@@ -3326,3 +3326,34 @@ func TestServeConfig_GetIncludesMeeting(t *testing.T) {
 	assert.Equal(t, false, meeting["file_excerpts"])
 	assert.Equal(t, float64(4500), meeting["minutes_max_tokens"])
 }
+
+// The agent-environment toggle must survive a PATCH round trip and be readable
+// back through GET. It is off by default, so the switch has to be able to turn
+// it on (and off again) without a restart.
+func TestServeConfig_Patch_ShellEnvInherit(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	if model.ConfigInstance.ShellEnv.Inherit {
+		t.Fatal("shell_env.inherit must default to false")
+	}
+
+	body := `{"shell_env":{"inherit":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.ShellEnv.Inherit,
+		"shell_env.inherit must be applied to ConfigInstance")
+	// Hot-reload field: the setting is read at spawn time, so no restart dialog.
+	assert.NotContains(t, w.Body.String(), "shell_env.inherit")
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(getReq, model.SessionToken)
+	getResp := callHandler(ServeConfig, getReq)
+	assert.Equal(t, http.StatusOK, getResp.Code)
+	assert.Contains(t, getResp.Body.String(), `"shell_env":{"inherit":true}`)
+}

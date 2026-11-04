@@ -3765,6 +3765,9 @@ export default {
       usageMeterMetricCost: '费用（USD）',
 
 
+      agentEnvSection: '智能体环境',
+      agentEnvInherit: '继承 Shell 环境变量',
+      agentEnvInheritDesc: '启动智能体时读取 ~/.bashrc、~/.zshrc 等启动文件里 export 的变量（例如 AK/SK）。关闭时智能体只看到 ClawBench 自身的环境。开启后会执行你的 Shell 启动脚本，并把其中所有变量交给智能体。',
       logCapture: '调试日志捕获',
       logCaptureDesc: '捕获客户端调试日志用于问题排查',
       reconfigureServer: '重配服务器',

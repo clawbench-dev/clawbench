@@ -224,6 +224,23 @@ type Config struct {
 	// internal/model/mcp.go. CLI backends ignore it: they have no mcpServers
 	// parameter and read their own config files.
 	MCP MCPConfig `yaml:"mcp"`
+	// ShellEnv controls what environment a spawned agent process starts from.
+	ShellEnv ShellEnvConfig `yaml:"shell_env"`
+}
+
+// ShellEnvConfig controls whether agent processes inherit the variables the
+// user exports from their shell startup files (.bashrc / .zshrc / .profile).
+//
+// Off by default, and deliberately so: capturing that environment runs the
+// user's startup files and hands the agent everything they export (proxy
+// settings, unrelated credentials, LD_PRELOAD). Users who keep their agent
+// credentials there have to opt in.
+type ShellEnvConfig struct {
+	// Inherit adds the shell's exports to the agent process environment when
+	// the variable is missing from ClawBench's own environment. Existing
+	// entries always win, and the shell is queried at most once every few
+	// minutes (see platform.LoginShellEnv).
+	Inherit bool `yaml:"inherit"`
 }
 
 // UsageMeterConfig is the single global usage budget rule.

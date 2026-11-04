@@ -356,6 +356,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionDays', descriptionKey: 'settings.items.uploadRetentionDaysDesc', key: 'upload.retention_days', type: 'number', source: 'server', min: 1, disableUnless: { key: 'upload.retention_enabled', value: true }, sectionHeader: 'settings.items.uploadSection' } },
   ],
   debug: [
+    // Opt-in: agent processes inherit what the user's shell startup files
+    // export. Off by default because it runs those files and hands the agent
+    // their whole environment (see issue #619).
+    { type: 'item', spec: { labelKey: 'settings.items.agentEnvInherit', descriptionKey: 'settings.items.agentEnvInheritDesc', key: 'shell_env.inherit', type: 'switch', source: 'server', sectionHeader: 'settings.items.agentEnvSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.logCapture', descriptionKey: 'settings.items.logCaptureDesc', key: 'logCapture', type: 'switch', source: 'local', sectionHeader: 'settings.items.debugSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local', appOnly: true, sectionHeader: 'settings.items.debugSection' } },
   ],
