@@ -70,7 +70,7 @@ sequenceDiagram
 - **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀。选择入口有两个：终端工具栏的主题按钮（带各主题 bg/fg/accent 实时配色预览）和 Settings → 终端面板的"配色主题"下拉。该计数与 `node_modules/xterm-theme` 具名导出数保持一致，升级 xterm-theme 时需同步
 - **终端输入抽屉**：移动端多行文本输入的 BottomSheet，支持从剪贴板粘贴填充、清空和发送。解决移动端虚拟键盘在 xterm 中输入长命令的体验问题
 - **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目。帮助入口嵌入终端工具栏，一键查看无需记忆
-- **拖拽文件上传到当前目录**：把系统文件管理器里的文件（含整个文件夹，保留嵌套结构与空目录）拖到终端面板上，即上传到 shell **当前所在目录**。复用文件管理器的上传逻辑与 UI（`useFileUpload` 的目录上传模式 + 共享的 `DropOverlay`/`UploadProgressBar` 组件），上传不会附加到聊天会话
+- **拖拽文件上传到当前目录**：把系统文件管理器里的文件（含整个文件夹，保留嵌套结构与空目录）拖到终端面板上，即上传到 shell **当前所在目录**。复用文件管理器的上传逻辑与 UI（`useFileUpload` 的目录上传模式 + 共享的 `DropOverlay`/`UploadProgressBar` 组件），上传不会附加到聊天会话。同名文件走 `/api/upload/check` 预检后由用户选择覆盖或保留两者；**覆盖时保留目标文件的权限位**——`os.Create` 原地截断本身保住 rwx，但内核会在非特权写入时清掉 setuid/setgid，故上传前后显式 stat + chmod 还原（`existingFileMode`）。覆盖失败（内容没拷完）时不删除已存在的文件，只清理本次新建的半成品
 - **打开当前目录**：工具栏按钮，点击后在文件管理器中打开 shell 的**实时** cwd——反向于文件管理器的「在终端打开此目录」。复用既有的 `open-directory-from-context` 事件（与代码链接预览同一管道），`source: 'terminal'` 让返回栈能回到终端。按钮门控严格判 `cwdProbeSupported === true`（该 ref 初值为 null，真值判断会让按钮在 macOS 上闪一下再消失）；cwd 为空（会话尚未连接）时提示而非派发——派发空串会让文件管理器误开项目根
 
 ### 设计要点

@@ -122,6 +122,12 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		return
 	}
 
+	// An overwrite must keep the destination's permission bits. Truncating the
+	// existing file in place already preserves them on Unix, but the kernel
+	// still clears setuid/setgid on a write by an unprivileged process, so the
+	// mode is captured first and re-applied once the bytes have landed.
+	prevMode, hadPrev := existingFileMode(dstPath)
+
 	// Create destination file
 	dst, err := os.Create(dstPath)
 	if err != nil {
@@ -132,9 +138,24 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 
 	// Copy file content
 	if _, err := io.Copy(dst, file); err != nil {
-		_ = os.Remove(dstPath)
+		// Only a file this upload created is removed. A pre-existing file is
+		// left in place: its name is still the user's only handle on that path,
+		// and deleting it would turn a failed overwrite into a lost file.
+		if !hadPrev {
+			_ = os.Remove(dstPath)
+		}
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "UploadSaveFailed", map[string]any{"Error": err.Error()})
 		return
+	}
+
+	// Restore the mode captured before the write. Failures are logged rather
+	// than surfaced: the content is already correct, and a chmod error (an
+	// unusual ACL layout, a read-only mount) must not report the upload as lost.
+	if hadPrev {
+		if err := os.Chmod(dstPath, prevMode); err != nil {
+			slog.Warn("upload: failed to restore destination permissions",
+				slog.String("path", dstPath), slog.String("err", err.Error()))
+		}
 	}
 
 	// Return relative path (always use forward slashes for frontend)
@@ -203,6 +224,24 @@ func resolveUploadDestination(dir, baseName string, overwrite bool) string {
 		}
 	}
 	return dstPath
+}
+
+// existingFileMode reports the permission bits of the regular file already
+// sitting at path, plus whether there was one to preserve.
+//
+// Symbolic links are followed because the upload writes through them (both
+// os.Stat and os.Create resolve the link), so the bits that matter are the
+// target's. A directory is reported as "nothing to preserve" — writing over one
+// fails at os.Create anyway.
+func existingFileMode(path string) (os.FileMode, bool) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return 0, false
+	}
+	// Perm() drops the setuid/setgid/sticky bits, which are exactly the ones a
+	// write clears, so they are put back explicitly.
+	mode := info.Mode().Perm() | (info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky))
+	return mode, true
 }
 
 // maxUploadCheckFiles bounds the preflight request: the body is only file
