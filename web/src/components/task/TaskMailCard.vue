@@ -112,7 +112,7 @@ onMounted(async () => {
   font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   text-align: right;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   min-width: 0;
 }
 .mail-card-hint {

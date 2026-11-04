@@ -329,7 +329,7 @@ async function remove(): Promise<void> {
   font-size: var(--font-size-sm, 12px);
   line-height: 1.65;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   color: var(--text-primary);
 }
 .mail-reader__attachments {
