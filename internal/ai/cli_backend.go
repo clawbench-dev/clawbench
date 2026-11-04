@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 )
 
 // streamWaitDelay bounds how long the process's exec-managed pipes (stderr)
@@ -146,8 +147,11 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			slog.String("agent_id", req.AgentID))
 	}
 
-	// Initialize env vars from current process environment
-	cmd.Env = os.Environ()
+	// Inherit the server environment, plus anything the user exports from their
+	// shell startup files (.bashrc / .zshrc). A server started from a desktop
+	// launcher or systemd never sourced them, so CLI agents would come up
+	// without the credentials the user's terminal session has (issue #619).
+	cmd.Env = platform.MergeLoginShellEnv(os.Environ())
 
 	// Mark as ClawBench child process for orphan cleanup on server crash.
 	// On restart, CleanupOrphans scans /proc for this marker and kills
