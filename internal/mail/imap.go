@@ -255,25 +255,24 @@ func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID u
 	return headers, nil
 }
 
-// headerFetchFields are the headers the cache keeps. They are fetched as a
-// header block and parsed with enmime instead of asking the server for an
-// ENVELOPE:
+// headerSectionItem asks for the message's header block, which is parsed with
+// enmime instead of asking the server for an ENVELOPE:
 //
 // QQ Mail (and other Chinese providers) emit ENVELOPE structures that violate
 // RFC 9051's grammar — one malformed message makes go-imap's strict parser
 // abort with `imapwire: expected ')', got "z"`, which kills the connection and
 // with it the whole account sync. A header block is opaque bytes: a broken
 // header can only cost that one message's fields, never the connection.
-var headerFetchFields = []string{
-	"From", "To", "Cc", "Reply-To", "Subject", "Date",
-	"Message-ID", "In-Reply-To", "References",
-}
-
+//
+// Deliberately the WHOLE header, not `HEADER.FIELDS (From To …)`: QQ accepts
+// that form and answers with an empty block (measured: 2 bytes, just CRLF), so
+// every message arrived with no subject and no sender. The unfiltered form
+// returns the real headers (~4 KB per message); the filter saves bandwidth on
+// servers that implement it, but a silently empty mailbox costs far more.
 func headerSectionItem() *imap.FetchItemBodySection {
 	return &imap.FetchItemBodySection{
-		Specifier:    imap.PartSpecifierHeader,
-		HeaderFields: headerFetchFields,
-		Peek:         true,
+		Specifier: imap.PartSpecifierHeader,
+		Peek:      true,
 	}
 }
 
