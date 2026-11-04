@@ -282,6 +282,76 @@ func TestFetchUpgradeInfo_AllSourcesFail(t *testing.T) {
 	assert.Contains(t, err.Error(), "all registry sources failed")
 }
 
+// A candidate that never answers must cost its own attempt budget, not the
+// whole check. The check is user-facing: the frontend aborts at its 10s default
+// timeout, so a check that spends 10s per candidate gets discarded even when
+// the fallback would have answered.
+func TestFetchUpgradeInfo_StuckCandidateCostsOneAttemptBudget(t *testing.T) {
+	resp := npmRegistryResponse{}
+	resp.Version = "99.0.0"
+	resp.Dist.Tarball = "https://mirror.example.com/pkg/-/pkg-99.0.0.tgz"
+	body, err := json.Marshal(resp)
+	require.NoError(t, err)
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+	upgradeHTTPClient = &http.Client{Transport: &stuckDefaultTransport{mirrorBody: body}}
+
+	orig := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(orig)
+	platform.ChinaMirrorChecked.Store(2) // default = registry.npmjs.org
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
+	os.Setenv("NPM_CONFIG_REGISTRY", "https://mirror.example.com")
+
+	start := time.Now()
+	info, err := fetchUpgradeInfo()
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Equal(t, "99.0.0", info.LatestVersion)
+	// The stuck candidate burns upgradeRegistryAttemptBudget; the mirror then
+	// answers immediately. Anything near the old per-query 10s means the
+	// candidate budgets are shared again.
+	assert.Less(t, elapsed, upgradeRegistryAttemptBudget+2*time.Second,
+		"a stuck candidate must not consume the whole check")
+}
+
+// stuckDefaultTransport hangs on the official registry hosts until the request
+// context is cancelled, and answers every other host with mirrorBody.
+type stuckDefaultTransport struct {
+	mirrorBody []byte
+}
+
+func (t *stuckDefaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host == "registry.npmjs.org" || req.URL.Host == "registry.npmmirror.com" {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(t.mirrorBody)),
+		Request:    req,
+	}, nil
+}
+
+// The budgets are only useful if they stay under the timeout the caller
+// actually waits for. Pinned here because the two sides live in different
+// languages: web/src/utils/api.ts aborts at API_TIMEOUT_MS (10s), so a server
+// budget at or above that would keep discarding checks the server completes.
+func TestUpgradeCheckBudgetsFitClientTimeout(t *testing.T) {
+	const clientTimeout = 10 * time.Second
+
+	assert.Less(t, upgradeCheckBudget, clientTimeout)
+	// Worst case: the default candidate times out, the fallback mirror answers,
+	// and its signature is then verified. registryCandidates returns at most the
+	// default base plus the user's mirror.
+	worstCase := 2*upgradeRegistryAttemptBudget + upgradeSignatureKeysBudget
+	assert.LessOrEqual(t, worstCase, upgradeCheckBudget)
+}
+
 // --- helpers ---
 
 // failoverTransport routes the default registry base to defaultBase and the
@@ -1021,7 +1091,7 @@ func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fetchUpgradeInfoFromBase(baseURL, pkg, version.Get())
+	return fetchUpgradeInfoFromBase(context.Background(), baseURL, pkg, version.Get())
 }
 
 // --- downloadAndExtract ---
@@ -1231,6 +1301,90 @@ func TestDownloadAndExtract_CancelledContext(t *testing.T) {
 	destDir := t.TempDir()
 	err := downloadAndExtract(ctx, ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
+}
+
+// A stream that goes silent must be cut short by the stall watchdog instead of
+// holding the total budget. This is the failure a user actually hits on a dead
+// connection: headers arrive, then nothing.
+func TestDownloadAndExtract_StalledStreamAborts(t *testing.T) {
+	origIdle := upgradeDownloadIdleTimeout
+	upgradeDownloadIdleTimeout = 100 * time.Millisecond
+	defer func() { upgradeDownloadIdleTimeout = origIdle }()
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	release := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Enough bytes to start the stream, never enough to finish it.
+		w.Header().Set("Content-Length", "1000000")
+		_, _ = w.Write([]byte{0x1f, 0x8b, 0x08, 0x00})
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer ts.Close()
+	defer close(release)
+
+	upgradeHTTPClient = ts.Client()
+
+	start := time.Now()
+	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(t.TempDir(), "out"))
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stalled", "the failure must say the stream stopped, not 'context canceled'")
+	assert.Less(t, elapsed, 5*time.Second, "a silent stream must not hold the whole download budget")
+}
+
+// A slow link that keeps delivering bytes must not be killed: the watchdog
+// measures silence, not elapsed time.
+func TestDownloadAndExtract_SlowButProgressingSucceeds(t *testing.T) {
+	origIdle := upgradeDownloadIdleTimeout
+	// Generous next to the 20ms chunk gap: a loaded machine must not turn this
+	// into a stall.
+	upgradeDownloadIdleTimeout = time.Second
+	defer func() { upgradeDownloadIdleTimeout = origIdle }()
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	binContent := []byte("#!/bin/sh\necho slow")
+	tarball, integrity := buildTarball(t, binContent)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		// Several chunks, each gap shorter than the idle timeout but the total
+		// transfer longer than it.
+		const chunk = 16
+		for offset := 0; offset < len(tarball); offset += chunk {
+			end := min(offset+chunk, len(tarball))
+			_, _ = w.Write(tarball[offset:end])
+			w.(http.Flusher).Flush()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, mustDigest(t, integrity, ""), destPath))
+
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, binContent, got)
+}
+
+// The shared client must keep a header timeout (so a request that never answers
+// cannot hang) and must not have a client-wide timeout (which would cap the
+// tarball body and kill slow downloads).
+func TestUpgradeHTTPClient_TransportBackstops(t *testing.T) {
+	client := newUpgradeHTTPClient()
+
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok, "the upgrade client must carry an *http.Transport")
+	assert.Equal(t, upgradeResponseHeaderTimeout, transport.ResponseHeaderTimeout)
+	assert.Zero(t, client.Timeout, "a client-wide timeout would also cap the download body")
 }
 
 func TestDownloadAndExtract_DestNotWritable(t *testing.T) {

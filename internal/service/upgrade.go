@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbench/internal/platform"
@@ -43,7 +44,59 @@ const (
 
 // upgradeHTTPClient is the HTTP client used for upgrade requests.
 // Overridden in tests to point at httptest.NewServer.
-var upgradeHTTPClient = http.DefaultClient
+//
+// It deliberately carries no client-wide Timeout: that would cap the tarball
+// body too, and a large download on a slow-but-working link legitimately takes
+// longer than any fixed total. Each request supplies its own context instead
+// (upgradeRegistryAttemptBudget, upgradeSignatureKeysBudget,
+// upgradeDownloadBudget), with the transport backstop below as a second line of
+// defense for the one phase a context may never reach: waiting for headers.
+var upgradeHTTPClient = newUpgradeHTTPClient()
+
+// upgradeResponseHeaderTimeout bounds the wait for response headers on every
+// upgrade request. Without it, a server that accepts the connection and then
+// says nothing hangs until the caller's context expires — and a future call
+// site that forgets a context would hang forever. Body reads are deliberately
+// not covered here; the download path has its own stall watchdog.
+const upgradeResponseHeaderTimeout = 20 * time.Second
+
+// newUpgradeHTTPClient builds the production client, keeping
+// http.DefaultTransport's settings (proxy, dial and TLS timeouts) and adding
+// the header timeout.
+func newUpgradeHTTPClient() *http.Client {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// Someone replaced http.DefaultTransport; still get the backstop.
+		base = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	transport := base.Clone()
+	transport.ResponseHeaderTimeout = upgradeResponseHeaderTimeout
+	return &http.Client{Transport: transport}
+}
+
+// Time budgets for one upgrade check.
+//
+// These bound network waits, and the whole check has to fit inside the
+// frontend's default request timeout (web/src/utils/api.ts API_TIMEOUT_MS =
+// 10s): the browser aborts there and throws away a check the server would have
+// completed. Budgeting per query instead would stack — two candidates at 10s
+// each is already twice what the client waits.
+//
+// The two budgets here plus upgradeSignatureKeysBudget add up to
+// upgradeCheckBudget, so the worst case (the default registry times out, the
+// fallback mirror answers, its signature is then verified) lands exactly on the
+// overall cap rather than past it.
+const (
+	// upgradeCheckBudget bounds the whole check, across every candidate. It is
+	// the backstop that keeps the sum of the per-request budgets under the
+	// client's timeout.
+	upgradeCheckBudget = 8 * time.Second
+
+	// upgradeRegistryAttemptBudget bounds one candidate's metadata query.
+	// Independent per candidate: a hanging default registry must not eat the
+	// fallback mirror's window.
+	upgradeRegistryAttemptBudget = 3 * time.Second
+)
 
 // upgradeShutdownFunc is called to gracefully shut down the server during upgrade.
 var upgradeShutdownFunc func()
@@ -267,9 +320,12 @@ func fetchUpgradeInfo() (*UpgradeInfo, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), upgradeCheckBudget)
+	defer cancel()
+
 	var errs []error
 	for _, registryBase := range registryCandidates() {
-		info, err := fetchUpgradeInfoFromBase(registryBase, pkg, currentVer)
+		info, err := fetchUpgradeInfoFromBase(ctx, registryBase, pkg, currentVer)
 		if err == nil {
 			return info, nil
 		}
@@ -281,10 +337,12 @@ func fetchUpgradeInfo() (*UpgradeInfo, error) {
 }
 
 // fetchUpgradeInfoFromBase queries a single registry base and returns upgrade info.
-func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInfo, error) {
+// parent carries the check-wide deadline; this candidate gets its own budget on
+// top of it.
+func fetchUpgradeInfoFromBase(parent context.Context, registryBase, pkg, currentVer string) (*UpgradeInfo, error) {
 	url := fmt.Sprintf("%s/%s/latest", registryBase, pkg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(parent, upgradeRegistryAttemptBudget)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
@@ -328,7 +386,14 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 	// A failed check yields issues rather than an error — the upgrade proceeds
 	// with the integrity check alone, and the messages are surfaced to the user.
 	// See verifyRegistrySignature for why this does not abort.
-	sigIssues := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
+	//
+	// This runs on the check-wide context, not the metadata query's: the keys
+	// fetch is a separate request to a different host and carries its own budget
+	// (upgradeSignatureKeysBudget). Sharing the metadata query's window would
+	// let a slow-but-successful query leave the signature check a sliver of
+	// time, which reports "keys unreachable" — and therefore an unauthenticated
+	// release — for a release that is signed and verifiable.
+	sigIssues := verifyRegistrySignature(parent, pkg, npmResp.Version, npmResp.Dist.Integrity,
 		npmResp.Dist.Signatures, registryBase)
 
 	// Resolve the hash here too, even though the download happens later. Both
@@ -410,7 +475,11 @@ func rewriteTarballURL(tarball, base string) string {
 // matches the metadata actually being installed. Compared by exact value; the
 // value is a sorted list of issue codes, not user-facing text.
 func PerformUpgrade(acknowledgedIssues string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Cancellation only. The download owns its own time limits
+	// (upgradeDownloadIdleTimeout / upgradeDownloadBudget): a single window over
+	// the whole flow would be the wrong shape for a transfer, and the other
+	// steps are local and not interruptible anyway.
+	ctx, cancel := context.WithCancel(context.Background())
 	upgradeCancel = cancel
 	go performUpgrade(ctx, acknowledgedIssues)
 }
@@ -704,13 +773,57 @@ const (
 	maxArchiveSize = 1 << 30   // 1 GiB decompressed stream
 )
 
+// Download timeouts.
+//
+// The shape matters more than the numbers: a total-time budget kills a large
+// tarball near the end on a slow-but-working link, while a connection that
+// silently stops still holds the entire budget before anyone notices. So the
+// primary limit is silence — no bytes for upgradeDownloadIdleTimeout — and the
+// total is only a backstop for a stream that trickles forever.
+//
+// Variables rather than constants so tests can shorten them.
+var (
+	// upgradeDownloadIdleTimeout aborts a download whose stream stops
+	// delivering bytes.
+	upgradeDownloadIdleTimeout = 30 * time.Second
+
+	// upgradeDownloadBudget is the total backstop for one download.
+	upgradeDownloadBudget = 30 * time.Minute
+)
+
+// errDownloadStalled is the cancellation cause for a download whose stream went
+// silent. It is distinct from context.Canceled so the failure can be described
+// as a stall rather than as a generic cancellation.
+var errDownloadStalled = errors.New("download stalled")
+
+// errDownloadBudgetExhausted is the cancellation cause for a download that
+// trickled for longer than upgradeDownloadBudget.
+var errDownloadBudgetExhausted = errors.New("download budget exhausted")
+
 // downloadAndExtract downloads the npm tarball, verifies it against digest, and
-// extracts the binary. ctx provides timeout and cancellation.
+// extracts the binary. parent provides cancellation; the time limits live here
+// (see upgradeDownloadIdleTimeout and upgradeDownloadBudget).
+//
+// A download that stops delivering bytes is aborted by a stall watchdog rather
+// than by the total budget: see upgradeDownloadIdleTimeout.
 //
 // Verification is attempted whenever the digest carries a hash. A digest with
 // no hash (the registry supplied none) extracts without comparison and logs
 // that fact, rather than reporting a verification that did not happen.
-func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedDigest, destPath string) error {
+func downloadAndExtract(parent context.Context, tarballURL string, digest expectedDigest, destPath string) (err error) {
+	ctx, cancel := context.WithCancelCause(parent)
+	defer cancel(nil)
+	defer func() {
+		if err != nil {
+			err = describeDownloadFailure(ctx, err)
+		}
+	}()
+
+	// Total backstop, separate from the caller's context so the two cannot be
+	// confused: a caller-supplied deadline must not be reported as ours.
+	budget := time.AfterFunc(upgradeDownloadBudget, func() { cancel(errDownloadBudgetExhausted) })
+	defer budget.Stop()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
@@ -726,9 +839,14 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
+	// Reset the silence window on every read that returns data, so a slow link
+	// keeps going while a dead one is cut short.
+	watchdog := newStallWatchdog(upgradeDownloadIdleTimeout, cancel)
+	defer watchdog.stop()
+
 	// Hash the bytes as they stream in, so verification needs no second pass.
 	hasher := digest.newHasher()
-	bodyReader := io.TeeReader(resp.Body, hasher)
+	bodyReader := io.TeeReader(&stallDetectingBody{ReadCloser: resp.Body, watchdog: watchdog}, hasher)
 
 	// Wrap body with progress reader (throttled)
 	totalSize := resp.ContentLength
@@ -794,6 +912,71 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 	}
 
 	return fmt.Errorf("binary '%s' not found in tarball", binName)
+}
+
+// describeDownloadFailure turns the context's cancellation cause into a message
+// that says what actually happened. Both failure modes otherwise surface as a
+// read error ("context canceled" / "deadline exceeded"), which reads like a bug
+// rather than a network condition.
+func describeDownloadFailure(ctx context.Context, err error) error {
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, errDownloadStalled):
+		return fmt.Errorf("download stalled: no data received for %s", upgradeDownloadIdleTimeout)
+	case errors.Is(cause, errDownloadBudgetExhausted):
+		return fmt.Errorf("download did not finish within %s", upgradeDownloadBudget)
+	default:
+		return err
+	}
+}
+
+// stallDetectingBody reports progress to the watchdog on every read that
+// returns bytes.
+type stallDetectingBody struct {
+	io.ReadCloser
+	watchdog *stallWatchdog
+}
+
+func (b *stallDetectingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.watchdog.touch()
+	}
+	return n, err
+}
+
+// stallWatchdog cancels a download when its stream stops delivering bytes.
+// The timer is reset on every read that returns data, so it measures silence
+// rather than elapsed time.
+type stallWatchdog struct {
+	mu      sync.Mutex
+	timer   *time.Timer
+	idle    time.Duration
+	cancel  context.CancelCauseFunc
+	stopped bool
+}
+
+func newStallWatchdog(idle time.Duration, cancel context.CancelCauseFunc) *stallWatchdog {
+	w := &stallWatchdog{idle: idle, cancel: cancel}
+	w.timer = time.AfterFunc(idle, func() { cancel(errDownloadStalled) })
+	return w
+}
+
+// touch records progress, restarting the silence window.
+func (w *stallWatchdog) touch() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return
+	}
+	w.timer.Reset(w.idle)
+}
+
+// stop releases the timer once the download is over.
+func (w *stallWatchdog) stop() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
+	w.timer.Stop()
 }
 
 // extractBinaryFromTar writes the binary entry currently positioned in tarReader

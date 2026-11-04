@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The npm registry signs every published version with an ECDSA P-256 key whose
@@ -303,9 +304,20 @@ func verifyECDSASignature(key npmSigningKey, sigB64, payload string) error {
 	return nil
 }
 
+// upgradeSignatureKeysBudget bounds the signing-keys fetch. It is separate from
+// the metadata query's budget because these are two independent requests: a
+// slow metadata response must not leave the signature check with almost no
+// time, which would report "keys unreachable" for a release that is in fact
+// signed and verifiable. The two budgets plus the metadata one add up to the
+// check-wide cap (see upgradeCheckBudget).
+const upgradeSignatureKeysBudget = 2 * time.Second
+
 // fetchNpmSigningKeys retrieves npm's published signing keys from the canonical
 // registry, independent of whichever registry served the package metadata.
-func fetchNpmSigningKeys(ctx context.Context) ([]npmSigningKey, error) {
+func fetchNpmSigningKeys(parent context.Context) ([]npmSigningKey, error) {
+	ctx, cancel := context.WithTimeout(parent, upgradeSignatureKeysBudget)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, npmjsRegistryBase+npmKeysPath, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create keys request: %w", err)

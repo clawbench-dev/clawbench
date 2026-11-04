@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,10 +13,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
+
+	"clawbench/internal/platform"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -534,7 +539,7 @@ func TestFetchUpgradeInfo_VerifiesSignature(t *testing.T) {
 		keysJSON:    keys.keysJSON(t),
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
 	require.NoError(t, err)
 	assert.Equal(t, "99.0.0", info.LatestVersion)
 }
@@ -568,7 +573,7 @@ func TestFetchUpgradeInfo_TamperedMetadataWarns(t *testing.T) {
 		keysJSON:    keys.keysJSON(t),
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
 	require.NoError(t, err, "signature failures must not abort the upgrade")
 	require.NotEmpty(t, info.VerificationWarning, "the tampering must be surfaced")
 	assert.Contains(t, info.VerificationWarning, "did not verify")
@@ -595,7 +600,7 @@ func TestFetchUpgradeInfo_VerifiedReleaseHasNoWarning(t *testing.T) {
 		keysJSON:    keys.keysJSON(t),
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
 	require.NoError(t, err)
 	assert.Empty(t, info.VerificationWarning)
 }
@@ -630,7 +635,7 @@ func TestFetchUpgradeInfo_MissingHashIsReportedBeforeDownload(t *testing.T) {
 		keysStatus: http.StatusNotFound,
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(mirror, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), mirror, pkg, "0.1.0")
 	require.NoError(t, err)
 
 	require.NotEmpty(t, info.VerificationWarning,
@@ -662,11 +667,86 @@ func TestFetchUpgradeInfo_ReportsBothReasons(t *testing.T) {
 
 	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
 
-	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
 	require.NoError(t, err)
 
 	// Both reasons appear: the signature check's complaint and the digest
 	// resolution's.
 	assert.Contains(t, info.VerificationWarning, "neither a signature nor an integrity hash")
 	assert.Contains(t, info.VerificationWarning, "no integrity hash for this release")
+}
+
+// Each request must carry its own budget. Sharing one window let a slow
+// metadata query leave the signature check with almost no time, which reports
+// "keys unreachable" — an unauthenticated release — for a release that is in
+// fact signed and verifiable.
+func TestFetchUpgradeInfo_EachRequestHasItsOwnBudget(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// Pin the default registry so the check does not run the China probe.
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2)
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+	keys := newTestSigningKeys(t)
+
+	var metadataBudget, keysBudget time.Duration
+	upgradeHTTPClient = &http.Client{Transport: &budgetProbeTransport{
+		metadata: func(remaining time.Duration) []byte {
+			metadataBudget = remaining
+			// Spend nearly the whole attempt window so a shared budget would
+			// leave the signature check with a fraction of a second.
+			time.Sleep(2500 * time.Millisecond)
+			body, err := json.Marshal(signedRegistryResponse(t, keys, pkg, "99.0.0", wellFormedIntegrity))
+			require.NoError(t, err)
+			return body
+		},
+		keys: func(remaining time.Duration) []byte {
+			keysBudget = remaining
+			return keys.keysJSON(t)
+		},
+	}}
+
+	info, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	assert.Equal(t, "99.0.0", info.LatestVersion)
+
+	const slack = 400 * time.Millisecond
+	assert.Greater(t, metadataBudget, upgradeRegistryAttemptBudget-slack,
+		"the metadata query must start with its own budget, not a shared window")
+	assert.LessOrEqual(t, metadataBudget, upgradeRegistryAttemptBudget)
+
+	assert.Greater(t, keysBudget, upgradeSignatureKeysBudget-slack,
+		"the signature check must get a fresh budget, not the metadata query's leftovers")
+	assert.LessOrEqual(t, keysBudget, upgradeSignatureKeysBudget)
+}
+
+// budgetProbeTransport answers the metadata query and the signing-keys endpoint
+// separately, reporting how much of its own deadline each request still had on
+// arrival.
+type budgetProbeTransport struct {
+	metadata func(remaining time.Duration) []byte
+	keys     func(remaining time.Duration) []byte
+}
+
+func (t *budgetProbeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	deadline, ok := req.Context().Deadline()
+	if !ok {
+		return nil, errors.New("request carries no deadline")
+	}
+
+	handler := t.metadata
+	if req.URL.Path == npmKeysPath {
+		handler = t.keys
+	}
+
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(handler(time.Until(deadline)))),
+		Request:    req,
+	}, nil
 }

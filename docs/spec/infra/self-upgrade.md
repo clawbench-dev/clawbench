@@ -45,6 +45,7 @@ sequenceDiagram
 - **版本短路**：升级前探测磁盘上二进制的版本，若已 ≥ 目标版本（典型场景：用户已通过 `npm install/update` 更新了包，只是进程还在跑旧版），跳过下载直接重启加载。避免为同一版本重复下载约 42MB。探测失败或重启函数未接线时**回退**正常下载流程，不做乐观假设；开发版（`dev` / git 短哈希）不参与比较
 - **Android 版本不匹配检测**：原生层在健康检查（`GET /api/health`）通过后、加载 WebView 之前对比 APK 版本与服务器版本（`VersionCompare.shouldShowMismatch`）。APK 落后时展示阻塞式 web 风格原生卡片（`MainActivity.showVersionMismatchDialog` → `WebStyleDialog`，样式对齐 web 的 `DialogOverlay.vue`，配色经 `ThemePalette` 按主题 ID 解析——与 splash / 状态栏同一张表，故卡片底色与背景一致），提示新旧版本可能不兼容，提供「下载 APK」与「强制跳过」两个动作；点下载会启动 DownloadManager 下载并退回原生登录页，完成后经 `getUriForDownloadedFile` 的 content URI 拉起系统安装器（scoped storage 下不能用 File API 定位下载文件），失败路径均有 toast 提示。该弹窗**不记忆跳过**（每次冷启动都会重新提示）。任一侧版本不可解析（`dev`、短哈希、缺 `version` 字段）时一律 fail-open，不阻塞登录。服务端升级后客户端可能落后，检测确保版本一致性
 - **下载校验**：升级包从 registry 拉取，落地前做两层校验——npm 的 `dist.integrity`（SRI，缺省时回退旧式 `dist.shasum`）与 npm 的 registry 签名（对 `<包名>@<版本>:<integrity>` 的 ECDSA P-256 签名，公钥固定取自 `registry.npmjs.org`，不跟随用户配置的镜像）。`/api/upgrade/check` 返回 `verification_warning`，列出本次升级中**无法完成**的校验原因
+- **下载超时按"沉默"计，不按总时长**：`upgradeDownloadIdleTimeout`（30 秒无新字节即中止）是主判据，`upgradeDownloadBudget`（30 分钟）只是"一直涓流"的兜底。反过来做（单一大总时长）会在慢速但正常的链路上把快下完的包砍掉，而真正卡死的连接仍要占满整个预算才被发现。中止原因用 `context.Cause` 区分（`download stalled` / `download did not finish within …`），不落到裸的 `context canceled`。传输层另有 `ResponseHeaderTimeout`（20 秒）兜住"接了连接却不回响应头"，且共享 client **刻意不设** `Timeout`——那会连 tarball 正文一起限死
 
 ### 校验策略：能校验就校验，校验不了由用户决定
 
@@ -59,6 +60,8 @@ sequenceDiagram
 区分第二、三类的理由：第二类是「不知道对不对」，第三类是「明确不对」——把一份已知与预期不符的文件覆盖到正在运行的程序上属于功能损坏，而非安全强度打折。
 
 「无法校验」的确认在**下载之前**完成：这些原因都来自 registry 元数据，无需先下载即可判定。因此 `/api/upgrade/check` 必须能报出全部三类原因（含缺失哈希），否则前端闸门不会触发，安装会在无人确认的情况下静默进行。前端闸门位于 `useUpgrade.startUpgrade()`，两个入口（升级对话框与启动提示）共用，取消则不发起任何请求。
+
+**超时预算按请求分列，且总和必须小于前端默认超时。** `/api/upgrade/check` 是同步请求，前端在 `API_TIMEOUT_MS`（10 秒）处中止——服务端再算得对，超时的结果也会被丢弃。因此候选源之间不共享窗口：每个候选的元数据查询有自己的 `upgradeRegistryAttemptBudget`（首个源挂住不能吃掉回退镜像的额度），签名公钥拉取有自己的 `upgradeSignatureKeysBudget`（否则慢速但成功的元数据查询会把签名检查挤到只剩几百毫秒，从而对一份**已签名且可验证**的发布报出「公钥不可达」），`upgradeCheckBudget` 作为整体上限把三者之和压在客户端超时之内。三者数值与关系由 `TestUpgradeCheckBudgetsFitClientTimeout` 钉住。
 
 确认在服务端会被**校验**，而非仅靠前端自律：`POST /api/upgrade/start` 的请求体携带客户端展示并取得同意的**原因码指纹**，服务端与**本次** registry 查询算出的指纹比对，不一致则以 `unverified_not_confirmed` 拒绝。比对用的是同一次查询的结果，所以注册表中途变化时比对会失败——这是期望行为：用户同意的风险描述已不适用，应重新确认。`startUpgrade` 每次尝试前都重新检查，重试不会复用上一次残留的警告。
 
