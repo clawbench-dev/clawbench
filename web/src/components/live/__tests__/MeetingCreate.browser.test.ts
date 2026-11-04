@@ -869,4 +869,30 @@ describe('MeetingCreate in a browser', () => {
       else delete (window as unknown as Record<string, unknown>).isSecureContext
     }
   })
+
+  // An old desktop shell that cannot capture either already gets the full
+  // "insecure origin" block below. Stacking the banner on top would repeat the
+  // same text and the same button twice on one screen.
+  it('does not repeat the HTTPS notice when the desktop shell cannot capture either', async () => {
+    stubCaptureApi(false)
+    cameraDevice.has = false
+    nativeApi.value = { isDesktopApp: () => true }
+    const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      // One notice only, and it is the full block (both variants share
+      // data-role, so the variant class is what tells them apart).
+      expect(wrapper.findAll('[data-role="https-notice"]')).toHaveLength(1)
+      expect(wrapper.find('.https-notice--banner').exists()).toBe(false)
+      expect(wrapper.find('[data-role="https-notice"]').classes()).toContain('https-notice--block')
+      expect(wrapper.find('.https-notice__title').text()).toBe(enMessages.liveShare.httpsNotice.blockTitle)
+      expect(wrapper.find('[data-action="https-notice-generate"]').exists()).toBe(true)
+    } finally {
+      if (original) Object.defineProperty(window, 'isSecureContext', original)
+      else delete (window as unknown as Record<string, unknown>).isSecureContext
+    }
+  })
 })

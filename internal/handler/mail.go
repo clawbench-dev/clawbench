@@ -299,8 +299,8 @@ func ServeMailFolderSubRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sub == "read-all" {
-		if err := service.MarkMailFolderRead(r.Context(), id); err != nil {
-			writeMailError(w, r, err)
+		if rerr := service.MarkMailFolderRead(r.Context(), id); rerr != nil {
+			writeMailError(w, r, rerr)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})

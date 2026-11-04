@@ -235,6 +235,27 @@ func TestApplyHeaderSection(t *testing.T) {
 	}
 }
 
+// The header block must be requested WITHOUT a HEADER.FIELDS filter. QQ Mail
+// accepts the filtered form and answers with an empty block (measured: 2 bytes,
+// just CRLF), which silently produced messages with no subject and no sender.
+// Re-adding a field list here would bring that bug straight back, and it is
+// invisible in the parser tests because they feed a header block directly.
+func TestHeaderSectionItemAsksForWholeHeader(t *testing.T) {
+	item := headerSectionItem()
+	if item == nil {
+		t.Fatal("headerSectionItem returned nil")
+	}
+	if item.Specifier != imap.PartSpecifierHeader {
+		t.Fatalf("specifier = %v, want HEADER", item.Specifier)
+	}
+	if len(item.HeaderFields) != 0 {
+		t.Fatalf("header filter must stay empty (QQ returns an empty block for it), got %v", item.HeaderFields)
+	}
+	if !item.Peek {
+		t.Fatal("must use BODY.PEEK: a fetch that sets \\Seen would mark every message read")
+	}
+}
+
 // Garbage in the header block must cost nothing: the caller keeps whatever the
 // FETCH response already provided (uid/size/flags), so a broken header cannot
 // take down a folder sync.

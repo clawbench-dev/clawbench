@@ -91,7 +91,7 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// RemoveTLSCerts deletes every recognised certificate/key file in dir, so the
+// RemoveTLSCerts deletes every recognized certificate/key file in dir, so the
 // next start falls back to HTTP.
 //
 // It removes ALL known names rather than just the pair ResolveTLSCerts picked:

@@ -312,6 +312,14 @@ func applyHeaderSection(h *MessageHeader, raw []byte) {
 	if err != nil {
 		return
 	}
+	applyHeaderIdentifiers(h, env)
+	applyHeaderAddresses(h, env)
+	applyHeaderDate(h, env)
+}
+
+// applyHeaderIdentifiers fills the message identity fields: subject plus the
+// Message-ID/In-Reply-To/References triple used for threading.
+func applyHeaderIdentifiers(h *MessageHeader, env *enmime.Envelope) {
 	if v := strings.TrimSpace(env.GetHeader("Subject")); v != "" {
 		h.Subject = v
 	}
@@ -328,25 +336,37 @@ func applyHeaderSection(h *MessageHeader, raw []byte) {
 			}
 		}
 	}
-	if list, aerr := env.AddressList("From"); aerr == nil && len(list) > 0 {
+}
+
+// applyHeaderAddresses fills the address fields. A field the parser rejects is
+// left empty rather than failing the whole header.
+func applyHeaderAddresses(h *MessageHeader, env *enmime.Envelope) {
+	if list, err := env.AddressList("From"); err == nil && len(list) > 0 {
 		h.FromName = list[0].Name
 		h.FromAddr = list[0].Address
 	}
-	if list, aerr := env.AddressList("To"); aerr == nil {
+	if list, err := env.AddressList("To"); err == nil {
 		h.To = convertMailAddresses(list)
 	}
-	if list, aerr := env.AddressList("Cc"); aerr == nil {
+	if list, err := env.AddressList("Cc"); err == nil {
 		h.Cc = convertMailAddresses(list)
 	}
-	if list, aerr := env.AddressList("Reply-To"); aerr == nil {
+	if list, err := env.AddressList("Reply-To"); err == nil {
 		h.ReplyTo = convertMailAddresses(list)
 	}
-	if h.Date.IsZero() {
-		if v := env.GetHeader("Date"); v != "" {
-			if d, derr := mail.ParseDate(v); derr == nil {
-				h.Date = d
-			}
-		}
+}
+
+// applyHeaderDate only fills the date when FETCH did not already provide one.
+func applyHeaderDate(h *MessageHeader, env *enmime.Envelope) {
+	if !h.Date.IsZero() {
+		return
+	}
+	v := env.GetHeader("Date")
+	if v == "" {
+		return
+	}
+	if d, err := mail.ParseDate(v); err == nil {
+		h.Date = d
 	}
 }
 
