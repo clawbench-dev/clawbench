@@ -270,13 +270,17 @@ func TestShouldSkipSearchDir(t *testing.T) {
 		{".parcel-cache", ".parcel-cache", true},
 		{".dart_tool", ".dart_tool", true},
 
-		// ── ClawBench's own runtime data ──
-		// The data dir holds session exports and logs (plain text, hundreds of
-		// MB); searching it returns the assistant's own history rather than
-		// the user's source. Both search surfaces must prune it.
-		{".clawbench", ".clawbench", true},
+		// ── ClawBench's own build artifacts ──
+		// `.clawbench-web` is the built frontend and `.clawbench-ci` is CI
+		// scratch; neither is user source.
 		{".clawbench-web", ".clawbench-web", true},
 		{".clawbench-ci", ".clawbench-ci", true},
+
+		// The runtime data dir is NOT pruned: its session exports and logs are
+		// files the user may want to reach from a path annotation, so the walk
+		// must descend into it.
+		{".clawbench", ".clawbench", false},
+		{".clawbench/logs", ".clawbench", false},
 
 		// A source directory whose name merely CONTAINS a pruned name is not
 		// pruned — matching is by exact directory name, not substring.

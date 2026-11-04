@@ -71,11 +71,13 @@ var ignoredSearchDirs = map[string]bool{
 	".dart_tool": true,
 	// Generic caches
 	".cache": true,
-	// ClawBench's own runtime data. `.clawbench` holds the SQLite DB, session
-	// exports and logs (hundreds of MB of JSON/text that would otherwise be
-	// searched as if it were source); `.clawbench-web` is the built frontend;
-	// `.clawbench-ci` is CI scratch. None is user source, and all are gitignored.
-	".clawbench":     true,
+	// Build/CI artifacts. `.clawbench-web` is the built frontend and
+	// `.clawbench-ci` is CI scratch; neither holds user source.
+	//
+	// NOTE: `.clawbench` (the runtime data dir) is deliberately NOT listed.
+	// Its session exports and logs are files the user may legitimately want to
+	// find from a path annotation, so the search must not prune it — the cost
+	// of walking it is accepted.
 	".clawbench-web": true,
 	".clawbench-ci":  true,
 }
