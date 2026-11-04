@@ -36,6 +36,7 @@ type imapClient struct {
 	conn     net.Conn
 	selected string
 	readOnly bool
+	closed   bool
 }
 
 // DialIMAP connects and logs in. The caller owns the returned client.
@@ -89,9 +90,13 @@ func DialIMAP(ctx context.Context, acc Account) (Client, error) {
 }
 
 func (m *imapClient) Close() error {
-	if m.c == nil {
+	if m.c == nil || m.closed {
 		return nil
 	}
+	// Callers hold `defer client.Close()` and also close explicitly on the
+	// failure paths; a second Logout on a dead connection reports "use of
+	// closed network connection", which reads like a real problem.
+	m.closed = true
 	_ = m.conn.SetDeadline(time.Now().Add(2 * time.Second))
 	_ = m.c.Logout().Wait()
 	return m.c.Close()

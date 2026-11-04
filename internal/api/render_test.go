@@ -190,7 +190,17 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// project-filtering description, and again when it gained the
 		// "ACP unconfirmed → empty models" contract note; the headroom is
 		// deliberate, not drift.
-		CommandTask:  9700,
+		//
+		// 9700 → 11500 when the mail trigger landed (measured 11298). The
+		// operation selection is unchanged — this is prose, not a leaked
+		// endpoint. The added bytes are the `trigger_mode=email` contract:
+		// which messages count as new, that the three gates are AND-ed
+		// substring matches, the per-message dedup, and the 5-per-sync cap.
+		// None of that is inferable from the field names, and getting it wrong
+		// makes the AI configure a task that either never fires or fires on the
+		// whole inbox, so it stays in the spec rather than moving to the prompt
+		// template (same bytes, worse locality).
+		CommandTask:  11500,
 		CommandUsage: 2000,
 		// The agent command renders six operations: the CRUD four carry long
 		// field notes (name uniqueness, avatar, disabled, project_scope, ACP

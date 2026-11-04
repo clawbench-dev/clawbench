@@ -8957,6 +8957,150 @@ components:
         at: { type: integer, format: int64, description: 服务端落库时间，Unix 毫秒 }
       required: [id, clientId, speaker, text, at]
 
+    MailAddress:
+      type: object
+      description: 一个解析后的地址。`name` 是显示名（可能为空），`addr` 是裸地址。
+      properties:
+        name: { type: string }
+        addr: { type: string }
+      required: [name, addr]
+
+    MailPreset:
+      type: object
+      description: |
+        常见服务商的服务器预设，供前端自动填表；用户仍可手改。
+        `domains` 用于按邮箱域名匹配，`hintKey` 是提示文案的 i18n 键
+        （多数国内服务商要求「授权码」而不是登录密码）。
+      properties:
+        id: { type: string }
+        label: { type: string }
+        domains:
+          type: array
+          items: { type: string }
+        imapHost: { type: string }
+        imapPort: { type: integer }
+        imapSecurity: { type: string, enum: [tls, starttls, none] }
+        smtpHost: { type: string }
+        smtpPort: { type: integer }
+        smtpSecurity: { type: string, enum: [tls, starttls, none] }
+        hintKey: { type: string }
+      required: [id, label, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity]
+
+    MailAccount:
+      type: object
+      description: |
+        一个邮箱账号。**密码永不回显**：只有 `hasPassword`，读取时带 `reveal=1`
+        才额外返回 `password`。`lastSyncAt` / `lastError` 由服务端在每次同步后
+        更新，客户端不要本地推算。
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        email: { type: string }
+        username: { type: string }
+        imapHost: { type: string }
+        imapPort: { type: integer }
+        imapSecurity: { type: string, enum: [tls, starttls, none] }
+        smtpHost: { type: string }
+        smtpPort: { type: integer }
+        smtpSecurity: { type: string, enum: [tls, starttls, none] }
+        insecureTls: { type: boolean, description: 跳过证书校验（自签名服务器） }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+        lastSyncAt: { type: integer, format: int64, description: Unix 秒；0 表示从未同步 }
+        lastError: { type: string }
+        hasPassword: { type: boolean }
+        createdAt: { type: integer, format: int64 }
+      required: [id, name, email, username, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity, insecureTls, enabled, sortOrder, lastSyncAt, lastError, hasPassword, createdAt]
+
+    MailAccountInput:
+      type: object
+      description: |
+        新增/修改账号的提交体。修改时 `password` 留空表示**保持原密码不变**
+        （服务端不会把空串写进去）；`username` 留空则回落到 `email`。
+        `enabled` 省略时视为 `true`。
+      properties:
+        name: { type: string }
+        email: { type: string }
+        username: { type: string }
+        password: { type: string }
+        imapHost: { type: string }
+        imapPort: { type: integer }
+        imapSecurity: { type: string, enum: [tls, starttls, none] }
+        smtpHost: { type: string }
+        smtpPort: { type: integer }
+        smtpSecurity: { type: string, enum: [tls, starttls, none] }
+        insecureTls: { type: boolean }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+      required: [name, email, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity]
+
+    MailMessage:
+      type: object
+      description: |
+        列表行（不含正文）。`bodyFetched` 为 false 时正文还没缓存，读取单封才会抓；
+        `folderPath` 只在跨文件夹查询（如搜索）时带出。`sentAt` 是 Unix 秒。
+      properties:
+        id: { type: integer, format: int64 }
+        accountId: { type: integer, format: int64 }
+        folderId: { type: integer, format: int64 }
+        folderPath: { type: string }
+        uid: { type: integer, format: int32 }
+        messageId: { type: string }
+        subject: { type: string }
+        fromName: { type: string }
+        fromAddr: { type: string }
+        to:
+          type: array
+          items: { $ref: "#/components/schemas/MailAddress" }
+        cc:
+          type: array
+          items: { $ref: "#/components/schemas/MailAddress" }
+        replyTo: { type: string }
+        inReplyTo: { type: string }
+        references: { type: string }
+        sentAt: { type: integer, format: int64 }
+        size: { type: integer, format: int64 }
+        seen: { type: boolean }
+        flagged: { type: boolean }
+        answered: { type: boolean }
+        hasAttachments: { type: boolean }
+        snippet: { type: string }
+        bodyFetched: { type: boolean }
+      required: [id, accountId, folderId, uid, messageId, subject, fromName, fromAddr, to, cc, replyTo, inReplyTo, references, sentAt, size, seen, flagged, answered, hasAttachments, snippet, bodyFetched]
+
+    MailSendRequest:
+      type: object
+      description: |
+        发信提交体。`to` / `cc` / `bcc` 是已拆好的地址数组（服务端不做文本拆分）；
+        `attachments` 的 `path` 是服务器上的文件路径，随请求一起带走。
+        带 `draftId` 表示这是从草稿发出的，成功后草稿会被删除。
+      properties:
+        accountId: { type: integer, format: int64 }
+        to:
+          type: array
+          items: { type: string }
+        cc:
+          type: array
+          items: { type: string }
+        bcc:
+          type: array
+          items: { type: string }
+        subject: { type: string }
+        text: { type: string }
+        html: { type: string }
+        inReplyTo: { type: string }
+        references: { type: string }
+        attachments:
+          type: array
+          items:
+            type: object
+            properties:
+              filename: { type: string }
+              path: { type: string }
+            required: [filename, path]
+        draftId: { type: integer, format: int64 }
+      required: [accountId, to, cc, bcc, subject, text]
+
     WeChatLogin:
       type: object
       description: |
