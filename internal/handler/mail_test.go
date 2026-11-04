@@ -134,3 +134,22 @@ func TestServeMailPresets_ListsKnownProviders(t *testing.T) {
 	}
 	assert.True(t, qq, "qq preset must be offered")
 }
+
+// The folder subtree serves two POST actions; the method guard distinguishes a
+// wired action from an unknown sub-path (both answer 404 to a bad folder).
+func TestServeMailFolderSubRoutes_ReadAllIsWired(t *testing.T) {
+	teardown := setupMailHandlerEnv(t)
+	defer teardown()
+
+	w := callHandler(ServeMailFolderSubRoutes,
+		newRequest(t, http.MethodGet, "/api/mail/folders/1/read-all", nil))
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+
+	w = callHandler(ServeMailFolderSubRoutes,
+		newRequest(t, http.MethodPost, "/api/mail/folders/1/read-all", nil))
+	assertStatus(t, w, http.StatusNotFound)
+
+	w = callHandler(ServeMailFolderSubRoutes,
+		newRequest(t, http.MethodGet, "/api/mail/folders/1/nope", nil))
+	assertStatus(t, w, http.StatusNotFound)
+}

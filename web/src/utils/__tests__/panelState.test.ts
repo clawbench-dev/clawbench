@@ -41,7 +41,7 @@ describe('panelState registry shape', () => {
     const declared: PanelId[] = [
       'leftCollapsed', 'chatCollapsed', 'splitRatio', 'sessionSidebar',
       'tocDockOpen', 'tocDockWidth', 'tocDockSide', 'fmPreviewRatio',
-      'fmPreviewOpen', 'gitBranchCollapsed', 'gitWorktreeCollapsed',
+      'fmPreviewOpen', 'mailSplitRatio', 'gitBranchCollapsed', 'gitWorktreeCollapsed',
       'gitManageTab', 'leftTab',
     ]
     expect(new Set(declared)).toEqual(new Set(Object.keys(PANEL_ENTRIES)))

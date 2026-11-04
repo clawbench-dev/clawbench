@@ -185,6 +185,17 @@ func (f *fakeMailClient) StoreFlags(_ context.Context, folder string, uid uint32
 	return f.err("store")
 }
 
+func (f *fakeMailClient) MarkAllSeen(_ context.Context, folder string) error {
+	f.flagOps = append(f.flagOps, folder+"/* +[\\Seen]")
+	if err := f.err("mark all seen"); err != nil {
+		return err
+	}
+	for i := range f.headers[folder] {
+		f.headers[folder][i].Seen = true
+	}
+	return nil
+}
+
 func (f *fakeMailClient) Move(_ context.Context, folder string, uid uint32, dest string) error {
 	f.moved = append(f.moved, fmt.Sprintf("%s/%d->%s", folder, uid, dest))
 	return f.err("move")
@@ -514,6 +525,80 @@ func TestSetMailMessageFlagsUpdatesLocalAndServer(t *testing.T) {
 	folder, _ := GetMailFolder(folders[0].ID)
 	if folder.Unread != 0 {
 		t.Fatalf("unread should have dropped to 0, got %d", folder.Unread)
+	}
+}
+
+func TestMarkMailFolderReadMarksEveryMessage(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 4, time.Now())
+	installFakeDialer(t, f)
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	folders, _ := ListMailFolders(acc.ID)
+	if folders[0].Unread != 2 {
+		t.Fatalf("expected 2 unread after sync, got %d", folders[0].Unread)
+	}
+
+	if err := MarkMailFolderRead(context.Background(), folders[0].ID); err != nil {
+		t.Fatalf("mark all read: %v", err)
+	}
+
+	// One range-wide STORE, not one per message.
+	if len(f.flagOps) != 1 || !strings.Contains(f.flagOps[0], "/* +[\\Seen]") {
+		t.Fatalf("expected a single folder-wide store, got %+v", f.flagOps)
+	}
+	for _, h := range f.headers["INBOX"] {
+		if !h.Seen {
+			t.Fatalf("server-side message %d still unseen", h.UID)
+		}
+	}
+	msgs, _ := ListMailMessages(MailMessageFilter{FolderID: folders[0].ID})
+	for _, m := range msgs {
+		if !m.Seen {
+			t.Fatalf("cached message %d still unseen", m.ID)
+		}
+	}
+	folder, _ := GetMailFolder(folders[0].ID)
+	if folder.Unread != 0 {
+		t.Fatalf("unread should be 0, got %d", folder.Unread)
+	}
+}
+
+func TestMarkMailFolderReadLeavesCacheWhenServerFails(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 4, time.Now())
+	installFakeDialer(t, f)
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	folders, _ := ListMailFolders(acc.ID)
+
+	f.failOn = "mark all seen"
+	if err := MarkMailFolderRead(context.Background(), folders[0].ID); err == nil {
+		t.Fatal("expected the server failure to surface")
+	}
+	f.failOn = ""
+
+	msgs, _ := ListMailMessages(MailMessageFilter{FolderID: folders[0].ID})
+	unseen := 0
+	for _, m := range msgs {
+		if !m.Seen {
+			unseen++
+		}
+	}
+	if unseen != 2 {
+		t.Fatalf("cache must be untouched when the server rejects, got %d unseen", unseen)
+	}
+	folder, _ := GetMailFolder(folders[0].ID)
+	if folder.Unread != 2 {
+		t.Fatalf("unread counter must be untouched, got %d", folder.Unread)
 	}
 }
 

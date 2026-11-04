@@ -110,6 +110,8 @@ export default {
     },
     bar: {
       account: 'Switch account',
+      folder: 'Folder',
+      markAllRead: 'Mark all read',
       refresh: 'Check mail',
       compose: 'Compose',
       manage: 'Account settings',
@@ -152,6 +154,7 @@ export default {
     },
     compose: {
       title: 'New message',
+      back: 'Back',
       to: 'To',
       cc: 'Cc',
       bcc: 'Bcc',

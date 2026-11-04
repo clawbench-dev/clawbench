@@ -1,5 +1,5 @@
 <template>
-  <div class="mail-panel">
+  <div ref="rootEl" class="mail-panel">
     <div v-if="initialLoading" class="mail-panel__loading">
       <PanelSkeleton variant="list" />
     </div>
@@ -20,51 +20,73 @@
     </MailEmpty>
 
     <template v-else>
+      <!-- Wide: list on the left, the opened message or composer beside it, so
+           reading and writing never take the list away. Narrow: the same views
+           drill down — the toolbar belongs to the list only there, and a
+           drill-down page owns the whole panel below the app header. -->
       <MailFolderBar
+        v-if="split || view === 'list'"
         v-model:account-id="activeAccountId"
         :accounts="accounts"
         :folders="list.folders.value"
         :folder-id="list.activeFolderId.value"
         :query="list.query.value"
         :refreshing="refreshing"
+        :marking="markingRead"
         @select-folder="onSelectFolder"
         @refresh="refreshAll"
         @compose="openCompose"
+        @mark-all-read="markAllRead"
         @setup="emit('open-settings')"
         @update:query="onQuery"
       />
 
-      <MailList
-        v-if="view === 'list'"
-        :messages="list.messages.value"
-        :loading="list.loading.value"
-        :loading-more="list.loadingMore.value"
-        :error="list.error.value"
-        :has-more="list.hasMore.value"
-        :query="list.query.value"
-        @open="openMessage"
-        @load-more="list.loadMore"
-        @retry="list.reload"
-      />
+      <SplitView
+        class="mail-panel__split"
+        orientation="horizontal"
+        :enabled="split && view !== 'list'"
+        :ratio="splitRatio"
+        :min-left="SPLIT_MIN_LIST"
+        :min-right="SPLIT_MIN_DETAIL"
+        @update:ratio="onSplitRatioChange"
+      >
+        <template #left>
+          <MailList
+            v-if="split || view === 'list'"
+            :messages="list.messages.value"
+            :loading="list.loading.value"
+            :loading-more="list.loadingMore.value"
+            :error="list.error.value"
+            :has-more="list.hasMore.value"
+            :query="list.query.value"
+            :active-id="view === 'reader' ? readerMessageId : 0"
+            @open="openMessage"
+            @load-more="list.loadMore"
+            @retry="list.reload"
+          />
+        </template>
 
-      <MailReader
-        v-else
-        :key="readerMessageId"
-        :message-id="readerMessageId"
-        @back="backToList"
-        @reply="startReply"
-        @deleted="onMessageDeleted"
-        @updated="onMessageUpdated"
-      />
+        <template #right>
+          <MailReader
+            v-if="view === 'reader'"
+            :key="readerMessageId"
+            :message-id="readerMessageId"
+            @back="backToList"
+            @reply="startReply"
+            @deleted="onMessageDeleted"
+            @updated="onMessageUpdated"
+          />
+
+          <MailCompose
+            v-if="view === 'compose'"
+            :account-id="activeAccountId"
+            :initial="composeInitial"
+            @close="closeCompose"
+            @sent="onSent"
+          />
+        </template>
+      </SplitView>
     </template>
-
-    <MailCompose
-      :open="composeOpen"
-      :account-id="activeAccountId"
-      :initial="composeInitial"
-      @close="composeOpen = false"
-      @sent="onSent"
-    />
   </div>
 </template>
 
@@ -72,20 +94,26 @@
 /**
  * The 邮件 dock tab.
  *
- * Two views and one overlay:
+ * The layout follows the panel's own width, not the window's: the dock pane is
+ * 40% of the window, so the same window can hold a wide or a narrow mailbox.
  *
- *   list ──点一行──▶ reader ──返回──▶ list
- *     └──写邮件──▶ compose (modal)
+ *   narrow (<520px) — drill down, one view at a time:
+ *     list ──点一行──▶ reader ──返回──▶ list
+ *       └──写邮件──▶ compose ◀──回复 / 转发──┘
  *
- * A three-pane layout is deliberately NOT used: the dock pane is 40% of the
- * window (320px at its narrowest), where a folder rail + list + reading pane
- * would each be too narrow to read. Drilling down gives the message the full
- * width and matches every other panel in the app.
+ *   wide (≥ both panes fit) — list and detail side by side, with the shared
+ *     draggable divider; with nothing open the list keeps the whole width and
+ *     no second column is reserved:
+ *     [ list | reader or compose ]
+ *
+ * The composer used to be a modal on top of the list; it is a pane now, so it
+ * never covers the mail it was started from.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Mail } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import SplitView from '@/components/common/SplitView.vue'
 import MailEmpty from './MailEmpty.vue'
 import MailFolderBar from './MailFolderBar.vue'
 import MailList from './MailList.vue'
@@ -94,9 +122,12 @@ import MailCompose from './MailCompose.vue'
 import { useMailAccounts } from '@/composables/useMailAccounts'
 import { useMailMessages } from '@/composables/useMailMessages'
 import { refreshMailUnread } from '@/composables/useMailUnread'
-import { apiGet } from '@/utils/api'
+import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
-import type { MailMessage, MailReplyContext } from '@/utils/mailTypes'
+import { useToast } from '@/composables/useToast'
+import { useUiScale } from '@/composables/useUiScale'
+import { DEFAULT_MAIL_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
+import { mailErrorMessage, type MailMessage, type MailReplyContext } from '@/utils/mailTypes'
 
 const props = defineProps<{ active?: boolean }>()
 const emit = defineEmits<{ 'open-settings': [] }>()
@@ -107,12 +138,49 @@ const list = useMailMessages()
 
 const accounts = computed(() => accountApi.accounts.value)
 const activeAccountId = ref(0)
-const view = ref<'list' | 'reader'>('list')
+const view = ref<'list' | 'reader' | 'compose'>('list')
 const readerMessageId = ref(0)
 const initialLoading = ref(true)
 const refreshing = ref(false)
-const composeOpen = ref(false)
+const markingRead = ref(false)
+// Where the composer returns to: a reply started from the reader goes back to
+// that message, a new mail started from the folder bar goes back to the list.
+const composeReturn = ref<'list' | 'reader'>('list')
 const composeInitial = ref<Partial<MailReplyContext> & { body?: string; draftId?: number }>({})
+
+// Pane minimums in design px. The split appears only when both fit: below that
+// the two views would each be too narrow to read, so they drill down instead.
+// `clientWidth` is CSS px, so the threshold is scaled like every other geometry
+// comparison (see designToCss).
+const SPLIT_MIN_LIST = 200
+const SPLIT_MIN_DETAIL = 300
+const SPLIT_MIN_PANEL = SPLIT_MIN_LIST + SPLIT_MIN_DETAIL + 1
+
+const uiScale = useUiScale()
+const rootEl = ref<HTMLElement | null>(null)
+const panelWidth = ref(0)
+const split = computed(() => panelWidth.value >= SPLIT_MIN_PANEL * uiScale.value)
+
+// The divider between the panes is draggable. The ratio is layout state, so it
+// lives in the shared registry: it survives reloads and follows the user's
+// layout-memory choice.
+const splitRatio = ref(clampMailSplitRatio(readPanelState('mailSplitRatio')))
+
+function onSplitRatioChange(ratio: number): void {
+  splitRatio.value = ratio
+  writePanelState('mailSplitRatio', ratio)
+}
+
+/** Keep a genuine split — reject degenerate 0/1 values from old storage. */
+function clampMailSplitRatio(ratio: number): number {
+  return ratio > 0 && ratio < 1 ? ratio : DEFAULT_MAIL_SPLIT_RATIO
+}
+
+watch(layoutEpoch, () => {
+  splitRatio.value = clampMailSplitRatio(readPanelState('mailSplitRatio'))
+})
+
+let widthObserver: ResizeObserver | null = null
 
 watch(activeAccountId, async (id) => {
   if (!id) return
@@ -122,7 +190,16 @@ watch(activeAccountId, async (id) => {
   else list.activeFolderId.value = 0
 })
 
+
 onMounted(async () => {
+  measureWidth()
+  if (typeof ResizeObserver !== 'undefined' && rootEl.value) {
+    widthObserver = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (typeof width === 'number') panelWidth.value = width
+    })
+    widthObserver.observe(rootEl.value)
+  }
   try {
     await accountApi.load()
     const first = accounts.value[0]
@@ -146,6 +223,15 @@ onMounted(async () => {
     initialLoading.value = false
   }
 })
+
+onBeforeUnmount(() => {
+  widthObserver?.disconnect()
+  widthObserver = null
+})
+
+function measureWidth(): void {
+  panelWidth.value = rootEl.value?.clientWidth ?? 0
+}
 
 // Re-opening the tab refreshes the list: mail may have arrived while the user
 // was in another panel, and the badge alone does not tell which rows are new.
@@ -181,6 +267,30 @@ async function onSelectFolder(id: number): Promise<void> {
   await list.selectFolder(id)
 }
 
+/**
+ * Mark every message of the current folder as read.
+ *
+ * The server call marks the whole mailbox, so the list and the folder counters
+ * are refetched afterwards instead of patching rows one by one — the local
+ * cache only holds the newest page and would drift from the server's count.
+ */
+async function markAllRead(): Promise<void> {
+  const folderId = list.activeFolderId.value
+  if (!folderId || markingRead.value) return
+  markingRead.value = true
+  try {
+    await apiPost(`/api/mail/folders/${folderId}/read-all`, {})
+    await list.reload()
+    await list.loadFolders(activeAccountId.value)
+    void refreshMailUnread()
+  } catch (e) {
+    appLog.w('MailPanel', 'mark all read failed', e)
+    useToast().show(mailErrorMessage(e, t), { icon: 'warning', type: 'error' })
+  } finally {
+    markingRead.value = false
+  }
+}
+
 async function onQuery(q: string): Promise<void> {
   view.value = 'list'
   await list.setQuery(q)
@@ -209,7 +319,12 @@ function onMessageUpdated(msg: MailMessage): void {
 
 function openCompose(): void {
   composeInitial.value = {}
-  composeOpen.value = true
+  composeReturn.value = 'list'
+  view.value = 'compose'
+}
+
+function closeCompose(): void {
+  view.value = composeReturn.value
 }
 
 async function startReply(mode: 'reply' | 'replyAll' | 'forward'): Promise<void> {
@@ -218,14 +333,15 @@ async function startReply(mode: 'reply' | 'replyAll' | 'forward'): Promise<void>
       `/api/mail/messages/${readerMessageId.value}/reply-context?mode=${mode}`,
     )
     composeInitial.value = data.context
-    composeOpen.value = true
+    composeReturn.value = 'reader'
+    view.value = 'compose'
   } catch (e) {
     appLog.w('MailPanel', 'reply context failed', e)
   }
 }
 
 async function onSent(): Promise<void> {
-  composeOpen.value = false
+  view.value = composeReturn.value
   await list.reload()
   await list.loadFolders(activeAccountId.value)
   void refreshMailUnread()
@@ -252,6 +368,28 @@ async function onSent(): Promise<void> {
   flex: 1;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
+}
+/* SplitView root. Narrow: a plain column, and SplitView's panes collapse to
+   `display: contents` so the list / reader / composer flow exactly as before.
+   Wide: SplitView switches itself to a row with the draggable divider. */
+.mail-panel__split {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+/* SplitView's horizontal panes are plain blocks; the mail views are flex
+   columns that need a definite height so their inner scroll areas scroll
+   instead of growing the pane. Only in split mode — the narrow layout relies
+   on the panes being `display: contents`. */
+.mail-panel__split.split-view--active :deep(.split-view__left),
+.mail-panel__split.split-view--active :deep(.split-view__right) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
 }
 </style>

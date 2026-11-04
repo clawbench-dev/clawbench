@@ -505,7 +505,23 @@ func UpsertMailMessages(msgs []MailMessage) ([]MailMessage, error) {
 		 to_addrs, cc_addrs, reply_to, in_reply_to, refs, sent_at, size,
 		 seen, flagged, answered, has_attachments, snippet, body_fetched)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-		ON CONFLICT(account_id, folder_id, uid) DO NOTHING`)
+		ON CONFLICT(account_id, folder_id, uid) DO UPDATE SET
+			subject = excluded.subject,
+			from_name = excluded.from_name,
+			from_addr = excluded.from_addr,
+			to_addrs = excluded.to_addrs,
+			cc_addrs = excluded.cc_addrs,
+			reply_to = excluded.reply_to,
+			in_reply_to = excluded.in_reply_to,
+			refs = excluded.refs,
+			sent_at = excluded.sent_at,
+			size = excluded.size,
+			has_attachments = excluded.has_attachments,
+			message_id = excluded.message_id
+		WHERE mail_messages.subject <> excluded.subject
+		   OR mail_messages.from_addr <> excluded.from_addr
+		   OR mail_messages.from_name <> excluded.from_name
+		   OR mail_messages.to_addrs <> excluded.to_addrs`)
 	if err != nil {
 		return nil, err
 	}
@@ -675,6 +691,19 @@ func MailFolderCachedCount(folderID int64) (int, error) {
 func AdjustMailFolderUnread(folderID int64, delta int) error {
 	_, err := store.WriteExec(`UPDATE mail_folders SET unread = MAX(0, unread + ?) WHERE id = ?`,
 		delta, folderID)
+	return err
+}
+
+// MarkMailFolderReadLocally mirrors a folder-wide "mark all read" into the
+// cache: every cached row becomes seen and the unread counter drops to zero.
+// The mailbox is what actually marks the messages; this only keeps the list
+// from still showing unread rows until the next sync.
+func MarkMailFolderReadLocally(folderID int64) error {
+	if _, err := store.WriteExec(`UPDATE mail_messages SET seen = 1 WHERE folder_id = ? AND seen = 0`,
+		folderID); err != nil {
+		return err
+	}
+	_, err := store.WriteExec(`UPDATE mail_folders SET unread = 0 WHERE id = ?`, folderID)
 	return err
 }
 

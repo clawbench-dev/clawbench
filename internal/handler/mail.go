@@ -285,16 +285,25 @@ func ServeMailMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{strMessages: msgs, jsonHasMore: hasMore})
 }
 
-// ServeMailFolderSubRoutes handles POST /api/mail/folders/{id}/load-older.
+// ServeMailFolderSubRoutes handles POST /api/mail/folders/{id}/load-older and
+// POST /api/mail/folders/{id}/read-all.
 func ServeMailFolderSubRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/mail/folders/")
 	idPart, sub, hasSub := strings.Cut(path, "/")
 	id, err := strconv.ParseInt(idPart, 10, 64)
-	if err != nil || id <= 0 || !hasSub || sub != "load-older" {
+	if err != nil || id <= 0 || !hasSub || (sub != "load-older" && sub != "read-all") {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
 		return
 	}
 	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if sub == "read-all" {
+		if err := service.MarkMailFolderRead(r.Context(), id); err != nil {
+			writeMailError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 	msgs, err := service.FetchOlderMailMessages(r.Context(), id)

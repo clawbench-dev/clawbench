@@ -185,6 +185,10 @@ type Client interface {
 	FetchRawBatch(ctx context.Context, folder string, uids []uint32) (map[uint32][]byte, error)
 	// StoreFlags adds and/or removes flags on one message.
 	StoreFlags(ctx context.Context, folder string, uid uint32, add, remove []string) error
+	// MarkAllSeen adds \Seen to every message in the folder, including ones the
+	// local cache has never fetched (the mailbox is the source of truth for the
+	// unread count, so the local cache cannot enumerate them).
+	MarkAllSeen(ctx context.Context, folder string) error
 	// Move moves one message to another folder.
 	Move(ctx context.Context, folder string, uid uint32, dest string) error
 	// Delete marks one message \Deleted and expunges it.

@@ -8418,6 +8418,27 @@ paths:
                     items: {$ref: "#/components/schemas/MailMessage"}
                   hasMore: {type: boolean}
 
+  /api/mail/folders/{id}/read-all:
+    post:
+      tags: [Mail]
+      summary: 把整个文件夹标记为已读
+      description: 对服务器上的整个邮箱执行一次 `\Seen` 写入（包括本地缓存还没抓取过的邮件，否则下次同步未读数会反弹），成功后同步清空本地缓存与未读计数。
+      operationId: mailFolderReadAll
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 已标记
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+
   /api/mail/messages:
     get:
       tags: [Mail]

@@ -1,6 +1,13 @@
 <template>
-  <ModalDialog :open="open" :title="title" size="wide" @close="close">
-    <div class="mail-compose">
+  <div class="mail-compose">
+    <div class="mail-compose__head">
+      <button class="mail-icon-btn" type="button" :title="t('mail.compose.back')" @click="close">
+        <ArrowLeft />
+      </button>
+      <div class="mail-compose__title">{{ title }}</div>
+    </div>
+
+    <div class="mail-compose__fields">
       <label class="mail-compose__row">
         <span class="mail-compose__label">{{ t('mail.compose.to') }}</span>
         <input v-model="form.to" class="mail-compose__input" type="text" placeholder="name@example.com" />
@@ -21,61 +28,64 @@
         <span class="mail-compose__label">{{ t('mail.compose.subject') }}</span>
         <input v-model="form.subject" class="mail-compose__input" type="text" />
       </label>
-
-      <textarea
-        ref="bodyRef"
-        v-model="form.text"
-        class="mail-compose__body"
-        :placeholder="t('mail.compose.bodyPlaceholder')"
-      />
-
-      <div v-if="attachments.length > 0" class="mail-compose__attachments">
-        <span v-for="(a, i) in attachments" :key="a.path" class="mail-compose__attachment">
-          <Paperclip class="mail-compose__attachment-icon" />
-          <span class="mail-compose__attachment-name">{{ a.filename }}</span>
-          <button class="mail-compose__attachment-remove" type="button" :title="t('mail.compose.removeAttachment')"
-            @click="attachments.splice(i, 1)">
-            <X />
-          </button>
-        </span>
-      </div>
-
-      <p v-if="error" class="mail-compose__error">{{ error }}</p>
-      <input ref="fileInput" type="file" multiple hidden @change="onFilesPicked" />
     </div>
 
-    <template #footer>
+    <textarea
+      ref="bodyRef"
+      v-model="form.text"
+      class="mail-compose__body"
+      :placeholder="t('mail.compose.bodyPlaceholder')"
+    />
+
+    <div v-if="attachments.length > 0" class="mail-compose__attachments">
+      <span v-for="(a, i) in attachments" :key="a.path" class="mail-compose__attachment">
+        <Paperclip class="mail-compose__attachment-icon" />
+        <span class="mail-compose__attachment-name">{{ a.filename }}</span>
+        <button class="mail-compose__attachment-remove" type="button" :title="t('mail.compose.removeAttachment')"
+          @click="attachments.splice(i, 1)">
+          <X />
+        </button>
+      </span>
+    </div>
+
+    <p v-if="error" class="mail-compose__error">{{ error }}</p>
+    <input ref="fileInput" type="file" multiple hidden @change="onFilesPicked" />
+
+    <div class="mail-compose__actions">
       <button class="fbtn fbtn--ghost" :disabled="sending" @click="close">{{ t('mail.compose.cancel') }}</button>
+      <span class="mail-compose__spacer" />
       <button class="fbtn" :disabled="sending" @click="attach">
         {{ t('mail.compose.attach') }}
       </button>
       <button class="fbtn fbtn--primary" :disabled="sending || uploading" @click="send">
         {{ sending ? t('mail.compose.sending') : t('mail.compose.send') }}
       </button>
-    </template>
-  </ModalDialog>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 /**
- * The composer.
+ * The composer, rendered as a drill-down view inside the mail panel.
+ *
+ * It used to be a modal on top of the list; the dock pane is narrow, and a
+ * modal covered the very list the draft was written from. It now takes the
+ * panel's full area and returns with the back arrow, exactly like the reader.
  *
  * A draft is saved locally (debounced) while typing and deleted when the send
  * succeeds. Drafts deliberately stay local: syncing them to the server's Drafts
  * folder would need a second APPEND/EXPUNGE state machine for a feature whose
  * only promise is "do not lose what I typed".
  */
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Paperclip, X } from 'lucide-vue-next'
-import ModalDialog from '@/components/common/ModalDialog.vue'
+import { ArrowLeft, Paperclip, X } from 'lucide-vue-next'
 import { apiPatch, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { mailErrorMessage, parseAddressList, type MailDraftFile, type MailReplyContext } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
 
 const props = defineProps<{
-  open: boolean
   accountId: number
   initial?: Partial<MailReplyContext> & { body?: string; draftId?: number }
 }>()
@@ -122,27 +132,23 @@ function resetFromInitial(): void {
   dirty = false
 }
 
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      resetFromInitial()
-      // Focus the body on the next tick so the modal's enter animation is not
-      // fighting the browser's scroll-into-view.
-      setTimeout(() => bodyRef.value?.focus({ preventScroll: true }), 0)
-    } else {
-      void flushDraft()
-    }
-  },
-  { immediate: true },
-)
+onMounted(() => {
+  resetFromInitial()
+  // The panel swaps views synchronously; focus after paint so the browser does
+  // not scroll the freshly mounted view while it is still being laid out.
+  setTimeout(() => bodyRef.value?.focus({ preventScroll: true }), 0)
+})
 
-// Autosave: the timer only runs while the dialog is open and something changed.
+onBeforeUnmount(() => {
+  if (saveTimer) clearTimeout(saveTimer)
+  void flushDraft()
+})
+
+// Autosave: the timer only runs while the composer is mounted and something changed.
 watch(
   () => [form.to, form.cc, form.bcc, form.subject, form.text, attachments.value.length],
   () => {
     dirty = true
-    if (!props.open) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => void flushDraft(), 3000)
   },
@@ -154,7 +160,7 @@ function isEmptyDraft(): boolean {
 }
 
 async function flushDraft(): Promise<void> {
-  if (!dirty || !props.open || isEmptyDraft()) return
+  if (!dirty || isEmptyDraft()) return
   dirty = false
   const payload = {
     accountId: props.accountId,
@@ -255,8 +261,33 @@ function close(): void {
 .mail-compose {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.mail-compose__head {
+  display: flex;
+  align-items: center;
   gap: var(--space-2, 4px);
-  min-height: calc(320 * var(--dp));
+  padding: var(--space-2, 4px) var(--space-3, 6px);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.mail-compose__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-md, 14px);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.mail-compose__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 4px);
+  padding: var(--space-2, 4px) var(--space-3, 6px) 0;
+  flex-shrink: 0;
 }
 .mail-compose__row {
   display: flex;
@@ -287,7 +318,8 @@ function close(): void {
 }
 .mail-compose__body {
   flex: 1;
-  min-height: calc(180 * var(--dp));
+  min-height: calc(120 * var(--dp));
+  margin: 0 var(--space-3, 6px);
   padding: var(--space-2, 4px) 0;
   font-family: inherit;
   font-size: var(--font-size-sm, 12px);
@@ -296,12 +328,15 @@ function close(): void {
   background: none;
   border: none;
   outline: none;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
 }
 .mail-compose__attachments {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2, 4px);
+  padding: 0 var(--space-3, 6px);
+  flex-shrink: 0;
 }
 .mail-compose__attachment {
   display: inline-flex;
@@ -337,8 +372,21 @@ function close(): void {
 }
 .mail-compose__error {
   margin: 0;
+  padding: 0 var(--space-3, 6px);
   font-size: var(--font-size-sm, 12px);
   color: var(--color-danger, #d1242f);
+  flex-shrink: 0;
+}
+.mail-compose__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 4px);
+  padding: var(--space-2, 4px) var(--space-3, 6px);
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.mail-compose__spacer {
+  flex: 1;
 }
 .mail-text-btn {
   padding: 0;
@@ -347,5 +395,26 @@ function close(): void {
   font-size: var(--font-size-sm, 12px);
   color: var(--accent-color);
   cursor: pointer;
+}
+.mail-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex: none;
+}
+.mail-icon-btn:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
+}
+.mail-icon-btn :deep(svg) {
+  width: calc(15 * var(--dp));
+  height: calc(15 * var(--dp));
 }
 </style>

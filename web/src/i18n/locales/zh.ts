@@ -110,6 +110,8 @@ export default {
     },
     bar: {
       account: '切换账号',
+      folder: '选择文件夹',
+      markAllRead: '全部已读',
       refresh: '收信',
       compose: '写邮件',
       manage: '账号设置',
@@ -152,6 +154,7 @@ export default {
     },
     compose: {
       title: '写邮件',
+      back: '返回',
       to: '收件人',
       cc: '抄送',
       bcc: '密送',

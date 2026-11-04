@@ -23,7 +23,13 @@
     />
 
     <div v-else ref="bodyRef" class="mail-list__body">
-      <MailListItem v-for="m in messages" :key="m.id" :msg="m" @open="(id) => emit('open', id)" />
+      <MailListItem
+        v-for="m in messages"
+        :key="m.id"
+        :msg="m"
+        :active="m.id === activeId"
+        @open="(id) => emit('open', id)"
+      />
       <div v-if="loadingMore" class="mail-list__more">
         <LoadingIndicator size="sm" inline />
       </div>
@@ -58,6 +64,8 @@ const props = defineProps<{
   error: string
   hasMore: boolean
   query: string
+  /** Message currently open in the reading pane (0 = none). */
+  activeId?: number
 }>()
 
 const emit = defineEmits<{ open: [id: number]; 'load-more': []; retry: [] }>()

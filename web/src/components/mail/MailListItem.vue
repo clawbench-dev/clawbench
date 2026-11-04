@@ -1,5 +1,10 @@
 <template>
-  <button class="mail-row" :class="{ 'is-unread': !msg.seen }" @click="emit('open', msg.id)">
+  <button
+    class="mail-row"
+    :class="{ 'is-unread': !msg.seen, 'is-active': active }"
+    :aria-current="active ? 'true' : undefined"
+    @click="emit('open', msg.id)"
+  >
     <span class="mail-row__dot" />
     <span class="mail-row__main">
       <span class="mail-row__line">
@@ -21,7 +26,7 @@ import { useI18n } from 'vue-i18n'
 import { Paperclip, Star } from 'lucide-vue-next'
 import { formatMailDate, mailSenderLabel, type MailMessage } from '@/utils/mailTypes'
 
-defineProps<{ msg: MailMessage }>()
+defineProps<{ msg: MailMessage; active?: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
 const { t, locale } = useI18n()
@@ -43,6 +48,15 @@ const { t, locale } = useI18n()
 }
 .mail-row:hover {
   background: var(--bg-hover, rgba(128, 128, 128, 0.1));
+}
+/* Open in the reading pane. Tint plus an accent bar drawn with `inset`
+   box-shadow so selecting a row never shifts its text. */
+.mail-row.is-active {
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  box-shadow: inset calc(2 * var(--dp)) 0 0 var(--accent-color);
+}
+.mail-row.is-active .mail-row__sender {
+  color: var(--text-primary);
 }
 .mail-row__dot {
   flex: none;

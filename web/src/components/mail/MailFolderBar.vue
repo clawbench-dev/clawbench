@@ -1,13 +1,24 @@
 <template>
   <div class="mail-bar">
     <div class="mail-bar__top">
-      <MenuSelect
-        class="mail-bar__account"
-        :model-value="accountId"
-        :options="accountOptions"
-        :title="t('mail.bar.account')"
-        @update:model-value="(v) => (accountId = Number(v))"
-      />
+      <!-- The pickers are wrapped: MenuSelect renders a fragment (trigger +
+           teleported popup), so a class on the component itself is dropped and
+           the width would never reach the trigger. -->
+      <div class="mail-bar__account" :title="t('mail.bar.account')">
+        <MenuSelect
+          :model-value="accountId"
+          :options="accountOptions"
+          @update:model-value="(v) => (accountId = Number(v))"
+        />
+      </div>
+      <div class="mail-bar__folder" :title="t('mail.bar.folder')">
+        <MenuSelect
+          :model-value="folderId"
+          :options="folderOptions"
+          :placeholder="t('mail.bar.folder')"
+          @update:model-value="(v) => emit('select-folder', Number(v))"
+        />
+      </div>
       <span class="mail-bar__spacer" />
       <button class="mail-icon-btn" :title="t('mail.bar.refresh')" :disabled="refreshing" @click="emit('refresh')">
         <RefreshCw :class="{ 'refresh-spin': refreshing }" />
@@ -20,40 +31,39 @@
       </button>
     </div>
 
-    <div class="mail-bar__folders">
+    <div class="mail-bar__search-row">
+      <div class="mail-bar__search">
+        <Search class="mail-bar__search-icon" />
+        <input
+          :value="query"
+          class="mail-bar__search-input"
+          type="search"
+          :placeholder="t('mail.bar.search')"
+          @input="onSearchInput"
+        />
+      </div>
       <button
-        v-for="f in folders"
-        :key="f.id"
-        class="mail-folder"
-        :class="{ 'is-active': f.id === folderId }"
-        @click="emit('select-folder', f.id)"
+        class="mail-read-all"
+        :disabled="marking || currentUnread === 0"
+        :title="t('mail.bar.markAllRead')"
+        @click="emit('mark-all-read')"
       >
-        <span class="mail-folder__name">{{ folderLabel(f) }}</span>
-        <span v-if="f.unread > 0" class="count-badge mail-folder__badge">{{ f.unread > 99 ? '99+' : f.unread }}</span>
+        {{ t('mail.bar.markAllRead') }}
       </button>
-    </div>
-
-    <div class="mail-bar__search">
-      <Search class="mail-bar__search-icon" />
-      <input
-        :value="query"
-        class="mail-bar__search-input"
-        type="search"
-        :placeholder="t('mail.bar.search')"
-        @input="onSearchInput"
-      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * Account switcher + folder bar + search.
+ * Account switcher + folder picker + search.
  *
- * Folders are chips rather than a vertical tree: the dock pane is narrow, and a
- * horizontal strip keeps the whole width for the message list. Servers that
- * expose a deep hierarchy are flattened — the folder's own name is what the
- * user recognizes, not its path.
+ * Folders are a dropdown next to the account picker rather than a chip strip:
+ * the dock pane is narrow, and the strip cost a whole row of vertical space
+ * above the list for what is one selection. Unread counts ride in the option
+ * labels so they stay visible without the chips. Servers that expose a deep
+ * hierarchy are flattened — the folder's own name is what the user recognizes,
+ * not its path.
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -68,11 +78,14 @@ const props = defineProps<{
   folderId: number
   query: string
   refreshing?: boolean
+  /** A folder-wide "mark all read" is in flight. */
+  marking?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:accountId': [id: number]
   'select-folder': [id: number]
+  'mark-all-read': []
   refresh: []
   compose: []
   setup: []
@@ -104,6 +117,18 @@ function folderLabel(f: MailFolder): string {
   return key ? t(key) : f.name || f.path
 }
 
+const folderOptions = computed(() =>
+  props.folders.map((f) => ({
+    value: f.id,
+    // The unread count lives in the label so the picker carries the same
+    // information the old chip strip did.
+    label: f.unread > 0 ? `${folderLabel(f)} (${f.unread > 99 ? '99+' : f.unread})` : folderLabel(f),
+  })),
+)
+
+/** Unread in the folder being shown; nothing to mark when it is zero. */
+const currentUnread = computed(() => props.folders.find((f) => f.id === props.folderId)?.unread ?? 0)
+
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 function onSearchInput(e: Event): void {
   const value = (e.target as HTMLInputElement).value
@@ -128,53 +153,61 @@ function onSearchInput(e: Event): void {
   align-items: center;
   gap: var(--space-1, 2px);
 }
-/* The trigger is MenuSelect's; only the width is ours. */
+/* The trigger is MenuSelect's; the wrapper only owns the width. */
 .mail-bar__account {
-  max-width: calc(180 * var(--dp));
+  display: flex;
+  max-width: calc(150 * var(--dp));
   min-width: 0;
+  flex: 0 1 auto;
+}
+/* The folder picker sits right of the account picker and gives up width first. */
+.mail-bar__folder {
+  display: flex;
+  max-width: calc(120 * var(--dp));
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.mail-bar__account :deep(.menu-select),
+.mail-bar__folder :deep(.menu-select) {
+  min-width: 0;
+  max-width: 100%;
   padding: calc(3 * var(--dp)) calc(7 * var(--dp));
   font-size: var(--font-size-sm, 12px);
 }
 .mail-bar__spacer {
   flex: 1;
 }
-.mail-bar__folders {
+.mail-bar__search-row {
   display: flex;
-  gap: var(--space-2, 4px);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.mail-bar__folders::-webkit-scrollbar {
-  display: none;
-}
-.mail-folder {
-  display: inline-flex;
   align-items: center;
-  gap: calc(4 * var(--dp));
-  flex: none;
-  padding: calc(3 * var(--dp)) calc(9 * var(--dp));
-  font-size: var(--font-size-sm, 12px);
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border: 1px solid transparent;
-  border-radius: var(--radius-full, 999px);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mail-folder:hover {
-  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
-}
-.mail-folder.is-active {
-  color: var(--text-primary);
-  border-color: var(--accent-color);
-}
-.mail-folder__badge {
-  font-size: var(--font-size-xs, 11px);
+  gap: var(--space-2, 4px);
 }
 .mail-bar__search {
   position: relative;
   display: flex;
   align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.mail-read-all {
+  flex: none;
+  padding: calc(4 * var(--dp)) calc(9 * var(--dp));
+  font-family: inherit;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mail-read-all:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
+}
+.mail-read-all:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .mail-bar__search-icon {
   position: absolute;

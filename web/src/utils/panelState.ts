@@ -82,6 +82,7 @@ export type PanelId =
   | 'tocDockSide'
   | 'fmPreviewRatio'
   | 'fmPreviewOpen'
+  | 'mailSplitRatio'
   | 'gitBranchCollapsed'
   | 'gitWorktreeCollapsed'
   | 'gitManageTab'
@@ -104,6 +105,12 @@ export const DEFAULT_SESSION_SIDEBAR_WIDTH = 280
 export const DEFAULT_TOC_DOCK_WIDTH = 260
 export const DEFAULT_TOC_DOCK_SIDE = 'right'
 export const DEFAULT_FM_PREVIEW_RATIO = 0.6
+/**
+ * Share of the mail panel taken by the message list when it is wide enough for
+ * list + reading pane side by side. Slightly under half: the message list is a
+ * row of subjects, the detail pane renders the mail body.
+ */
+export const DEFAULT_MAIL_SPLIT_RATIO = 0.42
 export const DEFAULT_GIT_MANAGE_TAB = 'branches'
 
 export interface SessionSidebarState {
@@ -329,6 +336,13 @@ const entries: PanelEntry<unknown>[] = [
   {
     id: 'fmPreviewRatio', key: 'fm-preview-ratio', scope: 'global', default: DEFAULT_FM_PREVIEW_RATIO,
     ...numberCodec(DEFAULT_FM_PREVIEW_RATIO),
+  },
+  // Mail panel: how the list and the opened message share the width when the
+  // pane is wide enough to show both. The narrow (drill-down) layout never
+  // reads it.
+  {
+    id: 'mailSplitRatio', key: 'mail-split-ratio', scope: 'global', default: DEFAULT_MAIL_SPLIT_RATIO,
+    ...numberCodec(DEFAULT_MAIL_SPLIT_RATIO),
   },
   // Whether the docked preview pane is expanded. Distinct from
   // `fmPreviewRatio` (how the split is divided) and from the `filePreviewMode`

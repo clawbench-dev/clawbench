@@ -102,4 +102,22 @@ describe('MailList', () => {
     expect(wrapper.find('.mail-row__clip').exists()).toBe(true)
     expect(wrapper.find('.mail-row__star').exists()).toBe(true)
   })
+
+  it('marks only the open message as active', () => {
+    const messages = [
+      makeMessage({ id: 7, subject: '第一封' }),
+      makeMessage({ id: 8, subject: '第二封', seen: true }),
+    ]
+    const wrapper = mountList({ messages, activeId: 8 })
+    const rows = wrapper.findAll('.mail-row')
+    expect(rows[0].classes()).not.toContain('is-active')
+    expect(rows[1].classes()).toContain('is-active')
+    expect(rows[1].attributes('aria-current')).toBe('true')
+    expect(rows[0].attributes('aria-current')).toBeUndefined()
+  })
+
+  it('marks no row as active when nothing is open', () => {
+    const wrapper = mountList({ messages: [makeMessage({ id: 7 })], activeId: 0 })
+    expect(wrapper.findAll('.mail-row.is-active')).toHaveLength(0)
+  })
 })

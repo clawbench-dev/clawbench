@@ -90,6 +90,33 @@ func setMailMessageFlags(ctx context.Context, msg MailMessage, seen, flagged boo
 	return nil
 }
 
+// MarkMailFolderRead marks every message of a folder as read.
+//
+// The mailbox is the source of truth: the server call runs first and a failure
+// leaves the local cache untouched, exactly like a single-message flag change.
+// The cache update then mirrors the result so the list and the unread counter
+// do not wait for the next sync.
+func MarkMailFolderRead(ctx context.Context, folderID int64) error {
+	folder, err := GetMailFolder(folderID)
+	if err != nil {
+		return err
+	}
+	acc, err := GetMailAccount(folder.AccountID)
+	if err != nil {
+		return err
+	}
+	client, err := mailDialer(ctx, acc.ProtocolAccount())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
+	if err := client.MarkAllSeen(ctx, folder.Path); err != nil {
+		return err
+	}
+	return MarkMailFolderReadLocally(folderID)
+}
+
 // MoveMailMessage moves one message to another folder. The local row is
 // dropped rather than rewritten: the destination folder picks it up on its next
 // sync with the destination's own UID.

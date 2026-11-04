@@ -464,6 +464,40 @@ func (m *imapClient) StoreFlags(ctx context.Context, folder string, uid uint32, 
 	return nil
 }
 
+// MarkAllSeen adds \Seen to every message in the folder.
+//
+// It stores over the sequence range 1:* rather than over locally known UIDs:
+// the unread badge comes from STATUS, so messages the cache never fetched would
+// otherwise stay unread on the server and the count would bounce right back on
+// the next sync.
+func (m *imapClient) MarkAllSeen(ctx context.Context, folder string) error {
+	sel, err := m.selectFolder(ctx, folder)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	total := 0
+	if sel != nil {
+		total = int(sel.NumMessages)
+	} else if mb := m.c.Mailbox(); mb != nil {
+		total = int(mb.NumMessages)
+	}
+	if total == 0 {
+		return nil
+	}
+	var set imap.SeqSet
+	set.AddRange(1, uint32(total))
+	m.deadline()
+	if err := m.c.Store(set, &imap.StoreFlags{
+		Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagSeen},
+	}, nil).Close(); err != nil {
+		return classify("mark all seen", err)
+	}
+	return nil
+}
+
 func (m *imapClient) Move(ctx context.Context, folder string, uid uint32, dest string) error {
 	if _, err := m.selectFolder(ctx, folder); err != nil {
 		return err
