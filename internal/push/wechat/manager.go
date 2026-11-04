@@ -39,6 +39,16 @@ type Manager struct {
 	// otherwise a monitor dying from an old token could mark a freshly
 	// restarted manager as stopped.
 	gen uint64
+	// monitorWG tracks the monitor goroutine so Stop can wait for it to finish.
+	// Without this, Stop returns while the goroutine may still be inside
+	// OnBufUpdate writing the cursor file — a caller that then deletes the data
+	// directory (t.TempDir cleanup, a data-dir wipe) races with that write and
+	// fails with "directory not empty" or leaves a half-written cursor.
+	//
+	// Add happens under startMu (in Start); Wait happens AFTER startMu is
+	// released, because runMonitor takes startMu on its way out. Waiting while
+	// holding it is the deadlock.
+	monitorWG sync.WaitGroup
 
 	statusMu   sync.Mutex
 	expired    bool
@@ -275,22 +285,32 @@ func (m *Manager) Start() error {
 	m.lastErr = ""
 	m.statusMu.Unlock()
 
-	go m.runMonitor(ctx, client, gen)
+	m.monitorWG.Add(1)
+	go func() {
+		defer m.monitorWG.Done()
+		m.runMonitor(ctx, client, gen)
+	}()
 
 	slog.Info("wechat: manager started", "bot_id", m.cfg.BotID)
 	return nil
 }
 
-// Stop tears the monitor down.
+// Stop tears the monitor down and WAITS for it to exit.
 //
-// It does not join the monitor goroutine: the goroutine exits at its next
-// ctx.Done() check, and waiting for it while holding startMu is the deadlock to
-// avoid. Any in-flight inbound media download is aborted by the same cancel.
+// The wait is the point. Cancelling alone only asks the goroutine to stop; it
+// may be inside OnBufUpdate writing the cursor file right then. A caller that
+// returns from Stop and immediately deletes the data directory (t.TempDir
+// cleanup, a data-dir wipe on logout) would race that write and fail with
+// "directory not empty", or leave a cursor file behind for the next start to
+// resume from. Observed as an intermittent CI failure in
+// TestMonitor_PersistsSyncBuf.
+//
+// The wait happens AFTER startMu is released: runMonitor takes startMu on its
+// way in, so joining it while holding the lock would deadlock.
 func (m *Manager) Stop() {
 	m.startMu.Lock()
-	defer m.startMu.Unlock()
-
 	if !m.started {
+		m.startMu.Unlock()
 		return
 	}
 	if m.cancel != nil {
@@ -308,6 +328,12 @@ func (m *Manager) Stop() {
 	m.statusMu.Lock()
 	m.expired = false
 	m.statusMu.Unlock()
+	m.startMu.Unlock()
+
+	// Join outside the lock. The context is already cancelled, so this returns
+	// as soon as the current poll unwinds — no timeout needed, and adding one
+	// would just reintroduce the race in slow cases.
+	m.monitorWG.Wait()
 
 	slog.Info("wechat: manager stopped")
 }
