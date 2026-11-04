@@ -142,7 +142,13 @@ function toggle() {
   // Measure before the popup positions itself (it reads geometry on the next
   // animation frame), so the menu can never come out narrower than the
   // trigger it drops out of.
-  menuMinWidth.value = anchorRef.value?.offsetWidth ?? 0
+  //
+  // Clamped to `menuWidth`: the popup's max-width is that same number, so a
+  // wider trigger (a `block` field stretches to the form width) would push the
+  // list past the popup and the browser paints a horizontal scrollbar under
+  // the menu. Alignment with the trigger is already lost past this point —
+  // the popup simply cannot grow further.
+  menuMinWidth.value = Math.min(anchorRef.value?.offsetWidth ?? 0, props.menuWidth)
   show.value = true
 }
 

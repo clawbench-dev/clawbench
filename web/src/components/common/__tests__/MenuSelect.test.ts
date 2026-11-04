@@ -99,4 +99,16 @@ describe('MenuSelect', () => {
     const list = wrapper.find('.menu-select-list')
     expect(list.attributes('style')).toContain('min-width: 180px')
   })
+
+  // A `block` field stretches to the form width (600px), which is wider than the
+  // popup's max width. Feeding that straight into min-width pushed the list past
+  // the popup, and the browser painted a horizontal scrollbar under the menu.
+  it('clamps the min-width to the popup max width', async () => {
+    const wrapper = mountSelect({ block: true, menuWidth: 400 })
+    const trigger = wrapper.find('.menu-select')
+    Object.defineProperty(trigger.element, 'offsetWidth', { value: 600, configurable: true })
+    await trigger.trigger('click')
+
+    expect(wrapper.find('.menu-select-list').attributes('style')).toContain('min-width: 400px')
+  })
 })
