@@ -99,6 +99,13 @@ func TestParseShellEnv(t *testing.T) {
 func TestMergeLoginShellEnv(t *testing.T) {
 	t.Cleanup(resetLoginShellEnvCache)
 
+	// The capture is POSIX-only (there are no login startup files to read on
+	// Windows), so the cache-seeded merge below only means anything on POSIX.
+	// TestMergeLoginShellEnvNoopOnWindows pins the Windows contract.
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
 	shellEnvMu.Lock()
 	shellEnvCache = []string{"AK=from-bashrc", "PATH=/from/bashrc", "NEW_VAR=1"}
 	shellEnvAt = time.Now()
