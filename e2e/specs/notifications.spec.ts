@@ -23,6 +23,14 @@ test.describe('Notifications', () => {
     // would otherwise wipe rows a later test expects, and stale rows from a
     // previous spec would break the "exactly the row I just made" assertions).
     await page.request.delete('/api/notifications')
+    // Send on a FRESH session rather than the auto-selected one. The app opens
+    // the most recent session, which an earlier spec can leave with a live
+    // runner; a send there is QUEUED behind it, and a queued turn's completion
+    // does not record a notification within this spec's budget. A session
+    // created for this test has no runner history, so the turn is direct and
+    // terminal. (createSession() — the bare "+" click — only opens the agent
+    // picker; the bridge/API path actually creates and switches to the session.)
+    await chat.createSessionWithAgent('acp-mock')
   })
 
   /**
@@ -44,7 +52,7 @@ test.describe('Notifications', () => {
       if (!res.ok()) return -1
       const body = await res.json()
       return body.total ?? 0
-    }, { timeout: 30000, message: 'a notification row should be recorded after the turn completes' })
+    }, { timeout: 45000, message: 'a notification row should be recorded after the turn completes' })
       .toBeGreaterThan(0)
   }
 

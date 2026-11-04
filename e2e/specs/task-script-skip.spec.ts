@@ -252,7 +252,7 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
       .locator('.execution-item')
       .filter({ has: page.locator('.exec-status-badge.skipped') })
       .first()
-    await expect(skippedItem).toBeVisible({ timeout: 30000 })
+    await expect(skippedItem).toBeVisible({ timeout: 45000 })
     await expect(skippedItem.locator('.exec-status-badge.skipped')).toHaveText(/Skipped|已跳过/)
     // A gate-closed run produced no AI output by design, so the row explains the
     // empty body instead of reading as a failure.

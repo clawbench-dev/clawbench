@@ -856,21 +856,50 @@ func extractUserText(blocks []acp.ContentBlock) string {
 // To make the cruise E2E exercise that path deterministically, the mock host
 // emits the end tag on its SECOND turn (after routing once), instead of routing
 // forever until the speech cap. The counter is per-session.
+//
+// NON-CRUISE gets the same treatment with a slightly larger budget. The host
+// has no other terminator: it routes to a member every round, the member's
+// reply mentions the next one, and each mention drains as its OWN user turn —
+// so chat.group_max_speeches (a per-turn budget) never accumulates and a plain
+// discussion runs until a human stops it. That is correct for the product but
+// poison for an E2E suite: a group spec that ends without cancelling leaves a
+// discussion running for the rest of the job, and every later spec that sends
+// into the app's auto-selected session queues behind it (observed: queued-*
+// and notifications specs timing out on slow runners). Two routing rounds is
+// enough for the group specs' assertions (host + 2 member turns) and matches
+// the ~10s abort the suite was tuned around. Override with
+// ACP_MOCK_GROUP_ROUTE_TURNS.
+
+// routingBudgetExceeded reports whether this host routing turn is past the
+// discussion budget. Cruise gets a single routing turn (the end tag then
+// triggers its confirmation round); a plain discussion gets
+// ACP_MOCK_GROUP_ROUTE_TURNS (default 2) so the E2E suite can never be poisoned
+// by a discussion that nobody stopped — see groupRoutingReply.
+func routingBudgetExceeded(sid, prompt string) bool {
+	limit := 2
+	if v := os.Getenv("ACP_MOCK_GROUP_ROUTE_TURNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	if strings.Contains(prompt, "[自动巡航模式]") {
+		limit = 1
+	}
+	relayTurnsMu.Lock()
+	relayTurns[sid]++
+	turn := relayTurns[sid]
+	relayTurnsMu.Unlock()
+	return turn > limit
+}
+
 func groupRoutingReply(sid, prompt string) string {
 	const marker = "可选的成员名："
 	idx := strings.Index(prompt, marker)
 	if idx < 0 {
 		return ""
 	}
-	cruise := strings.Contains(prompt, "[自动巡航模式]")
-	if cruise {
-		relayTurnsMu.Lock()
-		relayTurns[sid]++
-		turn := relayTurns[sid]
-		relayTurnsMu.Unlock()
-		if turn > 1 {
-			return "讨论差不多了。<clawbench-group-end/>"
-		}
+	if routingBudgetExceeded(sid, prompt) {
+		return "讨论差不多了。<clawbench-group-end/>"
 	}
 	rest := prompt[idx+len(marker):]
 	// The list ends at the first newline (BuildHostSystemPrompt appends "。\n").

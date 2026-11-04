@@ -61,13 +61,46 @@ test.describe('group notifications', () => {
       })
     }, groupId)
 
-    // Wait for the row to be RECORDED (written at terminal completion).
+    // Stop the discussion the way a user does (the stop button's own endpoint).
+    // It CANNOT be left to end on its own: a member's reply mentions the next
+    // member, and each mention drains as its OWN user turn with a fresh speech
+    // budget (a fresh orchestrator per drained message), so
+    // chat.group_max_speeches never accumulates across the chain — the
+    // discussion runs until the user stops it. Cancelling records a
+    // `cancelled` notification (a notifiable terminal state, same as
+    // completed), which is the row this spec then navigates with.
+    //
+    // A cancel landing in the gap between two member turns is a no-op (nothing
+    // is running at that instant), and a member turn that was mid-flight when
+    // an earlier cancel landed may have already relayed the floor to the next
+    // member (a NEW running turn). So keep cancelling until BOTH hold: a row is
+    // recorded AND this group is no longer running — the first cancel that
+    // lands mid-run aborts that member turn before it can mention anyone else,
+    // which is what actually ends the discussion.
+    //
+    // Do NOT cancel before the turn has started: a cancel that races the turn's
+    // own startup aborts it before the agent connection exists, and that hung
+    // start leaves the session stuck "running" with no terminal event — which
+    // is worse than the discussion continuing. Wait for the runner first.
     await expect.poll(async () => {
+      const sessions = await page.request.get('/api/ai/sessions')
+      if (!sessions.ok()) return false
+      const list = ((await sessions.json()) as { sessions?: Array<{ id?: string; running?: boolean }> }).sessions ?? []
+      return list.some((s) => s.id === groupId && s.running === true)
+    }, { timeout: 30000, message: 'the group turn should start running' }).toBe(true)
+
+    await expect.poll(async () => {
+      await page.request.post(`/api/ai/chat/cancel?session_id=${encodeURIComponent(groupId)}`)
+      const sessions = await page.request.get('/api/ai/sessions')
+      if (sessions.ok()) {
+        const list = ((await sessions.json()) as { sessions?: Array<{ id?: string; running?: boolean }> }).sessions ?? []
+        if (list.some((s) => s.id === groupId && s.running === true)) return 0
+      }
       const res = await page.request.get('/api/notifications')
       if (!res.ok()) return -1
       const body = await res.json()
       return body.total ?? 0
-    }, { timeout: 60000, message: 'a group turn should record a notification' }).toBeGreaterThan(0)
+    }, { timeout: 60000, message: 'the stopped group turn should record a notification and leave the group idle' }).toBeGreaterThan(0)
 
     // The stored target must be the group. Resolving each logged id as a group
     // must succeed — a member row would not answer the members endpoint.

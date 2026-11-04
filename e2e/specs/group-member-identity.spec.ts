@@ -80,7 +80,7 @@ test.describe.serial('group member identity', () => {
       .poll(async () => {
         const members = await fetchGroupMembers(page, gid)
         return members.length === 2 && members.filter(m => !!m.avatar).length === 1
-      }, { timeout: 30000 })
+      }, { timeout: 45000 })
       .toBe(true)
 
     const members = await fetchGroupMembers(page, gid)

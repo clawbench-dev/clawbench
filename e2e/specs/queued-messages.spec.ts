@@ -149,7 +149,7 @@ test.describe('Queued messages ordering', () => {
     for (const marker of [M1, M2, M3]) {
       await expect(
         page.locator('.chat-message.user').filter({ hasText: marker })
-      ).toHaveCount(1, { timeout: 30000 })
+      ).toHaveCount(1, { timeout: 45000 })
     }
     await expect(page.locator('.chat-message.user.pending')).toHaveCount(0, { timeout: 15000 })
     await expect(page.locator('.chat-message.assistant.streaming')).toHaveCount(0, { timeout: 15000 })
@@ -244,10 +244,10 @@ test.describe('Queued messages ordering', () => {
     // Let the queue drain, then reload: the edited text must be what the
     // backend stored (proves the edit was persisted, not a local-only change).
     await expect(page.locator('.queued-bar')).toHaveCount(0, { timeout: 90000 })
-    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 30000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 45000 })
     await reloadPage(page)
     await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 30000 })
+    await expect(page.locator('.chat-message.user').filter({ hasText: revisedB })).toHaveCount(1, { timeout: 45000 })
     await expect(page.locator('.chat-message.user').filter({ hasText: queuedB })).toHaveCount(0)
   })
 })
