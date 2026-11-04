@@ -177,6 +177,10 @@ paths:
         返回磁盘上证书的启用状态、路径、覆盖的地址与到期时间，供设置面板渲染。
         `active` 表示磁盘上有可用的证书（**下次启动**生效）；`serving` 表示当前这个
         请求本身是走 TLS 的。`httpsUrl` 由当前请求推导，用于「用 HTTPS 重新打开」。
+
+        证书存在但不可用时（过期 / 尚未生效 / 文件读不出来），`active` 仍为 true
+        （服务端照样会以 HTTPS 启动，只是浏览器会拒绝），另有 `expired` /
+        `notYetValid` / `unreadable` 三个标记说明原因，面板据此显示「已失效」。
       operationId: configTLSStatus
       responses:
         "200":
@@ -8229,6 +8233,9 @@ components:
           type: array
           items: { type: string }
         notAfter: { type: string }
+        expired: { type: boolean, description: 证书已过期（active 仍为 true，但浏览器会拒绝） }
+        notYetValid: { type: boolean, description: 证书尚未到生效时间 }
+        unreadable: { type: boolean, description: 证书文件存在但解析不出来 }
         httpsUrl: { type: string }
         restartRequired: { type: boolean }
       required: [active, serving, certDir]

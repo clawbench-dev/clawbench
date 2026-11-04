@@ -36,6 +36,14 @@ type tlsStatusResponse struct {
 	CertDir    string   `json:"certDir"`
 	Hosts      []string `json:"hosts,omitempty"`
 	NotAfter   string   `json:"notAfter,omitempty"`
+	// Expired / NotYetValid / Unreadable describe a certificate that is present
+	// but cannot be used. Active stays true for them on purpose: the listener
+	// still starts HTTPS (Go does not check dates), browsers are the ones that
+	// refuse it. Reporting "no certificate" there would be a lie, and the panel
+	// could not tell the user why the page will not open.
+	Expired     bool `json:"expired,omitempty"`
+	NotYetValid bool `json:"notYetValid,omitempty"`
+	Unreadable  bool `json:"unreadable,omitempty"`
 	// HTTPSURL is the address this server would be reachable at over TLS,
 	// derived from the current request. Empty when the port is unknown.
 	HTTPSURL string `json:"httpsUrl,omitempty"`
@@ -130,14 +138,22 @@ func buildTLSStatus(r *http.Request) tlsStatusResponse {
 	resp.Active = true
 	resp.CertFile = certs.CertFile
 	resp.KeyFile = certs.KeyFile
-	resp.SelfSigned = isSelfSigned(certs.CertFile)
-	if leaf := parseLeaf(certs.CertFile); leaf != nil {
-		resp.NotAfter = leaf.NotAfter.Format(time.RFC3339)
-		for _, ip := range leaf.IPAddresses {
-			resp.Hosts = append(resp.Hosts, ip.String())
-		}
-		resp.Hosts = append(resp.Hosts, leaf.DNSNames...)
+	leaf := parseLeaf(certs.CertFile)
+	if leaf == nil {
+		// A truncated write or an unrelated file in the directory: the pair
+		// exists, so HTTPS will still be attempted, but nothing can be read.
+		resp.Unreadable = true
+		return resp
 	}
+	resp.SelfSigned = isSelfSignedLeaf(leaf)
+	now := time.Now()
+	resp.Expired = now.After(leaf.NotAfter)
+	resp.NotYetValid = now.Before(leaf.NotBefore)
+	resp.NotAfter = leaf.NotAfter.Format(time.RFC3339)
+	for _, ip := range leaf.IPAddresses {
+		resp.Hosts = append(resp.Hosts, ip.String())
+	}
+	resp.Hosts = append(resp.Hosts, leaf.DNSNames...)
 	return resp
 }
 
@@ -174,6 +190,12 @@ func isSelfSigned(certFile string) bool {
 	if leaf == nil {
 		return false
 	}
+	return isSelfSignedLeaf(leaf)
+}
+
+// isSelfSignedLeaf is the parsed-certificate form, so callers that already have
+// a leaf (the status builder) do not read and parse the file twice.
+func isSelfSignedLeaf(leaf *x509.Certificate) bool {
 	return leaf.Issuer.String() == leaf.Subject.String()
 }
 

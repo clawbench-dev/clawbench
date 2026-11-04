@@ -89,8 +89,14 @@ func TestServeFileFromFS_ServesGzipSiblingWhenAccepted(t *testing.T) {
 		t.Fatalf("Content-Length = %q, want %q", got, want)
 	}
 	// Content type must describe the original file, not the .gz wrapper.
-	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/javascript") {
-		t.Fatalf("Content-Type = %q, want text/javascript", got)
+	//
+	// Both spellings are correct for .js: Go's mime table says text/javascript,
+	// but Windows resolves the type through the registry, which answers
+	// application/javascript. Asserting one spelling makes the test pass on
+	// Linux/macOS and fail on Windows for a reason that has nothing to do with
+	// the gzip sibling.
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/javascript") && !strings.HasPrefix(got, "application/javascript") {
+		t.Fatalf("Content-Type = %q, want a JavaScript media type", got)
 	}
 	if got := decodeBody(t, rec); got != probeBody {
 		t.Fatalf("decoded body = %q, want the original file", got)

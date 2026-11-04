@@ -10,14 +10,8 @@
     <template v-else>
       <div class="tls-panel__row">
         <span class="tls-panel__label">{{ t('settings.items.tlsState') }}</span>
-        <span class="tls-panel__value" :class="{ 'tls-panel__value--ok': status.active }">
-          {{
-            status.active
-              ? status.selfSigned
-                ? t('settings.items.tlsStateSelfSigned')
-                : t('settings.items.tlsStateCA')
-              : t('settings.items.tlsStateNone')
-          }}
+        <span class="tls-panel__value" :class="{ 'tls-panel__value--ok': certUsable }">
+          {{ certStateLabel }}
         </span>
       </div>
 
@@ -51,7 +45,7 @@
 
       <div class="tls-panel__actions">
         <button class="fbtn fbtn-primary" type="button" :disabled="busy" @click="generate(false)">
-          {{ status.active ? t('settings.items.tlsRegenerate') : t('settings.items.tlsGenerate') }}
+          {{ certUsable ? t('settings.items.tlsRegenerate') : t('settings.items.tlsGenerate') }}
         </button>
         <button
           v-if="needsForce"
@@ -116,6 +110,10 @@ interface TLSStatus {
   notAfter?: string
   httpsUrl?: string
   restartRequired?: boolean
+  /** Present but unusable: expired, not yet valid, or not parseable at all. */
+  expired?: boolean
+  notYetValid?: boolean
+  unreadable?: boolean
 }
 
 const status = ref<TLSStatus | null>(null)
@@ -130,6 +128,33 @@ const needsForce = ref(false)
 
 const restartRequired = computed(() => status.value?.restartRequired === true)
 const hosts = computed(() => status.value?.hosts ?? [])
+
+/**
+ * A certificate that exists but cannot be used. The files are still there, so
+ * `active` is true (HTTPS will be attempted) — but browsers reject it, and the
+ * panel must not present it as a working setup.
+ */
+const certInvalid = computed(
+  () =>
+    status.value?.active === true &&
+    (status.value.expired === true ||
+      status.value.notYetValid === true ||
+      status.value.unreadable === true),
+)
+
+/** Green styling / "regenerate" wording only when the cert is actually usable. */
+const certUsable = computed(() => status.value?.active === true && !certInvalid.value)
+
+const certStateLabel = computed(() => {
+  const s = status.value
+  if (!s?.active) return t('settings.items.tlsStateNone')
+  if (s.expired) return t('settings.items.tlsStateExpired')
+  if (s.notYetValid) return t('settings.items.tlsStateNotYetValid')
+  if (s.unreadable) return t('settings.items.tlsStateUnreadable')
+  return s.selfSigned
+    ? t('settings.items.tlsStateSelfSigned')
+    : t('settings.items.tlsStateCA')
+})
 
 function formatDate(iso: string): string {
   const d = new Date(iso)

@@ -61,6 +61,9 @@ func TestServeTLSGenerate_WritesSelfSignedAndRequiresRestart(t *testing.T) {
 	assert.True(t, resp.Active)
 	assert.True(t, resp.SelfSigned)
 	assert.True(t, resp.RestartRequired)
+	assert.False(t, resp.Expired, "a freshly generated certificate is usable")
+	assert.False(t, resp.NotYetValid)
+	assert.False(t, resp.Unreadable)
 	// The machine's own addresses are always covered, otherwise the link a
 	// colleague opens fails with a name mismatch.
 	assert.Contains(t, resp.Hosts, "127.0.0.1")
@@ -157,6 +160,95 @@ func writeCAIssuedCert(t *testing.T, dir string) {
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
 		0o600,
 	))
+}
+
+// writeSelfSignedCert writes a self-signed pair with an explicit validity
+// window, so the status endpoint can be exercised against expired or
+// not-yet-valid certificates without waiting for time to pass.
+func writeSelfSignedCert(t *testing.T, dir string, notBefore, notAfter time.Time) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "ClawBench"},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "cert.pem"),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		0o644,
+	))
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "key.pem"),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
+		0o600,
+	))
+}
+
+// An expired certificate is still "present": the listener will start HTTPS and
+// browsers will reject it. The panel has to be able to say that, so active
+// stays true and Expired carries the reason.
+func TestServeTLSStatus_FlagsExpiredCertificate(t *testing.T) {
+	dir := useTempCertDir(t)
+	writeSelfSignedCert(t, dir, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
+
+	w := httptest.NewRecorder()
+	ServeTLSStatus(w, newRequest(t, http.MethodGet, "/api/config/tls", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp tlsStatusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Active, "the pair is on disk, HTTPS will still be attempted")
+	assert.True(t, resp.Expired)
+	assert.False(t, resp.NotYetValid)
+	assert.False(t, resp.Unreadable)
+	assert.True(t, resp.SelfSigned)
+	assert.NotEmpty(t, resp.NotAfter)
+}
+
+func TestServeTLSStatus_FlagsNotYetValidCertificate(t *testing.T) {
+	dir := useTempCertDir(t)
+	writeSelfSignedCert(t, dir, time.Now().Add(time.Hour), time.Now().Add(2*time.Hour))
+
+	w := httptest.NewRecorder()
+	ServeTLSStatus(w, newRequest(t, http.MethodGet, "/api/config/tls", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp tlsStatusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Active)
+	assert.False(t, resp.Expired)
+	assert.True(t, resp.NotYetValid)
+	assert.False(t, resp.Unreadable)
+}
+
+// A truncated write or an unrelated file still forms a "pair" on disk. Nothing
+// can be read from it, so the panel must not call it enabled.
+func TestServeTLSStatus_FlagsUnreadableCertificate(t *testing.T) {
+	dir := useTempCertDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cert.pem"), []byte("not a certificate"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "key.pem"), []byte("not a key"), 0o600))
+
+	w := httptest.NewRecorder()
+	ServeTLSStatus(w, newRequest(t, http.MethodGet, "/api/config/tls", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp tlsStatusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Active)
+	assert.True(t, resp.Unreadable)
+	assert.False(t, resp.Expired)
+	assert.False(t, resp.NotYetValid)
+	assert.False(t, resp.SelfSigned)
+	assert.Empty(t, resp.NotAfter)
 }
 
 func TestServeTLSStatus_RejectsWrongMethod(t *testing.T) {

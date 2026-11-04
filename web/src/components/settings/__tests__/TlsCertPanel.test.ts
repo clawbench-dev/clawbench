@@ -45,6 +45,56 @@ async function mountPanel() {
   return w
 }
 
+describe('TlsCertPanel certificate validity', () => {
+  // The files are on disk, so the server still starts HTTPS — but browsers
+  // refuse the certificate. Presenting it as "enabled" is what left users
+  // staring at an unreachable page with no explanation.
+  it('marks an expired certificate as invalid and offers to generate a new one', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/config/tls') return ok({ ...status, expired: true })
+      return ok({})
+    })
+
+    const w = await mountPanel()
+    const state = w.findAll('.tls-panel__row')[0].find('.tls-panel__value')
+    expect(state.text()).toBe('settings.items.tlsStateExpired')
+    expect(state.classes()).not.toContain('tls-panel__value--ok')
+    expect(w.find('.tls-panel__actions button').text()).toBe('settings.items.tlsGenerate')
+  })
+
+  it('marks a not-yet-valid certificate as invalid', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/config/tls') return ok({ ...status, notYetValid: true })
+      return ok({})
+    })
+
+    const w = await mountPanel()
+    expect(w.findAll('.tls-panel__row')[0].find('.tls-panel__value').text())
+      .toBe('settings.items.tlsStateNotYetValid')
+    expect(w.find('.tls-panel__actions button').text()).toBe('settings.items.tlsGenerate')
+  })
+
+  it('marks an unreadable certificate as invalid', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/config/tls') return ok({ ...status, unreadable: true, selfSigned: false })
+      return ok({})
+    })
+
+    const w = await mountPanel()
+    expect(w.findAll('.tls-panel__row')[0].find('.tls-panel__value').text())
+      .toBe('settings.items.tlsStateUnreadable')
+    expect(w.find('.tls-panel__actions button').text()).toBe('settings.items.tlsGenerate')
+  })
+
+  it('keeps the regenerate wording for a usable certificate', async () => {
+    const w = await mountPanel()
+    const state = w.findAll('.tls-panel__row')[0].find('.tls-panel__value')
+    expect(state.text()).toBe('settings.items.tlsStateSelfSigned')
+    expect(state.classes()).toContain('tls-panel__value--ok')
+    expect(w.find('.tls-panel__actions button').text()).toBe('settings.items.tlsRegenerate')
+  })
+})
+
 describe('TlsCertPanel restart', () => {
   it('moves to the HTTPS address after the listener comes back', async () => {
     const replace = vi.fn()
