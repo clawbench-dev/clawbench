@@ -8,6 +8,11 @@
       <span class="meeting-header__spacer" />
     </div>
 
+    <!-- The desktop shell can capture on http (its own origin is promoted), but
+         the link it hands out cannot. Say so before the form is filled in — the
+         same notice the meeting list carries, so the two cannot drift. -->
+    <HttpsNotice v-if="desktopInsecure" variant="banner" />
+
     <div class="meeting-body">
       <template v-if="!supported">
         <!-- An insecure origin is not a stale client: the page has no capture
@@ -420,6 +425,14 @@ const unsupportedHint = computed(() => {
  * client" line, which would send the user looking in the wrong place.
  */
 const insecure = isInsecureCaptureContext()
+
+/**
+ * The desktop shell promotes its own origin to a secure context, so this form
+ * still works on http — but a guest opening the link cannot talk or share a
+ * screen. The same banner the meeting list shows, repeated here because this is
+ * where the link is about to be created.
+ */
+const desktopInsecure = getNative()?.isDesktopApp?.() === true && insecure
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
 const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.value)

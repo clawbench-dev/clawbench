@@ -810,4 +810,31 @@ describe('MeetingCreate in a browser', () => {
       else delete (window as unknown as Record<string, unknown>).isSecureContext
     }
   })
+
+  // The desktop shell promotes its own origin, so this form still works on
+  // http — but the link it is about to create will not work for guests. The
+  // notice sits above the form (not instead of it) and says exactly that.
+  it('warns the desktop shell that guests will need HTTPS', async () => {
+    stubCaptureApi(false)
+    nativeApi.value = { isDesktopApp: () => true, listCaptureSources: vi.fn(async () => '[]') }
+    const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      const notice = wrapper.find('[data-role="https-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('https-notice--banner')
+      expect(notice.find('.https-notice__title').text()).toBe(
+        enMessages.liveShare.httpsNotice.bannerTitle,
+      )
+      // The form is still there: capture works on this machine.
+      expect(wrapper.find('[data-role="meeting-nick"]').exists()).toBe(true)
+      expect(wrapper.find('.meeting-warn').exists()).toBe(false)
+    } finally {
+      if (original) Object.defineProperty(window, 'isSecureContext', original)
+      else delete (window as unknown as Record<string, unknown>).isSecureContext
+    }
+  })
 })
