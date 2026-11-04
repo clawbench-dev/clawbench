@@ -265,3 +265,65 @@ describe('expandDataTransfer (webkitGetAsEntry traversal)', () => {
     expect(result.files.map((f) => f.file.name).sort()).toEqual(['a.txt', 'b.txt', 'c.txt'])
   })
 })
+
+// ── Entry traversal failures must not abort the drop ──
+//
+// `dataTransfer.files` carries the same files on every browser that exposes
+// them, so the webkitGetAsEntry walk is an ENRICHMENT (nested folder contents),
+// not the only source. WebKit makes this concrete: a DataTransfer constructed
+// in script — which is how the e2e specs and the paste path build one — yields
+// entries whose `file()` rejects with NotFoundError, because the file never
+// came from the OS. Rejecting there discarded the `files` list too, and the
+// upload silently did nothing (reproduced: upload-conflict.spec.ts failed on
+// webkit only).
+describe('expandDataTransfer (entry failure degrades to dataTransfer.files)', () => {
+  it('still returns the files list when entry.file() rejects', async () => {
+    const dt = {
+      items: [{
+        webkitGetAsEntry: () => ({
+          isFile: true,
+          isDirectory: false,
+          name: 'a.txt',
+          fullPath: '/a.txt',
+          // Mirrors WebKit's NotFoundError for a script-built DataTransfer.
+          file: (_cb: unknown, err: (e: unknown) => void) => err(new Error('NotFoundError: Path does not exist')),
+        }),
+      }],
+      files: [new File(['abc'], 'a.txt', { type: 'text/plain' })],
+    } as unknown as DataTransfer
+
+    const result = await expandDataTransfer(dt)
+    expect(result.files.map((f) => f.file.name)).toEqual(['a.txt'])
+    expect(result.files[0].relPath).toBe('')
+  })
+
+  it('keeps the files gathered before the failing entry', async () => {
+    const good = makeFileEntry('/good.txt', 'G')
+    const bad = {
+      isFile: true,
+      isDirectory: false,
+      name: 'bad.txt',
+      fullPath: '/bad.txt',
+      file: (_cb: unknown, err: (e: unknown) => void) => err(new Error('NotFoundError')),
+    }
+    const dt = {
+      items: [
+        { webkitGetAsEntry: () => good },
+        { webkitGetAsEntry: () => bad },
+      ],
+      files: [new File(['G'], 'good.txt', { type: 'text/plain' })],
+    } as unknown as DataTransfer
+
+    const result = await expandDataTransfer(dt)
+    expect(result.files.map((f) => f.file.name)).toEqual(['good.txt'])
+  })
+
+  it('still reports an empty directory when the walk itself succeeds', async () => {
+    // Guards the counterpart: swallowing errors must not swallow the empty-dir
+    // signal, which is what tells the user "the folder was empty".
+    const empty = makeDirEntry('empty', '/empty', [])
+    const result = await expandDataTransfer(dataTransferWith([{ getEntry: () => empty }]))
+    expect(result.files).toHaveLength(0)
+    expect(result.emptyDirs).toEqual(['empty'])
+  })
+})

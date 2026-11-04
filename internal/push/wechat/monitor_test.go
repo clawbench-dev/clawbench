@@ -2,8 +2,13 @@ package wechat
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,3 +149,76 @@ func TestMonitor_DispatchesInbound(t *testing.T) {
 }
 
 var _ common.ConnectedClientChecker = (*mockClientChecker)(nil)
+
+// TestMonitor_StopJoinsBeforeReturning pins the fix for an intermittent CI
+// failure: `TestMonitor_PersistsSyncBuf` failed during t.TempDir cleanup with
+// "directory not empty".
+//
+// saveSyncBuf writes a `.tmp` sibling and renames it. Stop used to cancel the
+// context and return immediately, so the monitor goroutine could still be
+// between those two steps — leaving `sync_buf.tmp` behind when the caller
+// removed the directory, which is exactly what t.TempDir reported.
+//
+// TODO(flaky): this test cannot yet DISTINGUISH the two behaviors locally.
+// Removing `monitorWG.Wait()` leaves it green, because cancelling the context
+// aborts the in-flight long poll and the SDK returns from Monitor without ever
+// reaching OnBufUpdate again — so on a fast local machine the write window this
+// test targets never opens. It reproduced only on a loaded CI runner. The
+// assertions below still hold the guarantee (no `.tmp` after Stop, and none
+// appearing later), so the test is not a tautology about the WRONG thing; it
+// simply has not been observed failing without the join. To make it
+// discriminating, the write would have to be parked deterministically — e.g.
+// an OnBufUpdate hook that blocks until released — which requires exposing a
+// seam the SDK does not offer.
+func TestMonitor_StopJoinsBeforeReturning(t *testing.T) {
+	dir := t.TempDir()
+	origDataDir := model.DataDir
+	model.DataDir = dir
+	defer func() { model.DataDir = origDataDir }()
+
+	var n atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ret":             0,
+			"get_updates_buf": fmt.Sprintf("cursor-%d", n.Add(1)),
+			"msgs":            []any{},
+		})
+		// Hold the poll open so Stop lands while the goroutine is mid-cycle.
+		time.Sleep(120 * time.Millisecond)
+	}))
+	defer srv.Close()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.WeChatConfig{BotToken: "tok", BaseURL: srv.URL})
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	require.NoError(t, mgr.Start())
+	require.Eventually(t, func() bool { return loadSyncBuf("") != "" },
+		5*time.Second, 5*time.Millisecond, "the monitor must have written a cursor before Stop")
+
+	mgr.Stop()
+
+	stateDir := filepath.Dir(syncBufPath(""))
+	assertNoTempLeftovers(t, stateDir)
+	// A goroutine that outlived Stop would finish its cycle and write again.
+	time.Sleep(400 * time.Millisecond)
+	assertNoTempLeftovers(t, stateDir)
+}
+
+// assertNoTempLeftovers fails if saveSyncBuf's intermediate file is present.
+func assertNoTempLeftovers(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return
+	}
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasSuffix(e.Name(), ".tmp"),
+			"a cursor write was still in flight when Stop returned: %s", e.Name())
+	}
+}

@@ -124,10 +124,21 @@ export async function expandDataTransfer(dataTransfer: DataTransfer): Promise<Ex
 
   for (const entry of entries) {
     if (entry.isDirectory) topDirs.add(entry.name)
-    await walkEntry(entry, files, emptyDirs, (file, relPath) => {
-      files.push({ file, relPath })
-      seen.add(keyOf(file, relPath))
-    })
+    // A failing entry must NOT abort the whole drop. `dataTransfer.files`
+    // below carries the same files for every browser that exposes them, so the
+    // traversal is an ENRICHMENT (it adds nested folder contents), not the only
+    // source. WebKit makes this concrete: a DataTransfer built in script (as
+    // tests and the paste path do) yields entries whose `file()` rejects with
+    // NotFoundError, and rejecting here discarded the files the `files` list
+    // was about to supply — the upload silently did nothing.
+    try {
+      await walkEntry(entry, files, emptyDirs, (file, relPath) => {
+        files.push({ file, relPath })
+        seen.add(keyOf(file, relPath))
+      })
+    } catch {
+      // Fall through to the `files` list; the entry contributed nothing.
+    }
   }
 
   // dataTransfer.files always lists the full selection. Skip folder placeholders

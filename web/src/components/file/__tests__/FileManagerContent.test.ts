@@ -4,9 +4,15 @@ import { mount } from '@vue/test-utils'
 // Full-suite scheduling: keyboard-shortcut / upload / paste tests in this file
 // drive many async paths (DOM events, timers, uploads). They finish well under
 // 1s in isolation, but under the coverage-gate's full-suite run the worker
-// pool is busy and the default 5s testTimeout occasionally flakes. Bump this
-// file's timeout only.
-vi.setConfig({ testTimeout: 60_000 })
+// pool is busy and the defaults occasionally flake. Bump this file's timeouts
+// only.
+//
+// `hookTimeout` matters as much as `testTimeout` and was missing: the failure
+// surfaced as "Hook timed out in 10000ms" from the shared `beforeEach` (which
+// clears ~40 mocks), not from the test body. Raising only testTimeout left that
+// 10s default in place, so the suite still failed — intermittently, on a
+// different case each run, which reads as a random flake rather than a timeout.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
