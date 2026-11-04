@@ -753,6 +753,11 @@ describe('SettingsCategory', () => {
       expect(slider.attributes('disabled')).toBeDefined()
     })
 
+    // 20s, not the 5s default: mounting the appearance pane pulls in the whole
+    // WallpaperSetting subtree. Alone that is ~1s, but in the full 1000-file run
+    // the worker was slow enough to blow the default (same reason the 50-tile
+    // gallery test in WallpaperSetting.test.ts carries 20s). The assertion needs
+    // the real gallery, so the timeout is what gives.
     it('renders the gallery thumbnail for a locally selected image', async () => {
       localConfig.wallpaperMode = 'local'
       localConfig.wallpaperLocalSelected = 'local-1-a.png'
@@ -778,7 +783,7 @@ describe('SettingsCategory', () => {
         localConfig.wallpaperMode = 'wave'
         localConfig.wallpaperLocalSelected = ''
       }
-    })
+    }, 20_000)
 
     it('renders the auto-fit row as an action, not a switch', () => {
       const wrapper = mountCategory('appearance')

@@ -200,8 +200,20 @@ describe('Build output verification (Issue #328)', () => {
             //     That is broad, incremental growth — an order of magnitude
             //     smaller than the CodeMirror step, and no single heavy module
             //     entered the preload set.
+            //   - 2026-11-04 re-measured at 3,878,725 (+144,789 over the 11-02
+            //     number) after the built-in mail client landed. Attribution:
+            //     the panel itself stays async (MailPanel.vue is a
+            //     defineAsyncComponent, and no mail component appears in the
+            //     entry chunk); what grew is the eagerly bundled i18n pair
+            //     (both locales carry the mail dictionary — 邮件/抄送/收件箱…
+            //     are now in the shared chunk) plus `useMailUnread`, which
+            //     App.vue imports statically because the dock badge must work
+            //     while the panel is closed. The preload set is byte-identical
+            //     in composition to 11-02 (same 8 files, no katex/mermaid/
+            //     OfficePreview entry), so this is incremental dictionary and
+            //     glue growth, not a heavy dependency leaking back in.
             //
-            // The headroom stays ~85KB on purpose (r1 review): raising this
+            // The headroom stays ~40KB on purpose (r1 review): raising this
             // number to whatever the build happens to weigh turns the test into
             // a rubber stamp. If it trips, re-measure and say in the commit
             // what grew — don't just bump it.
@@ -209,7 +221,7 @@ describe('Build output verification (Issue #328)', () => {
             // Going lower needs one of: lazy katex (582KB, invasive — the
             // render path is synchronous), per-locale i18n chunks (270KB), or
             // trimming the eager highlight.js language set.
-            const firstScreenThreshold = 3_820_000
+            const firstScreenThreshold = 3_920_000
 
             console.log(`  First-screen JS payload:`)
             for (const d of details) console.log(`    ${d}`)
