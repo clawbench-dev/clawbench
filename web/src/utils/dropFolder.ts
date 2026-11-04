@@ -124,10 +124,19 @@ export async function expandDataTransfer(dataTransfer: DataTransfer): Promise<Ex
 
   for (const entry of entries) {
     if (entry.isDirectory) topDirs.add(entry.name)
-    await walkEntry(entry, files, emptyDirs, (file, relPath) => {
-      files.push({ file, relPath })
-      seen.add(keyOf(file, relPath))
-    })
+    try {
+      await walkEntry(entry, files, emptyDirs, (file, relPath) => {
+        files.push({ file, relPath })
+        seen.add(keyOf(file, relPath))
+      })
+    } catch {
+      // The entry API cannot always materialize a file: WebKit hands out
+      // entries for drops that have no backing file and then rejects
+      // `entry.file()` with NotFoundError, and a file deleted mid-drag fails
+      // the same way. Losing the whole drop over one entry is the worst
+      // outcome — the `dataTransfer.files` pass below still carries the File,
+      // so fall through to it instead of aborting.
+    }
   }
 
   // dataTransfer.files always lists the full selection. Skip folder placeholders

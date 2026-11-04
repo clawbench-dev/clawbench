@@ -12,6 +12,19 @@ interface FakeEntry {
   createReader?: () => { readEntries: (cb: (e: FakeEntry[]) => void) => void }
 }
 
+function makeFailingFileEntry(fullPath: string): FakeEntry {
+  const name = fullPath.split('/').pop() || 'file'
+  return {
+    isFile: true,
+    isDirectory: false,
+    name,
+    fullPath,
+    file: (_cb: (f: File) => void, err?: (e: unknown) => void) => {
+      err?.(new DOMException('Path does not exist', 'NotFoundError'))
+    },
+  }
+}
+
 function makeFileEntry(fullPath: string, content = 'x'): FakeEntry {
   const name = fullPath.split('/').pop() || 'file'
   return {
@@ -85,6 +98,33 @@ describe('expandDataTransfer (webkitGetAsEntry traversal)', () => {
     const result = await expandDataTransfer({ items: [], files: [] as unknown as FileList } as unknown as DataTransfer)
     expect(result.files).toEqual([])
     expect(result.emptyDirs).toEqual([])
+  })
+
+  // WebKit hands out entries for drops with no backing file and then rejects
+  // `entry.file()` with NotFoundError (a synthetic drop, or a file deleted
+  // mid-drag). Aborting the whole expansion there loses a file the browser is
+  // still offering in dataTransfer.files — which is exactly what a dropped
+  // upload looked like: no request, no dialog, nothing.
+  it('falls back to dataTransfer.files when an entry cannot be materialized', async () => {
+    const f = new File(['x'], 'loose.txt', { type: 'text/plain' })
+    const dt = {
+      items: [{ webkitGetAsEntry: () => makeFailingFileEntry('/loose.txt') }],
+      files: [f],
+    } as unknown as DataTransfer
+
+    const result = await expandDataTransfer(dt)
+    expect(result.files).toHaveLength(1)
+    expect(result.files[0].file.name).toBe('loose.txt')
+    expect(result.files[0].relPath).toBe('')
+  })
+
+  it('keeps the readable entries when one sibling entry fails', async () => {
+    const root = makeDirEntry('proj', '/proj', [
+      makeFileEntry('/proj/ok.txt', 'ok'),
+      makeFailingFileEntry('/proj/gone.txt'),
+    ])
+    const result = await expandDataTransfer(dataTransferWith([{ getEntry: () => root }]))
+    expect(result.files.map((f) => f.file.name)).toEqual(['ok.txt'])
   })
 
   it('falls back to dataTransfer.files when webkitGetAsEntry is unavailable', async () => {
