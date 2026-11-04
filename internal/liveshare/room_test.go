@@ -1048,3 +1048,69 @@ func TestAddViewer_EmptyNamesDoNotCollide(t *testing.T) {
 		t.Fatalf("a second unnamed join must be allowed: %v", err)
 	}
 }
+
+
+// newTestRoom builds a room the way the registry does, with a token the test
+// chooses so failures name the case.
+func newTestRoom(t *testing.T, token string) *Room {
+	t.Helper()
+	return &Room{
+		token:      token,
+		projectKey: "/p",
+		title:      "t",
+		createdAt:  time.Now(),
+		viewers:    make(map[string]*Viewer),
+	}
+}
+
+// The relay mode is fixed at creation time: a second create must not rewrite it
+// under a live meeting. These pin the getters/setters the SFU path reads.
+func TestRoomModeLifecycle(t *testing.T) {
+	r := newTestRoom(t, "tok")
+
+	if got := r.Mode(); got != ModeP2P {
+		t.Fatalf("a fresh room must be P2P, got %q", got)
+	}
+	if r.UseRelay() {
+		t.Fatal("a P2P room must not use the relay")
+	}
+	if got := r.LiveKit(); got != (LiveKitConfig{}) {
+		t.Fatalf("a P2P room has no relay snapshot, got %+v", got)
+	}
+
+	cfg := LiveKitConfig{URL: "wss://relay.example.com", APIURL: "https://relay.example.com", APIKey: "k", APISecret: "s"}
+	if !r.SetMode(ModeSFU, cfg, 4) {
+		t.Fatal("SetMode must succeed before a publisher attaches")
+	}
+	if got := r.Mode(); got != ModeSFU {
+		t.Fatalf("mode must be SFU, got %q", got)
+	}
+	if !r.UseRelay() {
+		t.Fatal("a configured SFU room uses the relay")
+	}
+	if got := r.LiveKit(); got != cfg {
+		t.Fatalf("relay snapshot must be kept, got %+v", got)
+	}
+
+	// An SFU request without credentials falls back to P2P rather than
+	// producing a room that claims to relay but cannot.
+	r2 := newTestRoom(t, "tok2")
+	if !r2.SetMode(ModeSFU, LiveKitConfig{}, 7) {
+		t.Fatal("SetMode must succeed on a fresh room")
+	}
+	if got := r2.Mode(); got != ModeP2P {
+		t.Fatalf("unconfigured relay must stay P2P, got %q", got)
+	}
+}
+
+func TestRoomSetModeRefusedWithPublisher(t *testing.T) {
+	r := newTestRoom(t, "tok")
+	r.ReservePublisher()
+	cfg := LiveKitConfig{URL: "wss://relay.example.com", APIURL: "https://relay.example.com", APIKey: "k", APISecret: "s"}
+	if r.SetMode(ModeSFU, cfg, 4) {
+		t.Fatal("mode must not change once a publisher is reserved")
+	}
+	if got := r.Mode(); got != ModeP2P {
+		t.Fatalf("mode must stay P2P, got %q", got)
+	}
+}

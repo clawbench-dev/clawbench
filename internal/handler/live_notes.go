@@ -2096,9 +2096,33 @@ func liveNotesProject(w http.ResponseWriter, r *http.Request) (string, int64, bo
 // The second is what makes the last upload and the minutes request survive the
 // publisher ending the share: the room is deleted the moment the publisher
 // stops, but the segments recorded seconds earlier must still land.
+
+// sameProjectPath reports whether two spellings name the same project directory.
+//
+// A plain string compare is not enough: macOS reports /var/folders/… for a temp
+// directory while the same place is /private/var/folders/… once symlinks are
+// resolved, and a share would then answer 404 for its own project. Resolve both
+// sides when they exist; fall back to a lexical comparison otherwise.
+func sameProjectPath(a, b string) bool {
+	if a == "" || b == "" {
+		// An empty project key is "no project"; it must never match another
+		// empty one (two unknown projects are not the same project).
+		return false
+	}
+	if a == b {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA == nil && errB == nil {
+		return ra == rb
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
 func liveNotesOwnedByProject(token, projectPath string, projectID int64) bool {
 	if room := liveRegistry.Get(token); room != nil {
-		return room.ProjectKey() == projectPath
+		return sameProjectPath(room.ProjectKey(), projectPath)
 	}
 	pid, exists, err := service.LiveNoteProjectID(token)
 	if err != nil {

@@ -11,6 +11,9 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewAISummarizer_EmptyBaseURL(t *testing.T) {
@@ -319,4 +322,70 @@ func TestRecommendNextStep_APIFailure(t *testing.T) {
 	if errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("unexpected deadline error: %v", err)
 	}
+}
+
+// stubSummarizer answers AskAboutContext and, optionally, the detailed call.
+type stubSummarizer struct {
+	text      string
+	truncated bool
+	err       error
+	detailed  bool
+	gotMax    int
+}
+
+func (s *stubSummarizer) Summarize(context.Context, string, string) (string, error) {
+	return s.text, s.err
+}
+
+func (s *stubSummarizer) AskAboutContext(_ context.Context, _, _, _, _ string, _ int) (string, error) {
+	return s.text, s.err
+}
+
+func (s *stubSummarizer) DoAskPassDetailed(_ context.Context, _, _, _ string, maxTokens int) (string, bool, error) {
+	s.gotMax = maxTokens
+	return s.text, s.truncated, s.err
+}
+
+// plainSummarizer implements only AskAboutContext (no detailed variant), which
+// is what every non-OpenAI/Anthropic backend looks like.
+type plainSummarizer struct{ text string }
+
+func (s *plainSummarizer) Summarize(context.Context, string, string) (string, error) { return s.text, nil }
+func (s *plainSummarizer) DoAskPass(context.Context, string, string, string, int) (string, error) {
+	return s.text, nil
+}
+
+// A backend that cannot report the finish reason keeps the old behavior: the
+// text comes back even though truncation cannot be detected.
+func TestAskAboutContextLossless_FallsBackForPlainSummarizer(t *testing.T) {
+	s := &plainSummarizer{text: "answer"}
+	got, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 100)
+	require.NoError(t, err)
+	assert.Equal(t, "answer", got)
+}
+
+// A truncated reply is an error: the caller asked for lossless output.
+func TestAskAboutContextLossless_TruncatedIsError(t *testing.T) {
+	s := &stubSummarizer{text: "half", truncated: true, detailed: true}
+	_, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 8000)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOutputTruncated)
+	assert.Contains(t, err.Error(), "8000")
+}
+
+// A zero budget means the default, not "unlimited".
+func TestAskAboutContextLossless_DefaultBudget(t *testing.T) {
+	s := &stubSummarizer{text: "ok", detailed: true}
+	got, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 0)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", got)
+	assert.Equal(t, recommendMaxTokens, s.gotMax)
+}
+
+// Errors from the backend pass through unchanged.
+func TestAskAboutContextLossless_PropagatesError(t *testing.T) {
+	boom := errors.New("boom")
+	s := &stubSummarizer{err: boom, detailed: true}
+	_, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 10)
+	require.ErrorIs(t, err, boom)
 }

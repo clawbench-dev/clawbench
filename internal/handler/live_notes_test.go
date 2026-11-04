@@ -2873,3 +2873,20 @@ func TestArtifactErrorCode_MapsBudget(t *testing.T) {
 	err := errors.Join(service.ErrLiveNotesBudget, errors.New("max_tokens=1200"))
 	assert.Equal(t, service.ArtifactErrBudget, artifactErrorCode(service.ArtifactMinutes, err))
 }
+
+// TestSameProjectPath pins the two spellings of one directory. macOS reports
+// /var/folders/… for a temp dir while the same place is /private/var/folders/…
+// after resolving symlinks; a plain string compare made a share 404 for its own
+// project (macOS CI: every live_notes_shots test).
+func TestSameProjectPath(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(dir, link))
+
+	assert.True(t, sameProjectPath(dir, dir), "identical paths match")
+	assert.True(t, sameProjectPath(dir, link), "a symlink to the same dir matches")
+	assert.True(t, sameProjectPath(link, dir), "the comparison is symmetric")
+	assert.False(t, sameProjectPath(dir, t.TempDir()), "different dirs do not match")
+	assert.False(t, sameProjectPath("", dir), "empty never matches")
+	assert.False(t, sameProjectPath("", ""), "two empties are not a project")
+}
