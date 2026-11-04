@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
 )
@@ -116,6 +117,11 @@ func TestServeLiveSFUTest_ProbesWithCredentials(t *testing.T) {
 
 func TestServeLiveSFUTest_ReportsRefusal(t *testing.T) {
 	withLiveSFUTestDB(t)
+	// The message is localized, so pin the language instead of relying on the
+	// process default: the assertion below is about the ZH wording being the
+	// "refused" one rather than the "unreachable" one.
+	defer func(prev string) { model.Language = prev }(model.Language)
+	model.Language = "zh"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

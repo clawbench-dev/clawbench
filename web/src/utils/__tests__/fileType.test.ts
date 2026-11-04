@@ -182,8 +182,11 @@ describe('isThumbableExt', () => {
     expect(isThumbableExt('anim.gif')).toBe(true)
   })
 
-  it('returns false for WebP (not thumbable)', () => {
-    expect(isThumbableExt('photo.webp')).toBe(false)
+  it('returns true for WebP (the backend decodes it)', () => {
+    // WebP joined the list together with backend decoding
+    // (internal/handler/file_thumb.go imports golang.org/x/image/webp), so the
+    // gallery may ask for a thumbnail instead of falling back to the icon.
+    expect(isThumbableExt('photo.webp')).toBe(true)
   })
 
   it('returns false for non-image extensions', () => {

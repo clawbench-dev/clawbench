@@ -10,18 +10,31 @@
  * ends are already in the room, the message shape (`ControlMessage`) is
  * unchanged, and it keeps the server out of a path it never had to understand.
  */
-import {
-  ConnectionState,
+import type {
   Room,
-  RoomEvent,
+  RemoteParticipant,
+  RemoteTrack,
+  RemoteTrackPublication,
   Track,
-  type RemoteParticipant,
-  type RemoteTrack,
-  type RemoteTrackPublication,
 } from 'livekit-client'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'LiveRelay'
+
+/**
+ * The relay client is ~2.6 MB. It is loaded on demand instead of at import
+ * time: this module is reachable from the chat screen (useLiveShare), so a
+ * static import put the whole LiveKit SDK on the first screen — measured as a
+ * 2.5 MB `mediaFullscreenGuard` chunk and a 4.2 MB first-screen payload, over
+ * the 3.6 MB budget. Only a meeting that actually joins a relay pays for it.
+ */
+type LiveKitModule = typeof import('livekit-client')
+let liveKitPromise: Promise<LiveKitModule> | null = null
+
+function loadLiveKit(): Promise<LiveKitModule> {
+  liveKitPromise ??= import('livekit-client')
+  return liveKitPromise
+}
 
 /** What the caller wants to hear about. All optional: a publisher ignores most. */
 export interface RelayHandlers {
@@ -45,6 +58,7 @@ export interface RelayHandlers {
  * reconnect asks ClawBench for a fresh one.
  */
 export async function openRelay(url: string, token: string, handlers: RelayHandlers = {}): Promise<Room> {
+  const { Room, RoomEvent, ConnectionState } = await loadLiveKit()
   const room = new Room({
     // Screen content is the main picture; without this the adaptive stream
     // logic treats a mostly-static desktop as "not visible" and pauses it.
@@ -92,24 +106,29 @@ export function closeRelay(room: Room | null): void {
  * Screen share and camera both travel as a video track; `source` is what lets
  * the viewer tell them apart, so it must match what the picture actually is.
  */
+export type VideoSource = 'screen_share' | 'camera'
+
 export async function publishVideo(
   room: Room,
   track: MediaStreamTrack | null,
-  source: Track.Source.ScreenShare | Track.Source.Camera,
+  source: VideoSource,
 ): Promise<void> {
+  const { Track } = await loadLiveKit()
+  const want = source === 'screen_share' ? Track.Source.ScreenShare : Track.Source.Camera
   const lp = room.localParticipant
-  const existing = [...lp.videoTrackPublications.values()].find((p) => p.source === source)
+  const existing = [...lp.videoTrackPublications.values()].find((p) => p.source === want)
   if (!track) {
     if (existing?.track) await lp.unpublishTrack(existing.track, true)
     return
   }
   if (existing?.track && existing.track.mediaStreamTrack === track) return
   if (existing?.track) await lp.unpublishTrack(existing.track, true)
-  await lp.publishTrack(track, { source })
+  await lp.publishTrack(track, { source: want })
 }
 
 /** Publish or stop the microphone. */
 export async function publishMic(room: Room, track: MediaStreamTrack | null): Promise<void> {
+  const { Track } = await loadLiveKit()
   const lp = room.localParticipant
   const existing = [...lp.audioTrackPublications.values()].find(
     (p) => p.source === Track.Source.Microphone,

@@ -41,6 +41,15 @@ LiveShareAlreadyPublishing: another publisher is already sharing this room
 LiveShareTooManyRooms: too many concurrent screen shares
 LiveShareRelayNotConfigured: the relay service is not configured — fill in and test the relay URL and credentials first
 LiveShareRelayUnavailable: the relay service is unavailable, so the meeting cannot start
+LiveSFURelayMissingFields: relay URL, API Key and API Secret are all required
+LiveSFURelayUnreachable: 'cannot reach {{.URL}}: {{.Detail}}'
+LiveSFURelayRejected: 'LiveKit refused the request (the address is reachable, but the key or permissions are wrong): {{.Detail}}'
+LiveSFURelayFailed: 'connection failed: {{.Detail}}'
+LiveSFURelayConnected: 'connected — {{.Rooms}} rooms on the relay'
+LiveSFUURLRequired: the relay URL is required
+LiveSFUURLUnparsable: the relay URL cannot be parsed
+LiveSFUURLScheme: the relay URL must start with ws:// or wss://
+LiveSFUCredentialsPair: the API key and secret must be filled in together
 ViewerNameRequired: a display name is required to join
 LiveNotesGenerating: the minutes are still being generated
 LiveNotesMeetingLive: the meeting is still in progress

@@ -39,7 +39,6 @@ import {
   resolvePreferredVideoMime,
   screenCaptureConstraints,
 } from './liveMediaPolicy'
-import { Track } from 'livekit-client'
 import {
   closeRelay,
   openRelay,
@@ -741,8 +740,8 @@ async function publishRelayPicture(): Promise<void> {
   const screen = displayStream?.getVideoTracks()[0] ?? null
   const camera = cameraStream?.getVideoTracks()[0] ?? null
   const main = screen ?? camera
-  await publishVideo(relayRoom, screen, Track.Source.ScreenShare)
-  await publishVideo(relayRoom, screen ? null : camera, Track.Source.Camera)
+  await publishVideo(relayRoom, screen, 'screen_share')
+  await publishVideo(relayRoom, screen ? null : camera, 'camera')
   applyContentHint(main, screen ? 'text' : 'motion')
 }
 

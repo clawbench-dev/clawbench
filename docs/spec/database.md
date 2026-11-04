@@ -491,6 +491,18 @@ UNIQUE：`UNIQUE(token, owner, path, opened_at)`。
 
 索引：`idx_live_note_shots_token(token, at_ms)`。
 
+### live_sfu_config（会议中继配置，单行）
+
+整个安装一份：一个中继地址 + 一对凭据，所有选择中继的会议共用。`id` 恒为 1（`CHECK (id = 1)`）就是「单行」的保证——没有第二行可言。密钥只写不读：接口只回 `hasSecret`，从不回显。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY, CHECK (id = 1) | — | 固定 1，单行表 |
+| url | TEXT | NOT NULL | `''` | 浏览器连接地址（ws:// 或 wss://） |
+| api_key | TEXT | NOT NULL | `''` | LiveKit API Key |
+| api_secret | TEXT | NOT NULL | `''` | LiveKit API Secret（只写不读） |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | |
+
 ### live_notes_chat（会议聊天，永久）
 
 发布端是唯一写入点（观众的消息经它中转，它自己的消息也走同一条路径）。`client_msg_id` 是幂等键：重试不会产生重复行。

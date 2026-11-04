@@ -303,6 +303,10 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		// ("look here", "this page"). They are matched against the transcript to
 		// pick key frames; nothing here is ever rendered.
 		"composables/useMeetingShots.ts": "key-frame cue phrases matched against the transcript",
+		// Not copy: the legacy file-event label regex. It recognizes the wording
+		// the server used BEFORE the label was unified ("打开文件" / "Opened
+		// file"), so the Chinese words must match the old output verbatim.
+		"components/live/TranscriptList.vue": "legacy transcript file-event label regex",
 		// Pre-existing ad-hoc bilingual strings: each already branches on the
 		// locale (zh ? '…' : '…'), so neither language is stuck with the other's
 		// text. Not the "Chinese-only, no English path" defect this guard

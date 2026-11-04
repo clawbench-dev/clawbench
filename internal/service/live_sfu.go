@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 
+	"clawbench/internal/i18n"
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -148,20 +150,20 @@ func validateLiveSFUConfig(c LiveSFUConfig) error {
 		return nil
 	}
 	if c.URL == "" {
-		return fmt.Errorf("%w: 中继地址不能为空", ErrLiveSFUInvalid)
+		return fmt.Errorf("%w: %s", ErrLiveSFUInvalid, i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFUURLRequired"))
 	}
 	u, err := url.Parse(c.URL)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("%w: 中继地址无法解析", ErrLiveSFUInvalid)
+		return fmt.Errorf("%w: %s", ErrLiveSFUInvalid, i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFUURLUnparsable"))
 	}
 	if u.Scheme != "ws" && u.Scheme != "wss" {
-		return fmt.Errorf("%w: 中继地址必须以 ws:// 或 wss:// 开头", ErrLiveSFUInvalid)
+		return fmt.Errorf("%w: %s", ErrLiveSFUInvalid, i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFUURLScheme"))
 	}
 	// A credential is a pair. Half of one is always a mistake — most often a
 	// paste that caught only the first line — and would fail at the first
 	// meeting with a 401 that says nothing about which field is wrong.
 	if (c.APIKey == "") != (c.APISecret == "") {
-		return fmt.Errorf("%w: API Key 与 Secret 必须同时填写", ErrLiveSFUInvalid)
+		return fmt.Errorf("%w: %s", ErrLiveSFUInvalid, i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFUCredentialsPair"))
 	}
 	return nil
 }

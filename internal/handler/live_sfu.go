@@ -13,10 +13,12 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"clawbench/internal/i18n"
+	"clawbench/internal/model"
 
 	"clawbench/internal/liveshare"
 	"clawbench/internal/service"
@@ -38,7 +40,12 @@ type liveSFUPatchBody struct {
 	Clear     bool    `json:"clear"`
 }
 
-const jsonSuccessKey = "success"
+const (
+	jsonSuccessKey    = "success"
+	templateDetailKey = "Detail"
+	templateURLKey    = "URL"
+	templateRoomsKey  = "Rooms"
+)
 
 func toLiveSFUResponse(c *service.LiveSFUConfig) liveSFUResponse {
 	return liveSFUResponse{
@@ -130,7 +137,7 @@ func ServeLiveSFUTest(w http.ResponseWriter, r *http.Request) {
 	if url == "" || key == "" || secret == "" {
 		writeJSON(w, http.StatusOK, map[string]any{
 			jsonSuccessKey: false,
-			messageKey:     "中继地址、API Key、API Secret 都需要填写",
+			messageKey:     i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFURelayMissingFields"),
 		})
 		return
 	}
@@ -154,7 +161,7 @@ func ServeLiveSFUTest(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		jsonSuccessKey: true,
-		messageKey:     fmt.Sprintf("连接成功，当前 %d 个房间", rooms),
+		messageKey:     i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFURelayConnected", map[string]interface{}{templateRoomsKey: rooms}),
 	})
 }
 
@@ -166,12 +173,13 @@ const relayProbeTimeout = 10 * time.Second
 // describeRelayError turns the client's two error kinds into something a user
 // can act on: "cannot reach" and "reached but refused" need different fixes.
 func describeRelayError(url string, err error) string {
+	loc := i18n.LocalizerForLocale(model.Language)
 	switch {
 	case errors.Is(err, liveshare.ErrRelayUnreachable):
-		return "无法连接 " + url + "：" + err.Error()
+		return i18n.T(loc, "LiveSFURelayUnreachable", map[string]interface{}{templateURLKey: url, templateDetailKey: err.Error()})
 	case errors.Is(err, liveshare.ErrRelayRejected):
-		return "LiveKit 拒绝了请求（地址可达，但密钥或权限不对）：" + err.Error()
+		return i18n.T(loc, "LiveSFURelayRejected", map[string]interface{}{templateDetailKey: err.Error()})
 	default:
-		return "连接失败：" + err.Error()
+		return i18n.T(loc, "LiveSFURelayFailed", map[string]interface{}{templateDetailKey: err.Error()})
 	}
 }

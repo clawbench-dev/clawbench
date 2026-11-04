@@ -213,7 +213,15 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// than inferred. The bulk is unavoidable: those descriptions ARE the
 		// contract the AI must follow, and trimming them would push the rules
 		// into the prompt template instead — same bytes, worse locality.
-		CommandMCP: 9600,
+		//
+		// Grew to 10301 when the `meeting.*` block joined the shared config
+		// description (auto_minutes / proofread / language / file_excerpts /
+		// minutes_max_tokens, plus their validation rules). Those fields are
+		// irrelevant to an MCP command, but the description is one shared block
+		// for GET and PATCH /api/config — the only way to drop it here would be
+		// to split that description per consumer, which would duplicate the MCP
+		// contract in two places.
+		CommandMCP: 10600,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)

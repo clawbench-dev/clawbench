@@ -283,6 +283,9 @@ export default defineConfig({
           'vendor-diff': ['diff'],
           'vendor-purify': ['dompurify'],
           'vendor-swagger-ui': ['swagger-ui-dist'],
+          // The relay SDK (~2.6 MB) must stay in its own chunk: it is only
+          // needed once a meeting joins a relay, never on first paint.
+          'vendor-livekit': ['livekit-client'],
         },
       },
     },
