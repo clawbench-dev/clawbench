@@ -575,6 +575,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	applyForgeNotifyDefaults(cfg, presence)
 	normalizeForgeCredentialKeys(cfg)
 
+	// --- Mail (built-in mail client) ---
+	// The master switch defaults to ON for the same reason as forge.enabled: a
+	// bool zero value would silently turn mail off for every install that has
+	// never written the key. An explicit `enabled: false` is respected.
+	if !presence["mail.enabled"] {
+		cfg.Mail.Enabled = true
+	}
+
 	// --- Skills (cross-agent skill discovery) ---
 	// Enabled defaults to false: auto-injecting every discovered skill spends
 	// context on every turn whether or not the user wants it, so it is opt-in.

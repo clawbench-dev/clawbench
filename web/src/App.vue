@@ -1122,7 +1122,13 @@ function applyPanelTab(tab: string) {
  */
 function applyProjectPanel(root: string) {
   applyPanelTab(
-    resolvePanelTab(loadProjectPanel(root), isWideScreen.value, !!store.state.currentFile, isForgeTabHidden.value),
+    resolvePanelTab(
+      loadProjectPanel(root),
+      isWideScreen.value,
+      !!store.state.currentFile,
+      isForgeTabHidden.value,
+      isMailTabHidden.value,
+    ),
   )
   saveProjectPanel(root, currentPanelTab.value)
 }
@@ -1338,6 +1344,11 @@ function switchTab(tab: string, force = false) {
   // `switchTab` is hoisted, so it must not read the `const`s below directly —
   // see forgeTabBlocked.
   if (tab === 'forge' && forgeTabBlocked()) return
+  // Mail is the same kind of disable: with the feature switched off there is no
+  // dock entry and no background sync behind the panel, so any programmatic
+  // navigation (a remembered tab replayed by the navigation coordinator, a
+  // notification deep link) is refused rather than landing on an orphan panel.
+  if (tab === 'mail' && mailTabBlocked()) return
   // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
   // per item now: opening a row clears that row, and the "mark all read" button
   // clears the rest. Clearing on tab open is what made the badge number
@@ -2094,6 +2105,16 @@ const isForgeTabHidden = computed(
   () => ((serverConfig.value?.forge ?? {}) as Record<string, unknown>).enabled === false,
 )
 
+// Mail dock entry visibility follows the SERVER's master switch, for the same
+// reason as forge: off stops the server's background IMAP sync (and the
+// email-triggered tasks that ride on it), so every client of that server must
+// agree. `=== false` keeps the tab while the config is still loading — a
+// missing value means "not known yet", and hiding it on first paint would make
+// the entry flicker in.
+const isMailTabHidden = computed(
+  () => ((serverConfig.value?.mail ?? {}) as Record<string, unknown>).enabled === false,
+)
+
 /**
  * Whether a programmatic navigation may enter the forge panel.
  *
@@ -2110,6 +2131,18 @@ const isForgeTabHidden = computed(
  */
 function forgeTabBlocked(): boolean {
   return isForgeTabHidden.value
+}
+
+/**
+ * Whether a programmatic navigation may enter the mail panel.
+ *
+ * Same rule as forge: the switch is a real disable (background sync stops, the
+ * dock entry is gone), so navigating there would strand the user on a panel with
+ * nothing pointing at it. Declared after the computed it reads for the same TDZ
+ * reason as `forgeTabBlocked`.
+ */
+function mailTabBlocked(): boolean {
+  return isMailTabHidden.value
 }
 
 watch(isPortForwardUnavailable, (disabled) => {
@@ -2129,6 +2162,20 @@ watch(isForgeTabHidden, (hidden) => {
   // panel they can only leave via another dock button — move them out, same as
   // the terminal/proxy gates above.
   if (hidden && panelIsActive('forge')) {
+    switchTab(isWideScreen.value ? 'browse' : 'chat')
+  }
+})
+watch(isMailTabHidden, (hidden) => {
+  // The unread poller exists only to feed the dock badge. With the entry gone
+  // there is nothing to feed, and hitting /api/mail/unread every minute for a
+  // disabled feature is exactly the kind of background traffic the switch is
+  // supposed to stop. Re-enabling restarts it; the poller refreshes immediately,
+  // so the count is right the moment the tab comes back.
+  if (hidden) stopMailUnreadPolling()
+  else startMailUnreadPolling()
+  // Same reason as the forge gate above: a panel left mounted with no dock entry
+  // pointing at it strands the user.
+  if (hidden && panelIsActive('mail')) {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
 })
@@ -2420,8 +2467,13 @@ const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKey
 const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSoftKeyboard } = useSoftKeyboard()
 onMounted(() => installSoftKeyboard())
 // The mail badge is the only consumer that must work while the panel is closed,
-// so its poller lives with the app shell rather than with the tab.
-onMounted(startMailUnreadPolling)
+// so its poller lives with the app shell rather than with the tab. Skipped when
+// the feature is already known to be off — the watcher above handles the
+// "config arrives later" case, and starting unconditionally would let a config
+// that loaded before mount be immediately undone here.
+onMounted(() => {
+  if (!isMailTabHidden.value) startMailUnreadPolling()
+})
 onUnmounted(stopMailUnreadPolling)
 onUnmounted(() => uninstallSoftKeyboard())
 
@@ -3409,6 +3461,7 @@ const overflowTabs = computed(() =>
     terminalDisabled: isTerminalDisabled.value,
     portForwardUnavailable: isPortForwardUnavailable.value,
     forgeHidden: isForgeTabHidden.value,
+    mailHidden: isMailTabHidden.value,
   }),
 )
 

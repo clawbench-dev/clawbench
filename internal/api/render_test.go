@@ -231,7 +231,12 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// for GET and PATCH /api/config — the only way to drop it here would be
 		// to split that description per consumer, which would duplicate the MCP
 		// contract in two places.
-		CommandMCP: 10600,
+		//
+		// Grew to 10700 when `mail.enabled` joined the same two descriptions:
+		// the mail switch must be told apart from forge's, since it stops the
+		// same background work but deletes nothing (accounts survive), so a
+		// reader cannot infer its semantics from the forge paragraph.
+		CommandMCP: 10900,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)

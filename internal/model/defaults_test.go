@@ -1500,6 +1500,33 @@ func TestApplyDefaults_UploadRetentionClampsNonPositiveDays(t *testing.T) {
 	}
 }
 
+// TestApplyDefaults_MailEnabledPresence covers the mail master switch's default.
+// Same bool zero-value trap as forge: an install that never wrote the key must
+// keep the mail client it already had.
+func TestApplyDefaults_MailEnabledPresence(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if !cfg.Mail.Enabled {
+		t.Error("Mail.Enabled should default to true when absent from config")
+	}
+
+	// Explicitly false → respected, not overwritten.
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{"mail.enabled": true})
+	if cfg.Mail.Enabled {
+		t.Error("Mail.Enabled must stay false when explicitly set")
+	}
+
+	// The whole section absent (empty presence map) still defaults ON.
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{})
+	if !cfg.Mail.Enabled {
+		t.Error("Mail.Enabled should default to true when the mail section is absent")
+	}
+}
+
 // TestApplyDefaults_ForgeEnabledPresence covers the master switch's default.
 // Go's bool zero value is false, so without the presence check every existing
 // install would read "forge disabled" on upgrade and lose its integration.

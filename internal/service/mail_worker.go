@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 const (
@@ -107,6 +109,14 @@ func (w *MailSyncWorker) run() {
 }
 
 func (w *MailSyncWorker) tick() {
+	// The master switch is a real disable, not just a hidden tab: while it is
+	// off the worker must not open a single IMAP connection. Email-triggered
+	// tasks are evaluated inside this same sync pass, so they stop with it.
+	// Accounts are left untouched — turning the switch back on resumes syncing
+	// on the next tick.
+	if !model.ConfigInstance.Mail.Enabled {
+		return
+	}
 	accounts, err := ListMailAccounts()
 	if err != nil {
 		slog.Warn("mail: list accounts failed", "error", err)

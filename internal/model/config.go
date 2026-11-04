@@ -217,6 +217,7 @@ type Config struct {
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "wechat", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
+	Mail        MailConfig        `yaml:"mail"`         // Built-in mail client master switch
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
 	// MCP is the global MCP server list shared by every ACP agent. Agents only
@@ -375,6 +376,22 @@ type ForgeNotifyConfig struct {
 	Reopened  bool `yaml:"reopened"`
 	Commented bool `yaml:"commented"`
 	Pipeline  bool `yaml:"pipeline"`
+}
+
+// MailConfig is the master switch for the built-in mail client.
+//
+// It is a SERVER-side switch, like Forge.Enabled: the thing being turned off is
+// the background IMAP polling and the email-triggered tasks that ride on it, and
+// those live on the server. A per-device flag would leave one client's server
+// syncing after another device had "disabled" mail.
+//
+// Off means: no background sync, no email-triggered task firing, no dock entry
+// and no unread polling. It does NOT delete the configured accounts — turning
+// the switch back on resumes exactly where it left off.
+type MailConfig struct {
+	// Enabled defaults to TRUE via ApplyDefaults' presence check: mail is an
+	// existing feature, so an install that never wrote the key must keep it.
+	Enabled bool `yaml:"enabled"`
 }
 
 // AppearanceConfig holds the custom-wallpaper *resources* the server owns.

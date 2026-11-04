@@ -2795,6 +2795,9 @@ export default {
       systemAbout: 'System & About',
     },
     items: {
+      mailEnabledSection: 'Mail feature',
+      mailEnabled: 'Enable mail',
+      mailEnabledDesc: 'Off stops background fetching and email-triggered tasks, and hides the Mail tab. Configured mailboxes are kept — turning it back on resumes them.',
       mailAccountsSection: 'Mailboxes',
       mailAccountsDesc: 'IMAP / SMTP accounts. The Mail tab and email-triggered tasks use the mailboxes configured here.',
       mailAdd: 'Add mailbox',

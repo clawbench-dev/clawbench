@@ -529,6 +529,34 @@ func TestServeConfig_Patch_ForgeEnabledRoundTrip(t *testing.T) {
 		"GET must echo the switch, otherwise the UI resets it on reload")
 }
 
+// TestServeConfig_Patch_MailEnabledRoundTrip covers the mail master switch. The
+// value must reach ConfigInstance (a whitelisted-but-unapplied field is the bug
+// the guard below exists for) and must be echoed by GET, or the toggle snaps
+// back on the reload patchConfig() performs — and the dock tab would reappear.
+func TestServeConfig_Patch_MailEnabledRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Mail: model.MailConfig{Enabled: true}}
+
+	body := `{"mail":{"enabled":false}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.ConfigInstance.Mail.Enabled,
+		"mail.enabled must be applied to ConfigInstance")
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(getReq, model.SessionToken)
+	gw := callHandler(ServeConfig, getReq)
+	assert.Equal(t, http.StatusOK, gw.Code)
+	assert.Contains(t, gw.Body.String(), `"mail":{"enabled":false}`,
+		"GET must echo the switch, otherwise the UI resets it on reload")
+}
+
 // TestServeConfig_Patch_ForgeDisableClearsBindings is the behavior the user
 // asked for: turning the integration off is a real disable, not a hidden tab —
 // every project's repository binding must be removed so polling has nothing to

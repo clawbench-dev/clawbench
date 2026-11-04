@@ -2790,6 +2790,9 @@ export default {
       systemAbout: '系统与关于',
     },
     items: {
+      mailEnabledSection: '邮件功能',
+      mailEnabled: '启用邮件功能',
+      mailEnabledDesc: '关闭后不再后台收信、不触发邮件任务，邮件页签也会隐藏。已配置的邮箱会保留，重新打开即可继续使用。',
       mailAccountsSection: '邮箱账号',
       mailAccountsDesc: '配置 IMAP / SMTP 账号。邮件页签、邮件触发的任务都用这里的账号。',
       mailAdd: '添加邮箱',

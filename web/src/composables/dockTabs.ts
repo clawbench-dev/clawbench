@@ -143,6 +143,11 @@ export function isDockTabId(tab: string): tab is DockTabId {
  * the time this flag is true there is nothing left for the panel to show — the
  * dock entry is simply the visible half of a real disable.
  *
+ * `mailHidden` is the same kind of switch for the mail client: off stops the
+ * server's background IMAP sync (and the email-triggered tasks riding on it) and
+ * hides the dock entry. Unlike forge it deletes nothing — the accounts stay, so
+ * the switch is trivially reversible.
+ *
  * The proxy flag is `portForwardUnavailable`, not `sshDisabled`: an install
  * forwarding over the stream tunnel has no SSH listener yet works fine, so
  * keying the dock off SSH alone hid the whole tab there. Callers compute it with
@@ -154,11 +159,13 @@ export function secondaryDockTabs(
     terminalDisabled?: boolean
     portForwardUnavailable?: boolean
     forgeHidden?: boolean
+    mailHidden?: boolean
   } = {},
 ): DockTabId[] {
   return DOCK_TABS.filter((t) => !t.primary)
     .filter((t) => !(t.id === 'terminal' && opts.terminalDisabled))
     .filter((t) => !(t.id === 'proxy' && opts.portForwardUnavailable))
     .filter((t) => !(t.id === 'forge' && opts.forgeHidden))
+    .filter((t) => !(t.id === 'mail' && opts.mailHidden))
     .map((t) => t.id)
 }
