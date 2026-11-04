@@ -78,6 +78,12 @@
         />
         <!-- Model providers: endpoint + credential shared by agents. The card
              body is a dedicated component (same pattern as MCPSetting). -->
+        <!-- Mailbox accounts: the one place an IMAP/SMTP account is added or
+             edited. The mail panel's gear sends the user here instead of
+             growing a second copy of this form. -->
+        <MailSetting
+          v-if="card.title === t('settings.items.mailAccountsSection')"
+        />
         <ProviderSetting
           v-if="card.title === t('settings.items.providerSection')"
           :description="t('settings.items.providerDesc')"
@@ -189,6 +195,7 @@ import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
 import TlsCertPanel from './TlsCertPanel.vue'
 import MCPSetting from './MCPSetting.vue'
+import MailSetting from './MailSetting.vue'
 import ProviderSetting from './ProviderSetting.vue'
 import SummaryModelPicker from './SummaryModelPicker.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
@@ -423,7 +430,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }

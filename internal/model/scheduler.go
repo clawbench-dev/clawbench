@@ -14,7 +14,8 @@ type ScheduledTask struct {
 	CronExpr    string `json:"cronExpr"`
 	AgentID     string `json:"agentId"`
 	Prompt      string `json:"prompt"`
-	// TriggerMode selects how the task runs: "cron" (default) or "event".
+	// TriggerMode selects how the task runs: "cron" (default), "event" (forge)
+	// or "email" (new mail matching the gate below).
 	TriggerMode string `json:"triggerMode,omitempty"`
 	// EventTypes lists the forge event types that trigger an event task
 	// (comma-separated: opened,closed,merged,reopened,commented,pipeline_done).
@@ -23,6 +24,22 @@ type ScheduledTask struct {
 	// is deliberately no repository field: the binding is the single source of
 	// truth and cannot drift from the task configuration.
 	EventTypes string `json:"eventTypes,omitempty"`
+	// MailAccountID / MailFolder select the mailbox an email task watches.
+	// MailFolder is the IMAP path ("" = the inbox). The account is required:
+	// a mailbox belongs to a person, and firing on "whatever account happens to
+	// exist" would make the same task behave differently after a second account
+	// is added.
+	MailAccountID int64  `json:"mailAccountId,omitempty"`
+	MailFolder    string `json:"mailFolder,omitempty"`
+	// MailFrom / MailSubject / MailBody are substring gates (case-insensitive,
+	// ALL must match). Empty means "do not constrain on this field", so an
+	// email task with no conditions fires for every new message in the folder.
+	MailFrom    string `json:"mailFrom,omitempty"`
+	MailSubject string `json:"mailSubject,omitempty"`
+	MailBody    string `json:"mailBody,omitempty"`
+	// MailHasAttachment additionally requires at least one non-inline
+	// attachment.
+	MailHasAttachment bool `json:"mailHasAttachment,omitempty"`
 	// Script is an optional gating shell script run BEFORE the AI call. Exit
 	// code 0 opens the gate and the AI turn runs; any other outcome (non-zero,
 	// timeout) closes it and the run is skipped without a session. Its result
@@ -51,6 +68,17 @@ type ScheduledTask struct {
 // cron schedule.
 func (t *ScheduledTask) IsEventTriggered() bool {
 	return t.TriggerMode == "event"
+}
+
+// IsEmailTriggered reports whether the task runs when new mail arrives.
+func (t *ScheduledTask) IsEmailTriggered() bool {
+	return t.TriggerMode == "email"
+}
+
+// HasEventSource reports whether the task runs on an external event rather than
+// a cron schedule. Both kinds carry no NextRunAt.
+func (t *ScheduledTask) HasEventSource() bool {
+	return t.IsEventTriggered() || t.IsEmailTriggered()
 }
 
 // EventTypeList splits the stored comma-separated event types.

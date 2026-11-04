@@ -890,6 +890,20 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// DELETE clears the whole log.
 	register("/api/notifications", ServeNotificationsOrClear)
 
+	// Built-in mail client: accounts, cached folders/messages, send, drafts.
+	// Data is global (a mailbox belongs to the person, not to a project).
+	register("/api/mail/presets", ServeMailPresets)
+	register("/api/mail/accounts", ServeMailAccounts)
+	register("/api/mail/accounts/", ServeMailAccountSubRoutes)
+	register("/api/mail/folders", ServeMailFolders)
+	register("/api/mail/folders/", ServeMailFolderSubRoutes)
+	register("/api/mail/messages", ServeMailMessages)
+	register("/api/mail/messages/", ServeMailMessageSubRoutes)
+	register("/api/mail/unread", ServeMailUnread)
+	register("/api/mail/send", ServeMailSend)
+	register("/api/mail/drafts", ServeMailDrafts)
+	register("/api/mail/drafts/", ServeMailDraftSubRoutes)
+
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)
 	register("/api/chat/quick-send/", ServeChatQuickSendByID)

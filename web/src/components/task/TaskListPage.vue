@@ -38,8 +38,8 @@
                    summary line only ever shows a schedule or a repository. -->
               <span
                 class="task-trigger-badge"
-                :class="task.triggerMode === 'event' ? 'is-event' : 'is-cron'"
-              >{{ task.triggerMode === 'event' ? t('task.form.triggerEvent') : t('task.form.triggerCron') }}</span>
+                :class="triggerBadgeClass(task)"
+              >{{ triggerBadgeLabel(task) }}</span>
               <span class="task-item-name">{{ task.name }}</span>
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
               <span v-if="task.unreadCount > 0" class="task-item-unread count-badge">{{ task.unreadCount }}</span>
@@ -53,7 +53,7 @@
                    shoving the neighbouring repeat label far to the right, so
                    event rows never lined up with cron rows.
                  The subscription detail lives in the task overview. -->
-            <div v-if="task.triggerMode !== 'event'" class="task-item-meta">
+            <div v-if="task.triggerMode !== 'event' && task.triggerMode !== 'email'" class="task-item-meta">
               <div class="meta-item cron" :title="task.cronExpr">
                 <Clock class="meta-icon" :size="12" />
                 <span>{{ humanizeCron(task.cronExpr) }}</span>
@@ -83,6 +83,10 @@
               <Zap class="meta-icon" :size="12" />
               <span class="task-item-events" :title="eventRowLabel(task)">{{ eventRowLabel(task) }}</span>
             </div>
+            <div v-else-if="task.triggerMode === 'email'" class="task-item-next">
+              <Mail class="meta-icon" :size="12" />
+              <span class="task-item-events" :title="mailRowLabel(task)">{{ mailRowLabel(task) }}</span>
+            </div>
             <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
               <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
@@ -99,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap, Mail } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -132,6 +136,10 @@ interface TaskItem {
   nextRunAt?: string
   // Trigger mode: 'cron' (default/absent) or 'event'.
   triggerMode?: string
+  mailFrom?: string
+  mailSubject?: string
+  mailBody?: string
+  mailHasAttachment?: boolean
   // Comma-separated event subscription; only meaningful for an event task.
   eventTypes?: string
 }
@@ -141,6 +149,34 @@ interface TaskItem {
 // and the full text stays reachable via the title attribute.
 function eventRowLabel(task: TaskItem): string {
   return eventTypesSummary(task.eventTypes) || t('task.form.eventTypesNone')
+}
+
+/** Badge text/colour for the three trigger kinds. */
+function triggerBadgeLabel(task: TaskItem): string {
+  if (task.triggerMode === 'event') return t('task.form.triggerEvent')
+  if (task.triggerMode === 'email') return t('task.form.triggerEmail')
+  return t('task.form.triggerCron')
+}
+
+function triggerBadgeClass(task: TaskItem): string {
+  if (task.triggerMode === 'event') return 'is-event'
+  if (task.triggerMode === 'email') return 'is-mail'
+  return 'is-cron'
+}
+
+/**
+ * One-line summary of the mail gates. Empty gates are omitted rather than
+ * rendered as "from: any", so a task with no gates reads as "every new message"
+ * instead of a list of blanks.
+ */
+function mailRowLabel(task: TaskItem): string {
+  const parts: string[] = []
+  if (task.mailFrom) parts.push(t('task.mail.gateFrom', { v: task.mailFrom }))
+  if (task.mailSubject) parts.push(t('task.mail.gateSubject', { v: task.mailSubject }))
+  if (task.mailBody) parts.push(t('task.mail.gateBody', { v: task.mailBody }))
+  if (task.mailHasAttachment) parts.push(t('task.mail.gateAttachment'))
+  if (parts.length === 0) return t('task.mail.noGates')
+  return parts.join(' · ')
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
@@ -389,6 +425,12 @@ onMounted(refresh)
   color: var(--text-primary, #1a1a1a);
   background: color-mix(in srgb, var(--color-purple, #7c3aed) 18%, transparent);
   border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 45%, transparent);
+}
+
+.task-trigger-badge.is-mail {
+  color: var(--text-primary, #1a1a1a);
+  background: color-mix(in srgb, var(--color-success, #16a34a) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-success, #16a34a) 45%, transparent);
 }
 
 .task-item-name {

@@ -136,7 +136,12 @@ const taskRunningCount = computed(() => props.task.runningCount as number)
 
 // An absent triggerMode is the cron default (tasks created before event mode
 // existed carry no field). Same reading as TaskListPage / TaskOverviewTab.
-const isEventTriggered = computed(() => (props.task.triggerMode as string) === 'event')
+const isEventTriggered = computed(() => {
+  const mode = props.task.triggerMode as string
+  // An email task is also event-driven: it has no schedule and a manual run
+  // would carry no mail context, so the "run now" button is hidden for both.
+  return mode === 'event' || mode === 'email'
+})
 
 const refreshing = ref(false)
 const scrollRef = ref<HTMLElement | null>(null)

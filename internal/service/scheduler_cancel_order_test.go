@@ -77,7 +77,7 @@ func TestScheduler_CancelExecution_StampsMessageBeforeTaskEvent(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, "/tmp", "manual", nil)
+		s.executeTask(task, "/tmp", "manual", nil, nil)
 	}()
 
 	// Wait until the reply has actually been persisted onto the streaming row,

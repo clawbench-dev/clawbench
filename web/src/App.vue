@@ -233,6 +233,11 @@
                   />
                 </TabPanel>
 
+                <!-- 邮件 Tab: folders, message list, reading pane and compose. -->
+                <TabPanel tabId="mail" :activeTab="leftPanelActive" :noHeader="true">
+                  <MailPanel :active="panelIsActive('mail')" @open-settings="openMailSettings" />
+                </TabPanel>
+
                 <!-- Proxy Tab -->
                 <TabPanel tabId="proxy" :activeTab="leftPanelActive" :noHeader="true">
                   <ProxyPanelContent :active="panelIsActive('proxy')" />
@@ -616,6 +621,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent, type CSSProperties } from 'vue'
+import { startMailUnreadPolling, stopMailUnreadPolling, useMailUnread } from '@/composables/useMailUnread'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
@@ -647,6 +653,12 @@ import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 // always offered — the list is readable even on a host that cannot capture.
 const MeetingPanel = defineAsyncComponent(
   buildAsyncComponentOptions({ loader: () => import('./components/live/MeetingPanel.vue') }),
+)
+// 邮件: a complete mail client. Kept async like the meeting panel — the panel
+// pulls in DOMPurify-backed HTML rendering and the compose dialog, none of
+// which is needed until the tab is opened.
+const MailPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/mail/MailPanel.vue') }),
 )
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
@@ -1780,6 +1792,16 @@ async function onToggleGroupParallel(enabled: boolean) {
  * target category travels through the module-level pending-category ref, which
  * SettingsPage consumes on mount or on activation.
  */
+/**
+ * Mailbox configuration lives in Settings, so the mail panel's gear and its
+ * empty-state button both land here instead of opening a second copy of the
+ * account form inside the dock pane.
+ */
+function openMailSettings() {
+  setPendingSettingsCategory('mail')
+  switchTab('settings')
+}
+
 function openAgentConfig(agentId: string) {
   if (!agentId) return
   beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
@@ -2397,6 +2419,10 @@ const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKey
 // teardown keeps the composable safe to unit test and hot-reload.
 const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSoftKeyboard } = useSoftKeyboard()
 onMounted(() => installSoftKeyboard())
+// The mail badge is the only consumer that must work while the panel is closed,
+// so its poller lives with the app shell rather than with the tab.
+onMounted(startMailUnreadPolling)
+onUnmounted(stopMailUnreadPolling)
 onUnmounted(() => uninstallSoftKeyboard())
 
 // The selection toolbar needs the keyboard's SIZE (not just whether it is open)
@@ -3805,6 +3831,7 @@ function dockTabBadgeCount(tab: string) {
     case 'tasks': return store.state.taskUnreadCount
     case 'terminal': return store.state.terminalSessionCount
     case 'proxy': return store.state.portForwardEnabledCount
+    case 'mail': return mailUnread.value
     default: return 0
   }
 }
@@ -3815,6 +3842,7 @@ function dockTabBadgeAnim(tab: string) {
     case 'tasks': return taskBadgeAnim.value
     case 'terminal': return terminalBadgeAnim.value
     case 'proxy': return proxyBadgeAnim.value
+    case 'mail': return mailBadgeAnim.value
     default: return false
   }
 }
@@ -3825,6 +3853,7 @@ function dockTabBadgeAnimEnd(tab: string) {
     case 'tasks': taskBadgeAnim.value = false; break
     case 'terminal': terminalBadgeAnim.value = false; break
     case 'proxy': proxyBadgeAnim.value = false; break
+    case 'mail': mailBadgeAnim.value = false; break
   }
 }
 function wideDockBadgeVisible(tab: string) {
@@ -3871,6 +3900,8 @@ const forgeBadgeAnim = ref(false)
 const taskBadgeAnim = ref(false)
 const terminalBadgeAnim = ref(false)
 const proxyBadgeAnim = ref(false)
+const { total: mailUnread } = useMailUnread()
+const mailBadgeAnim = ref(false)
 const overflowBadgeAnim = ref(false)
 
 function triggerBadgeAnim(animRef: { value: boolean }) {
@@ -3896,6 +3927,15 @@ watch(() => store.state.portForwardEnabledCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(proxyBadgeAnim)
     if (!allInlineOverflowTabs.value.includes('proxy')) triggerBadgeAnim(overflowBadgeAnim)
+  }
+})
+// Mail unread is a module-level singleton polled once a minute; the badge is
+// the only consumer outside the panel, so the poller starts with the app rather
+// than with the tab being opened.
+watch(mailUnread, (n, o) => {
+  if (o !== undefined && n !== o) {
+    triggerBadgeAnim(mailBadgeAnim)
+    if (!allInlineOverflowTabs.value.includes('mail')) triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 
