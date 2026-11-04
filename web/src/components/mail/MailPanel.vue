@@ -122,6 +122,7 @@ import MailCompose from './MailCompose.vue'
 import { useMailAccounts } from '@/composables/useMailAccounts'
 import { useMailMessages } from '@/composables/useMailMessages'
 import { refreshMailUnread } from '@/composables/useMailUnread'
+import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { useToast } from '@/composables/useToast'
@@ -343,6 +344,25 @@ function onMessageDeleted(): void {
 function onMessageUpdated(msg: MailMessage): void {
   list.patchMessage(msg)
 }
+
+/**
+ * Edge swipe / Android back: one level up, never out of the tab.
+ *
+ * The panel is a drill-down (list → reader → compose), so both deeper views
+ * must answer the gesture. Compose returns to wherever it was opened from —
+ * a reply goes back to the message, a new mail goes back to the list.
+ */
+const canGoBack = computed(() => !!props.active && view.value !== 'list')
+
+useFeatureBackHandler(
+  'mail',
+  () => canGoBack.value,
+  () => {
+    if (view.value === 'compose') closeCompose()
+    else void backToList()
+  },
+  PRIORITY_PAGE,
+)
 
 function openCompose(): void {
   composeInitial.value = {}
