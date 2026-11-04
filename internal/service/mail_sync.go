@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -84,6 +85,9 @@ func SyncMailAccount(ctx context.Context, accountID int64) (MailSyncResult, erro
 		_ = SetMailAccountSyncResult(accountID, err.Error())
 		return result, err
 	}
+	// Close whatever client is current at return time: a dead connection is
+	// replaced mid-loop, and closing the captured variable would leak the new
+	// one.
 	defer func() { _ = client.Close() }()
 
 	folders, err := client.ListFolders(ctx)
@@ -113,6 +117,18 @@ func SyncMailAccount(ctx context.Context, accountID int64) (MailSyncResult, erro
 		newCount, err := syncMailFolder(ctx, client, accountID, folderID, f)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", f.Name, err))
+			// A dead connection must not fail every remaining folder with
+			// "use of closed network connection" — that turned one bad message
+			// into an account-wide outage. Dial a fresh connection and carry on.
+			if mailConnectionDead(err) {
+				_ = client.Close()
+				fresh, dialErr := mailDialer(ctx, acc.ProtocolAccount())
+				if dialErr != nil {
+					result.Errors = append(result.Errors, dialErr.Error())
+					break
+				}
+				client = fresh
+			}
 			continue
 		}
 		result.NewMessages += newCount
@@ -124,6 +140,22 @@ func SyncMailAccount(ctx context.Context, accountID int64) (MailSyncResult, erro
 	}
 	_ = SetMailAccountSyncResult(accountID, lastErr)
 	return result, nil
+}
+
+// mailConnectionDead reports whether err means the IMAP connection itself is
+// gone (as opposed to one folder being unreadable).
+func mailConnectionDead(err error) bool {
+	var me *mail.Error
+	if errors.As(err, &me) {
+		switch me.Kind {
+		case mail.KindConnect, mail.KindTimeout, mail.KindTLS:
+			return true
+		}
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	return strings.Contains(err.Error(), "use of closed network connection")
 }
 
 // ErrMailSyncBusy is returned when a sync for the same account is already running.

@@ -125,6 +125,22 @@ watch(activeAccountId, async (id) => {
 onMounted(async () => {
   try {
     await accountApi.load()
+    const first = accounts.value[0]
+    // A freshly added account has never been synced, and the background worker
+    // only runs every three minutes — opening the tab used to show an empty
+    // inbox for that whole window with no hint that anything was happening.
+    // Sync once here so the first visit actually shows the mailbox.
+    if (first && !first.lastSyncAt) {
+      refreshing.value = true
+      try {
+        await accountApi.sync(first.id)
+        await accountApi.load()
+      } catch (e) {
+        appLog.w('MailPanel', 'initial sync failed', e)
+      } finally {
+        refreshing.value = false
+      }
+    }
     if (accounts.value.length > 0) activeAccountId.value = accounts.value[0].id
   } finally {
     initialLoading.value = false

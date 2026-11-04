@@ -190,3 +190,59 @@ func TestIMAPConnectFailureIsClassified(t *testing.T) {
 		t.Fatalf("expected connect/timeout kind, got %v (%v)", k, err)
 	}
 }
+
+// A header block is the fallback that replaced ENVELOPE. It must decode
+// RFC 2047 subjects, split addresses, and — most importantly — never panic or
+// abort on a header the parser dislikes.
+func TestApplyHeaderSection(t *testing.T) {
+	raw := []byte(
+		"From: =?utf-8?B?5byg5LiJ?= <zhangsan@example.com>\r\n" +
+			"To: Li Si <lisi@example.com>, wang@example.com\r\n" +
+			"Cc: cc@example.com\r\n" +
+			"Subject: =?utf-8?B?5ZGo5oql?=\r\n" +
+			"Date: Mon, 3 Nov 2025 10:24:00 +0800\r\n" +
+			"Message-ID: <abc@example.com>\r\n" +
+			"In-Reply-To: <parent@example.com>\r\n" +
+			"References: <root@example.com> <parent@example.com>\r\n" +
+			"\r\n")
+
+	var h MessageHeader
+	applyHeaderSection(&h, raw)
+
+	if h.Subject != "周报" {
+		t.Fatalf("subject = %q", h.Subject)
+	}
+	if h.FromName != "张三" || h.FromAddr != "zhangsan@example.com" {
+		t.Fatalf("from = %q <%q>", h.FromName, h.FromAddr)
+	}
+	if len(h.To) != 2 || h.To[0].Addr != "lisi@example.com" || h.To[1].Addr != "wang@example.com" {
+		t.Fatalf("to = %+v", h.To)
+	}
+	if len(h.Cc) != 1 || h.Cc[0].Addr != "cc@example.com" {
+		t.Fatalf("cc = %+v", h.Cc)
+	}
+	if h.MessageID != "abc@example.com" {
+		t.Fatalf("message id = %q", h.MessageID)
+	}
+	if h.InReplyTo != "parent@example.com" {
+		t.Fatalf("in-reply-to = %q", h.InReplyTo)
+	}
+	if len(h.References) != 2 || h.References[0] != "root@example.com" {
+		t.Fatalf("references = %+v", h.References)
+	}
+	if h.Date.Year() != 2025 || h.Date.Month() != time.November {
+		t.Fatalf("date = %v", h.Date)
+	}
+}
+
+// Garbage in the header block must cost nothing: the caller keeps whatever the
+// FETCH response already provided (uid/size/flags), so a broken header cannot
+// take down a folder sync.
+func TestApplyHeaderSectionGarbageKeepsGoing(t *testing.T) {
+	var h MessageHeader
+	h.Subject = "keep me"
+	applyHeaderSection(&h, []byte("this is not a header block at all"))
+	if h.Subject != "keep me" {
+		t.Fatalf("subject was clobbered: %q", h.Subject)
+	}
+}

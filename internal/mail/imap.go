@@ -1,12 +1,14 @@
 package mail
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"mime"
 	"net"
+	"net/mail"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/charset"
+	"github.com/jhillyerd/enmime"
 )
 
 const (
@@ -252,31 +255,103 @@ func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID u
 	return headers, nil
 }
 
+// headerFetchFields are the headers the cache keeps. They are fetched as a
+// header block and parsed with enmime instead of asking the server for an
+// ENVELOPE:
+//
+// QQ Mail (and other Chinese providers) emit ENVELOPE structures that violate
+// RFC 9051's grammar — one malformed message makes go-imap's strict parser
+// abort with `imapwire: expected ')', got "z"`, which kills the connection and
+// with it the whole account sync. A header block is opaque bytes: a broken
+// header can only cost that one message's fields, never the connection.
+var headerFetchFields = []string{
+	"From", "To", "Cc", "Reply-To", "Subject", "Date",
+	"Message-ID", "In-Reply-To", "References",
+}
+
+func headerSectionItem() *imap.FetchItemBodySection {
+	return &imap.FetchItemBodySection{
+		Specifier:    imap.PartSpecifierHeader,
+		HeaderFields: headerFetchFields,
+		Peek:         true,
+	}
+}
+
 func (m *imapClient) fetchHeadersBySet(ctx context.Context, set imap.NumSet) ([]MessageHeader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	m.deadline()
+	section := headerSectionItem()
 	msgs, err := m.c.Fetch(set, &imap.FetchOptions{
 		UID:           true,
 		Flags:         true,
-		Envelope:      true,
 		RFC822Size:    true,
 		InternalDate:  true,
 		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+		BodySection:   []*imap.FetchItemBodySection{section},
 	}).Collect()
 	if err != nil {
 		return nil, classify("fetch headers", err)
 	}
 	out := make([]MessageHeader, 0, len(msgs))
 	for _, msg := range msgs {
-		out = append(out, headerFromBuffer(msg))
+		out = append(out, headerFromBuffer(msg, section))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UID < out[j].UID })
 	return out, nil
 }
 
-func headerFromBuffer(msg *imapclient.FetchMessageBuffer) MessageHeader {
+// applyHeaderSection fills the header fields from a raw header block.
+//
+// Every field is best-effort: a header the parser cannot read is dropped and
+// the message still lands in the list (UID, size, flags and date come from the
+// FETCH response, not from here). This is the whole point of not using
+// ENVELOPE — one weird header must never take the mailbox down.
+func applyHeaderSection(h *MessageHeader, raw []byte) {
+	env, err := enmime.ReadEnvelope(bytes.NewReader(raw))
+	if err != nil {
+		return
+	}
+	if v := strings.TrimSpace(env.GetHeader("Subject")); v != "" {
+		h.Subject = v
+	}
+	if v := env.GetHeader("Message-ID"); v != "" {
+		h.MessageID = strings.Trim(strings.TrimSpace(v), "<>")
+	}
+	if v := env.GetHeader("In-Reply-To"); v != "" {
+		h.InReplyTo = firstOrEmpty(strings.Fields(strings.Trim(v, "<>")))
+	}
+	if v := env.GetHeader("References"); v != "" {
+		for _, ref := range strings.Fields(v) {
+			if id := strings.Trim(ref, "<>"); id != "" {
+				h.References = append(h.References, id)
+			}
+		}
+	}
+	if list, aerr := env.AddressList("From"); aerr == nil && len(list) > 0 {
+		h.FromName = list[0].Name
+		h.FromAddr = list[0].Address
+	}
+	if list, aerr := env.AddressList("To"); aerr == nil {
+		h.To = convertMailAddresses(list)
+	}
+	if list, aerr := env.AddressList("Cc"); aerr == nil {
+		h.Cc = convertMailAddresses(list)
+	}
+	if list, aerr := env.AddressList("Reply-To"); aerr == nil {
+		h.ReplyTo = convertMailAddresses(list)
+	}
+	if h.Date.IsZero() {
+		if v := env.GetHeader("Date"); v != "" {
+			if d, derr := mail.ParseDate(v); derr == nil {
+				h.Date = d
+			}
+		}
+	}
+}
+
+func headerFromBuffer(msg *imapclient.FetchMessageBuffer, section *imap.FetchItemBodySection) MessageHeader {
 	h := MessageHeader{
 		UID:            uint32(msg.UID),
 		Size:           msg.RFC822Size,
@@ -299,6 +374,14 @@ func headerFromBuffer(msg *imapclient.FetchMessageBuffer) MessageHeader {
 		h.ReplyTo = convertAddresses(env.ReplyTo)
 		if h.Date.IsZero() {
 			h.Date = env.Date
+		}
+	}
+	// No ENVELOPE is requested any more; the header block is the primary
+	// source. Keeping the ENVELOPE branch costs nothing and lets an older
+	// server (or a test double) that still sends one keep working.
+	if msg.Envelope == nil && section != nil {
+		if raw := msg.FindBodySection(section); len(raw) > 0 {
+			applyHeaderSection(&h, raw)
 		}
 	}
 	for _, f := range msg.Flags {
@@ -457,6 +540,19 @@ func toFlags(names []string) []imap.Flag {
 	out := make([]imap.Flag, 0, len(names))
 	for _, n := range names {
 		out = append(out, imap.Flag(n))
+	}
+	return out
+}
+
+// convertMailAddresses maps stdlib addresses (what enmime returns) to the
+// package's own shape.
+func convertMailAddresses(addrs []*mail.Address) []Address {
+	out := make([]Address, 0, len(addrs))
+	for _, a := range addrs {
+		if a == nil {
+			continue
+		}
+		out = append(out, Address{Name: a.Name, Addr: a.Address})
 	}
 	return out
 }
