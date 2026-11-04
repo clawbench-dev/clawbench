@@ -101,6 +101,54 @@ func TestListRooms_CountsRooms(t *testing.T) {
 	assert.Equal(t, 2, n)
 }
 
+// bearerVideoGrant returns the `video` claim of the token on the request.
+func bearerVideoGrant(t *testing.T, r *http.Request) map[string]any {
+	t.Helper()
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+	video, ok := decodeSegment(t, parts[1])["video"].(map[string]any)
+	require.True(t, ok, "server calls must carry a video grant")
+	return video
+}
+
+// ListRooms is an ACCOUNT-wide call. LiveKit scopes roomAdmin to the room named
+// in the grant, so roomAdmin alone (no room) authorizes nothing and the call
+// comes back 401 "permissions denied" — indistinguishable from a token that can
+// only join, which is exactly what the 测试连接 button used to report while the
+// key and secret were both correct.
+func TestListRooms_TokenCarriesRoomListGrant(t *testing.T) {
+	var video map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		video = bearerVideoGrant(t, r)
+		_, _ = io.WriteString(w, `{"rooms":[]}`)
+	}))
+	defer srv.Close()
+
+	_, err := testConfig(srv.URL).ListRooms(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, true, video["roomList"], "ListRooms is rejected without this grant")
+	assert.Nil(t, video["roomAdmin"], "roomAdmin without a room grants nothing, so it must not be sent alone")
+}
+
+// The room-scoped calls are the mirror image: roomAdmin + the room name, and no
+// account-wide grant.
+func TestRoomScopedCalls_TokenCarriesRoomAdminGrant(t *testing.T) {
+	var video map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		video = bearerVideoGrant(t, r)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+
+	require.NoError(t, testConfig(srv.URL).RemoveParticipant(context.Background(), "room-1", "viewer:9"))
+
+	assert.Equal(t, "room-1", video["room"], "roomAdmin is scoped to a room, so the room must travel with it")
+	assert.Equal(t, true, video["roomAdmin"])
+	assert.Nil(t, video["roomList"], "a per-room call must not be handed account-wide rights")
+}
+
 // A reachable server that refuses is a DIFFERENT failure from an unreachable
 // one, and the user's fix is different too (credentials vs address/firewall).
 func TestListRooms_DistinguishesRefusalFromUnreachable(t *testing.T) {
