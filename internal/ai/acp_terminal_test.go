@@ -21,9 +21,13 @@ func TestResolveTerminalCwd_RequestCwd(t *testing.T) {
 	assert.Equal(t, cwd, client.resolveTerminalCwd(req))
 }
 
-func TestResolveTerminalCwd_ConnRefFallback(t *testing.T) {
+func TestResolveTerminalCwd_ConnectionCwdFallback(t *testing.T) {
+	// No connRef on purpose: the fallback must come from the client's own cwd
+	// snapshot. Reading it through ACPConn.Cwd() would take conn.mu, which
+	// session/new holds while it waits for the agent — the agent waiting on
+	// this handler would then deadlock the connection.
 	client := NewClawBenchACPClient()
-	client.connRef = &ACPConn{cwd: "/project/dir"}
+	client.cwd = "/project/dir"
 	req := acp.CreateTerminalRequest{Command: "ls"}
 	assert.Equal(t, "/project/dir", client.resolveTerminalCwd(req))
 }
@@ -57,7 +61,7 @@ func TestCreateTerminal_ArgsAreExecuted(t *testing.T) {
 	// but the command never ran.
 	client := NewClawBenchACPClient()
 	cwd := t.TempDir()
-	client.connRef = &ACPConn{cwd: cwd}
+	client.cwd = cwd
 
 	marker := filepath.Join(cwd, "args-marker.txt")
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
@@ -81,7 +85,7 @@ func TestCreateTerminal_ArgsAreExecuted(t *testing.T) {
 func TestCreateTerminal_ArgsOutputCaptured(t *testing.T) {
 	client := NewClawBenchACPClient()
 	cwd := t.TempDir()
-	client.connRef = &ACPConn{cwd: cwd}
+	client.cwd = cwd
 
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 		Command: "/bin/echo",
@@ -111,7 +115,7 @@ func TestCreateTerminal_ProcessGroupIsolation(t *testing.T) {
 	// This prevents commands like `sudo` from blocking on /dev/tty.
 	client := NewClawBenchACPClient()
 	cwd := t.TempDir()
-	client.connRef = &ACPConn{cwd: cwd}
+	client.cwd = cwd
 
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 		Command: "echo hello",
@@ -146,7 +150,7 @@ func TestCreateTerminal_InteractiveCommandFailsFast(t *testing.T) {
 	// when stdin is not a tty, so it fails with "no tty present" in a new session.
 	client := NewClawBenchACPClient()
 	cwd := t.TempDir()
-	client.connRef = &ACPConn{cwd: cwd}
+	client.cwd = cwd
 
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 		// `cat /dev/tty` is the canonical test: it tries to open the
@@ -182,7 +186,7 @@ func TestCreateTerminal_CancelKillsProcessGroup(t *testing.T) {
 	// group, not just the leader process. This prevents orphaned children.
 	client := NewClawBenchACPClient()
 	cwd := t.TempDir()
-	client.connRef = &ACPConn{cwd: cwd}
+	client.cwd = cwd
 
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 		Command: "sleep 60",

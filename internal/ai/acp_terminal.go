@@ -34,17 +34,22 @@ type terminalSession struct {
 }
 
 // resolveTerminalCwd determines the working directory for a terminal command.
+//
+// The fallback is the client's cwd snapshot, NOT connRef.Cwd(): this runs on
+// the SDK's inbound-request goroutine, and ACPConn.mu is held across
+// session/new, session/load and session/resume. An agent that issues
+// terminal/create while the session is still being established would then wait
+// for a response we cannot produce until that RPC returns (see
+// resolveAgentPath for the same reasoning).
 func (c *ClawBenchACPClient) resolveTerminalCwd(req acp.CreateTerminalRequest) string {
 	if req.Cwd != nil && *req.Cwd != "" {
 		return *req.Cwd
 	}
-	if c.connRef != nil {
-		if connCwd := c.connRef.Cwd(); connCwd != "" {
-			slog.Info("acp terminal: req.Cwd is nil/empty, using connRef.cwd as fallback",
-				slog.String("command", req.Command),
-				slog.String("fallback_cwd", connCwd))
-			return connCwd
-		}
+	if c.cwd != "" {
+		slog.Info("acp terminal: req.Cwd is nil/empty, using the connection cwd as fallback",
+			slog.String("command", req.Command),
+			slog.String("fallback_cwd", c.cwd))
+		return c.cwd
 	}
 	slog.Warn("acp terminal: no Cwd available — command will inherit server CWD",
 		slog.String("command", req.Command))
