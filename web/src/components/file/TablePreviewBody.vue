@@ -266,7 +266,7 @@ import TableColumnStatsSheet from './TableColumnStatsSheet.vue'
 import TableValueFilterSheet from './TableValueFilterSheet.vue'
 
 const props = defineProps<{
-  file: { name?: string; content?: string | null; truncated?: boolean } | null
+  file: { name?: string; path?: string; content?: string | null; truncated?: boolean } | null
 }>()
 
 const { t } = useI18n()
