@@ -431,8 +431,16 @@ const insecure = isInsecureCaptureContext()
  * still works on http — but a guest opening the link cannot talk or share a
  * screen. The same banner the meeting list shows, repeated here because this is
  * where the link is about to be created.
+ *
+ * Gated on `canCapture`: when this machine cannot capture either, the block
+ * notice below already says everything, and two notices with the same button
+ * would be noise. (`canCapture` rather than `supported` because the latter also
+ * waits on the camera probe — the banner would flash in and out on a host that
+ * has no camera.)
  */
-const desktopInsecure = getNative()?.isDesktopApp?.() === true && insecure
+const desktopInsecure = computed(
+  () => canCapture.value && insecure && getNative()?.isDesktopApp?.() === true,
+)
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
 const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.value)
