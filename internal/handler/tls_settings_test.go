@@ -251,7 +251,7 @@ func TestServeTLSStatus_FlagsUnreadableCertificate(t *testing.T) {
 	assert.Empty(t, resp.NotAfter)
 }
 
-// Deleting removes every recognised pair, not just the one ResolveTLSCerts
+// Deleting removes every recognized pair, not just the one ResolveTLSCerts
 // picked: leaving a second pair behind would bring HTTPS back on restart.
 func TestServeTLSDelete_RemovesEveryRecognisedPairAndRequiresRestart(t *testing.T) {
 	dir := useTempCertDir(t)
@@ -260,7 +260,7 @@ func TestServeTLSDelete_RemovesEveryRecognisedPairAndRequiresRestart(t *testing.
 	ServeTLSGenerateSelfSigned(w, newRequest(t, http.MethodPost, "/api/config/tls/self-signed", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// A second recognised pair, plus the combined form: both would re-enable
+	// A second recognized pair, plus the combined form: both would re-enable
 	// HTTPS if only cert.pem/key.pem were removed.
 	certPEM, err := os.ReadFile(filepath.Join(dir, "cert.pem"))
 	require.NoError(t, err)
@@ -289,7 +289,7 @@ func TestServeTLSDelete_RemovesEveryRecognisedPairAndRequiresRestart(t *testing.
 func TestServeTLSDelete_IsIdempotent(t *testing.T) {
 	useTempCertDir(t)
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		w := httptest.NewRecorder()
 		ServeTLSDelete(w, newRequest(t, http.MethodDelete, "/api/config/tls/delete", nil))
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())

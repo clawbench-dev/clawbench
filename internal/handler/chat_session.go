@@ -1332,16 +1332,9 @@ func persistContextStateThinkingEffortChange(sessionID, effortID, modelID string
 
 // setSessionID sets session ID in cookie.
 // HttpOnly: true prevents JavaScript access, mitigating XSS-based session hijack (ISS-123).
-func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     model.ScopedCookieName("chat_session_id"),
-		Value:    sessionID,
-		Path:     "/",
-		MaxAge:   86400 * 30, // 30 days
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-	})
+// It goes through setAppCookie so it also survives a switch between HTTP and HTTPS.
+func setSessionID(w http.ResponseWriter, _ *http.Request, sessionID string) {
+	setAppCookie(w, "chat_session_id", sessionID, 86400*30)
 }
 
 // ServeForkSession handles POST /api/ai/session/fork — creates a new session
