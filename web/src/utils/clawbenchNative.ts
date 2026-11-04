@@ -284,6 +284,18 @@ export interface ClawBenchNative {
   setSSHPassword(pwd: string): Promise<void>
   connectToServer(url: string, password: string): Promise<void>
   /**
+   * Point the shell at a different address for the SAME server and reload.
+   *
+   * Used after generating a certificate: the server comes back over https and
+   * the old http address is gone. A plain navigation would be classified as
+   * external and opened in the system browser, and `connectToServer` would leave
+   * the dead http entry in the server list next to the new one.
+   *
+   * Optional: an older shell lacks it, and the caller falls back to
+   * `connectToServer`.
+   */
+  switchServerUrl?(url: string): Promise<void>
+  /**
    * Bind a local forward. The result differs by host:
    *   - Electron: a structured result. `{ok:true, port}` carries the port
    *     ACTUALLY bound, which may differ from `localPort` when that port was

@@ -19,6 +19,8 @@
       />
     </div>
 
+    <HttpsNotice v-if="showHttpsNotice" variant="banner" />
+
     <div class="meeting-body">
       <div v-if="loading && sessions.length === 0" class="meeting-hint">
         <LoadingIndicator size="sm" inline />
@@ -183,6 +185,9 @@ import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/util
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import HttpsNotice from '@/components/live/HttpsNotice.vue'
+import { getNative } from '@/utils/clawbenchNative'
+import { isInsecureCaptureContext } from '@/utils/screenCaptureSupport'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import {
@@ -219,6 +224,20 @@ const error = computed(() => history.error.value)
  * list itself says one is running.
  */
 const runningToken = computed(() => sessions.value.find(isLiveRecord)?.token ?? '')
+
+/**
+ * The desktop shell promotes its own http origin to a secure context, so
+ * capture works there — but the link it hands out gets no such treatment: a
+ * guest opening it in a browser cannot talk or share a screen without HTTPS.
+ * Nothing else in the UI says so, and the fix is one click away.
+ *
+ * Scoped to the desktop shell on purpose: a plain browser on an insecure origin
+ * cannot capture at all, and the create page already blocks with the full
+ * notice. Showing both would say the same thing twice.
+ */
+const showHttpsNotice = computed(
+  () => getNative()?.isDesktopApp?.() === true && isInsecureCaptureContext(),
+)
 
 /** `3小时前` / `昨天` / `2天前` — the list's own stamp; the detail spells the
  *  exact date and clock out in full, and the tooltip keeps it reachable here. */

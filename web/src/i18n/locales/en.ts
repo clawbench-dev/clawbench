@@ -4350,6 +4350,22 @@ export default {
     androidFailed: 'Could not start screen sharing. Please try again.',
     androidSystemAudioHint:
       'Only audio that apps allow to be captured (media, games) is recorded; calls and some protected content are not.',
+    httpsNotice: {
+      blockTitle: 'This device cannot share its screen',
+      blockBody:
+        'This page is open at {origin}, where the browser provides no screen or microphone. Generate a self-signed certificate, restart the server, then open the https:// address.',
+      bannerTitle: 'This is an HTTP connection — people joining your meeting are limited',
+      bannerBody:
+        'Screen and microphone work on this computer, but anyone opening your link in a browser needs HTTPS to talk or share their screen.',
+      action: 'Generate certificate and restart',
+      generating: 'Generating certificate…',
+      restarting: 'Restarting the server…',
+      hint: 'The browser will warn that the certificate is untrusted — choose "Continue". The certificate only covers the current address, so regenerate it after a network change.',
+      forceBody: 'The existing certificate was issued by a CA; overwriting it cannot be undone.',
+      forceAction: 'Overwrite anyway',
+      failed: 'Could not generate the certificate. Try again later.',
+      restartFailed: 'Could not restart the server. Try again later.',
+    },
     start: 'Start sharing',
     starting: 'Starting…',
     copyLink: 'Copy link',

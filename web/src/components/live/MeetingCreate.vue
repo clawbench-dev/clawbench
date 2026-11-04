@@ -10,7 +10,11 @@
 
     <div class="meeting-body">
       <template v-if="!supported">
-        <div class="meeting-warn">{{ unsupportedHint }}</div>
+        <!-- An insecure origin is not a stale client: the page has no capture
+             API at all. Offer the one action that actually fixes it instead of
+             sending the user to update an app that is already up to date. -->
+        <HttpsNotice v-if="insecure" variant="block" />
+        <div v-else class="meeting-warn">{{ unsupportedHint }}</div>
       </template>
 
       <template v-else>
@@ -269,6 +273,7 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen, Radio } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
+import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { useToast } from '@/composables/useToast'
 import { DEFAULT_DEVICE, applyMeetingDefaults, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'
@@ -406,9 +411,15 @@ const sourceHint = computed(() => {
 })
 
 const unsupportedHint = computed(() => {
-  if (isInsecureCaptureContext()) return t('liveShare.insecureContext')
   return t('liveShare.captureNeedsClient')
 })
+
+/**
+ * An insecure origin has no capture API at all. That case renders the shared
+ * HTTPS notice (with its one-click fix) instead of the generic "update your
+ * client" line, which would send the user looking in the wrong place.
+ */
+const insecure = isInsecureCaptureContext()
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
 const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.value)

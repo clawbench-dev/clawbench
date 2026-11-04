@@ -795,7 +795,13 @@ describe('MeetingCreate in a browser', () => {
       const wrapper = mountPanel()
       await flushPromises()
 
-      expect(wrapper.find('.meeting-warn').text()).toBe(enMessages.liveShare.insecureContext)
+      // An insecure origin is not a stale client: the page offers the one
+      // action that fixes it (generate a certificate and restart), and the
+      // generic "update your client" line must not appear at all.
+      expect(wrapper.find('.meeting-warn').exists()).toBe(false)
+      expect(wrapper.find('.https-notice__title').text()).toBe(enMessages.liveShare.httpsNotice.blockTitle)
+      expect(wrapper.find('.https-notice__text').text()).toContain(window.location.origin)
+      expect(wrapper.find('[data-action="https-notice-generate"]').exists()).toBe(true)
       // Nothing can be started: the button is present but disabled rather than
       // hidden, so the footer does not jump around between hosts.
       expect(wrapper.find('[data-action="meeting-start"]').attributes('disabled')).toBeDefined()

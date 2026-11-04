@@ -143,6 +143,38 @@ export function registerBridge(): void {
     } else { createMainWindow() }
   })
 
+  // Same server, different address — used after a self-signed certificate turns
+  // the listener into HTTPS. From that moment the old http URL is dead, so the
+  // saved entry is REWRITTEN rather than duplicated (a second entry would show
+  // an unreachable copy of the same machine forever). Rewriting in place also
+  // carries the display name and the stored credential along, since those are
+  // keyed by URL.
+  ipcMain.handle('native:switch-server-url', (_e, url: string) => {
+    if (typeof url !== 'string' || !url) return
+    const previous = getStore().get('serverUrl')
+    if (previous === url) return
+    getStore().set('serverUrl', url)
+
+    const servers = getStore().get('servers')
+    const idx = servers.findIndex(s => s.url === previous)
+    if (idx >= 0) {
+      const next = servers.slice()
+      next[idx] = { ...next[idx], url }
+      getStore().set('servers', next)
+    } else if (!servers.some(s => s.url === url)) {
+      getStore().set('servers', [{ url }, ...servers])
+    }
+
+    const w = getMainWindow()
+    if (w) {
+      showSplashFor(url)
+      void w.loadURL(url)
+      checkVersionGateFor(url)
+    } else {
+      createMainWindow()
+    }
+  })
+
   // The app calls this on every initialization exit path (see App.vue's
   // guardStartupWithSplash), so it is the single signal that the overlay is no
   // longer needed.

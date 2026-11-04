@@ -30,6 +30,7 @@ vi.mock('lucide-vue-next', () => {
     RotateCw: stub,
     RotateCcw: stub,
     Trash2: stub,
+    ShieldAlert: stub,
   }
 })
 
@@ -548,5 +549,48 @@ describe('MeetingList regeneration polling', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('MeetingList HTTPS banner', () => {
+  const originalSecure = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
+  const originalNative = Object.getOwnPropertyDescriptor(window, 'ClawBenchNative')
+
+  function setEnv(native: unknown, secure: boolean): void {
+    Object.defineProperty(window, 'isSecureContext', { value: secure, configurable: true })
+    Object.defineProperty(window, 'ClawBenchNative', { value: native, configurable: true })
+  }
+
+  afterEach(() => {
+    if (originalSecure) Object.defineProperty(window, 'isSecureContext', originalSecure)
+    else delete (window as unknown as Record<string, unknown>).isSecureContext
+    if (originalNative) Object.defineProperty(window, 'ClawBenchNative', originalNative)
+    else delete (window as unknown as Record<string, unknown>).ClawBenchNative
+  })
+
+  // The shell promotes its own origin to a secure context, so capture works
+  // there — but the link it hands out does not get that treatment. That gap is
+  // invisible until a guest cannot talk, which is what this banner says.
+  it('shows the notice in the desktop shell on an insecure origin', async () => {
+    setEnv({ isDesktopApp: () => true }, false)
+    const w = mountList()
+    await flushPromises()
+
+    expect(w.find('[data-role="https-notice"]').exists()).toBe(true)
+    expect(w.find('[data-action="https-notice-generate"]').exists()).toBe(true)
+  })
+
+  // A plain browser cannot capture at all; the create page blocks with the full
+  // notice, so repeating it on the list would say the same thing twice.
+  it('stays hidden in a browser and on a secure origin', async () => {
+    setEnv(null, false)
+    const browser = mountList()
+    await flushPromises()
+    expect(browser.find('[data-role="https-notice"]').exists()).toBe(false)
+
+    setEnv({ isDesktopApp: () => true }, true)
+    const secure = mountList()
+    await flushPromises()
+    expect(secure.find('[data-role="https-notice"]').exists()).toBe(false)
   })
 })

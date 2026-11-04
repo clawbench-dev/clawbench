@@ -87,6 +87,11 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // toggling throttling are fire-and-forget invokes so a failure cannot block
   // the renderer's start-up sequence.
   listCaptureSources: () => ipcRenderer.invoke('native:list-capture-sources') as Promise<string>,
+  // Same server, new address (http → https after a certificate was generated).
+  // A dedicated channel rather than connectToServer: the latter adds a second
+  // server entry and clears the stored password for the new URL.
+  switchServerUrl: (url: string) =>
+    ipcRenderer.invoke('native:switch-server-url', url) as Promise<void>,
   setPendingCaptureSource: (sourceId: string, systemAudio: boolean) =>
     ipcRenderer.invoke('native:set-pending-capture-source', sourceId, systemAudio) as Promise<void>,
   getAudioCaptureSupport: () => ipcRenderer.invoke('native:get-audio-capture-support') as Promise<string>,

@@ -4337,6 +4337,22 @@ export default {
     androidDenied: '已取消屏幕共享授权。',
     androidFailed: '无法启动屏幕共享，请重试。',
     androidSystemAudioHint: '系统声音只能录到允许被录制的声音（媒体、游戏）；通话和部分受保护的内容录不到。',
+    httpsNotice: {
+      blockTitle: '这台设备无法共享屏幕',
+      blockBody:
+        '当前地址是 {origin}，浏览器不会提供屏幕和麦克风。生成一张自签名证书并重启服务后，改用 https:// 打开就能开会。',
+      bannerTitle: '当前是 HTTP 连接，别人加入会议会受限',
+      bannerBody:
+        '你这台电脑可以共享屏幕和麦克风；但发给别人的链接，对方用浏览器打开时要 HTTPS 才能开麦、共享屏幕。',
+      action: '生成证书并重启',
+      generating: '正在生成证书…',
+      restarting: '正在重启服务…',
+      hint: '浏览器会提示证书不受信任，点「继续访问」即可。证书只对当前地址有效，换网络后需要重新生成。',
+      forceBody: '现有证书不是自签名的，覆盖后不可恢复。',
+      forceAction: '仍要覆盖',
+      failed: '生成证书失败，请稍后重试。',
+      restartFailed: '重启服务失败，请稍后重试。',
+    },
     start: '开始共享',
     starting: '正在启动…',
     copyLink: '复制链接',
