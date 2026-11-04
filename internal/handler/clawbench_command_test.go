@@ -419,7 +419,7 @@ func TestIsClawbenchCommand(t *testing.T) {
 //
 // It deliberately does NOT assert "no {{ at all". The /cb-task injection
 // documents the task-prompt template variables ({{code}} / {{stdout}} /
-// {{stderr}} / {{output}}) on purpose — the model must see the literal syntax
+// {{stderr}} / {{output}}, plus the email ones) on purpose — the model must see the literal syntax
 // and reproduce it in the prompt, or the substitution silently never happens.
 // So the rule is narrower and still strict: every brace token that survives
 // must be one of those documented variables, which catches a typo'd injection
@@ -431,6 +431,10 @@ func TestProcessClawbenchCommand_PlaceholderReplacement(t *testing.T) {
 	// prompt variables; /cb-chatsearch injects none, so nothing may survive.
 	allowedForTask := map[string]bool{
 		"{{code}}": true, "{{stdout}}": true, "{{stderr}}": true, "{{output}}": true,
+		// Email-triggered tasks document the mail context variables, which the
+		// scheduler substitutes at run time (applyMailTemplateVars).
+		"{{mailSubject}}": true, "{{mailFrom}}": true, "{{mailTo}}": true,
+		"{{mailDate}}": true, "{{mailBody}}": true, "{{mailFolder}}": true,
 	}
 	tests := []struct {
 		msg   string

@@ -584,6 +584,22 @@ describe('SettingsCategory', () => {
     })
   })
 
+  // ─── 视频会议 category ──────────────────────────────
+  describe('meeting category', () => {
+    // The relay endpoint/credential is installation-wide, so it lives here
+    // instead of the per-meeting create form. The card body is a dedicated
+    // component, and a section header with no matching render branch would
+    // leave an empty card — the exact failure this pins.
+    it('renders the relay form in its own card', () => {
+      const wrapper = mountCategory('meeting')
+
+      expect(wrapper.find('[data-role="relay-url"]').exists()).toBe(true)
+      expect(wrapper.find('[data-role="relay-key"]').exists()).toBe(true)
+      expect(wrapper.find('[data-role="relay-secret"]').exists()).toBe(true)
+      expect(wrapper.find('[data-action="relay-save-test"]').exists()).toBe(true)
+    })
+  })
+
   // ─── Shared AI-summary-model status ─────────────────────
   describe('AI summary model status', () => {
     /** The three in-place model pickers all share one label. */
@@ -737,6 +753,11 @@ describe('SettingsCategory', () => {
       expect(slider.attributes('disabled')).toBeDefined()
     })
 
+    // 20s, not the 5s default: mounting the appearance pane pulls in the whole
+    // WallpaperSetting subtree. Alone that is ~1s, but in the full 1000-file run
+    // the worker was slow enough to blow the default (same reason the 50-tile
+    // gallery test in WallpaperSetting.test.ts carries 20s). The assertion needs
+    // the real gallery, so the timeout is what gives.
     it('renders the gallery thumbnail for a locally selected image', async () => {
       localConfig.wallpaperMode = 'local'
       localConfig.wallpaperLocalSelected = 'local-1-a.png'
@@ -762,7 +783,7 @@ describe('SettingsCategory', () => {
         localConfig.wallpaperMode = 'wave'
         localConfig.wallpaperLocalSelected = ''
       }
-    })
+    }, 20_000)
 
     it('renders the auto-fit row as an action, not a switch', () => {
       const wrapper = mountCategory('appearance')

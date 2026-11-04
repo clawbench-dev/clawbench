@@ -571,6 +571,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// may trigger, and the paths leak the server's data directory.
 	register("/api/config/tls", ServeTLSStatus)
 	register("/api/config/tls/self-signed", ServeTLSGenerateSelfSigned)
+	register("/api/config/tls/delete", ServeTLSDelete)
 	register("/api/push/wechat/login", ServeWeChatLogin)
 	register("/api/push/wechat/status", ServeWeChatStatus)
 	register("/api/push/wechat/logout", ServeWeChatLogout)
@@ -889,6 +890,20 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// events. GET lists (with project/kind/time filters + keyset paging);
 	// DELETE clears the whole log.
 	register("/api/notifications", ServeNotificationsOrClear)
+
+	// Built-in mail client: accounts, cached folders/messages, send, drafts.
+	// Data is global (a mailbox belongs to the person, not to a project).
+	register("/api/mail/presets", ServeMailPresets)
+	register("/api/mail/accounts", ServeMailAccounts)
+	register("/api/mail/accounts/", ServeMailAccountSubRoutes)
+	register("/api/mail/folders", ServeMailFolders)
+	register("/api/mail/folders/", ServeMailFolderSubRoutes)
+	register("/api/mail/messages", ServeMailMessages)
+	register("/api/mail/messages/", ServeMailMessageSubRoutes)
+	register("/api/mail/unread", ServeMailUnread)
+	register("/api/mail/send", ServeMailSend)
+	register("/api/mail/drafts", ServeMailDrafts)
+	register("/api/mail/drafts/", ServeMailDraftSubRoutes)
 
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)

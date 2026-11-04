@@ -35,6 +35,10 @@
             <X :size="16" />
           </button>
         </div>
+        <!-- ⚠️ NO PADDING — .modal-body has NO inset of its own (see
+             modal-card.css). Every consumer MUST add its own padding, or the
+             content sits flush against the card's left and right edges, right
+             under the header, and looks broken. -->
         <div class="modal-body">
           <slot />
         </div>

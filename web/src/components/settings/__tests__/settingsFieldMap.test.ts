@@ -78,6 +78,7 @@ describe('settingsFieldMap', () => {
       'meetingDefaultShots',
       'meetingDefaultAllowTalk',
       'meetingDefaultAllowMemberScreen',
+      'meetingRelay',
     ])
 
     const model = meeting.find(e => e.type === 'item' && e.spec.key === 'summaryModel')

@@ -6,6 +6,11 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k }),
 }))
 
+const { confirmMock } = vi.hoisted(() => ({ confirmMock: vi.fn() }))
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: confirmMock }),
+}))
+
 const status = {
   active: true,
   selfSigned: true,
@@ -24,6 +29,7 @@ function ok(body: unknown): Response {
 }
 
 beforeEach(() => {
+  confirmMock.mockReset()
   fetchMock = vi.fn(async (url: string) => {
     if (url === '/api/config/tls') return ok(status)
     if (url === '/api/config/restart') return ok({ ok: true })
@@ -92,6 +98,67 @@ describe('TlsCertPanel certificate validity', () => {
     expect(state.text()).toBe('settings.items.tlsStateSelfSigned')
     expect(state.classes()).toContain('tls-panel__value--ok')
     expect(w.find('.tls-panel__actions button').text()).toBe('settings.items.tlsRegenerate')
+  })
+})
+
+describe('TlsCertPanel delete', () => {
+  function deleteButton(w: Awaited<ReturnType<typeof mountPanel>>) {
+    return w.findAll('.tls-panel__actions button')
+      .find(b => b.text() === 'settings.items.tlsDelete')
+  }
+
+  it('confirms first, then deletes and offers a restart without an https link', async () => {
+    confirmMock.mockResolvedValueOnce(true)
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/config/tls/delete') {
+        return ok({
+          active: false,
+          serving: false,
+          selfSigned: false,
+          certDir: '/data/tls',
+          restartRequired: true,
+          // The server still reports this, but it will not be reachable over
+          // TLS after the restart — the panel must not offer it.
+          httpsUrl: 'https://example.test:20000',
+        })
+      }
+      if (url === '/api/config/tls') return ok(status)
+      return ok({})
+    })
+
+    const w = await mountPanel()
+    await deleteButton(w)!.trigger('click')
+    await flushPromises()
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/config/tls/delete', expect.objectContaining({ method: 'DELETE' }))
+    expect(w.findAll('.tls-panel__row')[0].find('.tls-panel__value').text())
+      .toBe('settings.items.tlsStateNone')
+    expect(w.find('.tls-panel__notice').text()).toContain('settings.items.tlsDeletedRestartRequired')
+    expect(w.find('.tls-panel__notice a').exists()).toBe(false)
+  })
+
+  it('does nothing when the confirmation is cancelled', async () => {
+    confirmMock.mockResolvedValueOnce(false)
+
+    const w = await mountPanel()
+    await deleteButton(w)!.trigger('click')
+    await flushPromises()
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/config/tls/delete', expect.anything())
+    expect(w.findAll('.tls-panel__row')[0].find('.tls-panel__value').text())
+      .toBe('settings.items.tlsStateSelfSigned')
+  })
+
+  it('offers no delete button when there is no certificate', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === '/api/config/tls') return ok({ active: false, serving: false, certDir: '/data/tls' })
+      return ok({})
+    })
+
+    const w = await mountPanel()
+    expect(deleteButton(w)).toBeUndefined()
   })
 })
 

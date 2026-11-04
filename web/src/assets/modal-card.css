@@ -178,7 +178,14 @@
   color: var(--text-primary, #1a1a1a);
 }
 
-/* ── Body ── */
+/* ── Body ──
+   ⚠️ NO PADDING — deliberate, and the #1 way these shells look broken.
+   The body ships without an inset so a consumer can render a full-bleed list,
+   a tab strip or a divider that must reach the card edges. That means EVERY
+   other consumer has to add its own padding (e.g. `var(--space-6) var(--space-7)`);
+   content with none sits flush against the left/right edges, directly under
+   the header, and reads as a layout bug. Both shells are affected: ModalDialog
+   (.modal-body) and BottomSheet (.bs-body, narrow drawer AND wide card). */
 .modal-body,
 .bs-overlay.bs-overlay-wide-auto .bs-body {
   flex: 1;

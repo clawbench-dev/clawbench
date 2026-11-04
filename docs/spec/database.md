@@ -5,7 +5,7 @@ RAG：同一数据库文件，独立连接池
 
 > 项目身份统一为整数 `project_id`（`projects` 表），所有项目作用域表存 id 而非路径——改名/移动目录只需一条 UPDATE。`project_id=0` 是保留哨兵（全局标签、无法归属的分享），故不声明外键。
 >
-> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **39 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
+> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **53 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
 >
 > 升级路径上的列由 `database.go` 的 `ALTER TABLE ... ADD COLUMN` 补齐（102 条），最终形状与本文件一致；但 `CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，**所以老库不会自动获得新列，只能靠 ALTER**。改 schema 时必须两条路一起改。
 
@@ -205,10 +205,28 @@ UNIQUE：`(message_id)`
 | last_read_at | DATETIME | | — | 最后阅读时间 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
-| trigger_mode | TEXT | NOT NULL | `'cron'` | 触发方式：cron / event（大小写敏感，`IsEventTriggered` 只认小写 `event`） |
+| trigger_mode | TEXT | NOT NULL | `'cron'` | 触发方式：cron / event / email（大小写敏感，`IsEventTriggered`/`IsEmailTriggered` 只认小写） |
 | event_types | TEXT | NOT NULL | `''` | 事件类型列表（逗号分隔），仅 event 模式使用 |
+| mail_account_id | INTEGER | NOT NULL | `0` | 监听的邮箱账号（逻辑关联 `mail_accounts.id`），仅 email 模式使用 |
+| mail_folder | TEXT | NOT NULL | `''` | 监听的文件夹 IMAP 路径，空=收件箱 |
+| mail_from | TEXT | NOT NULL | `''` | 发件人门控（子串，不区分大小写） |
+| mail_subject | TEXT | NOT NULL | `''` | 主题门控（子串） |
+| mail_body | TEXT | NOT NULL | `''` | 正文门控（子串） |
+| mail_has_attachment | INTEGER | NOT NULL | `0` | 是否要求带附件 |
 
 索引：`idx_tasks_project(project_id, created_at DESC)`
+
+### mail_task_triggers（邮件触发的去重台账）
+
+一封匹配的邮件对同一个任务只能触发一次。每次同步都会重新读取最新 100 封邮件头，重启也会再读一遍，所以去重不能靠内存——主键就是全部保证：插入成功即「我抢到了」，冲突即「别人已经触发过」。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| task_id | INTEGER | PRIMARY KEY（复合） | — | 任务 id |
+| message_id | INTEGER | PRIMARY KEY（复合） | — | `mail_messages.id` |
+| fired_at | INTEGER | NOT NULL | — | 触发时间（unix 秒） |
+
+任务忙时（已有一次执行在跑）会释放这次认领，让下一轮同步重试。
 
 ### task_executions（任务执行记录）
 
@@ -837,6 +855,97 @@ UNIQUE：`(type, key_id)`
 | auth_mode | TEXT | NOT NULL | `auto` | `auto` / `x-api-key` / `bearer` |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
+
+### mail_accounts（邮箱账号）
+
+邮件客户端是**全局**的（没有 `project_id`）：邮箱属于人，不属于某个仓库，同一个收件箱在每个项目下都要能看到。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| name | TEXT | NOT NULL | `''` | 显示名 |
+| email | TEXT | NOT NULL | `''` | 邮箱地址（也是发信 From） |
+| username | TEXT | NOT NULL | `''` | IMAP/SMTP 登录名（多数服务商等于邮箱地址） |
+| password | TEXT | NOT NULL | `''` | 密码或授权码；**明文存储**，与 `providers.api_key` 同一取舍，接口只回 `hasPassword` |
+| imap_host / imap_port / imap_security | TEXT/INTEGER/TEXT | NOT NULL | `''`/993/`tls` | 收信服务器；security = tls / starttls / none |
+| smtp_host / smtp_port / smtp_security | TEXT/INTEGER/TEXT | NOT NULL | `''`/465/`tls` | 发信服务器 |
+| insecure_tls | INTEGER | NOT NULL | `0` | 跳过证书校验（自签名自建服务器） |
+| enabled | INTEGER | NOT NULL | `1` | 后台轮询是否包含该账号 |
+| sort_order | INTEGER | NOT NULL | `0` | 账号切换器顺序 |
+| last_sync_at / last_error | INTEGER/TEXT | NOT NULL | `0`/`''` | 上次同步结果，用于面板展示 |
+| created_at | INTEGER | NOT NULL | `0` | 创建时间（unix 秒） |
+
+### mail_folders（邮箱文件夹缓存）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| account_id | INTEGER | NOT NULL | — | 所属账号 |
+| path | TEXT | NOT NULL | — | IMAP 原始路径（非 ASCII 为 modified UTF-7），所有命令都用它 |
+| name | TEXT | NOT NULL | `''` | 解码后的显示名 |
+| delimiter | TEXT | NOT NULL | `'/'` | 层级分隔符 |
+| special_use | TEXT | NOT NULL | `''` | inbox / sent / drafts / trash / junk / archive |
+| uid_validity | INTEGER | NOT NULL | `0` | 变了即清空该文件夹缓存重来 |
+| uid_next / last_seen_uid | INTEGER | NOT NULL | `0` | 同步水位 |
+| unread / total | INTEGER | NOT NULL | `0` | 服务端 STATUS 的未读/总数（`total` 用于判断「还能不能往前翻」） |
+| sort_order | INTEGER | NOT NULL | `0` | 文件夹条顺序 |
+
+索引：`UNIQUE(account_id, path)`、`idx_mail_folders_account(account_id)`
+
+### mail_messages（邮件头缓存）
+
+正文不在同步流程里：`body_text`/`body_html` 打开某封时才拉取并写入，`body_fetched` 标记是否已解析。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| account_id / folder_id | INTEGER | NOT NULL | — | 归属 |
+| uid | INTEGER | NOT NULL | — | IMAP UID |
+| message_id | TEXT | NOT NULL | `''` | RFC Message-ID（回复线程用） |
+| subject / from_name / from_addr | TEXT | NOT NULL | `''` | 头部字段 |
+| to_addrs / cc_addrs | TEXT | NOT NULL | `'[]'` | JSON 数组 `[{name,addr}]` |
+| reply_to / in_reply_to / refs | TEXT | NOT NULL | `''` | 回复地址与线程头 |
+| sent_at / size | INTEGER | NOT NULL | `0` | 时间（unix 秒）/ 字节数 |
+| seen / flagged / answered | INTEGER | NOT NULL | `0` | 标志位本地副本 |
+| has_attachments | INTEGER | NOT NULL | `0` | 由 BODYSTRUCTURE 判定 |
+| snippet | TEXT | NOT NULL | `''` | 列表摘要（同步预取或首次打开时生成） |
+| body_text / body_html | TEXT | 可空 | NULL | 正文，NULL = 未抓取 |
+| body_fetched | INTEGER | NOT NULL | `0` | 是否已解析过正文 |
+
+索引：`UNIQUE(account_id, folder_id, uid)`、`idx_mail_messages_list(folder_id, sent_at DESC, id DESC)`、`idx_mail_messages_account(account_id)`
+
+### mail_attachments（邮件附件）
+
+附件在打开邮件时解析并落盘到 `{DataDir}/mail/attachments/<邮件行id>/`；同步预取只写元数据，`local_path` 留空，下载时再补。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| message_id | INTEGER | NOT NULL | — | 所属邮件 |
+| part_id | TEXT | NOT NULL | `''` | MIME part 标识（重新解析时按它匹配） |
+| filename / content_type | TEXT | NOT NULL | `''` | 文件名（已清洗）/ 类型 |
+| size | INTEGER | NOT NULL | `0` | 字节数 |
+| content_id | TEXT | NOT NULL | `''` | 内嵌图片的 cid |
+| inline | INTEGER | NOT NULL | `0` | 内嵌图（正文引用）还是附件 |
+| local_path | TEXT | NOT NULL | `''` | 落盘路径；空 = 尚未物化 |
+
+索引：`idx_mail_attachments_msg(message_id)`
+
+### mail_drafts（本地草稿）
+
+草稿只存在本地，不同步到服务器的 Drafts 文件夹——那需要另一套 APPEND/EXPUNGE 状态机，而这个功能唯一的承诺是「别丢我打的字」。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| account_id | INTEGER | NOT NULL | — | 所属账号 |
+| to_addrs / cc_addrs / bcc_addrs | TEXT | NOT NULL | `''` | 逗号分隔的地址串（原样回填输入框） |
+| subject / body_text / body_html | TEXT | NOT NULL | `''` | 内容 |
+| in_reply_to / refs | TEXT | NOT NULL | `''` | 线程头 |
+| attachments | TEXT | NOT NULL | `'[]'` | JSON 数组 `[{filename,path,size}]`，指向已上传的文件 |
+| updated_at | INTEGER | NOT NULL | `0` | 最后保存时间 |
+
+索引：`idx_mail_drafts_account(account_id)`
 
 ### schema_migrations（数据转换迁移台账）
 

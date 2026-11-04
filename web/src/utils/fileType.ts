@@ -12,6 +12,8 @@ export interface FileType {
     isVideo?: boolean
     isOffice?: boolean
     isExcalidraw?: boolean
+    /** Delimited text (CSV/TSV) — rendered as a data table, not raw text. */
+    isTable?: boolean
 }
 
 const FILE_TYPES: FileType[] = [
@@ -30,7 +32,7 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.xml', '.plist', '.xsd', '.xsl', '.xslt', '.rss', '.atom'], lang: 'xml', label: 'XML', color: '#e44d26', isMarkdown: false },
     { exts: ['.ini', '.conf', '.cfg'], lang: 'ini', label: 'INI', color: '#8b8b8b', isMarkdown: false },
     { exts: ['.properties'], lang: 'properties', label: 'Props', color: '#8b8b8b', isMarkdown: false },
-    { exts: ['.csv', '.tsv'], lang: 'plaintext', label: 'CSV', color: '#237f4a', isMarkdown: false },
+    { exts: ['.csv', '.tsv'], lang: 'plaintext', label: 'CSV', color: '#237f4a', isMarkdown: false, isTable: true },
     // Meeting transcripts are SubRip; rendering them as Markdown merged every
     // cue into one paragraph, so they stay plain text with their own badge.
     { exts: ['.srt'], lang: 'plaintext', label: 'SRT', color: '#7a5af8', isMarkdown: false },

@@ -333,8 +333,8 @@ func (s *Scheduler) AddTask(task *model.ScheduledTask) error {
 	// Event-triggered tasks have no cron schedule: they are driven by forge
 	// events. Validating their event configuration replaces cron parsing, and
 	// they are never registered with the cron scheduler.
-	if task.IsEventTriggered() {
-		if err := validateEventTask(task); err != nil {
+	if task.HasEventSource() {
+		if err := validateTaskTrigger(task); err != nil {
 			return err
 		}
 		if err := insertTask(task); err != nil {
@@ -471,7 +471,7 @@ func (s *Scheduler) TriggerTask(id int64) error {
 	if _, loaded := s.taskRunning.LoadOrStore(id, struct{}{}); loaded {
 		return fmt.Errorf("task %d already has a running execution", id)
 	}
-	go s.executeTask(task, task.ProjectPath, "manual", nil)
+	go s.executeTask(task, task.ProjectPath, "manual", nil, nil)
 	return nil
 }
 
@@ -493,7 +493,27 @@ func (s *Scheduler) triggerTaskWithContext(id int64, triggerType string, ec Even
 		slog.Info("event task deferred: already running", slog.Int64("task_id", id))
 		return false
 	}
-	s.executeTask(task, task.ProjectPath, triggerType, &ec)
+	s.executeTask(task, task.ProjectPath, triggerType, &ec, nil)
+	return true
+}
+
+// TriggerTaskWithMailContext starts an email-triggered run in the background.
+//
+// Unlike the forge path it does NOT block: mail has no cross-event ordering
+// requirement, and a run takes minutes — blocking the sync worker on it would
+// stall the next folder. It returns false when the task is already running so
+// the caller can release its dedupe claim and retry on the next sync.
+func (s *Scheduler) TriggerTaskWithMailContext(id int64, mc MailEventContext) bool {
+	task, err := GetTaskByID(id)
+	if err != nil {
+		slog.Warn("mail task not found", slog.Int64("task_id", id), slog.String("err", err.Error()))
+		return true // nothing to retry: the task is gone
+	}
+	if _, loaded := s.taskRunning.LoadOrStore(id, struct{}{}); loaded {
+		slog.Info("mail task deferred: already running", slog.Int64("task_id", id))
+		return false
+	}
+	go s.executeTask(task, task.ProjectPath, "email", nil, &mc)
 	return true
 }
 
@@ -505,8 +525,8 @@ func (s *Scheduler) UpdateTask(task *model.ScheduledTask) error {
 	// Event-triggered tasks carry no cron schedule. Validate the event
 	// configuration and drop any stale cron entry (a task may have been switched
 	// from cron to event), then persist.
-	if task.IsEventTriggered() {
-		if err := validateEventTask(task); err != nil {
+	if task.HasEventSource() {
+		if err := validateTaskTrigger(task); err != nil {
 			return err
 		}
 		s.mu.Lock()
@@ -669,6 +689,20 @@ func validateEventTask(task *model.ScheduledTask) error {
 	return ValidateEventSubscription(task.EventTypes)
 }
 
+// validateTaskTrigger dispatches to the validator for the task's trigger kind.
+// Cron tasks need no validation here: their cron expression is parsed by the
+// caller, which reports the more specific error.
+func validateTaskTrigger(task *model.ScheduledTask) error {
+	switch {
+	case task.IsEventTriggered():
+		return validateEventTask(task)
+	case task.IsEmailTriggered():
+		return validateEmailTask(task)
+	default:
+		return nil
+	}
+}
+
 // registerTask adds a task's cron job to the scheduler.
 func (s *Scheduler) registerTask(task *model.ScheduledTask) error {
 	s.mu.Lock()
@@ -681,7 +715,7 @@ func (s *Scheduler) registerTask(task *model.ScheduledTask) error {
 func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
 	// Event-triggered tasks have no cron entry: they are matched against forge
 	// events at dispatch time, so registering them here would fail cron parsing.
-	if task.IsEventTriggered() {
+	if task.HasEventSource() {
 		return nil
 	}
 	schedule, err := cron.ParseStandard(task.CronExpr)
@@ -710,7 +744,7 @@ func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
 			)
 			return
 		}
-		s.executeTask(current, projectPath, "auto", nil)
+		s.executeTask(current, projectPath, "auto", nil, nil)
 	}))
 
 	// Lock is already held by caller
@@ -853,7 +887,7 @@ func abandonTurn(executor *SessionExecutor, eventCh <-chan ai.StreamEvent, sessi
 // eventCtx, when non-nil, carries the forge event that triggered this run: its
 // variables are rendered into the prompt and its payload is persisted on the
 // execution record for traceability.
-func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, triggerType string, eventCtx *EventContext) { //nolint:gocognit,gocyclo // task execution with session lifecycle
+func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, triggerType string, eventCtx *EventContext, mailCtx *MailEventContext) { //nolint:gocognit,gocyclo // task execution with session lifecycle
 	// Ensure taskRunning flag is always cleaned up, even on early-return
 	// paths (agent not found, session creation failure, backend creation failure).
 	// Without this, the task is permanently stuck — no future execution possible (ISS-303).
@@ -1034,7 +1068,16 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// what lands in the session history via AddChatMessage below, so the user
 	// can see exactly what the AI was given.
 	renderedPrompt := task.Prompt
-	if eventCtx != nil {
+	if mailCtx != nil {
+		renderedPrompt = RenderMailEventContext(*mailCtx) + "\n\n" + task.Prompt
+		renderedPrompt = applyMailTemplateVars(renderedPrompt, *mailCtx)
+		if executionID != 0 {
+			if err := SetTaskExecutionEventPayload(executionID, mailCtx.URL, RenderMailEventContext(*mailCtx)); err != nil {
+				slog.Warn("failed to record mail payload on execution",
+					slog.Int64("execution_id", executionID), slog.String("err", err.Error()))
+			}
+		}
+	} else if eventCtx != nil {
 		renderedPrompt = RenderEventContext(*eventCtx) + "\n\n" + task.Prompt
 		// Persist the event payload on the execution so the notification can
 		// deep-link back to the originating issue/PR.
@@ -1667,6 +1710,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	if projectPath == "" {
 		query = `SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
+			s.mail_account_id, s.mail_folder, s.mail_from, s.mail_subject, s.mail_body, s.mail_has_attachment,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
@@ -1681,6 +1725,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 		}
 		query = `SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
+			s.mail_account_id, s.mail_folder, s.mail_from, s.mail_subject, s.mail_body, s.mail_has_attachment,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
@@ -1700,7 +1745,9 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	for rows.Next() {
 		var t model.ScheduledTask
 		var lastRun, nextRun, lastRead sql.NullTime
-		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
+		var hasAttachment int
+		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes,
+			&t.MailAccountID, &t.MailFolder, &t.MailFrom, &t.MailSubject, &t.MailBody, &hasAttachment, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRun.Valid {
@@ -1709,6 +1756,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 		if nextRun.Valid {
 			t.NextRunAt = &nextRun.Time
 		}
+		t.MailHasAttachment = hasAttachment != 0
 		if lastRead.Valid {
 			t.LastReadAt = &lastRead.Time
 		}
@@ -1721,9 +1769,11 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var t model.ScheduledTask
 	var lastRun, nextRun, lastRead sql.NullTime
+	var hasAttachment int
 	err := store.ReadDB().QueryRow(
 		`SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 		s.trigger_mode, s.event_types,
+		s.mail_account_id, s.mail_folder, s.mail_from, s.mail_subject, s.mail_body, s.mail_has_attachment,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
@@ -1732,7 +1782,8 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 		LEFT JOIN projects p ON p.id = s.project_id
 		WHERE s.id = ?`,
 		id,
-	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
+	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes,
+		&t.MailAccountID, &t.MailFolder, &t.MailFrom, &t.MailSubject, &t.MailBody, &hasAttachment, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1742,6 +1793,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	if nextRun.Valid {
 		t.NextRunAt = &nextRun.Time
 	}
+	t.MailHasAttachment = hasAttachment != 0
 	if lastRead.Valid {
 		t.LastReadAt = &lastRead.Time
 	}
@@ -1755,9 +1807,13 @@ func insertTask(task *model.ScheduledTask) error {
 		return idErr
 	}
 	result, err := store.WriteExec(
-		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		projectID, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types,
+			mail_account_id, mail_folder, mail_from, mail_subject, mail_body, mail_has_attachment,
+			status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		projectID, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes,
+		task.MailAccountID, task.MailFolder, task.MailFrom, task.MailSubject, task.MailBody, boolInt(task.MailHasAttachment),
+		task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -1773,8 +1829,12 @@ func insertTask(task *model.ScheduledTask) error {
 // updateTask updates an existing task in the database.
 func updateTask(task *model.ScheduledTask) error {
 	_, err := store.WriteExec(
-		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, script=?, script_timeout=?, session_id=?, trigger_mode=?, event_types=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
+		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, script=?, script_timeout=?, session_id=?, trigger_mode=?, event_types=?,
+			mail_account_id=?, mail_folder=?, mail_from=?, mail_subject=?, mail_body=?, mail_has_attachment=?,
+			status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes,
+		task.MailAccountID, task.MailFolder, task.MailFrom, task.MailSubject, task.MailBody, boolInt(task.MailHasAttachment),
+		task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
 	)
 	return err
 }

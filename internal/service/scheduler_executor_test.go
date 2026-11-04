@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	session_id TEXT,
 	trigger_mode TEXT NOT NULL DEFAULT 'cron',
 	event_types TEXT NOT NULL DEFAULT '',
+	mail_account_id INTEGER NOT NULL DEFAULT 0,
+	mail_folder TEXT NOT NULL DEFAULT '',
+	mail_from TEXT NOT NULL DEFAULT '',
+	mail_subject TEXT NOT NULL DEFAULT '',
+	mail_body TEXT NOT NULL DEFAULT '',
+	mail_has_attachment INTEGER NOT NULL DEFAULT 0,
 	status TEXT NOT NULL DEFAULT 'active',
 	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 	max_runs INTEGER DEFAULT 0,
@@ -599,7 +605,7 @@ func runAutoContinueTask(t *testing.T, s *Scheduler, name string) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, "/tmp", "manual", nil)
+		s.executeTask(task, "/tmp", "manual", nil, nil)
 	}()
 	select {
 	case <-done:

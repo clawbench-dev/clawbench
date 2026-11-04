@@ -554,7 +554,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	execDone := make(chan struct{})
 	go func() {
 		defer close(execDone)
-		s.executeTask(task, "/tmp", "manual", nil)
+		s.executeTask(task, "/tmp", "manual", nil, nil)
 	}()
 
 	// executeTask creates its own session (via CreateSession) and blocks inside

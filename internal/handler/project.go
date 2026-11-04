@@ -221,15 +221,7 @@ func renameProjectRegistryEntry(w http.ResponseWriter, r *http.Request) {
 	// a non-canonical spelling from older sessions.
 	if cur := middleware.GetProjectFromCookie(r); cur != "" &&
 		store.NormalizeProjectPath(cur) == store.NormalizeProjectPath(oldPath) {
-		http.SetCookie(w, &http.Cookie{
-			Name:     model.ScopedCookieName("clawbench_project"),
-			Value:    url.QueryEscape(newPath),
-			Path:     "/",
-			MaxAge:   7 * 24 * 3600,
-			HttpOnly: true,
-			Secure:   r.TLS != nil,
-			SameSite: http.SameSiteLaxMode,
-		})
+		setAppCookie(w, "clawbench_project", url.QueryEscape(newPath), 7*24*3600)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -326,15 +318,7 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,
 			}
 		}
 		// Refresh the cookie to extend its lifetime, using the resolved path.
-		http.SetCookie(w, &http.Cookie{
-			Name:     model.ScopedCookieName("clawbench_project"),
-			Value:    url.QueryEscape(projectPath),
-			Path:     "/",
-			MaxAge:   7 * 24 * 3600,
-			HttpOnly: true,
-			Secure:   r.TLS != nil,
-			SameSite: http.SameSiteLaxMode,
-		})
+		setAppCookie(w, "clawbench_project", url.QueryEscape(projectPath), 7*24*3600)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"path": projectPath, "homeDir": platform.UserHomeDir()})
 
@@ -396,28 +380,12 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,
 		}
 
 		// Clear chat session cookie when switching project
-		http.SetCookie(w, &http.Cookie{
-			Name:     model.ScopedCookieName("chat_session_id"),
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			HttpOnly: true,
-			Secure:   r.TLS != nil,
-			SameSite: http.SameSiteLaxMode,
-		})
+		setAppCookie(w, "chat_session_id", "", -1)
 
 		// Canonical form already established above (see the note there) — the
 		// cookie must carry it too, since it is the per-session source of truth
 		// read back by the GET branch and by every project-scoped handler.
-		http.SetCookie(w, &http.Cookie{
-			Name:     model.ScopedCookieName("clawbench_project"),
-			Value:    url.QueryEscape(absPath),
-			Path:     "/",
-			MaxAge:   7 * 24 * 3600,
-			HttpOnly: true,
-			Secure:   r.TLS != nil,
-			SameSite: http.SameSiteLaxMode,
-		})
+		setAppCookie(w, "clawbench_project", url.QueryEscape(absPath), 7*24*3600)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"ok":                     "true",

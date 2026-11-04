@@ -68,6 +68,14 @@ var allowedCJKFiles = map[string]string{
 	"internal/askquestion/markdown.go":           "ordered-list marker regex (CJK numerals)",
 	"internal/ai/backends/deepseek/discovery.go": "model-list output parser (（默认：/ 的模型)",
 	"internal/rag/chunker.go":                    "sentence-boundary detector (。！？) for chunking",
+	// Mail protocol layer. The CJK strings here are IMAP folder names that are
+	// MATCHED to infer special-use on servers without SPECIAL-USE (Chinese
+	// providers localize "Sent"/"Trash"), never rendered: the folder's display
+	// name comes from the server.
+	"internal/mail/imap.go": "IMAP special-use folder-name recognition (matched, not displayed)",
+	// Provider brand names offered in the account form. Brand names are not
+	// translated — "网易 163" is the product's name, not UI prose.
+	"internal/mail/preset.go": "mail provider brand names (untranslated by design)",
 	// Backend registry metadata — KNOWN GAP, not "not user-visible".
 	//
 	// `Specialty` IS shown to users (the onboarding agent picker reads it live

@@ -226,6 +226,28 @@ paths:
         "500":
           $ref: "#/components/responses/Error"
 
+  /api/config/tls/delete:
+    delete:
+      tags: [Config]
+      summary: 删除 HTTPS 证书
+      description: |
+        删除证书目录里所有已知的证书/私钥文件（fullchain.pem + privkey.pem、
+        cert.pem + key.pem、combined.pem），下次启动回退到 HTTP。监听器在启动时
+        创建，所以返回体带 `restartRequired: true`。
+
+        删除全部已知文件名而不是只删当前生效的那一对：否则目录里另一组配对的
+        文件会让 HTTPS 在下次重启后又回来。
+      operationId: configTLSDelete
+      responses:
+        "200":
+          description: "已删除（`active: false`、`restartRequired: true`）"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "500":
+          $ref: "#/components/responses/Error"
+
   # ── WeChat push (personal WeChat via iLink Bot) ───────────────────────────
   /api/push/wechat/login:
     post:
@@ -3969,6 +3991,9 @@ paths:
       description: |
         中继是本安装级的配置（一个地址、一对密钥，所有选择中继的会议共用），
         不是每场会议一份。密钥只写不读：响应只有 `hasSecret`，从不回显。
+
+        中继按普通 ws:// 部署即可，不需要证书：浏览器不直连它，而是连本服务的
+        `/livekit`，由服务端转发信令（媒体仍由浏览器直连 LiveKit）。
       operationId: liveShareSFUConfigGet
       responses:
         "200":
@@ -6593,11 +6618,27 @@ paths:
       summary: 新建任务
       operationId: tasksCreate
       description: |
-        创建任务。两种触发模式由 `trigger_mode` 决定：
+        创建任务。三种触发模式由 `trigger_mode` 决定：
 
         - `cron`（默认）：由 `cron_expr` 驱动，必填。
         - `event`：由 Forge（GitHub/GitLab）事件驱动，不需要 `cron_expr`，
           但必须提供 `event_types`（逗号分隔，且至少一个）。
+        - `email`：由新收到的邮件驱动，不需要 `cron_expr`，必须提供
+          `mail_account_id`。
+
+        **`trigger_mode=email` 的语义**：
+
+        - 只对**配置之后新到达**的邮件生效。账号第一次同步时缓存的历史邮件不会触发
+          （否则一配好就会把整个收件箱跑一遍）。
+        - 门控条件 `mail_from` / `mail_subject` / `mail_body` 是**子串匹配、不区分大小写**，
+          多个条件**同时满足**才触发；留空表示该字段不限。全部留空＝该文件夹每封新邮件都触发。
+        - `mail_folder` 为空表示收件箱（IMAP 路径）。`mail_has_attachment=true` 额外要求有附件。
+        - 同一封邮件对同一个任务**只会触发一次**（`mail_task_triggers` 去重表），
+          与重复同步、重启无关。
+        - 单次收信最多为每个任务触发 5 次，避免一次收到上百封时启动上百个 AI 回合。
+        - 触发时邮件上下文（账号、文件夹、发件人、收件人、主题、时间、正文摘要）会
+          **自动前置**到 `prompt` 之前；prompt 里也可以用 `{{mailSubject}}`、`{{mailFrom}}`、
+          `{{mailTo}}`、`{{mailDate}}`、`{{mailBody}}`、`{{mailFolder}}` 占位符。
 
         `event_types` 合法取值：`issue.opened`、`issue.closed`、`issue.reopened`、
         `issue.commented`、`pr.opened`、`pr.closed`、`pr.merged`、`pr.reopened`、
@@ -6658,11 +6699,29 @@ paths:
                   description: 预留字段，当前不生效。
                 trigger_mode:
                   type: string
-                  enum: [cron, event]
+                  enum: [cron, event, email]
                   description: 触发模式，默认 `cron`。
                 event_types:
                   type: string
                   description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
+                mail_account_id:
+                  type: integer
+                  description: 监听的邮箱账号 ID，`trigger_mode=email` 时必填。
+                mail_folder:
+                  type: string
+                  description: 监听的文件夹 IMAP 路径；留空表示收件箱。
+                mail_from:
+                  type: string
+                  description: 发件人门控（子串，不区分大小写）。
+                mail_subject:
+                  type: string
+                  description: 主题门控（子串，不区分大小写）。
+                mail_body:
+                  type: string
+                  description: 正文门控（子串，不区分大小写）。
+                mail_has_attachment:
+                  type: boolean
+                  description: 是否要求带附件。
                 script:
                   type: string
                   description: |
@@ -8176,6 +8235,426 @@ paths:
         "200":
           description: 更新成功
 
+  /api/mail/presets:
+    get:
+      tags: [Mail]
+      summary: 常见邮箱服务商的服务器预设
+      description: 返回 QQ / 163 / 126 / 阿里企业邮 / Gmail / Outlook / iCloud 的收发服务器地址、端口与加密方式。前端据此自动填表，用户仍可手改。`hintKey` 是提示文案的 i18n 键（多数国内服务商要求「授权码」而不是登录密码）。
+      operationId: mailPresets
+      responses:
+        "200":
+          description: 预设列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presets:
+                    type: array
+                    items: {$ref: "#/components/schemas/MailPreset"}
+
+  /api/mail/accounts:
+    get:
+      tags: [Mail]
+      summary: 列出邮箱账号
+      description: 密码永不回显；每行只有 `hasPassword`。
+      operationId: mailAccountsList
+      responses:
+        "200":
+          description: 账号列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accounts:
+                    type: array
+                    items: {$ref: "#/components/schemas/MailAccount"}
+    post:
+      tags: [Mail]
+      summary: 新增邮箱账号
+      operationId: mailAccountCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/MailAccountInput"}
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: {$ref: "#/components/schemas/MailAccount"}
+
+  /api/mail/accounts/{id}:
+    get:
+      tags: [Mail]
+      summary: 读取一个账号
+      description: 默认不含密码；`reveal=1` 时额外返回 `password`。
+      operationId: mailAccountGet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+        - name: reveal
+          in: query
+          schema: {type: string, enum: ["1"]}
+      responses:
+        "200":
+          description: 账号
+    patch:
+      tags: [Mail]
+      summary: 修改账号
+      description: "`password` 留空表示保持原密码不变。"
+      operationId: mailAccountUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/MailAccountInput"}
+      responses:
+        "200":
+          description: 更新成功
+    delete:
+      tags: [Mail]
+      summary: 删除账号及其本地缓存
+      operationId: mailAccountDelete
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 删除成功
+
+  /api/mail/accounts/{id}/test:
+    post:
+      tags: [Mail]
+      summary: 测试账号连接
+      description: 真连一次 IMAP 并列出文件夹。失败时按原因返回 MailAuthFailed / MailConnectFailed / MailTLSFailed / MailTimeout。
+      operationId: mailAccountTest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 连接成功
+
+  /api/mail/accounts/{id}/sync:
+    post:
+      tags: [Mail]
+      summary: 手动同步一个账号
+      description: 同步执行（最长 60 秒）。同一账号已有同步在跑时返回 409。
+      operationId: mailAccountSync
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 同步结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: object
+                    properties:
+                      folders: {type: integer}
+                      newMessages: {type: integer}
+                      errors:
+                        type: array
+                        items: {type: string}
+
+  /api/mail/folders:
+    get:
+      tags: [Mail]
+      summary: 列出某账号的文件夹与未读数
+      operationId: mailFolders
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 文件夹列表
+
+  /api/mail/folders/{id}/load-older:
+    post:
+      tags: [Mail]
+      summary: 从服务器加载更早的一页邮件
+      description: 本地缓存只保留每个文件夹最新的 100 封；用户滑到列表底部时调用它，服务端按 UID 向 IMAP 再拉一页并写入缓存。
+      operationId: mailFolderLoadOlder
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 更早的邮件
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: {$ref: "#/components/schemas/MailMessage"}
+                  hasMore: {type: boolean}
+
+  /api/mail/folders/{id}/read-all:
+    post:
+      tags: [Mail]
+      summary: 把整个文件夹标记为已读
+      description: 对服务器上的整个邮箱执行一次 `\Seen` 写入（包括本地缓存还没抓取过的邮件，否则下次同步未读数会反弹），成功后同步清空本地缓存与未读计数。
+      operationId: mailFolderReadAll
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 已标记
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+
+  /api/mail/messages:
+    get:
+      tags: [Mail]
+      summary: 列出某文件夹的邮件头
+      description: 按 `sent_at DESC, id DESC` 排序；分页把上一页最后一行的 `sentAt`/`id` 回传为 `beforeAt`/`beforeId`。`q` 在主题/发件人/摘要里做模糊匹配。
+      operationId: mailMessagesList
+      parameters:
+        - name: folderId
+          in: query
+          required: true
+          schema: {type: integer}
+        - name: limit
+          in: query
+          schema: {type: integer}
+        - name: beforeAt
+          in: query
+          schema: {type: integer}
+        - name: beforeId
+          in: query
+          schema: {type: integer}
+        - name: q
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: 邮件列表
+
+  /api/mail/messages/{id}:
+    get:
+      tags: [Mail]
+      summary: 读取一封邮件
+      description: 首次打开时服务端会去 IMAP 拉取并解析正文，同时把附件落盘。`bodyHtml` 里的 `cid:` 图片已重写为附件下载地址。
+      operationId: mailMessageGet
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 邮件详情
+
+  /api/mail/messages/{id}/flags:
+    post:
+      tags: [Mail]
+      summary: 修改已读/星标
+      operationId: mailMessageFlags
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seen: {type: boolean}
+                flagged: {type: boolean}
+      responses:
+        "200":
+          description: 更新后的邮件
+
+  /api/mail/messages/{id}/move:
+    post:
+      tags: [Mail]
+      summary: 把邮件移动到另一个文件夹
+      operationId: mailMessageMove
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folderId]
+              properties:
+                folderId: {type: integer}
+      responses:
+        "200":
+          description: 移动成功
+
+  /api/mail/messages/{id}/delete:
+    post:
+      tags: [Mail]
+      summary: 删除邮件
+      description: 默认移入垃圾箱（没有垃圾箱则永久删除）；`permanent=true` 强制永久删除。
+      operationId: mailMessageDelete
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permanent: {type: boolean}
+      responses:
+        "200":
+          description: 删除成功
+
+  /api/mail/messages/{id}/reply-context:
+    get:
+      tags: [Mail]
+      summary: 生成回复/转发的默认字段
+      operationId: mailReplyContext
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+        - name: mode
+          in: query
+          schema: {type: string, enum: [reply, replyAll, forward]}
+      responses:
+        "200":
+          description: 收件人、主题、引用正文与线程头
+
+  /api/mail/messages/{id}/attachments/{attachmentId}:
+    get:
+      tags: [Mail]
+      summary: 下载附件
+      operationId: mailAttachmentDownload
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+        - name: attachmentId
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 附件字节流
+
+  /api/mail/unread:
+    get:
+      tags: [Mail]
+      summary: 各账号未读汇总（Dock 角标）
+      operationId: mailUnread
+      responses:
+        "200":
+          description: 未读汇总
+
+  /api/mail/send:
+    post:
+      tags: [Mail]
+      summary: 发送邮件
+      description: 发送成功后会尝试 APPEND 一份到「已发送」；APPEND 失败不影响发送结果。
+      operationId: mailSend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/MailSendRequest"}
+      responses:
+        "200":
+          description: 已发送
+
+  /api/mail/drafts:
+    get:
+      tags: [Mail]
+      summary: 列出草稿
+      operationId: mailDraftsList
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 草稿列表
+    post:
+      tags: [Mail]
+      summary: 新建草稿
+      operationId: mailDraftCreate
+      responses:
+        "200":
+          description: 创建成功
+
+  /api/mail/drafts/{id}:
+    patch:
+      tags: [Mail]
+      summary: 保存草稿
+      operationId: mailDraftUpdate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 保存成功
+    delete:
+      tags: [Mail]
+      summary: 删除草稿
+      operationId: mailDraftDelete
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: 删除成功
+
 components:
   securitySchemes:
     cookieAuth:
@@ -8477,6 +8956,150 @@ components:
         text: { type: string }
         at: { type: integer, format: int64, description: 服务端落库时间，Unix 毫秒 }
       required: [id, clientId, speaker, text, at]
+
+    MailAddress:
+      type: object
+      description: 一个解析后的地址。`name` 是显示名（可能为空），`addr` 是裸地址。
+      properties:
+        name: { type: string }
+        addr: { type: string }
+      required: [name, addr]
+
+    MailPreset:
+      type: object
+      description: |
+        常见服务商的服务器预设，供前端自动填表；用户仍可手改。
+        `domains` 用于按邮箱域名匹配，`hintKey` 是提示文案的 i18n 键
+        （多数国内服务商要求「授权码」而不是登录密码）。
+      properties:
+        id: { type: string }
+        label: { type: string }
+        domains:
+          type: array
+          items: { type: string }
+        imapHost: { type: string }
+        imapPort: { type: integer }
+        imapSecurity: { type: string, enum: [tls, starttls, none] }
+        smtpHost: { type: string }
+        smtpPort: { type: integer }
+        smtpSecurity: { type: string, enum: [tls, starttls, none] }
+        hintKey: { type: string }
+      required: [id, label, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity]
+
+    MailAccount:
+      type: object
+      description: |
+        一个邮箱账号。**密码永不回显**：只有 `hasPassword`，读取时带 `reveal=1`
+        才额外返回 `password`。`lastSyncAt` / `lastError` 由服务端在每次同步后
+        更新，客户端不要本地推算。
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        email: { type: string }
+        username: { type: string }
+        imapHost: { type: string }
+        imapPort: { type: integer }
+        imapSecurity: { type: string, enum: [tls, starttls, none] }
+        smtpHost: { type: string }
+        smtpPort: { type: integer }
+        smtpSecurity: { type: string, enum: [tls, starttls, none] }
+        insecureTls: { type: boolean, description: 跳过证书校验（自签名服务器） }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+        lastSyncAt: { type: integer, format: int64, description: Unix 秒；0 表示从未同步 }
+        lastError: { type: string }
+        hasPassword: { type: boolean }
+        createdAt: { type: integer, format: int64 }
+      required: [id, name, email, username, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity, insecureTls, enabled, sortOrder, lastSyncAt, lastError, hasPassword, createdAt]
+
+    MailAccountInput:
+      type: object
+      description: |
+        新增/修改账号的提交体。修改时 `password` 留空表示**保持原密码不变**
+        （服务端不会把空串写进去）；`username` 留空则回落到 `email`。
+        `enabled` 省略时视为 `true`。
+      properties:
+        name: { type: string }
+        email: { type: string }
+        username: { type: string }
+        password: { type: string }
+        imapHost: { type: string }
+        imapPort: { type: integer }
+        imapSecurity: { type: string, enum: [tls, starttls, none] }
+        smtpHost: { type: string }
+        smtpPort: { type: integer }
+        smtpSecurity: { type: string, enum: [tls, starttls, none] }
+        insecureTls: { type: boolean }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+      required: [name, email, imapHost, imapPort, imapSecurity, smtpHost, smtpPort, smtpSecurity]
+
+    MailMessage:
+      type: object
+      description: |
+        列表行（不含正文）。`bodyFetched` 为 false 时正文还没缓存，读取单封才会抓；
+        `folderPath` 只在跨文件夹查询（如搜索）时带出。`sentAt` 是 Unix 秒。
+      properties:
+        id: { type: integer, format: int64 }
+        accountId: { type: integer, format: int64 }
+        folderId: { type: integer, format: int64 }
+        folderPath: { type: string }
+        uid: { type: integer, format: int32 }
+        messageId: { type: string }
+        subject: { type: string }
+        fromName: { type: string }
+        fromAddr: { type: string }
+        to:
+          type: array
+          items: { $ref: "#/components/schemas/MailAddress" }
+        cc:
+          type: array
+          items: { $ref: "#/components/schemas/MailAddress" }
+        replyTo: { type: string }
+        inReplyTo: { type: string }
+        references: { type: string }
+        sentAt: { type: integer, format: int64 }
+        size: { type: integer, format: int64 }
+        seen: { type: boolean }
+        flagged: { type: boolean }
+        answered: { type: boolean }
+        hasAttachments: { type: boolean }
+        snippet: { type: string }
+        bodyFetched: { type: boolean }
+      required: [id, accountId, folderId, uid, messageId, subject, fromName, fromAddr, to, cc, replyTo, inReplyTo, references, sentAt, size, seen, flagged, answered, hasAttachments, snippet, bodyFetched]
+
+    MailSendRequest:
+      type: object
+      description: |
+        发信提交体。`to` / `cc` / `bcc` 是已拆好的地址数组（服务端不做文本拆分）；
+        `attachments` 的 `path` 是服务器上的文件路径，随请求一起带走。
+        带 `draftId` 表示这是从草稿发出的，成功后草稿会被删除。
+      properties:
+        accountId: { type: integer, format: int64 }
+        to:
+          type: array
+          items: { type: string }
+        cc:
+          type: array
+          items: { type: string }
+        bcc:
+          type: array
+          items: { type: string }
+        subject: { type: string }
+        text: { type: string }
+        html: { type: string }
+        inReplyTo: { type: string }
+        references: { type: string }
+        attachments:
+          type: array
+          items:
+            type: object
+            properties:
+              filename: { type: string }
+              path: { type: string }
+            required: [filename, path]
+        draftId: { type: integer, format: int64 }
+      required: [accountId, to, cc, bcc, subject, text]
 
     WeChatLogin:
       type: object

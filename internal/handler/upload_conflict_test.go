@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,6 +63,61 @@ func TestUploadFile_OverwriteConflict(t *testing.T) {
 
 		_, err = os.Stat(filepath.Join(env.ProjectDir, "target", "dup_1.txt"))
 		assert.True(t, os.IsNotExist(err), "overwrite must not leave a renamed copy")
+	})
+
+	t.Run("PreservesExistingPermissions", func(t *testing.T) {
+		// Overwriting a script must not silently make it non-executable.
+		if runtime.GOOS == "windows" {
+			t.Skip("POSIX permission bits are not meaningful on Windows")
+		}
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "target/run.sh", "old")
+		target := filepath.Join(env.ProjectDir, "target", "run.sh")
+		require.NoError(t, os.Chmod(target, 0o750))
+
+		req := createMultipartUploadRequestFields(t, "run.sh", "new", map[string]string{
+			"dir":        "target",
+			"onconflict": "overwrite",
+		})
+		withProjectCookie(req, env.ProjectDir)
+		assertOK(t, callHandler(UploadFile, req))
+
+		info, err := os.Stat(target)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o750), info.Mode().Perm(), "overwrite must keep the original mode")
+
+		data, err := os.ReadFile(target)
+		require.NoError(t, err)
+		assert.Equal(t, "new", string(data))
+	})
+
+	t.Run("PreservesSetuidBitClearedByWrite", func(t *testing.T) {
+		// The kernel clears setuid/setgid when an unprivileged process writes a
+		// file, so the handler has to put them back explicitly. Under root the
+		// write never clears them and this assertion holds trivially.
+		if runtime.GOOS == "windows" {
+			t.Skip("no setuid bit on Windows")
+		}
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "target/tool", "old")
+		target := filepath.Join(env.ProjectDir, "target", "tool")
+		require.NoError(t, os.Chmod(target, 0o755|os.ModeSetuid))
+
+		req := createMultipartUploadRequestFields(t, "tool", "new", map[string]string{
+			"dir":        "target",
+			"onconflict": "overwrite",
+		})
+		withProjectCookie(req, env.ProjectDir)
+		assertOK(t, callHandler(UploadFile, req))
+
+		info, err := os.Stat(target)
+		require.NoError(t, err)
+		assert.NotZero(t, info.Mode()&os.ModeSetuid, "setuid bit must survive an overwrite")
+		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
 	})
 
 	t.Run("Default_StillRenames", func(t *testing.T) {

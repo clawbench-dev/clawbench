@@ -33,6 +33,7 @@ import {
   openRelay,
   publishMic,
   publishVideo,
+  relayConnectURL,
   sendRelayData,
 } from '@/composables/useLiveRelay'
 import type { Room, Track } from 'livekit-client'
@@ -712,7 +713,7 @@ export class LiveViewer {
     // never handed to us must not be able to fail the session.
     let room: Room | null = null
     try {
-      room = await openRelay(relay.url, relay.token, {
+      room = await openRelay(relayConnectURL(), relay.token, {
         onTrack: (track, source, identity) => this.onRelayTrack(track, source, identity),
         onTrackGone: (track) => this.onRelayTrackGone(track),
         onData: (payload) => this.onRelayData(payload),

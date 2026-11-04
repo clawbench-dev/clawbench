@@ -65,6 +65,14 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			Script string `json:"script"`
 			// ScriptTimeout bounds Script in seconds; 0 means the default.
 			ScriptTimeout int `json:"script_timeout"`
+			// Email trigger (trigger_mode == "email"): the watched mailbox and
+			// the substring gates. Every non-empty gate must match.
+			MailAccountID     int64  `json:"mail_account_id"`
+			MailFolder        string `json:"mail_folder"`
+			MailFrom          string `json:"mail_from"`
+			MailSubject       string `json:"mail_subject"`
+			MailBody          string `json:"mail_body"`
+			MailHasAttachment bool   `json:"mail_has_attachment"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -88,6 +96,14 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		}
 		if req.TriggerMode == "" {
 			req.TriggerMode = "cron"
+		}
+		if req.TriggerMode != "cron" && req.TriggerMode != "event" && req.TriggerMode != "email" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskTriggerModeInvalid")
+			return
+		}
+		if req.TriggerMode == "email" && req.MailAccountID <= 0 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskMailAccountRequired")
+			return
 		}
 		// An event task is driven by forge events and needs no cron expression;
 		// a cron task still requires one.
@@ -116,18 +132,24 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		}
 
 		task := &model.ScheduledTask{
-			ProjectPath:   projectPath,
-			Name:          req.Name,
-			CronExpr:      req.CronExpr,
-			AgentID:       req.AgentID,
-			Prompt:        req.Prompt,
-			RepeatMode:    req.RepeatMode,
-			MaxRuns:       req.MaxRuns,
-			SessionID:     req.SessionID,
-			TriggerMode:   req.TriggerMode,
-			EventTypes:    req.EventTypes,
-			Script:        req.Script,
-			ScriptTimeout: req.ScriptTimeout,
+			ProjectPath:       projectPath,
+			Name:              req.Name,
+			CronExpr:          req.CronExpr,
+			AgentID:           req.AgentID,
+			Prompt:            req.Prompt,
+			RepeatMode:        req.RepeatMode,
+			MaxRuns:           req.MaxRuns,
+			SessionID:         req.SessionID,
+			TriggerMode:       req.TriggerMode,
+			EventTypes:        req.EventTypes,
+			MailAccountID:     req.MailAccountID,
+			MailFolder:        req.MailFolder,
+			MailFrom:          req.MailFrom,
+			MailSubject:       req.MailSubject,
+			MailBody:          req.MailBody,
+			MailHasAttachment: req.MailHasAttachment,
+			Script:            req.Script,
+			ScriptTimeout:     req.ScriptTimeout,
 		}
 
 		if err := service.GlobalScheduler.AddTask(task); err != nil {
@@ -277,6 +299,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			Script *string `json:"script"`
 			// ScriptTimeout bounds Script in seconds; 0 means the default.
 			ScriptTimeout *int `json:"script_timeout"` // pointer to distinguish "not provided" from "set to 0"
+			// Email trigger fields. Pointers for the same reason as Script: this
+			// is a partial update, and an unconditional assignment would wipe the
+			// gates for any caller that omits them.
+			MailAccountID     *int64  `json:"mail_account_id"`
+			MailFolder        *string `json:"mail_folder"`
+			MailFrom          *string `json:"mail_from"`
+			MailSubject       *string `json:"mail_subject"`
+			MailBody          *string `json:"mail_body"`
+			MailHasAttachment *bool   `json:"mail_has_attachment"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -447,6 +478,24 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		if req.EventTypes != "" {
 			task.EventTypes = req.EventTypes
 		}
+		if req.MailAccountID != nil {
+			task.MailAccountID = *req.MailAccountID
+		}
+		if req.MailFolder != nil {
+			task.MailFolder = *req.MailFolder
+		}
+		if req.MailFrom != nil {
+			task.MailFrom = *req.MailFrom
+		}
+		if req.MailSubject != nil {
+			task.MailSubject = *req.MailSubject
+		}
+		if req.MailBody != nil {
+			task.MailBody = *req.MailBody
+		}
+		if req.MailHasAttachment != nil {
+			task.MailHasAttachment = *req.MailHasAttachment
+		}
 		// Script is a partial-update field like every other string above: a nil
 		// pointer means "not provided" and leaves the stored script alone, while
 		// an explicit empty string clears it. Assigning unconditionally would
@@ -498,6 +547,10 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			task.RunCount = 0
 		}
 
+		if task.TriggerMode == "email" && task.MailAccountID <= 0 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskMailAccountRequired")
+			return
+		}
 		// Update task
 		if err := service.GlobalScheduler.UpdateTask(task); err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to update task: %w", err)))

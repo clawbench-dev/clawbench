@@ -10,6 +10,7 @@ import {
   Settings,
   Github,
   Inbox,
+  Mail,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
 import { MEETING_ICON } from '@/utils/meetingIcon'
@@ -39,6 +40,7 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // utils/meetingIcon.ts — the list header, the quote chip and this tab share
   // one constant so they cannot drift apart.
   live: MEETING_ICON,
+  mail: Mail,
   proxy: Network,
   stats: BarChart3,
   settings: Settings,

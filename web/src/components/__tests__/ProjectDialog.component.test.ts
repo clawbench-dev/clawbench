@@ -276,6 +276,52 @@ describe('ProjectDialog — toolbar buttons', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/projects', expect.objectContaining({ method: 'POST' }))
   })
 
+  it('scrolls to and highlights the folder it just created', async () => {
+    mockDialogPrompt.mockResolvedValueOnce('newdir')
+    mockFetch
+      .mockResolvedValueOnce(okJson({ path: '/home/user', items: [] }))                       // open
+      .mockResolvedValueOnce(okJson({ ok: true, path: '/home/user/newdir' }))                 // POST /api/projects
+      .mockResolvedValueOnce(okJson({ path: '/home/user', items: [                              // reload
+        { name: 'aaa', type: 'dir' }, { name: 'newdir', type: 'dir' }, { name: 'zzz', type: 'dir' },
+      ] }))
+    const scrollSpy = vi.fn()
+    ;(Element.prototype as any).scrollIntoView = scrollSpy
+    try {
+      const wrapper = await mountOpen()
+      await flushPromises()
+      await wrapper.find('button[title*="projectDialog.newFolder"]').trigger('click')
+      await flushPromises()
+
+      const row = wrapper.find('.dialog-item[data-path="/home/user/newdir"]')
+      expect(row.exists()).toBe(true)
+      // Selection is both the visual highlight and what "confirm" picks.
+      expect(row.classes()).toContain('selected')
+      expect((wrapper.vm as any).selectedPath).toBe('/home/user/newdir')
+      // Scrolled with the created row itself as `this`, so it lands in view.
+      expect(scrollSpy).toHaveBeenCalledTimes(1)
+      expect(scrollSpy.mock.instances[0]).toBe(row.element)
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
+    } finally {
+      delete (Element.prototype as any).scrollIntoView
+    }
+  })
+
+  it('turns hidden files on when the created folder is dot-prefixed', async () => {
+    mockDialogPrompt.mockResolvedValueOnce('.config')
+    mockFetch
+      .mockResolvedValueOnce(okJson({ path: '/home/user', items: [] }))
+      .mockResolvedValueOnce(okJson({ ok: true }))
+      .mockResolvedValueOnce(okJson({ path: '/home/user', items: [{ name: '.config', type: 'dir' }] }))
+    const wrapper = await mountOpen()
+    await flushPromises()
+    await wrapper.find('button[title*="projectDialog.newFolder"]').trigger('click')
+    await flushPromises()
+
+    // Without this the row is filtered out and the reveal silently does nothing.
+    expect((wrapper.vm as any).showHidden).toBe(true)
+    expect(wrapper.find('.dialog-item[data-path="/home/user/.config"]').classes()).toContain('selected')
+  })
+
   it('new folder with empty name does nothing', async () => {
     mockDialogPrompt.mockResolvedValueOnce('   ')
     const wrapper = await mountNonRoot()

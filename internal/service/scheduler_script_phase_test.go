@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	session_id TEXT,
 	trigger_mode TEXT NOT NULL DEFAULT 'cron',
 	event_types TEXT NOT NULL DEFAULT '',
+	mail_account_id INTEGER NOT NULL DEFAULT 0,
+	mail_folder TEXT NOT NULL DEFAULT '',
+	mail_from TEXT NOT NULL DEFAULT '',
+	mail_subject TEXT NOT NULL DEFAULT '',
+	mail_body TEXT NOT NULL DEFAULT '',
+	mail_has_attachment INTEGER NOT NULL DEFAULT 0,
 	status TEXT NOT NULL DEFAULT 'active',
 	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 	max_runs INTEGER DEFAULT 0,
@@ -219,7 +225,7 @@ func TestExecuteTask_ScriptGateClosed_NoSessionNoEvent(t *testing.T) {
 	var writeMu sync.Mutex
 	sub := mgr.Subscribe(nil, &writeMu, "script-gate-client", "")
 
-	s.executeTask(task, task.ProjectPath, "auto", nil)
+	s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 
 	// No session was created.
 	var sessionCount int
@@ -292,7 +298,7 @@ func TestExecuteTask_ScriptGateOpen_RunsAI(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, task.ProjectPath, "auto", nil)
+		s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 	}()
 
 	// The AI turn must have started (a session exists) while it blocks on the gate.
@@ -348,7 +354,7 @@ func TestExecuteTask_ScriptPhase_VisibleButNotCounted(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, task.ProjectPath, "auto", nil)
+		s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 	}()
 
 	// While the script runs, the script-phase entry must be visible...
@@ -410,7 +416,7 @@ func TestExecuteTask_ScriptPhase_Cancel(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, task.ProjectPath, "auto", nil)
+		s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 	}()
 
 	// Wait for the script-phase entry, then cancel it mid-run.
@@ -495,7 +501,7 @@ func TestExecuteTask_ScriptPhase_CancelWithoutExecutionRow(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, task.ProjectPath, "auto", nil)
+		s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -553,7 +559,7 @@ func TestExecuteTask_ScriptTemplate_InjectedIntoPrompt(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, task.ProjectPath, "auto", nil)
+		s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 	}()
 
 	// The user message is written before the AI turn blocks on the gate.
@@ -657,7 +663,7 @@ func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
 
 	// The event task goes straight to the AI phase, which fails because the
 	// backend does not exist. The point is that no `skipped` row is written.
-	s.executeTask(task, task.ProjectPath, "auto", nil)
+	s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 
 	var skipped int
 	require.NoError(t, store.ReadDB().QueryRow(
@@ -706,7 +712,7 @@ func TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.executeTask(task, task.ProjectPath, "auto", nil)
+		s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -759,7 +765,7 @@ func TestExecuteTask_ScriptGateClosed_StillConsumesRun(t *testing.T) {
 	}
 	require.NoError(t, s.AddTask(task))
 
-	s.executeTask(task, task.ProjectPath, "auto", nil)
+	s.executeTask(task, task.ProjectPath, "auto", nil, nil)
 
 	after, err := GetTaskByID(task.ID)
 	require.NoError(t, err)

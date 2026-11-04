@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 
 const i18n = createI18n({
   legacy: false,
@@ -51,7 +52,6 @@ const globalStubs = {
   'lucide-terminal': true,
   'lucide-volume2': true,
   'lucide-mic': true,
-  'lucide-video': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-bell': true,
@@ -67,11 +67,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 21 category rows', () => {
+  it('renders 22 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(21)
+    expect(rows.length).toBe(22)
   })
 
   it('renders category labels', () => {
@@ -112,8 +112,28 @@ describe('SettingsIndex', () => {
     // are agent context, not chat behavior, so they lead the group.
     // AI 摘要 was removed (9 → 8) once the model is picked where it is
     // referenced; 会议 (10) brings the meeting defaults next to STT.
-    expect(perCard).toEqual([3, 10, 3, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(21)
+    // 连接与集成 gained 邮箱账号 (3 → 4): a mailbox is a connection this
+    // machine holds, alongside port forwarding and the forge integration.
+    expect(perCard).toEqual([3, 10, 4, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(22)
+  })
+
+  // The dock tab, the meeting list header and the quote chip all draw
+  // MEETING_ICON (utils/meetingIcon). This row used to hard-code a second,
+  // unrelated meeting glyph, so the settings page and the tab it configures
+  // showed different pictures for the same feature. Compare the rendered SVG
+  // against the shared constant instead of naming an icon: the assertion must
+  // survive a future change of MEETING_ICON and still catch a local override.
+  it('draws the shared meeting icon on the meeting row', () => {
+    const wrapper = mountIndex()
+
+    const row = wrapper.find('[data-category="meeting"]')
+    expect(row.exists()).toBe(true)
+    // Geometry, not the whole markup: size/scoped attributes legitimately
+    // differ from a bare render, but the glyph paths are the icon's identity.
+    const paths = (html: string) =>
+      [...html.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1])
+    expect(paths(row.find('svg').html())).toEqual(paths(mount(MEETING_ICON).html()))
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -132,7 +152,7 @@ describe('SettingsIndex', () => {
     const expectedIds = [
       'project', 'appearance', 'files',
       'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt', 'meeting',
-      'terminal', 'portForward', 'forgeIntegration',
+      'terminal', 'portForward', 'mail', 'forgeIntegration',
       'notification', 'usageMeter', 'security',
       'debug', 'about',
     ]

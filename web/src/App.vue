@@ -234,6 +234,11 @@
                   />
                 </TabPanel>
 
+                <!-- 邮件 Tab: folders, message list, reading pane and compose. -->
+                <TabPanel tabId="mail" :activeTab="leftPanelActive" :noHeader="true">
+                  <MailPanel :active="panelIsActive('mail')" @open-settings="openMailSettings" />
+                </TabPanel>
+
                 <!-- Proxy Tab -->
                 <TabPanel tabId="proxy" :activeTab="leftPanelActive" :noHeader="true">
                   <ProxyPanelContent :active="panelIsActive('proxy')" />
@@ -617,6 +622,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent, type CSSProperties } from 'vue'
+import { startMailUnreadPolling, stopMailUnreadPolling, useMailUnread } from '@/composables/useMailUnread'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
@@ -648,6 +654,12 @@ import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 // always offered — the list is readable even on a host that cannot capture.
 const MeetingPanel = defineAsyncComponent(
   buildAsyncComponentOptions({ loader: () => import('./components/live/MeetingPanel.vue') }),
+)
+// 邮件: a complete mail client. Kept async like the meeting panel — the panel
+// pulls in DOMPurify-backed HTML rendering and the compose dialog, none of
+// which is needed until the tab is opened.
+const MailPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/mail/MailPanel.vue') }),
 )
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
@@ -1788,6 +1800,16 @@ async function onToggleGroupParallel(enabled: boolean) {
  * target category travels through the module-level pending-category ref, which
  * SettingsPage consumes on mount or on activation.
  */
+/**
+ * Mailbox configuration lives in Settings, so the mail panel's gear and its
+ * empty-state button both land here instead of opening a second copy of the
+ * account form inside the dock pane.
+ */
+function openMailSettings() {
+  setPendingSettingsCategory('mail')
+  switchTab('settings')
+}
+
 function openAgentConfig(agentId: string) {
   if (!agentId) return
   beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
@@ -2405,6 +2427,10 @@ const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKey
 // teardown keeps the composable safe to unit test and hot-reload.
 const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSoftKeyboard } = useSoftKeyboard()
 onMounted(() => installSoftKeyboard())
+// The mail badge is the only consumer that must work while the panel is closed,
+// so its poller lives with the app shell rather than with the tab.
+onMounted(startMailUnreadPolling)
+onUnmounted(stopMailUnreadPolling)
 onUnmounted(() => uninstallSoftKeyboard())
 
 // The selection toolbar needs the keyboard's SIZE (not just whether it is open)
@@ -3036,6 +3062,10 @@ const isCodeMirrorFileView = computed(() => {
     if (ft.isHtml || f.subtype === 'openapi') {
         return markdownViewMode.value !== 'rendered'
     }
+    // CSV/TSV render as a data table (own search box, no CodeMirror).
+    if (ft.isTable) {
+        return fileEditor.isEditing() || markdownViewMode.value !== 'rendered'
+    }
     return true
 })
 // Rendered markdown preview (not CodeMirror): has an inline search bar
@@ -3056,6 +3086,14 @@ const isHtmlRenderedView = computed(() => {
     if (!f || typeof f.content !== 'string') return false
     const ft = getFileType(f.name || '')
     return ft.isHtml && markdownViewMode.value === 'rendered'
+})
+// Rendered CSV/TSV table. It carries its own search box (the table's), so the
+// header search button and Ctrl+F focus that instead of CodeMirror/the drawer.
+const isTableRenderedView = computed(() => {
+    const f = currentFile.value
+    if (!f || typeof f.content !== 'string') return false
+    const ft = getFileType(f.name || '')
+    return !!ft.isTable && markdownViewMode.value === 'rendered' && !fileEditor.isEditing()
 })
 const { entries: recentFileEntries } = useRecentFiles()
 const recentFilesCount = computed(() => recentFileEntries.value.length)
@@ -3107,12 +3145,12 @@ watch(() => currentFile.value, (file, prevFile) => {
 // CodeMirror panel starts closed, so a previously-active search state would
 // otherwise leave the header button stuck highlighted.
 watch(
-  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, isHtmlRenderedView.value, markdownViewMode.value],
-  ([cmNow, mdNow, htmlNow, _mode], [cmBefore, mdBefore, htmlBefore, modeBefore]) => {
+  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, isHtmlRenderedView.value, isTableRenderedView.value, markdownViewMode.value],
+  ([cmNow, mdNow, htmlNow, tableNow, _mode], [cmBefore, mdBefore, htmlBefore, tableBefore, modeBefore]) => {
     // Ignore the initial run and same-view transitions (e.g. raw->edit of the
     // same CodeMirror view keeps its panel state).
     if (modeBefore === undefined) return
-    if (cmNow === cmBefore && mdNow === mdBefore && htmlNow === htmlBefore) return
+    if (cmNow === cmBefore && mdNow === mdBefore && htmlNow === htmlBefore && tableNow === tableBefore) return
     viewSearchActive.value = false
     searchDrawer.close()
   },
@@ -3813,6 +3851,7 @@ function dockTabBadgeCount(tab: string) {
     case 'tasks': return store.state.taskUnreadCount
     case 'terminal': return store.state.terminalSessionCount
     case 'proxy': return store.state.portForwardEnabledCount
+    case 'mail': return mailUnread.value
     default: return 0
   }
 }
@@ -3823,6 +3862,7 @@ function dockTabBadgeAnim(tab: string) {
     case 'tasks': return taskBadgeAnim.value
     case 'terminal': return terminalBadgeAnim.value
     case 'proxy': return proxyBadgeAnim.value
+    case 'mail': return mailBadgeAnim.value
     default: return false
   }
 }
@@ -3833,6 +3873,7 @@ function dockTabBadgeAnimEnd(tab: string) {
     case 'tasks': taskBadgeAnim.value = false; break
     case 'terminal': terminalBadgeAnim.value = false; break
     case 'proxy': proxyBadgeAnim.value = false; break
+    case 'mail': mailBadgeAnim.value = false; break
   }
 }
 function wideDockBadgeVisible(tab: string) {
@@ -3879,6 +3920,8 @@ const forgeBadgeAnim = ref(false)
 const taskBadgeAnim = ref(false)
 const terminalBadgeAnim = ref(false)
 const proxyBadgeAnim = ref(false)
+const { total: mailUnread } = useMailUnread()
+const mailBadgeAnim = ref(false)
 const overflowBadgeAnim = ref(false)
 
 function triggerBadgeAnim(animRef: { value: boolean }) {
@@ -3904,6 +3947,15 @@ watch(() => store.state.portForwardEnabledCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(proxyBadgeAnim)
     if (!allInlineOverflowTabs.value.includes('proxy')) triggerBadgeAnim(overflowBadgeAnim)
+  }
+})
+// Mail unread is a module-level singleton polled once a minute; the badge is
+// the only consumer outside the panel, so the poller starts with the app rather
+// than with the tab being opened.
+watch(mailUnread, (n, o) => {
+  if (o !== undefined && n !== o) {
+    triggerBadgeAnim(mailBadgeAnim)
+    if (!allInlineOverflowTabs.value.includes('mail')) triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 
@@ -4501,7 +4553,7 @@ function openFileViewSearchDrawer() {
 // search button via viewSearchActive without opening the SearchDrawer; the
 // SearchDrawer bottom sheet is only used as a fallback.
 function openFileSearch() {
-  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value || isHtmlRenderedView.value) {
+  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value || isHtmlRenderedView.value || isTableRenderedView.value) {
     viewSearchActive.value = true
     fileOverlayRef.value?.focusSearchInput()
   } else {

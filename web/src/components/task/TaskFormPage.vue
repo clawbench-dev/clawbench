@@ -50,14 +50,58 @@
         <div class="form-group">
           <label class="form-label">{{ t('task.form.triggerMode') }}</label>
           <div class="preset-buttons">
-            <button class="preset-btn" :class="{ active: form.triggerMode !== 'event' }" @click="form.triggerMode = 'cron'">
+            <button class="preset-btn" :class="{ active: form.triggerMode === 'cron' }" @click="form.triggerMode = 'cron'">
               {{ t('task.form.triggerCron') }}
             </button>
             <button class="preset-btn" :class="{ active: form.triggerMode === 'event' }" @click="form.triggerMode = 'event'">
               {{ t('task.form.triggerEvent') }}
             </button>
+            <button class="preset-btn" :class="{ active: form.triggerMode === 'email' }" @click="form.triggerMode = 'email'">
+              {{ t('task.form.triggerEmail') }}
+            </button>
           </div>
         </div>
+
+        <!-- Email configuration (email mode) -->
+        <template v-if="form.triggerMode === 'email'">
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.mailAccount') }}</label>
+            <MenuSelect
+              :model-value="form.mailAccountId"
+              :options="mailAccountOptions"
+              block
+              @update:model-value="(v) => (form.mailAccountId = Number(v))"
+            />
+            <div v-if="errors.mailAccount" class="form-error">{{ errors.mailAccount }}</div>
+            <div v-if="!mailAccounts.length && !mailAccountsLoading" class="form-hint">
+              {{ t('task.form.mailAccountEmpty') }}
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.mailFolder') }}</label>
+            <MenuSelect
+              :model-value="form.mailFolder"
+              :options="mailFolderOptions"
+              block
+              @update:model-value="(v) => (form.mailFolder = String(v))"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.mailGates') }}</label>
+            <div class="mail-gates">
+              <input v-model="form.mailFrom" class="form-input" :placeholder="t('task.form.mailFromPlaceholder')" />
+              <input v-model="form.mailSubject" class="form-input" :placeholder="t('task.form.mailSubjectPlaceholder')" />
+              <input v-model="form.mailBody" class="form-input" :placeholder="t('task.form.mailBodyPlaceholder')" />
+            </div>
+            <label class="checkbox-label mail-attach-check">
+              <input type="checkbox" v-model="form.mailHasAttachment" />
+              <span>{{ t('task.form.mailHasAttachment') }}</span>
+            </label>
+            <div class="form-hint">{{ t('task.form.mailGateHint') }}</div>
+          </div>
+        </template>
 
         <!-- Event configuration (event mode) -->
         <template v-if="form.triggerMode === 'event'">
@@ -110,7 +154,11 @@
           </div>
         </template>
 
-        <template v-else>
+        <!-- Cron schedule. Explicitly cron-only: this used to be a `v-else`
+             attached to the event block, which made every non-event mode fall
+             through to it — so an email task rendered a meaningless frequency
+             picker and Cron expression below its mailbox settings. -->
+        <template v-if="form.triggerMode === 'cron'">
         <!-- Frequency preset -->
         <div class="form-group">
           <label class="form-label">{{ t('task.form.frequency') }}</label>
@@ -326,6 +374,8 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import MenuSelect from '@/components/common/MenuSelect.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { apiGet } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { useForgeBinding } from '@/composables/useForgeBinding'
@@ -371,6 +421,67 @@ const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
   mode: computed(() => props.mode),
   onSuccess: (taskId) => emit('saved', taskId),
 })
+
+// ── Email trigger configuration ──
+// The mailbox list is global (not project-scoped), so it is loaded lazily the
+// first time the user switches to email mode.
+const mailAccounts = ref([])
+const mailFolders = ref([])
+const mailAccountsLoading = ref(false)
+const mailAccountsLoaded = ref(false)
+
+const mailAccountOptions = computed(() => [
+  { value: 0, label: t('task.form.mailAccountPlaceholder') },
+  ...mailAccounts.value.map((a) => ({ value: a.id, label: a.name || a.email })),
+])
+
+const mailFolderOptions = computed(() => [
+  { value: '', label: t('task.form.mailFolderInbox') },
+  ...mailFolders.value.map((f) => ({ value: f.path, label: f.name || f.path })),
+])
+
+async function loadMailAccounts() {
+  if (mailAccountsLoaded.value || mailAccountsLoading.value) return
+  mailAccountsLoading.value = true
+  try {
+    const data = await apiGet('/api/mail/accounts')
+    mailAccounts.value = Array.isArray(data.accounts) ? data.accounts : []
+    mailAccountsLoaded.value = true
+  } catch (e) {
+    appLog.w('TaskForm', 'load mail accounts failed', e)
+  } finally {
+    mailAccountsLoading.value = false
+  }
+}
+
+async function loadMailFolders(accountId) {
+  mailFolders.value = []
+  if (!accountId) return
+  try {
+    const data = await apiGet(`/api/mail/folders?accountId=${accountId}`)
+    mailFolders.value = Array.isArray(data.folders) ? data.folders : []
+  } catch (e) {
+    appLog.w('TaskForm', 'load mail folders failed', e)
+  }
+}
+
+watch(
+  () => form.value.triggerMode,
+  (mode) => {
+    if (mode === 'email') void loadMailAccounts()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => form.value.mailAccountId,
+  (id) => {
+    void loadMailFolders(id)
+    // A folder belongs to one account; keeping the old path would point the
+    // task at a folder the new account does not have.
+    form.value.mailFolder = ''
+  },
+)
 
 // ── Event trigger configuration ──
 // The event-type list mirrors the backend's validForgeEventTypes set.
@@ -592,6 +703,9 @@ function validateForm() {
   if (form.value.triggerMode === 'event') {
     // An event task must subscribe to at least one event type.
     if (selectedEventTypes.value.length === 0) e.eventTypes = t('task.form.eventTypesRequired')
+  } else if (form.value.triggerMode === 'email') {
+    // An email task must name the mailbox it watches.
+    if (!form.value.mailAccountId) e.mailAccount = t('task.form.mailAccountRequired')
   } else if (preset.value === 'custom' && !customCron.value.trim()) {
     e.cronExpr = t('task.form.cronRequired')
   }
@@ -954,6 +1068,14 @@ onMounted(() => {
   min-height: calc(280 * var(--dp));
 }
 
+.mail-gates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 4px);
+}
+.mail-attach-check {
+  margin-top: var(--space-2, 4px);
+}
 .form-hint {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #6b7280);

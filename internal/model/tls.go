@@ -91,6 +91,27 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// RemoveTLSCerts deletes every recognized certificate/key file in dir, so the
+// next start falls back to HTTP.
+//
+// It removes ALL known names rather than just the pair ResolveTLSCerts picked:
+// leaving, say, cert.pem behind after deleting fullchain.pem would silently
+// bring HTTPS back on the next restart, which is the opposite of what the
+// caller told the user.
+func RemoveTLSCerts(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	var firstErr error
+	for _, name := range []string{tlsFullchainFile, tlsPrivkeyFile, tlsCertFile, tlsKeyFile, tlsCombinedFile} {
+		err := os.Remove(filepath.Join(dir, name))
+		if err != nil && !os.IsNotExist(err) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // pemFileHasCertAndKey reports whether the PEM file at path contains both at
 // least one CERTIFICATE block and at least one PRIVATE KEY block, i.e. it is a
 // valid combined cert+key file usable for a single-file HTTPS setup.

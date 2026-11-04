@@ -1,0 +1,9 @@
+order_id,customer,address,note
+A-1001,"Smith, John","12 Baker St, London","他说""明天送达""，别迟到"
+A-1002,"Doe, Jane","5th Ave
+New York","加急
+优先派送"
+A-1003,王小明,"上海市浦东新区
+世纪大道 100 号","普通包裹"
+A-1004,"O'Brien, Pat","44 O'Connell Street, Dublin",客户要求电话确认
+A-1005,李雷,"北京市海淀区中关村大街 1 号","货到付款"

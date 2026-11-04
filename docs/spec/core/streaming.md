@@ -98,6 +98,7 @@ sequenceDiagram
   - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`pong`/`metrics_preference` 六种客户端消息。`metrics_preference` 声明是否订阅系统资源推送及速率（前台 1000ms / 后台 5000ms / 关闭），服务端仅在存在订阅者时采样，按最快请求速率推送；新连接会清空该偏好，客户端每次重连后重新声明
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`。后端重放时给缓冲事件打 `Replayed` 标记（`replayed: true`），前端据此进入 `isReplayingEvents` 状态——补发的历史终态事件（如断线期间已完成的 `session_update`/`task_update`）不再被当作 live 事件处理，避免刷新后误弹历史完成通知/完成弹窗
 - **订阅超时清理**：客户端超过 120s 无活动即清理订阅，避免僵尸连接
+- **断开客户端的订阅名额要尽快回收**：名额限的是 registry 里的 clientID 个数，而断开只把连接置空、保留回放缓冲，条目要等 120s 才删——已关闭的客户端因此在两三分钟内继续占名额，正常客户端被「subscription rejected, limit reached」拒掉（全量 e2e 每轮实测 240+ 次）。所以名额满且是新 clientID 时，先回收「断开超过 10s（回放缓冲已失效）」里最久的一条；在线客户端与 10s 内刚断开的都不动，回收不到才拒绝
 - **投递可观测**：`EmitToSession` 对无订阅者的会话不再静默丢弃——按原因（`no_subscribers` / `no_manager`）原子计数并通过 `GET /api/ws/delivery-stats` 暴露；日志按事件类型分级（关键事件 WARN、高频增量 DEBUG）且**每个 (原因, 类型) 只记一次**，量级交给计数、事实交给日志。此前"UI 卡在缺少终态事件"与"后端根本没发"在日志上完全无法区分
 - **关键事件可靠投递**：通道满时按事件类型分流（见上图）——关键事件等待空位（默认 200ms，超时记 Error），高频增量保持非阻塞丢弃。ACP 来源是明确的例外
 - **前端缓冲回放**：内容类事件在 `streaming` 占位符尚未建立时不再被丢弃，改为有界缓冲（200 条），`stream_start` 到达后按到达顺序回放。此前 `stream_start` 延迟或丢失会让用户看到空回复，尽管后端已产出内容。缓冲满时丢弃最旧一条（新事件才是用户即将看到的，且无界缓冲会在 `stream_start` 永不出现时泄漏）；终态事件到达、会话切换与断连都清空缓冲——否则一个迟到的 `stream_start`（重连回放、后端重试）会把上一轮的陈旧内容回放进新建的占位符，产生永远收不到终态事件的僵尸气泡

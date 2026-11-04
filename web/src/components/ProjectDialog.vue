@@ -27,7 +27,7 @@
     </div>
 
     <!-- Content -->
-    <div class="dialog-content">
+    <div class="dialog-content" ref="contentRef">
       <PanelSkeleton v-if="loading" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       <div v-else-if="displayItems.length === 0" class="dialog-empty">{{ searchQuery ? t('projectDialog.noMatchDirs') : t('projectDialog.emptyDir') }}</div>
       <div
@@ -36,6 +36,7 @@
         :key="item.path"
         class="dialog-item"
         :class="{ selected: selectedPath === item.path }"
+        :data-path="item.path"
         @click="enterDir(item)"
       >
         <FileIcon :path="item.name" :is-dir="true" :size="28" class="item-icon" />
@@ -64,7 +65,7 @@
 
 <script setup>
 import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, LocateFixed } from 'lucide-vue-next'
-import { ref, computed, watch, inject, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, inject, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
 import PanelSkeleton from './common/PanelSkeleton.vue'
@@ -128,6 +129,7 @@ const isWindows = computed(() => store.state.rootPaths.length > 1)
 const browsePath = ref(isWindows.value ? '/' : (store.state.homeDir || '/'))
 const browseItems = ref([])
 const currentBrowseAbs = ref('')
+const contentRef = ref(null)
 
 // Detect the separator used by the current base path (backslash on Windows, forward slash on Unix)
 function pathSep(base) {
@@ -220,6 +222,26 @@ async function loadBrowse() {
     }
 }
 
+/**
+ * Select `path` and scroll its row into view.
+ *
+ * Called right after a create-folder reload: the new directory lands wherever
+ * the listing puts it (alphabetical, so usually far from where the user is
+ * looking), and without this it is selected-but-invisible. The row only exists
+ * once the refreshed listing has rendered, hence the post-flush wait.
+ */
+async function selectAndReveal(path) {
+    selectedPath.value = path
+    await nextTick()
+    const row = contentRef.value
+        ? [...contentRef.value.querySelectorAll('.dialog-item')].find(el => el.dataset.path === path)
+        : null
+    // jsdom (tests) may not implement scrollIntoView — guard it
+    if (row && typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+}
+
 async function doNewFolder() {
     const name = await dialog.prompt(t('projectDialog.promptFolderName'))
     if (!name || !name.trim()) return
@@ -230,7 +252,15 @@ async function doNewFolder() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: dir, name: name.trim() })
         })
-        if (resp.ok) await loadBrowse()
+        if (resp.ok) {
+            // A dot-prefixed directory is filtered out while hidden files are
+            // hidden, so revealing it would silently do nothing.
+            if (name.trim().startsWith('.')) showHidden.value = true
+            await loadBrowse()
+            // Build the path the same way displayItems does (from the listing's
+            // own base), so separators match the rendered rows on Windows too.
+            await selectAndReveal(pathJoin(currentBrowseAbs.value, name.trim()))
+        }
         else await dialog.alert(t('projectDialog.createFailed'))
     } catch { await dialog.alert(t('projectDialog.createFailed')) }
 }

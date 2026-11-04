@@ -48,10 +48,17 @@ func (c LiveKitConfig) Configured() bool {
 }
 
 // LiveKitGrant is the subset of a LiveKit video grant this feature needs.
+//
+// roomAdmin and roomList are NOT interchangeable. roomAdmin is scoped to the
+// one room named in `room`; the account-wide server methods (ListRooms) only
+// accept roomList. Sending roomAdmin for ListRooms gets 401 "permissions
+// denied" with a perfectly valid key and secret — the same answer as a token
+// that can only join.
 type LiveKitGrant struct {
 	Room           string `json:"room,omitempty"`
 	RoomJoin       bool   `json:"roomJoin,omitempty"`
 	RoomAdmin      bool   `json:"roomAdmin,omitempty"`
+	RoomList       bool   `json:"roomList,omitempty"`
 	CanPublish     bool   `json:"canPublish,omitempty"`
 	CanSubscribe   bool   `json:"canSubscribe,omitempty"`
 	CanPublishData bool   `json:"canPublishData,omitempty"`
@@ -87,13 +94,9 @@ func (c LiveKitConfig) JoinToken(room, identity, name string, canPublish bool, t
 	}, ttl)
 }
 
-// adminToken authorizes calls to LiveKit's server API.
-func (c LiveKitConfig) adminToken(room string) (string, error) {
-	return c.sign(map[string]any{
-		"sub":   c.APIKey,
-		"video": LiveKitGrant{Room: room, RoomAdmin: true},
-	}, 5*time.Minute)
-}
+// serverTokenTTL bounds an API-call token. Rebuilt for every call, so a short
+// life costs nothing.
+const serverTokenTTL = 5 * time.Minute
 
 // sign builds an HS256 JWT.
 //
@@ -138,15 +141,29 @@ var ErrRelayRejected = errors.New("relay rejected the request")
 
 const relayTimeout = 8 * time.Second
 
-// call posts one Twirp method and decodes the JSON reply into out.
-func (c LiveKitConfig) call(ctx context.Context, method, room string, payload any, out any) error {
+// call posts one Twirp method with a freshly signed server token and decodes
+// the JSON reply into out.
+//
+// The grant is passed per call rather than derived from the room name: LiveKit
+// scopes roomAdmin to a single room, so the account-wide methods need roomList
+// and the room-scoped ones need roomAdmin + room. Signing one grant for both
+// is what made the connectivity probe fail with "permissions denied".
+func (c LiveKitConfig) call(ctx context.Context, method string, grant LiveKitGrant, payload any, out any) error {
 	if !c.Configured() {
 		return errors.New("liveshare: livekit is not configured")
 	}
-	token, err := c.adminToken(room)
+	token, err := c.sign(map[string]any{"sub": c.APIKey, "video": grant}, serverTokenTTL)
 	if err != nil {
 		return err
 	}
+	return c.callWithToken(ctx, method, token, payload, out)
+}
+
+// callWithToken is call() with the token supplied by the caller. Split out so a
+// test can replay an arbitrary grant against a real relay — that is the only
+// way to pin down which grants LiveKit actually accepts, as opposed to which
+// ones we believe it accepts.
+func (c LiveKitConfig) callWithToken(ctx context.Context, method, token string, payload any, out any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -198,11 +215,14 @@ func (c LiveKitConfig) call(ctx context.Context, method, room string, payload an
 // It answers both questions in one call: reachability (did anything reply) and
 // credentials (did it accept the token). A plain TCP probe would pass with a
 // wrong secret, and the failure would only show up at the first meeting.
+//
+// roomList, not roomAdmin: this is an account-wide call, and a roomAdmin grant
+// with no room authorizes nothing at all.
 func (c LiveKitConfig) ListRooms(ctx context.Context) (int, error) {
 	var out struct {
 		Rooms []json.RawMessage `json:"rooms"`
 	}
-	if err := c.call(ctx, "ListRooms", "", struct{}{}, &out); err != nil {
+	if err := c.call(ctx, "ListRooms", LiveKitGrant{RoomList: true}, struct{}{}, &out); err != nil {
 		return 0, err
 	}
 	return len(out.Rooms), nil
@@ -214,7 +234,7 @@ func (c LiveKitConfig) ListRooms(ctx context.Context) (int, error) {
 // omitting it would silently turn the participant into a publisher that cannot
 // hear anyone.
 func (c LiveKitConfig) UpdateParticipantPermission(ctx context.Context, room, identity string, canPublish bool) error {
-	return c.call(ctx, "UpdateParticipant", room, map[string]any{
+	return c.call(ctx, "UpdateParticipant", LiveKitGrant{Room: room, RoomAdmin: true}, map[string]any{
 		"room":     room,
 		"identity": identity,
 		"permission": map[string]any{
@@ -227,7 +247,7 @@ func (c LiveKitConfig) UpdateParticipantPermission(ctx context.Context, room, id
 
 // RemoveParticipant hangs up one participant's connection.
 func (c LiveKitConfig) RemoveParticipant(ctx context.Context, room, identity string) error {
-	return c.call(ctx, "RemoveParticipant", room, map[string]any{
+	return c.call(ctx, "RemoveParticipant", LiveKitGrant{Room: room, RoomAdmin: true}, map[string]any{
 		"room":     room,
 		"identity": identity,
 	}, nil)

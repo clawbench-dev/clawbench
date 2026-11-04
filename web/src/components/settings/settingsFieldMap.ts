@@ -356,6 +356,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionDays', descriptionKey: 'settings.items.uploadRetentionDaysDesc', key: 'upload.retention_days', type: 'number', source: 'server', min: 1, disableUnless: { key: 'upload.retention_enabled', value: true }, sectionHeader: 'settings.items.uploadSection' } },
   ],
   debug: [
+    // Opt-in: agent processes inherit what the user's shell startup files
+    // export. Off by default because it runs those files and hands the agent
+    // their whole environment (see issue #619).
+    { type: 'item', spec: { labelKey: 'settings.items.agentEnvInherit', descriptionKey: 'settings.items.agentEnvInheritDesc', key: 'shell_env.inherit', type: 'switch', source: 'server', sectionHeader: 'settings.items.agentEnvSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.logCapture', descriptionKey: 'settings.items.logCaptureDesc', key: 'logCapture', type: 'switch', source: 'local', sectionHeader: 'settings.items.debugSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local', appOnly: true, sectionHeader: 'settings.items.debugSection' } },
   ],
@@ -392,6 +396,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // (MCPSetting); this entry only opens the section, so it must also be
     // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
+  ],
+  mail: [
+    // Mailbox accounts (IMAP + SMTP). The card body is MailSetting, so this
+    // placeholder only opens the section and must also be listed in
+    // PLACEHOLDER_ITEMS in SettingsCategory.vue.
+    { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
   ],
   providers: [
     // Model-provider list (endpoint + credential). Same shape as the MCP
@@ -719,6 +729,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultShots', descriptionKey: 'settings.items.meetingDefaultShotsDesc', key: 'meetingDefaultShots', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowTalk', descriptionKey: 'settings.items.meetingDefaultAllowTalkDesc', key: 'meetingDefaultAllowTalk', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowMemberScreen', descriptionKey: 'settings.items.meetingDefaultAllowMemberScreenDesc', key: 'meetingDefaultAllowMemberScreen', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    // 中继服务 (LiveKit). Installation-wide, so it lives here rather than in the
+    // create form: the relay is deployed once and every meeting that opts in
+    // shares it. The row is a placeholder that only opens the card — the form
+    // is MeetingRelaySetting, because the credential is write-only and the save
+    // is a test-then-store action, neither of which the generic row can do.
+    { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection' } },
   ],
   rag: [
     { type: 'panel', config: {

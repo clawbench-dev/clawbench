@@ -43,7 +43,10 @@
             <X :size="16" />
           </button>
         </div>
-        <!-- Body -->
+        <!-- ⚠️ NO PADDING — .bs-body has NO inset of its own, in BOTH the
+             narrow bottom drawer and the wide centred card. Every consumer
+             MUST add its own padding, or the content sits flush against the
+             panel edges and looks broken. -->
         <div class="bs-body">
           <slot />
         </div>

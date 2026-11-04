@@ -351,7 +351,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasFitWidth.value) ids.push('fitWidth')
     if (!isUntitled.value) ids.push('attach')
     if (isImageFile.value) ids.push('viewImage')
-    if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
+    if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value || isTableFile.value)) ids.push('toggleView')
     // Edit always sits right next to the preview toggle: the two form a single
     // view-mode control pair with no other buttons in between.
     if (isEditable.value) ids.push('edit')
@@ -387,7 +387,8 @@ const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
 const isImageFile = computed(() => fileType.value?.isImage || false)
 const isOpenapi = computed(() => props.file?.subtype === 'openapi')
-const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || isOpenapi.value) && props.viewMode === 'rendered' && !props.editing)
+const isTableFile = computed(() => fileType.value?.isTable || false)
+const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || isOpenapi.value || isTableFile.value) && props.viewMode === 'rendered' && !props.editing)
 // Effective view: when editing from rendered preview, the user sees source code
 const effectiveViewMode = computed(() => (isMarkdownRendered.value) ? 'rendered' : 'raw')
 const isMediaFile = computed(() => {
@@ -418,6 +419,9 @@ const isEditable = computed(() => {
     if (isUntitled.value) return false
     if (!hasTextContent.value || isMediaFile.value) return false
     if (isMarkdown.value) return true
+    // The table view is read-only by nature, but the file is still text: the
+    // edit button opens it in the source editor (same as markdown's preview).
+    if (isTableFile.value) return true
     // Other templated types (HTML/OpenAPI) are only editable in source view
     return !isMarkdownRendered.value
 })

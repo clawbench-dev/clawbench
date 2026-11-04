@@ -48,6 +48,15 @@ export function computeMenuStyle(
   rect: DOMRect,
   opts: {
     maxWidth?: number
+    /**
+     * Floor for the menu's own width (CSS px). Consumers whose popup should at
+     * least line up with the control it drops out of pass the trigger's width
+     * here. It belongs on the ROOT, not on the slot content: the root is the
+     * scroll container, so a child wider than the root's content box paints a
+     * horizontal scrollbar under the menu. Clamped to the effective max width
+     * so a narrow viewport cannot push the menu past the screen edge.
+     */
+    minWidth?: number
     maxHeight?: number
     edgeMargin?: number
     menuItemsCount?: number
@@ -78,6 +87,7 @@ export function computeMenuStyle(
   const defaultVp = typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 }
   const {
     maxWidth = 220,
+    minWidth = 0,
     maxHeight = 320,
     edgeMargin = 6,
     viewportWidth = defaultVp.width,
@@ -109,6 +119,8 @@ export function computeMenuStyle(
   // menu past the screen edge.
   const availableWidth = Math.max(0, cssViewportWidth - edgeMargin * 2)
   const effectiveMaxWidth = Math.min(maxWidth, availableWidth)
+  // Same border-box space as effectiveMaxWidth; 0 disables the floor.
+  const effectiveMinWidth = Math.min(minWidth, effectiveMaxWidth)
 
   // --- Vertical positioning: prefer above anchor, flip below when near top ---
   const spaceAbove = rect.top - edgeMargin
@@ -145,6 +157,7 @@ export function computeMenuStyle(
       maxWidth: `${effectiveMaxWidth}px`,
       maxHeight: `min(${maxHeight}px, ${availableBelow / (containingBlock?.scaleY || 1)}px)`,
     }
+    if (effectiveMinWidth > 0) style.minWidth = `${effectiveMinWidth}px`
     // When the menu doesn't scroll itself the caller handles overflow
     // internally (pinned header/footer + scrollable middle).
     if (scrollable) style.overflowY = 'auto'
@@ -161,6 +174,7 @@ export function computeMenuStyle(
     maxWidth: `${effectiveMaxWidth}px`,
     maxHeight: `min(${maxHeight}px, ${availableAbove / (containingBlock?.scaleY || 1)}px)`,
   }
+  if (effectiveMinWidth > 0) style.minWidth = `${effectiveMinWidth}px`
   if (scrollable) style.overflowY = 'auto'
   return style
 }

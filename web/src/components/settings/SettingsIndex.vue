@@ -46,8 +46,9 @@ import {
   ChevronRight,
   Github,
   UserRound,
-  Video,
+  Mail,
 } from 'lucide-vue-next'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
 
@@ -90,7 +91,9 @@ const groupDefs = [
       { id: 'stt', icon: Mic },
       // Meeting defaults sit next to the speech settings they depend on:
       // transcription (STT) and the shared summary model (providers).
-      { id: 'meeting', icon: Video },
+      // The icon comes from utils/meetingIcon so this row matches the dock
+      // tab instead of drawing a second, unrelated meeting glyph.
+      { id: 'meeting', icon: MEETING_ICON },
     ],
   },
   {
@@ -98,6 +101,9 @@ const groupDefs = [
     items: [
       { id: 'terminal', icon: SquareTerminal },
       { id: 'portForward', icon: ArrowLeftRight },
+      // Mailbox accounts sit with the other outbound integrations: they are a
+      // connection this machine holds, not a per-project setting.
+      { id: 'mail', icon: Mail },
       { id: 'forgeIntegration', icon: Github },
     ],
   },

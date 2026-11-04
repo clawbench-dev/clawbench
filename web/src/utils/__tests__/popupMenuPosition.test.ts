@@ -250,6 +250,31 @@ describe('computeMenuStyle', () => {
     })
   })
 
+  describe('minWidth: floor for the menu width', () => {
+    it('sets the floor when asked for one', () => {
+      const rect = mockRect({ top: 400, bottom: 440, left: 100, right: 600 })
+      const style = computeMenuStyle(rect, { viewportWidth: 1024, viewportHeight: 768, maxWidth: 260, minWidth: 240 })
+      expect(style.minWidth).toBe('240px')
+    })
+
+    // min-width beats max-width in CSS, so an unclamped floor would push the
+    // menu past the viewport edge instead of shrinking it.
+    it('clamps the floor to the effective max width on a narrow viewport', () => {
+      const rect = mockRect({ top: 400, bottom: 440, left: 4, right: 380 })
+      const style = computeMenuStyle(rect, {
+        anchor: 'left', viewportWidth: 390, viewportHeight: 844, maxWidth: 380, minWidth: 600, edgeMargin: 6,
+      })
+      expect(style.maxWidth).toBe('378px')
+      expect(style.minWidth).toBe('378px')
+    })
+
+    it('omits the floor when not requested', () => {
+      const rect = mockRect({ top: 400, bottom: 440, left: 100, right: 140 })
+      const style = computeMenuStyle(rect, { viewportWidth: 1024, viewportHeight: 768 })
+      expect(style.minWidth).toBeUndefined()
+    })
+  })
+
   describe('style invariants', () => {
     it('always includes position, maxWidth, maxHeight, overflowY (scrollable default)', () => {
       const rects = [

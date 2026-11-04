@@ -158,6 +158,12 @@ func ServeAuthCheck(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedError(w, r, model.Unauthorized(nil))
 		return
 	}
+	// Rewrite the cookie on every successful check. Besides extending the
+	// 7-day lifetime, this is the only chance to migrate a cookie issued by an
+	// older build with the Secure flag: a secure origin may replace it, a
+	// plain-HTTP one may not. Without this the user who switches to HTTP keeps
+	// sending nothing until the old cookie expires. See cookies.go.
+	setAppCookie(w, model.SessionCookie, validateToken, int(7*24*3600))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -231,15 +237,7 @@ func ServeLogin(w http.ResponseWriter, r *http.Request) {
 				model.CookieToken = cookieToken
 				model.PersistCookieToken(cookieToken)
 			}
-			http.SetCookie(w, &http.Cookie{
-				Name:     model.ScopedCookieName(model.SessionCookie),
-				Value:    cookieToken,
-				Path:     "/",
-				HttpOnly: true,
-				Secure:   r.TLS != nil,
-				MaxAge:   int(7 * 24 * 3600),
-				SameSite: http.SameSiteLaxMode,
-			})
+			setAppCookie(w, model.SessionCookie, cookieToken, int(7*24*3600))
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 		} else {

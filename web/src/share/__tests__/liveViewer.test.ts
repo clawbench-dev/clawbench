@@ -13,6 +13,10 @@ const relayMock = vi.hoisted(() => ({
   publishVideo: vi.fn(),
   publishMic: vi.fn(),
   sendRelayData: vi.fn(),
+  // The page always goes through this server's /livekit proxy; the real
+  // rewrite has its own test in useLiveRelay. A fixed value here proves the
+  // viewer uses the helper rather than the relay's own address.
+  relayConnectURL: () => 'wss://clawbench.test/livekit',
 }))
 
 vi.mock('@/composables/useLiveRelay', () => ({
@@ -21,6 +25,7 @@ vi.mock('@/composables/useLiveRelay', () => ({
   publishVideo: relayMock.publishVideo,
   publishMic: relayMock.publishMic,
   sendRelayData: relayMock.sendRelayData,
+  relayConnectURL: relayMock.relayConnectURL,
   // Real implementation: the viewer must run frames through the same parser
   // the peer-to-peer path uses, so a fake that always returns null would hide
   // a broken wiring.
@@ -1288,7 +1293,11 @@ describe('LiveViewer relay mode', () => {
 
     await joinRelay(viewer)
 
-    expect(relayMock.openRelay).toHaveBeenCalledWith(RELAY.url, RELAY.token, expect.any(Object))
+    expect(relayMock.openRelay).toHaveBeenCalledWith(
+      'wss://clawbench.test/livekit',
+      RELAY.token,
+      expect.any(Object),
+    )
     // The whole point of the mode: no second transport, and no offer that
     // nobody would answer.
     expect(FakePC.instances).toHaveLength(0)

@@ -156,6 +156,7 @@ vi.mock('@/utils/fileType.ts', () => ({
     if (name.endsWith('.mp3')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: true, isVideo: false, isPdf: false, lang: '' }
     if (name.endsWith('.mp4')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: true, isPdf: false, isOffice: false, lang: '' }
     if (name.endsWith('.docx') || name.endsWith('.xlsx') || name.endsWith('.pptx')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: true, lang: '' }
+    if (name.endsWith('.csv') || name.endsWith('.tsv')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false, isTable: true, lang: 'plaintext' }
     return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false, lang: 'plaintext' }
   },
   formatFileSize: (bytes: number) => {
@@ -227,6 +228,8 @@ afterEach(() => {
   mockOpenSearch.mockClear()
   mockOpenGoToLine.mockClear()
   mockHtmlSearchFocus.mockClear()
+  mockTableFocusSearch.mockClear()
+  mockTableCloseSearch.mockClear()
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -239,6 +242,8 @@ const mockHandleExit = vi.fn()
 const mockOpenSearch = vi.fn()
 const mockHtmlSearchFocus = vi.fn()
 const mockOpenGoToLine = vi.fn(() => true)
+const mockTableFocusSearch = vi.fn()
+const mockTableCloseSearch = vi.fn()
 const codeMirrorViewerStub = {
   name: 'CodeMirrorViewer',
   template: '<div class="cm-stub" />',
@@ -246,6 +251,17 @@ const codeMirrorViewerStub = {
     handleExit: (...args: unknown[]) => mockHandleExit(...args),
     openSearch: (...args: unknown[]) => mockOpenSearch(...args),
     openGoToLine: (...args: unknown[]) => mockOpenGoToLine(...args),
+  },
+}
+
+// The CSV table owns its own search box; the viewer only forwards to it.
+const tablePreviewStub = {
+  name: 'TablePreviewBody',
+  props: ['file'],
+  template: '<div class="table-preview-stub" />',
+  methods: {
+    focusSearch: () => mockTableFocusSearch(),
+    closeSearch: () => mockTableCloseSearch(),
   },
 }
 
@@ -266,6 +282,7 @@ const stubs = {
     methods: { focus: () => mockHtmlSearchFocus() },
   },
   CodeMirrorViewer: codeMirrorViewerStub,
+  TablePreviewBody: tablePreviewStub,
   DiffDrawer: true,
   TocDock: {
     name: 'TocDock',
@@ -305,6 +322,38 @@ describe('FileViewer', () => {
     const wrapper = mountViewer({ file: { name: 'err.ts', path: 'err.ts', error: 'Not found' } })
     expect(wrapper.find('.error-bubble').exists()).toBe(true)
     expect(wrapper.text()).toContain('Not found')
+  })
+
+  describe('CSV / TSV table view', () => {
+    const csvFile = { name: 'data.csv', path: 'data.csv', content: 'name,qty\napple,3' }
+
+    it('renders the table in rendered view and the editor in raw view', async () => {
+      const wrapper = mountViewer({ file: csvFile })
+      expect(wrapper.find('.table-preview-stub').exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(false)
+
+      await wrapper.setProps({ markdownViewMode: 'raw' })
+      expect(wrapper.find('.table-preview-stub').exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(true)
+    })
+
+    it('falls back to the editor while editing the source', async () => {
+      const wrapper = mountViewer({ file: csvFile })
+      ;(wrapper.vm as any).$.setupState.handleToggleEdit()
+      await nextTick()
+      expect(wrapper.find('.table-preview-stub').exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(true)
+    })
+
+    it('routes search focus and close to the table box, not CodeMirror', () => {
+      const wrapper = mountViewer({ file: csvFile })
+      wrapper.vm.focusSearchInput()
+      expect(mockTableFocusSearch).toHaveBeenCalledTimes(1)
+      expect(mockOpenSearch).not.toHaveBeenCalled()
+
+      wrapper.vm.closeSearchInput()
+      expect(mockTableCloseSearch).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('shows PdfPreview for PDF files', () => {

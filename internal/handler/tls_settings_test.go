@@ -251,6 +251,59 @@ func TestServeTLSStatus_FlagsUnreadableCertificate(t *testing.T) {
 	assert.Empty(t, resp.NotAfter)
 }
 
+// Deleting removes every recognized pair, not just the one ResolveTLSCerts
+// picked: leaving a second pair behind would bring HTTPS back on restart.
+func TestServeTLSDelete_RemovesEveryRecognisedPairAndRequiresRestart(t *testing.T) {
+	dir := useTempCertDir(t)
+
+	w := httptest.NewRecorder()
+	ServeTLSGenerateSelfSigned(w, newRequest(t, http.MethodPost, "/api/config/tls/self-signed", nil))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// A second recognized pair, plus the combined form: both would re-enable
+	// HTTPS if only cert.pem/key.pem were removed.
+	certPEM, err := os.ReadFile(filepath.Join(dir, "cert.pem"))
+	require.NoError(t, err)
+	keyPEM, err := os.ReadFile(filepath.Join(dir, "key.pem"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fullchain.pem"), certPEM, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "privkey.pem"), keyPEM, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "combined.pem"), append(certPEM, keyPEM...), 0o600))
+
+	w = httptest.NewRecorder()
+	ServeTLSDelete(w, newRequest(t, http.MethodDelete, "/api/config/tls/delete", nil))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp tlsStatusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.Active)
+	assert.True(t, resp.RestartRequired)
+	for _, name := range []string{"cert.pem", "key.pem", "fullchain.pem", "privkey.pem", "combined.pem"} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		assert.True(t, os.IsNotExist(err), "%s must be gone", name)
+	}
+}
+
+// Deleting when nothing is there is a no-op, not an error: the button can be
+// pressed twice, or after another tab already deleted the files.
+func TestServeTLSDelete_IsIdempotent(t *testing.T) {
+	useTempCertDir(t)
+
+	for range 2 {
+		w := httptest.NewRecorder()
+		ServeTLSDelete(w, newRequest(t, http.MethodDelete, "/api/config/tls/delete", nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+}
+
+func TestServeTLSDelete_RejectsWrongMethod(t *testing.T) {
+	useTempCertDir(t)
+
+	w := httptest.NewRecorder()
+	ServeTLSDelete(w, newRequest(t, http.MethodGet, "/api/config/tls/delete", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
 func TestServeTLSStatus_RejectsWrongMethod(t *testing.T) {
 	useTempCertDir(t)
 

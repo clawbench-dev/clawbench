@@ -135,7 +135,11 @@ const SettingsRestartDialogStub = defineComponent({
   template: '<div class="restart-dialog-stub" @click="$emit(\'later\')" />',
 })
 
-vi.mock('lucide-vue-next', () => ({
+// Spread the real module: SettingsIndex renders a dock icon through
+// utils/meetingIcon (MEETING_ICON = MonitorUp), so a narrow whitelist makes the
+// whole page fail to import the moment that icon set changes.
+vi.mock('lucide-vue-next', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('lucide-vue-next')>()),
   RefreshCw: { template: '<svg />' },
   ChevronLeft: { template: '<svg />' },
   Settings: { template: '<svg />' },

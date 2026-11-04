@@ -651,12 +651,16 @@ func TestSetSessionID_SetsHttpOnlyCookie(t *testing.T) {
 	assert.Equal(t, "test-session-123", c.Value)
 	assert.Equal(t, "/", c.Path)
 	assert.True(t, c.HttpOnly, "cookie should be HttpOnly to mitigate XSS")
-	assert.False(t, c.Secure, "cookie should not be Secure over plain HTTP")
+	assert.False(t, c.Secure, "cookie must never be Secure: a Secure cookie is dropped after switching back to HTTP")
 	assert.Equal(t, http.SameSiteLaxMode, c.SameSite)
 	assert.Equal(t, 86400*30, c.MaxAge)
 }
 
-func TestSetSessionID_SetsSecureCookieOverTLS(t *testing.T) {
+// The session cookie deliberately stays non-Secure even over TLS. Marking it
+// Secure would make it vanish the moment the user goes back to HTTP, and the
+// browser then refuses to let the plain-HTTP login response overwrite it — the
+// user ends up logged out for good. See cookies.go.
+func TestSetSessionID_CookieStaysInsecureOverTLS(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	r.TLS = &tls.ConnectionState{} // simulate TLS
@@ -665,7 +669,7 @@ func TestSetSessionID_SetsSecureCookieOverTLS(t *testing.T) {
 	cookies := w.Result().Cookies()
 	require.Len(t, cookies, 1, "should set exactly one cookie")
 	c := cookies[0]
-	assert.True(t, c.Secure, "cookie should be Secure over TLS")
+	assert.False(t, c.Secure, "cookie must stay non-Secure so it survives a switch back to HTTP")
 }
 
 // ============================================================================

@@ -997,7 +997,9 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 			}
 			return "no"
 		}()))
-	cmd.Env = os.Environ()
+	// Server environment, plus the user's shell startup exports when the
+	// opt-in shell_env.inherit setting is on (issue #619).
+	cmd.Env = agentProcessEnv()
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 
 	// Model provider environment. Resolved from the live agent (c.agent is a
@@ -1070,8 +1072,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	}
 	slog.Info("acp perf: spawnLocked.cmd.Start", "agent_id", c.agent.ID, "clawbench_sid", c.clawbenchSID, "pid", cmd.Process.Pid, "elapsed", time.Since(spawnStart))
 
-	client := NewClawBenchACPClient()
-	client.connRef = c // back-reference for cache updates
+	client := newConnClient(c)
 
 	// Wrap stdout to fix common ACP protocol violations:
 	// - CodeWhale/codewhale returns string IDs ("1") for numeric requests (1)

@@ -53,6 +53,7 @@ const PANELS: Array<[file: string, why: string]> = [
   ['web/src/components/task/TaskListPage.vue', 'task list'],
   ['web/src/components/task/TaskHistoryTab.vue', 'task execution history'],
   ['web/src/components/notifications/NotificationsPanelContent.vue', 'notification log'],
+  ['web/src/components/mail/MailList.vue', 'mail message list'],
   ['web/src/components/proxy/ProxyPanelContent.vue', 'port forwarding'],
   ['web/src/components/session/SessionList.vue', 'session list'],
   ['web/src/components/session/SessionSearchDrawer.vue', 'session search'],

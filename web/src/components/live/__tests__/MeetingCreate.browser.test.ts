@@ -45,8 +45,15 @@ vi.mock('@/utils/appLog', () => ({
 // The relay section reads its stored endpoint on mount. Answered here rather
 // than left to the real client: jsdom has no server, and an unhandled rejection
 // from a background read would fail an unrelated test.
+const sfuApi = vi.hoisted(() => ({
+  state: { url: '', hasSecret: false, configured: false } as {
+    url: string
+    hasSecret: boolean
+    configured: boolean
+  },
+}))
 vi.mock('@/utils/api', () => ({
-  apiGet: vi.fn(async () => ({ url: '', hasSecret: false, configured: false })),
+  apiGet: vi.fn(async () => ({ ...sfuApi.state })),
   apiPost: vi.fn(async () => ({ success: true, message: 'ok' })),
   apiPatch: vi.fn(async (_url: string, body: Record<string, unknown>) => ({
     url: (body.url as string) ?? '',
@@ -215,6 +222,7 @@ beforeEach(() => {
   localStorage.clear()
   // The relay configuration is a module-level singleton too.
   _resetLiveSFUConfigForTest()
+  sfuApi.state = { url: '', hasSecret: false, configured: false }
   // The capture options are module-level singletons shared with the running
   // meeting; a test that flips the camera would otherwise leak into the next
   // one and make the expectations order-dependent.
@@ -339,22 +347,27 @@ describe('MeetingCreate in a browser', () => {
     ])
   })
 
-  it('keeps the relay fields hidden until the switch is on', async () => {
+  // The endpoint and credential are installation-wide, so they live in
+  // 设置 → 视频会议. The create form keeps only the per-meeting switch: three
+  // inputs that apply to every meeting must not make each small meeting scroll
+  // past them, and editing them here would be a second source of truth.
+  it('keeps the relay credentials out of the create form', async () => {
     stubCaptureApi(true)
     const wrapper = mountPanel()
     await flushPromises()
 
-    // The switch has to be findable without opening anything; the three inputs
-    // must not make every small meeting scroll past them.
     expect(wrapper.find('[data-role="meeting-relay"]').exists()).toBe(true)
     expect(wrapper.find('[data-role="meeting-relay-url"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="meeting-relay-key"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="meeting-relay-secret"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="meeting-relay-test"]').exists()).toBe(false)
 
+    // Turning it on without a stored endpoint says where the missing half is
+    // edited, instead of leaving the disabled start button unexplained.
     await wrapper.find('[data-role="meeting-relay"]').setValue(true)
-
-    expect(wrapper.find('[data-role="meeting-relay-url"]').exists()).toBe(true)
-    expect(wrapper.find('[data-role="meeting-relay-key"]').exists()).toBe(true)
-    expect(wrapper.find('[data-role="meeting-relay-secret"]').exists()).toBe(true)
-    expect(wrapper.find('[data-action="meeting-relay-test"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="meeting-relay-missing"]').text()).toBe(
+      enMessages.meeting.create.relayNotConfigured,
+    )
   })
 
   it('blocks starting a relay meeting until the relay is configured', async () => {
@@ -370,6 +383,25 @@ describe('MeetingCreate in a browser', () => {
     // No stored endpoint and nothing tested: creating the room would produce one
     // that cannot carry media, so the button refuses instead.
     expect(startBtn().attributes('disabled')).toBeDefined()
+  })
+
+  // The other half of the gate: once 设置 → 视频会议 holds a tested endpoint,
+  // the switch is enough and the topology travels with the create request.
+  it('starts a relay meeting once the endpoint is configured', async () => {
+    stubCaptureApi(true)
+    sfuApi.state = { url: 'wss://relay.example.com', hasSecret: true, configured: true }
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+
+    await wrapper.find('[data-role="meeting-relay"]').setValue(true)
+    expect(wrapper.find('[data-role="meeting-relay-missing"]').exists()).toBe(false)
+    const startBtn = wrapper.find('[data-action="meeting-start"]')
+    expect(startBtn.attributes('disabled')).toBeUndefined()
+
+    await startBtn.trigger('click')
+    await flushPromises()
+    expect(shareApi.start).toHaveBeenCalledWith(expect.objectContaining({ useRelay: true }))
   })
 
   // Both permissions start ON: a meeting where nobody may speak and nobody may
@@ -805,6 +837,59 @@ describe('MeetingCreate in a browser', () => {
       // Nothing can be started: the button is present but disabled rather than
       // hidden, so the footer does not jump around between hosts.
       expect(wrapper.find('[data-action="meeting-start"]').attributes('disabled')).toBeDefined()
+    } finally {
+      if (original) Object.defineProperty(window, 'isSecureContext', original)
+      else delete (window as unknown as Record<string, unknown>).isSecureContext
+    }
+  })
+
+  // The desktop shell promotes its own origin, so this form still works on
+  // http — but the link it is about to create will not work for guests. The
+  // notice sits above the form (not instead of it) and says exactly that.
+  it('warns the desktop shell that guests will need HTTPS', async () => {
+    stubCaptureApi(false)
+    nativeApi.value = { isDesktopApp: () => true, listCaptureSources: vi.fn(async () => '[]') }
+    const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      const notice = wrapper.find('[data-role="https-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.classes()).toContain('https-notice--banner')
+      expect(notice.find('.https-notice__title').text()).toBe(
+        enMessages.liveShare.httpsNotice.bannerTitle,
+      )
+      // The form is still there: capture works on this machine.
+      expect(wrapper.find('[data-role="meeting-nick"]').exists()).toBe(true)
+      expect(wrapper.find('.meeting-warn').exists()).toBe(false)
+    } finally {
+      if (original) Object.defineProperty(window, 'isSecureContext', original)
+      else delete (window as unknown as Record<string, unknown>).isSecureContext
+    }
+  })
+
+  // An old desktop shell that cannot capture either already gets the full
+  // "insecure origin" block below. Stacking the banner on top would repeat the
+  // same text and the same button twice on one screen.
+  it('does not repeat the HTTPS notice when the desktop shell cannot capture either', async () => {
+    stubCaptureApi(false)
+    cameraDevice.has = false
+    nativeApi.value = { isDesktopApp: () => true }
+    const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      // One notice only, and it is the full block (both variants share
+      // data-role, so the variant class is what tells them apart).
+      expect(wrapper.findAll('[data-role="https-notice"]')).toHaveLength(1)
+      expect(wrapper.find('.https-notice--banner').exists()).toBe(false)
+      expect(wrapper.find('[data-role="https-notice"]').classes()).toContain('https-notice--block')
+      expect(wrapper.find('.https-notice__title').text()).toBe(enMessages.liveShare.httpsNotice.blockTitle)
+      expect(wrapper.find('[data-action="https-notice-generate"]').exists()).toBe(true)
     } finally {
       if (original) Object.defineProperty(window, 'isSecureContext', original)
       else delete (window as unknown as Record<string, unknown>).isSecureContext

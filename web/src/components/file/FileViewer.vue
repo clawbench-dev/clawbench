@@ -230,6 +230,13 @@
         </div>
       </template>
 
+      <!-- CSV / TSV — rendered as a filterable, sortable data table -->
+      <TablePreviewBody
+        v-else-if="isTableRenderedView"
+        ref="tablePreviewRef"
+        :file="file"
+      />
+
       <!-- Code / plain text -->
       <div v-else class="raw-content-viewer">
         <div v-if="file.truncated" class="truncated-notice">
@@ -295,6 +302,7 @@ import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./ExcalidrawViewer.vue') }))
 import MarkdownPreview from './MarkdownPreview.vue'
+import TablePreviewBody from './TablePreviewBody.vue'
 import PreviewSearchBar from './PreviewSearchBar.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./CodeMirrorViewer.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./OpenApiPreview.vue') }))
@@ -352,6 +360,12 @@ const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'p
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
 const isOpenapi = computed(() => props.file?.subtype === 'openapi')
+// Delimited text (CSV/TSV) renders as a data table in the rendered view and
+// falls back to the plain-text editor for source view / editing.
+const isTableFile = computed(() => fileType.value?.isTable || false)
+const isTableRenderedView = computed(
+    () => isTableFile.value && !editing.value && props.markdownViewMode === 'rendered',
+)
 // Whether the current view is rendered by CodeMirrorViewer. Code/plain text is
 // always CodeMirror. Markdown uses the SearchDrawer only for the rendered
 // preview; raw source view and editing are CodeMirror. HTML/OpenAPI rendered
@@ -363,6 +377,7 @@ const isCodeMirrorView = computed(() => {
     if (props.file.isBinary || props.file.tooLarge || props.file.error) return false
     if (isMarkdown.value) return editing.value || props.markdownViewMode !== 'rendered'
     if (isHtml.value || isOpenapi.value) return props.markdownViewMode !== 'rendered'
+    if (isTableFile.value) return !isTableRenderedView.value
     return true
 })
 const loading = ref(false)
@@ -370,6 +385,8 @@ const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
 const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
+/** CSV/TSV table view — owns its own search box. */
+const tablePreviewRef = ref(null)
 /** Inline find bar for the HTML preview's own document. */
 const htmlSearchBarRef = ref(null)
 /** Cache-buster for the HTML preview iframe (see htmlPreviewSrc). */
@@ -659,6 +676,8 @@ function focusSearchInput() {
         mdPreviewRef.value?.focusSearchInput?.()
     } else if (!editing.value && props.markdownViewMode === 'rendered' && isHtml.value) {
         htmlSearchBarRef.value?.focus?.()
+    } else if (isTableRenderedView.value) {
+        tablePreviewRef.value?.focusSearch?.()
     }
 }
 
@@ -671,6 +690,8 @@ function focusSearchInput() {
 function closeSearchInput() {
     if (isCodeMirrorView.value) {
         cmEditorRef.value?.closeSearch?.()
+    } else if (isTableRenderedView.value) {
+        tablePreviewRef.value?.closeSearch?.()
     }
 }
 
@@ -834,6 +855,7 @@ const scrollRestore = useFileScrollRestore({
     isMarkdown: () => isMarkdown.value,
     isHtml: () => isHtml.value,
     isOpenapi: () => isOpenapi.value,
+    isTable: () => isTableFile.value,
 })
 
 onMounted(() => {

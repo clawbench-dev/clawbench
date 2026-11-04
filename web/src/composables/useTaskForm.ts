@@ -38,11 +38,19 @@ export function useTaskForm(options: UseTaskFormOptions) {
     prompt: '',
     repeatMode: 'unlimited',
     maxRuns: 0,
-    // Trigger mode: 'cron' (default) or 'event'.
+    // Trigger mode: 'cron' (default), 'event' or 'email'.
     triggerMode: 'cron',
     // Comma-separated forge event subscription (event mode). The watched
     // repository is always the project's binding, so it is not form state.
     eventTypes: '',
+    // Email trigger (email mode): the watched mailbox and the substring gates.
+    // Every non-empty gate must match; empty means "do not constrain".
+    mailAccountId: 0,
+    mailFolder: '',
+    mailFrom: '',
+    mailSubject: '',
+    mailBody: '',
+    mailHasAttachment: false,
     // Optional gating shell script (cron tasks only). Runs before the AI call
     // as a gate: exit 0 runs the AI, anything else skips the run. Its result is
     // available to the prompt as {{code}} / {{stdout}} / {{stderr}} / {{output}}.
@@ -72,6 +80,12 @@ export function useTaskForm(options: UseTaskFormOptions) {
         maxRuns: (taskData.maxRuns as number) || 0,
         triggerMode: (taskData.triggerMode as string) || 'cron',
         eventTypes: (taskData.eventTypes as string) || '',
+        mailAccountId: (taskData.mailAccountId as number) || 0,
+        mailFolder: (taskData.mailFolder as string) || '',
+        mailFrom: (taskData.mailFrom as string) || '',
+        mailSubject: (taskData.mailSubject as string) || '',
+        mailBody: (taskData.mailBody as string) || '',
+        mailHasAttachment: (taskData.mailHasAttachment as boolean) || false,
         script: (taskData.script as string) || '',
         // A stored 0 is the backend default, so it is shown as an empty field
         // (with the 300s placeholder) rather than a literal "0".
@@ -88,6 +102,12 @@ export function useTaskForm(options: UseTaskFormOptions) {
         maxRuns: 0,
         triggerMode: 'cron',
         eventTypes: '',
+        mailAccountId: 0,
+        mailFolder: '',
+        mailFrom: '',
+        mailSubject: '',
+        mailBody: '',
+        mailHasAttachment: false,
         script: '',
         scriptTimeout: '',
       }
@@ -105,7 +125,7 @@ export function useTaskForm(options: UseTaskFormOptions) {
     // which is valid and means "use the backend default". Checked only in cron
     // mode: the script section (and so the field) is hidden for event tasks, so
     // an error there would be unreachable.
-    if (form.value.triggerMode !== 'event') {
+    if (form.value.triggerMode !== 'event' && form.value.triggerMode !== 'email') {
       const timeout = Number(form.value.scriptTimeout)
       if (!Number.isInteger(timeout) || timeout < 0) {
         e.scriptTimeout = 'task.form.scriptTimeoutInvalid'
@@ -122,11 +142,12 @@ export function useTaskForm(options: UseTaskFormOptions) {
     formError.value = ''
 
     const isEvent = form.value.triggerMode === 'event'
+    const isEmail = form.value.triggerMode === 'email'
     const payload = {
       name: form.value.name,
       // An event task has no cron schedule; send an empty expression so the
       // server does not synthesize a meaningless one.
-      cron_expr: isEvent ? '' : (form.value.cronExpr || '0 9 * * *'),
+      cron_expr: isEvent || isEmail ? '' : (form.value.cronExpr || '0 9 * * *'),
       agent_id: form.value.agentId,
       prompt: form.value.prompt,
       repeat_mode: form.value.repeatMode,
@@ -136,9 +157,17 @@ export function useTaskForm(options: UseTaskFormOptions) {
       // A gating script is a cron-task precondition: an event task's prompt is
       // driven by the injected event context, so the field is cleared like
       // event_types is for the cron mode.
-      script: isEvent ? '' : form.value.script,
+      script: isEvent || isEmail ? '' : form.value.script,
       // 0 means "use the backend default" (300s); an empty input coerces to 0.
-      script_timeout: isEvent ? 0 : Number(form.value.scriptTimeout) || 0,
+      script_timeout: isEvent || isEmail ? 0 : Number(form.value.scriptTimeout) || 0,
+      // Mail fields are only meaningful in email mode; sending them in other
+      // modes would leave stale gates behind after switching back.
+      mail_account_id: isEmail ? form.value.mailAccountId : 0,
+      mail_folder: isEmail ? form.value.mailFolder : '',
+      mail_from: isEmail ? form.value.mailFrom.trim() : '',
+      mail_subject: isEmail ? form.value.mailSubject.trim() : '',
+      mail_body: isEmail ? form.value.mailBody.trim() : '',
+      mail_has_attachment: isEmail ? form.value.mailHasAttachment : false,
     }
 
     try {

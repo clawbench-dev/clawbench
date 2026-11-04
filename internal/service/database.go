@@ -1131,6 +1131,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(ProvidersDDL); err != nil {
 		return fmt.Errorf("failed to create providers table: %w", err)
 	}
+	// Mail client (accounts, folders, cached headers, attachments, drafts).
+	// Defined in mail_store.go so tests share one source of truth.
+	if _, err := store.WriteExec(MailDDL); err != nil {
+		return fmt.Errorf("failed to create mail tables: %w", err)
+	}
+	// Dedupe ledger for email-triggered tasks: one row per (task, message) so a
+	// message that matches can never fire the same task twice, no matter how
+	// many times its folder is re-synced.
+	if _, err := store.WriteExec(MailTaskTriggerDDL); err != nil {
+		return fmt.Errorf("failed to create mail_task_triggers table: %w", err)
+	}
 	// Relay (LiveKit) endpoint + credential. One row; see live_sfu.go.
 	if _, err := store.WriteExec(LiveSFUDDL); err != nil {
 		return fmt.Errorf("failed to create live_sfu_config table: %w", err)
@@ -1279,6 +1290,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"event_types", "ALTER TABLE scheduled_tasks ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"},
 		{"script", "ALTER TABLE scheduled_tasks ADD COLUMN script TEXT NOT NULL DEFAULT ''"},
 		{"script_timeout", "ALTER TABLE scheduled_tasks ADD COLUMN script_timeout INTEGER NOT NULL DEFAULT 0"},
+		// Email-triggered tasks: which mailbox to watch and the substring gates.
+		{"mail_account_id", "ALTER TABLE scheduled_tasks ADD COLUMN mail_account_id INTEGER NOT NULL DEFAULT 0"},
+		{"mail_folder", "ALTER TABLE scheduled_tasks ADD COLUMN mail_folder TEXT NOT NULL DEFAULT ''"},
+		{"mail_from", "ALTER TABLE scheduled_tasks ADD COLUMN mail_from TEXT NOT NULL DEFAULT ''"},
+		{"mail_subject", "ALTER TABLE scheduled_tasks ADD COLUMN mail_subject TEXT NOT NULL DEFAULT ''"},
+		{"mail_body", "ALTER TABLE scheduled_tasks ADD COLUMN mail_body TEXT NOT NULL DEFAULT ''"},
+		{"mail_has_attachment", "ALTER TABLE scheduled_tasks ADD COLUMN mail_has_attachment INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)

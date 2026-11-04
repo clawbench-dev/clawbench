@@ -146,8 +146,9 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			slog.String("agent_id", req.AgentID))
 	}
 
-	// Initialize env vars from current process environment
-	cmd.Env = os.Environ()
+	// Server environment, plus the user's shell startup exports when the
+	// opt-in shell_env.inherit setting is on (issue #619).
+	cmd.Env = agentProcessEnv()
 
 	// Mark as ClawBench child process for orphan cleanup on server crash.
 	// On restart, CleanupOrphans scans /proc for this marker and kills

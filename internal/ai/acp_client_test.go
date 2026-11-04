@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1186,6 +1187,118 @@ func TestClawBenchACPClient_WriteTextFile_PathValidation(t *testing.T) {
 	_, err = c.WriteTextFile(ctx, acp.WriteTextFileRequest{Path: "/etc/evil", Content: "data"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not under allowed roots")
+}
+
+// --- Relative path resolution (issue #617) ---
+//
+// Antigravity and Copilot write their own bookkeeping files with project-relative
+// paths (".gemini/.../crash_*.log", ".copilot/session-state/...lock"). The ACP
+// spec says paths are absolute, but rejecting them aborted the turn with a
+// generic "Internal error" instead of end_turn — the reply was already on screen
+// while the UI kept waiting. The agent process runs with cmd.Dir = the project
+// directory, so a relative path resolves against that directory.
+
+func TestClawBenchACPClient_WriteTextFile_RelativePathResolvedAgainstCwd(t *testing.T) {
+	dir := t.TempDir()
+	origRoots := model.RootPaths
+	model.RootPaths = []string{dir}
+	defer func() { model.RootPaths = origRoots }()
+
+	c := NewClawBenchACPClient()
+	c.cwd = dir
+
+	_, err := c.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		Path:    ".gemini/antigravity/crash_1.log",
+		Content: "boom",
+	})
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(filepath.Join(dir, ".gemini", "antigravity", "crash_1.log"))
+	require.NoError(t, err)
+	assert.Equal(t, "boom", string(got))
+}
+
+func TestClawBenchACPClient_ReadTextFile_RelativePathResolvedAgainstCwd(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.md"), []byte("a\nb\nc"), 0o644))
+
+	origRoots := model.RootPaths
+	model.RootPaths = []string{dir}
+	defer func() { model.RootPaths = origRoots }()
+
+	c := NewClawBenchACPClient()
+	c.cwd = dir
+
+	line, limit := 2, 1
+	resp, err := c.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
+		Path:  "notes.md",
+		Line:  &line,
+		Limit: &limit,
+	})
+	require.NoError(t, err)
+	// Line/limit must be applied to the resolved file, not silently dropped.
+	assert.Equal(t, "b", resp.Content)
+}
+
+func TestNewConnClient_SnapshotsCwd(t *testing.T) {
+	// The fs handlers get their cwd from this snapshot, never from
+	// connRef.Cwd() (that takes ACPConn.mu — see resolveAgentPath). Losing the
+	// wiring here silently restores issue #617, so pin it.
+	conn := &ACPConn{cwd: "/project/dir"}
+	c := newConnClient(conn)
+	assert.Equal(t, "/project/dir", c.cwd)
+	assert.Same(t, conn, c.connRef)
+
+	// A connection that never spawned has no cwd to snapshot; relative paths
+	// must then stay rejected rather than resolving against "".
+	assert.Empty(t, newConnClient(&ACPConn{}).cwd)
+}
+
+func TestClawBenchACPClient_WriteTextFile_ResolvedPathStillGoesThroughAllowedRoots(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "proj")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	origRoots := model.RootPaths
+	model.RootPaths = []string{dir}
+	defer func() { model.RootPaths = origRoots }()
+
+	c := NewClawBenchACPClient()
+	c.cwd = dir
+
+	// Resolving a relative path must not skip the allowed-roots check: with a
+	// narrowed root, ".." out of the project is rejected and nothing is written.
+	//
+	// Production Unix/macOS roots are ["/"], so this is not a sandbox — an
+	// agent could already have sent the same path as an absolute one. What the
+	// narrowing proves is that the resolved path really is re-checked.
+	_, err := c.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		Path:    "../escape.txt",
+		Content: "x",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not under allowed roots")
+
+	_, statErr := os.Stat(filepath.Join(parent, "escape.txt"))
+	assert.True(t, os.IsNotExist(statErr), "rejected write must not create the file")
+}
+
+func TestClawBenchACPClient_WriteTextFile_RelativePathWithoutCwdStillRejected(t *testing.T) {
+	origRoots := model.RootPaths
+	model.RootPaths = []string{t.TempDir()}
+	defer func() { model.RootPaths = origRoots }()
+
+	// No connection (or one that never spawned): there is nothing to resolve
+	// against, so the absolute-path requirement stands. The message names the
+	// path the agent sent, which is what the agent needs to correct it.
+	c := NewClawBenchACPClient()
+	_, err := c.WriteTextFile(context.Background(), acp.WriteTextFileRequest{
+		Path:    ".gemini/crash.log",
+		Content: "x",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be absolute")
+	assert.Contains(t, err.Error(), ".gemini/crash.log")
 }
 
 // --- Terminal tests ---

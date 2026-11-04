@@ -59,6 +59,7 @@
         class="share-content"
         :data-markdown-rendered="isMarkdownRenderedView || undefined"
         :data-html-rendered="isHtmlRenderedView || undefined"
+        :data-table-rendered="isTableRenderedView || undefined"
         ref="contentRef"
       >
         <!-- Loading -->
@@ -86,6 +87,15 @@
             :word-wrap="wordWrap"
             @close-search="() => {}"
           />
+
+          <!-- CSV / TSV rendered as a data table (search / sort / filter are
+               local to the table; the share page is read-only). -->
+          <div
+            v-else-if="isTable && canRenderInline && viewMode === 'rendered'"
+            class="share-fill-viewer"
+          >
+            <TablePreviewBody :file="file" />
+          </div>
 
           <!-- PDF -->
           <PdfPreview
@@ -261,6 +271,7 @@ import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
 import MarkdownPreview from '@/components/file/MarkdownPreview.vue'
+import TablePreviewBody from '@/components/file/TablePreviewBody.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/CodeMirrorViewer.vue') }))
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
@@ -421,6 +432,11 @@ const isHtml = computed(() => {
 
 const isOpenapi = computed(() => file.value?.subtype === 'openapi' || false)
 
+const isTable = computed(() => {
+  if (!file.value) return false
+  return !!getFileType(file.value.name)?.isTable
+})
+
 const isTextContent = computed(() => {
   if (!file.value) return false
   if (file.value.isBinary || file.value.tooLarge) return false
@@ -436,14 +452,15 @@ const canRenderInline = computed(() => !file.value?.tooLarge)
  *  rendered preview, HTML rendered iframe, OpenAPI/Swagger docs) — i.e. the
  *  source/rendered toggle button is shown. */
 const showToggleView = computed(() =>
-  isTextContent.value && canRenderInline.value && (isMarkdown.value || isHtml.value || isOpenapi.value))
+  isTextContent.value && canRenderInline.value && (isMarkdown.value || isHtml.value || isOpenapi.value || isTable.value))
 
 /** Whether the current file body is rendered through CodeMirrorViewer (the raw
- *  source view). True for code/plain text files and for markdown/html/openapi
- *  after the user toggles to source. Drives the toggle button + TOC line jumps. */
+ *  source view). True for code/plain text files and for markdown/html/openapi/
+ *  table after the user toggles to source. Drives the toggle button + TOC line
+ *  jumps. */
 const showRawSourceView = computed(() => {
   if (!isTextContent.value) return false
-  if (isMarkdown.value || isHtml.value || isOpenapi.value) return viewMode.value === 'raw'
+  if (isMarkdown.value || isHtml.value || isOpenapi.value || isTable.value) return viewMode.value === 'raw'
   return true
 })
 
@@ -460,6 +477,10 @@ const isMarkdownRenderedView = computed(() => isMarkdown.value && viewMode.value
  *  cap (unlike markdown): the HTML controls its own layout. */
 const isHtmlRenderedView = computed(() => isHtml.value && viewMode.value === 'rendered')
 
+/** Rendered CSV/TSV table is active. Like HTML it must escape the 1080px
+ *  reading-column cap: a data table needs the full width. */
+const isTableRenderedView = computed(() => isTable.value && viewMode.value === 'rendered')
+
 const hasToc = computed(() => {
   if (!file.value || error.value) return false
   if (file.value.isBinary || file.value.tooLarge) return false
@@ -472,6 +493,8 @@ const hasToc = computed(() => {
   // rendered headings nor jump to them. Hide the TOC in that mode — it comes
   // back in source view, where entries jump by line through the code viewer.
   if (isHtml.value && viewMode.value === 'rendered') return false
+  // The table view has no headings to outline; source view still has one.
+  if (isTable.value && viewMode.value === 'rendered') return false
   return isMarkdown.value || isTextContent.value
 })
 
@@ -869,7 +892,8 @@ onBeforeUnmount(() => {
    would be letterboxed inside a fixed column (HTML). */
 @media (min-width: 1100px) {
   .share-content[data-markdown-rendered],
-  .share-content[data-html-rendered] {
+  .share-content[data-html-rendered],
+  .share-content[data-table-rendered] {
     max-width: none;
     margin: 0;
   }

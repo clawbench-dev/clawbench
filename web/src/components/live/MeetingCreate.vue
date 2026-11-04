@@ -8,6 +8,11 @@
       <span class="meeting-header__spacer" />
     </div>
 
+    <!-- The desktop shell can capture on http (its own origin is promoted), but
+         the link it hands out cannot. Say so before the form is filled in — the
+         same notice the meeting list carries, so the two cannot drift. -->
+    <HttpsNotice v-if="desktopInsecure" variant="banner" />
+
     <div class="meeting-body">
       <template v-if="!supported">
         <!-- An insecure origin is not a stale client: the page has no capture
@@ -168,9 +173,10 @@
         </div>
 
         <!-- 中继服务: the only option here that needs a second deployment.
-             The switch stays visible so the feature can be found at all; the
-             endpoint fields only appear once it is on, because a small meeting
-             must not have to scroll past three inputs it will never use. -->
+             Only the per-meeting switch lives on this form — the endpoint and
+             credential are installation-wide and edited in 设置 → 视频会议
+             (MeetingRelaySetting), because three inputs that apply to every
+             meeting do not belong in a form about this one. -->
         <div class="meeting-section" data-role="meeting-relay-section">
           {{ t('meeting.create.relay') }}
         </div>
@@ -187,57 +193,16 @@
             {{ t('meeting.create.relayEnable') }}
           </label>
         </div>
-
-        <template v-if="useRelay">
-          <!-- Said out loud because the fields sit in a per-meeting form while
-               they apply to every meeting on this server. -->
-          <div class="meeting-hint" data-role="meeting-relay-scope">
-            {{ t('meeting.create.relayScope') }}
-          </div>
-          <input
-            v-model="relayUrl"
-            class="meeting-input"
-            type="text"
-            data-role="meeting-relay-url"
-            :placeholder="t('meeting.create.relayUrlPlaceholder')"
-            spellcheck="false"
-          />
-          <input
-            v-model="relayKey"
-            class="meeting-input"
-            type="text"
-            data-role="meeting-relay-key"
-            :placeholder="t('meeting.create.relayKey')"
-            spellcheck="false"
-          />
-          <input
-            v-model="relaySecret"
-            class="meeting-input"
-            type="password"
-            data-role="meeting-relay-secret"
-            :placeholder="relayHasSecret ? t('meeting.create.relaySecretStored') : t('meeting.create.relaySecret')"
-            spellcheck="false"
-          />
-          <div class="meeting-checks">
-            <button
-              class="fbtn"
-              type="button"
-              data-action="meeting-relay-test"
-              :disabled="relayTesting"
-              @click="testRelay"
-            >
-              {{ relayTesting ? t('meeting.create.relayTesting') : t('meeting.create.relayTest') }}
-            </button>
-          </div>
-          <div
-            v-if="relayMessage"
-            class="meeting-hint"
-            :class="{ 'meeting-hint--required': !relayOk }"
-            data-role="meeting-relay-result"
-          >
-            {{ relayMessage }}
-          </div>
-        </template>
+        <!-- Not configured yet: the switch can be flipped (the choice is still
+             a choice), but starting is blocked, and this is the only place that
+             can say where the missing half is edited. -->
+        <div
+          v-if="useRelay && !relayReady"
+          class="meeting-hint meeting-hint--required"
+          data-role="meeting-relay-missing"
+        >
+          {{ t('meeting.create.relayNotConfigured') }}
+        </div>
       </template>
     </div>
 
@@ -357,20 +322,13 @@ const autoMinutes = computed(() => {
 /**
  * 中继服务: a per-meeting choice backed by installation-wide credentials.
  *
- * The switch is what decides the topology (and with it the viewer ceiling);
- * the three fields are the endpoint it points at. Default OFF: a meeting that
- * never asked for a relay must not start paying a hop through one.
+ * The switch is what decides the topology (and with it the viewer ceiling).
+ * The endpoint and credential are NOT edited here — they are shared by every
+ * meeting on this server and live in 设置 → 视频会议. Default OFF: a meeting
+ * that never asked for a relay must not start paying a hop through one.
  */
 const useRelay = ref(false)
-const relayUrl = ref('')
-const relayKey = ref('')
-const relaySecret = ref('')
-const relayMessage = ref('')
-const relayOk = ref(false)
-const relayTesting = ref(false)
-const { state: relayState, load: loadRelay, saveAndTest: saveAndTestRelay } = useLiveSFUConfig()
-/** Whether a credential is already stored — the form never receives its value. */
-const relayHasSecret = computed(() => relayState.value.hasSecret)
+const { state: relayState, load: loadRelay } = useLiveSFUConfig()
 /** The relay can only be selected once a working endpoint is stored. */
 const relayReady = computed(() => relayState.value.configured)
 
@@ -420,6 +378,22 @@ const unsupportedHint = computed(() => {
  * client" line, which would send the user looking in the wrong place.
  */
 const insecure = isInsecureCaptureContext()
+
+/**
+ * The desktop shell promotes its own origin to a secure context, so this form
+ * still works on http — but a guest opening the link cannot talk or share a
+ * screen. The same banner the meeting list shows, repeated here because this is
+ * where the link is about to be created.
+ *
+ * Gated on `canCapture`: when this machine cannot capture either, the block
+ * notice below already says everything, and two notices with the same button
+ * would be noise. (`canCapture` rather than `supported` because the latter also
+ * waits on the camera probe — the banner would flash in and out on a host that
+ * has no camera.)
+ */
+const desktopInsecure = computed(
+  () => canCapture.value && insecure && getNative()?.isDesktopApp?.() === true,
+)
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
 const cameraOn = computed(() => cameraChoice.value !== '' && cameraAvailable.value)
@@ -523,38 +497,6 @@ function notesLabel(channel: string): string {
   return t('liveShare.notes.speakerViewer', { n })
 }
 
-/**
- * Probe the draft values, and store them only if the probe passes.
- *
- * A relay that "saves fine" but cannot be reached is worse than one that
- * refuses: every later meeting would fail at start with no indication of which
- * of the three fields is wrong.
- */
-async function testRelay(): Promise<void> {
-  if (relayTesting.value) return
-  if (!relayUrl.value.trim() || (!relayKey.value.trim() && !relayHasSecret.value)) {
-    relayOk.value = false
-    relayMessage.value = t('meeting.create.relayMissing')
-    return
-  }
-  relayTesting.value = true
-  relayMessage.value = ''
-  try {
-    const res = await saveAndTestRelay({
-      url: relayUrl.value,
-      apiKey: relayKey.value,
-      apiSecret: relaySecret.value,
-    })
-    relayOk.value = res.ok
-    relayMessage.value = res.message
-    // The secret is now stored server-side; keeping it in the field would send
-    // it again on the next save for no reason.
-    if (res.ok) relaySecret.value = ''
-  } finally {
-    relayTesting.value = false
-  }
-}
-
 async function start(): Promise<void> {
   if (!canStart.value) return
   starting.value = true
@@ -610,12 +552,10 @@ onMounted(() => {
   // A disabled switch must not be left ON (it is a shared singleton, so the
   // running stage would read it back as "notes wanted").
   if (!notesSupported) notes.value = false
-  // Prefill the relay URL from what is stored, so enabling the switch on a
-  // configured install needs no retyping. The secret never comes back, which is
-  // why the placeholder says "已保存" instead.
-  void loadRelay().then(() => {
-    if (!relayUrl.value) relayUrl.value = relayState.value.url
-  })
+  // Read the installation-wide relay state: the switch is only usable once an
+  // endpoint has been stored and tested in 设置 → 视频会议. The read is cached
+  // module-wide, so entering this form twice costs one request.
+  void loadRelay()
   // The host always starts with the microphone on. The choice is a shared
   // singleton (the running stage mutes/unmutes the same ref), so a previous
   // meeting — or a previous visit to this form — may have left it muted. A

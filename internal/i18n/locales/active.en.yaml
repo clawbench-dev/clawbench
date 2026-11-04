@@ -416,6 +416,7 @@ RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart
 TLSCertNotSelfSigned: "The existing certificate is not self-signed (probably issued by a CA). Regenerating would overwrite it; pass force to confirm"
 TLSCertGenerateFailed: "Could not generate the certificate: {{.Error}}"
+TLSCertDeleteFailed: "Could not delete the certificate: {{.Error}}"
 # Files opened during a meeting: transcript cues, the files.md manifest and
 # archive skip reasons.
 MeetingFilesSpeaker: File
@@ -476,3 +477,27 @@ MeetingMinutesArtifacts: Artifacts
 MeetingMinutesTranscript: Transcript
 MeetingMinutesRecording: Recording
 MeetingMinutesChannelRecordings: "Per-channel recordings: `audio/` ({{.N}} files)"
+
+MailAuthFailed: Mailbox login failed — check the address and the app password / authorization code
+MailConnectFailed: Cannot reach the mail server — check the host and port
+MailTLSFailed: The mail server certificate could not be verified
+MailTimeout: The mail server did not respond in time
+MailServerError: The mail server returned an error
+MailNoRecipients: Add at least one recipient
+MailSyncBusy: This mailbox is already syncing
+TaskTriggerModeInvalid: Trigger mode must be cron, event or email
+TaskMailAccountRequired: Choose a mailbox for an email-triggered task
+MailContextHeader: Email trigger
+MailContextAccount: Account
+MailContextFolder: Folder
+MailContextFrom: From
+MailContextTo: To
+MailContextSubject: Subject
+MailContextDate: Date
+MailContextBody: Body
+MailContextTruncated: "… (truncated)"
+MailQuoteHeader: "-------- Original message --------"
+MailQuoteFrom: From
+MailQuoteDate: Date
+MailQuoteSubject: Subject
+MailAccountInvalid: Fill in a valid email address and both server hosts

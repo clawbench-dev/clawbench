@@ -1,0 +1,7 @@
+timestamp	level	service	latency_ms	message
+2026-11-04 09:12:01	INFO	gateway	23	request completed
+2026-11-04 09:12:04	WARN	gateway	812	slow upstream response
+2026-11-04 09:12:07	INFO	auth	15	token refreshed
+2026-11-04 09:12:11	ERROR	storage	2043	disk write timeout
+2026-11-04 09:12:12	INFO	storage	31	retry succeeded
+2026-11-04 09:12:19	DEBUG	worker	4	queue drained, 0 pending

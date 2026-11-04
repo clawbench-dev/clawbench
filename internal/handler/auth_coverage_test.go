@@ -293,9 +293,13 @@ func TestServeLogin_DeleteMethod_Returns405(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-// --- ServeLogin: Cookie Secure flag over TLS ---
+// --- ServeLogin: the session cookie stays non-Secure even over TLS ---
+//
+// Marking it Secure would drop it the moment the user switches back to HTTP,
+// and the browser refuses to let the plain-HTTP login response overwrite it,
+// leaving the user permanently logged out. See cookies.go.
 
-func TestServeLogin_CookieSecureOverTLS(t *testing.T) {
+func TestServeLogin_CookieStaysInsecureOverTLS(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -311,10 +315,47 @@ func TestServeLogin_CookieSecureOverTLS(t *testing.T) {
 	w := callHandler(ServeLogin, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	var seen bool
 	for _, c := range w.Result().Cookies() {
 		if c.Name == model.SessionCookie {
-			assert.True(t, c.Secure, "cookie should be Secure over TLS")
+			seen = true
+			assert.False(t, c.Secure, "session cookie must stay non-Secure so it survives a switch back to HTTP")
 		}
+	}
+	assert.True(t, seen, "login must set the session cookie")
+}
+
+// A cookie issued by an older build is Secure. The only place that can migrate
+// it to a non-Secure one is a secure request, and /api/me is the request every
+// client makes on startup — so it must rewrite the cookie there. Without this
+// the user who switches to HTTP keeps sending nothing until the old cookie
+// expires, and every request answers 403 NoProjectSelected.
+func TestServeAuthCheck_RefreshesSessionCookieWithoutSecure(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origToken, origCookie := model.SessionToken, model.CookieToken
+	t.Cleanup(func() { model.SessionToken, model.CookieToken = origToken, origCookie })
+
+	model.SessionToken = "tok"
+	model.CookieToken = "tok"
+
+	req := newRequest(t, http.MethodGet, "/api/me", nil)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName(model.SessionCookie), Value: "tok"})
+	req.TLS = &tls.ConnectionState{} // the old cookie was issued over HTTPS
+
+	w := callHandler(ServeAuthCheck, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var found *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == model.ScopedCookieName(model.SessionCookie) {
+			found = c
+		}
+	}
+	if assert.NotNil(t, found, "auth check must refresh the session cookie") {
+		assert.False(t, found.Secure, "the refresh must drop the legacy Secure flag")
+		assert.Equal(t, "tok", found.Value)
 	}
 }
 
