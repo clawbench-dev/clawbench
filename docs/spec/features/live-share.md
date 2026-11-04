@@ -193,7 +193,7 @@ muted --talk-mute(false)--> 可发言    （解除硬静音，麦克风仍由观
 
 客户端入口在共享弹窗里：「加入别人的共享」→ 粘贴链接 → 在独立窗口打开（复用同一 preload，所以分享页能识别出自己跑在客户端里）。
 
-**为什么客户端能绕开 HTTPS**：桌面壳启动时对配置的服务器 origin 加了 Chromium 的 `unsafely-treat-insecure-origin-as-secure`（见 `desktop/src/main/index.ts`），所以 `navigator.mediaDevices` 在该 origin 上存在。切换服务器需要重启才生效——这是进程级开关的固有限制。
+**为什么客户端能绕开 HTTPS**：桌面壳启动时把**已保存的全部服务器 origin**（`serverUrl` + 服务器列表）加进 Chromium 的 `unsafely-treat-insecure-origin-as-secure`（见 `desktop/src/main/secureContext.ts`），所以 `navigator.mediaDevices` 在这些 origin 上存在。Chromium 只在启动时读一次该开关，且不支持通配符，因此连接一个尚未保存的新服务器时桌面壳会**自动重启一次**（URL 先落盘，重启后即被覆盖）——不这样做的话，切完服务器会议就建不了，而界面上没有任何补救入口。
 
 **客户端模式下共享屏幕要先选源**：Electron 的 `setDisplayMediaRequestHandler` 拒绝未声明的源，所以分享页会先调 `listCaptureSources()` 弹一个选择器，再 `setPendingCaptureSource()` + `getDisplayMedia()`。
 

@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import { getStore, initStore } from './store'
+import { needsSecureContextRelaunch } from './secureContext'
 import { registerRemoteControlHandlers } from './remoteControl'
 import { openShareWindow } from './shareWindow'
 import {
@@ -114,6 +115,18 @@ export function registerBridge(): void {
     const servers = getStore().get('servers')
     if (!servers.some(s => s.url === url)) {
       getStore().set('servers', [{ url }, ...servers])
+    }
+    // Chromium reads the secure-context switch once, at startup, so a server
+    // this process did not start with is still an insecure origin: capture
+    // (screen, camera, microphone) would stay unavailable until a new process,
+    // which surfaces as "meetings cannot start" with no way to fix it from the
+    // UI. The URL is persisted above, so restarting now lands on this server
+    // and the next process promotes it — at most once per server.
+    if (needsSecureContextRelaunch(url)) {
+      record('I', 'SecureContext', `relaunching for ${url}`)
+      app.relaunch()
+      app.exit(0)
+      return
     }
     const w = getMainWindow()
     if (w) {

@@ -1,5 +1,6 @@
 import { app, Menu, session } from 'electron'
-import { initStore, getStore } from './store'
+import { initStore } from './store'
+import { applySecureContextSwitch } from './secureContext'
 import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
 import { stopRemoteControlHelper } from './remoteControl'
 import { createMainWindow, getMainWindow } from './window'
@@ -62,34 +63,12 @@ process.on('unhandledRejection', (reason) => {
   recordError('Main', reason)
 })
 
-// The desktop shell loads the server over plain HTTP on a LAN address, which
-// Chromium does NOT treat as a secure context. Without a secure context
-// `navigator.mediaDevices` is undefined, so microphone capture, screen capture
-// and WebCodecs are all unreachable — voice input has been broken in this shell
-// for exactly that reason.
+// Secure-context promotion lives in secureContext.ts: the switch has to cover
+// every saved server (a runtime switch cannot add to it) and a server that is
+// not covered yet forces a relaunch on connect.
 //
-// `unsafely-treat-insecure-origin-as-secure` promotes ONE origin to secure-context
-// treatment. It is deliberately scoped to the server the user configured, not
-// applied globally, and it must be set before the app is ready (Chromium reads
-// command-line switches during startup).
-//
-// Consequence to be aware of: this is a process-level switch, so switching to a
-// different server needs a restart before capture works against it. The renderer
-// surfaces that in the connect flow.
-function applySecureContextSwitch(): void {
-  try {
-    const url = getStore().get('serverUrl')
-    if (!url) return
-    const origin = new URL(url).origin
-    if (!origin.startsWith('http://')) return // https is already secure
-    app.commandLine.appendSwitch('unsafely-treat-insecure-origin-as-secure', origin)
-  } catch {
-    // A malformed stored URL is reported by the connect flow; nothing to do here.
-  }
-}
-
-// The store must exist before the switch can read serverUrl, and the switch must
-// run before `whenReady` — hence the early init.
+// The store must exist before the switch can read the server list, and the
+// switch must run before `whenReady` — hence the early init.
 initStore()
 applySecureContextSwitch()
 

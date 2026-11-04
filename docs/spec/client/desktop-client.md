@@ -75,7 +75,7 @@ sequenceDiagram
 - **会话缓存强刷**：`Ctrl+Shift+R`（macOS 为 `Cmd+Shift+R`）清空会话缓存与存储数据后硬刷新窗口；`F12` / `Ctrl+Shift+I`（macOS 为 `Cmd+Option+I`）开关开发者工具。这些键经 `before-input-event` 在窗口自己的事件路径上认领，其余按键（尤其 `F5`）原样交给页面——终端与文件管理器都在用 `F5`，而 OS 级 `globalShortcut` 会让页面再也收不到它。应用菜单被置为 null，因此开发者工具入口必须由这里提供
 - **麦克风与屏幕捕获权限**：授予 `media`（麦克风/摄像头）与 `display-capture`（屏幕捕获）两个权限值——它们是**独立的**，只放行 `media` 会让 `getDisplayMedia` 以 `NotAllowedError` 失败。同时实现 `setPermissionCheckHandler`：Electron 要求 request/check 两个都实现，缺 check 会让 `enumerateDevices()` 返回空 label。其余权限请求默认拒绝
 - **屏幕 + 声音共享（发布端）**：`getDisplayMedia` 在 Electron 里**不会自己弹选择框**，必须由主进程 `setDisplayMediaRequestHandler` 指定源。渲染层先 `native:list-capture-sources` 拿到屏幕/窗口列表并渲染选择器，再用 `native:set-pending-capture-source` 声明本次要抓哪个源；**该声明是一次性的**（handler 消费后立即清空），否则任何页面后续调用 `getDisplayMedia` 都能静默抓屏。**系统声音（loopback）仅 Windows 支持**，其他平台 `native:get-audio-capture-support` 返回 `systemAudio: false` 并给出原因，UI 不得提供该开关。共享期间 `native:set-publishing-active(true)` 关掉窗口的后台节流——最小化后 Chromium 会降频定时器，编码器随之停摆、所有观众画面冻结
-- **安全上下文**：桌面壳加载的是局域网 `http://` 地址，Chromium 不视为安全上下文，`navigator.mediaDevices` 因此为 `undefined`——麦克风、屏幕捕获、WebCodecs 全部不可达。启动时在 `app.whenReady()` **之前**按 `serverUrl` 的 origin 加 `unsafely-treat-insecure-origin-as-secure`（只作用于用户自己配置的那一个 origin，不是全局关闭）。这是进程级开关，切换服务器后需重启才对新 origin 生效
+- **安全上下文**：桌面壳加载的是局域网 `http://` 地址，Chromium 不视为安全上下文，`navigator.mediaDevices` 因此为 `undefined`——麦克风、屏幕捕获、WebCodecs 全部不可达。启动时在 `app.whenReady()` **之前**把**已保存的全部服务器 origin**（`serverUrl` + `servers` 列表，只取 `http://`）拼成逗号列表加 `unsafely-treat-insecure-origin-as-secure`——只作用于用户自己配置的服务器，不是全局关闭；该开关不支持通配符（实测 `http://*` 无效）。Chromium 只在启动时读一次，因此连接一个**不在列表里的新服务器**时会自动重启一次应用（`secureContext.ts` 的 `needsSecureContextRelaunch`，URL 先落盘，重启后即覆盖），避免"切完服务器会议就建不了、只能手动重启"
 
 ### 自升级：侧装 + 指针
 
