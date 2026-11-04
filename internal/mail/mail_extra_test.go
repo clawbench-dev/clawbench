@@ -107,7 +107,7 @@ func TestClassifyKinds(t *testing.T) {
 		err  error
 		want Kind
 	}{
-		{"auth text", errors.New("Authentication failed."), KindAuth},
+		{"auth text", errors.New("Authentication failed."), KindAuth}, //nolint:revive // the server's own wording, capitalized on purpose: the classifier must lowercase it
 		{"invalid credentials", errors.New("invalid credentials"), KindAuth},
 		{"imap auth code", &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeAuthenticationFailed, Text: "no"}, KindAuth},
 		{"imap other", &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeNonExistent, Text: "no such mailbox"}, KindServer},

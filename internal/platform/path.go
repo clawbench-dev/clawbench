@@ -238,16 +238,19 @@ func resolveExistingPath(absPath, root string) string {
 		// the parent's symlinks before comparing against the eval'd root.
 		evalParent, pErr := filepath.EvalSymlinks(parent)
 		if pErr != nil {
-			// Parent doesn't exist either — fall back to lexical check
-			cleanParent := filepath.Clean(parent)
-			if !strings.HasPrefix(cleanParent, root) && cleanParent != root {
-				return ""
-			}
-		} else {
-			cleanParent := filepath.Clean(evalParent)
-			if !strings.HasPrefix(cleanParent, root) && cleanParent != root {
-				return ""
-			}
+			// The parent does not exist yet either (the caller is about to
+			// create it). Keep walking up: comparing the *unresolved* parent
+			// against the resolved root is what broke every write into a new
+			// subdirectory on macOS (/var → /private/var) and Windows (8.3
+			// short temp paths). The loop ends at the first ancestor that
+			// exists, and the caller's prefix check still rejects anything
+			// that resolves outside the root.
+			dir = parent
+			continue
+		}
+		cleanParent := filepath.Clean(evalParent)
+		if !strings.HasPrefix(cleanParent, root) && cleanParent != root {
+			return ""
 		}
 		dir = parent
 	}

@@ -399,7 +399,7 @@ func TestWriteMailErrorMapping(t *testing.T) {
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
-		writeMailError(rec, httptest.NewRequest(http.MethodGet, "/api/mail/x", nil), c.err)
+		writeMailError(rec, httptest.NewRequest(http.MethodGet, "/api/mail/x", http.NoBody), c.err)
 		if rec.Code != c.want {
 			t.Errorf("%s: status = %d, want %d", c.name, rec.Code, c.want)
 		}

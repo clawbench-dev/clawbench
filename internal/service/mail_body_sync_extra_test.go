@@ -392,7 +392,7 @@ func TestSyncReconnectsAfterDeadConnection(t *testing.T) {
 		t.Fatalf("sync: %v", err)
 	}
 	if calls < 2 {
-		t.Fatalf("a dead connection should be re-dialled, dials = %d", calls)
+		t.Fatalf("a dead connection should be re-dialed, dials = %d", calls)
 	}
 	// The failed folder is recorded and retried on the next pass; the point of
 	// the re-dial is that the rest of the account does not inherit the failure.

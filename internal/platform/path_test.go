@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -493,5 +494,35 @@ func TestIsPathUnderAnyRoot_UNCSharePath(t *testing.T) {
 	}
 	if got {
 		t.Error("expected a UNC-looking path to be rejected on non-Windows")
+	}
+}
+
+// A path whose parents do not exist yet (the caller is about to create them)
+// must still be recognized as inside the root — including when the root is
+// reached through a symlink. That combination is not exotic: on macOS every
+// t.TempDir() is under /var → /private/var, and on Windows the temp dir comes
+// back as an 8.3 short name while EvalSymlinks returns the long one. Comparing
+// the unresolved parent against the resolved root rejected both, which surfaced
+// as "path not under allowed roots" for the agent's own bookkeeping writes.
+func TestIsPathUnderAnyRoot_NewSubdirUnderSymlinkedRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks on Windows needs privileges the test runner lacks")
+	}
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	pending := filepath.Join(link, "a", "b", "crash.log")
+	if !IsPathUnderAnyRoot(pending, []string{link}) {
+		t.Fatal("a not-yet-created path under a symlinked root must be allowed")
+	}
+	if IsPathUnderAnyRoot(pending, []string{filepath.Join(base, "elsewhere")}) {
+		t.Fatal("a path outside every root must still be rejected")
 	}
 }

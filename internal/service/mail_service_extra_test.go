@@ -160,7 +160,7 @@ func TestFetchOlderMailMessages(t *testing.T) {
 	// Simulate the two oldest messages never having been cached: the sync only
 	// pulls the newest page, so "load older" has to walk back through the UIDs
 	// still sitting on the server.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		row, err := oldestCachedMessage(folder.ID)
 		if err != nil || row == nil {
 			t.Fatalf("oldest: %v", err)
