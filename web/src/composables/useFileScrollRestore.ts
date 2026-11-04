@@ -116,6 +116,8 @@ export interface FileScrollContext {
     isMarkdown: () => boolean
     isHtml: () => boolean
     isOpenapi: () => boolean
+    /** CSV/TSV table view (own scroll container, no source-line anchor). */
+    isTable?: () => boolean
 }
 
 export interface UseFileScrollRestore {
@@ -323,6 +325,7 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
         }
         if (ctx.isHtml() && viewMode === 'rendered') return null // iframe scrolls itself
         if (ctx.isOpenapi() && viewMode === 'rendered') return null // ReDoc iframe scrolls itself
+        if (ctx.isTable?.() && viewMode === 'rendered') return el.querySelector('.table-scroll')
         if (ctx.file()?.isExcalidraw) return null // Excalidraw iframe scrolls itself
         // CodeMirror-based viewers scroll inside .cm-scroller
         return el.querySelector('.cm-scroller')

@@ -3028,6 +3028,10 @@ const isCodeMirrorFileView = computed(() => {
     if (ft.isHtml || f.subtype === 'openapi') {
         return markdownViewMode.value !== 'rendered'
     }
+    // CSV/TSV render as a data table (own search box, no CodeMirror).
+    if (ft.isTable) {
+        return fileEditor.isEditing() || markdownViewMode.value !== 'rendered'
+    }
     return true
 })
 // Rendered markdown preview (not CodeMirror): has an inline search bar
@@ -3048,6 +3052,14 @@ const isHtmlRenderedView = computed(() => {
     if (!f || typeof f.content !== 'string') return false
     const ft = getFileType(f.name || '')
     return ft.isHtml && markdownViewMode.value === 'rendered'
+})
+// Rendered CSV/TSV table. It carries its own search box (the table's), so the
+// header search button and Ctrl+F focus that instead of CodeMirror/the drawer.
+const isTableRenderedView = computed(() => {
+    const f = currentFile.value
+    if (!f || typeof f.content !== 'string') return false
+    const ft = getFileType(f.name || '')
+    return !!ft.isTable && markdownViewMode.value === 'rendered' && !fileEditor.isEditing()
 })
 const { entries: recentFileEntries } = useRecentFiles()
 const recentFilesCount = computed(() => recentFileEntries.value.length)
@@ -3099,12 +3111,12 @@ watch(() => currentFile.value, (file, prevFile) => {
 // CodeMirror panel starts closed, so a previously-active search state would
 // otherwise leave the header button stuck highlighted.
 watch(
-  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, isHtmlRenderedView.value, markdownViewMode.value],
-  ([cmNow, mdNow, htmlNow, _mode], [cmBefore, mdBefore, htmlBefore, modeBefore]) => {
+  () => [isCodeMirrorFileView.value, isMarkdownRenderedView.value, isHtmlRenderedView.value, isTableRenderedView.value, markdownViewMode.value],
+  ([cmNow, mdNow, htmlNow, tableNow, _mode], [cmBefore, mdBefore, htmlBefore, tableBefore, modeBefore]) => {
     // Ignore the initial run and same-view transitions (e.g. raw->edit of the
     // same CodeMirror view keeps its panel state).
     if (modeBefore === undefined) return
-    if (cmNow === cmBefore && mdNow === mdBefore && htmlNow === htmlBefore) return
+    if (cmNow === cmBefore && mdNow === mdBefore && htmlNow === htmlBefore && tableNow === tableBefore) return
     viewSearchActive.value = false
     searchDrawer.close()
   },
@@ -4493,7 +4505,7 @@ function openFileViewSearchDrawer() {
 // search button via viewSearchActive without opening the SearchDrawer; the
 // SearchDrawer bottom sheet is only used as a fallback.
 function openFileSearch() {
-  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value || isHtmlRenderedView.value) {
+  if (isCodeMirrorFileView.value || isMarkdownRenderedView.value || isHtmlRenderedView.value || isTableRenderedView.value) {
     viewSearchActive.value = true
     fileOverlayRef.value?.focusSearchInput()
   } else {

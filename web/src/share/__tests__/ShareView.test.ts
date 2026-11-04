@@ -34,6 +34,16 @@ vi.mock('@/components/file/MarkdownPreview.vue', () => ({
   },
 }))
 
+// Module-level mock (not a VTU stub): an SFC has no explicit `name` option, so
+// a stubs-key match would silently fall through to the real component.
+vi.mock('@/components/file/TablePreviewBody.vue', () => ({
+  default: {
+    name: 'TablePreviewBody',
+    props: ['file'],
+    template: '<div class="table-preview-stub">{{ file?.name }}</div>',
+  },
+}))
+
 vi.mock('@/stores/app.ts', () => ({
   store: { state: { projectRoot: '', homeDir: '' } },
 }))
@@ -184,6 +194,27 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     await flushPromises()
     expect(wrapper.find('.markdown-preview-stub').exists()).toBe(true)
     expect(wrapper.find('.cm-viewer-stub').exists()).toBe(false)
+  })
+
+  it('renders a CSV file as a data table and toggles to the source view', async () => {
+    const wrapper = await mountShare({
+      name: 'data.csv',
+      path: '/repo/data.csv',
+      content: 'name,qty\napple,3',
+    })
+
+    expect(wrapper.find('.table-preview-stub').exists()).toBe(true)
+    expect(wrapper.find('.cm-viewer-stub').exists()).toBe(false)
+    // Wide screens must lift the 1080px reading-column cap for a data table.
+    expect(wrapper.find('.share-content').attributes('data-table-rendered')).toBeDefined()
+
+    const toggle = wrapper.find('.share-view-toggle')
+    expect(toggle.exists()).toBe(true)
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.table-preview-stub').exists()).toBe(false)
+    expect(wrapper.find('.cm-viewer-stub').exists()).toBe(true)
+    expect(wrapper.find('.share-content').attributes('data-table-rendered')).toBeUndefined()
   })
 
   it('marks the content scroller for rendered markdown so wide screens lift the outer cap', async () => {

@@ -46,6 +46,13 @@ describe('fileSupportsToc', () => {
     expect(fileSupportsToc(oas, 'raw')).toBe(true)
   })
 
+  it('rejects the CSV table view but allows the source view', () => {
+    const csv = { name: 'data.csv', content: 'a,b\n1,2' }
+    expect(fileSupportsToc(csv, 'rendered')).toBe(false)
+    expect(fileSupportsToc(csv, 'raw')).toBe(true)
+    expect(fileSupportsToc({ name: 'data.tsv', content: 'a\tb' }, 'rendered')).toBe(false)
+  })
+
   it('rejects null/undefined file', () => {
     expect(fileSupportsToc(null)).toBe(false)
     expect(fileSupportsToc(undefined)).toBe(false)

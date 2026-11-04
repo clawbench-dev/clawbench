@@ -55,6 +55,9 @@ export function fileSupportsToc(file: TocSupportFile | null | undefined, viewMod
     if (viewMode === 'rendered') {
         if (ft.isHtml) return false
         if (file.subtype === 'openapi') return false
+        // The CSV/TSV table has no headings to outline; the source view still
+        // gets the code-symbol TOC.
+        if (ft.isTable) return false
     }
     return true
 }
