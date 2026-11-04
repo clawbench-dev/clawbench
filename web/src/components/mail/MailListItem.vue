@@ -5,7 +5,6 @@
     :aria-current="active ? 'true' : undefined"
     @click="emit('open', msg.id)"
   >
-    <span class="mail-row__dot" />
     <span class="mail-row__main">
       <!-- Sender + time share the first line: the sender identifies the
            message, the time orders it, and both are what you scan before
@@ -84,25 +83,16 @@ const fullTimestamp = computed(() => mailFullTimestamp(props.msg.sentAt))
 .mail-row:hover {
   background: var(--bg-hover, rgba(128, 128, 128, 0.1));
 }
-/* Open in the reading pane. Tint plus an accent bar drawn with `inset`
-   box-shadow so selecting a row never shifts its text. */
-.mail-row.is-active {
-  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+/* Unread is an accent edge, not a dot in its own column: the dot pushed the
+   text 15px right while the right edge stayed at 10px, which made every row
+   look shifted and off-centre. Drawn with `inset` box-shadow so it costs no
+   layout width and the text sits at the same 10px on both sides. */
+.mail-row.is-unread {
   box-shadow: inset calc(2 * var(--dp)) 0 0 var(--accent-color);
 }
-
-/* Unread marker. Sits on the sender's baseline rather than the row's top edge,
-   so it reads as part of the first line instead of floating in the padding. */
-.mail-row__dot {
-  flex: none;
-  width: calc(7 * var(--dp));
-  height: calc(7 * var(--dp));
-  margin-top: calc(7 * var(--dp));
-  border-radius: 50%;
-  background: transparent;
-}
-.mail-row.is-unread .mail-row__dot {
-  background: var(--accent-color);
+/* Open in the reading pane: a tint, no bar (the bar means unread). */
+.mail-row.is-active {
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
 }
 
 .mail-row__main {
