@@ -44,6 +44,14 @@ type ClawBenchACPClient struct {
 	connRef           *ACPConn                      // reference to ACPConn for cache updates
 	debouncers        map[string]*toolCallDebouncer // acpSessionID → debouncer
 
+	// cwd is the project working directory the agent process was spawned in
+	// (cmd.Dir). Written once by spawnLocked before the connection starts, then
+	// only read. It is a local copy on purpose: the fs handlers run on the
+	// SDK's inbound-request goroutines and must NOT take ACPConn.mu, which RPCs
+	// like NewSession hold while waiting — an agent that writes a file during
+	// session/new would deadlock against it.
+	cwd string
+
 	// toolInputs caches the rawInput seen on tool_call / tool_call_update frames,
 	// keyed by PermissionKey (sessionID + ":" + toolCallID). Some agents omit
 	// rawInput from session/request_permission even though they sent it on the
@@ -91,6 +99,16 @@ func NewClawBenchACPClient() *ClawBenchACPClient {
 		terminals:         make(map[string]*terminalSession),
 		toolInputs:        make(map[string]string),
 	}
+}
+
+// newConnClient builds the client for a freshly spawned connection, wiring the
+// back-reference and the cwd snapshot the fs handlers resolve relative paths
+// against (see resolveAgentPath). Caller holds c.mu.
+func newConnClient(conn *ACPConn) *ClawBenchACPClient {
+	client := NewClawBenchACPClient()
+	client.connRef = conn
+	client.cwd = conn.cwd
+	return client
 }
 
 // RegisterSession registers a StreamEvent channel for an ACP session.
@@ -763,12 +781,42 @@ func isPathAllowed(path string) error {
 	return nil
 }
 
+// resolveAgentPath turns a path supplied by the agent into the absolute path it
+// refers to.
+//
+// ACP declares fs/read_text_file and fs/write_text_file paths as absolute, but
+// several agents (Antigravity, Copilot) send project-relative paths for their
+// own bookkeeping files — ".gemini/.../crash_*.log", ".copilot/session-state/
+// ...lock". Rejecting those aborted the whole turn: the agent answers the
+// prompt with a generic "Internal error" instead of end_turn, so the reply was
+// already on screen while the UI kept waiting for completion (issue #617).
+//
+// The agent process is spawned with cmd.Dir = the connection's project
+// directory, so a relative path unambiguously means "relative to that
+// directory". Resolve against it and let isPathAllowed re-check the result —
+// the allowed-roots boundary is unchanged. When no cwd is known (tests, or a
+// connection that never spawned) there is nothing to resolve against, so the
+// absolute-path requirement still applies.
+func (c *ClawBenchACPClient) resolveAgentPath(path string) (string, error) {
+	if path != "" && !filepath.IsAbs(path) && c.cwd != "" {
+		return filepath.Join(c.cwd, path), nil
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path must be absolute: %s", path)
+	}
+	return path, nil
+}
+
 // ReadTextFile delegates file reads to the OS filesystem with path validation.
 func (c *ClawBenchACPClient) ReadTextFile(_ context.Context, p acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
-	if err := isPathAllowed(p.Path); err != nil {
+	path, err := c.resolveAgentPath(p.Path)
+	if err != nil {
 		return acp.ReadTextFileResponse{}, err
 	}
-	b, err := os.ReadFile(p.Path)
+	if allowErr := isPathAllowed(path); allowErr != nil {
+		return acp.ReadTextFileResponse{}, allowErr
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return acp.ReadTextFileResponse{}, err
 	}
@@ -793,13 +841,17 @@ func (c *ClawBenchACPClient) ReadTextFile(_ context.Context, p acp.ReadTextFileR
 
 // WriteTextFile delegates file writes to the OS filesystem with path validation.
 func (c *ClawBenchACPClient) WriteTextFile(_ context.Context, p acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
-	if err := isPathAllowed(p.Path); err != nil {
+	path, err := c.resolveAgentPath(p.Path)
+	if err != nil {
 		return acp.WriteTextFileResponse{}, err
 	}
-	if dir := filepath.Dir(p.Path); dir != "" {
+	if allowErr := isPathAllowed(path); allowErr != nil {
+		return acp.WriteTextFileResponse{}, allowErr
+	}
+	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return acp.WriteTextFileResponse{}, fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
-	return acp.WriteTextFileResponse{}, os.WriteFile(p.Path, []byte(p.Content), 0o644)
+	return acp.WriteTextFileResponse{}, os.WriteFile(path, []byte(p.Content), 0o644)
 }

@@ -1070,8 +1070,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	}
 	slog.Info("acp perf: spawnLocked.cmd.Start", "agent_id", c.agent.ID, "clawbench_sid", c.clawbenchSID, "pid", cmd.Process.Pid, "elapsed", time.Since(spawnStart))
 
-	client := NewClawBenchACPClient()
-	client.connRef = c // back-reference for cache updates
+	client := newConnClient(c)
 
 	// Wrap stdout to fix common ACP protocol violations:
 	// - CodeWhale/codewhale returns string IDs ("1") for numeric requests (1)
