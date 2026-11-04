@@ -584,6 +584,22 @@ describe('SettingsCategory', () => {
     })
   })
 
+  // ─── 视频会议 category ──────────────────────────────
+  describe('meeting category', () => {
+    // The relay endpoint/credential is installation-wide, so it lives here
+    // instead of the per-meeting create form. The card body is a dedicated
+    // component, and a section header with no matching render branch would
+    // leave an empty card — the exact failure this pins.
+    it('renders the relay form in its own card', () => {
+      const wrapper = mountCategory('meeting')
+
+      expect(wrapper.find('[data-role="relay-url"]').exists()).toBe(true)
+      expect(wrapper.find('[data-role="relay-key"]').exists()).toBe(true)
+      expect(wrapper.find('[data-role="relay-secret"]').exists()).toBe(true)
+      expect(wrapper.find('[data-action="relay-save-test"]').exists()).toBe(true)
+    })
+  })
+
   // ─── Shared AI-summary-model status ─────────────────────
   describe('AI summary model status', () => {
     /** The three in-place model pickers all share one label. */

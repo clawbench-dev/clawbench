@@ -729,6 +729,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultShots', descriptionKey: 'settings.items.meetingDefaultShotsDesc', key: 'meetingDefaultShots', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowTalk', descriptionKey: 'settings.items.meetingDefaultAllowTalkDesc', key: 'meetingDefaultAllowTalk', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowMemberScreen', descriptionKey: 'settings.items.meetingDefaultAllowMemberScreenDesc', key: 'meetingDefaultAllowMemberScreen', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    // 中继服务 (LiveKit). Installation-wide, so it lives here rather than in the
+    // create form: the relay is deployed once and every meeting that opts in
+    // shares it. The row is a placeholder that only opens the card — the form
+    // is MeetingRelaySetting, because the credential is write-only and the save
+    // is a test-then-store action, neither of which the generic row can do.
+    { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection' } },
   ],
   rag: [
     { type: 'panel', config: {

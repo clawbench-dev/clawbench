@@ -88,6 +88,10 @@
           v-if="card.title === t('settings.items.providerSection')"
           :description="t('settings.items.providerDesc')"
         />
+        <!-- 中继服务: installation-wide LiveKit endpoint + write-only
+             credential, with a test-then-save action. Lives here instead of the
+             per-meeting create form, which keeps only its own switch. -->
+        <MeetingRelaySetting v-if="card.title === t('settings.items.meetingRelaySection')" />
         <!-- Cross-agent skill discovery: directory + git repo lists with
              write-only tokens, plus the live discovered-skill listing. -->
         <SkillsSetting
@@ -197,6 +201,7 @@ import TlsCertPanel from './TlsCertPanel.vue'
 import MCPSetting from './MCPSetting.vue'
 import MailSetting from './MailSetting.vue'
 import ProviderSetting from './ProviderSetting.vue'
+import MeetingRelaySetting from './MeetingRelaySetting.vue'
 import SummaryModelPicker from './SummaryModelPicker.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
@@ -430,7 +435,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts', 'meetingRelay'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
