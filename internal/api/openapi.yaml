@@ -3991,6 +3991,9 @@ paths:
       description: |
         中继是本安装级的配置（一个地址、一对密钥，所有选择中继的会议共用），
         不是每场会议一份。密钥只写不读：响应只有 `hasSecret`，从不回显。
+
+        中继按普通 ws:// 部署即可，不需要证书：浏览器不直连它，而是连本服务的
+        `/livekit`，由服务端转发信令（媒体仍由浏览器直连 LiveKit）。
       operationId: liveShareSFUConfigGet
       responses:
         "200":

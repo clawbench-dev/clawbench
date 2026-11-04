@@ -44,6 +44,7 @@ import {
   openRelay,
   publishMic,
   publishVideo,
+  relayConnectURL,
   sendRelayData,
 } from './useLiveRelay'
 
@@ -799,7 +800,7 @@ async function connectRelay(
   relay: { url: string; token: string },
   onActiveSpeakers: (identities: string[]) => void,
 ): Promise<void> {
-  relayRoom = await openRelay(relay.url, relay.token, {
+  relayRoom = await openRelay(relayConnectURL(), relay.token, {
     onData: handleRelayData,
     onActiveSpeakers,
     onTrack: handleRelayTrack,

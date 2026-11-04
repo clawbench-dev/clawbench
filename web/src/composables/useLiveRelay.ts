@@ -51,6 +51,19 @@ export interface RelayHandlers {
 }
 
 /**
+ * The URL the browser connects to.
+ *
+ * Always this page's own origin. The relay itself is plain ws:// with no
+ * certificate, and a page served over https cannot open a plain socket, so the
+ * server proxies the signaling handshake under /livekit. The media path is
+ * unaffected: picture and sound still go straight from the browser to LiveKit.
+ */
+export function relayConnectURL(): string {
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${scheme}//${window.location.host}/livekit`
+}
+
+/**
  * Connect to the relay.
  *
  * `url` is the ws/wss endpoint from the `joined` frame; `token` is the

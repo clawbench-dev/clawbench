@@ -336,6 +336,11 @@ type ViewerControl struct {
 // The server never carries media for this mode: it only signs the token and
 // tells the browser where to go. Room is the share token, so the room name and
 // the share link are the same string.
+//
+// URL is the relay's own address. Pages do not dial it: they connect to this
+// server's /livekit endpoint instead, which forwards the signaling handshake to
+// URL. That keeps a plain-ws relay usable from an https page (mixed content is
+// blocked) and keeps the relay free of certificates.
 type RelayInfo struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`

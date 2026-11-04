@@ -2,17 +2,23 @@ package handler
 
 // Reverse proxy for the relay's signaling endpoint.
 //
-// A page served over https cannot open a ws:// socket — the browser refuses it
-// as mixed content — while LiveKit only offers ws:// on a plain deployment.
-// The page therefore asks for /livekit/rtc on the ClawBench origin and this
-// handler forwards it to the relay, so the socket inherits the page's scheme.
+// This is the ONLY way a page reaches the relay. Two reasons:
+//
+//   - A page served over https cannot open a ws:// socket — the browser refuses
+//     it as mixed content — while the relay is deployed plain (no certificate).
+//     Asking for /livekit/rtc on the ClawBench origin makes the socket inherit
+//     the page's scheme.
+//   - The relay therefore never needs TLS, and no certificate has to be trusted
+//     by every viewer's browser. The hop from here to the relay stays plain.
+//
+// Media is not involved: WebRTC carries the picture and sound directly between
+// the browser and LiveKit. What crosses this proxy is the signaling handshake
+// and its trickle of candidates — a few KB per participant.
 //
 // It is deliberately NOT a general-purpose forwarder. The only address it will
-// ever dial is 127.0.0.1:<the configured port>, and only when the configured
-// relay host is itself a loopback name; anything else is a 404. A remote relay
-// needs no proxy (its own wss:// endpoint is reachable directly), so treating
-// it as one would only turn this endpoint into a way to reach the rest of the
-// network from the server.
+// ever dial is the relay configured for this installation, and never one taken
+// from the request. A loopback name is normalized to 127.0.0.1 so a config edit
+// (or a poisoned row) cannot point this endpoint at another local service.
 //
 // Being public is intentional and matches the viewer socket: the LiveKit token
 // is the credential, and an anonymous caller reaching LiveKit's API surface
@@ -20,6 +26,7 @@ package handler
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -28,7 +35,7 @@ import (
 	"clawbench/internal/service"
 )
 
-// Loopback relay schemes. Named because the literals appear throughout the
+// Relay proxy schemes. Named because the literals appear throughout the
 // handler package and a bare "http" here reads as a URL, not as a scheme.
 const (
 	relayProxySchemeHTTP  = "http"
@@ -39,7 +46,7 @@ const (
 // /livekit/rtc → /rtc, /livekit/rtc/validate → /rtc/validate.
 const liveKitProxyPrefix = "/livekit"
 
-// ServeLiveKitProxy forwards /livekit/* to the loopback relay.
+// ServeLiveKitProxy forwards /livekit/* to the configured relay.
 //
 // 404 (not 502) when no usable relay is configured: to a browser that means
 // "this endpoint does not exist on this deployment", which is exactly true, and
@@ -85,9 +92,10 @@ func liveKitUpstreamPath(p string) string {
 // liveKitRelayTarget resolves the proxy destination, or reports that there is
 // none.
 //
-// Only a loopback host is accepted, and the address dialed is always the
-// literal 127.0.0.1 — never the configured host name. That way a config edit
-// (or a poisoned row) cannot point this endpoint at an arbitrary machine.
+// Any configured host is accepted — a relay on another machine is the normal
+// deployment, and the page has no other way to reach it over plain ws. The
+// boundary is "exactly the configured relay", never an address derived from the
+// request.
 func liveKitRelayTarget() (*url.URL, bool) {
 	cfg, err := service.GetLiveSFUConfig()
 	if err != nil || cfg.URL == "" {
@@ -97,14 +105,10 @@ func liveKitRelayTarget() (*url.URL, bool) {
 	if err != nil || u.Host == "" {
 		return nil, false
 	}
-	switch strings.ToLower(u.Hostname()) {
-	case "127.0.0.1", "localhost", "::1":
-	default:
-		return nil, false
-	}
 
-	// The dialed scheme follows the configured one: a ws:// relay answers plain
-	// HTTP on the loopback, a wss:// relay terminates TLS there too.
+	// The dialed scheme follows the configured one: ws:// answers plain HTTP,
+	// wss:// terminates TLS. New deployments use ws:// — the relay needs no
+	// certificate — but a stored wss:// endpoint still works through here.
 	scheme := relayProxySchemeHTTP
 	port := u.Port()
 	switch u.Scheme {
@@ -120,5 +124,11 @@ func liveKitRelayTarget() (*url.URL, bool) {
 	default:
 		return nil, false
 	}
-	return &url.URL{Scheme: scheme, Host: "127.0.0.1:" + port}, true
+
+	host := u.Hostname()
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "localhost", "::1":
+		host = "127.0.0.1"
+	}
+	return &url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}, true
 }

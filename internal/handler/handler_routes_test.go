@@ -67,9 +67,9 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 		"/api/apk",
 		"/api/desktop/latest",
 		"/api/ssh/info",
-		// Signaling proxy for a loopback relay: the viewer page is public, so
-		// the socket it opens must be too. The LiveKit token it carries is the
-		// credential, and the handler only ever dials 127.0.0.1.
+		// Signaling proxy for the relay: the viewer page is public, so the
+		// socket it opens must be too. The LiveKit token it carries is the
+		// credential, and the handler only ever dials the configured relay.
 		"/livekit/",
 	}
 	for _, p := range publicPatterns {

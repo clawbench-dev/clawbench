@@ -43,6 +43,10 @@ const relayApi = vi.hoisted(() => ({
   publishVideo: vi.fn(async () => undefined),
   publishMic: vi.fn(async () => undefined),
   sendRelayData: vi.fn(async () => undefined),
+  // The page always goes through this server's /livekit proxy; the real
+  // rewrite is covered by useLiveRelay's own test. A fixed value here lets the
+  // assertions prove the call site uses the helper instead of relay.url.
+  relayConnectURL: () => 'wss://clawbench.test/livekit',
 }))
 
 vi.mock('@/composables/useLiveRelay', () => relayApi)
@@ -2481,7 +2485,7 @@ describe('relay mode', () => {
     expect(ok).toBe(true)
 
     expect(relayApi.openRelay).toHaveBeenCalledWith(
-      'wss://relay.example.com',
+      'wss://clawbench.test/livekit',
       'jwt-host',
       expect.objectContaining({ onTrack: expect.any(Function) }),
     )

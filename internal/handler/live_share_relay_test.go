@@ -334,27 +334,40 @@ func TestServeLiveKitProxy_RewritesPrefixToRelay(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:"+port, gotHost, "the request must be addressed to the relay, not to the page's origin")
 }
 
-// Only a loopback relay may be proxied. Anything else is 404 — never a forward
-// to the configured host, which would make this an open proxy.
-func TestServeLiveKitProxy_RefusesNonLoopbackRelay(t *testing.T) {
+// The proxy dials exactly the configured relay — a remote one is the normal
+// deployment now. Loopback names are normalized to 127.0.0.1 so a config edit
+// cannot point this endpoint at another local service.
+func TestLiveKitRelayTarget_UsesConfiguredHost(t *testing.T) {
 	withLiveSFUTestDB(t)
+
+	for _, c := range []struct{ url, want string }{
+		{"ws://relay.example.com:7880", "http://relay.example.com:7880"},
+		{"ws://192.168.1.10:7880", "http://192.168.1.10:7880"},
+		{"ws://localhost:7880", "http://127.0.0.1:7880"},
+		{"ws://127.0.0.1:7880", "http://127.0.0.1:7880"},
+		{"wss://relay.example.com", "https://relay.example.com:443"},
+	} {
+		saveRelayConfig(t, c.url)
+		target, ok := liveKitRelayTarget()
+		require.True(t, ok, c.url)
+		assert.Equal(t, c.want, target.String(), c.url)
+	}
+}
+
+// A non-loopback relay is no longer rejected. The address here refuses the
+// connection, which must read as 502 (tried and failed) rather than 404 (no
+// proxy on this deployment).
+func TestServeLiveKitProxy_ForwardsNonLoopbackRelay(t *testing.T) {
+	withLiveSFUTestDB(t)
+	saveRelayConfig(t, "ws://127.0.0.2:1")
 
 	front := httptest.NewServer(http.HandlerFunc(ServeLiveKitProxy))
 	t.Cleanup(front.Close)
 
-	for _, host := range []string{
-		"relay.example.com",
-		"192.168.1.10",
-		"10.0.0.5",
-		"127.0.0.2", // loopback, but not an address this handler ever dials
-		"0.0.0.0",
-	} {
-		saveRelayConfig(t, "ws://"+host+":7880")
-		resp, err := http.Get(front.URL + "/livekit/rtc")
-		require.NoError(t, err)
-		_ = resp.Body.Close()
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "host %q", host)
-	}
+	resp, err := http.Get(front.URL + "/livekit/rtc")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusBadGateway, resp.StatusCode)
 }
 
 func TestServeLiveKitProxy_NotConfiguredIs404(t *testing.T) {
