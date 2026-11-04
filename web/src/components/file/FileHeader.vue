@@ -40,6 +40,26 @@
       <!-- Refresh button — first in the toolbar, and the last to collapse. -->
       <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
 
+      <!-- Maximize / restore the left pane (wide screen only).
+           The existing affordance is the collapse handle that appears on the
+           split divider under the cursor — a ~14px target on a 6px-wide line,
+           which is both hard to hit and easy to trigger by accident while
+           aiming at the scrollbar. This button is a full-size target in the
+           place the user is already looking (the file toolbar) and does the
+           same thing, so the divider handle stays as the discoverable one. -->
+      <button
+        v-if="isWideScreen && toolbarInlineIds.includes('maximize')"
+        class="file-header-btn"
+        data-action="toggle-maximize-pane"
+        :class="{ active: chatCollapsed }"
+        @click.stop="emit('toggleMaximizePane')"
+        :title="chatCollapsed ? t('nav.restorePane') : t('nav.maximizePane')"
+        :aria-label="chatCollapsed ? t('nav.restorePane') : t('nav.maximizePane')"
+      >
+        <Minimize2 v-if="chatCollapsed" :size="14" />
+        <Maximize2 v-else :size="14" />
+      </button>
+
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
@@ -181,6 +201,16 @@
               <RotateCw :size="14" />
               {{ t('nav.refresh') }}
             </button>
+            <!-- Maximize must be reachable from here too. useToolbarOverflow keeps
+                 a PREFIX inline, so on a narrow pane this button is among the
+                 first to be demoted — and a demoted id with no menu item simply
+                 vanishes, which would leave the pane maximizable only from the
+                 divider handle again (the thing this button exists to fix). -->
+            <button v-if="toolbarCollapsedIds.includes('maximize')" class="dropdown-item" :class="{ active: chatCollapsed }" @click="emit('toggleMaximizePane'); menuOpen = false">
+              <Minimize2 v-if="chatCollapsed" :size="14" />
+              <Maximize2 v-else :size="14" />
+              {{ chatCollapsed ? t('nav.restorePane') : t('nav.maximizePane') }}
+            </button>
             <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click="handleToggleView">
               <Eye :size="14" />
               {{ effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
@@ -218,7 +248,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Minimize2 } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -248,11 +278,14 @@ const props = defineProps({
     canGoForwardFile: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat', 'toggleMaximizePane'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
-const { isWideScreen } = getWideScreenState()
+// `chatCollapsed` decides whether the maximize button reads as maximize or
+// restore, so it has to be reactive here — the pane can also be collapsed from
+// the divider handle or the settings drawer while this header is mounted.
+const { isWideScreen, chatCollapsed } = getWideScreenState()
 const { refreshFileShare, isFileShared } = useFileShare()
 
 /** The open file lives outside the project root (chat annotations may name any
@@ -309,6 +342,10 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     // Refresh / attach / download all read from the file's path on disk, which
     // an unsaved Untitled buffer does not have yet.
     if (hasTextContent.value && !isUntitled.value) ids.push('refresh')
+    // Maximize sits immediately after refresh: both are layout-level actions on
+    // the pane, and the user asked for it next to the button they already use.
+    // Not gated on content — an empty pane can still be maximized.
+    if (isWideScreen.value) ids.push('maximize')
     if (hasToc.value) ids.push('toc')
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')

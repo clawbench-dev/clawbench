@@ -138,4 +138,35 @@ describe('chat pane collapse affordance', () => {
     expect(src).not.toContain('chat-restore-fab')
     expect(src).not.toContain('data-action="hide-chat"')
   })
+
+  it('offers a full-size maximize button in the file header, wired to the same handler', () => {
+    // The divider handle is a ~14px target on a 6px line that only appears
+    // under the cursor — hard to hit and easy to trigger while aiming at the
+    // scrollbar. The header button is the same operation with a normal target,
+    // placed next to the refresh button the user already reaches for. Both must
+    // route to ONE handler, or the two entry points drift apart.
+    const app = readWebFile(APP)
+    expect(app).toContain('@toggle-maximize-pane="toggleChatPane"')
+
+    const header = readWebFile('src/components/file/FileHeader.vue')
+    expect(header).toContain('data-action="toggle-maximize-pane"')
+    expect(header).toContain("@click.stop=\"emit('toggleMaximizePane')\"")
+    // Wide screen only: narrow layout has no split to maximize.
+    expect(header).toContain('v-if="isWideScreen && toolbarInlineIds.includes(\'maximize\')"')
+
+    // The event must be forwarded through both wrapper layers, or the click
+    // dies at FileHeader and App.vue never sees it.
+    for (const wrapper of ['src/components/file/FileViewer.vue', 'src/components/file/FileOverlay.vue']) {
+      expect(readWebFile(wrapper), `${wrapper} must forward the event`).toContain("@toggle-maximize-pane=\"emit('toggleMaximizePane')\"")
+    }
+  })
+
+  it('keeps the divider handle as the discoverable entry point', () => {
+    // The header button is an ADDITIONAL entry point, not a replacement: the
+    // divider handle is what makes the split feel draggable/collapsible at all.
+    const app = readWebFile(APP)
+    const tag = splitViewTag(app)
+    expect(tag).toContain(':collapse-right="isWideScreen"')
+    expect(tag).toContain('@collapse="onSplitCollapse"')
+  })
 })

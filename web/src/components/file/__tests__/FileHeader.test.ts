@@ -27,7 +27,11 @@ const i18n = createI18n({
   locale: 'en',
   messages: {
     en: {
-      nav: { refresh: 'Refresh' },
+      nav: {
+        refresh: 'Refresh',
+        maximizePane: 'Maximize the left panel (hide chat)',
+        restorePane: 'Restore the split (show chat)',
+      },
       common: { download: 'Download', delete: 'Delete', close: 'Close' },
       chat: {
         actions: { attachToChat: 'Attach' },
@@ -82,8 +86,9 @@ vi.mock('@/composables/useAppMode.ts', () => ({
 
 // Mock wide-screen state — drag-to-chat (draggable file name) is gated on it
 const mockIsWideScreen = ref(true)
+const mockChatCollapsed = ref(false)
 vi.mock('@/composables/useWideScreenLayout', () => ({
-  getWideScreenState: () => ({ isWideScreen: mockIsWideScreen }),
+  getWideScreenState: () => ({ isWideScreen: mockIsWideScreen, chatCollapsed: mockChatCollapsed }),
 }))
 
 // Keep the real setAttachDragData (verifies the drag payload) but stub the
@@ -272,6 +277,93 @@ describe('FileHeader', () => {
       const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
       expect(titles).not.toContain('Refresh')
       expect((wrapper.vm as any).$.setupState.toolbarInlineIds).not.toContain('refresh')
+    })
+  })
+
+  describe('maximize / restore pane button', () => {
+    // The pane could previously only be maximized from the collapse handle that
+    // appears on the split divider under the cursor: a ~14px target on a 6px
+    // line, hard to hit and easy to trigger while aiming at the scrollbar. The
+    // header button is the same operation with a full-size target, next to the
+    // refresh button the user already reaches for.
+    beforeEach(() => {
+      mockIsWideScreen.value = true
+      mockChatCollapsed.value = false
+    })
+
+    function maximizeBtn(wrapper: any) {
+      return wrapper.find('[data-action="toggle-maximize-pane"]')
+    }
+
+    it('sits immediately after the refresh button', () => {
+      const wrapper = mountHeader()
+      const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
+      const iRefresh = titles.indexOf('Refresh')
+      const iMax = titles.findIndex(t => t.includes('Maximize'))
+      expect(iRefresh).toBeGreaterThan(-1)
+      expect(iMax, 'the maximize button must be in the inline toolbar').toBeGreaterThan(-1)
+      expect(iMax).toBe(iRefresh + 1)
+    })
+
+    it('emits toggleMaximizePane when clicked', async () => {
+      const wrapper = mountHeader()
+      await maximizeBtn(wrapper).trigger('click')
+      expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
+    })
+
+    it('reads as maximize while the chat pane is visible', () => {
+      const wrapper = mountHeader()
+      const btn = maximizeBtn(wrapper)
+      expect(btn.attributes('title')).toBe('Maximize the left panel (hide chat)')
+      // Maximize2 is the "expand" glyph; the button must not already look
+      // like a restore while there is nothing to restore.
+      expect(btn.html()).toContain('lucide-maximize-2')
+      expect(btn.html()).not.toContain('lucide-minimize-2')
+    })
+
+    it('reads as restore once the chat pane is collapsed', async () => {
+      mockChatCollapsed.value = true
+      const wrapper = mountHeader()
+      const btn = maximizeBtn(wrapper)
+      expect(btn.attributes('title')).toBe('Restore the split (show chat)')
+      expect(btn.html()).toContain('lucide-minimize-2')
+      expect(btn.classes()).toContain('active')
+      // Same handler either way: the button toggles, it does not "maximize".
+      await btn.trigger('click')
+      expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
+    })
+
+    it('is absent on a narrow screen, where there is no split to maximize', () => {
+      mockIsWideScreen.value = false
+      const wrapper = mountHeader()
+      expect(maximizeBtn(wrapper).exists()).toBe(false)
+      expect((wrapper.vm as any).$.setupState.toolbarInlineIds).not.toContain('maximize')
+    })
+
+    it('falls back to the More menu when the toolbar overflows', async () => {
+      // useToolbarOverflow keeps a PREFIX inline and demotes the tail. Without a
+      // menu entry a demoted button simply disappears — the pane would then only
+      // be maximizable from the divider handle again, which is the very thing
+      // this button exists to replace. jsdom has no layout, so force the
+      // collapsed state and assert the menu carries the action.
+      const wrapper = mountHeader()
+      const state = (wrapper.vm as any).$.setupState
+      state.toolbarCollapsedIds.push('maximize')
+      await nextTick()
+      // Open the More dropdown; its items are only rendered while it is open.
+      await wrapper.find('.dropdown-wrapper > .file-header-btn').trigger('click')
+      await nextTick()
+      const items = wrapper.findAll('.file-header-dropdown-menu .dropdown-item')
+      const texts = items.map(i => i.text())
+      expect(texts.some(t => t.includes('Maximize'))).toBe(true)
+    })
+
+    it('is offered even when the file has no text content', () => {
+      // Unlike refresh (which needs something to re-fetch), maximizing is a
+      // layout action on the pane — an image or an empty buffer can still be
+      // given the whole width.
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      expect(maximizeBtn(wrapper).exists()).toBe(true)
     })
   })
 

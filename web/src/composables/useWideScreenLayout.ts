@@ -194,10 +194,17 @@ export function useWideScreenLayout() {
   return { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed, chatCollapsed }
 }
 
-/** Ref access for useTabDrawer (init once, return only the refs it needs). */
+/**
+ * Ref access for components that only need a slice of the layout (init once).
+ *
+ * `chatCollapsed` is included for the file viewer's maximize button: whether
+ * the chat pane is hidden is the ONLY thing that decides whether that button
+ * means "maximize" or "restore", so the component cannot render it from
+ * `isWideScreen` alone.
+ */
 export function getWideScreenState() {
   initWideScreen()
-  return { isWideScreen, leftTab }
+  return { isWideScreen, leftTab, chatCollapsed }
 }
 
 /** Record which pane the user is currently working in (drives focus-aware shortcuts). */

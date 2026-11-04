@@ -171,6 +171,7 @@
                       @quote-in-chat="handleFileQuoteInChat"
                       @set-as-background="handleSetAsBackground"
                       @open-search="openFileSearch"
+                      @toggle-maximize-pane="toggleChatPane"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
                       <template v-if="recentFileEntries.length">
@@ -1253,6 +1254,13 @@ function onSplitCollapse(side: 'left' | 'right') {
 // is restored; hide → the chat pane is removed and the left pane takes the full
 // width. Hiding routes focus to the left pane so the user keeps working there
 // (chat shortcuts are intentionally inactive while hidden).
+//
+// ALSO the handler behind the file header's maximize button. That button is the
+// same operation — "give the left pane the whole width" — reached from the
+// place the user is already looking, instead of the collapse handle that only
+// appears when the cursor is over the divider. Both call this one function so
+// the mutual-exclusion guard (`setChatCollapsed` re-opens the left pane) cannot
+// diverge between them.
 function toggleChatPane() {
   const hiding = !chatCollapsed.value
   setChatCollapsed(hiding)

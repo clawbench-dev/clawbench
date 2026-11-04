@@ -205,6 +205,8 @@ export default {
     hideLeftPane: 'Hide left panel',
     hideChat: 'Hide chat area',
     showChat: 'Show chat area',
+    maximizePane: 'Maximize the left panel (hide chat)',
+    restorePane: 'Restore the split (show chat)',
   },
   forge: {
     type: { issues: 'Issues', prs: 'PRs', pipelines: 'Pipelines' },
