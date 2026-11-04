@@ -16,7 +16,6 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
 	"clawbench/internal/skill"
 )
 
@@ -998,11 +997,9 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 			}
 			return "no"
 		}()))
-	// Inherit the server environment, plus whatever the user exports from their
-	// shell startup files (.bashrc / .zshrc). Agents started from a desktop
-	// launcher or a systemd unit never saw those exports and come up logged out
-	// (issue #619). Existing entries always win.
-	cmd.Env = platform.MergeLoginShellEnv(os.Environ())
+	// Server environment, plus the user's shell startup exports when the
+	// opt-in shell_env.inherit setting is on (issue #619).
+	cmd.Env = agentProcessEnv()
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 
 	// Model provider environment. Resolved from the live agent (c.agent is a

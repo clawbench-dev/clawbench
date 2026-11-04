@@ -3571,6 +3571,9 @@ export default {
       usageMeterMetricCost: 'Cost (USD)',
 
 
+      agentEnvSection: 'Agent Environment',
+      agentEnvInherit: 'Inherit shell environment',
+      agentEnvInheritDesc: 'Read variables exported by ~/.bashrc, ~/.zshrc and similar startup files (for example AK/SK) when starting an agent. Off means agents only see the ClawBench environment. Turning it on runs your shell startup files and hands every variable they export to the agent.',
       logCapture: 'Debug Log Capture',
       logCaptureDesc: 'Capture client debug logs for troubleshooting',
       reconfigureServer: 'Reconfigure Server',

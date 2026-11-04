@@ -604,6 +604,8 @@ const serverDefaults: Record<string, unknown> = {
   'user.nickname': '',
   'user.profile': '',
   'chat.group_max_speeches': 100,
+  // Opt-in: agent processes inherit the user's shell startup exports.
+  'shell_env.inherit': false,
   'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,

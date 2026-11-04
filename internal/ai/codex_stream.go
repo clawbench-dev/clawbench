@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strings"
 
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
 )
 
 // CodexStreamMessage represents a single JSON line from `codex exec --json`
@@ -474,9 +472,9 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 
 	cmd := exec.CommandContext(ctx, cmdBinary, fullArgs...)
 	cmd.Dir = req.WorkDir
-	// Inherit the server environment plus the user's shell startup exports
-	// (issue #619); existing entries win.
-	cmd.Env = platform.MergeLoginShellEnv(os.Environ())
+	// Server environment, plus the user's shell startup exports when the
+	// opt-in shell_env.inherit setting is on (issue #619).
+	cmd.Env = agentProcessEnv()
 
 	// Model provider injection (see providerEnvForRequest). Codex is a
 	// config-file backend: the environment only carries the secret its

@@ -188,6 +188,9 @@ var hotReloadFields = map[string]bool{
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
 	"usage_meter.quota":       true,
+	// Agent process environment. Read from ConfigInstance at spawn time, so a
+	// change applies to the next process without a restart.
+	"shell_env.inherit": true,
 }
 
 // restartFunc is the function called to trigger a server restart.
@@ -307,6 +310,7 @@ type configResponse struct {
 	Forge          configForge          `json:"forge"`
 	UsageMeter     configUsageMeter     `json:"usage_meter"`
 	MCP            configMCP            `json:"mcp"`
+	ShellEnv       configShellEnv       `json:"shell_env"`
 }
 
 // configMCP is the global MCP server list as sent to the client.
@@ -403,6 +407,11 @@ type configUsageMeter struct {
 	PeriodDays int     `json:"period_days"`
 	Metric     string  `json:"metric"`
 	Quota      float64 `json:"quota"`
+}
+
+// configShellEnv exposes the agent process environment switch.
+type configShellEnv struct {
+	Inherit bool `json:"inherit"`
 }
 
 type configChat struct {
@@ -951,6 +960,8 @@ var PatchableConfigPaths = map[string]bool{
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
 	"usage_meter.quota":       true,
+	// Agent process environment (opt-in, off by default).
+	"shell_env.inherit": true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -1148,6 +1159,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		},
 		Skills:     buildConfigSkills(cfg),
 		MCP:        buildConfigMCP(cfg),
+		ShellEnv:   configShellEnv{Inherit: cfg.ShellEnv.Inherit},
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 		UsageMeter: configUsageMeter{
@@ -2117,6 +2129,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
+		}
+	}
+
+	if shellEnvMap, ok := patch["shell_env"].(map[string]any); ok {
+		if v, ok := shellEnvMap["inherit"].(bool); ok {
+			cfg.ShellEnv.Inherit = v
 		}
 	}
 
