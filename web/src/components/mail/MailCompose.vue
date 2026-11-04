@@ -363,7 +363,7 @@ function close(): void {
   padding: 0;
   border: none;
   background: none;
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   cursor: pointer;
 }
 .mail-compose__attachment-remove :deep(svg) {
@@ -374,7 +374,7 @@ function close(): void {
   margin: 0;
   padding: 0 var(--space-3, 6px);
   font-size: var(--font-size-sm, 12px);
-  color: var(--color-danger, #d1242f);
+  color: var(--color-red);
   flex-shrink: 0;
 }
 .mail-compose__actions {

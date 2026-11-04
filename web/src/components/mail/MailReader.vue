@@ -89,7 +89,7 @@ import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { buildMailDocument, hasRemoteImages } from '@/utils/mailHtml'
 import {
-  formatMailDate,
+  mailFullTimestamp,
   formatMailSize,
   mailErrorMessage,
   mailSenderLabel,
@@ -107,7 +107,7 @@ const emit = defineEmits<{
   updated: [msg: MailMessage]
 }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const detail = ref<MailMessageDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -116,7 +116,7 @@ const allowRemoteImages = ref(false)
 
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
 const sentAtLabel = computed(() =>
-  detail.value ? formatMailDate(detail.value.sentAt, String(locale.value)) : '',
+  detail.value ? mailFullTimestamp(detail.value.sentAt) : '',
 )
 const showImagesBar = computed(
   () => !!detail.value?.bodyHtml && hasRemoteImages(detail.value.bodyHtml) && !allowRemoteImages.value,
@@ -250,7 +250,7 @@ async function remove(): Promise<void> {
   cursor: default;
 }
 .mail-chip--danger {
-  color: var(--color-danger, #d1242f);
+  color: var(--color-red);
 }
 .mail-reader__meta {
   display: flex;
@@ -273,14 +273,14 @@ async function remove(): Promise<void> {
 }
 .mail-reader__addr {
   font-size: var(--font-size-xs, 11px);
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .mail-reader__time {
   font-size: var(--font-size-xs, 11px);
-  color: var(--text-tertiary);
+  color: var(--text-hint);
 }
 .mail-reader__recipients {
   font-size: var(--font-size-xs, 11px);
@@ -290,7 +290,7 @@ async function remove(): Promise<void> {
   white-space: nowrap;
 }
 .mail-reader__meta-label {
-  color: var(--text-tertiary);
+  color: var(--text-hint);
 }
 .mail-reader__body {
   flex: 1;
@@ -344,7 +344,7 @@ async function remove(): Promise<void> {
 }
 .mail-reader__attachments-title {
   font-size: var(--font-size-xs, 11px);
-  color: var(--text-tertiary);
+  color: var(--text-hint);
 }
 .mail-attachment {
   display: flex;
@@ -362,7 +362,7 @@ async function remove(): Promise<void> {
 .mail-attachment__icon {
   width: calc(12 * var(--dp));
   height: calc(12 * var(--dp));
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   flex: none;
 }
 .mail-attachment__name {
@@ -375,7 +375,7 @@ async function remove(): Promise<void> {
 .mail-attachment__size {
   flex: none;
   font-size: var(--font-size-xs, 11px);
-  color: var(--text-tertiary);
+  color: var(--text-hint);
 }
 .mail-icon-btn {
   display: inline-flex;
@@ -403,7 +403,7 @@ async function remove(): Promise<void> {
   height: calc(15 * var(--dp));
 }
 .mail-icon-btn :deep(svg.is-on) {
-  color: var(--color-warning, #bf8700);
+  color: var(--color-orange);
   fill: currentColor;
 }
 </style>

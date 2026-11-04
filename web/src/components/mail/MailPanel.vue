@@ -182,14 +182,60 @@ watch(layoutEpoch, () => {
 
 let widthObserver: ResizeObserver | null = null
 
-watch(activeAccountId, async (id) => {
-  if (!id) return
+// Guards the account watcher while loadAll() is picking the account itself:
+// without it the first render loads every folder twice.
+let bootstrapping = false
+
+watch(activeAccountId, (id) => {
+  if (!id || bootstrapping) return
+  void activateAccount(id)
+})
+
+/** Load one account's folders and land on its inbox. */
+async function activateAccount(id: number): Promise<void> {
   await list.loadFolders(id)
+  const keep = list.folders.value.some((f) => f.id === list.activeFolderId.value)
+  if (keep) return
   const preferred = list.folders.value.find((f) => f.specialUse === 'inbox') ?? list.folders.value[0]
   if (preferred) await list.selectFolder(preferred.id)
   else list.activeFolderId.value = 0
-})
+}
 
+/**
+ * Read the account list and bring the panel up to date.
+ *
+ * Called on mount and every time the tab becomes active — the settings page is
+ * a different screen, so a mailbox added there leaves this panel holding a
+ * stale (often empty) account list, and coming back used to show "还没有配置
+ * 邮箱" until the whole app was reloaded.
+ *
+ * A mailbox that has never synced is synced here rather than waiting for the
+ * three-minute worker: it has no folders and no messages, so the tab would
+ * otherwise open empty with no explanation.
+ */
+async function loadAll(): Promise<void> {
+  await accountApi.load()
+  if (accounts.value.length === 0) {
+    activeAccountId.value = 0
+    return
+  }
+  const target = accounts.value.find((a) => a.id === activeAccountId.value) ?? accounts.value[0]
+  if (!target.lastSyncAt) {
+    refreshing.value = true
+    try {
+      await accountApi.sync(target.id)
+      await accountApi.load()
+    } catch (e) {
+      appLog.w('MailPanel', 'initial sync failed', e)
+    } finally {
+      refreshing.value = false
+    }
+  }
+  bootstrapping = true
+  activeAccountId.value = target.id
+  bootstrapping = false
+  await activateAccount(target.id)
+}
 
 onMounted(async () => {
   measureWidth()
@@ -201,24 +247,7 @@ onMounted(async () => {
     widthObserver.observe(rootEl.value)
   }
   try {
-    await accountApi.load()
-    const first = accounts.value[0]
-    // A freshly added account has never been synced, and the background worker
-    // only runs every three minutes — opening the tab used to show an empty
-    // inbox for that whole window with no hint that anything was happening.
-    // Sync once here so the first visit actually shows the mailbox.
-    if (first && !first.lastSyncAt) {
-      refreshing.value = true
-      try {
-        await accountApi.sync(first.id)
-        await accountApi.load()
-      } catch (e) {
-        appLog.w('MailPanel', 'initial sync failed', e)
-      } finally {
-        refreshing.value = false
-      }
-    }
-    if (accounts.value.length > 0) activeAccountId.value = accounts.value[0].id
+    await loadAll()
   } finally {
     initialLoading.value = false
   }
@@ -233,17 +262,15 @@ function measureWidth(): void {
   panelWidth.value = rootEl.value?.clientWidth ?? 0
 }
 
-// Re-opening the tab refreshes the list: mail may have arrived while the user
-// was in another panel, and the badge alone does not tell which rows are new.
+// Re-opening the tab refreshes everything: mail may have arrived while the user
+// was elsewhere, and a mailbox may have been added or removed in Settings.
+// Only the local cache is re-read — a full IMAP sync on every tab switch would
+// make opening the tab feel slow and fight the background worker.
 watch(
   () => props.active,
   (active) => {
-    if (!active || accounts.value.length === 0) return
-    // Only the LOCAL list is reloaded here. The background worker syncs every
-    // three minutes; running a full IMAP sync on every tab switch would make
-    // opening the tab feel slow and fight the worker for the same account.
-    void list.reload()
-    void list.loadFolders(activeAccountId.value)
+    if (!active) return
+    void loadAll()
   },
 )
 

@@ -214,7 +214,7 @@ function onSearchInput(e: Event): void {
   left: calc(8 * var(--dp));
   width: calc(13 * var(--dp));
   height: calc(13 * var(--dp));
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   pointer-events: none;
 }
 .mail-bar__search-input {

@@ -4,6 +4,7 @@
  * These mirror `internal/service/mail_store.go` field by field; the JSON tags
  * there are the contract. Keep them in sync when a field is added.
  */
+import { formatClockTime, formatDayLabel, formatFullTimestamp } from '@/utils/format'
 
 export type MailSecurity = 'tls' | 'starttls' | 'none'
 
@@ -192,17 +193,29 @@ export function mailErrorMessage(err: unknown, t: (key: string) => string): stri
 }
 
 /** Formats a message timestamp the way the list shows it. */
-export function formatMailDate(unix: number, locale: string, now = Date.now()): string {
+/**
+ * Friendly day label for the message list: 今天 / 昨天 / 周三 / 11月3日.
+ *
+ * Shares the timeline's labels (`time.today` …) so the two places cannot drift,
+ * and keeps the exact clock time beside it — a list that shows only "11月3日"
+ * answers "which day" but not "when", which is what you need when hunting for
+ * a specific message.
+ */
+export function mailDayLabel(unix: number): string {
   if (!unix) return ''
-  const d = new Date(unix * 1000)
-  const sameDay = d.toDateString() === new Date(now).toDateString()
-  if (sameDay) {
-    return d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
-  }
-  const sameYear = d.getFullYear() === new Date(now).getFullYear()
-  return d.toLocaleDateString(locale, sameYear
-    ? { month: 'short', day: 'numeric' }
-    : { year: 'numeric', month: 'short', day: 'numeric' })
+  return formatDayLabel(new Date(unix * 1000))
+}
+
+/** "14:21" — the exact clock time shown under the day label. */
+export function mailClockTime(unix: number): string {
+  if (!unix) return ''
+  return formatClockTime(new Date(unix * 1000))
+}
+
+/** "2026-11-04 14:21:05" — the tooltip / reading-pane timestamp. */
+export function mailFullTimestamp(unix: number): string {
+  if (!unix) return ''
+  return formatFullTimestamp(new Date(unix * 1000))
 }
 
 /** "张三" for a named sender, otherwise the bare address. */
