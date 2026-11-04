@@ -226,6 +226,28 @@ paths:
         "500":
           $ref: "#/components/responses/Error"
 
+  /api/config/tls/delete:
+    delete:
+      tags: [Config]
+      summary: 删除 HTTPS 证书
+      description: |
+        删除证书目录里所有已知的证书/私钥文件（fullchain.pem + privkey.pem、
+        cert.pem + key.pem、combined.pem），下次启动回退到 HTTP。监听器在启动时
+        创建，所以返回体带 `restartRequired: true`。
+
+        删除全部已知文件名而不是只删当前生效的那一对：否则目录里另一组配对的
+        文件会让 HTTPS 在下次重启后又回来。
+      operationId: configTLSDelete
+      responses:
+        "200":
+          description: "已删除（`active: false`、`restartRequired: true`）"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TLSStatus"
+        "500":
+          $ref: "#/components/responses/Error"
+
   # ── WeChat push (personal WeChat via iLink Bot) ───────────────────────────
   /api/push/wechat/login:
     post:

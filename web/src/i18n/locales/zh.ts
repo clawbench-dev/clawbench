@@ -3673,6 +3673,10 @@ export default {
       tlsGenerate: '生成自签名证书',
       tlsRegenerate: '重新生成证书',
       tlsForceOverwrite: '仍要覆盖',
+      tlsDelete: '删除证书',
+      tlsDeleteConfirm:
+        '删除证书文件？删除后重启服务端会回到 HTTP，成员端将无法共享屏幕或使用麦克风。',
+      tlsDeletedRestartRequired: '证书已删除，重启服务端后恢复 HTTP 访问。',
       tlsNotSelfSigned:
         '现有证书不是自签名证书（可能来自 CA），覆盖后无法恢复。确认要覆盖请点「仍要覆盖」。',
       tlsRestartRequired: '证书已写入，重启服务端后生效。',

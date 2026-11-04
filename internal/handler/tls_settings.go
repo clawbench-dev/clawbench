@@ -114,6 +114,26 @@ func ServeTLSGenerateSelfSigned(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
+// ServeTLSDelete handles DELETE /api/config/tls/delete.
+//
+// Deleting the certificate is how a user goes back to HTTP (the certificate was
+// issued for an address they no longer use, or a CA cert must be swapped out).
+// The listener is created at startup, so the response carries restartRequired
+// exactly like generation does.
+func ServeTLSDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+	if err := model.RemoveTLSCerts(tlsCertDir()); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "TLSCertDeleteFailed",
+			map[string]any{errDetailKey: err.Error()})
+		return
+	}
+	status := buildTLSStatus(r)
+	status.RestartRequired = true
+	writeJSON(w, http.StatusOK, status)
+}
+
 // tlsCertDir resolves the configured certificate directory, falling back to the
 // default under the data directory.
 func tlsCertDir() string {

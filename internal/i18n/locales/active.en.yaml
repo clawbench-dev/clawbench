@@ -416,6 +416,7 @@ RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart
 TLSCertNotSelfSigned: "The existing certificate is not self-signed (probably issued by a CA). Regenerating would overwrite it; pass force to confirm"
 TLSCertGenerateFailed: "Could not generate the certificate: {{.Error}}"
+TLSCertDeleteFailed: "Could not delete the certificate: {{.Error}}"
 # Files opened during a meeting: transcript cues, the files.md manifest and
 # archive skip reasons.
 MeetingFilesSpeaker: File

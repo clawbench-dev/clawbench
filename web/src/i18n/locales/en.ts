@@ -3678,6 +3678,11 @@ export default {
       tlsGenerate: 'Generate self-signed certificate',
       tlsRegenerate: 'Regenerate certificate',
       tlsForceOverwrite: 'Overwrite anyway',
+      tlsDelete: 'Delete certificate',
+      tlsDeleteConfirm:
+        'Delete the certificate files? After a restart the server falls back to HTTP, and viewers can no longer share a screen or use a microphone.',
+      tlsDeletedRestartRequired:
+        'The certificate is deleted. Restart the server to fall back to HTTP.',
       tlsNotSelfSigned:
         'The existing certificate is not self-signed (probably CA-issued) and overwriting it cannot be undone. Click "Overwrite anyway" to confirm.',
       tlsRestartRequired: 'The certificate is written. Restart the server for it to take effect.',

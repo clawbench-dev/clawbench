@@ -571,6 +571,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// may trigger, and the paths leak the server's data directory.
 	register("/api/config/tls", ServeTLSStatus)
 	register("/api/config/tls/self-signed", ServeTLSGenerateSelfSigned)
+	register("/api/config/tls/delete", ServeTLSDelete)
 	register("/api/push/wechat/login", ServeWeChatLogin)
 	register("/api/push/wechat/status", ServeWeChatStatus)
 	register("/api/push/wechat/logout", ServeWeChatLogout)

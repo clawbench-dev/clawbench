@@ -56,6 +56,18 @@
         >
           {{ t('settings.items.tlsForceOverwrite') }}
         </button>
+        <!-- Deleting is how a user goes back to HTTP (the certificate was
+             issued for an address they no longer use). Destructive, so it asks
+             first — the same treatment as every other delete on this page. -->
+        <button
+          v-if="status.active"
+          class="fbtn fbtn-danger"
+          type="button"
+          :disabled="busy"
+          @click="deleteCert"
+        >
+          {{ t('settings.items.tlsDelete') }}
+        </button>
       </div>
 
       <div v-if="error" class="tls-panel__error">{{ error }}</div>
@@ -64,7 +76,13 @@
       <!-- The listener is created at startup, so a new certificate only takes
            effect after a restart. Saying so is not enough — offer the button. -->
       <div v-if="restartRequired" class="tls-panel__notice">
-        <div>{{ t('settings.items.tlsRestartRequired') }}</div>
+        <div>
+          {{
+            deleted
+              ? t('settings.items.tlsDeletedRestartRequired')
+              : t('settings.items.tlsRestartRequired')
+          }}
+        </div>
         <div class="tls-panel__actions">
           <button class="fbtn fbtn-primary" type="button" :disabled="restarting" @click="restart">
             {{ restarting ? t('settings.items.tlsRestarting') : t('settings.items.tlsRestartNow') }}
@@ -95,9 +113,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { useDialog } from '@/composables/useDialog'
 import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
+const dialog = useDialog()
 
 interface TLSStatus {
   active: boolean
@@ -125,6 +145,8 @@ const error = ref('')
 const info = ref('')
 /** Set when the existing certificate came from a CA: overwriting needs force. */
 const needsForce = ref(false)
+/** The last action was a deletion, so the restart notice must say so. */
+const deleted = ref(false)
 
 const restartRequired = computed(() => status.value?.restartRequired === true)
 const hosts = computed(() => status.value?.hosts ?? [])
@@ -184,6 +206,7 @@ async function generate(force: boolean): Promise<void> {
   busy.value = true
   error.value = ''
   needsForce.value = false
+  deleted.value = false
   try {
     const resp = await fetch('/api/config/tls/self-signed', {
       method: 'POST',
@@ -204,6 +227,40 @@ async function generate(force: boolean): Promise<void> {
     status.value = (await resp.json()) as TLSStatus
   } catch (e) {
     appLog.w('TlsPanel', 'generate cert failed', e)
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
+ * Delete the certificate and fall back to HTTP on the next start.
+ *
+ * The server answers with a fresh status; `httpsUrl` is deliberately dropped
+ * here because the restarted server will not be reachable over TLS any more,
+ * and the restart notice offers that address as a destination.
+ */
+async function deleteCert(): Promise<void> {
+  const ok = await dialog.confirm(t('settings.items.tlsDeleteConfirm'), {
+    title: t('settings.items.tlsDelete'),
+    dangerous: true,
+  })
+  if (!ok) return
+
+  busy.value = true
+  error.value = ''
+  needsForce.value = false
+  try {
+    const resp = await fetch('/api/config/tls/delete', { method: 'DELETE' })
+    if (!resp.ok) {
+      const data = (await resp.json().catch(() => ({}))) as { error?: string }
+      throw new Error(data.error || `status ${resp.status}`)
+    }
+    const next = (await resp.json()) as TLSStatus
+    status.value = { ...next, httpsUrl: '' }
+    deleted.value = true
+  } catch (e) {
+    appLog.w('TlsPanel', 'delete cert failed', e)
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     busy.value = false
