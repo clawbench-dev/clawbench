@@ -2769,7 +2769,7 @@ export default {
       terminal: 'Terminal',
       tts: 'TTS Voice',
       stt: 'Speech Recognition',
-      meeting: 'Meetings',
+      meeting: 'Video Meetings',
       rag: 'Session Search',
       portForward: 'Port Mapping',
       mail: 'Mailboxes',

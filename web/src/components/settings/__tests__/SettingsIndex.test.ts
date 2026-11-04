@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 
 const i18n = createI18n({
   legacy: false,
@@ -51,7 +52,6 @@ const globalStubs = {
   'lucide-terminal': true,
   'lucide-volume2': true,
   'lucide-mic': true,
-  'lucide-video': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-bell': true,
@@ -116,6 +116,24 @@ describe('SettingsIndex', () => {
     // machine holds, alongside port forwarding and the forge integration.
     expect(perCard).toEqual([3, 10, 4, 3, 2])
     expect(perCard.reduce((a, b) => a + b, 0)).toBe(22)
+  })
+
+  // The dock tab, the meeting list header and the quote chip all draw
+  // MEETING_ICON (utils/meetingIcon). This row used to hard-code a second,
+  // unrelated meeting glyph, so the settings page and the tab it configures
+  // showed different pictures for the same feature. Compare the rendered SVG
+  // against the shared constant instead of naming an icon: the assertion must
+  // survive a future change of MEETING_ICON and still catch a local override.
+  it('draws the shared meeting icon on the meeting row', () => {
+    const wrapper = mountIndex()
+
+    const row = wrapper.find('[data-category="meeting"]')
+    expect(row.exists()).toBe(true)
+    // Geometry, not the whole markup: size/scoped attributes legitimately
+    // differ from a bare render, but the glyph paths are the icon's identity.
+    const paths = (html: string) =>
+      [...html.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1])
+    expect(paths(row.find('svg').html())).toEqual(paths(mount(MEETING_ICON).html()))
   })
 
   it('emits navigate with categoryId when row clicked', async () => {

@@ -2764,7 +2764,7 @@ export default {
       terminal: '终端',
       tts: '语音朗读',
       stt: '语音识别',
-      meeting: '会议',
+      meeting: '视频会议',
       rag: '会话搜索',
       portForward: '端口映射',
       mail: '邮箱账号',
