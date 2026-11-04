@@ -200,13 +200,29 @@ describe('geometry follows the scale', () => {
     // surroundings grew. The rules select on the attribute, so no template has
     // to change.
     const components = readWebFile('css/components.css')
-    expect(components).toMatch(/:where\(svg\[width="14"\]\)/)
-    expect(components).toMatch(/:where\(svg\[width="16"\]\)/)
+    expect(components).toMatch(/:where\(svg\[width="14"\]\[height="14"\]\)/)
+    expect(components).toMatch(/:where\(svg\[width="16"\]\[height="16"\]\)/)
     // `:where()` keeps specificity at 0,1,0 so a component that sizes its own
     // SVG (.agent-icon-svg, .li-spinner) still wins.
-    const rules = components.match(/:where\(svg\[width="\d+"\]\)\s*\{[^}]*\}/g) ?? []
+    const rules = components.match(/:where\(svg\[width="\d+"\][^{]*\)\s*\{[^}]*\}/g) ?? []
     expect(rules.length).toBeGreaterThan(15)
     for (const rule of rules) expect(rule).toContain('var(--dp)')
+  })
+
+  it('only scales SQUARE svgs from their width attribute', () => {
+    // An icon is square, so the rule may key on the width attribute alone only
+    // when the height attribute carries the same value. Keying on width alone
+    // flattened every non-square drawing that happened to use an icon-sized
+    // width: the git graph SVG is width="40" on a single-lane history (the
+    // graph's minimum column width) with height = the whole commit list, so it
+    // collapsed to 40x40 and every node below the newest one disappeared.
+    const components = readWebFile('css/components.css')
+    const selectors = stripComments(components).match(/:where\(svg\[width="\d+"\][^)]*\)/g) ?? []
+    expect(selectors.length).toBeGreaterThan(15)
+    for (const sel of selectors) {
+      const w = sel.match(/width="(\d+)"/)?.[1]
+      expect(sel).toContain(`[height="${w}"]`)
+    }
   })
 })
 

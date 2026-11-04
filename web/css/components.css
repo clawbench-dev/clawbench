@@ -1241,39 +1241,47 @@
    selects on the attribute value can scale it without touching the template.
 
    `svg[width="14"]` matches any element whose width ATTRIBUTE is exactly 14 —
-   which is precisely the set lucide generated. Two guards keep this from
+   which is precisely the set lucide generated. Three guards keep this from
    touching icons that were deliberately given a percentage, `em`, or no size:
      • only bare integers are listed, so `width="100%"` never matches;
      • `:where()` keeps specificity at 0,1,0 so a component that sizes its own
-       SVG (`.agent-icon-svg`, `.li-spinner`) still wins.
+       SVG (`.agent-icon-svg`, `.li-spinner`) still wins;
+     • the selector also requires the SAME value in `height`, because an icon is
+       square. Without it any drawing that happens to carry an icon-sized
+       `width` attribute got flattened to a square: the git graph SVG is
+       `width="40"` on a single-lane history (40 is the graph's minimum column
+       width) while its height is the whole list, so it collapsed to 40px tall
+       and only the newest commit's node stayed visible. Requiring the pair
+       keeps non-square SVGs (graphs, charts) out of the rule's reach while
+       still covering every lucide icon and the hand-written square ones.
 
    Adding a new icon size means adding one line here. The list is exhaustive on
    purpose: a size that is missing silently stops scaling, and the failure looks
    like "one icon stayed small", which is easy to miss in review.
    ========================================================================== */
 
-:where(svg[width="9"])  { width: calc(9  * var(--dp)); height: calc(9  * var(--dp)); }
-:where(svg[width="10"]) { width: calc(10 * var(--dp)); height: calc(10 * var(--dp)); }
-:where(svg[width="11"]) { width: calc(11 * var(--dp)); height: calc(11 * var(--dp)); }
-:where(svg[width="12"]) { width: calc(12 * var(--dp)); height: calc(12 * var(--dp)); }
-:where(svg[width="13"]) { width: calc(13 * var(--dp)); height: calc(13 * var(--dp)); }
-:where(svg[width="14"]) { width: calc(14 * var(--dp)); height: calc(14 * var(--dp)); }
-:where(svg[width="15"]) { width: calc(15 * var(--dp)); height: calc(15 * var(--dp)); }
-:where(svg[width="16"]) { width: calc(16 * var(--dp)); height: calc(16 * var(--dp)); }
-:where(svg[width="18"]) { width: calc(18 * var(--dp)); height: calc(18 * var(--dp)); }
-:where(svg[width="20"]) { width: calc(20 * var(--dp)); height: calc(20 * var(--dp)); }
-:where(svg[width="22"]) { width: calc(22 * var(--dp)); height: calc(22 * var(--dp)); }
-:where(svg[width="24"]) { width: calc(24 * var(--dp)); height: calc(24 * var(--dp)); }
-:where(svg[width="26"]) { width: calc(26 * var(--dp)); height: calc(26 * var(--dp)); }
-:where(svg[width="28"]) { width: calc(28 * var(--dp)); height: calc(28 * var(--dp)); }
-:where(svg[width="30"]) { width: calc(30 * var(--dp)); height: calc(30 * var(--dp)); }
-:where(svg[width="32"]) { width: calc(32 * var(--dp)); height: calc(32 * var(--dp)); }
-:where(svg[width="34"]) { width: calc(34 * var(--dp)); height: calc(34 * var(--dp)); }
-:where(svg[width="36"]) { width: calc(36 * var(--dp)); height: calc(36 * var(--dp)); }
-:where(svg[width="40"]) { width: calc(40 * var(--dp)); height: calc(40 * var(--dp)); }
-:where(svg[width="44"]) { width: calc(44 * var(--dp)); height: calc(44 * var(--dp)); }
-:where(svg[width="48"]) { width: calc(48 * var(--dp)); height: calc(48 * var(--dp)); }
-:where(svg[width="56"]) { width: calc(56 * var(--dp)); height: calc(56 * var(--dp)); }
+:where(svg[width="9"][height="9"])  { width: calc(9  * var(--dp)); height: calc(9  * var(--dp)); }
+:where(svg[width="10"][height="10"]) { width: calc(10 * var(--dp)); height: calc(10 * var(--dp)); }
+:where(svg[width="11"][height="11"]) { width: calc(11 * var(--dp)); height: calc(11 * var(--dp)); }
+:where(svg[width="12"][height="12"]) { width: calc(12 * var(--dp)); height: calc(12 * var(--dp)); }
+:where(svg[width="13"][height="13"]) { width: calc(13 * var(--dp)); height: calc(13 * var(--dp)); }
+:where(svg[width="14"][height="14"]) { width: calc(14 * var(--dp)); height: calc(14 * var(--dp)); }
+:where(svg[width="15"][height="15"]) { width: calc(15 * var(--dp)); height: calc(15 * var(--dp)); }
+:where(svg[width="16"][height="16"]) { width: calc(16 * var(--dp)); height: calc(16 * var(--dp)); }
+:where(svg[width="18"][height="18"]) { width: calc(18 * var(--dp)); height: calc(18 * var(--dp)); }
+:where(svg[width="20"][height="20"]) { width: calc(20 * var(--dp)); height: calc(20 * var(--dp)); }
+:where(svg[width="22"][height="22"]) { width: calc(22 * var(--dp)); height: calc(22 * var(--dp)); }
+:where(svg[width="24"][height="24"]) { width: calc(24 * var(--dp)); height: calc(24 * var(--dp)); }
+:where(svg[width="26"][height="26"]) { width: calc(26 * var(--dp)); height: calc(26 * var(--dp)); }
+:where(svg[width="28"][height="28"]) { width: calc(28 * var(--dp)); height: calc(28 * var(--dp)); }
+:where(svg[width="30"][height="30"]) { width: calc(30 * var(--dp)); height: calc(30 * var(--dp)); }
+:where(svg[width="32"][height="32"]) { width: calc(32 * var(--dp)); height: calc(32 * var(--dp)); }
+:where(svg[width="34"][height="34"]) { width: calc(34 * var(--dp)); height: calc(34 * var(--dp)); }
+:where(svg[width="36"][height="36"]) { width: calc(36 * var(--dp)); height: calc(36 * var(--dp)); }
+:where(svg[width="40"][height="40"]) { width: calc(40 * var(--dp)); height: calc(40 * var(--dp)); }
+:where(svg[width="44"][height="44"]) { width: calc(44 * var(--dp)); height: calc(44 * var(--dp)); }
+:where(svg[width="48"][height="48"]) { width: calc(48 * var(--dp)); height: calc(48 * var(--dp)); }
+:where(svg[width="56"][height="56"]) { width: calc(56 * var(--dp)); height: calc(56 * var(--dp)); }
 
 /* ==========================================================================
    App-menu popup chrome (title / scrollable middle / column / divider)
