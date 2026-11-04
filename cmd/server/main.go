@@ -1168,6 +1168,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	defer service.StopSessionCleanupWorker()
 	defer service.StopUploadCleanupWorker()
 	defer service.StopUsageMeterWorker()
+	defer service.StopMailSyncWorker()
 	defer service.StopQueueReaper()
 	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
@@ -1327,6 +1328,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// configured; it exists so a rule that is already past its baseline at
 	// startup (or one crossed by a non-interactive turn) still notifies.
 	service.StartUsageMeterWorker()
+
+	// Background mail polling. No-op until at least one account exists, and it
+	// keeps running while the UI is closed so the dock badge is current.
+	service.StartMailSyncWorker()
 
 	// Start the queue reaper: a safety net that recovers user messages left
 	// stranded at queued=1 by a lost consumer handoff (stale running flag,

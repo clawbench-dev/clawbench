@@ -24,8 +24,9 @@
            runtime. They are separate components because almost no field is
            shared — rendering one card for both produced a blank cron line and a
            meaningless "next run: none" on event tasks. -->
-      <TaskScheduleCard v-if="!isEventTriggered" :task="task" />
-      <TaskEventCard v-else :task="task" />
+      <TaskScheduleCard v-if="!isEventTriggered && !isEmailTriggered" :task="task" />
+      <TaskEventCard v-else-if="isEventTriggered" :task="task" />
+      <TaskMailCard v-else :task="task" />
 
       <!-- Gating script card (collapsible). Shown only when the task has a
            script configured: an empty card would document a feature the task
@@ -60,6 +61,7 @@ import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import TaskScheduleCard from '@/components/task/TaskScheduleCard.vue'
 import TaskEventCard from '@/components/task/TaskEventCard.vue'
+import TaskMailCard from '@/components/task/TaskMailCard.vue'
 import TaskScriptCard from '@/components/task/TaskScriptCard.vue'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
@@ -96,6 +98,7 @@ const taskHasScript = computed(() => !!((task.value.script as string) || '').tri
 // Trigger mode selects which card renders above the prompt. Absent means cron
 // (the pre-event-task default the backend also assumes).
 const isEventTriggered = computed(() => (task.value.triggerMode as string) === 'event')
+const isEmailTriggered = computed(() => (task.value.triggerMode as string) === 'email')
 
 const promptCollapsed = ref(true)
 

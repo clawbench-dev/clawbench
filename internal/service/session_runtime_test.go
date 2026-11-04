@@ -1544,7 +1544,7 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	_ = sub
 
 	// Execute the task — should fail at backend creation and emit "failed" event
-	s.executeTask(task, "/test-project", "manual", nil)
+	s.executeTask(task, "/test-project", "manual", nil, nil)
 
 	// Give a small window for async processing
 	time.Sleep(100 * time.Millisecond)
@@ -1619,7 +1619,7 @@ func TestExecuteTask_ExecuteStreamError(t *testing.T) {
 	_ = sub
 
 	// Execute the task — should fail at ExecuteStream and emit "failed" event
-	s.executeTask(task, "/test-project", "auto", nil)
+	s.executeTask(task, "/test-project", "auto", nil, nil)
 
 	// Give a small window for async processing
 	time.Sleep(200 * time.Millisecond)
@@ -1694,7 +1694,7 @@ func TestExecuteTask_AgentNotFound(t *testing.T) {
 	defer s.Stop()
 
 	// Execute should pause the task and not panic
-	s.executeTask(task, "/test-project", "auto", nil)
+	s.executeTask(task, "/test-project", "auto", nil, nil)
 
 	// Verify task was paused
 	var status string

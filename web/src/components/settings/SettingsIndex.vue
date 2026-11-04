@@ -47,6 +47,7 @@ import {
   Github,
   UserRound,
   Video,
+  Mail,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
@@ -98,6 +99,9 @@ const groupDefs = [
     items: [
       { id: 'terminal', icon: SquareTerminal },
       { id: 'portForward', icon: ArrowLeftRight },
+      // Mailbox accounts sit with the other outbound integrations: they are a
+      // connection this machine holds, not a per-project setting.
+      { id: 'mail', icon: Mail },
       { id: 'forgeIntegration', icon: Github },
     ],
   },

@@ -29,6 +29,7 @@ export type TabId =
   | 'notifications'
   | 'terminal'
   | 'live'
+  | 'mail'
   | 'proxy'
   | 'stats'
   | 'settings'
@@ -82,6 +83,10 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   { id: 'tasks', titleKey: 'nav.tasks' },
   { id: 'terminal', titleKey: 'terminal.title' },
   { id: 'stats', titleKey: 'nav.stats' },
+  // 邮件: a full mail client (accounts, folders, reading, composing). Data is
+  // global rather than per-project — a mailbox belongs to the person, not to a
+  // repository — so the tab looks the same in every project.
+  { id: 'mail', titleKey: 'nav.mail' },
   // 视频会议: the meeting records, and the meeting itself — screen/camera or
   // voice. It used to be two tabs (听记 and 桌面共享) even though both drove the
   // same recorder, the same endpoints and the same artifact folder; a record

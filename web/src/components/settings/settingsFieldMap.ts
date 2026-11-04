@@ -393,6 +393,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
   ],
+  mail: [
+    // Mailbox accounts (IMAP + SMTP). The card body is MailSetting, so this
+    // placeholder only opens the section and must also be listed in
+    // PLACEHOLDER_ITEMS in SettingsCategory.vue.
+    { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+  ],
   providers: [
     // Model-provider list (endpoint + credential). Same shape as the MCP
     // section: the card body is ProviderSetting, so this placeholder item only

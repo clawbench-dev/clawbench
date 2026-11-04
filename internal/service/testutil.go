@@ -71,6 +71,12 @@ func InitInMemoryDB() (*sql.DB, error) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE IF NOT EXISTS task_executions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id INTEGER NOT NULL,
+			read_at DATETIME,
+			status TEXT NOT NULL DEFAULT 'running'
+		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL DEFAULT 0,
@@ -78,7 +84,25 @@ func InitInMemoryDB() (*sql.DB, error) {
 			cron_expr TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
 			prompt TEXT NOT NULL DEFAULT '',
+			script TEXT NOT NULL DEFAULT '',
+			script_timeout INTEGER NOT NULL DEFAULT 0,
+			session_id TEXT NOT NULL DEFAULT '',
+			trigger_mode TEXT NOT NULL DEFAULT 'cron',
+			event_types TEXT NOT NULL DEFAULT '',
+			mail_account_id INTEGER NOT NULL DEFAULT 0,
+			mail_folder TEXT NOT NULL DEFAULT '',
+			mail_from TEXT NOT NULL DEFAULT '',
+			mail_subject TEXT NOT NULL DEFAULT '',
+			mail_body TEXT NOT NULL DEFAULT '',
+			mail_has_attachment INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL DEFAULT 'active',
+			repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
+			max_runs INTEGER NOT NULL DEFAULT 0,
+			last_run_at DATETIME,
+			next_run_at DATETIME,
+			run_count INTEGER NOT NULL DEFAULT 0,
+			last_read_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`); err != nil {

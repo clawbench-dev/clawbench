@@ -67,11 +67,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 21 category rows', () => {
+  it('renders 22 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(21)
+    expect(rows.length).toBe(22)
   })
 
   it('renders category labels', () => {
@@ -112,8 +112,10 @@ describe('SettingsIndex', () => {
     // are agent context, not chat behavior, so they lead the group.
     // AI 摘要 was removed (9 → 8) once the model is picked where it is
     // referenced; 会议 (10) brings the meeting defaults next to STT.
-    expect(perCard).toEqual([3, 10, 3, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(21)
+    // 连接与集成 gained 邮箱账号 (3 → 4): a mailbox is a connection this
+    // machine holds, alongside port forwarding and the forge integration.
+    expect(perCard).toEqual([3, 10, 4, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(22)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -132,7 +134,7 @@ describe('SettingsIndex', () => {
     const expectedIds = [
       'project', 'appearance', 'files',
       'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt', 'meeting',
-      'terminal', 'portForward', 'forgeIntegration',
+      'terminal', 'portForward', 'mail', 'forgeIntegration',
       'notification', 'usageMeter', 'security',
       'debug', 'about',
     ]
