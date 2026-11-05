@@ -116,6 +116,15 @@ jobs:
         run: ./scripts/check-go-coverage.sh
 
       - name: Frontend coverage gate
+        # Same budget as ci.yml's Coverage Gate (Frontend). V8 coverage roughly
+        # triples the suite's wall clock, and the suite has outgrown the
+        # script's default 20-minute watchdog: on v0.134.0 the run was killed
+        # at 1200s mid-suite, never wrote coverage-summary.json, and read as a
+        # gate failure even though the identical commit was green in ci.yml.
+        # The script still kills workers that stop making CPU progress, so a
+        # real hang is not hidden by the longer budget.
+        env:
+          VITEST_TIMEOUT_S: 2700
         run: |
           set +e
           ./scripts/check-frontend-coverage.sh
