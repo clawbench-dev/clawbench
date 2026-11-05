@@ -31,6 +31,12 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 ./build.sh --restart [--restart-skip-build] [--restart-port=8080]
 ```
 
+### 运维：一个数据目录只能跑一个服务
+
+服务启动时在数据目录下取一把独占锁（`.instance.lock`，进程退出即由系统释放，不存在残留锁）。同一个数据目录已有实例在跑时，新进程最多等 10 秒（覆盖重启时旧进程还没退完的窗口）后**拒绝启动**并报错。
+
+原因不是抢端口，而是两个实例共用一个数据库会互相破坏：启动恢复把「库里还有 `streaming=1`」当成「上个进程崩溃了」，于是把对方**正在跑**的那一轮改写成「已取消 + 服务重启中断」并自己重跑一遍，用户看到的就是「消息内容显示已结束，但终止按钮和列表动画还在」。要在本地起第二个实例做实验，必须显式给 `--data-dir /tmp/<某个临时目录>`。
+
 ### 运维：僵尸进程清理
 
 `./scripts/kill-zombies.sh` 清理僵尸（defunct）进程及其孤儿进程树。默认 dry-run 列出僵尸与将要杀的进程树；`--kill` 实际清理（`--force` 跳过确认）；`--port 8080` 额外保护 8080 端口的服务器。
