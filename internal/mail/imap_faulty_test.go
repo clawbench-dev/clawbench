@@ -3,6 +3,7 @@ package mail
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -385,6 +386,14 @@ func TestTakeDecoderError_DistinguishesMalformedReplyFromDroppedSocket(t *testin
 		}
 	})
 
+	t.Run("no client yet", func(t *testing.T) {
+		// The guard exists because classifyFetchError runs on a client whose
+		// connection may already have been dropped by a failed dial.
+		if derr := (&imapClient{}).takeDecoderError(); derr != nil {
+			t.Fatalf("a client without a connection has no decoder error, got %v", derr)
+		}
+	})
+
 	t.Run("dropped socket", func(t *testing.T) {
 		_, acc := startFaultyIMAP(t, &faultyIMAP{dropOnFetch: true})
 		c, err := DialIMAP(ctx, acc)
@@ -404,6 +413,39 @@ func TestTakeDecoderError_DistinguishesMalformedReplyFromDroppedSocket(t *testin
 			t.Fatalf("a clean drop must leave no decoder error, got %v", derr)
 		}
 	})
+}
+
+// The CI variant of the same event: the command reports the dead socket
+// ("use of closed network connection") even though it was the decoder that
+// killed it. Classifying on the command's error alone would call this a plain
+// transport failure, and the folder would never be retried.
+func TestClassifyFetchError_DeadSocketAfterMalformedReplyIsADecodeError(t *testing.T) {
+	ctx := context.Background()
+	_, acc := startFaultyIMAP(t, &faultyIMAP{malformedBodyStructure: true})
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	cl := c.(*imapClient)
+	if _, err := cl.selectFolder(ctx, "INBOX"); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+
+	var set imap.UIDSet
+	set.AddRange(imap.UID(1), imap.UID(1000))
+	opts := &imap.FetchOptions{
+		UID:           true,
+		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+	}
+	_, _ = cl.c.Fetch(set, opts).Collect() // the decoder dies here
+
+	// Exactly what the racing write reports in CI.
+	writeErr := &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}
+	var decode *decodeError
+	if got := cl.classifyFetchError(writeErr); !errors.As(got, &decode) {
+		t.Fatalf("a dead socket after a malformed reply must still be a decode error, got %v", got)
+	}
 }
 
 // A malformed BODYSTRUCTURE used to cost the whole folder: go-imap closes the
