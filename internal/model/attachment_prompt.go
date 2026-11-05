@@ -81,6 +81,8 @@ type QuotePrompt struct {
 	ExecutionID string
 	// MeetingToken is the live-share room token a meeting quote came from.
 	MeetingToken string
+	// MailID is the local mail message a mail quote came from.
+	MailID int64
 }
 
 // ClassifyAttachments splits entries into prompt buckets. excludePaths holds
@@ -109,6 +111,7 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 				MessageID:    f.MessageID,
 				ExecutionID:  f.ExecutionID,
 				MeetingToken: f.MeetingToken,
+				MailID:       f.MailID,
 			})
 			continue
 		}
@@ -180,6 +183,9 @@ func quoteSourceKeys(q QuotePrompt) []string {
 	}
 	if q.MeetingToken != "" {
 		keys = append(keys, "meeting: "+q.MeetingToken)
+	}
+	if q.MailID != 0 {
+		keys = append(keys, fmt.Sprintf("mail: %d", q.MailID))
 	}
 	return keys
 }

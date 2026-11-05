@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import en from '@/i18n/locales/en'
 import MailListItem from '../MailListItem.vue'
 import type { MailMessage } from '@/utils/mailTypes'
+import { readQuoteDragData } from '@/utils/quoteDrag'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
 
@@ -67,5 +68,24 @@ describe('MailListItem time', () => {
     const wrapper = mountRow(now)
     const title = wrapper.find('.mail-row__time').attributes('title') || ''
     expect(title).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+  })
+
+  it('drags as a mail quote: identity only, the body is fetched on drop', async () => {
+    const wrapper = mountRow(Math.floor(Date.now() / 1000))
+    const store = new Map<string, string>()
+    const dt = {
+      setData: (type: string, value: string) => { store.set(type, value) },
+      getData: (type: string) => store.get(type) || '',
+      get types() { return [...store.keys()] },
+      setDragImage: () => {},
+      effectAllowed: '',
+    }
+
+    await wrapper.find('.mail-row').trigger('dragstart', { dataTransfer: dt })
+
+    const payload = readQuoteDragData(dt as unknown as DataTransfer)
+    expect(payload, 'the row must write a quote payload').toBeTruthy()
+    expect(payload).toMatchObject({ mailId: 1, language: 'mail', sourceKind: 'mail', text: '' })
+    expect(payload!.filePath).toBe('周报 · 老板')
   })
 })

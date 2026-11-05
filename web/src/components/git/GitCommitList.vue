@@ -94,7 +94,7 @@
             :key="c.sha"
             class="drilldown-item"
             :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx }"
-            :draggable="canDragCommit(c)"
+            :draggable="isWideScreen && canDragCommit(c)"
             @dragstart="onCommitDragStart(c, $event)"
             @dragend="cleanupDragGhost()"
             @click="$emit('select', c)"
@@ -117,6 +117,19 @@
                 <span v-if="c.author"> · {{ c.author }}</span>
               </div>
             </div>
+            <!-- Quote this commit into a conversation. Dragging the row does the
+                 same thing, but a drag is invisible: every other quotable object
+                 (issue/PR, meeting, file) also has a button, and a commit row
+                 was the one place the action could not be discovered. -->
+            <button
+              v-if="!c.isWT && c.sha"
+              class="commit-quote-btn"
+              :title="t('file.header.quoteInChat')"
+              :aria-label="t('file.header.quoteInChat')"
+              @click.stop="quoteCommit(c)"
+            >
+              <MessageSquare :size="14" />
+            </button>
           </div>
           <div ref="listRef" class="git-load-more-sentinel">
             <div v-if="hasMore && loadingMore" class="git-load-more">
@@ -130,7 +143,7 @@
 </template>
 
 <script setup>
-import { FileText, GitBranch, GitCommitHorizontal, Info, MoreVertical } from 'lucide-vue-next'
+import { FileText, GitBranch, GitCommitHorizontal, Info, MessageSquare, MoreVertical } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
@@ -143,9 +156,13 @@ import { useListKeys } from '@/composables/useListKeys'
 import { refLabelText } from '@/utils/gitGraph'
 import { formatRelativeTime, formatDateTime } from '@/utils/format'
 import { startQuoteDrag, commitDragPayload } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { useUiScale } from '@/composables/useUiScale'
 const { t } = useI18n()
+
+const { isWideScreen } = useWideScreenLayout()
 
 /**
  * Commit row height, in CSS px, for the graph to lay its lanes out against.
@@ -205,6 +222,22 @@ function onCommitDragStart(c, e) {
     // drag that would silently drop nothing.
     e.preventDefault()
   }
+}
+
+/**
+ * Quote a commit from the row's button.
+ *
+ * Same payload as the drag (`commitDragPayload`), but through the shared quote
+ * bar so the user can write an annotation and, for a cross-conversation quote,
+ * pick a destination. The bar is a global singleton, so no event has to be
+ * plumbed up to App.vue.
+ */
+const quoteQuestion = useQuoteQuestion()
+
+function quoteCommit(c) {
+  const payload = commitDragPayload(c)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
 }
 
 const commitSearch = ref('')
@@ -442,6 +475,43 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .git-commit-info {
   flex: 1;
   min-width: 0;
+}
+
+/* Row-level "quote into a conversation" action. Hidden until the row is hovered
+   so the list keeps its density; on touch there is no hover, so it is always
+   visible — an invisible button simply would not exist there. */
+.commit-quote-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  margin-left: var(--space-3);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
+}
+
+.drilldown-item:hover .commit-quote-btn,
+.commit-quote-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .commit-quote-btn { opacity: 1; }
+}
+
+@media (hover: hover) {
+  .commit-quote-btn:hover {
+    color: var(--accent-color, #4a90d9);
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
+  }
 }
 
 .git-commit-msg {

@@ -239,6 +239,7 @@ async function loadAll(): Promise<void> {
 }
 
 onMounted(async () => {
+  window.addEventListener('clawbench-open-mail', handleOpenMail)
   measureWidth()
   if (typeof ResizeObserver !== 'undefined' && rootEl.value) {
     widthObserver = new ResizeObserver((entries) => {
@@ -255,6 +256,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('clawbench-open-mail', handleOpenMail)
   widthObserver?.disconnect()
   widthObserver = null
 })
@@ -327,6 +329,18 @@ async function onQuery(q: string): Promise<void> {
 function openMessage(id: number): void {
   readerMessageId.value = id
   view.value = 'reader'
+}
+
+/**
+ * Opening an email from a quote's "jump to source".
+ *
+ * App switches to the 邮件 tab, then this opens the reader. The id comes from
+ * the quote, so the message does not have to be on the loaded list page (it may
+ * be older than what the folder has cached) — MailReader fetches by id itself.
+ */
+function handleOpenMail(event: Event): void {
+  const detail = (event as CustomEvent<{ messageId?: number }>).detail
+  if (detail?.messageId) openMessage(detail.messageId)
 }
 
 async function backToList(): Promise<void> {

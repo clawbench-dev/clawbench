@@ -151,6 +151,9 @@ export default {
       noBody: '这封邮件没有正文',
       errorTitle: '邮件打开失败',
       attachments: '附件（{n}）',
+      quoteToChat: '引用对话',
+      attachToChat: '添加到对话',
+      attachFailed: '附件添加失败',
     },
     compose: {
       title: '写邮件',
@@ -176,7 +179,8 @@ export default {
       server: '邮件服务器返回错误。',
       busy: '这个邮箱正在同步中，请稍后再试。',
       noRecipients: '请至少填一个收件人。',
-      unsupported: '邮箱地址里 @ 前面那部分含中文等非 ASCII 字符，当前邮件服务器不支持这种地址，这封邮件发不出去。',
+      // 字面 `@` 必须转义：vue-i18n 会把裸 `@` 当成链接消息引用，整个语言包编译失败。
+      unsupported: '邮箱地址里 {\'@\'} 前面那部分含中文等非 ASCII 字符，当前邮件服务器不支持这种地址，这封邮件发不出去。',
       generic: '操作失败，请稍后重试。',
     },
   },
@@ -677,6 +681,9 @@ export default {
     },
     title: 'AI 对话',
     sendError: '错误: {error}',
+    // Drop hint on the chat column while dragging an object (commit, task,
+    // issue/PR, meeting) — it becomes a quote card, not an attachment.
+    dropToQuote: '松开引用到会话',
     shortcutJumpUnread: {
       none: '没有未读会话',
     },
@@ -1175,7 +1182,6 @@ export default {
     },
     pending: {
       uploadedAttachment: '上传附件',
-      fileReference: '文件引用',
       queuing: '排队中',
       insert: '插话',
       insertHint: '把这条消息并入正在生成的回复，本轮的工作继续',
@@ -2452,6 +2458,7 @@ export default {
     selectionQuote: '选中内容',
     typeFile: '文件',
     typeMeeting: '会议',
+    typeMail: '邮件',
     typeTask: '计划任务',
     typeExec: '任务执行',
     typeDiff: 'Git 差异',

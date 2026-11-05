@@ -678,14 +678,16 @@ describe('QueuedMessageBar type scale (source contract)', () => {
 
   it('no longer uses the badge size (2xs) for any card text', () => {
     // 2xs is reserved for badges/corner marks. Any text a user must READ
-    // (message body, header title, file chips, action label) must be larger.
-    for (const sel of ['.queued-bar-text', '.queued-bar-header', '.queued-bar-file', '.queued-bar-action']) {
+    // (message body, header title, action label) must be larger.
+    for (const sel of ['.queued-bar-text', '.queued-bar-header', '.queued-bar-action']) {
       expect(rule(sel), `${sel} must not use the 10px badge size`).not.toMatch(/font-size:\s*var\(--font-size-2xs\)/)
     }
   })
 
-  it('keeps meta (file chips, action label) one step below primary text', () => {
-    expect(rule('.queued-bar-file')).toMatch(/font-size:\s*var\(--font-size-xs\)/)
+  it('keeps the action label one step below primary text', () => {
+    // File/quote chips are no longer styled here: they render through the
+    // shared attachment card / QuoteCard, whose type scale is owned by
+    // css/components.css.
     expect(rule('.queued-bar-action')).toMatch(/font-size:\s*var\(--font-size-xs\)/)
   })
 })
@@ -775,19 +777,23 @@ describe('QueuedMessageBar (attachments reuse the input cards)', () => {
 
     expect(wrapper.find('.chat-file-attachment').exists(), 'shared card').toBe(true)
     expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
-    expect(wrapper.find('.queued-bar-file').exists(), 'no filename pill').toBe(false)
+    expect(wrapper.find('.attachment-quote').exists(), 'a file is not a quote card').toBe(false)
   })
 
-  it('keeps quotes as reference chips (the shared cards skip them)', async () => {
+  it('renders a quote through the shared card, with its label', async () => {
+    // The quote used to be a generic "file ref" pill, so the queued row did not
+    // say WHAT was quoted. It is now the same card the input and a sent bubble
+    // use — label, source type icon and line range included.
     const wrapper = mountRow([
-      { path: '', kind: 'quote', id: 'quote-1', text: 'quoted' },
+      { path: 'Refactor session', kind: 'quote', id: 'quote-1', text: 'quoted', sourceKind: 'message' },
       { path: '/project/main.go', isDir: false },
     ])
     await wrapper.find('.queued-bar-header').trigger('click')
 
-    const chips = wrapper.findAll('.queued-bar-file')
-    expect(chips, 'one chip for the quote').toHaveLength(1)
-    expect(wrapper.findAll('.chat-file-attachment'), 'the file still renders as a card').toHaveLength(1)
+    const cards = wrapper.findAll('.attachment-quote')
+    expect(cards, 'one quote card').toHaveLength(1)
+    expect(cards[0].text()).toContain('Refactor session')
+    expect(wrapper.findAll('.chat-file-attachment'), 'the file still renders as a card').toHaveLength(2)
   })
 
   it('is read-only: no remove control inside a queued row', async () => {

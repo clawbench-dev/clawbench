@@ -77,7 +77,7 @@
           class="res-row"
           role="button"
           tabindex="0"
-          draggable="true"
+          :draggable="isWideScreen"
           :title="item.displayPath"
           @click="open(item)"
           @keydown.enter.prevent="open(item)"
@@ -184,6 +184,7 @@ import { formatFileSize } from '@/utils/fileType'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import { isThumbableExt } from '@/utils/fileManager'
 import { mediaVersionFor } from '@/composables/useMediaWatch'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 
 const props = defineProps<{
   groups: MeetingResourceGroup[]
@@ -198,6 +199,11 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ reload: [] }>()
+
+// Attaching a resource by dragging it onto the chat is a wide-screen gesture —
+// on a narrow layout the chat column is never on screen next to this list.
+// (The per-row "add to conversation" button is the touch fallback.)
+const { isWideScreen } = useWideScreenLayout()
 
 const { t, locale } = useI18n()
 const toast = useToast()
@@ -258,7 +264,7 @@ function attach(item: MeetingResourceItem): void {
 }
 
 function onDragStart(event: DragEvent, item: MeetingResourceItem): void {
-  startAttachDrag(event, item.path, item.name, item.isDir)
+  startAttachDrag(event, item.path, { name: item.name, isDir: item.isDir })
 }
 
 async function copy(text: string): Promise<void> {

@@ -151,6 +151,9 @@ export default {
       noBody: 'This message has no body',
       errorTitle: 'Could not open the message',
       attachments: 'Attachments ({n})',
+      quoteToChat: 'Quote in chat',
+      attachToChat: 'Add to chat',
+      attachFailed: 'Could not add the attachment',
     },
     compose: {
       title: 'New message',
@@ -176,7 +179,9 @@ export default {
       server: 'The mail server returned an error.',
       busy: 'This mailbox is already syncing. Try again in a moment.',
       noRecipients: 'Add at least one recipient.',
-      unsupported: 'The part of the address before @ contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent.',
+      // The literal `@` must be escaped: vue-i18n parses a bare `@` as a
+      // linked-message reference and fails to compile the locale.
+      unsupported: 'The part of the address before {\'@\'} contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent.',
       generic: 'Something went wrong. Try again.',
     },
   },
@@ -676,6 +681,9 @@ export default {
       none: 'No unread sessions',
     },
     sendError: 'Error: {error}',
+    // Drop hint on the chat column while dragging an object (commit, task,
+    // issue/PR, meeting) — it becomes a quote card, not an attachment.
+    dropToQuote: 'Drop to quote in chat',
     input: {
       placeholder: 'Type a message...',
       placeholderQueue: 'Type a message to enqueue...',
@@ -1170,7 +1178,6 @@ export default {
     },
     pending: {
       uploadedAttachment: 'Upload',
-      fileReference: 'File ref',
       queuing: 'Queued',
       insert: 'Insert',
       insertHint: 'Join the reply being written now; its current work continues',
@@ -2454,6 +2461,7 @@ export default {
     selectionQuote: 'Selected text',
     typeFile: 'File',
     typeMeeting: 'Meeting',
+    typeMail: 'Email',
     typeTask: 'Scheduled task',
     typeExec: 'Task run',
     typeDiff: 'Git diff',

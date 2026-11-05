@@ -161,8 +161,7 @@ describe('MeetingResources', () => {
     expect(startAttachDrag).toHaveBeenCalledWith(
       expect.anything(),
       '.clawbench/notes/x/minutes.md',
-      'minutes.md',
-      false,
+      { name: 'minutes.md', isDir: false },
     )
   })
 

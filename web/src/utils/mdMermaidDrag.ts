@@ -15,7 +15,7 @@
  */
 
 import { isShareMode } from '@/share/shareMode'
-import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
+import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { mermaidFenceEndLine } from '@/utils/mdMermaidAttach'
 
 export interface MermaidDragHit {
@@ -62,14 +62,10 @@ export function resolveMermaidDragTarget(e: DragEvent): MermaidDragHit | null {
 export function onMermaidDragStart(e: DragEvent): void {
   const hit = resolveMermaidDragTarget(e)
   if (!hit) return
-  const dt = e.dataTransfer
-  if (!dt) return
+  if (!e.dataTransfer) return
   e.stopPropagation()
-  dt.effectAllowed = 'copy'
   const fileName = hit.path.split('/').pop() || hit.path
-  setAttachDragData(dt, hit.path, false, hit.startLine, hit.endLine)
-  const ghost = buildAttachDragImage(`${fileName}:${hit.startLine}-${hit.endLine}`, false)
-  dt.setDragImage(ghost, 14, 16)
+  startAttachDrag(e, hit.path, { name: fileName, startLine: hit.startLine, endLine: hit.endLine })
 }
 
 /** Delegated dragend: remove the custom ghost (must outlive dragstart). */

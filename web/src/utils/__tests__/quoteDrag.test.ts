@@ -10,6 +10,7 @@ import {
   pipelineDragPayload,
   forgeUnreadDragPayload,
   meetingDragPayload,
+  mailDragPayload,
 } from '@/utils/quoteDrag'
 import { resolveQuoteType } from '@/utils/quoteItem'
 
@@ -235,5 +236,28 @@ describe('meetingDragPayload', () => {
   it('refuses a record with no token', () => {
     expect(meetingDragPayload({ token: '', label: 'x' })).toBeNull()
     expect(meetingDragPayload(null)).toBeNull()
+  })
+})
+
+describe('mailDragPayload', () => {
+  it('carries the message id and a readable label, and no text', () => {
+    const p = mailDragPayload({ id: 77, label: '周报 · 张三' })!
+
+    expect(p.mailId).toBe(77)
+    // Identity only: the drop handler fetches the body (dragstart cannot await).
+    expect(p.text).toBe('')
+    expect(p.language).toBe('mail')
+    expect(p.sourceKind).toBe('mail')
+    expect(p.filePath).toBe('周报 · 张三')
+    expect(resolveQuoteType(p)).toBe('mail')
+  })
+
+  it('falls back to the id when the caller has no label', () => {
+    expect(mailDragPayload({ id: 9 })!.filePath).toBe('#9')
+  })
+
+  it('refuses a record with no id', () => {
+    expect(mailDragPayload({ id: 0, label: 'x' })).toBeNull()
+    expect(mailDragPayload(null)).toBeNull()
   })
 })

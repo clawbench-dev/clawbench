@@ -25,7 +25,7 @@
           :key="task.id"
           class="task-item"
           :class="[task.status, { 'has-unread': task.unreadCount > 0, 'is-running': task.runningCount > 0 }]"
-          draggable="true"
+          :draggable="isWideScreen"
           @dragstart="onTaskDragStart(task, $event)"
           @dragend="cleanupDragGhost()"
           @click="$emit('select', task.id)"
@@ -93,6 +93,18 @@
               <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
           </div>
+          <!-- Quote this task into a conversation. Dragging the row already did
+               this, but a drag is invisible — every other quotable object has a
+               button, and the task list was one of the two places it could not
+               be found. -->
+          <button
+            class="task-quote-btn"
+            :title="t('file.header.quoteInChat')"
+            :aria-label="t('file.header.quoteInChat')"
+            @click.stop="quoteTask(task)"
+          >
+            <MessageSquare :size="14" />
+          </button>
           <div class="task-item-right">
             <span class="task-item-status" :class="task.status">{{ statusLabel(task.status) }}</span>
           </div>
@@ -103,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap, Mail } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap, Mail, MessageSquare } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -116,9 +128,13 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { startQuoteDrag, taskDragPayload } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 
 const { t } = useI18n()
+
+const { isWideScreen } = useWideScreenLayout()
 const { loadTasks, markAllTasksRead } = useTaskTab()
 const { loadAgents, getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 
@@ -198,6 +214,20 @@ function onTaskDragStart(task: { id: number; name?: string }, e: DragEvent) {
     // Nothing usable to drag — cancel rather than start an empty drag.
     e.preventDefault()
   }
+}
+
+/**
+ * Quote a task from the row's button: same payload as the drag, but through the
+ * shared quote bar so the user can annotate it or send it to another
+ * conversation. The bar is a global singleton, so nothing has to be plumbed up
+ * through TaskTab.
+ */
+const quoteQuestion = useQuoteQuestion()
+
+function quoteTask(task: { id: number; name?: string }) {
+  const payload = taskDragPayload(task)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
 }
 
 async function refresh() {
@@ -583,5 +613,41 @@ onMounted(refresh)
   align-self: flex-start;
   margin-top: calc(2 * var(--dp));
   margin-left: calc(10 * var(--dp));
+}
+
+/* Row-level "quote into a conversation" action. Hidden until the row is hovered
+   so the list keeps its density; always visible on touch, where there is no
+   hover at all. */
+.task-quote-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
+}
+
+.task-item:hover .task-quote-btn,
+.task-quote-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .task-quote-btn { opacity: 1; }
+}
+
+@media (hover: hover) {
+  .task-quote-btn:hover {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  }
 }
 </style>

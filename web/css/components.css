@@ -759,6 +759,77 @@
    Scoped to `.attachment-quote`, which only QuoteCard sets, so no normal
    attachment is affected.
    ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Fallback geometry ──
+   The three chat surfaces each declare their own `.chat-file-attachment`
+   metrics (input chip, sent bubble, attachment strip), and those must keep
+   winning. But a NEW host with no such rule — the queued-message bar and its
+   edit sheet — got a card with no height, padding or radius at all, i.e. a bare
+   inline span. That is why those two surfaces used to draw their own chip.
+
+   `:where()` contributes ZERO specificity, so every existing `.chat-file-
+   attachment` rule (0,1,0 or higher) still beats this block. It only fills in
+   where nothing else says anything. */
+:where(.chat-file-attachment.attachment-quote) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    height: calc(40 * var(--dp));
+    padding: 0 var(--space-5);
+    border-radius: var(--radius-lg);
+    max-width: calc(150 * var(--dp));
+    position: relative;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+    transition: opacity var(--duration-base);
+}
+
+:where(.chat-file-attachment.attachment-quote) .attachment-filename {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* Removable card: leave room for the absolutely-positioned close button, so a
+   long label cannot run underneath it. Same 24px the input chip reserves. */
+:where(.chat-file-attachment.attachment-quote.quote-card--removable) {
+    padding-right: calc(24 * var(--dp));
+}
+
+/* Close button, same shape as the one on a file attachment. Needed here for the
+   same reason as the geometry above: the only other declarations are scoped to
+   the components that render file chips. */
+:where(.chat-file-attachment.attachment-quote) .attachment-close-btn {
+    position: absolute;
+    top: calc(4 * var(--dp));
+    right: calc(4 * var(--dp));
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: var(--font-size-2xs);
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--duration-base);
+    z-index: 1;
+}
+
+@media (hover: hover) {
+    :where(.chat-file-attachment.attachment-quote) .attachment-close-btn:hover {
+        background: var(--color-red);
+    }
+}
+
 .chat-file-attachment.attachment-quote {
     background: linear-gradient(
         180deg,

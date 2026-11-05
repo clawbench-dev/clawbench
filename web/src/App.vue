@@ -376,8 +376,9 @@
                        .chat-panel-row: that row also spans the session sidebar,
                        so centering there would push the pill off the chat. -->
                   <div v-if="chatDropActive" class="chat-drop-hint">
-                    <Paperclip :size="16" />
-                    {{ t('file.dropToAttach') }}
+                    <MessageSquare v-if="chatDropKind === 'quote'" :size="16" />
+                    <Paperclip v-else :size="16" />
+                    {{ chatDropKind === 'quote' ? t('chat.dropToQuote') : t('file.dropToAttach') }}
                   </div>
                   </div>
                   <SessionSidebar
@@ -791,6 +792,9 @@ import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
+import { buildMailQuote } from '@/utils/mailQuote'
+import { apiGet } from '@/utils/api'
+import type { MailMessageDetail } from '@/utils/mailTypes'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -1639,6 +1643,30 @@ function handleOpenUsageMeter(e?: Event) {
   recordNotificationOrigin((e as CustomEvent<{ fromNotificationCenter?: boolean }> | undefined)?.detail)
   setPendingSettingsCategory('usageMeter')
   switchTab('settings')
+}
+
+/**
+ * Payload of the `clawbench-open-mail` event (a quote jumping to the email it
+ * was taken from).
+ */
+interface OpenMailDetail { messageId?: number }
+
+/**
+ * Handle clawbench-open-mail.
+ *
+ * The mail panel listens to the SAME event and opens the reader (it owns the
+ * list/reader state). This handler does the one thing the panel cannot: switch
+ * to the 邮件 tab. Mail is global rather than project-scoped, so unlike the
+ * meeting jump there is no project to rebuild first.
+ */
+function handleOpenMail(e: Event) {
+  const detail = (e as CustomEvent<OpenMailDetail>).detail
+  if (!detail?.messageId) {
+    appLog.w(TAG, 'clawbench-open-mail: no messageId in detail, ignoring')
+    return
+  }
+  if (mailTabBlocked()) return
+  switchTab('mail')
 }
 
 /**
@@ -2825,6 +2853,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-forge', handleOpenForge)
   window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
   window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
+  window.addEventListener('clawbench-open-mail', handleOpenMail)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -3717,6 +3746,30 @@ async function handleMeetingQuote(token: string): Promise<void> {
 }
 
 /**
+ * A mail drag carries only the message id (a dragstart cannot await), so the
+ * email is fetched here before the card is staged — the same shape as the
+ * meeting drop above, and the same builder the reader's button uses.
+ */
+async function handleMailQuote(mailId: number): Promise<void> {
+  if (!mailId) return
+  try {
+    const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${mailId}`)
+    if (!data?.message) return
+    const quote = buildMailQuote(data.message, t('mail.list.noSubject'))
+    addStagedQuote(quote)
+    switchTab('chat')
+    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
+      icon: 'chat',
+      type: 'success',
+      duration: 1800,
+    })
+  } catch (e) {
+    appLog.w(TAG, 'mail quote drop failed', e)
+    toast.show(t('common.operationFailed'), { type: 'error', icon: 'warning' })
+  }
+}
+
+/**
  * "Quote in chat" from the meeting detail header — the SAME interaction as the
  * issue/PR detail header: the shared quote bar opens in composer mode with the
  * meeting previewed as a chip and nothing quoted yet. The user annotates it (or
@@ -3774,6 +3827,8 @@ function handleFileQuoteInChat(path: string) {
 }
 const { uploadAndAttach, leaveInputDraft } = useFileUpload()
 const chatDropActive = ref(false)
+/** What the in-flight drag would DO on drop: attach a file, or quote an object. */
+const chatDropKind = ref('attach')
 let chatDropCounter = 0
 
 /** Whether a drag event carries OS files (dragged from the file manager / desktop). */
@@ -3788,15 +3843,22 @@ function onChatColDragEnter(e: DragEvent) {
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
   if (!internal && !quote && !osFiles) return
+  // A quote drag and an attach drag produce completely different things (a quote
+  // card vs an attachment), so the hint has to say which — the ghost looks the
+  // same for both.
+  chatDropKind.value = quote && !internal ? 'quote' : 'attach'
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e: DragEvent) {
   // Allow the drop for internal attach drags (wide-screen), quote drags, and OS
-  // file drops. A quote drag is allowed on narrow screens too: it stages a card
-  // rather than referencing a file path, so there is no wide-screen-only
-  // affordance behind it (the narrow layout IS the chat).
+  // file drops.
+  //
+  // Quote drags are not gated on the layout HERE: every quote drag source gates
+  // itself (a row is draggable only on a wide screen), and duplicating the rule
+  // in the drop handler is how the two drift apart. This handler only has to
+  // accept what a source was willing to start.
   const internal = hasAttachDragData(e.dataTransfer)
   const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
@@ -3847,6 +3909,11 @@ function onChatColDrop(e: DragEvent) {
     // is fetched here before the card is staged.
     if (quote.meetingToken) {
       void handleMeetingQuote(quote.meetingToken)
+      return
+    }
+    // Same reason: a mail row carries its id only, so the body is fetched here.
+    if (quote.mailId) {
+      void handleMailQuote(quote.mailId)
       return
     }
     addStagedQuote(quote)
@@ -4842,6 +4909,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
     window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
     window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
+    window.removeEventListener('clawbench-open-mail', handleOpenMail)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)

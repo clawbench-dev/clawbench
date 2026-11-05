@@ -826,7 +826,17 @@ async function jumpToQuoteSource(q) {
         return
     }
 
-    // 4. Session + message: switch to the session and scroll to the message.
+    // 4. Mail: switch to the 邮件 tab and open that message. The panel owns
+    //    the list/reader state, so the request travels as an event, like the
+    //    meeting jump above. Mail is global, so no project switch is involved.
+    if (q.mailId) {
+        window.dispatchEvent(new CustomEvent('clawbench-open-mail', {
+            detail: { messageId: q.mailId },
+        }))
+        return
+    }
+
+    // 5. Session + message: switch to the session and scroll to the message.
     //    The request is parked in module state because the session may still
     //    have to load (and may be a different project) — see useMessageNavigation.
     if (q.sessionId) {
@@ -837,18 +847,19 @@ async function jumpToQuoteSource(q) {
         return
     }
 
-    // 4. External address (a forge issue/PR, a CI run, a comment anchor).
+    // 6. External address (a forge issue/PR, a CI run, a comment anchor).
     if (q.url) {
         openExternalUrl(q.url)
         return
     }
 
-    // A meeting quote whose token did not survive (an old message) has no
-    // addressable source: opening the label as a path would 404 and look like
-    // a broken file.
+    // A meeting or mail quote whose locator did not survive (an old message)
+    // has no addressable source: opening the label as a path would 404 and
+    // look like a broken file.
     if (q.language === 'meeting' && !q.meetingToken) return
+    if (q.language === 'mail' && !q.mailId) return
 
-    // 5. A file: open it at its line range.
+    // 7. A file: open it at its line range.
     if (!q.filePath) return
     const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
     await openFilePath(relPath, q.startLine, q.endLine, 'chat')

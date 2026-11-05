@@ -11,7 +11,6 @@
  * in the components) means the card never needs to know which side it is on.
  */
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
-import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
 import { extractSpeakableText } from '@/utils/speakableText'
 import { stripGroupProtocolTags, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
 
@@ -69,7 +68,7 @@ export function quotableMessageText(
  * back to 'message' for anything without a url/path — which would label a
  * terminal quote as "chat message" in the drawer.
  */
-export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting'
+export type QuoteSourceKind = 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting' | 'mail'
 
 /** The normalized quote shape used by every quote surface. */
 export interface QuoteItem {
@@ -102,6 +101,8 @@ export interface QuoteItem {
   executionId?: string
   /** Meeting token when the quote came from a meeting record. */
   meetingToken?: string
+  /** Local mail message id when the quote came from an email. */
+  mailId?: number
 }
 
 /** The staged-quote shape owned by useChatContext (structurally compatible). */
@@ -121,6 +122,7 @@ export interface StagedQuoteLike {
   sessionId?: string
   executionId?: string
   meetingToken?: string
+  mailId?: number
 }
 
 /**
@@ -155,6 +157,7 @@ export function fromStagedQuote(q: StagedQuoteLike): QuoteItem {
     sessionId: q.sessionId,
     executionId: q.executionId,
     meetingToken: q.meetingToken,
+    mailId: q.mailId,
   }
 }
 
@@ -183,6 +186,7 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
     sessionId: f.sessionId,
     executionId: f.executionId,
     meetingToken: f.meetingToken,
+    mailId: f.mailId,
   }
 }
 
@@ -236,35 +240,49 @@ export function buildMessageQuote(
 }
 
 /**
- * Build a quote that references a whole object (a file or a forge issue/PR)
- * rather than a text selection.
+ * Build a quote that references a whole object (a file, a forge issue/PR, a
+ * commit, a scheduled task) rather than a free-form selection.
  *
- * This is what the entry-point buttons (file browser, issue/PR detail, CI run)
- * produce: "quote this file" is the same interaction as quoting selected text,
- * differing only in that the quoted thing is the object itself. `text` is
- * therefore EMPTY — the prompt then carries the path/address and the AI reads
- * it, instead of inlining content the user never selected.
+ * This is the ONE builder for every entry-point button that quotes something
+ * it is already displaying: the file viewer header, the issue/PR detail header,
+ * a commit row, a task row, and a code preview's selection. They all used to
+ * assemble the payload by hand, which is how a missing locator (or a second id
+ * format) crept in per surface.
+ *
+ * `text` is EMPTY by default: "quote this file" references the object, and the
+ * prompt then carries the path/address so the AI reads it, instead of inlining
+ * content the user never selected. A surface that DOES have the selected
+ * content in hand (the code preview) passes it, along with the line range.
  *
  * The id is a preview placeholder; the real id is minted when the quote is
- * staged (addStagedQuote).
+ * staged (addStagedQuote) or handed to the delivery helper (mintPendingQuoteId).
  */
 export function quoteItemFromTarget(target: {
   filePath?: string
   url?: string
   label?: string
   language?: string
+  /** Selected content, when the surface has it. Omit for whole-object quotes. */
+  text?: string
+  startLine?: number
+  endLine?: number
+  /** Explicit origin kind; inferred from url/path when omitted. */
+  sourceKind?: QuoteSourceKind
+  /** Local mail message id, for a quote taken from an email. */
+  mailId?: number
 }): QuoteItem {
   const filePath = target.filePath || target.label || ''
   return {
     id: '',
-    text: '',
+    text: target.text || '',
     note: '',
     filePath,
     language: target.language || '',
-    startLine: 0,
-    endLine: 0,
+    startLine: target.startLine || 0,
+    endLine: target.endLine || 0,
     url: target.url,
-    sourceKind: inferSourceKind({ url: target.url, filePath }),
+    sourceKind: target.sourceKind || inferSourceKind({ url: target.url, filePath }),
+    ...(target.mailId ? { mailId: target.mailId } : {}),
   }
 }
 
@@ -298,12 +316,8 @@ export function toFileEntry(q: QuoteItem): FileEntry {
     // Without this the sent meeting quote loses its jump target and falls back
     // to opening its own LABEL as a file path.
     ...(q.meetingToken ? { meetingToken: q.meetingToken } : {}),
+    ...(q.mailId ? { mailId: q.mailId } : {}),
   }
-}
-
-/** Whether an entry in a sent message's files array is a quote. */
-export function isQuoteFileEntry(f: FileEntry): boolean {
-  return isQuoteEntry(f)
 }
 
 /**
@@ -327,6 +341,7 @@ export type QuoteDisplayType =
   | 'chat'      // chat message
   | 'file'      // file / code
   | 'meeting'   // meeting record (minutes / transcript)
+  | 'mail'      // email (body quoted, or the message referenced as a whole)
   | 'selection' // free-form selection with no addressable source
 
 /**
@@ -346,6 +361,7 @@ const TYPE_MARKER_LANGUAGE: Record<string, QuoteDisplayType> = {
   'pr': 'pr',
   'issue': 'issue',
   'meeting': 'meeting',
+  'mail': 'mail',
 }
 
 /**
@@ -356,7 +372,7 @@ const TYPE_MARKER_LANGUAGE: Record<string, QuoteDisplayType> = {
  * selected a hunk means the commit, not the file.
  */
 export function resolveQuoteType(q: Pick<QuoteItem,
-  'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha' | 'taskId' | 'executionId' | 'meetingToken'
+  'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha' | 'taskId' | 'executionId' | 'meetingToken' | 'mailId'
 >): QuoteDisplayType {
   // 1. An explicit type marker from the surface that produced the quote.
   const marked = q.language ? TYPE_MARKER_LANGUAGE[q.language] : undefined
@@ -364,6 +380,7 @@ export function resolveQuoteType(q: Pick<QuoteItem,
 
   // 2. Locators, most specific first.
   if (q.meetingToken) return 'meeting'
+  if (q.mailId) return 'mail'
   if (q.executionId) return 'exec'
   if (q.taskId) return 'task'
   // A CI run carries both its address and the commit it built; a git diff only
@@ -428,10 +445,18 @@ export function quoteLineRange(q: QuoteItem): string {
  */
 export function canJumpToSource(q: QuoteItem): boolean {
   if (q.commitSha) return true
+  if (q.mailId) return true
+  if (q.meetingToken) return true
   if (q.taskId) return true
   if (q.sessionId) return true
   if (q.sourceKind === 'message') return false
   if (q.sourceKind === 'selection') return false
+  // A meeting/mail quote whose locator did not survive (an old message) has no
+  // addressable source. Falling through to the file branch would open its
+  // human-readable label as a path and 404 — the jump handler refuses the same
+  // two shapes, so the button must not be offered either.
+  if (q.sourceKind === 'meeting') return false
+  if (q.sourceKind === 'mail') return false
   if (q.sourceKind === 'url') return !!q.url
   return !!q.filePath
 }

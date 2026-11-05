@@ -86,6 +86,11 @@ type FileEntry struct {
 	// addressable, so without the token the jump handler silently no-ops and
 	// the AI cannot tell which meeting the snippet came from.
 	MeetingToken string `json:"meetingToken,omitempty"`
+	// MailID is the local mail message row a mail quote came from (a quoted
+	// body, or an email referenced as a whole). Mail is global rather than
+	// project-scoped, so the id alone identifies it; the subject and sender
+	// travel in Path as the human-readable label.
+	MailID int64 `json:"mailId,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.

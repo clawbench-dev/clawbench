@@ -216,6 +216,31 @@ export function meetingDragPayload(record: {
   }
 }
 
+/**
+ * Build the payload for an email row.
+ *
+ * Identity only: `dragstart` cannot await and the list row holds no body. The
+ * drop handler fetches the message before staging the card, so dragging a row
+ * and pressing the reader's "quote" button produce the same quote.
+ */
+export function mailDragPayload(record: {
+  id?: number
+  /** Human-readable label, built by the caller with i18n (subject · sender). */
+  label?: string
+} | null): QuoteDragPayload | null {
+  const id = Number(record?.id)
+  if (!id) return null
+  return {
+    text: '',
+    filePath: record?.label || `#${id}`,
+    language: 'mail',
+    startLine: 0,
+    endLine: 0,
+    sourceKind: 'mail',
+    mailId: id,
+  }
+}
+
 /** `owner/repo#123` — the shared label shape for a forge item. */
 function forgeLabel(item: { number?: number; slug?: string; title?: string }): string {
   if (item.slug && item.number) return `${item.slug}#${item.number}`

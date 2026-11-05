@@ -58,7 +58,7 @@ import { Home, HardDrive } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { splitPath, normalizeSlashes, isAbsolutePath, uncShareRoot } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
-import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
+import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag.ts'
 import CopyButton from '@/components/common/CopyButton.vue'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
@@ -113,10 +113,9 @@ const fsRootTitle = computed(() => t('file.nav.fsRoot'))
 
 function onCrumbDragStart(path, name, e) {
   if (!isWideScreen.value) return
-  setAttachDragData(e.dataTransfer, path, true)
-  e.dataTransfer.effectAllowed = 'move'
-  const ghost = buildAttachDragImage(name || '/', true)
-  e.dataTransfer.setDragImage(ghost, 14, 16)
+  // A directory crumb can be dropped on the chat (attach) or on another folder
+  // in the manager (move), so it is the one attach source that advertises move.
+  startAttachDrag(e, path, { name: name || '/', isDir: true, effectAllowed: 'move' })
 }
 
 /**

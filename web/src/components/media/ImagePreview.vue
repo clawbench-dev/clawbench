@@ -113,7 +113,7 @@ function handleKeyDown(e) {
 function onImageDragStart(e) {
     const path = props.file?.path
     if (!path) return
-    startAttachDrag(e, path, baseName(path))
+    startAttachDrag(e, path, { name: baseName(path) })
 }
 
 function onImageDragEnd() {

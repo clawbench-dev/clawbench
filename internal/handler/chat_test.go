@@ -1602,6 +1602,54 @@ func TestAIChat_QuoteAttachment_KeepsMeetingToken(t *testing.T) {
 		"the meeting locator must survive, or the reloaded quote cannot jump back to its meeting")
 }
 
+// TestAIChat_QuoteAttachment_KeepsMailID verifies a mail quote keeps the id of
+// the email it came from, through decode → validate → persist.
+//
+// Same failure shape as the meeting-token regression above: the client sends
+// `mailId`, but a field missing from model.FileEntry is dropped by the JSON
+// decoder, and validatedQuoteEntry (which rebuilds the entry field by field)
+// then has nothing to copy. The quote still renders — only its jump target is
+// gone, so clicking "跳转来源" silently does nothing.
+//
+// The body is a raw map on purpose: marshaling model.FileEntry would only prove
+// the struct has the field, not that the wire name the client sends reaches it.
+func TestAIChat_QuoteAttachment_KeepsMailID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-mail", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "帮我总结这封邮件",
+		"files": []map[string]any{{
+			"path": "季度复盘 · 张三 <zhang@example.com>", "kind": "quote", "id": "quote-mail-1",
+			"text": "本季度收入同比增长 12%", "language": "mail",
+			"sourceKind": "mail", "mailId": 77,
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	queue, err := service.GetQueuedMessages(sessionID)
+	assert.NoError(t, err)
+	require.Len(t, queue, 1)
+	require.Len(t, queue[0].Files, 1)
+
+	got := queue[0].Files[0]
+	assert.Equal(t, "quote", got.Kind)
+	assert.Equal(t, int64(77), got.MailID,
+		"the mail locator must survive, or the reloaded quote cannot jump back to its email")
+}
+
 // TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
 // (no path, message may even be empty) is accepted: files alone satisfy the
 // "message or files required" guard, and an empty Path never reaches

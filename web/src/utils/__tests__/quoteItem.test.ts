@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, resolveQuoteType, buildMessageQuote, quotableMessageText, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, buildMessageQuote, quotableMessageText, type QuoteItem } from '@/utils/quoteItem.ts'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -282,14 +282,6 @@ describe('canJumpToSource', () => {
   })
 })
 
-describe('isQuoteFileEntry', () => {
-  it('is true only for kind=quote', () => {
-    expect(isQuoteFileEntry({ path: '', kind: 'quote' })).toBe(true)
-    expect(isQuoteFileEntry({ path: 'x', kind: 'url', url: 'https://e.com' })).toBe(false)
-    expect(isQuoteFileEntry({ path: '/a.go' })).toBe(false)
-  })
-})
-
 describe('materializeQuotes', () => {
   it('turns staged quotes into kind=quote entries', () => {
     // Both send paths (direct and enqueue) go through this one helper, so a
@@ -338,6 +330,30 @@ describe('quoteItemFromTarget', () => {
     expect(got.filePath).toBe('acme/widgets#7')
   })
 
+  it('carries the selected content and its line range when given', () => {
+    // A preview that HAS the selected code passes it, so the quote is a
+    // snippet rather than a bare "look at this file" reference.
+    const got = quoteItemFromTarget({
+      filePath: '/proj/src/main.ts',
+      language: 'typescript',
+      text: 'const a = 1',
+      startLine: 12,
+      endLine: 14,
+    })
+
+    expect(got).toMatchObject({
+      text: 'const a = 1', language: 'typescript', startLine: 12, endLine: 14,
+      sourceKind: 'file',
+    })
+  })
+
+  it('keeps an explicit sourceKind instead of inferring it', () => {
+    // A commit/task quote has a label but no url, so inference would call it a
+    // file; the surface states what it is.
+    const got = quoteItemFromTarget({ label: 'abc1234 fix: x', sourceKind: 'selection' })
+    expect(got.sourceKind).toBe('selection')
+  })
+
   it('survives the round trip to a send entry', () => {
     // The whole point of the empty text: it must reach the backend as an entry
     // with a path and no content, so the prompt renders a path reference rather
@@ -348,6 +364,37 @@ describe('quoteItemFromTarget', () => {
     expect(entry.path).toBe('/proj/src/main.ts')
     expect(entry.text).toBe('')
     expect(entry.startLine).toBeUndefined()
+  })
+})
+
+describe('mail quotes', () => {
+  it('carries the mail locator through the send entry', () => {
+    // A mail quote's label (subject + sender) is not addressable, so the id is
+    // the only route back to the email — dropping it makes the jump a no-op.
+    const entry = toFileEntry(fromStagedQuote({
+      id: 'q1', text: '正文', filePath: '周报 · 张三', language: 'mail',
+      startLine: 0, endLine: 0, sourceKind: 'mail', mailId: 77,
+    }))
+
+    expect(entry).toMatchObject({ kind: 'quote', mailId: 77, sourceKind: 'mail' })
+    expect(fromFileEntry(entry).mailId).toBe(77)
+  })
+
+  it('is typed as mail and is jumpable', () => {
+    const q: QuoteItem = {
+      id: 'q1', text: '正文', note: '', filePath: '周报 · 张三', language: 'mail',
+      startLine: 0, endLine: 0, sourceKind: 'mail', mailId: 77,
+    }
+    expect(resolveQuoteType(q)).toBe('mail')
+    expect(canJumpToSource(q)).toBe(true)
+  })
+
+  it('is typed as mail from the locator alone (a legacy row with no marker)', () => {
+    const q: QuoteItem = {
+      id: 'q1', text: '', note: '', filePath: '周报 · 张三', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'file', mailId: 77,
+    }
+    expect(resolveQuoteType(q)).toBe('mail')
   })
 })
 

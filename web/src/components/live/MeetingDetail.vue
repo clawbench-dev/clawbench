@@ -6,7 +6,7 @@
       </button>
       <span
         class="meeting-header__title"
-        :draggable="Boolean(record)"
+        :draggable="isWideScreen && Boolean(record)"
         :title="t('meeting.detail.dragHint')"
         @dragstart="onDragStart"
         @dragend="cleanupDragGhost()"
@@ -344,6 +344,7 @@ import { cleanupDragGhost } from '@/utils/attachDrag'
 import { formatClockTime } from '@/utils/format'
 import { resolveUserNickname } from '@/utils/userNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
 import {
   groupNoteSegments,
@@ -360,6 +361,10 @@ import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ token: string; initialTab?: MeetingDetailTab }>()
 const emit = defineEmits<{ back: []; quote: [token: string]; 'tab-change': [tab: MeetingDetailTab] }>()
+
+// Quote drags are a wide-screen gesture: the drop target is the chat column,
+// which a narrow layout never shows next to the drag source.
+const { isWideScreen } = useWideScreenLayout()
 
 /**
  * The meeting-name limit, in characters.

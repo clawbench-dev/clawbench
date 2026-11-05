@@ -512,7 +512,8 @@ import { buildHtmlPreviewSrc } from '@/utils/htmlPreview'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { designToCss } from '@/utils/uiScale'
-import { requestTarget } from '@/composables/useConversationTarget.ts'
+import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
+import { quoteItemFromTarget } from '@/utils/quoteItem.ts'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
@@ -950,13 +951,18 @@ const handleQuoteToChat = () => {
   requestTarget({
     mode: 'add',
     quotes: [{
-      text: code,
-      filePath: target.filePath,
-      language: ft.lang || '',
-      startLine,
-      endLine,
+      // Shared builder (also used by the file/issue/task entry points), so this
+      // surface cannot drift on which fields a quote carries. The id comes from
+      // the one minter: a hand-rolled id format here was a second convention.
+      ...quoteItemFromTarget({
+        filePath: target.filePath,
+        language: ft.lang || '',
+        text: code,
+        startLine,
+        endLine,
+      }),
       note: '',
-      id: `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: mintPendingQuoteId(),
     }],
     attachments: [],
     text: '',

@@ -257,7 +257,7 @@ import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { getNative } from '@/utils/clawbenchNative'
-import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
+import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { useFileShare } from '@/composables/useFileShare'
 
@@ -603,10 +603,7 @@ function handleFileNameDragStart(e) {
     const path = props.file?.path
     const name = props.file?.name
     if (!path || !name) return
-    e.dataTransfer.effectAllowed = 'copy'
-    setAttachDragData(e.dataTransfer, path, false)
-    const ghost = buildAttachDragImage(name, false)
-    e.dataTransfer.setDragImage(ghost, 14, 16)
+    startAttachDrag(e, path, { name })
 }
 
 function handleFileNameDragEnd() {

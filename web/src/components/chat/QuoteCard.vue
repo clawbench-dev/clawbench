@@ -1,7 +1,7 @@
 <template>
   <span
     class="chat-file-attachment attachment-quote"
-    :class="{ 'attachment-quote-note': !!quote.note }"
+    :class="{ 'attachment-quote-note': !!quote.note, 'quote-card--removable': removable }"
     :title="cardTitle"
     @click="$emit('click', quote)"
   >

@@ -1,28 +1,22 @@
 import { ref } from 'vue'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import type { QuoteItem, QuoteSourceKind } from '@/utils/quoteItem'
 
-export interface QuoteData {
-  text: string
-  filePath: string
-  language: string
-  startLine: number
-  endLine: number
-  /** External address when the quote came from a forge object. */
-  url?: string
-  /** Where the quote came from; drives the drawer's jump affordance. */
-  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting'
-  /** DB message id when the quote was taken from a chat message. */
-  messageId?: number
-  /** Commit SHA when the quote came from a git-history or CI-pipeline view. */
-  commitSha?: string
-  /** Scheduled task id when the quote came from a task view. */
-  taskId?: number
-  /** Chat session id when the quote came from a chat message. */
-  sessionId?: string
-  /** Task execution id when the quote came from one run's detail view. */
-  executionId?: string
-  /** Meeting token when the quote came from a meeting record. */
-  meetingToken?: string
+/**
+ * A quote as it travels between surfaces (no id/note yet).
+ *
+ * Derived from `QuoteItem` rather than re-declared: this shape was copied into
+ * three places historically (here, `QuoteItem`, `PendingQuote`), and every new
+ * locator had to be added to all of them or be silently dropped on one path.
+ * `id`/`note` are added by whoever stages the quote (see `StagedQuote`).
+ *
+ * `sourceKind` is relaxed to optional because a producer that does not know the
+ * origin (a plain markdown selection) may omit it — `fromStagedQuote` infers it
+ * from url/path at that point. Everything else stays as strict as `QuoteItem`,
+ * which is the point of deriving instead of re-typing.
+ */
+export type QuoteData = Omit<QuoteItem, 'id' | 'note' | 'sourceKind'> & {
+  sourceKind?: QuoteSourceKind
 }
 
 export interface StagedQuote extends QuoteData {

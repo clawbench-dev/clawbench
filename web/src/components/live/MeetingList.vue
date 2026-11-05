@@ -50,7 +50,7 @@
           class="meeting-row"
           :data-token="r.record.token"
           :data-state="r.state.kind"
-          draggable="true"
+          :draggable="isWideScreen"
           @click="emit('open', r.record.token)"
           @dragstart="onDragStart($event, r.record)"
           @dragend="cleanupDragGhost()"
@@ -237,6 +237,7 @@ import {
   type MeetingRecord,
 } from '@/composables/useMeetingHistory'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
@@ -251,6 +252,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const { isWideScreen } = useWideScreenLayout()
 const dialog = useDialog()
 const toast = useToast()
 const history = useMeetingHistory()

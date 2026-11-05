@@ -200,6 +200,24 @@ func TestApplyAttachmentPrefixes_QuoteRendersMeetingToken(t *testing.T) {
 	assert.Contains(t, got, "(meeting: tok-9)")
 }
 
+// A mail quote's id must reach BOTH the classification and the rendered
+// prompt, for the same reason as the meeting token: the subject/sender label is
+// not addressable, so without the id the AI cannot name the email and the
+// client cannot jump back to it.
+func TestApplyAttachmentPrefixes_QuoteRendersMailID(t *testing.T) {
+	entries := []FileEntry{{
+		Path: "季度复盘 · 张三 <zhang@example.com>", Kind: "quote", ID: "q1", Language: "mail",
+		Text: "本季度收入同比增长 12%", SourceKind: "mail", MailID: 77,
+	}}
+	parts := ClassifyAttachments(entries, nil)
+
+	require.Len(t, parts.Quotes, 1)
+	assert.Equal(t, int64(77), parts.Quotes[0].MailID, "classification must carry the mail locator")
+
+	got := ApplyAttachmentPrefixes("帮我总结这封邮件", nil, nil, parts)
+	assert.Contains(t, got, "(mail: 77)")
+}
+
 // The quote's Path is only a label and may legitimately equal an attached
 // file's path. Checking excludePaths before the quote branch would silently
 // drop the quoted text from the prompt — the single most damaging regression
