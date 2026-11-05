@@ -1042,6 +1042,60 @@ func TestServeGroupMembers_DeleteWithoutIdsIs400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
 
+// A body that is not JSON must be refused before any lookup: otherwise the
+// handler would treat the zero-value ids as a request about the empty group.
+func TestServeGroupMembers_DeleteMalformedJSONIs400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/group/members", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// An id that resolves to no session is 404, not 403: the caller cannot tell
+// "does not exist" from "belongs to someone else", and neither should we.
+func TestServeGroupMembers_DeleteUnknownGroupIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{
+		"groupId": "no-such-group", "memberId": "no-such-member",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}
+
+// A running turn owns every member connection, so removal is refused until it
+// ends — killing the connection mid-reply would leave a half-written row.
+func TestServeGroupMembers_DeleteWhileGroupRunningIs409(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "讨论组", "", []service.GroupMemberSpec{
+		{AgentID: "claude", Backend: "claude", DisplayName: "Claude"},
+		{AgentID: "codebuddy", Backend: "codebuddy", DisplayName: "CodeBuddy"},
+	})
+	require.NoError(t, err)
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+
+	service.SetSessionRunning(groupID, true)
+	t.Cleanup(func() { service.SetSessionRunning(groupID, false) })
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{
+		"groupId": groupID, "memberId": members[1].ID,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "GroupRunning")
+}
+
 // A DB failure while listing must surface as 500, not an empty roster: the UI
 // reads an empty list as "this group has no members" and would offer to add
 // everyone again.
