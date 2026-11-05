@@ -16,6 +16,8 @@ on:
     branches: [main]
     paths:
       - 'web/landing/**'
+      - 'web/docs/**'
+      - 'docs/user-guide/**'
       - '.github/workflows/deploy-landing-pages.yml'
   workflow_dispatch:
 
@@ -37,6 +39,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Same as deploy-landing.yml: the manual builder needs marked /
+      # highlight.js / mermaid from the root package.json.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       # Same staging as the Cloudflare workflow, minus `_headers`: GitHub Pages
       # has no header syntax and would serve it at /_headers. The test file is
       # excluded for the same reason it is there — it would be published.
@@ -54,6 +67,9 @@ jobs:
           # Jekyll is skipped for artifact deploys, but the marker keeps the
           # site intact if the Pages source is ever switched to a branch.
           touch dist/.nojekyll
+
+      - name: Build user guide
+        run: node web/docs/build.mjs --out dist/docs
 
       - uses: actions/upload-pages-artifact@v3
         with:

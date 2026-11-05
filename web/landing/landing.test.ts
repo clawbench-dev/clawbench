@@ -380,7 +380,8 @@ describe('landing page', () => {
       const locs = Array.from(xml.matchAll(/<loc>([^<]+)<\/loc>/g)).map((m) => m[1])
       // Both directions matter: a missing entry means the page is undiscovered,
       // a stale one means the sitemap points at a URL that no longer exists.
-      expect(locs).toEqual([CANONICAL])
+      // /docs/ 是手册站点入口（各章节页靠站内互链被发现）。
+      expect(locs).toEqual([CANONICAL, `${CANONICAL}docs/`])
     })
 
     /** Paths handed to `cp -r` by a workflow's staging step. */

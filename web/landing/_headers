@@ -17,3 +17,13 @@
 
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
+
+# 手册站（/docs/）单独一档：截图文件名会随功能更新被原地覆盖
+# （docs/user-guide/screenshots/ 是同一批文件名重拍），所以不能像 /img/*
+# 那样 immutable 缓存一年，否则改完手册老访客看不到新图。
+# 规则靠下者优先，HTML 的 must-revalidate 必须写在 /docs/* 后面。
+/docs/*
+  Cache-Control: public, max-age=3600
+
+/docs/*.html
+  Cache-Control: public, max-age=0, must-revalidate
