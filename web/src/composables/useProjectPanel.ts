@@ -89,18 +89,21 @@ export function loadProjectPanel(root: string): string | null {
  *    still switchable (a notification deep link opens it), but the user has
  *    asked for it not to be part of the dock, so restoring a project must not
  *    land them on a panel with no entry pointing at it (issue #590).
+ * 6. Same for `mail` while the mail feature is switched off.
  */
 export function resolvePanelTab(
   remembered: string | null,
   isWideScreen: boolean,
   hasOpenFile: boolean,
   forgeHidden = false,
+  mailHidden = false,
 ): TabId {
   const fallback: TabId = isWideScreen ? 'browse' : 'chat'
   if (!remembered) return fallback
   if (isWideScreen && remembered === 'chat') return 'browse'
   if (remembered === 'view' && !hasOpenFile) return 'browse'
   if (remembered === 'forge' && forgeHidden) return fallback
+  if (remembered === 'mail' && mailHidden) return fallback
   return isDockTabId(remembered) ? remembered : fallback
 }
 

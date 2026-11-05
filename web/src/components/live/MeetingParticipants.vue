@@ -1,4 +1,11 @@
 <template>
+  <!-- Headcount above the list. The tab badge already carries the number, but
+       this is the pane that answers "who is here", so the total has to be
+       readable in it too — and the host row below makes the count verifiable. -->
+  <p class="mp-total" data-role="participants-total">
+    {{ t('liveShare.memberCount', { n: total }) }}
+  </p>
+
   <ul class="mp" data-role="participants">
     <!-- The host is a participant too: pinning them first is what makes the
          list read as "who is in this meeting" rather than "who is watching
@@ -167,7 +174,7 @@ import { useI18n } from 'vue-i18n'
 import { Mic, MicOff, MonitorOff, UserX } from 'lucide-vue-next'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { LiveViewerInfo } from '@/composables/useLiveShare'
-import { viewerLabels } from './viewerLabels'
+import { viewerLabels, memberCount } from './viewerLabels'
 
 const props = defineProps<{
   /** The host's own nickname (already resolved from the account). */
@@ -199,6 +206,9 @@ const { t } = useI18n()
    screen card names the same person and must not say something else. */
 const labels = computed(() => viewerLabels(props.viewers))
 
+/** Host + viewers: the host is pinned as a row, so it counts as one person. */
+const total = computed(() => memberCount(props.viewers))
+
 function label(v: LiveViewerInfo): string {
   return labels.value[v.id] || v.name || v.id
 }
@@ -218,6 +228,14 @@ function subline(v: LiveViewerInfo): string {
 </script>
 
 <style scoped>
+/* The headcount line: a caption for the list, not a control. No bottom margin
+   — the pane is a flex column and already spaces its children. */
+.mp-total {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
 .mp {
   list-style: none;
   margin: 0;

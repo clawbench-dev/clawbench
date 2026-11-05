@@ -167,6 +167,7 @@ var hotReloadFields = map[string]bool{
 	"forge.notify.commented":    true,
 	"forge.notify.pipeline":     true,
 	"forge.pause_event_tasks":   true,
+	"mail.enabled":              true,
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
@@ -308,6 +309,7 @@ type configResponse struct {
 	Skills         configSkills         `json:"skills"`
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
+	Mail           configMail           `json:"mail"`
 	UsageMeter     configUsageMeter     `json:"usage_meter"`
 	MCP            configMCP            `json:"mcp"`
 	ShellEnv       configShellEnv       `json:"shell_env"`
@@ -592,6 +594,15 @@ type configForgeNotify struct {
 	Reopened  bool `json:"reopened"`
 	Commented bool `json:"commented"`
 	Pipeline  bool `json:"pipeline"`
+}
+
+// configMail exposes the mail client's master switch.
+//
+// Only the switch is here: the accounts themselves live in the database and are
+// managed through /api/mail/accounts, and disabling mail deliberately does not
+// touch them.
+type configMail struct {
+	Enabled bool `json:"enabled"`
 }
 
 type configFileSearch struct {
@@ -940,6 +951,7 @@ var PatchableConfigPaths = map[string]bool{
 	"forge.notify.commented":             true,
 	"forge.notify.pipeline":              true,
 	"forge.pause_event_tasks":            true,
+	"mail.enabled":                       true,
 	"file_search.display_limit":          true,
 	"tls.cert_dir":                       true,
 	"fonts.dir":                          true,
@@ -1162,6 +1174,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		ShellEnv:   configShellEnv{Inherit: cfg.ShellEnv.Inherit},
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
+		Mail:       configMail{Enabled: cfg.Mail.Enabled},
 		UsageMeter: configUsageMeter{
 			Enabled:    cfg.UsageMeter.Enabled,
 			AnchorDate: cfg.UsageMeter.AnchorDate,
@@ -2547,6 +2560,15 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			applyBool("reopened", &cfg.Forge.Notify.Reopened)
 			applyBool("commented", &cfg.Forge.Notify.Commented)
 			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
+		}
+	}
+
+	// Mail master switch. Only the switch is patchable — the accounts live in
+	// the database and are managed through /api/mail/accounts, so disabling mail
+	// must not (and does not) touch them.
+	if mailMap, ok := patch["mail"].(map[string]any); ok {
+		if v, ok := mailMap["enabled"].(bool); ok {
+			cfg.Mail.Enabled = v
 		}
 	}
 

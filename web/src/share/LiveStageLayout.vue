@@ -67,6 +67,15 @@
           @click="selectTab('participants')"
         >
           {{ t('share.live.participants') }}
+          <!-- Headcount beside the label: "who else is here" is the question
+               this tab answers, and the number answers half of it without a
+               click. Hidden at zero so a not-yet-synced roster does not print
+               a misleading "0". -->
+          <span
+            v-if="participantCount > 0"
+            class="live-side-count"
+            data-role="participants-count"
+          >{{ participantCount }}</span>
         </button>
         <span class="live-side-gap" />
         <button
@@ -147,8 +156,10 @@ const props = withDefaults(
     notesAvailable?: boolean
     /** Whether the 成员 tab exists (the audience has a roster; a lone host may not). */
     participantsAvailable?: boolean
+    /** How many people are in the room (host included). 0 = not known yet. */
+    participantCount?: number
   }>(),
-  { notesAvailable: false, participantsAvailable: false },
+  { notesAvailable: false, participantsAvailable: false, participantCount: 0 },
 )
 
 const emit = defineEmits<{
@@ -289,6 +300,20 @@ defineExpose({ rootEl: computed(() => rootRef.value) })
   color: var(--accent-color, #4a90d9);
   border-bottom-color: var(--accent-color, #4a90d9);
   font-weight: 600;
+}
+
+/* Headcount on the 成员 tab. Same quiet pill as the app's other counters, not
+   the accent of an unread badge: being in a meeting is not a pending event. */
+.live-side-count {
+  min-width: calc(14 * var(--dp));
+  padding: 0 calc(4 * var(--dp));
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.08));
+  color: var(--text-secondary, #8b949e);
+  font-size: calc(10 * var(--dp));
+  line-height: calc(14 * var(--dp));
+  font-weight: 500;
+  text-align: center;
 }
 
 /* Pushes the close button to the far edge, so the tabs stay left-aligned like

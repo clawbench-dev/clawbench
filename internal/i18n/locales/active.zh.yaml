@@ -53,6 +53,8 @@ LiveSFUCredentialsPair: API Key 与 Secret 必须同时填写
 ViewerNameRequired: 请填写称谓后再加入
 LiveNotesGenerating: 纪要仍在生成中
 LiveNotesMeetingLive: 会议仍在进行中
+MeetingImportUnavailable: 服务器没有安装 ffmpeg，无法导入录音或视频文件
+MeetingImportTooLarge: 文件超过 4 GB，无法导入
 InvalidRequestBody: 请求体无效
 NotADirectory: 不是目录
 NotAFile: 不是文件

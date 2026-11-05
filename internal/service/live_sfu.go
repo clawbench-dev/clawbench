@@ -20,7 +20,8 @@ import (
 //
 // The secret lives here rather than in config.yaml because config.yaml is
 // copied, backed up and pasted into chat far more often than a database file is.
-// The HTTP layer never returns it — see handler/live_sfu.go.
+// The HTTP layer returns it only on an explicit `?reveal=1` — see
+// handler/live_sfu.go.
 const LiveSFUDDL = `
 CREATE TABLE IF NOT EXISTS live_sfu_config (
 	id INTEGER PRIMARY KEY CHECK (id = 1),

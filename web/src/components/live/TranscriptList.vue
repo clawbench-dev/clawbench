@@ -4,6 +4,7 @@
     class="transcript"
     :class="{ 'transcript--fill': fill }"
     data-media-gallery
+    @scroll.passive="onScroll"
     @click="interactions.handleClick"
   >
     <div
@@ -85,7 +86,7 @@
  * panel pads its own body — through `--transcript-inset`, which defaults to 0
  * here so the token is declared where it is read.
  */
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { shotLabel, shotRefName } from '@/utils/meetingShots'
@@ -94,6 +95,7 @@ import { escapeHtml } from '@/utils/html.ts'
 import { annotatePlainText } from '@/composables/usePlainTextAnnotation.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useMarkdownDocumentInteractions } from '@/composables/useMarkdownDocumentInteractions.ts'
+import { useStickToBottom } from '@/composables/useStickToBottom.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
@@ -361,31 +363,21 @@ watch(() => props.blocks, verifyRenderedPaths, { flush: 'post' })
 onMounted(verifyRenderedPaths)
 
 /**
- * Follows the conversation, but only when the reader is already at the bottom.
- *
- * The publisher's pane used to scroll unconditionally, so scrolling up to
- * re-read an earlier line was undone by the next segment. "At the bottom" is
- * measured before the new row is laid out, which is why it happens first.
+ * Follows the conversation while the reader is at the bottom, and lands on the
+ * newest line when the list (re)appears — a 转写 tab opened mid-meeting, or a
+ * `v-show` panel being reopened, both used to start at the top of the meeting
+ * and never catch up. The mechanics live in the shared composable so the live
+ * chat beside it cannot drift.
  *
  * The signature is the row count AND the length of the last row's text: one
  * speaker talking without a pause extends the last block instead of adding a
  * row, and watching only the count left the panel frozen while the words grew
  * below the fold.
  */
-watch(
-  () => {
-    const last = props.blocks[props.blocks.length - 1]
-    return `${props.blocks.length}:${last?.text.length ?? 0}`
-  },
-  async () => {
-    const el = rootRef.value
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    if (!nearBottom) return
-    await nextTick()
-    el.scrollTop = el.scrollHeight
-  },
-)
+const { onScroll } = useStickToBottom(rootRef, () => {
+  const last = props.blocks[props.blocks.length - 1]
+  return `${props.blocks.length}:${last?.text.length ?? 0}`
+})
 </script>
 
 <style scoped>

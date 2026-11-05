@@ -197,9 +197,10 @@ function card(wrapper: ReturnType<typeof mountPanel>, kind: 'audio' | 'video', i
   return wrapper.find(`[data-role="device-choice"][data-kind="${kind}"] [data-device="${id}"]`)
 }
 
-function mountPanel() {
+function mountPanel(props: Record<string, unknown> = {}) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
   return mount(MeetingCreate, {
+    props,
     global: {
       plugins: [i18n],
       stubs: {
@@ -368,6 +369,44 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.find('[data-role="meeting-relay-missing"]').text()).toBe(
       enMessages.meeting.create.relayNotConfigured,
     )
+  })
+
+  // The form is where the user finds out the relay is missing, so it carries
+  // the action instead of making them hunt for 设置 → 会议. The jump itself
+  // (origin + return to this form) is wired in App.vue — see
+  // meetingRelaySettingsWiring.test.ts.
+  it('offers a jump to the relay configuration from its heading', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const jump = wrapper.find('[data-action="meeting-relay-settings"]')
+    expect(jump.exists()).toBe(true)
+    expect(jump.text()).toBe(enMessages.meeting.create.relaySettings)
+    await jump.trigger('click')
+
+    expect(wrapper.emitted('relaySettings')).toHaveLength(1)
+  })
+
+  // The jump leaves this form mounted (the tab is only hidden), so `onMounted`
+  // never runs again. Without the re-read the switch keeps the pre-jump state
+  // and starting a relay meeting stays blocked after the user just fixed it.
+  it('re-reads the relay state when the form comes back on screen', async () => {
+    stubCaptureApi(true)
+    const wrapper = mountPanel({ active: true })
+    await flushPromises()
+    await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
+    await wrapper.find('[data-role="meeting-relay"]').setValue(true)
+    expect(wrapper.find('[data-role="meeting-relay-missing"]').exists()).toBe(true)
+
+    // Away to 设置 → 会议, where the endpoint is stored and tested.
+    await wrapper.setProps({ active: false })
+    sfuApi.state = { url: 'wss://relay.example.com', hasSecret: true, configured: true }
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+
+    expect(wrapper.find('[data-role="meeting-relay-missing"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="meeting-start"]').attributes('disabled')).toBeUndefined()
   })
 
   it('blocks starting a relay meeting until the relay is configured', async () => {
@@ -846,11 +885,14 @@ describe('MeetingCreate in a browser', () => {
   // The desktop shell promotes its own origin, so this form still works on
   // http — but the link it is about to create will not work for guests. The
   // notice sits above the form (not instead of it) and says exactly that.
+  //
+  // `isSecureContext` is TRUE here on purpose: that is what the shell reports
+  // on an http origin, so keying the banner on it would hide it forever.
   it('warns the desktop shell that guests will need HTTPS', async () => {
     stubCaptureApi(false)
     nativeApi.value = { isDesktopApp: () => true, listCaptureSources: vi.fn(async () => '[]') }
     const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
-    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
     try {
       const wrapper = mountPanel()
       await flushPromises()

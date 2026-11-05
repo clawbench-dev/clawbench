@@ -33,7 +33,12 @@ func withLiveSFUTestDB(t *testing.T) {
 
 func doLiveSFU(t *testing.T, h http.HandlerFunc, method, body string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
-	req := httptest.NewRequest(method, "/api/live-share/sfu", strings.NewReader(body))
+	return doLiveSFUAt(t, h, method, "/api/live-share/sfu", body)
+}
+
+func doLiveSFUAt(t *testing.T, h http.HandlerFunc, method, target, body string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h(rec, req)
@@ -65,6 +70,28 @@ func TestServeLiveSFUConfig_EmptyThenSaved(t *testing.T) {
 		}
 	}
 	assert.NotContains(t, rec.Body.String(), "lk-secret")
+}
+
+func TestServeLiveSFUConfig_RevealReturnsStoredCredential(t *testing.T) {
+	withLiveSFUTestDB(t)
+
+	_, _ = doLiveSFU(t, ServeLiveSFUConfig, http.MethodPatch,
+		`{"url":"wss://relay.example.com:7880","apiKey":"lk-key","apiSecret":"lk-secret"}`)
+
+	// Without the explicit request the credential stays out of the body.
+	rec, _ := doLiveSFU(t, ServeLiveSFUConfig, http.MethodGet, "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "lk-secret")
+	assert.NotContains(t, rec.Body.String(), "lk-key")
+
+	// The eye button's request does carry it, so the panel can show what is
+	// stored instead of leaving the operator to guess.
+	rec, got := doLiveSFUAt(t, ServeLiveSFUConfig, http.MethodGet, "/api/live-share/sfu?reveal=1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "lk-key", got["apiKey"])
+	assert.Equal(t, "lk-secret", got["apiSecret"])
+	assert.Equal(t, "wss://relay.example.com:7880", got["url"])
+	assert.Equal(t, true, got["hasSecret"])
 }
 
 func TestServeLiveSFUConfig_URLOnlyEditKeepsSecret(t *testing.T) {

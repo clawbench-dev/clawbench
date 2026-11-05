@@ -88,7 +88,11 @@ const i18n = createI18n({
           failedDesc: '请检查网络',
           failedIceDesc: '无法建立媒体连接',
           retry: '重试',
-          enableSound: '开启声音',
+          soundToggle: '声音',
+          soundOn: '声音已开',
+          soundOff: '声音已关',
+          soundOnHint: '正在播放会议里的声音',
+          soundOffHint: '点击打开声音',
           fullscreen: '全屏',
           exitFullscreen: '退出全屏',
         },
@@ -461,8 +465,8 @@ describe('LiveShareView microphone toggle', () => {
   })
 })
 
-describe('LiveShareView sound unlock', () => {
-  it('does not prompt for sound on a silent stream', async () => {
+describe('LiveShareView sound toggle', () => {
+  it('offers no sound toggle on a silent stream', async () => {
     const w = mountView()
     await flushPromises()
 
@@ -471,11 +475,11 @@ describe('LiveShareView sound unlock', () => {
     } as unknown as MediaStream)
     await flushPromises()
 
-    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+    expect(w.find('[data-action="toggle-sound"]').exists()).toBe(false)
     w.unmount()
   })
 
-  it('unmutes the element when sound is unlocked', async () => {
+  it('flips between "sound off" and "sound on" instead of disappearing', async () => {
     const w = mountView()
     await flushPromises()
     lastViewer?.opts?.callbacks?.onStream?.({
@@ -485,33 +489,44 @@ describe('LiveShareView sound unlock', () => {
 
     const video = w.find('video').element as HTMLVideoElement
     expect(video.muted).toBe(true)
+    expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已关')
+    expect(w.find('[data-action="toggle-sound"]').attributes('aria-checked')).toBe('false')
 
-    await w.find('[data-action="enable-sound"]').trigger('click')
+    await w.find('[data-action="toggle-sound"]').trigger('click')
     await flushPromises()
 
     expect(video.muted).toBe(false)
+    // The button stays in the dock, relabelled: the way to mute again.
+    expect(w.find('[data-action="toggle-sound"]').exists()).toBe(true)
+    expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已开')
+    expect(w.find('[data-action="toggle-sound"]').attributes('aria-checked')).toBe('true')
+
+    await w.find('[data-action="toggle-sound"]').trigger('click')
+    await flushPromises()
+
+    expect(video.muted).toBe(true)
+    expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已关')
     w.unmount()
   })
 
-  it('does not ask again after a re-attach, when the sound is already on', async () => {
+  it('keeps the sound on across a re-attach', async () => {
     const w = mountView()
     await flushPromises()
     const audioStream = { getAudioTracks: () => [{}] } as unknown as MediaStream
     lastViewer?.opts?.callbacks?.onStream?.(audioStream)
     await flushPromises()
 
-    await w.find('[data-action="enable-sound"]').trigger('click')
+    await w.find('[data-action="toggle-sound"]').trigger('click')
     await flushPromises()
-    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
 
-    // The publisher swapping its picture source re-attaches a stream, and the
-    // prompt used to come back on "this stream has audio" alone — over audio
-    // that is already playing, so pressing it changed nothing.
+    // The publisher swapping its picture source re-attaches a stream. The mute
+    // state lives on the element, so the toggle must read it back rather than
+    // re-muting the viewer (or claiming the sound is off while it plays).
     lastViewer?.opts?.callbacks?.onStream?.(audioStream)
     await flushPromises()
 
-    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
     expect((w.find('video').element as HTMLVideoElement).muted).toBe(false)
+    expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已开')
     w.unmount()
   })
 })

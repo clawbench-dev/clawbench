@@ -727,6 +727,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
 	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
 	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
+	// Import an existing recording or video as a meeting: the file is decoded to
+	// the same mono Opus track a solo recording produces, then the ordinary
+	// transcript → proofread → minutes chain runs on it.
+	register("/api/live-share/notes/import", ServeLiveNotesImport)
 	// Regeneration: plan first (the confirmation sheet), then accept or cancel.
 	// The plan endpoint is read-only; the POST recomputes the plan instead of
 	// trusting the client's copy.

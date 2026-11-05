@@ -61,6 +61,11 @@ const i18n = createI18n({
           micOnHint: '其他人可以听到你说话',
           micOffHint: '点击打开麦克风发言',
           micNeedsHttps: '需要 HTTPS 才能使用麦克风',
+          soundToggle: '声音',
+          soundOn: '声音已开',
+          soundOff: '声音已关',
+          soundOnHint: '正在播放会议里的声音',
+          soundOffHint: '点击打开声音',
           statusConnecting: '连接中…',
           joinSubtitle: '主持人邀请你加入会议。填一个称谓，发布端与其他观众会看到它。',
           joinNick: '你的称谓',
@@ -81,7 +86,7 @@ const i18n = createI18n({
           shareScreenHint: '把你的屏幕共享给所有人',
           stopSharingHint: '停止共享你的屏幕',
           youAreSharing: '你正在共享屏幕',
-          viewingSharer: '成员 {id} 正在共享屏幕',
+          viewingSharer: '{name} 正在共享屏幕',
           backToHost: '看主持人',
           viewShared: '看共享',
           shareFailed: '无法开始共享',
@@ -274,7 +279,7 @@ describe('LiveShareView control dock', () => {
     w.unmount()
   })
 
-  it('offers "enable sound" inside the dock, not floating over the picture', async () => {
+  it('offers the sound toggle inside the dock, not floating over the picture', async () => {
     const w = mountView()
     await flushPromises()
 
@@ -284,7 +289,7 @@ describe('LiveShareView control dock', () => {
     } as unknown as MediaStream)
     await flushPromises()
 
-    const btn = w.find('[data-action="enable-sound"]')
+    const btn = w.find('[data-action="toggle-sound"]')
     expect(btn.exists()).toBe(true)
     // Same rule as the other controls: one dock, nothing else over the video.
     expect(btn.element.closest('.live-dock')).not.toBeNull()
@@ -292,7 +297,10 @@ describe('LiveShareView control dock', () => {
     await btn.trigger('click')
     await flushPromises()
 
-    expect(w.find('[data-action="enable-sound"]').exists()).toBe(false)
+    // Turning the sound on must not take the control away: it becomes the mute
+    // button, which is the only way back to silence on a phone.
+    expect(w.find('[data-action="toggle-sound"]').exists()).toBe(true)
+    expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已开')
 
     w.unmount()
   })

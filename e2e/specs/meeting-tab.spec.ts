@@ -47,8 +47,13 @@ test.describe('Meeting tab', () => {
     const micOff = form.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]')
 
     // A picture source is pre-selected (a screen when one can be enumerated),
-    // so the only thing missing is the required nickname.
+    // so the only thing missing is the required nickname. Clear it first: the
+    // field is prefilled from the ACCOUNT nickname, which another browser
+    // project in the same run sets when it creates a meeting (the server is
+    // shared), and "empty nickname blocks start" must not depend on whether
+    // that already happened.
     const start = page.locator('[data-action="meeting-start"]')
+    await page.locator('[data-role="meeting-nick"]').fill('')
     await expect(start).toBeDisabled()
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     await expect(start).toBeEnabled()
@@ -352,5 +357,75 @@ test.describe('Meeting flow', () => {
         { timeout: 20000, intervals: [500, 1000, 2000] },
       )
       .toBe(200)
+  })
+})
+
+/**
+ * Importing an existing recording is the only way a meeting can be created
+ * without media capture, which makes it the one full record lifecycle the
+ * browser can drive end to end.
+ */
+test.describe('Meeting import', () => {
+  /** A silent 1-second 16 kHz mono WAV: a real container ffmpeg can decode. */
+  function silentWav(): Buffer {
+    const data = Buffer.alloc(16_000 * 2)
+    const header = Buffer.alloc(44)
+    header.write('RIFF', 0)
+    header.writeUInt32LE(36 + data.length, 4)
+    header.write('WAVEfmt ', 8)
+    header.writeUInt32LE(16, 16)
+    header.writeUInt16LE(1, 20)
+    header.writeUInt16LE(1, 22)
+    header.writeUInt32LE(16_000, 24)
+    header.writeUInt32LE(32_000, 28)
+    header.writeUInt16LE(2, 32)
+    header.writeUInt16LE(16, 34)
+    header.write('data', 36)
+    header.writeUInt32LE(data.length, 40)
+    return Buffer.concat([header, data])
+  }
+
+  test('a picked recording becomes a meeting named after the file', async ({ page }) => {
+    await page.goto('/')
+    // The conversion runs on the server; a machine without ffmpeg reports the
+    // capability up front and this flow is unavailable there.
+    const available = await page.evaluate(async () => {
+      const resp = await fetch('/api/live-share/notes/sessions')
+      const body = (await resp.json()) as { import?: { available?: boolean } }
+      return body.import?.available !== false
+    })
+    test.skip(!available, 'this server has no ffmpeg')
+
+    await page.locator('.dock-btn[data-tab="live"]').filter({ visible: true }).first().click()
+
+    const name = `E2E 录音 ${Date.now()}`
+    // The hidden input is the same code path the drop handler uses; a phone has
+    // no drag gesture, so the picker is not a test-only entry point.
+    await page.locator('.meeting-file-input').setInputFiles({
+      name: `${name}.wav`,
+      mimeType: 'audio/wav',
+      buffer: silentWav(),
+    })
+
+    // One file opens its own record so the user watches it generate.
+    await expect(page.locator('.meeting-tabs')).toBeVisible({ timeout: 30000 })
+    await expect(page.locator('.meeting-header__title')).toContainText(name)
+
+    // The recording itself stays a resource of the meeting: the converted audio
+    // is a derivative, not a replacement.
+    await expect(page.locator('.res-row', { hasText: `${name}.wav` })).toBeVisible()
+
+    // The record exists whether or not recognition succeeds (no STT provider is
+    // configured in e2e), which is what keeps a failed import visible instead
+    // of silently vanishing.
+    await page.locator('[data-action="meeting-back"]').click()
+    const row = page.locator('.meeting-row', { hasText: name })
+    await expect(row).toBeVisible({ timeout: 10000 })
+
+    // Leave the shared database as it was found.
+    await row.locator('[data-action^="meeting-delete-"]').click()
+    await expect(page.locator('.dlg-box')).toBeVisible({ timeout: 5000 })
+    await page.locator('.dlg-ok').click()
+    await expect(row).toHaveCount(0, { timeout: 10000 })
   })
 })

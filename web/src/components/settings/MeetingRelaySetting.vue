@@ -39,35 +39,65 @@
       <label class="relay-panel__label" for="meeting-relay-key">
         {{ t('settings.items.meetingRelayKey') }}
       </label>
-      <input
-        id="meeting-relay-key"
-        v-model="apiKey"
-        class="relay-panel__input"
-        type="text"
-        spellcheck="false"
-        autocomplete="off"
-        data-role="relay-key"
-      />
+      <div class="relay-panel__secret">
+        <input
+          id="meeting-relay-key"
+          :value="keyValue"
+          :type="showKey ? 'text' : 'password'"
+          class="relay-panel__input"
+          spellcheck="false"
+          autocomplete="off"
+          data-role="relay-key"
+          @input="onKeyInput"
+          @focus="onMaskedFocus($event, keyMasked)"
+        />
+        <button
+          type="button"
+          class="relay-panel__eye"
+          data-action="relay-key-toggle"
+          :disabled="revealing"
+          :title="showKey ? t('settings.items.meetingRelayHide') : t('settings.items.meetingRelayReveal')"
+          :aria-label="showKey ? t('settings.items.meetingRelayHide') : t('settings.items.meetingRelayReveal')"
+          @click="toggleReveal('key')"
+        >
+          <component :is="showKey ? EyeOff : Eye" :size="15" />
+        </button>
+      </div>
     </div>
 
     <div class="relay-panel__field">
       <label class="relay-panel__label" for="meeting-relay-secret">
         {{ t('settings.items.meetingRelaySecret') }}
       </label>
-      <input
-        id="meeting-relay-secret"
-        v-model="apiSecret"
-        class="relay-panel__input"
-        type="password"
-        spellcheck="false"
-        autocomplete="new-password"
-        data-role="relay-secret"
-        :placeholder="
-          hasSecret
-            ? t('settings.items.meetingRelaySecretStored')
-            : t('settings.items.meetingRelaySecretPlaceholder')
-        "
-      />
+      <div class="relay-panel__secret">
+        <input
+          id="meeting-relay-secret"
+          :value="secretValue"
+          :type="showSecret ? 'text' : 'password'"
+          class="relay-panel__input"
+          spellcheck="false"
+          autocomplete="new-password"
+          data-role="relay-secret"
+          :placeholder="
+            hasSecret
+              ? t('settings.items.meetingRelaySecretStored')
+              : t('settings.items.meetingRelaySecretPlaceholder')
+          "
+          @input="onSecretInput"
+          @focus="onMaskedFocus($event, secretMasked)"
+        />
+        <button
+          type="button"
+          class="relay-panel__eye"
+          data-action="relay-secret-toggle"
+          :disabled="revealing"
+          :title="showSecret ? t('settings.items.meetingRelayHide') : t('settings.items.meetingRelayReveal')"
+          :aria-label="showSecret ? t('settings.items.meetingRelayHide') : t('settings.items.meetingRelayReveal')"
+          @click="toggleReveal('secret')"
+        >
+          <component :is="showSecret ? EyeOff : Eye" :size="15" />
+        </button>
+      </div>
     </div>
 
     <div class="relay-panel__actions">
@@ -101,16 +131,18 @@
  * relay is deployed once and every meeting that opts in shares it. The create
  * form keeps only the per-meeting switch.
  *
- * The secret is write-only — the server answers `hasSecret` and never the
- * value — so the field shows a masked placeholder and is sent only when the
- * user typed something.
+ * The credential is masked: a stored key/secret shows as dots until the eye
+ * asks the server for it (same shape as the provider key field). Nothing is
+ * fetched just to render the panel, and an untouched field is never sent — an
+ * empty value means "keep what is stored".
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Eye, EyeOff } from 'lucide-vue-next'
 import { useLiveSFUConfig } from '@/composables/useLiveSFUConfig'
 
 const { t } = useI18n()
-const { state, busy, load, saveAndTest } = useLiveSFUConfig()
+const { state, busy, load, reveal, saveAndTest } = useLiveSFUConfig()
 
 const url = ref('')
 const apiKey = ref('')
@@ -118,8 +150,101 @@ const apiSecret = ref('')
 const message = ref('')
 const ok = ref(false)
 
+/**
+ * Dots standing in for a stored credential that has not been revealed. Without
+ * it the fields look empty and "a credential is saved" is indistinguishable
+ * from "none yet". The refs stay empty while the mask is shown: an empty value
+ * on save means "keep the stored one", and the mask must never be sent as if it
+ * were the credential.
+ */
+const KEY_MASK_CHAR = '•'
+const KEY_MASK = KEY_MASK_CHAR.repeat(12)
+const keyMasked = ref(false)
+const secretMasked = ref(false)
+const showKey = ref(false)
+const showSecret = ref(false)
+const revealing = ref(false)
+
+const keyValue = computed(() => (keyMasked.value ? KEY_MASK : apiKey.value))
+const secretValue = computed(() => (secretMasked.value ? KEY_MASK : apiSecret.value))
+
 const configured = computed(() => state.value.configured)
 const hasSecret = computed(() => state.value.hasSecret)
+
+function maskFields(): void {
+  keyMasked.value = hasSecret.value
+  secretMasked.value = hasSecret.value
+  apiKey.value = ''
+  apiSecret.value = ''
+  showKey.value = false
+  showSecret.value = false
+}
+
+/**
+ * Show / hide one credential. The first reveal fetches both from the server —
+ * one request, and the pair is always edited together.
+ */
+async function toggleReveal(which: 'key' | 'secret'): Promise<void> {
+  const shown = which === 'key' ? showKey : showSecret
+  if (shown.value) {
+    shown.value = false
+    return
+  }
+  if (keyMasked.value || secretMasked.value) {
+    revealing.value = true
+    message.value = ''
+    try {
+      const stored = await reveal()
+      // An empty answer while the read says a credential exists means the
+      // server did not understand `reveal` (older binary). Say so instead of
+      // rendering empty fields that look like the credential was lost.
+      if (!stored.apiKey && !stored.apiSecret && hasSecret.value) {
+        throw new Error(t('settings.items.meetingRelayRevealFailed'))
+      }
+      apiKey.value = stored.apiKey
+      apiSecret.value = stored.apiSecret
+      keyMasked.value = false
+      secretMasked.value = false
+    } catch (err) {
+      ok.value = false
+      message.value = err instanceof Error ? err.message : String(err)
+      return
+    } finally {
+      revealing.value = false
+    }
+  }
+  shown.value = true
+}
+
+/** Select the mask on focus so the first keystroke replaces it instead of
+ *  landing in the middle of a run of bullets. */
+function onMaskedFocus(event: FocusEvent, masked: boolean): void {
+  if (!masked) return
+  const el = event.target as HTMLInputElement | null
+  el?.select()
+}
+
+function stripMask(event: Event, masked: boolean): string {
+  const el = event.target as HTMLInputElement
+  let next = el.value
+  if (masked) {
+    // Clicking into the mask without selecting it leaves bullets in the box;
+    // strip them instead of storing them as part of the credential.
+    next = next.split(KEY_MASK_CHAR).join('')
+  }
+  if (el.value !== next) el.value = next
+  return next
+}
+
+function onKeyInput(event: Event): void {
+  apiKey.value = stripMask(event, keyMasked.value)
+  keyMasked.value = false
+}
+
+function onSecretInput(event: Event): void {
+  apiSecret.value = stripMask(event, secretMasked.value)
+  secretMasked.value = false
+}
 
 /**
  * Probe the draft values, and store them only if the probe passes.
@@ -143,11 +268,11 @@ async function save(): Promise<void> {
   })
   ok.value = res.ok
   message.value = res.message
-  // The secret is now stored server-side; keeping it in the field would send it
-  // again on the next save for no reason.
+  // The credential is now stored server-side; keeping it in the fields would
+  // send it again on the next save for no reason, and the dots say it is there.
   if (res.ok) {
-    apiSecret.value = ''
     url.value = state.value.url
+    maskFields()
   }
 }
 
@@ -156,6 +281,7 @@ onMounted(async () => {
   // and this panel is where the value is edited.
   await load(true)
   url.value = state.value.url
+  maskFields()
 })
 </script>
 
@@ -198,6 +324,45 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* Input + eye: the button sits inside the field's right edge, like the
+   provider key field, so the row keeps one control height. */
+.relay-panel__secret {
+  position: relative;
+  display: flex;
+  height: calc(30 * var(--dp));
+}
+.relay-panel__secret > .relay-panel__input {
+  flex: 1;
+  min-width: 0;
+  /* Leave room for the button so a long credential never runs underneath it. */
+  padding-right: calc(38 * var(--dp));
+}
+.relay-panel__eye {
+  position: absolute;
+  top: 50%;
+  right: calc(4 * var(--dp));
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+.relay-panel__eye:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+.relay-panel__eye:disabled {
+  cursor: default;
+  opacity: var(--opacity-disabled);
 }
 
 .relay-panel__input {

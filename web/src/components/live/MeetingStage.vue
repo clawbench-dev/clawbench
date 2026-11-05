@@ -45,6 +45,15 @@
         @click="selectTab(tab.key)"
       >
         {{ t(tab.labelKey) }}
+        <!-- Headcount on 参会者, visible without opening the tab: the host is
+             usually asking "how many people are in this meeting" before
+             anything else. Muted, not accent — the accent badge next to it is
+             a pending approval, which is a different kind of number. -->
+        <span
+          v-if="tab.key === 'participants'"
+          class="live-tab__count"
+          data-role="participants-count"
+        >{{ memberTotal }}</span>
         <!-- An accent count on 参会者 while somebody is waiting for an answer:
              the request lives in a tab the host is not looking at, and a
              request nobody notices is the same as a refusal. -->
@@ -467,7 +476,7 @@ import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import MemberScreenSurface from './MemberScreenSurface.vue'
 import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/share/liveControl'
 import { chunkChatHistory, appendChatMessage, trimChat } from '@/share/chatHistory'
-import { viewerLabel } from '@/components/live/viewerLabels'
+import { viewerLabel, memberCount } from '@/components/live/viewerLabels'
 import { appLog } from '@/utils/appLog'
 // The same section / hint / checkbox primitives the create form uses.
 import '@/assets/meeting-form.css'
@@ -668,6 +677,9 @@ const fillTab = computed(() => activeTab.value === 'notes' || activeTab.value ==
  * from the request set means a future approval type joins the badge for free.
  */
 const pendingApprovals = computed(() => controlRequests.value.size)
+
+/** Everyone in the meeting, the host included. */
+const memberTotal = computed(() => memberCount(share.viewers.value))
 
 function selectTab(key: LiveTab): void {
   activeTab.value = key
@@ -1457,6 +1469,21 @@ watch(
      no 10px token, so express it in --dp instead of a literal. */
   font-size: calc(10 * var(--dp));
   line-height: calc(14 * var(--dp));
+  text-align: center;
+}
+
+/* Headcount on the 参会者 tab. Quiet on purpose: it is always there, while the
+   accent .live-count beside it means "someone is waiting for you". Same box as
+   the unread pill so the two sit on one line without shifting the label. */
+.live-tab__count {
+  min-width: calc(14 * var(--dp));
+  padding: 0 calc(4 * var(--dp));
+  border-radius: var(--radius-full, 999px);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: calc(10 * var(--dp));
+  line-height: calc(14 * var(--dp));
+  font-weight: var(--font-weight-medium);
   text-align: center;
 }
 

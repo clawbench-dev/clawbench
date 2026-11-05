@@ -398,6 +398,16 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
   ],
   mail: [
+    // Master switch, on its own card ahead of the accounts — same shape and
+    // reasoning as `forge.enabled`: it decides whether the rest of the page
+    // applies at all, so folding it into the accounts card would read as one
+    // more credential field.
+    //
+    // Server-side, not per-device: turning mail off stops the background IMAP
+    // sync and the email-triggered tasks on the server, so every client of one
+    // server must agree. Accounts are kept, not deleted — turning it back on
+    // resumes where it left off, which is why no confirmation dialog is needed.
+    { type: 'item', spec: { labelKey: 'settings.items.mailEnabled', descriptionKey: 'settings.items.mailEnabledDesc', key: 'mail.enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.mailEnabledSection' } },
     // Mailbox accounts (IMAP + SMTP). The card body is MailSetting, so this
     // placeholder only opens the section and must also be listed in
     // PLACEHOLDER_ITEMS in SettingsCategory.vue.

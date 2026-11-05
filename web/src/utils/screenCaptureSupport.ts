@@ -33,3 +33,16 @@ export function browserScreenCaptureAvailable(): boolean {
 export function isInsecureCaptureContext(): boolean {
   return typeof window !== 'undefined' && window.isSecureContext === false
 }
+
+/**
+ * Whether this page is served over plain HTTP.
+ *
+ * The desktop shell cannot use `isSecureContext` to answer "will the link I
+ * hand out be insecure?": it promotes its own origin with
+ * `unsafely-treat-insecure-origin-as-secure` so that capture works, which makes
+ * `isSecureContext` true on exactly the origins whose invite links are http.
+ * The protocol is the only thing that still tells the truth there.
+ */
+export function isHttpOrigin(): boolean {
+  return typeof window !== 'undefined' && window.location?.protocol === 'http:'
+}

@@ -77,4 +77,19 @@ describe('useLiveSFUConfig', () => {
     expect(body).toEqual({ url: 'wss://new' })
     expect(body).not.toHaveProperty('apiSecret')
   })
+
+  // The eye button's request. Deliberately a separate call from `load`: reading
+  // the panel must not pull a plaintext credential into the page.
+  it('reveals the stored credential on an explicit request only', async () => {
+    getMock.mockResolvedValue({ url: 'wss://r', hasSecret: true, configured: true, apiKey: 'k', apiSecret: 's' })
+    const { load, reveal } = useLiveSFUConfig()
+
+    await load()
+    expect(getMock).toHaveBeenCalledTimes(1)
+    expect(getMock).toHaveBeenCalledWith('/api/live-share/sfu')
+
+    const values = await reveal()
+    expect(getMock).toHaveBeenLastCalledWith('/api/live-share/sfu?reveal=1')
+    expect(values).toEqual({ apiKey: 'k', apiSecret: 's' })
+  })
 })

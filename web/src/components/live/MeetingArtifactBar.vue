@@ -142,14 +142,21 @@ const errorText = computed(() => {
       return t('meeting.detail.artifact.sttFailed', { error })
     case 'audio':
       return t('meeting.detail.artifact.audioUnavailable')
+    case 'import':
+      return t('meeting.detail.artifact.importFailed', { error })
     case 'timeout':
       return t('meeting.detail.artifact.timeout')
     case 'io':
       return t('meeting.detail.artifact.ioFailed', { error })
     case 'budget':
       return t('meeting.detail.artifact.budgetFailed')
-    case 'model':
     case 'no_source':
+      // The server's `error` here is an internal English string ("live notes:
+      // transcript is empty"); the bar must never surface it.
+      return props.kind === 'transcript'
+        ? t('meeting.detail.artifact.noSourceTranscript')
+        : t('meeting.detail.artifact.noSourceUpstream')
+    case 'model':
       return t('meeting.detail.artifact.failedWith', { error })
     default:
       return error || t('meeting.detail.artifact.failed')

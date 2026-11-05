@@ -506,6 +506,29 @@ const engaged = ref(false)
 const litIndex = ref(-1)
 let pointerY = 0
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+let openTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * How long the pointer must REST on the rail before the index opens, in ms.
+ *
+ * Opening is a commitment: the card is 244px wide and covers the conversation
+ * beside it. It used to open on the very first `mousemove`, so merely crossing
+ * the gutter on the way to a scrollbar or the window edge flashed the whole
+ * panel — the reader had to wait for it to fade before they could see the
+ * messages again. The numbers stay visible and clickable the entire time, which
+ * is all a quick pass needs; only a deliberate hover earns the card.
+ *
+ * Longer than `SplitDivider`'s 200ms dwell because that one only reveals two
+ * small discs, while this one paints a panel over the reading surface.
+ */
+const OPEN_DELAY_MS = 350
+
+function clearOpenTimer() {
+  if (openTimer) {
+    clearTimeout(openTimer)
+    openTimer = null
+  }
+}
 
 function nearestIndex(clientY: number) {
   const rail = railRef.value
@@ -522,19 +545,47 @@ function relight() {
   if (idx >= 0) litIndex.value = idx
 }
 
-function onEnter() {
+/**
+ * The pointer has been on the rail (or its card) long enough: show it at full
+ * strength and open the card.
+ */
+function openNow() {
+  clearOpenTimer()
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
   engaged.value = true
-}
-
-function onPointerMove(e: MouseEvent) {
-  onEnter()
-  pointerY = e.clientY
-  if (!expanded.value) expanded.value = true
+  expanded.value = true
+  // The pointer is already somewhere on the axis; light the row under it so the
+  // card does not open with nothing marked.
   relight()
 }
 
+/**
+ * Pointer arrived (or is still moving) on the rail or its card.
+ *
+ * Re-entry while the card is open only cancels the pending collapse — it must
+ * NOT restart the dwell clock, or moving between the axis and the card (two
+ * sibling elements, so each crossing is a fresh `mouseenter`) would keep
+ * pushing the open back forever.
+ */
+function onEnter(e?: MouseEvent) {
+  if (e) pointerY = e.clientY
+  if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+  if (expanded.value || openTimer) return
+  openTimer = setTimeout(() => {
+    openTimer = null
+    openNow()
+  }, OPEN_DELAY_MS)
+}
+
+function onPointerMove(e: MouseEvent) {
+  onEnter(e)
+  if (expanded.value) relight()
+}
+
 function scheduleCollapse() {
+  // A pass that ends before the dwell elapsed must not open a moment later:
+  // the pointer is already gone by then.
+  clearOpenTimer()
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = setTimeout(() => {
     hideTimer = null
@@ -546,6 +597,9 @@ function scheduleCollapse() {
 
 function onSelect(msg: RailIndexMsg) {
   if (suppressClick) return
+  // A click is a decision, not a hover: the card must not pop open a moment
+  // later because the pointer is still resting on the axis.
+  clearOpenTimer()
   expanded.value = false
   litIndex.value = -1
   emit('select', msg)
@@ -560,6 +614,7 @@ function onSelect(msg: RailIndexMsg) {
  */
 function onPendingSelect() {
   if (suppressClick) return
+  clearOpenTimer()
   expanded.value = false
   litIndex.value = -1
   emit('select-pending')
@@ -597,6 +652,9 @@ let suppressClick = false
 
 function onPointerDown(e: PointerEvent) {
   if (maxOffset.value <= 0) return
+  // Dragging the axis is a scroll gesture; a card popping open mid-drag would
+  // land under the pointer and swallow the rest of the gesture.
+  clearOpenTimer()
   drag = { y: e.clientY, start: offset.value, moved: false, id: e.pointerId }
 }
 
@@ -696,6 +754,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener(UI_SCALE_EVENT, onViewportChange)
   if (hideTimer) clearTimeout(hideTimer)
+  clearOpenTimer()
 })
 
 /**

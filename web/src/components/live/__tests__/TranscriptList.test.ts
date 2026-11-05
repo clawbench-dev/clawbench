@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import TranscriptList from '../TranscriptList.vue'
@@ -66,7 +66,42 @@ function fakeScroller(el: HTMLElement, opts: { scrollHeight: number; clientHeigh
   return () => top
 }
 
+/**
+ * A ResizeObserver the test can fire on demand.
+ *
+ * The global polyfill in `test-setup.ts` is a no-op, so a component that
+ * re-scrolls when its box regains a height (a `v-show` panel being reopened)
+ * could not be tested at all: jsdom never lays anything out.
+ */
+class FakeResizeObserver {
+  static instances: FakeResizeObserver[] = []
+  private readonly cb: ResizeObserverCallback
+
+  constructor(cb: ResizeObserverCallback) {
+    this.cb = cb
+    FakeResizeObserver.instances.push(this)
+  }
+
+  static last(): FakeResizeObserver {
+    const last = FakeResizeObserver.instances[FakeResizeObserver.instances.length - 1]
+    if (!last) throw new Error('no ResizeObserver was created')
+    return last
+  }
+
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  fire() {
+    this.cb([], this as unknown as ResizeObserver)
+  }
+}
+
 describe('TranscriptList', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    FakeResizeObserver.instances = []
+  })
+
   it('draws one avatar + name + text per speaker turn', () => {
     const w = mountList([block('n1', '我', '第一句'), block('n2', '小明', '第二句')])
     const rows = w.findAll('.transcript__row')
@@ -393,6 +428,9 @@ describe('TranscriptList', () => {
 
   it('follows new lines while the reader is at the bottom', async () => {
     const w = mountList([block('n1', '我', 'a')], true)
+    // Let the mount-time pass run against the real (empty) jsdom box: the
+    // geometry below describes content that arrives afterwards.
+    await nextTick()
     const readTop = fakeScroller(w.element as HTMLElement, {
       scrollHeight: 1000,
       clientHeight: 400,
@@ -409,6 +447,7 @@ describe('TranscriptList', () => {
     // One speaker never changes the row count; the panel used to stop following
     // as soon as the first block was the only block.
     const w = mountList([block('n1', '我', 'a')], true)
+    await nextTick()
     const readTop = fakeScroller(w.element as HTMLElement, {
       scrollHeight: 1000,
       clientHeight: 400,
@@ -425,6 +464,7 @@ describe('TranscriptList', () => {
     // The publisher's pane used to scroll unconditionally, so scrolling back
     // was undone by the next segment.
     const w = mountList([block('n1', '我', 'a')], true)
+    await nextTick()
     const readTop = fakeScroller(w.element as HTMLElement, {
       scrollHeight: 1000,
       clientHeight: 400,
@@ -434,6 +474,74 @@ describe('TranscriptList', () => {
     await w.setProps({ blocks: [block('n1', '我', 'a'), block('n2', '小明', 'b')] })
     await nextTick()
     await nextTick()
+    expect(readTop()).toBe(100)
+  })
+
+  it('shows the newest line when it is mounted into a running conversation', async () => {
+    // Switching to 转写 mid-meeting re-creates the list with the whole meeting
+    // already in it. It used to start at the top, and because the follow rule
+    // only scrolls a list that is *already* at the bottom, it never caught up.
+    const w = mountList([block('n1', '我', 'a'), block('n2', '小明', 'b')], true)
+    const readTop = fakeScroller(w.element as HTMLElement, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTop: 0,
+    })
+
+    await nextTick()
+    await nextTick()
+    expect(readTop()).toBe(1000)
+  })
+
+  it('follows again when a pane that grew while hidden is shown', async () => {
+    // The viewer's 听记 panel and the member's side panel are `v-show`: while
+    // closed the list is laid out at zero height, so every scroll metric reads
+    // 0 and "at the bottom" was a lie. On reopening it sat at the top of the
+    // whole meeting and the next line was treated as "the reader scrolled up".
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    const w = mountList([block('n1', '我', 'a')], true)
+    await nextTick()
+    const readTop = fakeScroller(w.element as HTMLElement, {
+      scrollHeight: 0,
+      clientHeight: 0,
+      scrollTop: 0,
+    })
+
+    await w.setProps({ blocks: [block('n1', '我', 'a'), block('n2', '小明', 'b')] })
+    await nextTick()
+
+    // Shown again: the box now has a height and the conversation overflows.
+    Object.defineProperty(w.element, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(w.element, 'clientHeight', { value: 400, configurable: true })
+    FakeResizeObserver.last().fire()
+
+    expect(readTop()).toBe(1000)
+  })
+
+  it('keeps a reader who scrolled up where they were when the pane is shown', async () => {
+    // Hiding the panel is not "scrolling to the bottom": the remembered
+    // position must survive, otherwise reopening it would throw away the place
+    // the reader had deliberately gone back to.
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    const w = mountList([block('n1', '我', 'a')], true)
+    await nextTick()
+    const readTop = fakeScroller(w.element as HTMLElement, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTop: 100,
+    })
+    await w.trigger('scroll')
+
+    // Closed: the box has no geometry, and new lines keep arriving.
+    Object.defineProperty(w.element, 'clientHeight', { value: 0, configurable: true })
+    Object.defineProperty(w.element, 'scrollHeight', { value: 0, configurable: true })
+    await w.setProps({ blocks: [block('n1', '我', 'a'), block('n2', '小明', 'b')] })
+    await nextTick()
+
+    Object.defineProperty(w.element, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(w.element, 'clientHeight', { value: 400, configurable: true })
+    FakeResizeObserver.last().fire()
+
     expect(readTop()).toBe(100)
   })
 })

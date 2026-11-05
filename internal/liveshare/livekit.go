@@ -107,7 +107,10 @@ func (c LiveKitConfig) sign(claims map[string]any, ttl time.Duration) (string, e
 	now := time.Now()
 	body := map[string]any{
 		"iss": c.APIKey,
-		"nbf": now.Add(-10 * time.Second).Unix(),
+		// Backdated to absorb clock skew between this server and the LiveKit
+		// host; a slightly fast local clock would otherwise make LiveKit
+		// reject a freshly minted token as "not yet valid".
+		"nbf": now.Add(-5 * time.Minute).Unix(),
 		"exp": now.Add(ttl).Unix(),
 	}
 	for k, v := range claims {

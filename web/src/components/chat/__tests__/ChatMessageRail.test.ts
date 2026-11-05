@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ChatMessageRail from '../ChatMessageRail.vue'
@@ -178,6 +178,20 @@ describe('ChatMessageRail — gutter gate', () => {
 })
 
 describe('ChatMessageRail — interaction', () => {
+  /**
+   * Opening is dwell-gated (see `OPEN_DELAY_MS`), so every test that wants the
+   * card open has to let the intent timer run. Fake timers keep that instant.
+   */
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** Hover the axis and let the dwell elapse. */
+  async function hoverOpen(w: ReturnType<typeof mountRail>, clientY = 0) {
+    await w.find('.msg-rail').trigger('mousemove', { clientY })
+    vi.runOnlyPendingTimers()
+    await w.vm.$nextTick()
+  }
+
   it('opens the card on hover and lights the row nearest the pointer', async () => {
     const w = mountRail()
     const rail = w.find('.msg-rail')
@@ -185,10 +199,57 @@ describe('ChatMessageRail — interaction', () => {
 
     // jsdom reports every rect as 0, so the first node's centre is the origin;
     // a pointer at y=0 resolves to slot 0.
-    await rail.trigger('mousemove', { clientY: 0 })
+    await hoverOpen(w, 0)
     expect(w.find('.msg-rail-card').classes()).toContain('msg-rail-card--show')
     expect(w.findAll('.msg-rail-node')[0].classes()).toContain('msg-item--lit')
     expect(w.findAll('.msg-rail-row')[0].classes()).toContain('msg-item--lit')
+    expect(rail.classes()).toContain('msg-rail--engaged')
+  })
+
+  it('does not open on a quick pass over the gutter', async () => {
+    // The complaint this guards: the card used to appear on the first
+    // `mousemove`, so crossing the rail on the way to the scrollbar flashed a
+    // 244px panel over the conversation.
+    const w = mountRail()
+    const rail = w.find('.msg-rail')
+
+    await rail.trigger('mousemove', { clientY: 0 })
+    await rail.trigger('mouseleave')
+    vi.runAllTimers()
+    await w.vm.$nextTick()
+
+    expect(w.find('.msg-rail-card').classes()).not.toContain('msg-rail-card--show')
+    expect(rail.classes()).not.toContain('msg-rail--engaged')
+  })
+
+  it('holds the card back for a brief hover, then opens once the pointer rests', async () => {
+    const w = mountRail()
+    const rail = w.find('.msg-rail')
+
+    await rail.trigger('mousemove', { clientY: 0 })
+    // 200ms is enough for the divider's handle reveal but must NOT be enough
+    // here: the card covers the messages, so it waits for a deliberate hover.
+    vi.advanceTimersByTime(200)
+    await w.vm.$nextTick()
+    expect(w.find('.msg-rail-card').classes()).not.toContain('msg-rail-card--show')
+
+    vi.runOnlyPendingTimers()
+    await w.vm.$nextTick()
+    expect(w.find('.msg-rail-card').classes()).toContain('msg-rail-card--show')
+  })
+
+  it('keeps the card open when the pointer moves from the axis onto it', async () => {
+    // The two layers are siblings, so crossing between them is a `mouseleave`
+    // followed by a `mouseenter`. Re-entry must cancel the pending collapse
+    // without restarting the dwell clock.
+    const w = mountRail()
+    await hoverOpen(w)
+    const card = w.find('.msg-rail-card')
+    await w.find('.msg-rail').trigger('mouseleave')
+    await card.trigger('mouseenter')
+    vi.advanceTimersByTime(1000)
+    await w.vm.$nextTick()
+    expect(card.classes()).toContain('msg-rail-card--show')
   })
 
   it('emits select with the row payload when a node is clicked', async () => {
@@ -201,8 +262,21 @@ describe('ChatMessageRail — interaction', () => {
 
   it('closes the card after a selection', async () => {
     const w = mountRail()
-    await w.find('.msg-rail').trigger('mousemove', { clientY: 0 })
+    await hoverOpen(w)
+    expect(w.find('.msg-rail-card').classes()).toContain('msg-rail-card--show')
     await w.findAll('.msg-rail-node')[1].trigger('click')
+    expect(w.find('.msg-rail-card').classes()).not.toContain('msg-rail-card--show')
+  })
+
+  it('does not reopen the card after a click on a node', async () => {
+    // A click is a decision: the pointer is still resting on the axis, and the
+    // dwell timer it started before the click must not fire afterwards.
+    const w = mountRail()
+    const rail = w.find('.msg-rail')
+    await rail.trigger('mousemove', { clientY: 0 })
+    await w.findAll('.msg-rail-node')[2].trigger('click')
+    vi.runAllTimers()
+    await w.vm.$nextTick()
     expect(w.find('.msg-rail-card').classes()).not.toContain('msg-rail-card--show')
   })
 })

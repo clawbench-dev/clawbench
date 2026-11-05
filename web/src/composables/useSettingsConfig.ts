@@ -582,6 +582,9 @@ const serverDefaults: Record<string, unknown> = {
   // "not disabled", but an explicit default keeps the settings row in the right
   // position too).
   'forge.enabled': true,
+  // Mail master switch defaults ON, mirroring ApplyDefaults so the dock does not
+  // flash the tab away before /api/config arrives.
+  'mail.enabled': true,
   'forge.notify.opened': true,
   'forge.notify.closed': true,
   'forge.notify.merged': true,

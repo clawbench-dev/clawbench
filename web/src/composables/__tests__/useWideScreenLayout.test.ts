@@ -538,13 +538,15 @@ describe('wide dock tab reachability (regression)', () => {
     for (const terminalDisabled of [false, true]) {
       for (const portForwardUnavailable of [false, true]) {
         for (const forgeHidden of [false, true]) {
-          const rendered = wideDockTabOrder(
-            secondaryDockTabs({ terminalDisabled, portForwardUnavailable, forgeHidden }),
-          )
-          expect(
-            rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
-            `gate combination terminalDisabled=${terminalDisabled} portForwardUnavailable=${portForwardUnavailable} forgeHidden=${forgeHidden}`,
-          ).toEqual([])
+          for (const mailHidden of [false, true]) {
+            const rendered = wideDockTabOrder(
+              secondaryDockTabs({ terminalDisabled, portForwardUnavailable, forgeHidden, mailHidden }),
+            )
+            expect(
+              rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
+              `gate combination terminalDisabled=${terminalDisabled} portForwardUnavailable=${portForwardUnavailable} forgeHidden=${forgeHidden} mailHidden=${mailHidden}`,
+            ).toEqual([])
+          }
         }
       }
     }
@@ -586,6 +588,21 @@ describe('wide dock tab reachability (regression)', () => {
     // would make it flicker in once /api/config arrives.
     expect(secondaryDockTabs({ forgeHidden: false })).toContain('forge')
     expect(secondaryDockTabs({})).toContain('forge')
+  })
+
+  it('hides only the mail entry when the mail feature is switched off', () => {
+    // Same contract as the forge gate: the entry disappears, nothing else moves,
+    // and the gates stay independent of each other.
+    const hidden = secondaryDockTabs({ mailHidden: true })
+    expect(hidden).not.toContain('mail')
+    expect(hidden).toEqual(secondaryDockTabs().filter((t) => t !== 'mail'))
+    expect(hidden).toContain('forge')
+    expect(hidden).toContain('terminal')
+    expect(secondaryDockTabs({ forgeHidden: true })).toContain('mail')
+    // Unset means "not known yet" → visible, so the entry cannot flicker away
+    // during the first paint.
+    expect(secondaryDockTabs({ mailHidden: false })).toContain('mail')
+    expect(secondaryDockTabs({})).toContain('mail')
   })
 
   it('keeps the proxy tab on an h2-only install (SSH off, h2 allowed)', () => {

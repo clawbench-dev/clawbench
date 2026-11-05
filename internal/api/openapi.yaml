@@ -687,6 +687,9 @@ paths:
         `PATCH` 段）。这是服务端开关而非每设备偏好：轮询与凭据都在服务端，同一服务器
         的所有客户端必须一致。
 
+        `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后服务端停止后台
+        收信与邮件触发任务，前端隐藏邮件页签；已配置的邮箱保留，重新打开即恢复。
+
         `user` 是用户本人的一级身份配置：`user.nickname` 是智能体称呼你的名字（留空则
         回退静态字面量 `User`；群聊路由与会议显示名共用，不能含引号 / 尖括号 / 逗号 /
         控制字符，且不得与智能体同名）；`user.profile` 是你的自述，注入每个智能体的系统
@@ -732,6 +735,9 @@ paths:
         清空失败**不返回 500**：配置已是权威事实，返回 500 会让客户端把
         `forge.enabled` 回滚成 `true`，界面显示「已启用」而服务端实际已停用。改为
         `200` + `warnings` 里的一条说明；残留绑定本身无害（轮询器先判开关）。
+
+        `mail.enabled` 只停后台收信与邮件触发任务并隐藏邮件页签，**不删除邮箱账号**，
+        因此关闭时无需确认、随时可恢复；热更新，不需要重启。
 
         `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
         存储值恒为 `true`（监听器常开，与 `ApplyDefaults` 一致）。
@@ -3990,14 +3996,24 @@ paths:
       summary: 读取中继服务（LiveKit）配置
       description: |
         中继是本安装级的配置（一个地址、一对密钥，所有选择中继的会议共用），
-        不是每场会议一份。密钥只写不读：响应只有 `hasSecret`，从不回显。
+        不是每场会议一份。密钥默认只写不读：普通响应只有 `hasSecret`，不带凭据；
+        只有 `reveal=1` 才回显 `apiKey` / `apiSecret`，那是设置页眼睛按钮的
+        「看一眼已存的值」，读设置页本身不会把明文密钥拉进页面。
 
         中继按普通 ws:// 部署即可，不需要证书：浏览器不直连它，而是连本服务的
         `/livekit`，由服务端转发信令（媒体仍由浏览器直连 LiveKit）。
       operationId: liveShareSFUConfigGet
+      parameters:
+        - name: reveal
+          in: query
+          required: false
+          description: 传 `1` 时额外回显已存的 apiKey / apiSecret（眼睛按钮专用）
+          schema:
+            type: string
+            enum: ["1"]
       responses:
         "200":
-          description: 当前配置（不含密钥）
+          description: 当前配置（不含密钥，除非 reveal=1）
           content:
             application/json:
               schema:
@@ -4012,6 +4028,12 @@ paths:
                     type: boolean
                   updatedAt:
                     type: string
+                  apiKey:
+                    type: string
+                    description: 仅 reveal=1 时出现
+                  apiSecret:
+                    type: string
+                    description: 仅 reveal=1 时出现
     patch:
       tags: [LiveShare]
       summary: 修改中继服务配置
@@ -4624,6 +4646,17 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/MeetingRecord"
+                  import:
+                    type: object
+                    description: |
+                      本机能否把录音/视频导入成会议。跟着列表一起下发，是为了让前端在
+                      用户拖进文件的那一刻就知道结果，而不是先传几个 G 再被拒。
+                    properties:
+                      available:
+                        type: boolean
+                      reason:
+                        type: string
+                        description: 不可用时的原因码，目前只有 `ffmpeg_missing`
         "403":
           description: 缺少项目上下文
     patch:
@@ -4691,6 +4724,80 @@ paths:
           description: token 不存在或不属于当前项目
         "409":
           description: 会议仍在进行，或纪要正在生成
+
+  /api/live-share/notes/import:
+    post:
+      tags: [LiveShare]
+      summary: 把一段录音或视频导入成一场会议
+      description: |
+        `multipart/form-data`：`file`（必填）、`title`（选填，缺省用文件名）、
+        `startedAt`（选填，unix 毫秒，客户端读到的文件时间；未来时间会被改成当前时间）。
+
+        服务端用 **ffmpeg** 把文件解码成单声道 16 kHz 的 Opus 轨，落到会议目录的
+        `audio/meeting.webm`——与「一个人开的会议」合并后的形态完全一致，因此后续的
+        转写分片、播放、重新识别都不需要区分来源。接口在文件存好后就返回，转码与
+        「转写 → 校对 → 纪要」在后台跑，进度通过记录的产物状态体现。
+
+        **原片留在会议根目录**（同名，非法字符替换、不覆盖产物文件名），在「资源」页签里
+        可以直接打开。视频还会**自动截关键画面**：按画面变化（ffmpeg 场景检测）取帧，
+        理由记为 `change`（画面变化），两帧至少隔 15 秒、单场最多 60 张（超出时在整段里
+        均匀取样）。抽帧与转写并行，失败不影响转写。
+
+        服务器没有安装 ffmpeg 时返回 **503**（`msgKey=MeetingImportUnavailable`）；
+        单个文件上限 4 GB，超过返回 **413**。会议列表接口的 `import.available`
+        提前告诉前端能不能导入，避免先传几个 G 再被拒。
+      operationId: liveShareNotesImport
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 任意音频或视频文件
+                title:
+                  type: string
+                  description: 会议名，最长 80 字；缺省取文件名（不含扩展名）
+                startedAt:
+                  type: string
+                  description: 文件自身的 unix 毫秒时间戳，用于会议日期
+      responses:
+        "200":
+          description: 会议已创建（转码与转写在后台进行）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: 新会议的 32 位 token
+                  session:
+                    $ref: "#/components/schemas/MeetingRecord"
+        "400":
+          description: 请求体无效，或没有文件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: 缺少项目上下文
+        "413":
+          description: 文件超过 4 GB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: 服务器没有安装 ffmpeg
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/live-share/notes/sessions/artifact:
     get:

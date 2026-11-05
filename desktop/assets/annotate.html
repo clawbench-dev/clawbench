@@ -153,6 +153,9 @@
 
         let mode = 'pen'
         let color = '#ff3b30'
+        /** Stroke width in the shared 800px reference space — the number that
+         *  travels on the wire. Viewers multiply it by their own surface size
+         *  (see `inkScale`), so this is NOT a CSS pixel count. */
         const width = 4
         /** Finished strokes, in normalised 0..1 coordinates. */
         let strokes = []
@@ -168,10 +171,24 @@
           redraw()
         }
 
+        /**
+         * Stroke thickness relative to the picture, exactly as every viewer
+         * computes it (web/src/share/LiveInkLayer.vue): a width of `w` covers
+         * `w / 800` of the surface. Without this the overlay drew a fixed
+         * `width * dpr` device pixels — on a 1920-wide screen the host saw a
+         * 4px line while the audience, which scales, saw a 9.6px one.
+         *
+         * `canvas.width` is in DEVICE pixels and `lineWidth` is too, so dpr
+         * cancels out and a HiDPI screen does not get a thicker line.
+         */
+        function inkScale() {
+          return Math.max(1, canvas.width / 800)
+        }
+
         function drawStroke(s) {
           if (s.points.length === 0) return
           ctx.strokeStyle = s.color
-          ctx.lineWidth = width * dpr
+          ctx.lineWidth = Math.max(1, width * inkScale())
           ctx.lineCap = 'round'
           ctx.lineJoin = 'round'
           ctx.beginPath()

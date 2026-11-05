@@ -28,3 +28,15 @@ export function viewerLabel(viewers: LiveViewerInfo[], id: string): string {
   if (!id) return ''
   return viewerLabels(viewers)[id] || id
 }
+
+/**
+ * How many people are in the room, host included.
+ *
+ * The host is a participant too, so the roster the host itself sees
+ * (`viewers`, which excludes them) is one short of the real headcount. The
+ * count is shown in two places — the 参会者 tab and the list header — and both
+ * must say the same number.
+ */
+export function memberCount(viewers: LiveViewerInfo[]): number {
+  return viewers.length + 1
+}

@@ -232,6 +232,38 @@ func TestMailWorkerTickStopsBetweenAccounts(t *testing.T) {
 	w.tick()
 }
 
+// The master switch is a real disable, not a hidden tab: with mail off the
+// worker must not open an IMAP connection at all. A dialer that fails the test
+// if it is ever called makes that observable — an assertion on LastSyncAt alone
+// would also pass for "synced and found nothing".
+func TestMailWorkerTickSkipsWhenDisabled(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	model.ConfigInstance.Mail.Enabled = false
+
+	dialed := false
+	prev := mailDialer
+	mailDialer = func(context.Context, mail.Account) (mail.Client, error) {
+		dialed = true
+		return nil, errors.New("mail is disabled; must not dial")
+	}
+	t.Cleanup(func() { mailDialer = prev })
+
+	w := &MailSyncWorker{stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+	w.tick()
+
+	if dialed {
+		t.Fatal("the worker dialed IMAP while mail was disabled")
+	}
+	got, err := GetMailAccount(acc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastSyncAt != 0 {
+		t.Fatalf("LastSyncAt = %d, want 0 (no sync while disabled)", got.LastSyncAt)
+	}
+}
+
 func TestDeleteMailAccountAttachmentFilesOnBrokenDB(t *testing.T) {
 	cleanup := useClosedDB(t)
 	defer cleanup()

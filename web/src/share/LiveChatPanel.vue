@@ -1,6 +1,6 @@
 <template>
   <div class="live-chat">
-    <div ref="listRef" class="live-chat__list">
+    <div ref="listRef" class="live-chat__list" @scroll.passive="onScroll">
       <!-- The same empty state every 会议 tab uses: a centred glyph + title
            instead of one muted sentence in the top corner, which reads as a
            message that failed to render. No `desc` here on purpose — an empty
@@ -51,12 +51,13 @@
  * behind a video keyframe, and the publisher relays them so viewers see each
  * other without a server round trip.
  */
-import { nextTick, ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagesSquare } from 'lucide-vue-next'
 import ChatMessageRow from '@/components/live/ChatMessageRow.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import { CHAT_MAX_CHARS } from '@/share/liveControl'
+import { useStickToBottom } from '@/composables/useStickToBottom.ts'
 
 export interface ChatMessage {
   id: string
@@ -83,18 +84,9 @@ function submit(): void {
   draft.value = ''
 }
 
-// Follow the conversation, but only when the reader is already at the bottom.
-watch(
-  () => props.messages.length,
-  async () => {
-    const el = listRef.value
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    if (!nearBottom) return
-    await nextTick()
-    el.scrollTop = el.scrollHeight
-  },
-)
+// Same rule as the transcript beside it: follow while the reader is at the
+// bottom, and open on the newest line instead of the first one ever sent.
+const { onScroll } = useStickToBottom(listRef, () => props.messages.length)
 </script>
 
 <style scoped>

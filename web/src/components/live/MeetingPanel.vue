@@ -10,7 +10,13 @@
       @open="openDetail"
       @resume="view = 'meeting'"
     />
-    <MeetingCreate v-else-if="view === 'create'" @back="view = 'list'" @started="view = 'meeting'" />
+    <MeetingCreate
+      v-else-if="view === 'create'"
+      :active="active"
+      @back="view = 'list'"
+      @started="view = 'meeting'"
+      @relay-settings="emit('relaySettings')"
+    />
     <MeetingJoin v-else-if="view === 'join'" @back="view = 'list'" />
     <MeetingDetail
       v-else-if="view === 'detail'"
@@ -65,10 +71,10 @@ import { useToast } from '@/composables/useToast'
 import { setHostedMeetingToken, setVisibleMeetingToken } from '@/utils/meetingVisibility'
 import { getNative } from '@/utils/clawbenchNative'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
-import { takeMeetingReturn, clearMeetingView, type MeetingDetailTab } from '@/composables/useMeetingViewState'
+import { takeMeetingReturn, takeMeetingCreateReturn, clearMeetingView, type MeetingDetailTab } from '@/composables/useMeetingViewState'
 
 const props = defineProps<{ active?: boolean }>()
-const emit = defineEmits<{ quote: [token: string] }>()
+const emit = defineEmits<{ quote: [token: string]; relaySettings: [] }>()
 
 type View = 'list' | 'create' | 'join' | 'meeting' | 'detail'
 const view = ref<View>('list')
@@ -196,6 +202,14 @@ watch(
       detailToken.value = pending.token
       detailTab.value = pending.tab
       view.value = 'detail'
+      return
+    }
+    // Returning from the relay configuration, which is reached FROM the create
+    // form: the form is still mounted and half filled, so it is exactly what
+    // the user must land on. (The refresh of the relay state itself is the
+    // form's own job — it watches `active`.)
+    if (takeMeetingCreateReturn()) {
+      view.value = 'create'
       return
     }
     // Re-entering the tab keeps where the user left off. A running meeting

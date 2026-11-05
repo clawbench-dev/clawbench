@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   browserScreenCaptureAvailable,
+  isHttpOrigin,
   isInsecureCaptureContext,
 } from '../screenCaptureSupport'
 
@@ -48,5 +49,27 @@ describe('isInsecureCaptureContext', () => {
   it('does not claim insecurity when the flag is absent', () => {
     vi.stubGlobal('window', {})
     expect(isInsecureCaptureContext()).toBe(false)
+  })
+})
+
+/**
+ * The desktop shell promotes its own http origin, so `isSecureContext` is true
+ * there while every invite link is still http. This predicate is what the
+ * "guests will be limited" banner keys on, and it has to stay true even when
+ * the page claims to be secure — that combination IS the desktop shell.
+ */
+describe('isHttpOrigin', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('is true on a plain http page, even one marked as a secure context', () => {
+    vi.stubGlobal('window', { isSecureContext: true, location: { protocol: 'http:' } })
+    expect(isHttpOrigin()).toBe(true)
+  })
+
+  it('is false on https', () => {
+    vi.stubGlobal('window', { isSecureContext: true, location: { protocol: 'https:' } })
+    expect(isHttpOrigin()).toBe(false)
   })
 })

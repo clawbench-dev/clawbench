@@ -177,4 +177,19 @@ describe('resolvePanelTab', () => {
     expect(resolvePanelTab('forge', false, false)).toBe('forge')
     expect(resolvePanelTab('forge', true, false, false)).toBe('forge')
   })
+
+  it('falls back when the remembered panel is mail and the feature is off', () => {
+    // Same shape as the hidden-forge rule: with the mail feature switched off
+    // there is no dock entry, so restoring a project last left on mail must not
+    // land there.
+    expect(resolvePanelTab('mail', true, false, false, true)).toBe('browse')
+    expect(resolvePanelTab('mail', false, false, false, true)).toBe('chat')
+    // Independent of the forge flag, and defaults to visible when not passed.
+    expect(resolvePanelTab('mail', true, false, true, true)).toBe('browse')
+    expect(resolvePanelTab('mail', true, false, false, false)).toBe('mail')
+    expect(resolvePanelTab('mail', true, false)).toBe('mail')
+    // The new rule must not swallow the other tabs.
+    expect(resolvePanelTab('tasks', true, false, false, true)).toBe('tasks')
+    expect(resolvePanelTab('forge', true, false, false, true)).toBe('forge')
+  })
 })

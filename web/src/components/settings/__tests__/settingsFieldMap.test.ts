@@ -682,6 +682,38 @@ describe('settingsFieldMap', () => {
     expect(localForge).toBeUndefined()
   })
 
+  it('mail master switch is a SERVER switch that opens its own card', () => {
+    // Same shape as forge.enabled: turning mail off stops the server's
+    // background IMAP sync (and the email-triggered tasks riding on it), so the
+    // choice belongs to the server, not to one device.
+    const items = categoryItems['mail'].filter(e => e.type === 'item').map(e => e.spec)
+    const item = items.find(i => i.key === 'mail.enabled')
+
+    expect(item).toBeDefined()
+    expect(item!.type).toBe('switch')
+    expect(item!.source).toBe('server')
+    expect(item!.sectionHeader).toBe('settings.items.mailEnabledSection')
+    // First entry: it decides whether the rest of the page applies at all, so
+    // it must not be folded into the accounts card.
+    const first = categoryItems['mail'][0]
+    expect(first.type === 'item' && first.spec.key).toBe('mail.enabled')
+    expect(items.find(i => i.key === 'mailAccounts')!.sectionHeader)
+      .toBe('settings.items.mailAccountsSection')
+    // Restart-dialog labels come from this map; a missing entry names the raw
+    // path if the field ever lands in a cold-field list.
+    expect(getServerFieldToLabelKey()['mail.enabled']).toBe('settings.items.mailEnabled')
+  })
+
+  it('the mail master switch has copy in both locales', () => {
+    for (const [name, loc] of [['en', en], ['zh', zh]] as const) {
+      const items = loc.settings.items as unknown as Record<string, string>
+      for (const key of ['mailEnabledSection', 'mailEnabled', 'mailEnabledDesc']) {
+        expect(items[key], `${name} is missing settings.items.${key}`).toBeTruthy()
+        expect(items[key], `${name}.${key} must not echo its key`).not.toBe(`settings.items.${key}`)
+      }
+    }
+  })
+
   it('the forge master switch has copy and a confirmation dialog in both locales', () => {
     // A missing key renders the raw path ("settings.items.forgeEnabled") in the
     // row, and nothing else fails.

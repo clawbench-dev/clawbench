@@ -1,7 +1,7 @@
 <template>
   <button
     class="live-dock-btn"
-    :class="{ 'live-dock-btn--live': live, 'live-dock-btn--call': call }"
+    :class="{ 'live-dock-btn--live': live }"
     type="button"
   >
     <slot name="icon" />
@@ -19,9 +19,8 @@
  * callers keep the semantics they need without this component knowing about
  * microphones, screen capture or picture frames.
  */
-withDefaults(defineProps<{ live?: boolean; call?: boolean; badge?: number }>(), {
+withDefaults(defineProps<{ live?: boolean; badge?: number }>(), {
   live: false,
-  call: false,
   badge: 0,
 })
 </script>
@@ -31,13 +30,13 @@ withDefaults(defineProps<{ live?: boolean; call?: boolean; badge?: number }>(), 
   display: inline-flex;
   align-items: center;
   gap: var(--space-2, 4px);
-  padding: var(--space-2, 4px) var(--space-5, 10px);
-  /* Touch target, not decoration: this pill floats over the picture on a phone,
-     where it is the only way to mute, chat or go fullscreen. Below 44dp the
-     mic and the control button next to it are pressed by mistake. The dock's
-     own padding (2 × 4dp) brings the pill to 52dp — the same offset the
-     control banner above it is positioned with. */
-  min-height: calc(44 * var(--dp));
+  padding: 0 var(--space-5, 10px);
+  /* Compact bar, not a form control: this pill floats over the picture and is
+     read at a glance, so every extra dp of height eats the video. 28dp keeps
+     the label's line box (13px × 1.6 ≈ 20dp) with ~4dp of air above and below —
+     the dock's own 2 × 2dp padding brings the pill to 32dp. It used to be 36dp,
+     which made the tinted sound button read as a slab next to its label. */
+  min-height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-full, 999px);
   background: transparent;
@@ -72,28 +71,18 @@ withDefaults(defineProps<{ live?: boolean; call?: boolean; badge?: number }>(), 
   color: var(--text-secondary, #8b949e);
 }
 
-/* Live state: tinted rather than a solid green fill, which would shout next to
-   the status chip in the header. */
+/* "On" state: a tint of the theme's own accent, never a semantic colour. The
+   dock floats over arbitrary shared content, so every control has to come from
+   the palette the rest of the app uses — a green here reads as a different
+   product (and on several themes it collides with the accent anyway). */
 .live-dock-btn--live {
-  background: color-mix(in srgb, var(--color-success, #3fb950) 18%, transparent);
-  color: var(--color-success, #3fb950);
-}
-
-/* The sound prompt is the only control the viewer MUST act on, so it gets the
-   accent tint rather than the neutral one. */
-.live-dock-btn--call {
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 22%, transparent);
-  color: var(--accent-color, #4a90d9);
-}
-
-.live-dock-btn--call:hover {
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 32%, transparent);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 20%, transparent);
   color: var(--accent-color, #4a90d9);
 }
 
 .live-dock-btn--live:hover {
-  background: color-mix(in srgb, var(--color-success, #3fb950) 26%, transparent);
-  color: var(--color-success, #3fb950);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 30%, transparent);
+  color: var(--accent-color, #4a90d9);
 }
 
 /* The label is the first thing to drop when space runs out: the icon and the
@@ -106,8 +95,8 @@ withDefaults(defineProps<{ live?: boolean; call?: boolean; badge?: number }>(), 
   .live-dock-btn {
     padding: var(--space-2, 4px) var(--space-3, 6px);
     /* Icon only from here on, so the horizontal target collapses with the
-       label unless it is pinned to the same 44dp square. */
-    min-width: calc(44 * var(--dp));
+       label: pin the width to the button's height and it stays a square. */
+    min-width: calc(28 * var(--dp));
   }
 }
 

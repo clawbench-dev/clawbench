@@ -130,6 +130,44 @@ describe('MeetingArtifactBar', () => {
   })
 })
 
+// A no_source failure carries a raw English detail from the server ("live
+// notes: transcript is empty"); the bar must localize it instead of echoing it.
+describe('MeetingArtifactBar no-source failure', () => {
+  const rawError = 'live notes: transcript is empty'
+
+  it('explains an empty transcript without echoing the server detail', () => {
+    const w = mountBar({
+      kind: 'transcript',
+      state: {
+        hasContent: false,
+        jobStatus: 'failed',
+        errorCode: 'no_source',
+        error: rawError,
+        contentAt: 0,
+        stale: false,
+      },
+    })
+    expect(w.text()).toContain(enMessages.meeting.detail.artifact.noSourceTranscript)
+    expect(w.text()).not.toContain(rawError)
+  })
+
+  it('points downstream artifacts at the missing transcript', () => {
+    const w = mountBar({
+      kind: 'minutes',
+      state: {
+        hasContent: false,
+        jobStatus: 'failed',
+        errorCode: 'no_source',
+        error: rawError,
+        contentAt: 0,
+        stale: false,
+      },
+    })
+    expect(w.text()).toContain(enMessages.meeting.detail.artifact.noSourceUpstream)
+    expect(w.text()).not.toContain(rawError)
+  })
+})
+
 // A budget failure is a settings problem, not a model problem: the bar must
 // say so and offer a way to fix it instead of a bare "generation failed".
 describe('MeetingArtifactBar budget failure', () => {

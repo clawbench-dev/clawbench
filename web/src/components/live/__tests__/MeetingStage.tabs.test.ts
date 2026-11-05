@@ -280,9 +280,30 @@ describe('MeetingStage tabs', () => {
     // "no literal key is missing" scan cannot see them. A missing key renders
     // as the raw key, which is what this pins.
     expect(tab(wrapper, 'basic').text()).toBe('Manage meeting')
-    expect(tab(wrapper, 'participants').text()).toBe('Participants')
+    // The headcount rides in the same label, so compare the label alone.
+    expect(tab(wrapper, 'participants').text()).toContain('Participants')
     expect(tab(wrapper, 'notes').text()).toBe('Transcript')
     expect(tab(wrapper, 'chat').text()).toBe('Chat')
+  })
+
+  it('shows the headcount on the participants tab, host included', async () => {
+    ;(shareApi.viewers as { value: unknown[] }).value = [
+      { id: 'v1', name: '', talk: 'muted' },
+      { id: 'v2', name: '', talk: 'muted' },
+    ]
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      // Two viewers plus the host. The number is on the tab so the host can see
+      // it without opening the pane, and the same count is printed in the pane.
+      expect(tab(wrapper, 'participants').find('[data-role="participants-count"]').text()).toBe('3')
+
+      await tab(wrapper, 'participants').trigger('click')
+      expect(wrapper.find('[data-role="participants-total"]').text()).toBe('3 in the meeting')
+    } finally {
+      ;(shareApi.viewers as { value: unknown[] }).value = [{ id: 'v1', name: '', talk: 'muted' }]
+    }
   })
 
   it('swaps one surface for another instead of stacking them', async () => {
