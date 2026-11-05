@@ -476,12 +476,47 @@ func (m *imapClient) fetchHeadersBySet(ctx context.Context, folder string, set i
 // is a net error (or EOF), a decoder failure is a plain error.
 type decodeError struct{ error }
 
-func (m *imapClient) classifyFetchError(err error) error {
+// isTransportFailure reports whether err is the socket going away rather than a
+// response the decoder could not parse.
+func isTransportFailure(err error) bool {
 	var netErr net.Error
-	if errors.As(err, &netErr) ||
+	return errors.As(err, &netErr) ||
 		errors.Is(err, net.ErrClosed) ||
 		errors.Is(err, io.EOF) ||
-		errors.Is(err, io.ErrUnexpectedEOF) {
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrClosedPipe)
+}
+
+// takeDecoderError closes the dead connection and returns the error that
+// stopped its read loop, if there was one.
+//
+// This is the tie-breaker the error alone cannot give us. go-imap closes the
+// socket from its read goroutine when it cannot parse a response, and the
+// command that was in flight then reports the dead socket ("use of closed
+// network connection") rather than the parse error — which goroutine notices
+// first is a scheduling race, so the same malformed reply reaches us as a
+// transport error on one run and as a parse error on the next.
+//
+// A clean peer close leaves go-imap's decoder error nil (the read loop breaks
+// on EOF without recording it), so nil means "nothing was parsed wrong": a real
+// drop. Any non-nil, non-transport error is a response the decoder rejected.
+func (m *imapClient) takeDecoderError() error {
+	if m.c == nil {
+		return nil
+	}
+	return m.c.Close()
+}
+
+func (m *imapClient) classifyFetchError(err error) error {
+	if isTransportFailure(err) {
+		// Only consult the decoder when the socket is really gone: closing a
+		// connection that a timeout left alive would turn a transient read
+		// timeout into a permanent failure.
+		if m.connGone() {
+			if derr := m.takeDecoderError(); derr != nil && !isTransportFailure(derr) {
+				return &decodeError{m.fail("fetch headers", derr)}
+			}
+		}
 		return m.fail("fetch headers", err)
 	}
 	return &decodeError{m.fail("fetch headers", err)}

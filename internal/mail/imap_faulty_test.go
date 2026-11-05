@@ -345,6 +345,67 @@ func (s *faultyIMAP) fetchOptions() []string {
 	return append([]string(nil), s.fetches...)
 }
 
+// The decoder's error is the only thing that separates "the server sent a reply
+// we could not parse" from "the socket just died". The command's own error is a
+// scheduling race — go-imap closes the socket from its read goroutine, so the
+// same malformed reply reaches the caller as a parse error on one run and as
+// "use of closed network connection" on the next. takeDecoderError must still
+// tell the two apart, otherwise the retry that recovers the folder fires
+// randomly (and so does the guard that refuses to degrade on a real drop).
+func TestTakeDecoderError_DistinguishesMalformedReplyFromDroppedSocket(t *testing.T) {
+	ctx := context.Background()
+	var set imap.UIDSet
+	set.AddRange(imap.UID(1), imap.UID(1000))
+	opts := &imap.FetchOptions{
+		UID:           true,
+		Flags:         true,
+		RFC822Size:    true,
+		InternalDate:  true,
+		BodySection:   []*imap.FetchItemBodySection{headerSectionItem()},
+		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+	}
+
+	t.Run("malformed reply", func(t *testing.T) {
+		_, acc := startFaultyIMAP(t, &faultyIMAP{malformedBodyStructure: true})
+		c, err := DialIMAP(ctx, acc)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer c.Close()
+		cl := c.(*imapClient)
+		if _, err := cl.selectFolder(ctx, "INBOX"); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		// The command fails either way; which error it reports is the race.
+		_, _ = cl.c.Fetch(set, opts).Collect()
+
+		derr := cl.takeDecoderError()
+		if derr == nil || isTransportFailure(derr) {
+			t.Fatalf("a malformed reply must leave a parse error behind, got %v", derr)
+		}
+	})
+
+	t.Run("dropped socket", func(t *testing.T) {
+		_, acc := startFaultyIMAP(t, &faultyIMAP{dropOnFetch: true})
+		c, err := DialIMAP(ctx, acc)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer c.Close()
+		cl := c.(*imapClient)
+		if _, err := cl.selectFolder(ctx, "INBOX"); err != nil {
+			t.Fatalf("select: %v", err)
+		}
+		_, _ = cl.c.Fetch(set, opts).Collect()
+
+		// A clean peer close leaves the decoder's error nil: nothing was parsed
+		// wrong, the connection simply went away.
+		if derr := cl.takeDecoderError(); derr != nil {
+			t.Fatalf("a clean drop must leave no decoder error, got %v", derr)
+		}
+	})
+}
+
 // A malformed BODYSTRUCTURE used to cost the whole folder: go-imap closes the
 // connection, so the batch (and every folder after it) failed. The client must
 // notice, reconnect, and ask again without the item that cannot be parsed.
