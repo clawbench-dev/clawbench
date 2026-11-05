@@ -194,8 +194,40 @@ class FakeRecorder {
   }
 }
 
-function fakeStream(): MediaStream {
-  const track = { kind: 'audio' } as MediaStreamTrack
+/**
+ * A track that behaves like the real one where the recorder looks at it.
+ *
+ * `readyState` and the `ended` event are the only two things the capture uses
+ * to tell a dead microphone from a quiet room, so a fake without them cannot
+ * exercise that at all — and it used to be exactly the shape that made
+ * `addEventListener` blow up.
+ */
+class FakeTrack {
+  readonly kind = 'audio'
+  readyState: MediaStreamTrackState = 'live'
+  private readonly listeners = new Map<string, Array<() => void>>()
+
+  addEventListener(type: string, fn: () => void): void {
+    const list = this.listeners.get(type) ?? []
+    list.push(fn)
+    this.listeners.set(type, list)
+  }
+
+  removeEventListener(type: string, fn: () => void): void {
+    const list = this.listeners.get(type) ?? []
+    this.listeners.set(
+      type,
+      list.filter((f) => f !== fn),
+    )
+  }
+
+  stop(): void {
+    this.readyState = 'ended'
+    for (const fn of this.listeners.get('ended') ?? []) fn()
+  }
+}
+
+function fakeStream(track: FakeTrack = new FakeTrack()): MediaStream {
   return { getAudioTracks: () => [track] } as unknown as MediaStream
 }
 
@@ -399,6 +431,47 @@ describe('LiveNotesCapture', () => {
   it('ignores channels with no audio track', () => {
     const capture = new LiveNotesCapture(fakeCtx(), async () => null, { segmentMs: 1000 })
     capture.addChannel('system', () => '系统声音', { getAudioTracks: () => [] } as unknown as MediaStream)
+    expect(capture.size).toBe(0)
+    expect(FakeRecorder.instances).toHaveLength(0)
+  })
+
+  it('reports a channel whose source track went away', () => {
+    // The device is unplugged: the recorder keeps producing silence, so the
+    // dead flag is the ONLY evidence the channel stopped hearing anything.
+    const track = new FakeTrack()
+    const capture = new LiveNotesCapture(fakeCtx(), async () => null, { segmentMs: 1000 })
+    capture.addChannel('mic', () => '我', fakeStream(track))
+    expect(capture.deadChannels()).toEqual([])
+
+    track.stop()
+
+    expect(capture.deadChannels()).toEqual(['mic'])
+  })
+
+  it('tracks the last time a channel carried speech', async () => {
+    const capture = new LiveNotesCapture(fakeCtx(), async () => null, { segmentMs: 1000 })
+    fakeLevel = 1
+    capture.addChannel('mic', () => '我', fakeStream())
+
+    const before = Date.now()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(capture.lastVoiceAt).toBeGreaterThanOrEqual(before)
+
+    // Silence must not move the marker: this is what "no sound for N minutes"
+    // is computed from.
+    const heard = capture.lastVoiceAt
+    fakeLevel = 0
+    await vi.advanceTimersByTimeAsync(600)
+    expect(capture.lastVoiceAt).toBe(heard)
+  })
+
+  it('refuses a stream whose track already ended', () => {
+    // A recovery that hands back a dead device must not create a recorder that
+    // can only ever hear silence — it has to fail loudly instead.
+    const track = new FakeTrack()
+    track.stop()
+    const capture = new LiveNotesCapture(fakeCtx(), async () => null, { segmentMs: 1000 })
+    capture.addChannel('mic', () => '我', fakeStream(track))
     expect(capture.size).toBe(0)
     expect(FakeRecorder.instances).toHaveLength(0)
   })

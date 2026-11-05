@@ -64,11 +64,15 @@
         >{{ pendingApprovals > 9 ? '9+' : pendingApprovals }}</span>
         <span v-if="tab.key === 'chat' && unread > 0" class="live-count">{{ unread > 9 ? '9+' : unread }}</span>
         <!-- A red dot while the recorder runs: the tab bar is what the user
-             looks at while reading the other tabs. -->
+             looks at while reading the other tabs. It turns amber/red when the
+             transcript is not actually being produced, so a dead microphone is
+             visible from a tab the user is not on. -->
         <span
           v-if="tab.key === 'notes' && notesOn"
           class="live-tab__rec"
-          :title="t('liveShare.notes.listening')"
+          :class="{ 'live-tab__rec--alert': notesHealth !== 'ok' }"
+          :title="notesHealthTitle"
+          data-role="notes-tab-dot"
         />
       </button>
     </div>
@@ -272,14 +276,28 @@
             data-role="notes-off"
           />
           <template v-else>
+            <!-- The live state, always visible while recording: the empty card
+                 below answers "what is this pane", this answers "is it working".
+                 Two different questions, and only the second one used to have
+                 no answer at all. -->
+            <NotesStatusBar
+              v-if="showNotesStatus"
+              :health="notes.health.value"
+              :silent-for-ms="notes.silentForMs.value"
+              :pending="notes.pending.value"
+              :lost="notes.lost.value"
+              :retrying="share.micRecovering.value"
+              :segments="notes.segments.value.length"
+              @retry="share.retryMicrophone()"
+            />
             <MeetingEmpty
-              v-if="noteBlocks.length === 0"
+              v-if="noteBlocks.length === 0 && notes.health.value === 'ok'"
               :icon="Captions"
               :title="t('liveShare.notes.listening')"
               :desc="t('liveShare.notes.listeningHint')"
               data-role="notes-listening"
             />
-            <TranscriptList v-else :blocks="noteBlocks" fill />
+            <TranscriptList v-else-if="noteBlocks.length > 0" :blocks="noteBlocks" fill />
           </template>
           <!-- What the record will contain, visible while it happens. Shown
                only once frames exist (or were lost): an empty bar under every
@@ -439,6 +457,7 @@ import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import NotesStatusBar from '@/components/live/NotesStatusBar.vue'
 import MeetingParticipants from '@/components/live/MeetingParticipants.vue'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -548,6 +567,23 @@ const cameraSelected = computed(() =>
   share.cameraEnabled.value ? options.cameraChoice.value || DEFAULT_DEVICE : '',
 )
 const notesOn = computed(() => notes.phase.value === 'recording')
+/**
+ * The recorder's own verdict on whether it is producing a transcript.
+ *
+ * Distinct from `notesOn`: that one means "the user left 听记 switched on".
+ * This one means "it is actually hearing something" — the whole point of the
+ * status bar, since the two used to be indistinguishable from the outside.
+ */
+const notesHealth = computed(() => notes.health.value)
+/** The bar is quiet when there is nothing to say and nothing transcribed yet. */
+const showNotesStatus = computed(
+  () => notesOn.value && (notesHealth.value !== 'ok' || notes.segments.value.length > 0),
+)
+const notesHealthTitle = computed(() =>
+  notesHealth.value === 'ok'
+    ? t('liveShare.notes.listening')
+    : t('liveShare.notes.statusAttention'),
+)
 /** Whether frames are being kept right now (running and not paused). */
 const shotsOn = computed(() => shots.active.value && !shots.paused.value)
 /**
@@ -1845,6 +1881,15 @@ watch(
   background: var(--accent-color, #4a90d9);
   animation: live-panel-pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
+}
+
+/* The recorder is on but not producing: a dead microphone looks exactly like a
+   quiet room from the tab bar, and this is the only place a host who is reading
+   the participant list would notice. Colour, not a second animation — the pulse
+   already says "this tab is live". */
+.live-tab__rec--alert {
+  background: var(--color-red, #dc2626);
+  animation: none;
 }
 
 /* The publisher's own camera. Mirrored: people expect their self-view to move

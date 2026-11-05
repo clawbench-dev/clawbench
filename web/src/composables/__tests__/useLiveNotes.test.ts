@@ -35,6 +35,13 @@ const h = vi.hoisted(() => {
     drainResult = true
     drainCalls = 0
     flushTimeout: number | null = null
+    /** Mirrors the real capture: what the status bar reads while recording. */
+    lastVoiceAt = 0
+    dead: string[] = []
+
+    deadChannels(): string[] {
+      return this.dead
+    }
 
     constructor(ctx: unknown, upload: (args: unknown) => Promise<unknown>, opts: Record<string, unknown>) {
       this.ctx = ctx
@@ -784,5 +791,114 @@ describe('useLiveNotes — upload callback', () => {
     opts.onOverflow()
 
     expect(notes.lost.value).toBe(2)
+  })
+})
+
+/**
+ * The status bar's input.
+ *
+ * Every case here is a state the panel used to be unable to show: the pane said
+ * "listening" whether the recorder was hearing a room, a dead headset or an
+ * audio graph the system had suspended.
+ */
+describe('useLiveNotes — live status', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  function startRecording() {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: {} as MediaStream })
+    return notes
+  }
+
+  it('is plain "ok" while recording', () => {
+    const notes = startRecording()
+    expect(notes.health.value).toBe('ok')
+    expect(notes.silentForMs.value).toBe(0)
+  })
+
+  it('reports a channel whose device disappeared', () => {
+    const notes = startRecording()
+    lastCapture().dead = ['mic']
+
+    vi.advanceTimersByTime(1_000)
+
+    expect(notes.health.value).toBe('micDead')
+  })
+
+  it('reports the audio graph being suspended', () => {
+    const notes = startRecording()
+    notes.setAudioSuspended(true)
+    expect(notes.health.value).toBe('suspended')
+  })
+
+  it('reports the connection to the server', () => {
+    const notes = startRecording()
+    notes.setConnectionState('reconnecting')
+    expect(notes.health.value).toBe('reconnecting')
+    notes.setConnectionState('offline')
+    expect(notes.health.value).toBe('offline')
+  })
+
+  it('calls out a microphone that has been silent past the threshold', () => {
+    const notes = startRecording()
+
+    // Just under two minutes: still a normal pause.
+    vi.advanceTimersByTime(119_000)
+    expect(notes.health.value).toBe('ok')
+
+    vi.advanceTimersByTime(2_000)
+    expect(notes.health.value).toBe('silent')
+    expect(notes.silentForMs.value).toBeGreaterThanOrEqual(120_000)
+  })
+
+  it('stops counting silence once a line is heard again', () => {
+    const notes = startRecording()
+    vi.advanceTimersByTime(130_000)
+    expect(notes.health.value).toBe('silent')
+
+    lastCapture().lastVoiceAt = Date.now()
+    vi.advanceTimersByTime(1_000)
+
+    expect(notes.health.value).toBe('ok')
+  })
+
+  it('reports a transcription backlog', () => {
+    const notes = startRecording()
+    lastCapture().pending = 5
+
+    vi.advanceTimersByTime(1_000)
+
+    expect(notes.health.value).toBe('queued')
+    expect(notes.pending.value).toBe(5)
+  })
+
+  /**
+   * Priority matters, not just coverage: a dead microphone also produces no
+   * speech and no backlog, so "silent" would be true and useless. The cause
+   * has to win over the symptom.
+   */
+  it('names the cause, not the symptom, when several apply', () => {
+    const notes = startRecording()
+    vi.advanceTimersByTime(130_000)
+    lastCapture().dead = ['mic']
+    notes.setAudioSuspended(true)
+    notes.setConnectionState('offline')
+
+    vi.advanceTimersByTime(1_000)
+
+    expect(notes.health.value).toBe('micDead')
+  })
+
+  it('says nothing about health once the recording stops', async () => {
+    const notes = startRecording()
+    lastCapture().dead = ['mic']
+    vi.advanceTimersByTime(1_000)
+    expect(notes.health.value).toBe('micDead')
+
+    await notes.stopCapture()
+
+    expect(notes.health.value).toBe('ok')
   })
 })

@@ -27,6 +27,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMain shortens the publisher grace window for the whole package.
+//
+// Production keeps a room alive for fifteen seconds after its publisher socket
+// drops, so a network blip reconnects instead of ending the meeting. Almost
+// every test here treats "socket closed" as "meeting over" and asserts that
+// within a few seconds, which would otherwise take fifteen seconds per case.
+// The reconnect test sets the window back up locally.
+func TestMain(m *testing.M) {
+	publisherGrace = 0
+	publisherGraceHandoff = 0
+	os.Exit(m.Run())
+}
+
 // resetLiveRegistry installs a fresh registry for a test and restores the
 // process-wide one afterwards. The registry is global, so without this a room
 // created by one test would be visible to the next.
@@ -1741,20 +1754,107 @@ func TestLiveWS_RosterDropsALeavingViewer(t *testing.T) {
 	}
 }
 
-// closePublisherAndWait tears the publisher socket down and waits until its
-// deferred finalize has closed the meeting record.
+// closePublisherAndWait tears the publisher socket down and waits until the
+// meeting is completely over.
 //
 // Without this the test returns first and the handler's post-close writes race
 // the DB teardown — the record's finalize then hits a nil handle and panics in
 // a goroutine, which the race detector surfaces as a crash rather than a
-// failure. The record's ended_at is the observable proof the write landed.
+// failure. The ROOM disappearing is the observable proof: teardown removes it
+// only after the record is closed, and a hijacked websocket is not something
+// httptest.Server.Close waits for.
 func closePublisherAndWait(t *testing.T, pub *websocket.Conn, token string) {
 	t.Helper()
 	_ = pub.CloseNow()
+	require.Eventually(t, func() bool { return liveRegistry.Get(token) == nil },
+		3*time.Second, 10*time.Millisecond, "publisher teardown never ended the share")
 	require.Eventually(t, func() bool {
 		note, ok, err := service.GetLiveNote(token)
 		return err == nil && ok && note.EndedAt > 0
 	}, 3*time.Second, 10*time.Millisecond, "publisher teardown never closed the meeting record")
+}
+
+// setPublisherGrace drives the reconnect window for one test. TestMain sets it
+// to zero so the rest of the package keeps the old "socket closed, meeting
+// over" timing.
+func setPublisherGrace(t *testing.T, grace time.Duration) {
+	t.Helper()
+	prev := publisherGrace
+	prevHandoff := publisherGraceHandoff
+	publisherGrace = grace
+	publisherGraceHandoff = grace
+	t.Cleanup(func() {
+		publisherGrace = prev
+		publisherGraceHandoff = prevHandoff
+	})
+}
+
+// A publisher that drops and comes back within the window keeps its meeting.
+//
+// This is the whole point of the grace period: a Wi-Fi change, a sleeping
+// laptop or a recycled proxy connection closes the socket exactly like "the
+// host pressed 结束会议", and ending a meeting over a two-second blip loses the
+// recording, the transcript and the room for everyone.
+func TestLiveWS_PublisherReconnectKeepsTheMeetingAlive(t *testing.T) {
+	setPublisherGrace(t, 3*time.Second)
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, viewer) // joined
+
+	_ = pub.CloseNow()
+	require.Eventually(t, func() bool {
+		room := liveRegistry.Get(token)
+		return room != nil && room.Publisher() == nil
+	}, 2*time.Second, 5*time.Millisecond, "the publisher slot was never released")
+
+	// The viewers must not be told the meeting is over: their peer connection
+	// carries the media, and tearing it down is what loses the rest of the call.
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	for {
+		_, data, err := viewer.Read(ctx)
+		if err != nil {
+			break
+		}
+		var msg liveshare.ViewerMessage
+		require.NoError(t, json.Unmarshal(data, &msg))
+		require.NotEqual(t, liveshare.MsgPublisherGone, msg.Type,
+			"viewers must not see the share end while the publisher may still reconnect")
+	}
+
+	// Reconnect on the SAME token, as the client does.
+	pub2 := dialPublisher(t, srv, token)
+	room := liveRegistry.Get(token)
+	require.NotNil(t, room, "the room must survive the reconnect")
+	require.NotNil(t, room.Publisher(), "the reconnected socket must own the room again")
+
+	note, ok, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Zero(t, note.EndedAt, "the meeting record must still be open")
+
+	// End it properly so no timer outlives the test (its finalize would run
+	// against a torn-down database).
+	publisherGrace = 0
+	closePublisherAndWait(t, pub2, token)
+}
+
+// ...and when nobody comes back, the meeting ends exactly as before.
+func TestLiveWS_PublisherNeverReturnsEndsTheMeeting(t *testing.T) {
+	setPublisherGrace(t, 150*time.Millisecond)
+	srv, token := liveWSServer(t)
+	pub := dialPublisher(t, srv, token)
+	viewer := dialWS(t, srv, "/api/share/"+token+"/signal?name=张三")
+	_ = readViewerMsg(t, viewer) // joined
+
+	_ = pub.CloseNow()
+	require.Eventually(t, func() bool { return liveRegistry.Get(token) == nil },
+		3*time.Second, 10*time.Millisecond, "the room was never reaped after the grace window")
+	require.Eventually(t, func() bool {
+		note, ok, err := service.GetLiveNote(token)
+		return err == nil && ok && note.EndedAt > 0
+	}, 3*time.Second, 10*time.Millisecond, "the meeting record was never closed")
 }
 
 // waitMeetingNotifications polls the log until a row of `eventType` for `token`

@@ -410,6 +410,22 @@ class ChannelRecorder {
   private waiters: Array<() => void> = []
   private readonly opts: LiveNotesCaptureOptions
 
+  /**
+   * When this channel last carried speech, in epoch ms (0 = never).
+   *
+   * Instance level, not per segment: the panel needs "how long has this channel
+   * been silent" across segment boundaries, and a device that disappears keeps
+   * producing perfectly valid SILENT audio — the recorder cannot tell that from
+   * a quiet room. Without this number the UI has no way to say so.
+   */
+  private lastVoiceAt = 0
+  /**
+   * The source track ended (headset unplugged, USB device removed, the system
+   * switched inputs). Recording continues on silence, so this flag is the only
+   * evidence the channel is dead rather than quiet.
+   */
+  private sourceEnded = false
+
   constructor(
     ctx: AudioContext,
     stream: MediaStream,
@@ -434,6 +450,16 @@ class ChannelRecorder {
     // mix recorder itself passes null here: feeding it back would loop.
     if (mixDest) this.source.connect(mixDest)
 
+    // A dead source is not an error anywhere in the Web Audio API: the graph
+    // keeps running and hands out silence. This listener is what turns "the
+    // microphone disappeared" into a state the UI can show.
+    for (const track of stream.getAudioTracks()) {
+      if (track.readyState === 'ended') this.sourceEnded = true
+      track.addEventListener('ended', () => {
+        this.sourceEnded = true
+      })
+    }
+
     // Level metering for pause detection. The analyser is pulled through a
     // muted gain so it keeps being processed without being heard (the
     // publisher's speakers are already fed by the viewer monitor edge).
@@ -453,6 +479,16 @@ class ChannelRecorder {
   /** Segments still waiting to be uploaded (the in-flight one included). */
   get pending(): number {
     return this.queue.length + (this.pumping ? 1 : 0)
+  }
+
+  /** Epoch ms of the last speech this channel carried (0 = never). */
+  get lastVoice(): number {
+    return this.lastVoiceAt
+  }
+
+  /** True when the source track went away under us. */
+  get dead(): boolean {
+    return this.sourceEnded
   }
 
   start(): void {
@@ -529,7 +565,9 @@ class ChannelRecorder {
     // keeping it.
     let speechSeen = this.analyser === null
     let vadSamples = 0
-    let lastVoiceAt = startedAt
+    // Segment-local: a pause ends THIS segment. The instance-level
+    // `this.lastVoiceAt` is what the panel reads, and it survives the cut.
+    let segmentVoiceAt = startedAt
     const cut = () => {
       try {
         if (rec.state !== 'inactive') rec.stop()
@@ -539,6 +577,12 @@ class ChannelRecorder {
     }
     rec.ondataavailable = (ev: BlobEvent) => {
       if (ev.data && ev.data.size > 0) chunks.push(ev.data)
+    }
+    // A recorder error is reported, not retried here: the spec fires stop after
+    // it, and `onstop` is what chains the next segment. Swallowing it would
+    // leave the channel silently dead with the UI still claiming it is listening.
+    rec.onerror = (ev: Event) => {
+      appLog.e(TAG, 'recorder error', this.channel, (ev as unknown as { error?: unknown }).error)
     }
     rec.onstop = () => {
       this.recorder = null
@@ -577,13 +621,14 @@ class ChannelRecorder {
       const now = Date.now()
       if (rms >= NOTES_SILENCE_RMS) {
         speechSeen = true
-        lastVoiceAt = now
+        segmentVoiceAt = now
+        this.lastVoiceAt = now
       }
       if (now - startedAt >= this.segmentMs) {
         cut()
         return
       }
-      if (now - startedAt >= this.minSegmentMs && now - lastVoiceAt >= NOTES_SILENCE_HOLD_MS) {
+      if (now - startedAt >= this.minSegmentMs && now - segmentVoiceAt >= NOTES_SILENCE_HOLD_MS) {
         cut()
       }
     })
@@ -723,10 +768,37 @@ export class LiveNotesCapture {
     return n
   }
 
+  /** Epoch ms of the last speech heard on ANY channel (0 = never). */
+  get lastVoiceAt(): number {
+    let latest = 0
+    for (const rec of this.channels.values()) latest = Math.max(latest, rec.lastVoice)
+    return latest
+  }
+
+  /**
+   * Channels whose audio source disappeared.
+   *
+   * A microphone that is unplugged, or a Bluetooth headset that walks out of
+   * range, leaves the recorder producing valid silence — the transcript simply
+   * stops growing and nothing anywhere reports why. These are the channels the
+   * UI must call out instead of showing "listening".
+   */
+  deadChannels(): string[] {
+    const out: string[] = []
+    for (const [name, rec] of this.channels) {
+      if (rec.dead) out.push(name)
+    }
+    return out
+  }
+
   /** Adds (or replaces) a channel. A null/empty stream is ignored: a muted
    *  microphone is normal and must not create a silent recorder. */
   addChannel(channel: string, speaker: () => string, stream: MediaStream | null): void {
     if (this.stopped || !stream || stream.getAudioTracks().length === 0) return
+    // A stream whose track already ended would produce a recorder that only
+    // ever hears silence — the exact failure this class now reports. Refuse it
+    // so the caller has to hand over a live source.
+    if (stream.getAudioTracks().every((t) => t.readyState === 'ended')) return
     this.removeChannel(channel)
     const rec = new ChannelRecorder(this.ctx, stream, channel, speaker, this.upload, this.opts, this.mixDest)
     this.channels.set(channel, rec)
