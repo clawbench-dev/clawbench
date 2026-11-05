@@ -211,6 +211,14 @@ env:
 
 registry 覆盖不能再用 `$NPM_CONFIG_USERCONFIG`：该变量只在 `registry-url` 存在时才由 `setup-node` 导出，移除后重定向会展开成空串并以 "No such file or directory" 失败（v0.112.1 实测）。因此改为把 `registry=https://registry.npmjs.org/` 一条 `> .npmrc` 写进**项目** .npmrc（npm 从工作目录读取，无需任何环境变量）。回归守护见 `scripts/__tests__/npmTrustedPublishing.test.ts`。
 
+#### 发布后催 npmmirror 同步
+
+npm 发完不等于镜像有了。npmmirror 平时靠上游事件自动同步，但**大包经常漏**：v0.132.0 发布后主包与 android 包已是 0.132.0，而 linux-x64 / linux-arm64 / darwin-x64 / darwin-arm64 / win32-x64 五个平台包全停在 0.131.0。主包的 `optionalDependencies` 指向新版本，从镜像装的人拉不到对应平台包——直接装不上，而报错发生在用户机器的 npm 里，不是我们的日志里。
+
+`sync-npmmirror` job 在所有 npm 发布之后跑 `scripts/npmmirror-sync.sh`：对每个包提交一次同步任务，然后**统一**轮询（镜像任务是并行的，逐个等会把最坏情况变成「包数 × 等待窗口」），最后再实取 1KB 验一次 tarball——元数据先到、文件后到，只查元数据会误判成功。
+
+它单独成 job 而不是并进 `publish-npm`：失败只让流水线变红，已发布的包不受影响，重跑这一个 job 即可（脚本幂等）。守护 `scripts/__tests__/npmmirrorSync.test.ts` 用假 curl 跑真脚本，钉住三件事：版本晚几次才出现时继续轮询、始终不同步的包要点名失败、tarball 下不了也算没同步好。
+
 ### 下游影响
 
 - **桌面端下载 URL 必须带 tag**：`internal/service/desktop_upgrade.go` 的 `desktopAssetBase` 只存基名，`desktopAssetName(osArch, tag)` 拼上 tag。因为名字含版本，**不存在** `releases/latest/download/<名>` 这种稳定链接，URL 一律由服务端上报的 tag 拼出。
