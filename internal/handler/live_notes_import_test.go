@@ -368,13 +368,22 @@ func TestLiveNoteImportSourceName(t *testing.T) {
 		{"产品评审会.mp4", "产品评审会.mp4"},
 		{"../../etc/passwd", "passwd"},
 		{"minutes.md", "source-minutes.md"},
-		{"a:b?.mkv", "a_b_.mkv"},
 		{"", "source"},
 		{".hidden.mp4", "source.mp4"},
 	}
 	for _, c := range cases {
 		assert.Equal(t, c.want, liveNoteImportSourceName(c.in), "input %q", c.in)
 	}
+
+	// A colon is a drive separator on Windows, so `filepath.Base` keeps only
+	// what follows it there. Both outcomes are safe names; what must hold on
+	// every platform is that nothing the filesystem refuses survives and the
+	// extension is preserved.
+	colon := liveNoteImportSourceName("a:b?.mkv")
+	assert.NotContains(t, colon, ":")
+	assert.NotContains(t, colon, "?")
+	assert.True(t, strings.HasSuffix(colon, ".mkv"), colon)
+
 	// Long names keep their extension so the file still opens as what it is.
 	long := liveNoteImportSourceName(strings.Repeat("会", 200) + ".mp4")
 	assert.LessOrEqual(t, len([]rune(long)), 120)
