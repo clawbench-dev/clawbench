@@ -93,20 +93,24 @@
               <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
           </div>
-          <!-- Quote this task into a conversation. Dragging the row already did
-               this, but a drag is invisible — every other quotable object has a
-               button, and the task list was one of the two places it could not
-               be found. -->
-          <button
-            class="task-quote-btn"
-            :title="t('file.header.quoteInChat')"
-            :aria-label="t('file.header.quoteInChat')"
-            @click.stop="quoteTask(task)"
-          >
-            <MessageSquare :size="14" />
-          </button>
+          <!-- Right rail: lifecycle pill on top, row actions at the bottom.
+               Both ends are anchored to the card's own edges, so the rail
+               stretches with the left column's height instead of leaving the
+               lower-right corner empty. -->
           <div class="task-item-right">
             <span class="task-item-status" :class="task.status">{{ statusLabel(task.status) }}</span>
+            <!-- Quote this task into a conversation. Dragging the row already
+                 did this, but a drag is invisible — every other quotable
+                 object has a button, and the task list was one of the two
+                 places it could not be found. -->
+            <button
+              class="task-quote-btn"
+              :title="t('file.header.quoteInChat')"
+              :aria-label="t('file.header.quoteInChat')"
+              @click.stop="quoteTask(task)"
+            >
+              <MessageSquare :size="14" />
+            </button>
           </div>
         </div>
       </div>
@@ -604,14 +608,17 @@ onMounted(refresh)
   min-width: 0;
 }
 
+/* Stretches the card's full content height so the pill anchors to the top
+   edge and the quote action anchors to the bottom edge — the row's lower-right
+   corner reads as part of the card instead of dead space. */
 .task-item-right {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: space-between;
   gap: calc(6 * var(--dp));
   flex-shrink: 0;
-  align-self: flex-start;
-  margin-top: calc(2 * var(--dp));
+  align-self: stretch;
   margin-left: calc(10 * var(--dp));
 }
 
