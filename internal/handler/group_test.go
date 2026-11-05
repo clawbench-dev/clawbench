@@ -1011,7 +1011,9 @@ func TestServeGroupMembers_DeleteLastMemberIs409(t *testing.T) {
 	created, err := service.ListGroupMembers(groupID)
 	require.NoError(t, err)
 	require.Len(t, created, 2)
-	require.NoError(t, service.RemoveGroupMember(groupID, created[0].ID))
+	removed, err := service.RemoveGroupMember(groupID, created[0].ID)
+	require.NoError(t, err)
+	require.True(t, removed)
 
 	// The remaining member is the last one: removing it would empty the group.
 	members, err := service.ListGroupMembers(groupID)

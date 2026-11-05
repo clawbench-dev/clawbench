@@ -1347,6 +1347,10 @@ func writeDisabledSystemEvent(groupID, memberID string, disabled bool) {
 
 // RemoveGroupMember deletes a member from the group (移出群聊). Idempotent.
 //
+// The bool reports whether a row actually changed (false for a repeated removal,
+// an unknown id, or a member of another group) — the handler uses it to decide
+// whether the member's ACP connection needs closing.
+//
 // Unlike disabling, this is one-way from the user's point of view: the member
 // disappears from the roster, the @-mention menu and every scheduling path, and
 // re-adding the same agent creates a NEW instance. The row itself is KEPT with
@@ -1363,18 +1367,18 @@ func writeDisabledSystemEvent(groupID, memberID string, disabled bool) {
 //
 // The UPDATE is scoped by group_id and `removed = 0`, so a repeated call or a
 // member id belonging to a DIFFERENT group is a no-op and writes no system line.
-func RemoveGroupMember(groupID, memberID string) error {
+func RemoveGroupMember(groupID, memberID string) (bool, error) {
 	if memberID == "" || groupID == "" {
-		return nil
+		return false, nil
 	}
 	if memberID == GetGroupHostMember(groupID) {
-		return ErrCannotRemoveHost
+		return false, ErrCannotRemoveHost
 	}
 	// Only an ACTIVE member can be the last one; re-asserting removal of an
 	// already-removed row must stay a no-op success.
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	found := false
 	targetDisabled := false
@@ -1391,7 +1395,7 @@ func RemoveGroupMember(groupID, memberID string) error {
 		// reduces the speaking count, so only the enabled case needs the second
 		// check.
 		if len(members) <= 1 || (!targetDisabled && countSpeakingMembers(members) <= 1) {
-			return ErrCannotRemoveLastMember
+			return false, ErrCannotRemoveLastMember
 		}
 	}
 
@@ -1401,14 +1405,14 @@ func RemoveGroupMember(groupID, memberID string) error {
 		memberID, groupID, groupMemberSessionType,
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
 	affected, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if affected == 0 {
-		return nil
+		return false, nil
 	}
 	// Best-effort: the member is already removed, so a write failure must not
 	// surface as a failed removal.
@@ -1422,7 +1426,7 @@ func RemoveGroupMember(groupID, memberID string) error {
 			emitGroupSystemMessage(groupID, msgID, text)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // memberDisplayName returns a member row's display name (empty if unknown).

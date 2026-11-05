@@ -425,7 +425,8 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
 		return
 	}
-	if err := service.RemoveGroupMember(req.GroupID, req.MemberID); err != nil {
+	removed, err := service.RemoveGroupMember(req.GroupID, req.MemberID)
+	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrCannotRemoveHost):
 			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
@@ -436,11 +437,16 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 		}
 		return
 	}
-	// The member owns its own ACP connection (keyed by the member row id), so it
-	// must be closed here — otherwise the agent subprocess keeps running for a
-	// member the user just deleted. Async like every other close path: close()
-	// may block on cmd.Wait().
-	go ai.GetACPConnManager().CloseConn(req.MemberID)
+	// Only close the connection when THIS group's row actually changed: a no-op
+	// (repeated removal, or a member id from another group) must not reach into
+	// someone else's session.
+	if removed {
+		// The member owns its own ACP connection (keyed by the member row id), so
+		// it must be closed here — otherwise the agent subprocess keeps running
+		// for a member the user just deleted. Async like every other close path:
+		// close() may block on cmd.Wait().
+		go ai.GetACPConnManager().CloseConn(req.MemberID)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

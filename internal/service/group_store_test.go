@@ -2567,7 +2567,7 @@ func TestRemoveGroupMember_HidesFromRosterButKeepsAttribution(t *testing.T) {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
 
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
+	if _, err := RemoveGroupMember(groupID, memberID); err != nil {
 		t.Fatalf("RemoveGroupMember: %v", err)
 	}
 
@@ -2619,7 +2619,7 @@ func TestRemoveGroupMember_RefusesHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, hostID); !errors.Is(err, ErrCannotRemoveHost) {
+	if _, err := RemoveGroupMember(groupID, hostID); !errors.Is(err, ErrCannotRemoveHost) {
 		t.Fatalf("removing the host must be refused with ErrCannotRemoveHost, got %v", err)
 	}
 }
@@ -2633,10 +2633,10 @@ func TestRemoveGroupMember_RefusesLastMember(t *testing.T) {
 	}
 	groupID, byName := createFreeGroup(t, project, "A", "B")
 
-	if err := RemoveGroupMember(groupID, byName["B"]); err != nil {
+	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
 		t.Fatalf("removing one of two members must work: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, byName["A"]); !errors.Is(err, ErrCannotRemoveLastMember) {
+	if _, err := RemoveGroupMember(groupID, byName["A"]); !errors.Is(err, ErrCannotRemoveLastMember) {
 		t.Fatalf("removing the last member must be refused with ErrCannotRemoveLastMember, got %v", err)
 	}
 }
@@ -2659,7 +2659,7 @@ func TestRemoveGroupMember_ForeignMemberIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup B: %v", err)
 	}
-	if err := RemoveGroupMember(groupA, memberB); err != nil {
+	if _, err := RemoveGroupMember(groupA, memberB); err != nil {
 		t.Fatalf("foreign member removal must be a no-op success: %v", err)
 	}
 	active, err := ListGroupMembers(groupA)
@@ -2689,7 +2689,7 @@ func TestRemoveGroupMember_WritesOneSystemEvent(t *testing.T) {
 	}
 	before := len(systemMessages(t, groupID))
 
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
+	if _, err := RemoveGroupMember(groupID, memberID); err != nil {
 		t.Fatalf("RemoveGroupMember: %v", err)
 	}
 	sysMsgs := systemMessages(t, groupID)
@@ -2701,7 +2701,7 @@ func TestRemoveGroupMember_WritesOneSystemEvent(t *testing.T) {
 		t.Fatalf("removal event must name the member and say they were removed: %q", last)
 	}
 
-	if err := RemoveGroupMember(groupID, memberID); err != nil {
+	if _, err := RemoveGroupMember(groupID, memberID); err != nil {
 		t.Fatalf("repeat removal must be a no-op success: %v", err)
 	}
 	if got := len(systemMessages(t, groupID)); got != len(sysMsgs) {
@@ -2720,7 +2720,7 @@ func TestRemoveGroupMember_WorksOnDisabledMember(t *testing.T) {
 	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
 		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, byName["B"]); err != nil {
+	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
 		t.Fatalf("removing a disabled member must work: %v", err)
 	}
 	if _, err := ListGroupMembers(groupID); err != nil {
@@ -2744,7 +2744,7 @@ func TestRemoveGroupMember_NameIsNotReused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddGroupMember: %v", err)
 	}
-	if err := RemoveGroupMember(groupID, secondID); err != nil {
+	if _, err := RemoveGroupMember(groupID, secondID); err != nil {
 		t.Fatalf("RemoveGroupMember: %v", err)
 	}
 	newIDs, err := AddGroupMembers(project, groupID, []GroupMemberSpec{{AgentID: "agent-claude", Backend: "claude"}})
@@ -2783,11 +2783,11 @@ func TestRemoveGroupMember_RefusesLastSpeakerWithDisabledMembersLeft(t *testing.
 		t.Fatalf("SetGroupMemberDisabled: %v", err)
 	}
 
-	if err := RemoveGroupMember(groupID, byName["A"]); !errors.Is(err, ErrCannotRemoveLastMember) {
+	if _, err := RemoveGroupMember(groupID, byName["A"]); !errors.Is(err, ErrCannotRemoveLastMember) {
 		t.Fatalf("removing the only enabled member must be refused, got %v", err)
 	}
 	// The disabled member can go: A still speaks afterwards.
-	if err := RemoveGroupMember(groupID, byName["B"]); err != nil {
+	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
 		t.Fatalf("removing a disabled member must work while an enabled one remains: %v", err)
 	}
 	active, err := ListGroupMembers(groupID)
