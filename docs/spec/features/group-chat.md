@@ -180,6 +180,7 @@ flowchart TB
 - `POST /api/group/members` — 批量加成员（整批过成员数上限）
 - `POST /api/group/member-avatars` — 批量写回成员头像（`{groupId, avatars:[{memberId, avatar}]}`；每个 SVG 过 `avatarSVGLooksSafe` 安全门）
 - `PATCH /api/group/members` — 禁用 / 启用（拒绝禁用主持人；`disabled` 必填）
+- `DELETE /api/group/members` — 把成员**移出群聊**（`{groupId, memberId}`）。成员行保留并置 `removed=1`（历史发言要能解析发言人），花名册与所有调度路径过滤掉它；重新添加同一智能体创建新实例。拒绝主持人、最后一位可发言成员、以及本轮讨论进行中（均 409）；重复删除幂等成功
 - `PATCH /api/group/host` — 更换主持人（`{groupId, memberId}`，`memberId` 是成员行 id）。群行上的指针 + 群行的 `backend`/`agent_id` 镜像在同一事务内改写，成功后写一条「XX 成为了主持人」系统行；重复设当前主持人幂等且不写行。自由群（无主持人）→ 409，非本群成员 → 400，已禁用成员 → 409
 - `PATCH /api/group/settings` — 群设置（`parallelDefault`、`cruise`）
 - 智能体讨论次数上限（`chat.group_max_speeches`）与用户称谓（`user.nickname`）都是**全局配置**（`PATCH /api/config`），不是每群设置
