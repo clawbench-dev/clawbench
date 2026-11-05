@@ -1389,7 +1389,7 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 
 	// The guard is ALSO expressed in the UPDATE's WHERE clause, so two concurrent
 	// removals cannot both pass the pre-check above and empty the roster. SQLite
-	// serialises writers, so the subqueries see the other deletion's commit.
+	// serializes writers, so the subqueries see the other deletion's commit.
 	res, err := store.WriteExec(
 		`UPDATE chat_sessions SET removed = 1, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND group_id = ? AND session_type = ? AND removed = 0
