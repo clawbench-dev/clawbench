@@ -1399,6 +1399,46 @@ jobs:
             ./scripts/npm-publish-idempotent.sh "./npm/desktop-payloads/$KEY" --access public
           done
 
+  sync-npmmirror:
+    name: Sync npmmirror
+    # 国内用户默认走 npmmirror，而镜像并不总是自己跟上：v0.132.0 发布后，
+    # 主包和 android 包已是 0.132.0，但 linux-x64 / linux-arm64 / darwin-* /
+    # win32-x64 五个平台包全停在 0.131.0。主包的 optionalDependencies 指向
+    # 新版本，从镜像装的人直接拉不到对应平台包——装不上，且没有任何提示。
+    #
+    # 所以发布完要主动催一次同步，并等到「元数据 + tarball 都可用」才算完。
+    # 单独成 job：失败只让流水线变红，已经发出去的包不受影响，重跑这一个
+    # job 就能补齐（脚本本身幂等）。
+    needs: [publish-npm, publish-npm-desktop]
+    runs-on: ubuntu-latest
+    # 脚本内部有统一的等待窗口（默认 10 分钟），加上每个包一次 tarball 探测，
+    # 这里再兜一层防止卡死。
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          # npm 语义化版本不允许 v 前缀。
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger and wait for mirror sync
+        run: |
+          ./scripts/npmmirror-sync.sh "${{ steps.version.outputs.VERSION }}" \
+            @xulongzhe/clawbench \
+            @xulongzhe/clawbench-linux-x64 \
+            @xulongzhe/clawbench-linux-arm64 \
+            @xulongzhe/clawbench-android-arm64 \
+            @xulongzhe/clawbench-darwin-x64 \
+            @xulongzhe/clawbench-darwin-arm64 \
+            @xulongzhe/clawbench-win32-x64 \
+            @xulongzhe/clawbench-desktop-linux-x64-payload \
+            @xulongzhe/clawbench-desktop-linux-arm64-payload \
+            @xulongzhe/clawbench-desktop-windows-x64-payload
+
   release-notes:
     name: Generate Release Notes
     needs: [build-linux, build-linux-arm64, build-android-go, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker, publish-npm]
