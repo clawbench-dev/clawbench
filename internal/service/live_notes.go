@@ -2445,7 +2445,7 @@ const liveNotesMinutesChunkRunes = 24000
 // drop exactly the details the larger chunk was meant to preserve.
 const liveNotesMinutesChunkMaxTokens = liveNotesMinutesChunkRunes / 5
 
-const liveNotesMinutesPrompt = `你是一名专业的会议记录员。根据下面这场会议的实时转写（每行是「时间 说话人：内容」，不同说话人的语音来自不同信道，已按时间重排），生成结构化的会议纪要。
+const liveNotesMinutesPrompt = `你是一名专业的会议记录员。根据下面这场会议的实时转写（每行是「时间 说话人：内容」，已按时间重排；同一路声音里也可能有多人交替发言，一律以每行的说话人标签为准），生成结构化的会议纪要。
 
 要求：
 1. 输出 Markdown，使用以下章节（没有内容的章节可省略）：
