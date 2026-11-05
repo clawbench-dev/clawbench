@@ -47,8 +47,8 @@ withDefaults(defineProps<{ brand?: boolean; live?: boolean; title?: string }>(),
   align-items: center;
   /* Centred, and allowed to wrap. The dock is a SIBLING of the stage, so the
      stage's `overflow: hidden` never clips it: once the buttons stopped fitting
-     (7 controls × 44dp on a 320dp phone, and interface scaling multiplies the
-     whole pill) it spilled symmetrically past both edges and the outermost
+     (7 controls on a 320dp phone, and interface scaling multiplies the whole
+     pill) it spilled symmetrically past both edges and the outermost
      buttons — brand and fullscreen — became untappable. Wrapping turns that
      into a second row, which is ugly but usable; `justify-content` keeps each
      row centred instead of left-aligned inside the widest one. */
@@ -61,7 +61,7 @@ withDefaults(defineProps<{ brand?: boolean; live?: boolean; title?: string }>(),
   width: max-content;
   max-width: calc(100% - 2 * var(--space-3, 6px));
   gap: var(--space-2, 4px);
-  padding: var(--space-2, 4px);
+  padding: var(--space-1, 2px);
   border-radius: var(--radius-full, 999px);
   background: color-mix(in srgb, var(--bg-secondary, #161b22) 86%, transparent);
   border: 1px solid var(--border-color, #30363d);

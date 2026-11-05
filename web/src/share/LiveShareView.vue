@@ -218,16 +218,26 @@
            uses too: same object, different actions. -->
       <LiveDock brand :live="state === 'playing'" :title="title || t('share.live.title')">
         <!-- Autoplay with audio is blocked without a user gesture, so playback
-             starts muted and the viewer opts in here. Showing an error instead
-             would leave them with a silent stream and no clue. -->
+             starts muted and the viewer opts in here. A switch, labelled by
+             STATE exactly like the microphone next to it (声音已关 / 声音已开),
+             so the way back to silence is the same control. Only shown when the
+             stream actually carries audio — there is nothing to switch on a
+             silent share. -->
         <LiveDockButton
-          v-if="needsSoundUnlock"
-          call
-          data-action="enable-sound"
-          @click="unlockSound"
+          v-if="hasAudio"
+          :live="!soundMuted"
+          role="switch"
+          :aria-checked="!soundMuted"
+          :aria-label="t('share.live.soundToggle')"
+          :title="soundMuted ? t('share.live.soundOffHint') : t('share.live.soundOnHint')"
+          data-action="toggle-sound"
+          @click="toggleSound"
         >
-          <template #icon><VolumeX :size="16" /></template>
-          {{ t('share.live.enableSound') }}
+          <template #icon>
+            <VolumeX v-if="soundMuted" :size="16" />
+            <Volume2 v-else :size="16" />
+          </template>
+          {{ soundMuted ? t('share.live.soundOff') : t('share.live.soundOn') }}
         </LiveDockButton>
 
         <!-- One toggle: on = live, off = muted. No approval step — the
@@ -475,6 +485,7 @@ import {
   ScreenShare,
   ScreenShareOff,
   VideoOff,
+  Volume2,
   VolumeX,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -598,7 +609,15 @@ const talking = ref(false)
  * host can undo at any moment.
  */
 const mutedByHost = ref(false)
-const needsSoundUnlock = ref(false)
+/**
+ * Sound is a two-state toggle, not a one-shot prompt.
+ *
+ * `hasAudio` decides whether the button exists at all (a silent share has
+ * nothing to toggle); `soundMuted` mirrors the <video> element, which is the
+ * real owner of the mute state.
+ */
+const hasAudio = ref(false)
+const soundMuted = ref(true)
 /** Mirrors the browser's fullscreen state so the icon can follow Esc / F11. */
 const isFullscreen = ref(false)
 
@@ -1411,22 +1430,30 @@ function attachStream(stream: MediaStream): void {
   const el = videoRef.value
   if (!el) return
   el.srcObject = stream
-  // Playback starts muted (autoplay policy), and the prompt is only useful
-  // while that is still true. Reading the ELEMENT rather than assuming: after
-  // `unlockSound` the mute state lives on the element (imperative, not tracked
-  // by Vue), so a re-attach — the publisher swapping source, or a renegotiation
-  // — would otherwise bring the prompt back over audio that is already playing.
-  needsSoundUnlock.value = el.muted && stream.getAudioTracks().length > 0
+  // The mute state lives on the ELEMENT (imperative, not tracked by Vue), so a
+  // re-attach — the publisher swapping source, or a renegotiation — must read it
+  // back instead of assuming: the viewer may already have turned the sound on,
+  // and re-muting them would be a silent regression.
+  hasAudio.value = stream.getAudioTracks().length > 0
+  soundMuted.value = el.muted
   void el.play().catch((e) => {
     appLog.w(TAG, 'autoplay blocked', e)
   })
 }
 
-function unlockSound(): void {
+/**
+ * Flip the sound on or off.
+ *
+ * Reading `el.muted` back keeps the element the single source of truth: an
+ * autoplay block or a browser-side mute can change it without going through
+ * this function.
+ */
+function toggleSound(): void {
   const el = videoRef.value
   if (!el) return
-  el.muted = false
-  needsSoundUnlock.value = false
+  el.muted = !el.muted
+  soundMuted.value = el.muted
+  if (el.muted) return
   void el.play().catch((e) => appLog.w(TAG, 'unmuted play failed', e))
 }
 
@@ -1820,19 +1847,19 @@ onBeforeUnmount(() => {
   /* Positioning context for the floating dock and the banners. */
   position: relative;
   background: var(--bg-primary, #0d1117);
-  /* How much of the bottom the dock occupies — one 44dp row plus the pill's own
-     2 × 4dp padding and its 1px borders. The control pill is positioned above
+  /* How much of the bottom the dock occupies — one 28dp row plus the pill's own
+     2 × 2dp padding and its 1px borders. The control pill is positioned above
      it, so the two cannot drift apart. */
-  --live-dock-height: calc(54 * var(--dp));
+  --live-dock-height: calc(34 * var(--dp));
 }
 
-/* The dock wraps once its buttons stop fitting (seven 44dp controls do not fit
+/* The dock wraps once its buttons stop fitting (seven 28dp controls do not fit
    a 320dp phone, and interface scaling multiplies the whole pill), so on narrow
-   screens the control pill above it has to clear TWO rows: 2 × 44dp + 4dp gap +
-   2 × 4dp padding + borders. */
+   screens the control pill above it has to clear TWO rows: 2 × 28dp + 4dp gap +
+   2 × 2dp padding + borders. */
 @media (max-width: 520px) {
   .live-share-view {
-    --live-dock-height: calc(102 * var(--dp));
+    --live-dock-height: calc(66 * var(--dp));
   }
 }
 

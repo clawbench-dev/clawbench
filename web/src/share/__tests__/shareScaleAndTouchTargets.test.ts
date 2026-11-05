@@ -7,8 +7,14 @@ import { readWebFile } from '@/testUtils/readWebFile'
  * 1. Touch targets. The dock buttons are the ONLY way to mute, chat or go
  *    fullscreen while a phone viewer is watching a share, and the join gate's
  *    field/button is the only way past the gate. They were 24–30dp tall (and
- *    the icon-only variant at ≤520px was about 24dp wide), well under the 44dp
- *    floor — so a thumb pressed the neighbouring control instead.
+ *    the icon-only variant at ≤520px was about 24dp wide) — so a thumb pressed
+ *    the neighbouring control instead.
+ *
+ *    The dock's floor is 28dp, not 44: it floats over the picture and every dp
+ *    of height comes out of the video, so the bar is deliberately compact
+ *    (28dp button + 2dp pill padding = 32dp). Do not "restore" 44dp without
+ *    also accepting a bar that is half again as tall as the picture's own
+ *    controls. The join gate keeps 44dp — it is a form, not an overlay.
  *
  * 2. Interface scaling. `--ui-scale` only scales the root font size, so every
  *    geometric length has to be written as `calc(N * var(--dp))`. A bare `6px`
@@ -71,12 +77,12 @@ const DOCK_BUTTON = 'src/share/LiveDockButton.vue'
 const JOIN_GATE = 'src/share/LiveJoinGate.vue'
 
 describe('touch targets', () => {
-  it('gives every dock button a 44dp minimum in both axes', () => {
+  it('gives every dock button a 28dp minimum in both axes', () => {
     const bodies = bodiesOf(DOCK_BUTTON, '.live-dock-btn')
     expect(bodies.length).toBeGreaterThan(0)
 
     // Height: one rule is enough, it applies everywhere.
-    expect(bodies.some((b) => /min-height:\s*calc\(44 \* var\(--dp\)\)/.test(b))).toBe(true)
+    expect(bodies.some((b) => /min-height:\s*calc\(28 \* var\(--dp\)\)/.test(b))).toBe(true)
 
     // Width: only needed once the label is dropped. It must live in THAT
     // breakpoint — a min-width on the labelled variant is dead weight and would
@@ -93,7 +99,7 @@ describe('touch targets', () => {
 
     const narrowButton = narrowRules.filter((r) => r.selector === '.live-dock-btn')
     expect(narrowButton, 'no .live-dock-btn rule inside the ≤520px block').toHaveLength(1)
-    expect(narrowButton[0].body).toMatch(/min-width:\s*calc\(44 \* var\(--dp\)\)/)
+    expect(narrowButton[0].body).toMatch(/min-width:\s*calc\(28 \* var\(--dp\)\)/)
   })
 
   it('raises the join gate field and button to 44dp', () => {
@@ -109,15 +115,15 @@ describe('touch targets', () => {
   })
 
   /**
-   * The 44dp floor makes the dock wider than a small phone.
+   * The 28dp floor still makes the dock wider than a small phone.
    *
    * A viewer's dock can hold seven controls (sound, mic, control, share, chat,
-   * notes, fullscreen) at 44dp each, and interface scaling multiplies the whole
+   * notes, fullscreen) at 28dp each, and interface scaling multiplies the whole
    * pill. The dock is absolutely positioned and centred, and it is a SIBLING of
    * the stage — so the stage's `overflow: hidden` never clips it. Without a
    * ceiling and wrapping it spilled symmetrically past both edges and the
    * outermost buttons (brand, fullscreen) could not be tapped at all. Wrapping
-   * is the fix; shrinking the buttons back under 44dp is not.
+   * is the fix; shrinking the buttons further is not.
    */
   it('lets the dock wrap instead of overflowing the viewport', () => {
     const bodies = bodiesOf('src/share/LiveDock.vue', '.live-dock')
@@ -152,7 +158,7 @@ describe('touch targets', () => {
     // ...and the narrow breakpoint really reserves the two-row height.
     const narrow = mediaBlock(css, '@media (max-width: 520px)')
     expect(narrow, 'the ≤520px block is missing').not.toBe('')
-    expect(narrow).toMatch(/--live-dock-height:\s*calc\(102 \* var\(--dp\)\)/)
+    expect(narrow).toMatch(/--live-dock-height:\s*calc\(66 \* var\(--dp\)\)/)
   })
 })
 
