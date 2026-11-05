@@ -41,9 +41,11 @@
       </button>
     </div>
 
-    <div v-if="loading" class="meeting-body meeting-center">
-      <LoadingIndicator size="sm" inline />
-      {{ t('common.loading') }}
+    <!-- First load: the pane below the header is an article (minutes /
+         transcript / chat), so the placeholder previews paragraph lines. It
+         keeps the body's own padding, which is what the real content sits on. -->
+    <div v-if="loading" class="meeting-body">
+      <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
     </div>
     <div v-else-if="!record" class="meeting-body">
       <MeetingEmpty
@@ -308,7 +310,7 @@ import {
   SpellCheck,
   Trash2,
 } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
 import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
@@ -1155,7 +1157,6 @@ onMounted(() => {
   display: flex; flex-direction: column; gap: var(--space-5);
   padding: var(--space-6) var(--space-7);
 }
-.meeting-center { align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 
 .meeting-md {
   font-size: var(--font-size-sm); line-height: 1.75; color: var(--text-primary);

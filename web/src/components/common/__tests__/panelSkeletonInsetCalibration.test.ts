@@ -46,7 +46,10 @@ function length(token: string): number {
   if (t === '0') return 0
   const calc = /^calc\(\s*(-?[\d.]+)\s*\*\s*var\(--dp\)\s*\)$/.exec(t)
   if (calc) return Number(calc[1])
-  const space = /^var\((--space-\d+)\)$/.exec(t)
+  // A fallback (`var(--space-5, 10px)`) is only a safety net for a missing
+  // token — the token itself is what the real layout uses, so resolve through
+  // it and ignore the fallback.
+  const space = /^var\((--space-\d+)(?:,\s*[^)]*)?\)$/.exec(t)
   if (space) {
     const v = SPACE[space[1]]
     if (v === undefined) throw new Error(`unknown spacing token ${t}`)
@@ -282,6 +285,18 @@ const SURFACES: Surface[] = [
     file: 'src/components/chat/MessageClustersDrawer.vue',
     skeleton: '.mc-content',
     row: '.mc-cluster-item',
+  },
+  {
+    name: 'meeting records',
+    file: 'src/components/live/MeetingList.vue',
+    skeleton: '.meeting-list-skeleton',
+    row: '.meeting-row',
+  },
+  {
+    name: 'meeting resource files',
+    file: 'src/components/live/MeetingResources.vue',
+    skeleton: '.res-skeleton',
+    row: '.res-row',
   },
 ]
 

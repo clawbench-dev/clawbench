@@ -485,14 +485,18 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - **触发要延迟一拍**（`composables/useDelayedFlag.ts`，默认 120ms）：统计查询是本地 SQLite 聚合，常在几十毫秒内返回，每次点周期都闪一次灰块比等待本身更扎眼；延迟后只有真正慢的加载才显示骨架屏。源标志变 false 时**立即**清除，不留尾随骨架屏。
   - **骨架屏必须替换掉旧数字**，不能覆盖在旧数字上：用户抱怨的「静默卡住」正是「控件已变、数字没变、也没有任何加载信号」——保留上一周期的数值等于把旧数据冒充新数据。
 - **面板首屏骨架屏（`components/common/PanelSkeleton.vue`）**：所有 dock 面板的**首次加载**都用它，不再用居中圆环。圆环只说「在等」，不说「要来的长什么样」，而且会让整个面板塌成一个字形。三种形状 `variant`：
-  - `list`（默认）——行 = `[leading 图标块] 主文本 + 副文本 [meta 块]`，`leading`/`meta` 可关。用于文件列表、会话列表、Git 提交、Forge 列表、任务、通知、代理端口、选择器。
+  - `list`（默认）——行 = `[leading 图标块] 主文本 + 副文本 [meta 块]`，`leading`/`meta` 可关。用于文件列表、会话列表、Git 提交、Forge 列表、任务、通知、代理端口、选择器、会议记录、会议资源页签。
   - `grid`——方形缩略图 + 标题，几何对齐 `.file-grid`（`minmax(90px,1fr)`）。用于文件网格与搜索结果网格。
-  - `text`——段落行。用于文件预览、diff、分享页正文、OpenAPI 文档。
+  - `text`——段落行。用于文件预览、diff、分享页正文、OpenAPI 文档、会议详情、重新生成计划面板。
   - **行宽是固定循环**，与 `ChatSkeleton`/`StatsSkeleton` 同一理由：微光已在表达「加载中」，随机宽度会在重渲染时跳动。
   - **可见块全部 `aria-hidden`**，加载文案由唯一的 `role="status"` 承载。`label` 传现有 i18n 键（`common.loading` / `forge.loading` / …），不要新造文案。
   - **必须铺满容器并左对齐**：`.git-history-loading` / `.forge-loading` / `.task-loading` 等旧容器是 `display:flex` 的**默认横向**容器且 `align-items:center`，直接把骨架塞进去会缩成中间一条窄柱。做法是加 `--skeleton` 修饰类（`align-items:stretch; justify-content:flex-start`），或给骨架一个自带宽度的类。
     - **宽度必须由骨架自己声明（`width:100%`），不能只靠修饰类**：`align-items:stretch` 作用在横向容器的**交叉轴（高度）**上，给不了宽度；而骨架内部所有行宽都是百分比，父宽为 0 时全部归零 —— 实测流水线详情整块量到 **0px**（面板一片空白、看着像没接骨架屏），列表也只剩 leading/meta 的固定宽度（96px / 541px 容器）。守卫 `PanelSkeleton.test.ts` 直接钉源码里的 `width: 100%`（jsdom 不做布局，测不了几何）。
   - **只替换首屏，不替换三种「有内容在场」的加载**：①已有数据的刷新遮罩（文件管理器切目录时的 `dirLoading && displayEntries.length > 0`，旧行必须留在原地）②「加载更多」页脚 ③按钮内联 spinner / 进行中动作（如消息索引的 `jumping`）。这三类继续用 `LoadingIndicator`。
+  - **「是不是首屏」看「这块内容是不是第一次出现」，不看「页面有没有在请求」**：同一个面板第二次进来时数据已经在手上，就不该再闪一次灰块；只有「内容为空、只等数据」的那一次才算首屏。反过来，**只要一个视图有这样一个首屏，就必须用骨架屏**——哪怕它藏在页签里、藏在弹层里。视频会议是这条的样板：记录列表、记录详情、详情里的「资源」页签、重新生成计划面板四处都有独立的首屏，四处都用骨架屏；而会议进行中的界面没有首屏（进去就是实时画面），所以不套骨架。判断时别按「整个 tab 算不算一个面板」切，按**每个会单独等待数据的视图**切。
+  - **新增一个面板 / 面板里的新视图，必须同步加进守卫清单，否则等于没接**：
+    - `components/common/__tests__/panelSkeletonUsage.test.ts` 的 `PANELS`——不在清单里的面板退回居中圆环，测试永远绿。视频会议这四处（2026-11 补上）就漏了整整一轮：当时清单里 47 个面板、`live/` 一个都没有，所以一直没人发现它们还是转圈。
+    - 骨架的横向缩进和真实行不一致时，再加进 `panelSkeletonInsetCalibration.test.ts` 的 `SURFACES`（行侧从真实规则反解，改行不改骨架会红）。行内边距是 0 或与默认 8dp 相同的，走 `DEFAULT_INSET_SURFACES` 那组提示清单即可。
   - **横向内边距必须落在真实行上（`--panel-skeleton-inset`）**：骨架的横向缩进只有一处是对的——**真实行文本的 x**。它不是常量（行内边距从 0 到 18dp 都有：全宽行 0、卡片行要叠上列表容器），所以原语把它做成变量，三个形状各自读它并保留今天的值作为兜底：`list` 8dp、`grid` 8dp、`text` 0（`text` 的调用方本来就落在有 padding 的容器里）。每个面板在自己的规则里覆盖，并在注释里点名它对齐的是哪一行：
     ```css
     .projects-skeleton { --panel-skeleton-inset: calc(16 * var(--dp)); } /* = .projects-row */
@@ -675,6 +679,15 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 - [ ] `dockTabMeta.ts` 加图标
 - [ ] 深链接：模块级 pending ref + `watch([pending, active])`
 
+### 加一个面板 / 面板里的新视图
+
+- [ ] 先回答「它有没有一个**内容为空、只等数据**的首屏」——有就必须渲染 `<PanelSkeleton>`，不能用居中 `<LoadingIndicator>`（环只说「在等」，还说不出要来的长什么样）
+- [ ] 变体按内容形状选：行列表 → `list`、缩略图网格 → `grid`、正文段落 → `text`
+- [ ] 骨架的横向缩进对齐**真实行文本的 x**（`--panel-skeleton-inset`），并在规则旁注释它对齐的是哪一行
+- [ ] 加进 `panelSkeletonUsage.test.ts` 的 `PANELS`；缩进与默认 8dp 不同的，再加进 `panelSkeletonInsetCalibration.test.ts` 的 `SURFACES`（**不加清单等于没接**，退回转圈也没人拦）
+- [ ] 已有数据的刷新遮罩 / 「加载更多」页脚 / 按钮内联 spinner **不换**骨架屏，继续用 `LoadingIndicator`
+- [ ] 藏在页签或弹层里的首屏同样算首屏（如会议详情的「资源」页签、重新生成计划面板）
+
 ### 加一个动效
 
 - [ ] 时长用 `--duration-*` token
@@ -723,7 +736,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/sharedRingUnification.test.ts` | 加载环全局唯一、调用方不得重述形状、**全仓只有一个 `--li-border` 比例**（走查源码）、覆盖类必须带祖先 |
 | `components/common/__tests__/spinnerUnification.test.ts` | 迁移到 LoadingIndicator 的 6 处保留各自 `--li-color`、不再自带 animation/keyframes、`size` 用档位而非数字 |
 | `components/common/__tests__/PanelSkeleton.test.ts` | 骨架屏三种形状、`leading`/`meta` 可关、可见块 `aria-hidden` + 唯一 `role=status`、行宽固定循环 |
-| `components/common/__tests__/panelSkeletonUsage.test.ts` | 清单内的面板首屏必须渲染 `PanelSkeleton`；白名单外的面板级 `LoadingIndicator` 失败；`.skeleton-block` 必须留在全局表且组件内不得重述 |
+| `components/common/__tests__/panelSkeletonUsage.test.ts` | 清单内的面板首屏必须渲染 `PanelSkeleton`；白名单外的面板级 `LoadingIndicator` 失败；`.skeleton-block` 必须留在全局表且组件内不得重述。**新增面板要手动加进 `PANELS`**，否则它退回转圈也照样绿 |
 | `components/chat/__tests__/chatPanelBusyWiring.test.ts` | `startBusy` 认领制（不抢占）、各自只释放自己的 kind、BusyBar 已挂载、卸载清 ticker |
 | `components/file/__tests__/dockedPaneStacking.css.test.ts` | 停靠预览窗格层级 |
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |

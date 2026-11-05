@@ -601,23 +601,23 @@ describe('MeetingDetail', () => {
 
     const w = mountDetail('minutes')
     try {
-      expect(w.find('.meeting-center').exists()).toBe(true) // first paint shows loading
+      expect(w.find('.panel-skeleton').exists()).toBe(true) // first paint shows the placeholder
 
       await flushPromises()
-      expect(w.find('.meeting-center').exists()).toBe(false)
+      expect(w.find('.panel-skeleton').exists()).toBe(false)
       expect(getMock).toHaveBeenCalledTimes(1)
 
       await vi.advanceTimersByTimeAsync(2500)
       await nextTick()
 
       expect(getMock).toHaveBeenCalledTimes(2) // the poll really ran
-      expect(w.find('.meeting-center').exists()).toBe(false)
+      expect(w.find('.panel-skeleton').exists()).toBe(false)
       expect(w.find('.meeting-tabs').exists()).toBe(true)
       expect(w.find('.meeting-body').text()).toContain(enMessages.meeting.detail.emptyMinutesTitle)
 
       releasePoll?.()
       await flushPromises()
-      expect(w.find('.meeting-center').exists()).toBe(false)
+      expect(w.find('.panel-skeleton').exists()).toBe(false)
       expect(w.find('.meeting-tabs').exists()).toBe(true)
     } finally {
       w.unmount()

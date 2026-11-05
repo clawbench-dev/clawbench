@@ -1,9 +1,15 @@
 <template>
   <div class="meeting-resources">
-    <div v-if="loading" class="res-center">
-      <LoadingIndicator size="sm" inline />
-      {{ t('common.loading') }}
-    </div>
+    <!-- First load: the tab is a list of file rows, so the placeholder draws
+         those rows (glyph + name + meta) instead of a lone ring. -->
+    <PanelSkeleton
+      v-if="loading"
+      class="res-skeleton"
+      variant="list"
+      :rows="6"
+      :meta="false"
+      :label="t('common.loading')"
+    />
 
     <div v-else-if="error" class="res-center res-center--error">
       <span>{{ t('meeting.resources.loadFailed') }}</span>
@@ -171,7 +177,7 @@ import {
   Paperclip,
 } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import MeetingEmpty from './MeetingEmpty.vue'
 import { useToast } from '@/composables/useToast'
@@ -320,6 +326,11 @@ function metaFor(item: MeetingResourceItem): string {
   color: var(--text-muted);
 }
 .res-center--error { color: var(--color-red); }
+
+/* `.res-row` insets its own text by 6dp and the tab body adds no padding, so
+   the placeholder repeats that inset — otherwise the list jumps sideways the
+   moment the rows arrive. */
+.res-skeleton { --panel-skeleton-inset: calc(6 * var(--dp)); }
 
 .res-head {
   display: flex;

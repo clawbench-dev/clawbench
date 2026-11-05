@@ -1,10 +1,14 @@
 <template>
   <BottomSheet :open="open" :title="sheetTitle" auto size="narrow" @close="emit('close')">
     <div class="regen-body">
-      <div v-if="loading" class="regen-loading">
-        <LoadingIndicator size="sm" inline />
-        {{ t('meeting.detail.regen.preparing') }}
-      </div>
+      <!-- Preparing the plan is a short read (a few step lines plus a hint), so
+           the placeholder previews paragraph lines rather than a ring. -->
+      <PanelSkeleton
+        v-if="loading"
+        variant="text"
+        :rows="4"
+        :label="t('meeting.detail.regen.preparing')"
+      />
       <div v-else-if="error" class="regen-error">{{ error }}</div>
       <template v-else-if="plan">
         <div v-if="plan.blocked" class="regen-error">{{ blockedText }}</div>
@@ -72,7 +76,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import type { MeetingArtifactKind, RegenPlan, RegenReason } from '@/composables/useMeetingHistory'
 import '@/assets/modal-footer-btn.css'
 
@@ -167,12 +171,6 @@ function onDownstreamChange(event: Event): void {
   padding: var(--space-6) var(--space-7);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-}
-.regen-loading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--text-muted);
 }
 .regen-error {
   padding: var(--space-3) var(--space-4);

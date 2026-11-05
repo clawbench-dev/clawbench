@@ -29,10 +29,17 @@
     <HttpsNotice v-if="showHttpsNotice" variant="banner" />
 
     <div class="meeting-body">
-      <div v-if="loading && sessions.length === 0" class="meeting-hint">
-        <LoadingIndicator size="sm" inline />
-        {{ t('common.loading') }}
-      </div>
+      <!-- First load: the record rows are cards, so the placeholder draws the
+           same row shape instead of a lone ring in an empty pane. -->
+      <PanelSkeleton
+        v-if="loading && sessions.length === 0"
+        class="meeting-list-skeleton"
+        variant="list"
+        :rows="6"
+        :leading="false"
+        :meta="false"
+        :label="t('common.loading')"
+      />
       <div v-else-if="error" class="meeting-error">{{ t('meeting.list.loadFailed') }}</div>
       <!-- The empty state speaks the card language the other dock tabs use:
            a muted glyph, a title, and one line about what lands here. The
@@ -223,6 +230,7 @@ import {
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/utils/format'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
@@ -888,14 +896,11 @@ onMounted(() => {
 }
 .meeting-row__del:active { transform: scale(0.92); }
 
-.meeting-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
-  color: var(--text-muted);
-}
+/* The record rows are cards inset by their own horizontal padding inside
+   `.meeting-body`; the placeholder sits in that same body, so its row inset has
+   to be the card's, or the whole list jumps sideways when the data lands. */
+.meeting-list-skeleton { --panel-skeleton-inset: calc(10 * var(--dp)); }
+
 .meeting-error {
   padding: var(--space-4, 8px) var(--space-5, 10px);
   border-radius: var(--radius-md);
