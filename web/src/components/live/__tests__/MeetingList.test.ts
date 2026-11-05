@@ -563,10 +563,22 @@ describe('MeetingList regeneration polling', () => {
 describe('MeetingList HTTPS banner', () => {
   const originalSecure = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
   const originalNative = Object.getOwnPropertyDescriptor(window, 'ClawBenchNative')
+  const originalLocation = Object.getOwnPropertyDescriptor(window, 'location')
 
-  function setEnv(native: unknown, secure: boolean): void {
+  /**
+   * `secure` is the shell's own `isSecureContext`, which is TRUE on http (the
+   * desktop promotes its origin so capture works) — that is the combination the
+   * banner has to survive. What decides the banner is the protocol.
+   */
+  function setEnv(native: unknown, protocol: 'http:' | 'https:', secure: boolean): void {
     Object.defineProperty(window, 'isSecureContext', { value: secure, configurable: true })
     Object.defineProperty(window, 'ClawBenchNative', { value: native, configurable: true })
+    const origin = `${protocol}//localhost:20000`
+    Object.defineProperty(window, 'location', {
+      value: { protocol, origin, href: `${origin}/`, replace: vi.fn() },
+      configurable: true,
+      writable: true,
+    })
   }
 
   afterEach(() => {
@@ -574,13 +586,14 @@ describe('MeetingList HTTPS banner', () => {
     else delete (window as unknown as Record<string, unknown>).isSecureContext
     if (originalNative) Object.defineProperty(window, 'ClawBenchNative', originalNative)
     else delete (window as unknown as Record<string, unknown>).ClawBenchNative
+    if (originalLocation) Object.defineProperty(window, 'location', originalLocation)
   })
 
   // The shell promotes its own origin to a secure context, so capture works
   // there — but the link it hands out does not get that treatment. That gap is
   // invisible until a guest cannot talk, which is what this banner says.
-  it('shows the notice in the desktop shell on an insecure origin', async () => {
-    setEnv({ isDesktopApp: () => true }, false)
+  it('shows the notice in the desktop shell on an http origin', async () => {
+    setEnv({ isDesktopApp: () => true }, 'http:', true)
     const w = mountList()
     await flushPromises()
 
@@ -589,14 +602,15 @@ describe('MeetingList HTTPS banner', () => {
   })
 
   // A plain browser cannot capture at all; the create page blocks with the full
-  // notice, so repeating it on the list would say the same thing twice.
-  it('stays hidden in a browser and on a secure origin', async () => {
-    setEnv(null, false)
+  // notice, so repeating it on the list would say the same thing twice. An
+  // https server has no such gap to report.
+  it('stays hidden in a browser and on an https origin', async () => {
+    setEnv(null, 'http:', false)
     const browser = mountList()
     await flushPromises()
     expect(browser.find('[data-role="https-notice"]').exists()).toBe(false)
 
-    setEnv({ isDesktopApp: () => true }, true)
+    setEnv({ isDesktopApp: () => true }, 'https:', true)
     const secure = mountList()
     await flushPromises()
     expect(secure.find('[data-role="https-notice"]').exists()).toBe(false)

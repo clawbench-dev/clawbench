@@ -227,7 +227,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { getNative } from '@/utils/clawbenchNative'
-import { isInsecureCaptureContext } from '@/utils/screenCaptureSupport'
+import { isHttpOrigin } from '@/utils/screenCaptureSupport'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import {
@@ -447,9 +447,13 @@ const runningToken = computed(() => sessions.value.find(isLiveRecord)?.token ?? 
  * Scoped to the desktop shell on purpose: a plain browser on an insecure origin
  * cannot capture at all, and the create page already blocks with the full
  * notice. Showing both would say the same thing twice.
+ *
+ * Gated on the protocol, not on `isSecureContext`: the promotion above makes
+ * that flag true here, so asking it would hide the banner on every desktop
+ * shell that actually needs it.
  */
 const showHttpsNotice = computed(
-  () => getNative()?.isDesktopApp?.() === true && isInsecureCaptureContext(),
+  () => getNative()?.isDesktopApp?.() === true && isHttpOrigin(),
 )
 
 /** `3小时前` / `昨天` / `2天前` — the list's own stamp; the detail spells the

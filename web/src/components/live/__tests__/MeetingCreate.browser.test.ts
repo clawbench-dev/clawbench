@@ -846,11 +846,14 @@ describe('MeetingCreate in a browser', () => {
   // The desktop shell promotes its own origin, so this form still works on
   // http — but the link it is about to create will not work for guests. The
   // notice sits above the form (not instead of it) and says exactly that.
+  //
+  // `isSecureContext` is TRUE here on purpose: that is what the shell reports
+  // on an http origin, so keying the banner on it would hide it forever.
   it('warns the desktop shell that guests will need HTTPS', async () => {
     stubCaptureApi(false)
     nativeApi.value = { isDesktopApp: () => true, listCaptureSources: vi.fn(async () => '[]') }
     const original = Object.getOwnPropertyDescriptor(window, 'isSecureContext')
-    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
     try {
       const wrapper = mountPanel()
       await flushPromises()

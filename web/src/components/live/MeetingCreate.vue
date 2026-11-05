@@ -253,7 +253,11 @@ import {
   type CaptureSource,
 } from '@/composables/useLiveShare'
 import { getNative } from '@/utils/clawbenchNative'
-import { browserScreenCaptureAvailable, isInsecureCaptureContext } from '@/utils/screenCaptureSupport'
+import {
+  browserScreenCaptureAvailable,
+  isHttpOrigin,
+  isInsecureCaptureContext,
+} from '@/utils/screenCaptureSupport'
 import { buildCaptureChoices, captureSourceIdOf } from '@/utils/captureSourceChoices'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
@@ -390,9 +394,12 @@ const insecure = isInsecureCaptureContext()
  * would be noise. (`canCapture` rather than `supported` because the latter also
  * waits on the camera probe — the banner would flash in and out on a host that
  * has no camera.)
+ *
+ * Gated on the protocol rather than on `isSecureContext`: the promotion above
+ * makes that flag true in this shell, so asking it would never show the banner.
  */
 const desktopInsecure = computed(
-  () => canCapture.value && insecure && getNative()?.isDesktopApp?.() === true,
+  () => canCapture.value && isHttpOrigin() && getNative()?.isDesktopApp?.() === true,
 )
 
 /** Camera on AND usable — a camera the OS cannot provide is not a picture. */
