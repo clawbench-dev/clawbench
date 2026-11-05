@@ -624,6 +624,35 @@ describe('MeetingDetail', () => {
       vi.useRealTimers()
     }
   })
+
+  it('re-reads a record that still looks running, so a just-ended meeting stops hiding rename', async () => {
+    // The shell opens the record as soon as publishing stops — before the end
+    // request has been answered — so the first read can still say "running".
+    // Without a re-read the view would keep 进行中 and hide the rename control
+    // until the user navigated away and back.
+    vi.useFakeTimers()
+    const now = Date.now()
+    const running = record({ startedAt: now - 60_000, endedAt: 0, hasMinutes: false })
+    const ended = record({ startedAt: now - 60_000, endedAt: now, hasMinutes: false })
+    getMock.mockImplementationOnce(async () => running).mockImplementationOnce(async () => ended)
+    artifactMock.mockImplementation(async () => null)
+
+    const w = mountDetail()
+    try {
+      await flushPromises()
+      expect(getMock).toHaveBeenCalledTimes(1)
+      expect(w.find('[data-action="meeting-rename"]').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      expect(getMock).toHaveBeenCalledTimes(2)
+      expect(w.find('[data-action="meeting-rename"]').exists()).toBe(true)
+    } finally {
+      w.unmount()
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('MeetingDetail chat sides', () => {

@@ -784,16 +784,35 @@ async function loadArtifacts(rec: MeetingRecord, silent: boolean): Promise<void>
 }
 
 /**
- * Whether a job may still change the record.
+ * How long a record that still looks "running" is re-read after this view
+ * opens.
  *
- * `generation` is obvious. The second case is the just-ended meeting: the
- * publisher drains its upload queue and only then asks for the minutes, so for
- * a while the record has no job although one is about to start. The window is
- * bounded so an old meeting that never got minutes does not poll forever.
+ * The shell opens the record the moment publishing stops, which is BEFORE the
+ * end request has been answered — so the first read can land a few
+ * milliseconds before the server stamps `endedAt`. That record is
+ * indistinguishable from a genuinely running meeting, and without a re-read the
+ * view would keep saying 进行中 (and hide the rename control) until the user
+ * navigated away and back. Bounded so a record that really is running (another
+ * device hosts it) does not poll forever.
+ */
+const LIVE_RECORD_POLL_WINDOW_MS = 60_000
+const liveRecordPollDeadline = Date.now() + LIVE_RECORD_POLL_WINDOW_MS
+
+/**
+ * Whether a job (or the end of the meeting) may still change the record.
+ *
+ * `generation` is obvious. The just-ended meeting whose `endedAt` has not
+ * reached the database yet is the second case above. The third is the meeting
+ * that ended a moment ago: the publisher drains its upload queue and only then
+ * asks for the minutes, so for a while the record has no job although one is
+ * about to start. That window is bounded so an old meeting that never got
+ * minutes does not poll forever.
  */
 function shouldPoll(r: MeetingRecord | null): boolean {
   if (!r) return false
   if (r.generation) return true
+  // A just-ended meeting whose end has not reached the database yet.
+  if (isLiveRecord(r)) return Date.now() < liveRecordPollDeadline
   return r.endedAt > 0 && !artifactStateOf(r, 'minutes').hasContent
     && Date.now() - r.endedAt < 10 * 60 * 1000
 }
