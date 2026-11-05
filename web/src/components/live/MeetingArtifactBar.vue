@@ -142,6 +142,8 @@ const errorText = computed(() => {
       return t('meeting.detail.artifact.sttFailed', { error })
     case 'audio':
       return t('meeting.detail.artifact.audioUnavailable')
+    case 'import':
+      return t('meeting.detail.artifact.importFailed', { error })
     case 'timeout':
       return t('meeting.detail.artifact.timeout')
     case 'io':

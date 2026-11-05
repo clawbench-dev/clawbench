@@ -1,5 +1,12 @@
 <template>
-  <div class="meeting-panel">
+  <div
+    class="meeting-panel"
+    :class="{ 'is-drop-target': dropActive }"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <!-- One bar, not two: the tab title and the list's own title said the same
          thing stacked 36px apart. The record count rides next to the title and
          the refresh control closes the row, the way every other panel header
@@ -117,11 +124,18 @@
       </div>
     </div>
 
+    <!-- Import progress sits above the footer rather than over the list: the
+         record it belongs to is already in the list (the server answers as soon
+         as the file is stored), so a blocking overlay would hide the very row
+         the user is waiting on. -->
+    <div v-if="importing" class="meeting-import-bar">
+      <LoadingIndicator size="sm" inline />
+      <span class="meeting-import-bar__text">{{ importLabel }}</span>
+      <span class="meeting-import-bar__pct">{{ importing.percent }}%</span>
+    </div>
+
     <!-- Footer actions use the shared .fbtn pills, the same language the task
          tab's action bar uses — see design-guide §按钮.
-
-         The bar has three states, and all three agree with the rows above
-         (the list is the server's truth):
 
          - THIS client is publishing → the single action is the way back;
            starting or joining a second meeting would strand the running one.
@@ -129,7 +143,7 @@
            device hosts it) → the primary action joins that meeting. Creating
            is not offered: the room is per project, so a create here reuses
            the live room and then fails its publisher attach with 409.
-         - Nothing is running → the two entry points. -->
+         - Nothing is running → the three entry points. -->
     <div class="meeting-footer">
       <button
         v-if="liveToken"
@@ -150,6 +164,16 @@
         <LinkIcon :size="14" />{{ t('meeting.list.joinLive') }}
       </button>
       <template v-else>
+        <button
+          class="fbtn"
+          type="button"
+          data-action="meeting-import"
+          :disabled="importing !== null"
+          :title="importAvailable ? t('meeting.list.importHint') : t('meeting.list.importUnavailable')"
+          @click="pickFiles"
+        >
+          <Upload :size="14" />{{ t('meeting.list.import') }}
+        </button>
         <button class="fbtn" type="button" data-action="meeting-join" @click="emit('join')">
           <LinkIcon :size="14" />{{ t('meeting.list.join') }}
         </button>
@@ -157,6 +181,21 @@
           <Plus :size="14" />{{ t('meeting.list.create') }}
         </button>
       </template>
+    </div>
+
+    <!-- The drop zone covers the whole panel, but a phone has no drag gesture,
+         so the same code path is reachable from the footer button. -->
+    <input
+      ref="fileInput"
+      class="meeting-file-input"
+      type="file"
+      multiple
+      :accept="IMPORT_ACCEPT"
+      @change="onPickFiles"
+    />
+
+    <div v-if="dropActive" class="meeting-drop-hint">
+      <Upload :size="14" />{{ t('meeting.list.importDrop') }}
     </div>
   </div>
 </template>
@@ -179,6 +218,7 @@ import {
   Link as LinkIcon,
   Plus,
   Trash2,
+  Upload,
 } from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/utils/format'
@@ -217,6 +257,179 @@ const history = useMeetingHistory()
 const sessions = computed(() => history.sessions.value)
 const loading = computed(() => history.loading.value)
 const error = computed(() => history.error.value)
+
+/**
+ * Extensions the server can decode, used only to filter a drop BEFORE uploading
+ * gigabytes. The authority is the server (it probes the actual file); this list
+ * just spares the user a long upload of something that is obviously not media.
+ *
+ * Deliberately broader than what a browser can play: decoding happens on the
+ * server with ffmpeg, so mkv/avi/wmv/amr and friends are all fair game.
+ */
+const IMPORT_EXTENSIONS = new Set([
+  // audio
+  'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'amr', 'wma',
+  'aiff', 'aif', 'ape', 'mka', 'weba', 'caf', 'au', 'ra', '3ga', 'm4b',
+  // video
+  'mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'ts', 'mts',
+  'm2ts', 'mpg', 'mpeg', '3gp', '3g2', 'ogv', 'rmvb', 'rm', 'asf', 'vob',
+  'f4v', 'divx',
+])
+
+/** `accept` for the file picker: the MIME wildcards plus every extension. */
+const IMPORT_ACCEPT = [
+  'audio/*',
+  'video/*',
+  ...Array.from(IMPORT_EXTENSIONS, (ext) => `.${ext}`),
+].join(',')
+
+const importAvailable = computed(() => history.importAvailability.value.available)
+const fileInput = ref<HTMLInputElement | null>(null)
+const dropActive = ref(false)
+const importing = ref<{ name: string; percent: number; index: number; total: number } | null>(null)
+/** dragenter/dragleave fire per element crossed; a depth counter is the only
+ *  way to know when the pointer actually left the panel. */
+let dropDepth = 0
+
+const importLabel = computed(() => {
+  const state = importing.value
+  if (!state) return ''
+  if (state.total > 1) {
+    return t('meeting.list.importProgressN', {
+      name: state.name, index: state.index, total: state.total, pct: state.percent,
+    })
+  }
+  return t('meeting.list.importProgress', { name: state.name, pct: state.percent })
+})
+
+/** True for an OS file drag. Internal drags (a meeting row being quoted) carry
+ *  our own MIME types and must keep working untouched. */
+function hasFiles(e: DragEvent): boolean {
+  const types = e.dataTransfer?.types
+  return !!types && Array.from(types).includes('Files')
+}
+
+function isMediaFile(file: File): boolean {
+  if (file.type.startsWith('audio/') || file.type.startsWith('video/')) return true
+  const dot = file.name.lastIndexOf('.')
+  return dot >= 0 && IMPORT_EXTENSIONS.has(file.name.slice(dot + 1).toLowerCase())
+}
+
+function onDragEnter(e: DragEvent): void {
+  if (!hasFiles(e)) return
+  e.preventDefault()
+  dropDepth++
+  dropActive.value = true
+}
+
+function onDragOver(e: DragEvent): void {
+  if (!hasFiles(e)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onDragLeave(): void {
+  dropDepth = Math.max(0, dropDepth - 1)
+  if (dropDepth === 0) dropActive.value = false
+}
+
+function onDrop(e: DragEvent): void {
+  dropDepth = 0
+  dropActive.value = false
+  if (!hasFiles(e)) return
+  // The chat column listens for OS drops too; a recording dropped on the
+  // meeting list must not also become a chat attachment.
+  e.preventDefault()
+  e.stopPropagation()
+  void importFiles(Array.from(e.dataTransfer?.files ?? []))
+}
+
+function pickFiles(): void {
+  if (!importAvailable.value) {
+    toast.show(t('meeting.list.importUnavailable'), { type: 'error', icon: 'warning' })
+    return
+  }
+  fileInput.value?.click()
+}
+
+function onPickFiles(e: Event): void {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  // Clearing lets the same file be picked twice in a row.
+  input.value = ''
+  void importFiles(files)
+}
+
+/** Map a server message key onto this panel's wording. */
+function importFailText(reason: string): string {
+  switch (reason) {
+    case 'MeetingImportUnavailable':
+      return t('meeting.list.importUnavailable')
+    case 'MeetingImportTooLarge':
+      return t('meeting.list.importTooLarge')
+    case 'network':
+      return t('meeting.list.importNetwork')
+    default:
+      return reason
+  }
+}
+
+/**
+ * Import a batch sequentially. One at a time on purpose: each file becomes its
+ * own meeting and runs a recognition chain, and the server's transcription
+ * slots are shared with live meetings.
+ */
+async function importFiles(files: File[]): Promise<void> {
+  const media = files.filter(isMediaFile)
+  if (media.length === 0) {
+    if (files.length > 0) {
+      toast.show(t('meeting.list.importUnsupported'), { type: 'error', icon: 'warning' })
+    }
+    return
+  }
+  if (!importAvailable.value) {
+    toast.show(t('meeting.list.importUnavailable'), { type: 'error', icon: 'warning' })
+    return
+  }
+  if (importing.value) return
+
+  let imported = 0
+  let firstToken = ''
+  let lastReason = ''
+  for (let i = 0; i < media.length; i++) {
+    const file = media[i]
+    importing.value = { name: file.name, percent: 0, index: i + 1, total: media.length }
+    const result = await history.importFile(file, (percent) => {
+      if (importing.value) importing.value = { ...importing.value, percent }
+    })
+    if (result.ok) {
+      imported++
+      if (!firstToken) firstToken = result.token
+    } else {
+      lastReason = result.reason
+      appLog.w('MeetingList', 'import failed', result.reason)
+    }
+  }
+  importing.value = null
+
+  if (imported === 0) {
+    toast.show(t('meeting.list.importFailed', { reason: importFailText(lastReason) }), {
+      type: 'error', icon: 'warning', duration: 6000,
+    })
+    return
+  }
+  // The record already exists server-side; this reload is what puts it on
+  // screen, and schedulePoll keeps the row's state fresh while it transcodes.
+  await history.load()
+  schedulePoll()
+  toast.show(
+    imported > 1 ? t('meeting.list.importDoneN', { n: imported }) : t('meeting.list.importDone'),
+    { type: 'success', icon: 'success' },
+  )
+  // One file is a single, obvious destination — open it so the user watches
+  // the transcript appear. A batch stays on the list.
+  if (imported === 1 && firstToken) emit('open', firstToken)
+}
 
 /**
  * The meeting a row above advertises as 进行中 — the same `isLiveRecord` fact
@@ -440,6 +653,7 @@ onMounted(() => {
 
 <style scoped>
 .meeting-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -710,5 +924,69 @@ onMounted(() => {
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* ── Import a dropped recording ─────────────────────────────────────────── */
+
+/* The picker is only ever driven from the footer button, never shown. */
+.meeting-file-input { display: none; }
+
+/* Same dashed accent frame the chat column uses for a file drop, so "drop a
+   file here" reads identically in both places. */
+.is-drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px dashed var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.meeting-drop-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  padding: var(--space-5, 10px) calc(18 * var(--dp));
+  border-radius: var(--radius-full);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-color, #0066cc);
+  box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.15);
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  pointer-events: none;
+  z-index: 11;
+  white-space: nowrap;
+}
+
+/* Sits between the list and the footer: it is a status line, not a modal. */
+.meeting-import-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  padding: var(--space-3, 6px) var(--space-5, 10px);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+  min-width: 0;
+}
+.meeting-import-bar__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meeting-import-bar__pct {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 </style>

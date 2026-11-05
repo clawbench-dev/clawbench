@@ -253,7 +253,14 @@ func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{jsonSessions: sessions})
+	// The import capability rides along with the list: the panel needs it the
+	// moment the user starts dragging a file, and a second round trip at that
+	// point would either race the drop or upload gigabytes to learn "no ffmpeg".
+	available, reason := liveNoteImportAvailability()
+	writeJSON(w, http.StatusOK, map[string]any{
+		jsonSessions: sessions,
+		"import":     map[string]any{"available": available, detailKey: reason},
+	})
 }
 
 // ServeLiveNotesArtifact handles
@@ -1837,6 +1844,8 @@ func artifactErrorCode(kind service.ArtifactKind, err error) string {
 		return service.ArtifactErrSTT
 	case errors.Is(err, service.ErrLiveNoteAudioMissing):
 		return service.ArtifactErrAudio
+	case errors.Is(err, service.ErrLiveNoteImport):
+		return service.ArtifactErrImport
 	}
 	if kind == service.ArtifactTranscript {
 		return service.ArtifactErrIO

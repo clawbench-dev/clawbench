@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { MonitorUp } from 'lucide-vue-next'
 import enMessages from '@/i18n/locales/en'
 import MeetingList from '../MeetingList.vue'
@@ -31,6 +31,7 @@ vi.mock('lucide-vue-next', () => {
     RotateCcw: stub,
     Trash2: stub,
     ShieldAlert: stub,
+    Upload: stub,
   }
 })
 
@@ -43,6 +44,9 @@ vi.mock('@/utils/attachDrag', () => ({
   buildAttachDragImage: vi.fn(),
 }))
 
+const toastShow = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: toastShow }) }))
+
 const confirmMock = vi.hoisted(() => vi.fn(async () => true))
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: confirmMock }),
@@ -50,8 +54,10 @@ vi.mock('@/composables/useDialog', () => ({
 
 const sessions = ref<unknown[]>([])
 const loading = ref(false)
+const importAvailable = ref(true)
 const loadMock = vi.hoisted(() => vi.fn(async () => undefined))
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
+const importMock = vi.hoisted(() => vi.fn(async () => ({ ok: true, token: 'imported-token' })))
 vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   // Keep the real helpers (the state labels live in i18n); only the
   // composable's I/O is stubbed.
@@ -62,8 +68,10 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
       sessions,
       loading,
       error: ref(''),
+      importAvailability: computed(() => ({ available: importAvailable.value, reason: '' })),
       load: loadMock,
       remove: removeMock,
+      importFile: importMock,
     }),
   }
 })
@@ -592,5 +600,116 @@ describe('MeetingList HTTPS banner', () => {
     const secure = mountList()
     await flushPromises()
     expect(secure.find('[data-role="https-notice"]').exists()).toBe(false)
+  })
+})
+
+/**
+ * Dropping a recording is the only entry point that turns an existing file into
+ * a meeting. The panel owns three decisions: which drops count, whether the
+ * server can decode them, and what happens after the upload.
+ */
+describe('MeetingList import', () => {
+  function dropPayload(files: File[]) {
+    return { dataTransfer: { files, types: ['Files'] } }
+  }
+
+  function mediaFile(name = 'standup.m4a', type = 'audio/mp4') {
+    return new File(['audio'], name, { type, lastModified: 1_700_000_000_000 })
+  }
+
+  beforeEach(() => {
+    importAvailable.value = true
+    importMock.mockClear()
+  })
+
+  it('imports a dropped recording and opens the new record', async () => {
+    const w = mountList()
+    await flushPromises()
+
+    await w.find('.meeting-panel').trigger('drop', dropPayload([mediaFile()]))
+    await flushPromises()
+
+    expect(importMock).toHaveBeenCalledTimes(1)
+    expect(importMock.mock.calls[0][0]).toBeInstanceOf(File)
+    expect((importMock.mock.calls[0][0] as File).name).toBe('standup.m4a')
+    // The new meeting is the only destination worth opening.
+    expect(loadMock).toHaveBeenCalled()
+    expect(w.emitted('open')?.[0]).toEqual(['imported-token'])
+  })
+
+  it('accepts a video container a browser cannot play', async () => {
+    const w = mountList()
+    await flushPromises()
+
+    await w.find('.meeting-panel').trigger('drop', dropPayload([
+      new File(['v'], 'screen recording.mkv', { type: '' }),
+    ]))
+    await flushPromises()
+
+    expect(importMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a dropped file that is not media', async () => {
+    const w = mountList()
+    await flushPromises()
+
+    await w.find('.meeting-panel').trigger('drop', dropPayload([
+      new File(['x'], 'notes.txt', { type: 'text/plain' }),
+    ]))
+    await flushPromises()
+
+    expect(importMock).not.toHaveBeenCalled()
+    expect(w.emitted('open')).toBeUndefined()
+    // Silence would read as "the drop did nothing"; say why.
+    expect(toastShow).toHaveBeenCalledWith(
+      'Only audio and video files can be imported',
+      expect.anything(),
+    )
+  })
+
+  it('does not upload when the server cannot decode media', async () => {
+    importAvailable.value = false
+    const w = mountList()
+    await flushPromises()
+
+    await w.find('.meeting-panel').trigger('drop', dropPayload([mediaFile()]))
+    await flushPromises()
+
+    // Uploading gigabytes to be told "no ffmpeg" at the end is the failure this
+    // guard exists to prevent.
+    expect(importMock).not.toHaveBeenCalled()
+  })
+
+  it('shows the drop hint only while an OS file drag is over the panel', async () => {
+    const w = mountList()
+    await flushPromises()
+    expect(w.find('.meeting-drop-hint').exists()).toBe(false)
+
+    await w.find('.meeting-panel').trigger('dragenter', dropPayload([mediaFile()]))
+    expect(w.find('.meeting-drop-hint').exists()).toBe(true)
+
+    await w.find('.meeting-panel').trigger('dragleave', dropPayload([]))
+    expect(w.find('.meeting-drop-hint').exists()).toBe(false)
+  })
+
+  it('offers the same path from the footer for devices without drag', async () => {
+    const w = mountList()
+    await flushPromises()
+
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {})
+    await w.find('[data-action="meeting-import"]').trigger('click')
+    expect(clickSpy).toHaveBeenCalled()
+    clickSpy.mockRestore()
+  })
+
+  it('does not report a failure when nothing was dropped', async () => {
+    const w = mountList()
+    await flushPromises()
+
+    await w.find('.meeting-panel').trigger('drop', dropPayload([]))
+    await flushPromises()
+
+    expect(importMock).not.toHaveBeenCalled()
+    expect(w.emitted('open')).toBeUndefined()
   })
 })

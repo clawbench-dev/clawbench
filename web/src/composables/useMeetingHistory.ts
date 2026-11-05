@@ -132,6 +132,38 @@ export interface MeetingChatMessage {
 /** A quote carries at most this much meeting text into the prompt. */
 export const MEETING_QUOTE_MAX_CHARS = 4000
 
+/**
+ * Whether this server can turn a dropped recording into a meeting.
+ *
+ * The conversion needs ffmpeg, so the panel has to know before it accepts a
+ * multi-gigabyte upload that would only be rejected at the end.
+ */
+export interface MeetingImportAvailability {
+  available: boolean
+  /** Stable reason code (`ffmpeg_missing`), localized by the caller. */
+  reason: string
+}
+
+/** One import response: the new token, or the server's message key. */
+interface ImportResponse {
+  token?: string
+  msgKey?: string
+  error?: string
+}
+
+/** Parse an import response body, tolerating a non-JSON error page. */
+function parseImportResponse(text: string): ImportResponse | null {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return parsed && typeof parsed === 'object' ? (parsed as ImportResponse) : null
+  } catch {
+    return null
+  }
+}
+
+/** Outcome of importing one file: the new meeting's token, or why it failed. */
+export type MeetingImportResult = { ok: true; token: string } | { ok: false; reason: string }
+
 /** Empty state used before the first record arrives. */
 export function emptyArtifactState(): MeetingArtifactState {
   return { hasContent: false, jobStatus: 'idle', contentAt: 0, stale: false }
@@ -183,22 +215,48 @@ export function useMeetingHistory() {
   const sessions = ref<MeetingRecord[]>([])
   const loading = ref(false)
   const error = ref('')
+  /**
+   * Server capability, refreshed with every list load. Optimistic before the
+   * first load: assuming "yes" only costs a rejected request, while assuming
+   * "no" would hide the drop zone from every user.
+   */
+  const importAvailability = ref<MeetingImportAvailability>({ available: true, reason: '' })
+
+  /** A load requested while one was in flight: re-run once it settles. */
+  let reloadQueued = false
 
   async function load(): Promise<void> {
-    if (loading.value) return
+    if (loading.value) {
+      // Dropping this silently loses the caller's intent: a refresh clicked
+      // during a poll would do nothing, and an import would leave the new
+      // record invisible until the next poll (which is only armed for rows
+      // that are already on screen).
+      reloadQueued = true
+      return
+    }
     loading.value = true
     error.value = ''
     try {
-      const data = await readJSON<{ sessions?: MeetingRecord[] }>(
-        await fetch('/api/live-share/notes/sessions'),
-        'meeting list',
-      )
+      const data = await readJSON<{
+        sessions?: MeetingRecord[]
+        import?: Partial<MeetingImportAvailability>
+      }>(await fetch('/api/live-share/notes/sessions'), 'meeting list')
       sessions.value = Array.isArray(data.sessions) ? data.sessions : []
+      if (data.import) {
+        importAvailability.value = {
+          available: data.import.available !== false,
+          reason: data.import.reason ?? '',
+        }
+      }
     } catch (e) {
       appLog.w(TAG, 'load failed', e)
       error.value = String(e)
     } finally {
       loading.value = false
+      if (reloadQueued) {
+        reloadQueued = false
+        await load()
+      }
     }
   }
 
@@ -377,6 +435,45 @@ export function useMeetingHistory() {
   }
 
   /**
+   * Upload one recording (or video) and turn it into a meeting.
+   *
+   * XHR rather than fetch: a meeting recording is hundreds of megabytes and
+   * `fetch` reports no upload progress, so the user would stare at nothing for
+   * minutes. The server answers as soon as the file is stored — decoding and
+   * transcription continue in the background and show up through the record's
+   * artifact state, which the list already polls.
+   */
+  function importFile(file: File, onProgress?: (percent: number) => void): Promise<MeetingImportResult> {
+    return new Promise((resolve) => {
+      const form = new FormData()
+      // The file's own timestamp, so a recording made last week is filed under
+      // the day it happened rather than the day it was dragged in.
+      form.append('startedAt', String(file.lastModified || 0))
+      form.append('file', file, file.name)
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', '/api/live-share/notes/import')
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && event.total > 0) {
+          onProgress?.(Math.round((event.loaded / event.total) * 100))
+        }
+      }
+      xhr.onload = () => {
+        const payload = parseImportResponse(xhr.responseText)
+        if (xhr.status >= 200 && xhr.status < 300 && payload?.token) {
+          onProgress?.(100)
+          resolve({ ok: true, token: payload.token })
+          return
+        }
+        appLog.w(TAG, 'import failed', xhr.status, payload?.msgKey ?? '')
+        resolve({ ok: false, reason: payload?.msgKey || payload?.error || `HTTP ${xhr.status}` })
+      }
+      xhr.onerror = () => resolve({ ok: false, reason: 'network' })
+      xhr.onabort = () => resolve({ ok: false, reason: 'aborted' })
+      xhr.send(form)
+    })
+  }
+
+  /**
    * Delete one meeting (folder + rows). The server refuses while the meeting is
    * running or while any artifact job is running; both surface as `409`.
    */
@@ -433,6 +530,7 @@ export function useMeetingHistory() {
     sessions,
     loading,
     error,
+    importAvailability,
     load,
     get,
     artifact,
@@ -442,6 +540,7 @@ export function useMeetingHistory() {
     regenPlan,
     regenerate,
     cancelRegeneration,
+    importFile,
     remove,
     rename,
     buildQuote,

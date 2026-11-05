@@ -60,7 +60,11 @@ const (
 	// ArtifactErrBudget is the minutes output cap being hit. It is separate
 	// from "model" so the SPA can point at the 纪要输出上限 setting instead of
 	// suggesting a model/provider problem.
-	ArtifactErrBudget  = "budget"
+	ArtifactErrBudget = "budget"
+	// ArtifactErrImport is a dropped recording that could not be decoded. It is
+	// separate from "audio" (a recording that is gone) because the fix is a
+	// different file, not a retry.
+	ArtifactErrImport  = "import"
 	ArtifactErrUnknown = "unknown"
 )
 
@@ -648,6 +652,11 @@ var ErrLiveNoteAudioMissing = errors.New("live notes: recording is unavailable")
 // ErrLiveNoteSTT wraps a speech-recognition failure so the handler can classify
 // it separately from a model or file error.
 var ErrLiveNoteSTT = errors.New("live notes: speech recognition failed")
+
+// ErrLiveNoteImport wraps a failure to decode an imported recording. It is its
+// own error so the artifact row can say "this file could not be read" instead of
+// "the recording is gone", which are two different problems for the user.
+var ErrLiveNoteImport = errors.New("live notes: imported recording is unreadable")
 
 // ReplaceLiveNoteSegments swaps a meeting's transcript rows for a new set and
 // records that the VTT still has to be rendered, in ONE transaction.

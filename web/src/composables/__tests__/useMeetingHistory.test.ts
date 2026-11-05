@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clipQuoteText,
   isStaleGenerating,
@@ -119,5 +119,115 @@ describe('useMeetingHistory regeneration', () => {
 
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 409, json: async () => ({}) })))
     await expect(useMeetingHistory().cancelRegeneration('tok')).resolves.toBe(false)
+  })
+})
+
+/**
+ * Import uploads through XHR (fetch cannot report upload progress). The fake
+ * below drives the three outcomes the panel distinguishes: success, a refusal
+ * that carries a message key, and a dropped connection.
+ */
+describe('useMeetingHistory.importFile', () => {
+  class FakeXHR {
+    static instances: FakeXHR[] = []
+    upload: { onprogress?: (e: ProgressEvent) => void } = {}
+    status = 0
+    responseText = ''
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    onabort: (() => void) | null = null
+    method = ''
+    url = ''
+    body: FormData | null = null
+
+    open(method: string, url: string): void {
+      this.method = method
+      this.url = url
+    }
+
+    send(body: FormData): void {
+      this.body = body
+      FakeXHR.instances.push(this)
+    }
+  }
+
+  beforeEach(() => {
+    FakeXHR.instances = []
+    vi.stubGlobal('XMLHttpRequest', FakeXHR)
+  })
+
+  function file(name = 'weekly.m4a'): File {
+    return new File(['x'], name, { type: 'audio/mp4', lastModified: 1_700_000_000_000 })
+  }
+
+  it('posts the file and its own timestamp to the import endpoint', async () => {
+    const pending = useMeetingHistory().importFile(file())
+    const xhr = FakeXHR.instances[0]
+    expect(xhr.method).toBe('POST')
+    expect(xhr.url).toBe('/api/live-share/notes/import')
+    expect(xhr.body?.get('startedAt')).toBe('1700000000000')
+    expect((xhr.body?.get('file') as File).name).toBe('weekly.m4a')
+
+    xhr.status = 200
+    xhr.responseText = JSON.stringify({ token: 't' })
+    xhr.onload?.()
+    await pending
+  })
+
+  it('reports upload progress and resolves with the new token', async () => {
+    const seen: number[] = []
+    const pending = useMeetingHistory().importFile(file(), (pct) => seen.push(pct))
+    const xhr = FakeXHR.instances[0]
+
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 5, total: 20 } as ProgressEvent)
+    expect(seen).toEqual([25])
+
+    xhr.status = 200
+    xhr.responseText = JSON.stringify({ token: 'abc' })
+    xhr.onload?.()
+    await expect(pending).resolves.toEqual({ ok: true, token: 'abc' })
+    expect(seen.at(-1)).toBe(100)
+  })
+
+  it('surfaces the server message key when the import is refused', async () => {
+    const pending = useMeetingHistory().importFile(file())
+    const xhr = FakeXHR.instances[0]
+    xhr.status = 503
+    xhr.responseText = JSON.stringify({ error: 'no ffmpeg', msgKey: 'MeetingImportUnavailable' })
+    xhr.onload?.()
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'MeetingImportUnavailable' })
+  })
+
+  it('treats a transport failure as a network error', async () => {
+    const pending = useMeetingHistory().importFile(file())
+    FakeXHR.instances[0].onerror?.()
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'network' })
+  })
+})
+
+describe('useMeetingHistory.load', () => {
+  it('re-runs a load requested while one is still in flight', async () => {
+    let release: (value: unknown) => void = () => {}
+    const first = new Promise((resolve) => { release = resolve })
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => first)
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ sessions: [{ token: 'imported' }] }),
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const history = useMeetingHistory()
+    const running = history.load()
+    // A refresh clicked during a poll — or an import finishing mid-poll — used
+    // to be dropped entirely, leaving the new record off screen.
+    const queued = history.load()
+    release({ ok: true, status: 200, json: async () => ({ sessions: [] }) })
+    await Promise.all([running, queued])
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(history.sessions.value[0]?.token).toBe('imported')
   })
 })

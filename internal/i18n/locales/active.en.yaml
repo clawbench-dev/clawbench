@@ -53,6 +53,8 @@ LiveSFUCredentialsPair: the API key and secret must be filled in together
 ViewerNameRequired: a display name is required to join
 LiveNotesGenerating: the minutes are still being generated
 LiveNotesMeetingLive: the meeting is still in progress
+MeetingImportUnavailable: ffmpeg is not installed on this server, so recordings cannot be imported
+MeetingImportTooLarge: The file is larger than 4 GB and cannot be imported
 InvalidRequestBody: Invalid request body
 NotADirectory: Not a directory
 NotAFile: Not a file
