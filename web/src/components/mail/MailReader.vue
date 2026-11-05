@@ -15,6 +15,10 @@
       <button class="mail-chip" :disabled="busy" @click="emit('reply', 'reply')">{{ t('mail.reader.reply') }}</button>
       <button class="mail-chip" :disabled="busy" @click="emit('reply', 'replyAll')">{{ t('mail.reader.replyAll') }}</button>
       <button class="mail-chip" :disabled="busy" @click="emit('reply', 'forward')">{{ t('mail.reader.forward') }}</button>
+      <!-- Quote this email into a conversation. It goes through the SAME quote
+           bar as a commit / task / issue, so it can carry an annotation and be
+           sent to another session; the card jumps back here via `mailId`. -->
+      <button class="mail-chip" @click="quoteToChat">{{ t('mail.reader.quoteToChat') }}</button>
       <span class="mail-reader__spacer" />
       <button class="mail-chip" :disabled="busy" @click="toggleSeen">
         {{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}
@@ -64,17 +68,31 @@
 
     <div v-if="attachments.length > 0" class="mail-reader__attachments">
       <div class="mail-reader__attachments-title">{{ t('mail.reader.attachments', { n: attachments.length }) }}</div>
-      <a
-        v-for="a in attachments"
-        :key="a.id"
-        class="mail-attachment"
-        :href="`/api/mail/messages/${a.messageId}/attachments/${a.id}`"
-        :download="a.filename"
-      >
-        <Paperclip class="mail-attachment__icon" />
-        <span class="mail-attachment__name">{{ a.filename }}</span>
-        <span class="mail-attachment__size">{{ formatMailSize(a.size) }}</span>
-      </a>
+      <div v-for="a in attachments" :key="a.id" class="mail-attachment-row">
+        <a
+          class="mail-attachment"
+          :href="`/api/mail/messages/${a.messageId}/attachments/${a.id}`"
+          :download="a.filename"
+        >
+          <Paperclip class="mail-attachment__icon" />
+          <span class="mail-attachment__name">{{ a.filename }}</span>
+          <span class="mail-attachment__size">{{ formatMailSize(a.size) }}</span>
+        </a>
+        <!-- Add the attachment to the chat input. The bytes are re-uploaded
+             into the project's uploads directory: chat attachments are
+             validated to live inside the project, and the mail store is not
+             inside it. -->
+        <button
+          class="mail-attachment__chat"
+          :title="t('mail.reader.attachToChat')"
+          :aria-label="t('mail.reader.attachToChat')"
+          :disabled="attachingId === a.id"
+          @click="attachToChat(a)"
+        >
+          <LoadingIndicator v-if="attachingId === a.id" size="sm" inline />
+          <MessageSquarePlus v-else :size="14" />
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -82,7 +100,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, MailOpen, Paperclip, Star, TriangleAlert } from 'lucide-vue-next'
+import { ArrowLeft, MailOpen, MessageSquarePlus, Paperclip, Star, TriangleAlert } from 'lucide-vue-next'
 import MailEmpty from './MailEmpty.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { apiGet, apiPost } from '@/utils/api'
@@ -98,6 +116,10 @@ import {
   type MailMessageDetail,
 } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
+import { useFileUpload } from '@/composables/useFileUpload'
+import { useToast } from '@/composables/useToast'
+import { buildMailQuote } from '@/utils/mailQuote'
 
 const props = defineProps<{ messageId: number }>()
 const emit = defineEmits<{
@@ -115,6 +137,61 @@ const busy = ref(false)
 const allowRemoteImages = ref(false)
 
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
+
+// ── Handing this email to the chat ─────────────────────────────
+const quoteQuestion = useQuoteQuestion()
+const { uploadAndAttach } = useFileUpload()
+const toast = useToast()
+
+/** Attachment currently being copied into the chat (0 = none). */
+const attachingId = ref(0)
+
+/**
+ * Quote this email into a conversation.
+ *
+ * Same payload shape as every other entry point (label + sourceKind + locator),
+ * so the card gets the mail icon and its "jump to source" works. The BODY is
+ * inlined because the AI has no way to fetch an email from `mail: <id>` — the
+ * id exists for the client's jump, and the label alone tells the model nothing
+ * it can read.
+ *
+ * It opens the shared quote bar (composer mode) rather than staging directly:
+ * the user almost always wants to say WHY they are quoting a mail, and the bar
+ * is also where a different destination session is chosen.
+ */
+function quoteToChat(): void {
+  const d = detail.value
+  if (!d) return
+  // One shared builder: dropping a mail row on the chat produces the same card.
+  const quote = buildMailQuote(d, t('mail.list.noSubject'))
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
+}
+
+/**
+ * Add one attachment to the chat input.
+ *
+ * The bytes are re-fetched and uploaded into the project's uploads directory
+ * instead of referencing the mail store path: chat attachments are validated to
+ * live inside the project, and `{data-dir}/mail/attachments/...` is not inside
+ * it. Going through `uploadAndAttach` also means the normal size limit, progress
+ * chip and dedupe apply, exactly as if the file had been dropped in.
+ */
+async function attachToChat(a: MailAttachment): Promise<void> {
+  if (attachingId.value) return
+  attachingId.value = a.id
+  try {
+    const res = await fetch(`/api/mail/messages/${a.messageId}/attachments/${a.id}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const file = new File([blob], a.filename, { type: a.contentType || blob.type || 'application/octet-stream' })
+    await uploadAndAttach([file])
+  } catch (e) {
+    appLog.w('MailReader', 'attach to chat failed', e)
+    toast.show(t('mail.reader.attachFailed'), { type: 'error', icon: 'warning' })
+  } finally {
+    attachingId.value = 0
+  }
+}
 const sentAtLabel = computed(() =>
   detail.value ? mailFullTimestamp(detail.value.sentAt) : '',
 )
@@ -346,8 +423,16 @@ async function remove(): Promise<void> {
   font-size: var(--font-size-xs, 11px);
   color: var(--text-hint);
 }
+.mail-attachment-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 2px);
+  min-width: 0;
+}
 .mail-attachment {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: var(--space-2, 4px);
   padding: calc(3 * var(--dp)) calc(6 * var(--dp));
@@ -376,6 +461,31 @@ async function remove(): Promise<void> {
   flex: none;
   font-size: var(--font-size-xs, 11px);
   color: var(--text-hint);
+}
+/* "Add to chat" sits at the row's right edge, outside the download link (a
+   button inside an <a> is invalid HTML and would also trigger the download). */
+.mail-attachment__chat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-hint);
+  cursor: pointer;
+  transition: color var(--duration-base), background var(--duration-base);
+}
+.mail-attachment__chat:hover {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+.mail-attachment__chat:disabled {
+  cursor: default;
+  opacity: var(--opacity-muted, 0.6);
 }
 .mail-icon-btn {
   display: inline-flex;

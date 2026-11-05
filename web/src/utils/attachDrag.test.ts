@@ -300,7 +300,7 @@ describe('startAttachDrag', () => {
 
   it('writes the internal payload, sets effectAllowed and installs a ghost', () => {
     const { e, dt, setDragImage } = dragEvent()
-    const ok = startAttachDrag(e, 'assets/logo.png', 'logo.png')
+    const ok = startAttachDrag(e, 'assets/logo.png', { name: 'logo.png' })
     expect(ok).toBe(true)
     expect(dt.effectAllowed).toBe('copy')
     expect(readAttachDragData(dt)).toEqual({ path: 'assets/logo.png', isDir: false })
@@ -311,25 +311,55 @@ describe('startAttachDrag', () => {
 
   it('attaches directories with isDir true', () => {
     const { e, dt } = dragEvent()
-    startAttachDrag(e, 'src/utils', 'utils', true)
+    startAttachDrag(e, 'src/utils', { name: 'utils', isDir: true })
     expect(readAttachDragData(dt)).toEqual({ path: 'src/utils', isDir: true })
+    cleanupDragGhost()
+  })
+
+  it('carries a line range and shows it on the ghost', () => {
+    // Mermaid diagrams attach as a ranged reference; the range has to reach the
+    // payload (the AI reads the fence) AND the ghost (the user sees what is
+    // being dragged).
+    const { e, dt } = dragEvent()
+    startAttachDrag(e, 'docs/a.md', { name: 'a.md', startLine: 10, endLine: 24 })
+    expect(readAttachDragData(dt)).toEqual({
+      path: 'docs/a.md', isDir: false, startLine: 10, endLine: 24,
+    })
+    expect(document.querySelector('[data-attach-ghost]')?.textContent).toContain('a.md:10-24')
+    cleanupDragGhost()
+  })
+
+  it('carries a multi-selection when entries are given', () => {
+    const { e, dt } = dragEvent()
+    startAttachDrag(e, 'src/a.ts', {
+      name: '2 selected',
+      entries: [{ path: 'src/a.ts', isDir: false }, { path: 'src', isDir: true }],
+    })
+    expect(readAttachDragData(dt)?.entries).toHaveLength(2)
+    cleanupDragGhost()
+  })
+
+  it('honours an explicit effectAllowed (file rows can also move)', () => {
+    const { e, dt } = dragEvent()
+    startAttachDrag(e, 'src/a.ts', { effectAllowed: 'move' })
+    expect(dt.effectAllowed).toBe('move')
     cleanupDragGhost()
   })
 
   it('returns false and writes nothing when the path is empty', () => {
     const { e, dt, setDragImage } = dragEvent()
-    expect(startAttachDrag(e, '', 'x.png')).toBe(false)
+    expect(startAttachDrag(e, '', { name: 'x.png' })).toBe(false)
     expect(readAttachDragData(dt)).toBeNull()
     expect(setDragImage).not.toHaveBeenCalled()
   })
 
   it('returns false when the event has no dataTransfer', () => {
-    expect(startAttachDrag({} as DragEvent, 'a.png', 'a.png')).toBe(false)
+    expect(startAttachDrag({} as DragEvent, 'a.png', { name: 'a.png' })).toBe(false)
   })
 
   it('falls back to the path as the ghost label when name is empty', () => {
     const { e } = dragEvent()
-    startAttachDrag(e, 'deep/dir/pic.png', '')
+    startAttachDrag(e, 'deep/dir/pic.png', {})
     const ghost = document.querySelector('[data-attach-ghost]')
     expect(ghost?.textContent).toContain('deep/dir/pic.png')
     cleanupDragGhost()

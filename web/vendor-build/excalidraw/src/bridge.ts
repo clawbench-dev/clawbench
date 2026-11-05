@@ -5,8 +5,9 @@
  * Protocol (all messages are JSON strings):
  *
  *   parent → iframe:
- *     { event: 'load', data: { content: string } }   // .excalidraw JSON text
- *     { event: 'saveRequest' }                       // ask for current XML
+ *     { event: 'load', data: { content, lang?, readonly? } } // .excalidraw JSON text
+ *     { event: 'saveRequest' }                       // ask for the serialized scene
+ *     { event: 'theme' | 'lang', data: { theme | lang } }
  *
  *   iframe → parent:
  *     { event: 'ready' }                             // editor mounted
@@ -17,7 +18,7 @@
 
 export interface BridgeMessage {
   event: 'load' | 'saveRequest' | 'theme' | 'lang'
-  data?: { content: string; lang?: string; theme?: string }
+  data?: { content: string; lang?: string; theme?: string; readonly?: boolean }
 }
 
 // The iframe is same-origin with the host app, so we can target the exact

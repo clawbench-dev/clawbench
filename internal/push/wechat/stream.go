@@ -268,6 +268,8 @@ func (m *Manager) handleIncomingText(ctx context.Context, userID, token, text st
 		m.handleStopSession(ctx, userID, token, route.Arg)
 	case common.RouteNewSession:
 		m.handleNewSession(ctx, userID, token, route.Arg)
+	case common.RouteHelp:
+		m.handleHelp(ctx, userID, token)
 	case common.RouteNoTarget:
 		m.replyNoTarget(ctx, userID, token)
 	case common.RouteToSession:
@@ -512,6 +514,15 @@ func (m *Manager) handleSessionList(ctx context.Context, userID, token string) {
 	}
 
 	_ = m.SendText(ctx, userID, sb.String(), token)
+}
+
+// handleHelp replies with the command reference.
+//
+// WeChat renders no Markdown, so the shared body goes through
+// stripMarkdownForWeChat: without it the user sees literal "**/ls**" markers.
+func (m *Manager) handleHelp(ctx context.Context, userID, token string) {
+	body := common.T("PushHelpTitle") + "\n\n" + stripMarkdownForWeChat(common.HelpText())
+	_ = m.SendText(ctx, userID, body, token)
 }
 
 // replyNoTarget tells the user how to pick a session.

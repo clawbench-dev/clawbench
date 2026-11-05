@@ -64,6 +64,13 @@ function ExcalidrawHost() {
   // via postMessage and applied to the Excalidraw props (langCode / theme).
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const [langCode, setLangCode] = useState<string>('en')
+  // Read-only preview (the public share page): the host sends readonly in the
+  // load payload. Excalidraw's viewModeEnabled hides the toolbars and turns the
+  // canvas into a pan/zoom-only surface, which is exactly what an anonymous
+  // reader may do. The ref mirrors the state so the (dep-less) keydown handler
+  // and onChange see the current value without re-subscribing.
+  const [readonly, setReadonly] = useState(false)
+  const readonlyRef = useRef(false)
 
   const handleApiRef = useCallback((api: unknown) => {
     excalidrawAPI.current = api
@@ -108,11 +115,18 @@ function ExcalidrawHost() {
         if (msg.data.theme === 'dark' || msg.data.theme === 'light') {
           window.setTimeout(() => setTheme(msg.data.theme), 0)
         }
+        if (msg.data.readonly === true) {
+          readonlyRef.current = true
+          setReadonly(true)
+        }
       } else if (msg.event === 'theme' && (msg.data?.theme === 'dark' || msg.data?.theme === 'light')) {
         setTheme(msg.data.theme)
       } else if (msg.event === 'lang' && typeof msg.data?.lang === 'string' && msg.data.lang) {
         setLangCode(resolveLangCode(msg.data.lang))
       } else if (msg.event === 'saveRequest') {
+        // A read-only preview has nothing to persist (and the share page has no
+        // authenticated write endpoint) — answering would look like a save.
+        if (readonlyRef.current) return
         const api = excalidrawAPI.current
         if (api) {
           emitSave(serializeScene(api, initialRef.current))
@@ -141,7 +155,10 @@ function ExcalidrawHost() {
     function onKeyDown(e: KeyboardEvent) {
       const mod = e.ctrlKey || e.metaKey
       if (mod && e.key.toLowerCase() === 's') {
+        // Never let the browser's "save page" dialog take over inside the
+        // embed; in read-only mode there is also nothing to write.
         e.preventDefault()
+        if (readonlyRef.current) return
         const api = excalidrawAPI.current
         if (api) {
           emitSave(serializeScene(api, initialRef.current))
@@ -154,6 +171,9 @@ function ExcalidrawHost() {
   }, [])
 
   const handleChange = useCallback(() => {
+    // Read-only scenes still emit onChange for pan/zoom (appState) — that is
+    // not an edit, so it must not mark the parent's dirty state.
+    if (readonlyRef.current) return
     dirtyRef.current = true
     emitChanged()
   }, [])
@@ -181,36 +201,42 @@ function ExcalidrawHost() {
           },
         }}
         zenModeEnabled={false}
+        // Read-only preview: hides the toolbar/menus, leaves pan + zoom. The
+        // host sets this only on the public share page (readonly in `load`).
+        viewModeEnabled={readonly}
       />
       {/* Floating save button — Excalidraw's own download-style actions are
-          hidden, so this is the visible "save to file" affordance. */}
-      <button
-        type="button"
-        onClick={() => {
-          const api = excalidrawAPI.current
-          if (api) {
-            emitSave(serializeScene(api, initialRef.current))
-            dirtyRef.current = false
-          }
-        }}
-        style={{
-          position: 'absolute',
-          bottom: '16px',
-          right: '16px',
-          zIndex: 1000,
-          padding: '8px 16px',
-          borderRadius: '8px',
-          border: 'none',
-          background: '#6965db',
-          color: '#fff',
-          fontSize: '14px',
-          fontWeight: 600,
-          cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-        }}
-      >
-        保存
-      </button>
+          hidden, so this is the visible "save to file" affordance. Not rendered
+          in a read-only preview: there is nowhere to write. */}
+      {!readonly && (
+        <button
+          type="button"
+          onClick={() => {
+            const api = excalidrawAPI.current
+            if (api) {
+              emitSave(serializeScene(api, initialRef.current))
+              dirtyRef.current = false
+            }
+          }}
+          style={{
+            position: 'absolute',
+            bottom: '16px',
+            right: '16px',
+            zIndex: 1000,
+            padding: '8px 16px',
+            borderRadius: '8px',
+            border: 'none',
+            background: '#6965db',
+            color: '#fff',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          }}
+        >
+          保存
+        </button>
+      )}
     </div>
   )
 }

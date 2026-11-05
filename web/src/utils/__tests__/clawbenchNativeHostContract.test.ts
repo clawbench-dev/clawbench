@@ -84,10 +84,10 @@ describe('Android host contract: bridge methods the frontend consumes', () => {
   })
 
   it('getTunnelTransport is bridged (read by usePortForward.refreshActiveTransport)', () => {
-    // usePortForward.ts:560 — the panel's "transport" line falls back to this
-    // read when getActiveTunnelTransport() reports no live wire. Both are
-    // optional in the TS contract, so a host that stops exposing this one
-    // silently hides the line instead of failing.
+    // usePortForward.ts — the panel's "transport" line and status annotations
+    // are driven by this read (the configured wire). Both are optional in the
+    // TS contract, so a host that stops exposing this one silently hides the
+    // line instead of failing.
     expect(androidBridgeExposes(src, 'getTunnelTransport')).toBe(true)
   })
 
@@ -97,10 +97,9 @@ describe('Android host contract: bridge methods the frontend consumes', () => {
     expect(src).toContain('BackgroundService.isTunnelTransportH2Enabled(activity) ? "h2" : "ssh"')
   })
 
-  it('getActiveTunnelTransport is bridged (preferred by usePortForward.refreshActiveTransport)', () => {
-    // usePortForward.ts:559 — the panel prefers this read, which reports the
-    // wire that actually carried the last connect (a 'both' client reports the
-    // winner), before falling back to the preference above.
+  it('getActiveTunnelTransport is bridged (fallback in usePortForward.refreshActiveTransport)', () => {
+    // usePortForward.ts — used only when the preference is unknown (older
+    // host), reporting the wire that actually carried the last connect.
     expect(androidBridgeExposes(src, 'getActiveTunnelTransport')).toBe(true)
   })
 

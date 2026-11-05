@@ -112,6 +112,17 @@ describe('MeetingResources', () => {
     expect(wrapper.findAll('.res-row')).toHaveLength(2)
   })
 
+  it('previews the file rows while the tab loads', () => {
+    // The tab is a list of glyph + name + meta rows; the wait shows that shape
+    // rather than a centred ring that says nothing about what is coming.
+    const wrapper = mountResources({ groups: [], loading: true, total: 0, folderPath: '' })
+
+    const skeleton = wrapper.find('.panel-skeleton')
+    expect(skeleton.exists()).toBe(true)
+    expect(skeleton.classes()).toContain('panel-skeleton--list')
+    expect(wrapper.findAll('.res-row')).toHaveLength(0)
+  })
+
   it('keeps the meeting link above the files, with the retention note', () => {
     const wrapper = mountResources({
       shareToken: 'tok-9',
@@ -161,8 +172,7 @@ describe('MeetingResources', () => {
     expect(startAttachDrag).toHaveBeenCalledWith(
       expect.anything(),
       '.clawbench/notes/x/minutes.md',
-      'minutes.md',
-      false,
+      { name: 'minutes.md', isDir: false },
     )
   })
 

@@ -26,6 +26,15 @@ vi.mock('@/composables/useSettingsConfig', async (importOriginal) => {
   }
 })
 
+// Delivery target: dropping a quote on a row must go through the SAME
+// dispatcher the session picker uses. Mocked so the test can assert the target
+// session id without a network round trip.
+const delivery = vi.hoisted(() => ({ dispatchToTarget: vi.fn(async () => true), requestTarget: vi.fn() }))
+vi.mock('@/composables/useConversationTarget', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useConversationTarget')>()
+  return { ...actual, dispatchToTarget: delivery.dispatchToTarget, requestTarget: delivery.requestTarget }
+})
+
 const { mockGetAgentBackend, mockGetAgentName, mockGetAgentModel, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState, mockDraggable, mockToastShow, mockGenerateSessionTitle, mockRenameSessionById } = await vi.hoisted(async () => {
   // The real store exposes a reactive() state, so tests that mutate
   // state.projectRoot (or sessionListVersion) must trigger the component's
@@ -243,6 +252,71 @@ describe('SessionList', () => {
     await btn.trigger('click')
     await nextTick()
   }
+
+  // ── Quote drop target ──
+  //
+  // A quote dragged from a commit / task / issue / meeting can be dropped on a
+  // row to park the card in THAT session's draft — the pointer equivalent of
+  // the session picker, which a drag cannot open.
+  describe('quote drop on a row', () => {
+    const QUOTE_MIME = 'application/x-clawbench-quote'
+
+    /** Mount with one real row (the list renders nothing without a session). */
+    async function mountWithRow() {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      return wrapper
+    }
+
+    function quoteDragEvent(payload: Record<string, unknown>) {
+      return {
+        types: [QUOTE_MIME],
+        getData: (type: string) => (type === QUOTE_MIME ? JSON.stringify(payload) : ''),
+        dropEffect: '',
+      }
+    }
+
+    beforeEach(() => {
+      delivery.dispatchToTarget.mockClear()
+      delivery.requestTarget.mockClear()
+    })
+
+    it('highlights the row under the pointer, and only while it is there', async () => {
+      const wrapper = await mountWithRow()
+      const row = wrapper.find('.session-row')
+
+      await row.trigger('dragover', { dataTransfer: quoteDragEvent({ filePath: 'abc1234 fix' }) })
+      expect(row.classes()).toContain('is-quote-drop')
+
+      await row.trigger('dragleave')
+      expect(row.classes()).not.toContain('is-quote-drop')
+    })
+
+    it('ignores a drag that is not a quote (reordering must not be hijacked)', async () => {
+      const wrapper = await mountWithRow()
+      const row = wrapper.find('.session-row')
+
+      await row.trigger('dragover', { dataTransfer: { types: ['Files'], getData: () => '', dropEffect: '' } })
+      expect(row.classes()).not.toContain('is-quote-drop')
+    })
+
+    it('delivers the dropped quote to the row’s own session', async () => {
+      const wrapper = await mountWithRow()
+      const row = wrapper.find('.session-row')
+
+      await row.trigger('drop', { dataTransfer: quoteDragEvent({ filePath: 'abc1234 fix', language: 'diff', commitSha: 'abc1234' }) })
+      await flushPromises()
+
+      expect(delivery.dispatchToTarget).toHaveBeenCalledTimes(1)
+      const [target, request] = delivery.dispatchToTarget.mock.calls[0]
+      expect(target).toEqual({ kind: 'session', id: 's1' })
+      expect(request.mode).toBe('add')
+      expect(request.quotes).toHaveLength(1)
+      expect(request.quotes[0]).toMatchObject({ filePath: 'abc1234 fix', commitSha: 'abc1234', note: '' })
+    })
+  })
 
   // ── Share state on the context menu ──
   //

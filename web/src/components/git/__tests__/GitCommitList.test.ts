@@ -4,9 +4,14 @@ import { nextTick, defineComponent } from 'vue'
 import GitCommitList from '@/components/git/GitCommitList.vue'
 
 // ── Mocks ────────────────────────────────────────────────────
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
-}))
+// importOriginal, not a bare replacement: the component now also pulls in
+// shared composables (the quote bar) that install the real i18n singleton, and
+// a mock without createI18n makes that module fail to evaluate — the whole
+// suite then reports "0 test" instead of failing an assertion.
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+})
 
 // Mock IntersectionObserver
 const mockObserve = vi.fn()
@@ -26,19 +31,10 @@ class MockIntersectionObserver {
 }
 vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
 
-// Mock lucide-vue-next icons
-vi.mock('lucide-vue-next', () => ({
-  FileText: { template: '<svg />' },
-  Info: { template: '<svg />' },
-  RefreshCw: { template: '<svg />' },
-  RotateCw: { template: '<svg />' },
-  RotateCcw: { template: '<svg />' },
-  GitBranch: { template: '<svg />' },
-  GitCommitHorizontal: { template: '<svg />' },
-  GitFork: { template: '<svg />' },
-  MoreVertical: { template: '<svg />' },
-  LoaderCircle: { template: '<svg />' },
-}))
+// Real icons (importOriginal): a whitelist mock silently renders nothing for
+// any icon added later, which is exactly how the quote button's glyph would go
+// missing without a single test failing.
+vi.mock('lucide-vue-next', async (importOriginal) => await importOriginal<typeof import('lucide-vue-next')>())
 
 vi.mock('@/components/common/SearchInput.vue', () => ({
   default: defineComponent({

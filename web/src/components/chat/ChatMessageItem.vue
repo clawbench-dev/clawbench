@@ -203,6 +203,9 @@
           class="chat-action-btn"
           :title="t('quoteBar.quoteMessage')"
           :aria-label="t('quoteBar.quoteMessage')"
+          :draggable="quoteDragEnabled"
+          @dragstart="onQuoteDragStart"
+          @dragend="cleanupDragGhost()"
           @click="$emit('quote-message', msg)"
         >
           <MessageSquare :size="14" />
@@ -305,7 +308,11 @@ import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
-import { quotableMessageText } from '@/utils/quoteItem.ts'
+import { quotableMessageText, buildMessageQuote } from '@/utils/quoteItem.ts'
+import { startQuoteDrag } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
+import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
@@ -609,6 +616,44 @@ const showMetaBar = computed(() => {
 // group session has the protocol, so the strip is gated on it (a single chat's
 // prose must not be truncated by a literal tag mentioned in discussion).
 const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary, props.isGroupSession))
+
+/**
+ * Whether the quote button can be DRAGGED into the chat.
+ *
+ * The message body itself is not draggable on purpose: `draggable` on a text
+ * container kills text selection, and selecting text inside a message is how a
+ * snippet quote is made. The meta-bar button is the drag handle instead — a
+ * gesture that starts on an icon cannot be confused with selecting prose.
+ *
+ * Wide-screen only, like every other quote drag source: the drop target is the
+ * chat column, which on a narrow layout is never on screen at the same time as
+ * the drag source. On a phone the drag would start and drop nowhere.
+ */
+const identity = useSessionIdentity()
+const { isWideScreen } = useWideScreenLayout()
+const quoteDragEnabled = computed(() => isWideScreen.value && !props.readOnly && !!quotableText.value)
+
+/**
+ * Drag the quote button → the same quote the click produces, staged on drop.
+ *
+ * Payload comes from `buildMessageQuote`, the one builder both message-quote
+ * entries use (the click path in ChatPanelContent calls it too), so the two
+ * cannot drift on session id / message id.
+ */
+function onQuoteDragStart(e) {
+  const text = quotableText.value
+  if (!text) {
+    e.preventDefault()
+    return
+  }
+  const id = Number(props.msg?.id)
+  const payload = buildMessageQuote(
+    text,
+    { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
+    Number.isFinite(id) && id > 0 ? id : undefined,
+  )
+  if (!startQuoteDrag(e, payload)) e.preventDefault()
+}
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".

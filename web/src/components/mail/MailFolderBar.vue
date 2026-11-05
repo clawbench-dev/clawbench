@@ -20,9 +20,7 @@
         />
       </div>
       <span class="mail-bar__spacer" />
-      <button class="mail-icon-btn" :title="t('mail.bar.refresh')" :disabled="refreshing" @click="emit('refresh')">
-        <RefreshCw :class="{ 'refresh-spin': refreshing }" />
-      </button>
+      <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')" />
       <button class="mail-icon-btn" :title="t('mail.bar.compose')" @click="emit('compose')">
         <PenLine />
       </button>
@@ -67,8 +65,9 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PenLine, RefreshCw, Search, Settings } from 'lucide-vue-next'
+import { PenLine, Search, Settings } from 'lucide-vue-next'
 import MenuSelect from '@/components/common/MenuSelect.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
 import type { MailAccount, MailFolder } from '@/utils/mailTypes'
 
 const props = defineProps<{

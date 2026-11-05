@@ -20,6 +20,7 @@
 | PDF | `.pdf` | 分页渲染 |
 | Word | `.docx` | Office 预览 |
 | Excel | `.xlsx` | 表格渲染 |
+| CSV / TSV | `.csv` `.tsv` | 表格视图（搜索 / 排序 / 分页 / 列菜单），可切回文本编辑 |
 | PPT | `.pptx` | 幻灯片渲染 |
 | OpenAPI | `.yaml` `.json`（含 openapi 字段） | Swagger UI |
 | Excalidraw | `.xdraw` `.excalidraw` | 内嵌画布编辑器 |
@@ -38,6 +39,7 @@
 | PDF | `.pdf` | 分页渲染 |
 | Word | `.docx` | 文档视图 |
 | Excel | `.xlsx` | 表格视图（多 Sheet） |
+| CSV / TSV | `.csv` `.tsv` | 表格视图（搜索 / 排序 / 分页 / 列菜单） |
 | PPT | `.pptx` | 逐页渲染 |
 | OpenAPI | 含 `openapi` 字段的 YAML/JSON | Swagger UI |
 | Excalidraw | `.xdraw` `.excalidraw` | 内嵌画布编辑器 |
@@ -214,6 +216,18 @@ PDF 分页渲染，可以滚动翻页、缩放、切换页码。
 ![Excel 预览](screenshots/preview-excel.png)
 
 `.xlsx` 渲染为表格，支持多 Sheet 切换（顶部标签）、单元格内容查看。
+
+## CSV / TSV 表格
+
+`.csv` 与 `.tsv` 默认以**表格**打开，而不是一大片逗号分隔的文本：
+
+- **查找**：顶部搜索框全局过滤，也可以只搜某一列
+- **排序与分页**：点表头排序，长表分页浏览
+- **列菜单**（点表头右侧）：按值筛选、隐藏此列 / 只看此列、冻结、列统计、复制整列或列名、数据条
+- **切回源文件**：表格旁边仍能切到文本视图，并且可以直接编辑——表格是看数据的方式，不是另一份副本
+- 40 列的宽表有自己的横向滚动条，可以一路拖到底
+
+分享链接打开同一份 CSV 时也是这套表格，读者不用登录就能筛选和排序。
 
 ## PPT 幻灯片
 

@@ -21,6 +21,8 @@ export interface GroupMemberInfo {
   agentName: string
   /** 禁用：仍是在群成员，但调度时不安排它发言。启用后能看到禁用期间的全部内容。 */
   disabled: boolean
+  /** 已移出群聊（删除）。仅用于解析历史消息的发言人身份，花名册与 @ 菜单都不显示。 */
+  removed?: boolean
   isHost: boolean
   /**
    * 该成员**自己**的上下文用量（成员行 context_state.usage，或活连接的缓存）。
@@ -139,6 +141,9 @@ export async function generateMemberAvatars(groupId: string, onlyMemberIds?: str
   const { members } = await listGroupMembers(groupId)
   const seenAgents = new Set<string>()
   const targets = members.filter(m => {
+    // A removed member is not in the group any more; generating its avatar is
+    // pointless (the row is only kept for history attribution).
+    if (m.removed) return false
     if (m.disabled) return false
     // Roster order is creation order, so the first SPEAKING member of an agent
     // is its first instance; it keeps the agent avatar. Later instances are the
@@ -170,6 +175,24 @@ export async function setGroupMemberDisabled(groupId: string, memberId: string, 
   // for the browser, which stalls `networkidle` waits. Same reason as
   // utils/sessionRead.ts — this one is user-triggered rather than on page load,
   // so it could not fail a reload, but the leak is identical.
+  await resp.body?.cancel().catch(() => {})
+  if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
+}
+
+/** removeGroupMember deletes a member from the group (移出群聊).
+ *
+ *  Unlike disabling this is one-way: the member disappears from the roster and
+ *  the @ menu, and re-adding the same agent creates a NEW instance. Its past
+ *  speech stays in the timeline with the original name (the row is kept
+ *  server-side for attribution). */
+export async function removeGroupMember(groupId: string, memberId: string): Promise<void> {
+  const resp = await fetch('/api/group/members', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, memberId }),
+  })
+  // Consume the body for the same reason as setGroupMemberDisabled: an unread
+  // response stream keeps the request "in flight" and stalls networkidle waits.
   await resp.body?.cancel().catch(() => {})
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
 }

@@ -11,6 +11,7 @@ vi.mock('vue-i18n', () => ({
 
 const mockAdd = vi.fn().mockResolvedValue(undefined)
 const mockSetDisabled = vi.fn().mockResolvedValue(undefined)
+const mockRemove = vi.fn().mockResolvedValue(undefined)
 const mockSetHost = vi.fn().mockResolvedValue(undefined)
 const mockSetParallel = vi.fn().mockResolvedValue(undefined)
 const mockSetCruise = vi.fn().mockResolvedValue(undefined)
@@ -19,10 +20,18 @@ const mockToastShow = vi.fn()
 vi.mock('@/composables/useGroupChat', () => ({
   addGroupMembers: (...a: any[]) => mockAdd(...a),
   setGroupMemberDisabled: (...a: any[]) => mockSetDisabled(...a),
+  removeGroupMember: (...a: any[]) => mockRemove(...a),
   setGroupHost: (...a: any[]) => mockSetHost(...a),
   setGroupParallelDefault: (...a: any[]) => mockSetParallel(...a),
   setGroupCruise: (...a: any[]) => mockSetCruise(...a),
   generateMemberAvatars: (...a: any[]) => mockGenerateAvatars(...a),
+}))
+
+// Removal asks for confirmation first (it is destructive and irreversible from
+// the UI). Stub the shared dialog so the test controls the answer.
+const mockConfirm = vi.fn().mockResolvedValue(true)
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: (...a: any[]) => mockConfirm(...a) }),
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -102,6 +111,8 @@ const MEMBERS = [
 describe('GroupSettingsSheet', () => {
   beforeEach(() => {
     mockSetDisabled.mockClear()
+    mockRemove.mockClear()
+    mockConfirm.mockReset().mockResolvedValue(true)
     mockAdd.mockClear()
     mockGenerateAvatars.mockClear()
     mockToggleAutoApprove.mockClear()
@@ -360,6 +371,87 @@ describe('GroupSettingsSheet', () => {
     await disabledRow.find('.gm-disable-toggle').trigger('click')
     await flushPromises()
     expect(mockSetDisabled).toHaveBeenCalledWith('g1', 'm3', false)
+  })
+
+  // ── 删除成员 (remove) ──
+
+  // The remove control follows the disable toggle (the user asked for exactly
+  // that order) and is rendered on every row so the trailing column stays
+  // aligned; the host's is inert (it is the group's only router).
+  it('puts a remove control after the disable toggle, inert on the host', () => {
+    const w = mountSheet(MEMBERS)
+    const hostRow = w.findAll('.gm-row')[0]
+    const buttons = hostRow.findAll('button')
+    const disableIdx = buttons.findIndex(b => b.classes().includes('gm-disable-toggle'))
+    const removeIdx = buttons.findIndex(b => b.classes().includes('gm-remove-toggle'))
+    expect(removeIdx).toBe(disableIdx + 1)
+
+    const hostRemove = hostRow.find('.gm-remove-toggle')
+    expect(hostRemove.attributes('disabled')).toBeDefined()
+    expect(hostRemove.classes()).toContain('gm-remove-toggle--inert')
+    expect(hostRemove.attributes('title')).toBe('group.hostCannotRemove')
+    expect(hostRemove.attributes('data-action')).toBeUndefined()
+  })
+
+  it('asks for confirmation, then removes the member and refreshes', async () => {
+    const w = mountSheet(MEMBERS)
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    await aliceRow.find('.gm-remove-toggle').trigger('click')
+    await flushPromises()
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    // Dangerous styling: removal cannot be undone from the UI.
+    expect(mockConfirm.mock.calls[0][1]).toEqual({ dangerous: true })
+    expect(mockRemove).toHaveBeenCalledWith('g1', 'm2')
+    expect(w.emitted('changed')).toBeTruthy()
+  })
+
+  it('does not remove anything when the confirmation is cancelled', async () => {
+    mockConfirm.mockResolvedValueOnce(false)
+    const w = mountSheet(MEMBERS)
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    await aliceRow.find('.gm-remove-toggle').trigger('click')
+    await flushPromises()
+    expect(mockRemove).not.toHaveBeenCalled()
+    expect(w.emitted('changed')).toBeFalsy()
+  })
+
+  it('keeps the last remaining member unremovable', () => {
+    const w = mountSheet([{ id: 'm1', name: 'Solo', backend: 'claude', agentId: 'a1', isHost: false }])
+    const btn = w.find('.gm-remove-toggle')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('group.lastMemberCannotRemove')
+  })
+
+  it('keeps the last ENABLED member unremovable but still allows removing a disabled one', () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'OnlySpeaker', backend: 'claude', agentId: 'a1', isHost: false },
+      { id: 'm2', name: 'Parked', backend: 'claude', agentId: 'a2', isHost: false, disabled: true },
+    ])
+    const rowFor = (name: string) => w.findAll('.gm-row').find(r => r.text().includes(name))!
+    // Removing the only enabled member would leave nobody able to answer.
+    expect(rowFor('OnlySpeaker').find('.gm-remove-toggle').attributes('disabled')).toBeDefined()
+    // The disabled one does not reduce the speaking count, so it can go.
+    const parked = rowFor('Parked').find('.gm-remove-toggle')
+    expect(parked.attributes('disabled')).toBeUndefined()
+    expect(parked.attributes('data-action')).toBe('remove-member')
+  })
+
+  it('keeps removal inert while the group is running', () => {
+    const w = mountSheet(MEMBERS, { groupRunning: true })
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    const btn = aliceRow.find('.gm-remove-toggle')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('group.removeRunning')
+  })
+
+  it('surfaces a failed removal instead of doing nothing visible', async () => {
+    mockRemove.mockRejectedValueOnce(new Error('boom'))
+    const w = mountSheet(MEMBERS)
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    await aliceRow.find('.gm-remove-toggle').trigger('click')
+    await flushPromises()
+    expect(mockToastShow).toHaveBeenCalledWith('group.removeFailed')
+    expect(w.emitted('changed')).toBeFalsy()
   })
 
   // Adding is the sheet's primary action: it lives in the drawer header (right

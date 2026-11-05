@@ -9,7 +9,7 @@
  * share is live. Only the minutes are polled, because they are generated
  * asynchronously on the server.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import {
   LiveNotesCapture,
@@ -34,8 +34,44 @@ const TAG = 'LiveNotes'
  *  of every long meeting. */
 const FINISH_UPLOAD_TIMEOUT_MS = 180_000
 
+/**
+ * A channel that has carried no speech for this long is called out.
+ *
+ * Two minutes is long enough that a normal pause, a question being typed or a
+ * screen-sharing demo does not raise a false alarm, and short enough that a
+ * dead microphone is noticed while the meeting still matters.
+ */
+export const NOTES_SILENCE_ALERT_MS = 120_000
+
+/**
+ * Backlog (in segments) at which the panel says transcription is behind.
+ *
+ * Segments are 4-20s, so three of them is roughly a minute of audio waiting —
+ * the point where "why is nothing appearing" starts being a fair question.
+ */
+export const NOTES_BACKLOG_ALERT = 3
+
+/** How often the live status is recomputed. */
+const HEALTH_TICK_MS = 1_000
+
 export type NotesPhase = 'idle' | 'recording' | 'finalizing'
 export type MinutesPhase = 'idle' | 'generating' | 'ready' | 'failed'
+
+/**
+ * One answer to "what is happening right now", in priority order.
+ *
+ * The order is not cosmetic: a dead microphone also produces no speech and no
+ * pending work, so reporting "silent" would be technically true and completely
+ * useless. Every cause that explains the others comes first.
+ */
+export type NotesHealthKind =
+  | 'ok'
+  | 'queued'
+  | 'silent'
+  | 'micDead'
+  | 'suspended'
+  | 'reconnecting'
+  | 'offline'
 
 /** Files a meeting leaves in the project. Empty until the server reports them. */
 export interface NotesArtifacts {
@@ -85,6 +121,27 @@ const pending = ref(0)
 const lost = ref(0)
 /** True when the final drain timed out: the transcript is missing its tail. */
 const truncated = ref(false)
+
+// ── Live status ──────────────────────────────────────────────────────────────
+//
+// Everything below answers "is transcription actually working", which is a
+// different question from "did it ever produce a line". Before this existed the
+// panel showed the same empty card for "nobody has spoken yet" and "the
+// microphone died twenty minutes ago".
+
+/** The publisher's socket, as far as the panel cares. */
+const connection = ref<'online' | 'reconnecting' | 'offline'>('online')
+/** The audio graph was suspended by the system (the recorder hears nothing). */
+const audioSuspended = ref(false)
+/** Channels whose audio source disappeared. */
+const deadChannels = ref<string[]>([])
+/** Epoch ms of the last speech heard on any channel (0 = never). */
+const lastVoiceAt = ref(0)
+/** Epoch ms the current recording started (so "silent since" has a floor). */
+const recordingSince = ref(0)
+/** Recomputed once a second so "silent for N minutes" is live, not a snapshot. */
+const healthClock = ref(Date.now())
+let healthTimer: ReturnType<typeof setInterval> | null = null
 
 let capture: LiveNotesCapture | null = null
 /**
@@ -181,6 +238,62 @@ function uploadArchiveSegment(token: string): NotesUploader {
 
 export function useLiveNotes() {
   /**
+   * The one answer to "is transcription working right now".
+   *
+   * Kept here rather than in the panel because three producers feed it (the
+   * recorder, the audio graph, the publisher socket) and the priority between
+   * them is the whole design: a dead microphone also means "no speech" and "no
+   * backlog", so the specific causes must win over the general ones.
+   */
+  const health = computed<NotesHealthKind>(() => {
+    if (phase.value !== 'recording') return 'ok'
+    if (deadChannels.value.length > 0) return 'micDead'
+    if (audioSuspended.value) return 'suspended'
+    if (connection.value === 'offline') return 'offline'
+    if (connection.value === 'reconnecting') return 'reconnecting'
+    if (pending.value >= NOTES_BACKLOG_ALERT) return 'queued'
+    const since = Math.max(lastVoiceAt.value, recordingSince.value)
+    if (since > 0 && healthClock.value - since >= NOTES_SILENCE_ALERT_MS) return 'silent'
+    return 'ok'
+  })
+
+  /** How long the meeting has been without speech (0 when unknown). */
+  const silentForMs = computed(() => {
+    const since = Math.max(lastVoiceAt.value, recordingSince.value)
+    return since > 0 ? Math.max(0, healthClock.value - since) : 0
+  })
+
+  function startHealthTimer(): void {
+    stopHealthTimer()
+    healthClock.value = Date.now()
+    healthTimer = setInterval(() => {
+      healthClock.value = Date.now()
+      const cap = capture
+      if (!cap) return
+      pending.value = cap.pending
+      deadChannels.value = cap.deadChannels()
+      lastVoiceAt.value = cap.lastVoiceAt
+    }, HEALTH_TICK_MS)
+  }
+
+  function stopHealthTimer(): void {
+    if (healthTimer !== null) {
+      clearInterval(healthTimer)
+      healthTimer = null
+    }
+  }
+
+  /** Reported by the share's socket: it is what carries every upload. */
+  function setConnectionState(next: 'online' | 'reconnecting' | 'offline'): void {
+    connection.value = next
+  }
+
+  /** Reported by the audio graph: a suspended context records nothing. */
+  function setAudioSuspended(next: boolean): void {
+    audioSuspended.value = next
+  }
+
+  /**
    * Begin capturing. Only microphones are transcribed: the system-audio loop
    * would capture whatever else the machine is playing, which is not what a
    * meeting transcript is for, and it duplicated every remote voice into a
@@ -240,6 +353,12 @@ export function useLiveNotes() {
       capture.addChannel(`viewer:${viewerId}`, () => labelFor(`viewer:${viewerId}`), stream)
     }
     phase.value = 'recording'
+    // A fresh recorder has heard nothing yet: "silent since" starts now, not at
+    // whatever the previous session last heard.
+    recordingSince.value = Date.now()
+    lastVoiceAt.value = 0
+    deadChannels.value = []
+    startHealthTimer()
   }
 
   /**
@@ -281,6 +400,12 @@ export function useLiveNotes() {
    * running in the background.
    */
   async function stopCapture(): Promise<void> {
+    stopHealthTimer()
+    // The recorder is gone: a dead channel or a suspended graph is no longer a
+    // statement about anything, and leaving them set would keep the status bar
+    // red between here and the finalize that hides it.
+    deadChannels.value = []
+    audioSuspended.value = false
     if (!capture) return
     await capture.stopAndFlush(2000)
   }
@@ -520,6 +645,7 @@ export function useLiveNotes() {
     // would otherwise write into.
     sessionGen += 1
     stopPolling()
+    stopHealthTimer()
     capture = null
     draining = null
     viewerStreams.clear()
@@ -539,6 +665,11 @@ export function useLiveNotes() {
     pending.value = 0
     lost.value = 0
     truncated.value = false
+    connection.value = 'online'
+    audioSuspended.value = false
+    deadChannels.value = []
+    lastVoiceAt.value = 0
+    recordingSince.value = 0
   }
 
   return {
@@ -554,6 +685,13 @@ export function useLiveNotes() {
     pending,
     lost,
     truncated,
+    health,
+    silentForMs,
+    deadChannels,
+    connection,
+    audioSuspended,
+    setConnectionState,
+    setAudioSuspended,
     start,
     addViewer,
     removeViewer,

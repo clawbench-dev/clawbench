@@ -85,3 +85,48 @@ func TestCommandWithAttachmentText_NamesTheCommand(t *testing.T) {
 		t.Fatal("reply must not be empty")
 	}
 }
+
+// /help is the only way an IM user discovers the commands, so every command the
+// parser accepts must appear in the body. The text is hand-written prose, which
+// is exactly why a command added without a matching line would stay invisible.
+func TestHelpText_ListsEveryCommand(t *testing.T) {
+	orig := model.Language
+	defer func() { model.Language = orig }()
+
+	words := []string{
+		SessionListCommand,
+		SessionShowCommand,
+		SessionStopCommand,
+		SessionNewCommand,
+		SessionHelpCommand,
+	}
+
+	for _, lang := range []string{"en", "zh"} {
+		model.Language = lang
+		body := HelpText()
+		if strings.TrimSpace(body) == "" || body == "PushHelpBody" {
+			t.Fatalf("%s: help body is missing or untranslated: %q", lang, body)
+		}
+		// Each command must be its own list item. Markdown renderers (DingTalk,
+		// Feishu cards) merge consecutive plain lines into a single paragraph, so
+		// a one-line-per-command body without bullets arrives as one run-on blob.
+		lines := strings.Split(body, "\n")
+		for _, word := range words {
+			documented := false
+			for _, line := range lines {
+				if strings.HasPrefix(line, "- ") && strings.Contains(line, word) {
+					documented = true
+					break
+				}
+			}
+			if !documented {
+				t.Errorf("%s: %q must be documented as its own list item, got body:\n%s", lang, word, body)
+			}
+		}
+		// The "@{shortID}" form is not a command, but it is the other half of
+		// the addressing model — a body without it omits how to target a session.
+		if !strings.Contains(body, "@") {
+			t.Errorf("%s: help body does not explain the @sessionID form", lang)
+		}
+	}
+}

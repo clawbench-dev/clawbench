@@ -23,17 +23,24 @@ import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
  * served at /vendor/excalidraw/index.html — Vue and React never share a
  * bundle. Communication is via postMessage:
  *
- *   this → iframe: { event: 'load', data: { content, lang, theme } }
+ *   this → iframe: { event: 'load', data: { content, lang, readonly } }
  *                   { event: 'theme', data: { theme } } | { event: 'lang', data: { lang } }
  *   iframe → this: ready | changed | save | exit
  *
  * .excalidraw files open directly in the editor (no browse/read-only mode),
  * so the component mounts in "editing" state and registers the dirty-save
  * handlers exactly like CodeMirrorViewer.
+ *
+ * `readonly` is the one exception: the public share page mounts this viewer to
+ * PREVIEW a shared diagram. It then skips the editing registration (there is no
+ * back gesture or save endpoint on that page) and the iframe is told to enable
+ * Excalidraw's view mode — pan/zoom only, no toolbars, no save button.
  */
 
 const props = defineProps({
     file: Object,
+    /** Preview-only: no editing state, no save/exit flow, canvas is read-only. */
+    readonly: { type: Boolean, default: false },
 })
 
 const { locale, t } = useI18n()
@@ -84,14 +91,19 @@ function onMessage(e) {
             }
             break
         case 'changed':
+            // A read-only preview must never look dirty: the share page has no
+            // save path, and FileViewer's exit guard would try to persist.
+            if (props.readonly) break
             setDirty(true)
             break
         case 'save':
+            if (props.readonly) break
             if (msg.data?.content != null) {
                 handleIframeSave(msg.data.content)
             }
             break
         case 'exit':
+            if (props.readonly) break
             // The iframe is leaving (e.g. its own back button). Report the
             // dirty state to the parent so FileViewer can run the same
             // save/discard confirmation as other editors.
@@ -105,7 +117,7 @@ function sendLoad(content) {
     frameRef.value.contentWindow.postMessage(
         JSON.stringify({
             event: 'load',
-            data: { content, lang: currentLang() },
+            data: { content, lang: currentLang(), readonly: props.readonly },
         }),
         window.location.origin
     )
@@ -217,11 +229,16 @@ onMounted(() => {
     // Excalidraw opens directly in the editor, so it counts as "editing" for
     // the global back gesture (without this, back/navigation skips the
     // dirty-save flow entirely and unsaved edits are silently lost).
-    fileEditor.setEditing(true)
-    // Register with the shared editor state so the global back gesture and
-    // FileViewer's guardExitEdit find us.
-    unregisterExitEdit = fileEditor.registerExitEditHandler(handleExit)
-    unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => dirty)
+    // A read-only preview is not an editor: registering it would make the
+    // share page's (nonexistent) back gesture and any host leave-guard think
+    // there is unsaved work.
+    if (!props.readonly) {
+        fileEditor.setEditing(true)
+        // Register with the shared editor state so the global back gesture and
+        // FileViewer's guardExitEdit find us.
+        unregisterExitEdit = fileEditor.registerExitEditHandler(handleExit)
+        unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => dirty)
+    }
 
     // Push host theme changes (light/dark) into the iframe so the editor stays
     // in sync with the rest of the app.
@@ -248,12 +265,17 @@ onBeforeUnmount(() => {
         unregisterDirtyGetter()
         unregisterDirtyGetter = null
     }
-    fileEditor.setEditing(false)
+    // Only the editing mount owns this flag — a read-only preview must not
+    // clear the state of whatever real editor is mounted elsewhere.
+    if (!props.readonly) {
+        fileEditor.setEditing(false)
+    }
 })
 
 // Public method used by FileViewer's exit handler to route the global back
 // gesture to this editor instead of the (inactive) CodeMirror editor.
 async function requestExit() {
+    if (props.readonly) return true
     return handleExit()
 }
 

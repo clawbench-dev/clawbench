@@ -6,7 +6,7 @@
       </button>
       <span
         class="meeting-header__title"
-        :draggable="Boolean(record)"
+        :draggable="isWideScreen && Boolean(record)"
         :title="t('meeting.detail.dragHint')"
         @dragstart="onDragStart"
         @dragend="cleanupDragGhost()"
@@ -41,9 +41,11 @@
       </button>
     </div>
 
-    <div v-if="loading" class="meeting-body meeting-center">
-      <LoadingIndicator size="sm" inline />
-      {{ t('common.loading') }}
+    <!-- First load: the pane below the header is an article (minutes /
+         transcript / chat), so the placeholder previews paragraph lines. It
+         keeps the body's own padding, which is what the real content sits on. -->
+    <div v-if="loading" class="meeting-body">
+      <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
     </div>
     <div v-else-if="!record" class="meeting-body">
       <MeetingEmpty
@@ -308,7 +310,7 @@ import {
   SpellCheck,
   Trash2,
 } from 'lucide-vue-next'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
 import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
@@ -344,6 +346,7 @@ import { cleanupDragGhost } from '@/utils/attachDrag'
 import { formatClockTime } from '@/utils/format'
 import { resolveUserNickname } from '@/utils/userNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
 import {
   groupNoteSegments,
@@ -360,6 +363,10 @@ import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ token: string; initialTab?: MeetingDetailTab }>()
 const emit = defineEmits<{ back: []; quote: [token: string]; 'tab-change': [tab: MeetingDetailTab] }>()
+
+// Quote drags are a wide-screen gesture: the drop target is the chat column,
+// which a narrow layout never shows next to the drag source.
+const { isWideScreen } = useWideScreenLayout()
 
 /**
  * The meeting-name limit, in characters.
@@ -777,16 +784,35 @@ async function loadArtifacts(rec: MeetingRecord, silent: boolean): Promise<void>
 }
 
 /**
- * Whether a job may still change the record.
+ * How long a record that still looks "running" is re-read after this view
+ * opens.
  *
- * `generation` is obvious. The second case is the just-ended meeting: the
- * publisher drains its upload queue and only then asks for the minutes, so for
- * a while the record has no job although one is about to start. The window is
- * bounded so an old meeting that never got minutes does not poll forever.
+ * The shell opens the record the moment publishing stops, which is BEFORE the
+ * end request has been answered — so the first read can land a few
+ * milliseconds before the server stamps `endedAt`. That record is
+ * indistinguishable from a genuinely running meeting, and without a re-read the
+ * view would keep saying 进行中 (and hide the rename control) until the user
+ * navigated away and back. Bounded so a record that really is running (another
+ * device hosts it) does not poll forever.
+ */
+const LIVE_RECORD_POLL_WINDOW_MS = 60_000
+const liveRecordPollDeadline = Date.now() + LIVE_RECORD_POLL_WINDOW_MS
+
+/**
+ * Whether a job (or the end of the meeting) may still change the record.
+ *
+ * `generation` is obvious. The just-ended meeting whose `endedAt` has not
+ * reached the database yet is the second case above. The third is the meeting
+ * that ended a moment ago: the publisher drains its upload queue and only then
+ * asks for the minutes, so for a while the record has no job although one is
+ * about to start. That window is bounded so an old meeting that never got
+ * minutes does not poll forever.
  */
 function shouldPoll(r: MeetingRecord | null): boolean {
   if (!r) return false
   if (r.generation) return true
+  // A just-ended meeting whose end has not reached the database yet.
+  if (isLiveRecord(r)) return Date.now() < liveRecordPollDeadline
   return r.endedAt > 0 && !artifactStateOf(r, 'minutes').hasContent
     && Date.now() - r.endedAt < 10 * 60 * 1000
 }
@@ -1150,7 +1176,6 @@ onMounted(() => {
   display: flex; flex-direction: column; gap: var(--space-5);
   padding: var(--space-6) var(--space-7);
 }
-.meeting-center { align-items: center; justify-content: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 
 .meeting-md {
   font-size: var(--font-size-sm); line-height: 1.75; color: var(--text-primary);

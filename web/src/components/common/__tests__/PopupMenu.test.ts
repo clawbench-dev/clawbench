@@ -51,6 +51,29 @@ describe('PopupMenu', () => {
     expect(wrapper.find('.popup-menu').exists()).toBe(false)
   })
 
+  it('is fixed-positioned before the first position pass writes any inline style', async () => {
+    // The containing-block probe CLONES the menu and reads where the clone
+    // lands. It only measures the real block when the box is `position: fixed`
+    // — a static clone is a normal-flow box, so the probe reports the menu's own
+    // flow position as its containing block. That error equals the menu's own
+    // height, which for a short menu keeps the result inside the viewport, so
+    // the viewport sanity gate does not reject it: the popup opened one menu
+    // height too high, covering its trigger, and looked fine from the second
+    // open on (the inline style from the previous open was still there).
+    //
+    // `position: fixed` must therefore come from the class, so it holds on the
+    // very first open — before `updatePosition` has run.
+    const wrapper = mount(PopupMenu, {
+      props: { show: true, targetElement: { getBoundingClientRect: () => ({ top: 40, bottom: 60, left: 10, right: 200 }) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    const el = wrapper.find('.popup-menu').element as HTMLElement
+    // Nothing has positioned it yet: the rAF pass has not run.
+    expect(el.getAttribute('style') ?? '').not.toContain('position')
+    expect(getComputedStyle(el).position).toBe('fixed')
+  })
+
   it('emits update:show false on click', async () => {
     const wrapper = mount(PopupMenu, {
       props: { show: true },

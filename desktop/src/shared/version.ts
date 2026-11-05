@@ -159,3 +159,37 @@ export function shouldGate(client: string, server: string, opts: GateOptions): b
   if (!isVersionedBuild(client) || !isVersionedBuild(server)) return false
   return compareVersions(client, server) !== 0
 }
+
+/** Inputs for the protocol-aware gate. */
+export interface ClientGateInput {
+  /** Protocol number compiled into this shell (0 = built before the field). */
+  clientProtocol: number
+  /** Protocol number reported by the server (0 = server predates the field). */
+  serverProtocol: number
+  clientVersion: string
+  serverVersion: string
+  packaged: boolean
+}
+
+/**
+ * Whether the desktop shell and the server are incompatible.
+ *
+ * The decision is made on the PROTOCOL number, not on the version string: a
+ * release that did not change the shell<->server contract ships the previous
+ * desktop package unchanged, so the versions differ while the client is still
+ * perfectly compatible. Gating on versions there would force every user to
+ * re-download ~150MB for a byte-identical app.
+ *
+ * Falls back to {@link shouldGate} when either side reports no protocol — a
+ * shell or server built before the field existed — which keeps the old strict
+ * behaviour and is the one-time upgrade path for existing installs.
+ *
+ * Mirrors Android's `VersionCompare.shouldShowMismatch(app, server, cp, sp)`.
+ */
+export function shouldGateClient(input: ClientGateInput): boolean {
+  if (!input.packaged) return false
+  if (input.clientProtocol > 0 && input.serverProtocol > 0) {
+    return input.clientProtocol !== input.serverProtocol
+  }
+  return shouldGate(input.clientVersion, input.serverVersion, { packaged: input.packaged })
+}

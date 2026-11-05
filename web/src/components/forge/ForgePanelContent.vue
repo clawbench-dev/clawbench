@@ -196,7 +196,7 @@
               :key="run.id"
               class="forge-row forge-pipeline-row"
               :class="{ unread: run.unread }"
-              draggable="true"
+              :draggable="isWideScreen"
               @dragstart="onPipelineDragStart(run, $event)"
               @dragend="cleanupDragGhost()"
               @click="openPipelineDetail(run)"
@@ -290,7 +290,7 @@
             :key="`${it.type}-${it.number}`"
             class="forge-row"
             :class="{ unread: it.unread }"
-            draggable="true"
+            :draggable="isWideScreen"
             @dragstart="onForgeItemDragStart(it, $event)"
             @dragend="cleanupDragGhost()"
             @click="openDetail(it)"
@@ -423,6 +423,7 @@ import { useForgeUnread } from '@/composables/useForgeUnread'
 import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 import { startQuoteDrag, forgeItemDragPayload, pipelineDragPayload } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 
 const TAG = 'ForgePanel'
@@ -436,6 +437,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const { isWideScreen } = useWideScreenLayout()
 const items = useForgeItems(() => props.projectPath)
 const pipelines = useForgePipelines(() => props.projectPath)
 // The same count the dock badge shows, so the "mark all read" button reflects

@@ -61,10 +61,10 @@ func resolveSessionSpeakersWithInfo(info *SessionInfo, sessionID string) (*Speak
 		return &sessionAgent, nil
 	}
 
-	// Group: map each member row id to its identity. ListGroupMembers includes
-	// DISABLED members on purpose — their past speech is still in the timeline and
+	// Group: map each member row id to its identity. REMOVED and DISABLED members
+	// are included on purpose — their past speech is still in the timeline and
 	// must keep resolving to their own icon, not the host's.
-	members, err := ListGroupMembers(sessionID)
+	members, err := ListGroupMembersIncludingRemoved(sessionID)
 	if err != nil || len(members) == 0 {
 		return &sessionAgent, nil
 	}

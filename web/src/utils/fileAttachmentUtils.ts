@@ -32,7 +32,7 @@ export interface FileEntry {
    * quote correctly after a reload — inference alone cannot distinguish a
    * terminal quote from a chat quote (both carry no url and no path).
    */
-  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting' | 'mail'
   /**
    * Quote-only source locators. Each is a MACHINE-readable key that both the
    * jump handler and the AI prompt use to find the origin; the human-readable
@@ -54,6 +54,14 @@ export interface FileEntry {
   executionId?: string
   /** Meeting token, when the quote came from a meeting record. */
   meetingToken?: string
+  /** Local mail message id, when the quote came from an email. */
+  mailId?: number
+  /**
+   * Project-relative folder holding the quote's source material, when that is
+   * a directory rather than one file (a meeting's notes folder). `path` stays
+   * the label, so this is the only thing the AI can actually open.
+   */
+  sourceDir?: string
 }
 
 /** Whether an entry is a quoted snippet rather than a file or URL. */

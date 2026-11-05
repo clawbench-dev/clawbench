@@ -39,6 +39,10 @@ import { downloadAndInstall, installPayload, fetchNpmIntegrity } from './install
 
 const latest = (over: Partial<DesktopLatest> = {}): DesktopLatest => ({
   version: 'v1.1.0',
+  // Ordinary release: the package really is this tag's build, and the server
+  // predates the protocol field (0) so these cases exercise the version gate.
+  clientVersion: 'v1.1.0',
+  protocol: 0,
   tag: 'v1.1.0',
   urls: ['https://example/full.zip'],
   payloadUrls: [],
@@ -82,6 +86,46 @@ describe('evaluateGate', () => {
     expect(info!.urls).toEqual(['https://example/full.zip'])
     expect(info!.payloadUrls).toEqual(['https://example/payload.tgz'])
   })
+
+  it('does not gate when the protocols agree, even though the versions differ', () => {
+    // A release that reused the previous desktop build: the version strings
+    // differ (the server moved on) but the contract did not, so forcing a
+    // ~150MB download of an identical app would be pointless.
+    const info = evaluateGate('0.129.0', latest({ version: 'v0.130.0', protocol: 3 }), true, 3)
+    expect(info).toBeNull()
+  })
+
+  it('gates when the protocols differ, even with equal versions', () => {
+    // A breaking contract change must be caught regardless of the version
+    // string — including two builds of the same tag.
+    const info = evaluateGate('1.1.0', latest({ protocol: 4 }), true, 3)
+    expect(info).not.toBeNull()
+    expect(info!.direction).toBe('older')
+  })
+
+  it('falls back to the version gate when the server reports no protocol', () => {
+    // Rolling upgrade: an older server has no protocol field.
+    expect(evaluateGate('1.0.0', latest({ protocol: 0 }), true, 3)).not.toBeNull()
+    expect(evaluateGate('1.1.0', latest({ protocol: 0 }), true, 3)).toBeNull()
+  })
+
+  it('never gates on protocol for an unpackaged dev build', () => {
+    expect(evaluateGate('0.1.0', latest({ protocol: 4 }), false, 3)).toBeNull()
+  })
+
+  it('installs the version the package actually carries, not the server version', () => {
+    // The reused build reports its own (older) version; installing it under the
+    // server's version makes app.getVersion() disagree with the pointer, and
+    // the startup handoff then deletes the pointer and reverts the upgrade.
+    const info = evaluateGate(
+      '0.128.0',
+      latest({ version: 'v0.130.0', clientVersion: 'v0.129.0', protocol: 4 }),
+      true,
+      3,
+    )
+    expect(info!.serverVersion).toBe('v0.130.0')
+    expect(info!.installVersion).toBe('v0.129.0')
+  })
 })
 
 describe('beginNavigation', () => {
@@ -124,6 +168,7 @@ describe('checkVersionGate', () => {
 const gateInfo = (over: Partial<VersionGateInfo> = {}): VersionGateInfo => ({
   clientVersion: '1.0.0',
   serverVersion: '1.1.0',
+  installVersion: '1.1.0',
   direction: 'older',
   urls: ['https://example/full.zip'],
   payloadUrls: [],
@@ -200,6 +245,30 @@ describe('installServerVersion integrity', () => {
     // The payload is the app itself; an unverified archive is an unverified
     // application.
     expect(installPayload).toHaveBeenCalledWith([payloadUrl], '1.1.0', '/tmp/app', undefined, 'sha512-abc')
+  })
+
+  it('installs a reused build under its own version, not the server version', async () => {
+    if (process.platform === 'darwin') return // macOS has no payload path
+    vi.mocked(fetchNpmIntegrity).mockResolvedValue('sha512-abc')
+    vi.mocked(installPayload).mockResolvedValue('/tmp/app-0.129.0')
+
+    const payloadUrl = 'https://registry.example/p/-/p-0.130.0.tgz'
+    const ok = await installServerVersion(
+      gateInfo({
+        serverVersion: '0.130.0',
+        installVersion: '0.129.0',
+        payloadUrls: [payloadUrl],
+      }),
+      null,
+    )
+
+    expect(ok).toBe(true)
+    // The npm package carries the release's version...
+    expect(fetchNpmIntegrity).toHaveBeenCalledWith([payloadUrl], '0.130.0')
+    // ...but the app inside is the reused one, so the install directory follows
+    // the app's own version. Otherwise the startup handoff sees a pointer whose
+    // version disagrees with app.getVersion() and deletes it.
+    expect(installPayload).toHaveBeenCalledWith([payloadUrl], '0.129.0', '/tmp/app', undefined, 'sha512-abc')
   })
 })
 

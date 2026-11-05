@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -155,6 +156,11 @@ func mailConnectionDead(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
+	// A server that drops the socket mid-response surfaces as EOF, not as a
+	// net.OpError, and the sync must redial rather than reuse a dead client.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
 	return strings.Contains(err.Error(), "use of closed network connection")
 }
 
@@ -185,6 +191,12 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 	}
 	msgs := make([]MailMessage, 0, len(headers))
 	for _, h := range headers {
+		if h.Deleted {
+			// Flagged for removal by another client (or by us, on a server
+			// without UIDPLUS where the expunge has to be left to someone
+			// else). Caching it would put it back in the list on every pass.
+			continue
+		}
 		msgs = append(msgs, headerToRow(accountID, folderID, h))
 	}
 	firstSync := cached.LastSeenUID == 0
@@ -244,6 +256,16 @@ func refreshFolderFlags(ctx context.Context, client mail.Client, folderID int64,
 	for _, h := range fresh {
 		old, ok := byUID[h.UID]
 		if !ok {
+			continue
+		}
+		if h.Deleted {
+			// Expunged elsewhere, or flagged by us on a server that cannot
+			// expunge a single UID (see imapClient.expungeOne). Either way it
+			// must leave the cache, or the next sync re-adds it.
+			if err := DeleteMailMessageRow(old.ID); err != nil {
+				return err
+			}
+			DeleteMailAttachmentFiles(old.ID)
 			continue
 		}
 		if old.Seen == h.Seen && old.Flagged == h.Flagged && old.Answered == h.Answered {

@@ -938,19 +938,162 @@ func TestServeGroupMembers_PatchWithoutDisabledIsRejected(t *testing.T) {
 	}
 }
 
-// DELETE was removed when "离场" became a reversible "禁用": the route must now
-// answer 405 rather than falling through to a nil handler.
-func TestServeGroupMembers_DeleteIsGone(t *testing.T) {
+// DELETE removes a member from the group: it disappears from the roster (the row
+// stays, flagged, for speaker attribution) and a system line records it.
+func TestServeGroupMembers_DeleteRemovesMember(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	req = newRequest(t, http.MethodGet, "/api/group/members?groupId="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Members []struct {
+			ID      string `json:"id"`
+			Removed bool   `json:"removed"`
+		} `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Members, 2, "the removed row stays for attribution")
+	for _, m := range resp.Members {
+		if m.ID == memberID {
+			assert.True(t, m.Removed)
+		}
+		if m.ID == hostID {
+			assert.False(t, m.Removed)
+		}
+	}
+
+	// Repeating the DELETE is an idempotent success (and writes no extra line).
+	req = newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": memberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// Removing the host is refused: it is the group's only router.
+func TestServeGroupMembers_DeleteHostIs409(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostID, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": hostID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "CannotRemoveHost")
+}
+
+// A free group's only member cannot be removed: nobody would be left to answer.
+func TestServeGroupMembers_DeleteLastMemberIs409(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "讨论组", "", []service.GroupMemberSpec{
+		{AgentID: "claude", Backend: "claude", DisplayName: "Claude"},
+		{AgentID: "codebuddy", Backend: "codebuddy", DisplayName: "CodeBuddy"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, service.GroupModeFree, service.GetGroupMode(groupID))
+	created, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, created, 2)
+	removed, err := service.RemoveGroupMember(groupID, created[0].ID)
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	// The remaining member is the last one: removing it would empty the group.
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	lastID := members[0].ID
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": lastID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "CannotRemoveLastMember")
+}
+
+// DELETE without ids is malformed.
+func TestServeGroupMembers_DeleteWithoutIdsIs400(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
 	require.NoError(t, err)
 
-	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID, "memberId": "whatever"})
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": groupID})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandlerWithAuth(ServeGroupMembers, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, w.Body.String())
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// A body that is not JSON must be refused before any lookup: otherwise the
+// handler would treat the zero-value ids as a request about the empty group.
+func TestServeGroupMembers_DeleteMalformedJSONIs400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/group/members", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// An id that resolves to no session is 404, not 403: the caller cannot tell
+// "does not exist" from "belongs to someone else", and neither should we.
+func TestServeGroupMembers_DeleteUnknownGroupIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{
+		"groupId": "no-such-group", "memberId": "no-such-member",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}
+
+// A running turn owns every member connection, so removal is refused until it
+// ends — killing the connection mid-reply would leave a half-written row.
+func TestServeGroupMembers_DeleteWhileGroupRunningIs409(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "讨论组", "", []service.GroupMemberSpec{
+		{AgentID: "claude", Backend: "claude", DisplayName: "Claude"},
+		{AgentID: "codebuddy", Backend: "codebuddy", DisplayName: "CodeBuddy"},
+	})
+	require.NoError(t, err)
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+
+	service.SetSessionRunning(groupID, true)
+	t.Cleanup(func() { service.SetSessionRunning(groupID, false) })
+
+	req := newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{
+		"groupId": groupID, "memberId": members[1].ID,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "GroupRunning")
 }
 
 // A DB failure while listing must surface as 500, not an empty roster: the UI

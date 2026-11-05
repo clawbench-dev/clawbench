@@ -74,7 +74,10 @@
             <div
               :data-session-id="row.session.id"
               class="session-row"
-              :class="rowClasses(row)"
+              :class="[rowClasses(row), { 'is-quote-drop': quoteDropSessionId === row.session.id }]"
+              @dragover="onRowQuoteDragOver($event, row.session.id)"
+              @dragleave="onRowQuoteDragLeave(row.session.id)"
+              @drop="onRowQuoteDrop($event, row.session.id)"
             >
               <!-- The edge carries exactly ONE signal. A running row gets the
                    travelling comet (driven by v-running-sweep); a blocked row
@@ -353,6 +356,9 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { useToast } from '@/composables/useToast'
 import { useSessionIdentity, reconcileRunningSessions, renameSessionById } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { hasQuoteDragData, readQuoteDragData } from '@/utils/quoteDrag'
+import { dispatchToTarget, mintPendingQuoteId, requestTarget } from '@/composables/useConversationTarget'
+import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
@@ -400,6 +406,80 @@ const dialog = useDialog()
 const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
+
+// ── Dropping a quote onto a row ─────────────────────────────────────────────
+// A quote dragged from a commit / task / issue / meeting can be dropped on the
+// CHAT COLUMN (lands in the active conversation) or on a ROW here (lands in
+// THAT session's draft). The row is the only way to pick a destination with the
+// pointer, since a drag cannot open the session picker.
+//
+// The rows are also Sortable's drag handles, but only via `.session-more-btn`,
+// and Sortable reacts only to drags it started — a quote payload passes through
+// untouched. The handlers below return early for anything that is not a quote,
+// so reordering is unaffected.
+const meetingHistory = useMeetingHistory()
+/** Row currently under a quote drag, for the drop highlight. '' when none. */
+const quoteDropSessionId = ref('')
+
+function onRowQuoteDragOver(e, sessionId) {
+  if (!hasQuoteDragData(e.dataTransfer)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  quoteDropSessionId.value = sessionId
+}
+
+function onRowQuoteDragLeave(sessionId) {
+  if (quoteDropSessionId.value === sessionId) quoteDropSessionId.value = ''
+}
+
+function onRowQuoteDrop(e, sessionId) {
+  const payload = readQuoteDragData(e.dataTransfer)
+  quoteDropSessionId.value = ''
+  if (!payload) return
+  e.preventDefault()
+  // Sortable listens on the container; a drop it did not start must not reach
+  // it, or the list would try to reorder around a foreign payload.
+  e.stopPropagation()
+  if (payload.meetingToken) {
+    void deliverMeetingQuote(payload.meetingToken, sessionId)
+    return
+  }
+  deliverQuoteToSession(payload, sessionId)
+}
+
+/**
+ * Stage a quote into one session's draft.
+ *
+ * `dispatchToTarget` is the same delivery the session picker uses, so the card
+ * looks and behaves identically however it got there. On failure (bridge
+ * missing, network throw) it falls back to the picker — the payload must never
+ * be silently dropped.
+ */
+function deliverQuoteToSession(payload, sessionId) {
+  const request = {
+    mode: 'add',
+    quotes: [{ ...payload, note: '', id: mintPendingQuoteId() }],
+    attachments: [],
+    text: '',
+  }
+  void dispatchToTarget({ kind: 'session', id: sessionId }, request).then(
+    (ok) => { if (!ok) requestTarget(request) },
+    () => requestTarget(request),
+  )
+}
+
+/**
+ * A meeting drag carries only its token (dragstart cannot await), so the
+ * minutes have to be fetched before there is a card to stage — the same reason
+ * the chat column's drop path fetches it.
+ */
+async function deliverMeetingQuote(token, sessionId) {
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (!quote) return
+  deliverQuoteToSession(quote, sessionId)
+}
 
 // The drag-bound array. It holds only TOP-LEVEL rows: a session that heads a
 // fork group is one entry here, and its group members live in
@@ -1709,6 +1789,15 @@ onUnmounted(() => {
      spans the full row width. Drawn on the two cells it stopped short of the
      trailing button cell, leaving a gap. */
   border-top: 1px solid var(--border-color, #dee2e6);
+}
+
+/* Quote drag hovering this row: it is a drop target that will park the card in
+   THIS session's draft. Drawn with an inset shadow rather than a border or an
+   outline so the row's box does not change size mid-drag (which would make the
+   rows under the pointer shift while the user is aiming). */
+.session-row.is-quote-drop {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent-color, #0066cc);
 }
 
 /* Trailing action cell: opens the session menu (pin/rename/tags/archive/

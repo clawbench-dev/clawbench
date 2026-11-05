@@ -75,4 +75,29 @@ describe('MailFolderBar', () => {
     expect(busy.find('.mail-read-all').attributes('disabled')).toBeDefined()
     busy.unmount()
   })
+
+  // The refresh icon must go through the shared RefreshButton: its spin is
+  // driven by `loading` (WAAPI in the browser, the utility class in jsdom) and
+  // it blocks a second click while a refresh is already running. A hand-rolled
+  // <button><RefreshCw/></button> silently loses both.
+  it('uses the unified RefreshButton and spins while refreshing', async () => {
+    const wrapper = mountBar()
+    const btn = wrapper.findAll('.mail-icon-btn')[0]
+    expect(btn.classes()).toContain('refresh-spin')
+    expect(btn.classes()).not.toContain('refresh-spin--active')
+
+    await btn.trigger('click')
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+    wrapper.unmount()
+
+    const busy = mountBar({ refreshing: true })
+    const busyBtn = busy.findAll('.mail-icon-btn')[0]
+    expect(busyBtn.classes()).toContain('refresh-spin--active')
+    expect(busyBtn.attributes('disabled')).toBeDefined()
+
+    // Disabled means no click reaches the parent while the request is in flight.
+    await busyBtn.trigger('click')
+    expect(busy.emitted('refresh')).toBeUndefined()
+    busy.unmount()
+  })
 })

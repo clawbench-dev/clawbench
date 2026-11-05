@@ -42,6 +42,9 @@ web/package-lock.json
 web/src/assets/material-icons/
 web/sw-template.js
 
+# 手册静态站点（node web/docs/build.mjs 的产物，随部署构建，不入库）
+web/landing/docs/
+
 # App runtime data
 .ClawBench/
 .clawbench/

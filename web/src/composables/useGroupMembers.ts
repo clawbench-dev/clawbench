@@ -20,7 +20,12 @@ export interface GroupSpeakerIdentity {
  * host. Outside a group the roster is empty and resolveSpeaker returns null.
  */
 export function useGroupMembers(currentSessionId: Ref<string>) {
-  const members = ref<GroupMemberInfo[]>([])
+  // EVERY member row the server returns, removed ones included. Removed members
+  // are kept ONLY so a past message's speaker (chat_history.agent_id = member
+  // row id) still resolves to its own name/avatar; the roster itself is
+  // `members` below, which drops them.
+  const allMembers = ref<GroupMemberInfo[]>([])
+  const members = computed(() => allMembers.value.filter(m => !m.removed))
   const mode = ref<'host' | 'free'>('host')
   /** Free-mode "并发执行" switch (server-authoritative). */
   const parallelDefault = ref(false)
@@ -34,7 +39,7 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
 
   const byId = computed(() => {
     const map = new Map<string, GroupMemberInfo>()
-    for (const m of members.value) map.set(m.id, m)
+    for (const m of allMembers.value) map.set(m.id, m)
     return map
   })
 
@@ -52,11 +57,12 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
 
   /** resolveByName maps a display name to a speaker identity or null.
    *  Used to render @-mention chips for the host's routing targets, which are
-   *  named (not id'd) in the routing tag. */
+   *  named (not id'd) in the routing tag. Searches ALL rows so a chip in an old
+   *  message still resolves after the member was removed. */
   function resolveByName(name: string): GroupSpeakerIdentity | null {
     const target = name.trim()
     if (!target) return null
-    const m = members.value.find(x => x.name.trim() === target)
+    const m = allMembers.value.find(x => x.name.trim() === target)
     if (!m) return null
     return toIdentity(m)
   }
@@ -70,7 +76,7 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     // pattern loadHistorySeq uses for chat history.
     const gen = ++refreshGen
     if (!sessionId) {
-      members.value = []
+      allMembers.value = []
       mode.value = 'host'
       parallelDefault.value = false
       cruise.value = false
@@ -82,13 +88,13 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     try {
       const res = await listGroupMembers(sessionId)
       if (gen !== refreshGen) return // superseded by a newer refresh
-      members.value = res.members
+      allMembers.value = res.members
       mode.value = res.mode
       parallelDefault.value = res.parallelDefault
       cruise.value = res.cruise
     } catch {
       if (gen !== refreshGen) return // superseded — do not clobber the new session
-      members.value = []
+      allMembers.value = []
       mode.value = 'host'
       parallelDefault.value = false
       cruise.value = false

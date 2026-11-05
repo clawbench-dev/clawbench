@@ -665,6 +665,19 @@ func SaveMailMessageBody(id int64, text, htmlBody, snippet string) error {
 	return err
 }
 
+// SetMailMessageHasAttachments records that the decoded body contained
+// attachments.
+//
+// The list gets this flag from the server's BODYSTRUCTURE, but a batch that
+// contained a message go-imap could not parse is fetched without it (see
+// imapClient.fetchHeadersBySet). Decoding the body is the other way to know, so
+// the paperclip comes back as soon as the message has been opened or
+// prefetched.
+func SetMailMessageHasAttachments(id int64) error {
+	_, err := store.WriteExec(`UPDATE mail_messages SET has_attachments = 1 WHERE id = ?`, id)
+	return err
+}
+
 // DeleteMailMessageRow removes one cached message (and its attachment rows).
 func DeleteMailMessageRow(id int64) error {
 	if _, err := store.WriteExec(`DELETE FROM mail_attachments WHERE message_id = ?`, id); err != nil {

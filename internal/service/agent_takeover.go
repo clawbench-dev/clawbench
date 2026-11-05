@@ -256,11 +256,14 @@ func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNati
 	// UPDATE below also touches group timeline rows, archived member rows and
 	// scheduled execution sessions; reporting RowsAffected would make the success
 	// toast print a different number than the confirm dialog the user just read.
+	// REMOVED member rows are excluded on both sides: they are no longer part of
+	// the group, and the UPDATE below deliberately leaves them untouched so past
+	// speech keeps its original attribution.
 	var sessionCount int
 	if countErr := tx.QueryRowContext(ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ?) +
-			(SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0)`,
+			(SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0 AND removed = 0)`,
 		agentID, store.SessionTypeChat, agentID, store.SessionTypeGroupMember,
 	).Scan(&sessionCount); countErr != nil {
 		return res, fmt.Errorf("count sessions of agent %s: %w", agentID, countErr)
@@ -296,7 +299,7 @@ func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNati
 				WHEN context_state IS NULL OR context_state = '' THEN '{}'
 				ELSE json_remove(context_state, '$.mode', '$.thinkingEffort', '$.usage')
 			END
-		WHERE agent_id = ?`,
+		WHERE agent_id = ? AND removed = 0`,
 		replacement.ID, replacement.Backend, reuseNative, reuseNative, oldName, agentID,
 	)
 	if err != nil {
@@ -347,7 +350,7 @@ func collectTakeoverNoticesTx(ctx context.Context, tx *sql.Tx, agentID string) (
 		       COALESCE(p.path, ''), s.archived
 		  FROM chat_sessions s
 		  LEFT JOIN projects p ON p.id = s.project_id
-		 WHERE s.agent_id = ? AND s.session_type IN (?, ?)`,
+		 WHERE s.agent_id = ? AND s.session_type IN (?, ?) AND s.removed = 0`,
 		agentID, store.SessionTypeChat, store.SessionTypeGroupMember,
 	)
 	if err != nil {
@@ -383,7 +386,7 @@ func collectTakeoverNoticesTx(ctx context.Context, tx *sql.Tx, agentID string) (
 func affectedGroupIDsTx(ctx context.Context, tx *sql.Tx, agentID string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT DISTINCT group_id FROM chat_sessions
-		 WHERE agent_id = ? AND session_type = ? AND group_id != ''`,
+		 WHERE agent_id = ? AND session_type = ? AND group_id != '' AND removed = 0`,
 		agentID, store.SessionTypeGroupMember,
 	)
 	if err != nil {
@@ -428,7 +431,7 @@ func recomputeGroupIdentityTx(ctx context.Context, tx *sql.Tx, groupID string) e
 		// pick an arbitrary member).
 		err = tx.QueryRowContext(ctx,
 			`SELECT id FROM chat_sessions
-			  WHERE group_id = ? AND session_type = ?
+			  WHERE group_id = ? AND session_type = ? AND removed = 0
 			  ORDER BY rowid ASC LIMIT 1`,
 			groupID, store.SessionTypeGroupMember,
 		).Scan(&memberID)
@@ -460,6 +463,24 @@ func recomputeGroupIdentityTx(ctx context.Context, tx *sql.Tx, groupID string) e
 		return fmt.Errorf("update group %s identity: %w", groupID, err)
 	}
 	return nil
+}
+
+// recomputeGroupIdentity applies recomputeGroupIdentityTx in its own write
+// transaction. Used when the roster changes outside a takeover (member removal):
+// the group row mirrors the host / first member, so removing that member must
+// update the session-list icon instead of leaving it pointing at a deleted
+// member's agent.
+func recomputeGroupIdentity(groupID string) error {
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return err
+	}
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+	if err := recomputeGroupIdentityTx(context.Background(), tx, groupID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // writeTakeoverNotices appends the "changed hands" rows to each affected

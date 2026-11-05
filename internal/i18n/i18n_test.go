@@ -264,12 +264,15 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"GroupMemberJoined",
 		"GroupMemberDisabled",
 		"GroupMemberEnabled",
+		"GroupMemberRemoved",
 		"GroupHostChanged",
 		// Handler-side 409 for the disable toggle. Rendered from a request, but a
 		// one-sided add (only one locale) would silently fall back to a raw key
 		// in the other language, so it is pinned like the rest.
 		"CannotDisableHost",
 		"CannotDisableLastMember",
+		"CannotRemoveHost",
+		"CannotRemoveLastMember",
 		"GroupNotHostMode",
 		"HostNotMember",
 		"HostDisabled",
@@ -333,6 +336,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PushNewCreateFailed",
 		"PushStopFailed",
 		"PushCommandWithAttachment",
+		"PushHelpTitle",
+		"PushHelpBody",
 		"PushInvalidSessionID",
 		"PushShowRunning",
 	}

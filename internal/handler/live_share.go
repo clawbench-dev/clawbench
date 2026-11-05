@@ -387,6 +387,11 @@ func serveLiveShareEnd(w http.ResponseWriter, r *http.Request, projectPath strin
 		http.NotFound(w, r)
 		return
 	}
+	// An explicit end wins over a pending grace window: the host asked for the
+	// meeting to be over, not for fifteen seconds of "maybe they reconnect".
+	publisherTeardownMu.Lock()
+	cancelPublisherTeardown(token)
+	publisherTeardownMu.Unlock()
 	// Tell the viewers before dropping the room, so they see "publisher ended
 	// the share" rather than a bare socket close.
 	room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
@@ -425,7 +430,14 @@ func LiveSharePublishWS(w http.ResponseWriter, r *http.Request) {
 
 	// Swap the reservation for the real sink. AttachPublisher is not a claim:
 	// we already own the slot, and it clears the reservation flag.
+	//
+	// The attach and the cancellation of a pending end share the teardown
+	// mutex: this is the moment a reconnect becomes real, and the timer that
+	// would otherwise end the meeting must not be able to look in between.
+	publisherTeardownMu.Lock()
 	room.AttachPublisher(sink)
+	cancelPublisherTeardown(token)
+	publisherTeardownMu.Unlock()
 	reserved = false
 
 	// The meeting record starts here, not when the folder is first written: a
@@ -487,8 +499,82 @@ func startLiveMeetingRecord(token, projectPath string, room *liveshare.Room) int
 	return projectID
 }
 
-// endPublisherSocket is the publisher socket's teardown: release the slot, tell
-// every viewer the share ended, and close the meeting record.
+// How long a room outlives its publisher socket.
+//
+// The publisher socket is the room's lifeline, and losing it used to end the
+// meeting outright. A phone changing Wi-Fi, a laptop waking from sleep or a
+// proxy recycling an idle connection all produce the same closed socket as the
+// host pressing 结束会议 — and a meeting is not worth ending over a two-second
+// blip. The window keeps the room (and every viewer's peer connection, which
+// carries media the server never sees) alive while the publisher reconnects.
+//
+// A real end is unaffected: the client sends `end` and then DELETEs the share,
+// and the DELETE still tears the room down on the spot.
+var (
+	publisherGrace = 15 * time.Second
+	// publisherGraceHandoff is the second wait granted when a reconnect has
+	// claimed the publisher slot but has not finished its handshake yet.
+	publisherGraceHandoff = 5 * time.Second
+)
+
+// publisherTeardown marks one scheduled end-of-meeting. Identity is what makes
+// cancellation safe: a reconnecting publisher replaces (or removes) the entry,
+// and the timer that no longer owns it does nothing.
+type publisherTeardown struct{}
+
+var (
+	publisherTeardownMu sync.Mutex
+	publisherTeardowns  = map[string]*publisherTeardown{}
+)
+
+// cancelPublisherTeardown drops a scheduled end. The caller must hold
+// publisherTeardownMu: it is always done together with taking the publisher
+// slot, so the timer can never fire between "reconnected" and "cancelled".
+func cancelPublisherTeardown(token string) {
+	delete(publisherTeardowns, token)
+}
+
+// schedulePublisherTeardown ends the meeting after delay unless a publisher
+// comes back first.
+func schedulePublisherTeardown(room *liveshare.Room, token string, projectID int64, projectPath string, delay time.Duration, handedOff bool) {
+	mark := &publisherTeardown{}
+	publisherTeardownMu.Lock()
+	publisherTeardowns[token] = mark
+	publisherTeardownMu.Unlock()
+
+	time.AfterFunc(delay, func() {
+		// The decision and the attach path share this mutex, so a publisher
+		// that has just attached can never be torn down under itself.
+		publisherTeardownMu.Lock()
+		if publisherTeardowns[token] != mark {
+			publisherTeardownMu.Unlock()
+			return
+		}
+		if room.Publisher() != nil {
+			// Reconnected and attached: the meeting continues.
+			delete(publisherTeardowns, token)
+			publisherTeardownMu.Unlock()
+			return
+		}
+		if room.HasPublisher() && !handedOff {
+			// A reconnect reserved the slot but has not upgraded yet. The
+			// handshake needs one more window; only then is it really gone.
+			delete(publisherTeardowns, token)
+			publisherTeardownMu.Unlock()
+			schedulePublisherTeardown(room, token, projectID, projectPath, publisherGraceHandoff, true)
+			return
+		}
+		delete(publisherTeardowns, token)
+		publisherTeardownMu.Unlock()
+		if liveRegistry.Get(token) != room {
+			return // already replaced or ended by someone else
+		}
+		endPublisherSession(room, token, projectID, projectPath)
+	})
+}
+
+// endPublisherSocket is the publisher socket's teardown: release the slot and
+// start the grace window.
 //
 // ReleasePublisher is compare-and-clear so a socket that was replaced never
 // deletes the room its successor is using.
@@ -496,11 +582,28 @@ func endPublisherSocket(room *liveshare.Room, sink *liveSink, token string, proj
 	if !room.ReleasePublisher(sink) {
 		return
 	}
+	// A zero window means "no grace": end inline, exactly like before it
+	// existed. Tests rely on this to keep the teardown synchronous.
+	if publisherGrace <= 0 {
+		endPublisherSession(room, token, projectID, projectPath)
+		return
+	}
+	schedulePublisherTeardown(room, token, projectID, projectPath, publisherGrace, false)
+}
+
+// endPublisherSession is the real end: tell the viewers, close the meeting
+// record, then drop the room.
+//
+// The room goes LAST on purpose. Removing it is the only observable "this
+// meeting is completely over" signal — a test (or a caller) that waits for the
+// token to disappear would otherwise return while the record is still being
+// written, and read a half-closed meeting.
+func endPublisherSession(room *liveshare.Room, token string, projectID int64, projectPath string) {
 	room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
-	liveRegistry.Delete(token)
 	// Close the record and archive the chat while the project path is still
 	// known. Best effort: losing the archive must not keep the meeting open.
 	finalizeLiveNotes(token, projectID, projectPath)
+	liveRegistry.Delete(token)
 }
 
 // readPublisherFrames applies publisher control frames until the socket dies or

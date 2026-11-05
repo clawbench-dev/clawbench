@@ -603,7 +603,7 @@ import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
-import { setAttachDragData, setMultiAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
+import { startAttachDrag, hasAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath, postForBlobWithProgress } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
@@ -791,30 +791,20 @@ function onItemDragStart(entry, e) {
     // a search hit carries its own project-relative path.
     dragSourcePaths.value = searchHasQuery.value ? null : paths
     const isDir = entry.type === 'dir'
-    if (paths.length > 1) {
+    // One helper for every attach drag source: it writes the payload (single,
+    // ranged or multi-selection), sets effectAllowed and installs the ghost.
+    // A search hit can only be attached to chat (copy); browse rows can also be
+    // moved into another directory, which is what the move cursor advertises.
+    startAttachDrag(e, path, {
+        name: paths.length > 1 ? t('file.multiSelect.selectedCount', { n: paths.length }) : entry.name,
+        isDir,
         // Multi-selection: carry the whole set so dropping on the chat column
         // attaches all of it. isDir resolves through metaForPath (not
         // entryByPath) because the selection may outlive the current listing —
         // a stale path must not be silently downgraded to a file.
-        setMultiAttachDragData(
-            e.dataTransfer,
-            path,
-            isDir,
-            paths.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' })),
-        )
-    } else {
-        setAttachDragData(e.dataTransfer, path, isDir)
-    }
-    // A search hit can only be attached to chat (copy); browse rows can also be
-    // moved into another directory, which is what the move cursor advertises.
-    e.dataTransfer.effectAllowed = searchHasQuery.value ? 'copy' : 'move'
-    // Build a DOM ghost element off-screen for reliable snapshot in Chrome.
-    // The ghost must stay in the DOM until dragend — cleanupDragGhost() handles that.
-    const ghost = buildAttachDragImage(
-        paths.length > 1 ? t('file.multiSelect.selectedCount', { n: paths.length }) : entry.name,
-        isDir,
-    )
-    e.dataTransfer.setDragImage(ghost, 14, 16)
+        entries: paths.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' })),
+        effectAllowed: searchHasQuery.value ? 'copy' : 'move',
+    })
 }
 
 // ── Clipboard paste handler ──

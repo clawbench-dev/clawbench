@@ -202,17 +202,53 @@ export function meetingDragPayload(record: {
   token?: string
   /** Human-readable label, built by the caller with i18n (`meetingQuoteLabel`). */
   label?: string
+  /**
+   * Transcript text, when the meeting is STILL RUNNING.
+   *
+   * A finished meeting is addressed by token and its body is fetched on drop.
+   * A live one has no artifacts yet, so the only way to carry its content is to
+   * hand it over at dragstart — the stage already holds the segments in memory.
+   */
+  text?: string
+  /** Project-relative notes folder, when the server has reported one. */
+  sourceDir?: string
 } | null): QuoteDragPayload | null {
   const token = (record?.token || '').trim()
   if (!token) return null
   return {
-    text: '',
+    text: record?.text || '',
     filePath: record?.label || token,
     language: 'meeting',
     startLine: 0,
     endLine: 0,
     sourceKind: 'meeting',
     meetingToken: token,
+    ...(record?.sourceDir ? { sourceDir: record.sourceDir } : {}),
+  }
+}
+
+/**
+ * Build the payload for an email row.
+ *
+ * Identity only: `dragstart` cannot await and the list row holds no body. The
+ * drop handler fetches the message before staging the card, so dragging a row
+ * and pressing the reader's "quote" button produce the same quote.
+ */
+export function mailDragPayload(record: {
+  id?: number
+  /** Human-readable label, built by the caller with i18n (subject · sender). */
+  label?: string
+} | null): QuoteDragPayload | null {
+  const id = Number(record?.id)
+  if (!id) return null
+  return {
+    text: '',
+    filePath: record?.label || `#${id}`,
+    language: 'mail',
+    startLine: 0,
+    endLine: 0,
+    sourceKind: 'mail',
+    mailId: id,
   }
 }
 

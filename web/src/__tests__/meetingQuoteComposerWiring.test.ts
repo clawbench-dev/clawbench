@@ -48,7 +48,12 @@ describe('meeting quote composer wiring', () => {
     // Dropping a row on the chat already means "put this in the conversation",
     // so the composer detour stays out of that path.
     const body = functionBody('handleMeetingQuote')
-    expect(body).toContain('addStagedQuote(quote)')
+    expect(body).toContain('stageQuoteInChat(quote)')
     expect(body).not.toContain('openComposer')
+    // And the helper really stages: it must reach addStagedQuote rather than
+    // routing back into the composer under a different name.
+    const stage = functionBody('stageQuoteInChat')
+    expect(stage).toContain('addStagedQuote(quote)')
+    expect(stage).not.toContain('openComposer')
   })
 })

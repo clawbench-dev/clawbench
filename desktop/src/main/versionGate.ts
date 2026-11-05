@@ -9,7 +9,8 @@ import {
 } from './install'
 import { recordError } from './clientLog'
 import { trustedFingerprintFor } from './certificateTrust'
-import { compareVersions, shouldGate } from '../shared/version'
+import { compareVersions, shouldGateClient } from '../shared/version'
+import { CLIENT_PROTOCOL } from '../shared/protocol'
 import { resolveNativeLanguage, versionGateLabels } from './labels'
 
 /**
@@ -31,6 +32,14 @@ export interface VersionGateInfo {
   /** The version the server reports for itself. */
   serverVersion: string
   /**
+   * Version of the package to install. Equal to `serverVersion` for an ordinary
+   * release; the PREVIOUS release's version when this release reused that
+   * desktop build. The installer keys the side-by-side directory off it, and
+   * installing a v0.129 app under app-0.130 makes the startup handoff delete
+   * the pointer and silently revert the upgrade.
+   */
+  installVersion: string
+  /**
    * Which side is newer. `older` means the client is behind the server (the
    * classic "upgrade the app" case); `newer` means the client is AHEAD, so
    * "download" aligns it down to the server's version. The overlay picks its
@@ -47,6 +56,12 @@ export interface VersionGateInfo {
  * Pure gate decision: given the running client version, the server's release
  * info and whether this is a packaged build, decide whether to block.
  *
+ * The decision is made on the PROTOCOL number, not the version string (see
+ * `shouldGateClient`): a release that did not change the shell<->server contract
+ * ships the previous desktop package, so the versions differ while the client
+ * remains compatible. When either side reports no protocol (a build predating
+ * the field) the strict version comparison is used instead.
+ *
  * Returns null when there is nothing to block on. `fetchDesktopLatest` already
  * returns null for a dev/untagged server, so `latest` here is always a real
  * release with at least one download URL.
@@ -55,12 +70,24 @@ export function evaluateGate(
   clientVersion: string,
   latest: DesktopLatest,
   packaged: boolean,
+  clientProtocol = 0,
 ): VersionGateInfo | null {
-  if (!shouldGate(clientVersion, latest.version, { packaged })) return null
+  const gate = shouldGateClient({
+    clientProtocol,
+    serverProtocol: latest.protocol,
+    clientVersion,
+    serverVersion: latest.version,
+    packaged,
+  })
+  if (!gate) return null
   return {
     clientVersion,
     serverVersion: latest.version,
-    direction: compareVersions(clientVersion, latest.version) < 0 ? 'older' : 'newer',
+    installVersion: latest.clientVersion,
+    // Equal versions can still gate on a protocol mismatch (two builds of the
+    // same tag). They are treated as "older" so the prompt offers an upgrade
+    // rather than describing a downgrade that is not happening.
+    direction: compareVersions(clientVersion, latest.version) <= 0 ? 'older' : 'newer',
     urls: latest.urls,
     payloadUrls: latest.payloadUrls,
   }
@@ -122,7 +149,7 @@ export async function checkVersionGate(url: string, gen: number): Promise<Versio
   // The navigation may have moved on while the request was in flight.
   if (gen !== generation) return null
 
-  return evaluateGate(app.getVersion(), latest, app.isPackaged)
+  return evaluateGate(app.getVersion(), latest, app.isPackaged, CLIENT_PROTOCOL)
 }
 
 /**
@@ -182,7 +209,10 @@ export async function installServerVersion(
       // archive is unpacked; when the registry cannot answer, the download is
       // still https-only (see downloadFirstAvailable).
       const integrity = await fetchNpmIntegrity(info.payloadUrls, info.serverVersion)
-      await installPayload(info.payloadUrls, info.serverVersion, appRoot(), undefined, integrity)
+      // installVersion, not serverVersion: the payload of a release that reused
+      // the previous desktop build IS that older app, and the side-by-side
+      // directory must match the version the app reports at startup.
+      await installPayload(info.payloadUrls, info.installVersion, appRoot(), undefined, integrity)
       installed = true
     } catch (err) {
       console.error('[gate] payload install failed, falling back to full download:', err)
@@ -194,7 +224,7 @@ export async function installServerVersion(
   }
 
   try {
-    if (!installed) await downloadAndInstall(info.urls, info.serverVersion, '')
+    if (!installed) await downloadAndInstall(info.urls, info.installVersion, '')
   } catch (err) {
     const labels = versionGateLabels(resolveNativeLanguage())
     await dialog.showMessageBox(parentArg as BrowserWindow, {
@@ -214,7 +244,7 @@ export async function installServerVersion(
     defaultId: 0,
     cancelId: 1,
     title: labels.versionReadyTitle,
-    message: labels.versionReadyMessage.replace('{version}', info.serverVersion),
+    message: labels.versionReadyMessage.replace('{version}', info.installVersion),
     // The pointer is already flipped, and startup reads it itself, so "later"
     // still lands on the new version on the next launch.
     detail: labels.versionReadyDetail,
@@ -225,7 +255,7 @@ export async function installServerVersion(
   if (response !== 0) return true
 
   try {
-    restartInto(info.serverVersion)
+    restartInto(info.installVersion)
   } catch (err) {
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'error',

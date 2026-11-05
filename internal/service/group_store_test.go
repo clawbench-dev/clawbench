@@ -2547,3 +2547,312 @@ func TestChangeGroupHost_DatabaseFailureIsNotAMembershipError(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrGroupNotHostMode)
 	assert.Contains(t, err.Error(), "no such column")
 }
+
+// ── RemoveGroupMember (移出群聊) ──────────────────────────────────────────────
+
+// Removing hides the member from every scheduling-facing listing, but keeps the
+// row (and therefore its name) so past speech in the timeline still resolves.
+func TestRemoveGroupMember_HidesFromRosterButKeepsAttribution(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	if _, err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+
+	active, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 1 || active[0].ID != hostID {
+		t.Fatalf("removed member must disappear from the active roster, got %+v", active)
+	}
+	all, err := ListGroupMembersIncludingRemoved(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembersIncludingRemoved: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("the removed row must be kept for attribution, got %d rows", len(all))
+	}
+	found := false
+	for _, m := range all {
+		if m.ID == memberID {
+			found = true
+			if !m.Removed {
+				t.Fatal("the kept row must be flagged removed")
+			}
+			if m.Name != "A" {
+				t.Fatalf("kept row lost its name: %q", m.Name)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("removed member row is missing")
+	}
+
+	// Past speech still resolves to its own name (the share/search path).
+	_, speakers := ResolveSessionSpeakers(groupID)
+	if got := speakers[memberID].Name; got != "A" {
+		t.Fatalf("speaker identity for a removed member = %q, want A", got)
+	}
+}
+
+// The host is the only router and cannot be removed.
+func TestRemoveGroupMember_RefusesHost(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-host"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := RemoveGroupMember(groupID, hostID); !errors.Is(err, ErrCannotRemoveHost) {
+		t.Fatalf("removing the host must be refused with ErrCannotRemoveHost, got %v", err)
+	}
+}
+
+// A free group with one member cannot lose it: nobody would be left.
+func TestRemoveGroupMember_RefusesLastMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-last"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
+		t.Fatalf("removing one of two members must work: %v", err)
+	}
+	if _, err := RemoveGroupMember(groupID, byName["A"]); !errors.Is(err, ErrCannotRemoveLastMember) {
+		t.Fatalf("removing the last member must be refused with ErrCannotRemoveLastMember, got %v", err)
+	}
+}
+
+// A foreign member id matches no row: documented no-op, not a "last member" error.
+func TestRemoveGroupMember_ForeignMemberIsNoOp(t *testing.T) {
+	setupGroupDB(t)
+	projectA := "/tmp/grouptest-remove-a"
+	projectB := "/tmp/grouptest-remove-b"
+	for _, p := range []string{projectA, projectB} {
+		if _, err := store.ProjectIDForPath(p); err != nil {
+			t.Fatalf("ProjectIDForPath(%s): %v", p, err)
+		}
+	}
+	groupA, hostA, err := CreateGroup(projectA, "A 组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup A: %v", err)
+	}
+	_, memberB, err := CreateGroup(projectB, "B 组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup B: %v", err)
+	}
+	if _, err := RemoveGroupMember(groupA, memberB); err != nil {
+		t.Fatalf("foreign member removal must be a no-op success: %v", err)
+	}
+	active, err := ListGroupMembers(groupA)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 1 || active[0].ID != hostA {
+		t.Fatalf("group A roster must be unchanged, got %+v", active)
+	}
+}
+
+// Removal writes one system line; repeating it writes none (idempotent).
+func TestRemoveGroupMember_WritesOneSystemEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-event"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	before := len(systemMessages(t, groupID))
+
+	if _, err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	sysMsgs := systemMessages(t, groupID)
+	if len(sysMsgs) != before+1 {
+		t.Fatalf("expected one more system event: before=%d after=%d", before, len(sysMsgs))
+	}
+	last := sysMsgs[len(sysMsgs)-1].Content
+	if !strings.Contains(last, "A") || !strings.Contains(last, "移出群聊") {
+		t.Fatalf("removal event must name the member and say they were removed: %q", last)
+	}
+
+	if _, err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("repeat removal must be a no-op success: %v", err)
+	}
+	if got := len(systemMessages(t, groupID)); got != len(sysMsgs) {
+		t.Fatalf("repeated removal must not append another line: %d -> %d", len(sysMsgs), got)
+	}
+}
+
+// A disabled member is still a member and can be removed.
+func TestRemoveGroupMember_WorksOnDisabledMember(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-disabled"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
+	}
+	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
+		t.Fatalf("removing a disabled member must work: %v", err)
+	}
+	active, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 1 || active[0].ID != byName["A"] {
+		t.Fatalf("roster = %+v, want only A", active)
+	}
+}
+
+// Removing a member must not free its display name for a new instance: the
+// timeline would otherwise show two different rows under the same name.
+func TestRemoveGroupMember_NameIsNotReused(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-name"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-claude", "Claude")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	secondID, err := AddGroupMember(project, groupID, "claude", "agent-claude", "Bob")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if _, err := RemoveGroupMember(groupID, secondID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	newIDs, err := AddGroupMembers(project, groupID, []GroupMemberSpec{{AgentID: "agent-claude", Backend: "claude"}})
+	if err != nil {
+		t.Fatalf("AddGroupMembers: %v", err)
+	}
+	all, err := ListGroupMembersIncludingRemoved(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembersIncludingRemoved: %v", err)
+	}
+	names := map[string]int{}
+	for _, m := range all {
+		names[m.Name]++
+	}
+	for name, n := range names {
+		if n > 1 {
+			t.Fatalf("name %q is used by %d member rows (must stay unique)", name, n)
+		}
+	}
+	if newIDs[0] == secondID || newIDs[0] == hostID {
+		t.Fatal("re-adding must create a NEW member row")
+	}
+}
+
+// Removing the last ENABLED member is refused even when disabled members remain:
+// the group would keep rows but nobody could ever answer. Removing one of those
+// disabled members is still allowed (it does not reduce the speaking count).
+func TestRemoveGroupMember_RefusesLastSpeakerWithDisabledMembersLeft(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-last-speaker"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	if err := SetGroupMemberDisabled(groupID, byName["B"], true); err != nil {
+		t.Fatalf("SetGroupMemberDisabled: %v", err)
+	}
+
+	if _, err := RemoveGroupMember(groupID, byName["A"]); !errors.Is(err, ErrCannotRemoveLastMember) {
+		t.Fatalf("removing the only enabled member must be refused, got %v", err)
+	}
+	// The disabled member can go: A still speaks afterwards.
+	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
+		t.Fatalf("removing a disabled member must work while an enabled one remains: %v", err)
+	}
+	active, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 1 || active[0].ID != byName["A"] {
+		t.Fatalf("roster = %+v, want only A", active)
+	}
+}
+
+// The free group's row mirrors its FIRST member. Removing that member must move
+// the group's identity to the next active member, or the session list keeps
+// showing the deleted member's agent icon.
+func TestRemoveGroupMember_RecomputesFreeGroupIdentity(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-identity"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	var before string
+	if err := store.ReadDB().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", groupID).Scan(&before); err != nil {
+		t.Fatalf("read group identity: %v", err)
+	}
+	if before != "agent-a" {
+		t.Fatalf("fixture: group identity = %q, want the first member's agent-a", before)
+	}
+
+	if _, err := RemoveGroupMember(groupID, byName["A"]); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	var after string
+	if err := store.ReadDB().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", groupID).Scan(&after); err != nil {
+		t.Fatalf("read group identity after removal: %v", err)
+	}
+	if after != "agent-b" {
+		t.Fatalf("group identity after removing the first member = %q, want agent-b", after)
+	}
+}
+
+// A running turn owns every member connection; removing one would kill its
+// in-flight reply. The deletion is refused until the turn ends.
+func TestRemoveGroupMember_RefusesWhileGroupRunning(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-running"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	SetSessionRunning(groupID, true)
+	t.Cleanup(func() { SetSessionRunning(groupID, false) })
+
+	if _, err := RemoveGroupMember(groupID, byName["B"]); !errors.Is(err, ErrGroupRunning) {
+		t.Fatalf("removing a member while the group runs must be refused, got %v", err)
+	}
+	active, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("a refused removal must not change the roster, got %d", len(active))
+	}
+}

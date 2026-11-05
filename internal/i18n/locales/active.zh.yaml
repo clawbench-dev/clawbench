@@ -6,6 +6,8 @@ SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档�
 SessionIdRequired: session_id 为必填项
 CannotDisableHost: 主持人是群的唯一调度者，不能禁用
 CannotDisableLastMember: 最后一位可发言的成员不能禁用——否则群里就没有人能接话了
+CannotRemoveHost: 主持人是群的唯一调度者，不能移出群聊
+CannotRemoveLastMember: 群聊至少要保留一位可发言的成员
 GroupNotHostMode: 该群是自由聊天模式，没有主持人可换
 HostNotMember: 只能把本群的成员设为主持人
 HostDisabled: 该成员已禁用，请先启用再设为主持人
@@ -220,7 +222,7 @@ PushAttachmentsTruncated: '⚠️ 附件数量超过上限（{{.Max}}），仅�
 PushUnsupportedMsgType: 暂不支持该消息类型（{{.Type}}）。请发送文字、图片或文件。
 PushSendMessageFailed: '发送消息失败: '
 PushMessageSent: 消息已发送
-PushNoSessionSelected: 尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择。
+PushNoSessionSelected: 尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择；发 /help 查看全部命令。
 PushErrorTitle: 错误
 PushUnsupportedTitle: 暂不支持
 PushSelectSessionTitle: 请选择会话
@@ -270,6 +272,18 @@ PushNewListFailed: 获取项目列表失败，请稍后重试。
 PushNewCreateFailed: 创建会话失败，请稍后重试。
 PushStopFailed: 停止会话失败，请稍后重试。
 PushCommandWithAttachment: '命令 `{{.Command}}` 不能和附件一起发送。请先单独发送命令，再发送文件。'
+PushHelpTitle: 命令说明
+PushHelpBody: |-
+  - **/ls** — 列出最近会话（每条带 8 位短 ID）
+  - **/show [短ID]** — 重发目标会话最后一条完整的 AI 回复；不带 ID 用默认会话
+  - **/stop [短ID]** — 停止目标会话正在跑的回合并清空排队消息；不带 ID 用默认会话
+  - **/new [序号|路径]** — 不带参数列出项目；带参数在指定项目下新建会话
+  - **/help** — 显示这份命令说明
+  - **@短ID 消息** — 点名发给某个会话，优先级高于所有命令
+
+  不带 @ 的文本和附件会发给「默认会话」：你上次发送成功或 /new 新建的那个，直到你用 @ 指定别的。
+
+  命令只在消息开头生效，且不能和附件一起发送。
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在
@@ -318,6 +332,7 @@ CruiseMaxRounds: '自动巡航：已达确认轮数上限'
 GroupMemberJoined: '{{.Name}}加入了讨论'
 GroupMemberDisabled: '{{.Name}} 已禁用'
 GroupMemberEnabled: '{{.Name}} 已启用'
+GroupMemberRemoved: '{{.Name}} 已被移出群聊'
 GroupHostChanged: '{{.Name}} 成为了主持人'
 GroupMemberCompactionStarted: '{{.Name}} 正在压缩上下文…'
 GroupMemberCompactionDone: '{{.Name}} 已压缩上下文（{{.Before}} → {{.After}}）'
@@ -474,6 +489,7 @@ MailTLSFailed: 邮件服务器证书校验失败
 MailTimeout: 邮件服务器响应超时
 MailServerError: 邮件服务器返回错误
 MailNoRecipients: 请至少填一个收件人
+MailUnsupportedAddress: 邮箱地址里 @ 前面那部分含中文等非 ASCII 字符，当前邮件服务器不支持这种地址，这封邮件发不出去
 MailSyncBusy: 这个邮箱正在同步中
 TaskTriggerModeInvalid: 触发方式只能是定时、仓库事件或邮件
 TaskMailAccountRequired: 邮件触发需要选择一个邮箱账号

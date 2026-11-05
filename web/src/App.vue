@@ -376,8 +376,9 @@
                        .chat-panel-row: that row also spans the session sidebar,
                        so centering there would push the pill off the chat. -->
                   <div v-if="chatDropActive" class="chat-drop-hint">
-                    <Paperclip :size="16" />
-                    {{ t('file.dropToAttach') }}
+                    <MessageSquare v-if="chatDropKind === 'quote'" :size="16" />
+                    <Paperclip v-else :size="16" />
+                    {{ chatDropKind === 'quote' ? t('chat.dropToQuote') : t('file.dropToAttach') }}
                   </div>
                   </div>
                   <SessionSidebar
@@ -725,7 +726,7 @@ import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useLiveShare } from './composables/useLiveShare.ts'
-import { useMeetingHistory } from './composables/useMeetingHistory.ts'
+import { meetingSourceDir, useMeetingHistory } from './composables/useMeetingHistory.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -791,6 +792,12 @@ import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
+import { buildMailQuote } from '@/utils/mailQuote'
+import { buildLiveMeetingQuote } from '@/utils/liveMeetingQuote'
+import { useLiveNotes } from './composables/useLiveNotes.ts'
+import type { QuoteData } from '@/composables/useChatContext'
+import { apiGet } from '@/utils/api'
+import type { MailMessageDetail } from '@/utils/mailTypes'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -1639,6 +1646,30 @@ function handleOpenUsageMeter(e?: Event) {
   recordNotificationOrigin((e as CustomEvent<{ fromNotificationCenter?: boolean }> | undefined)?.detail)
   setPendingSettingsCategory('usageMeter')
   switchTab('settings')
+}
+
+/**
+ * Payload of the `clawbench-open-mail` event (a quote jumping to the email it
+ * was taken from).
+ */
+interface OpenMailDetail { messageId?: number }
+
+/**
+ * Handle clawbench-open-mail.
+ *
+ * The mail panel listens to the SAME event and opens the reader (it owns the
+ * list/reader state). This handler does the one thing the panel cannot: switch
+ * to the 邮件 tab. Mail is global rather than project-scoped, so unlike the
+ * meeting jump there is no project to rebuild first.
+ */
+function handleOpenMail(e: Event) {
+  const detail = (e as CustomEvent<OpenMailDetail>).detail
+  if (!detail?.messageId) {
+    appLog.w(TAG, 'clawbench-open-mail: no messageId in detail, ignoring')
+    return
+  }
+  if (mailTabBlocked()) return
+  switchTab('mail')
 }
 
 /**
@@ -2825,6 +2856,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-forge', handleOpenForge)
   window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
   window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
+  window.addEventListener('clawbench-open-mail', handleOpenMail)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -3698,15 +3730,8 @@ const meetingHistory = useMeetingHistory()
  * written yet produces no card at all — a quote with only a title would spend a
  * prompt slot saying nothing.
  */
-async function handleMeetingQuote(token: string): Promise<void> {
-  if (!token) return
-  const record = await meetingHistory.get(token)
-  if (!record) return
-  const quote = await meetingHistory.buildQuote(record)
-  if (!quote) {
-    toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
-    return
-  }
+/** Stage a quote card into the live input and bring the chat into view. */
+function stageQuoteInChat(quote: QuoteData): void {
   addStagedQuote(quote)
   switchTab('chat')
   toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
@@ -3714,6 +3739,55 @@ async function handleMeetingQuote(token: string): Promise<void> {
     type: 'success',
     duration: 1800,
   })
+}
+
+async function handleMeetingQuote(token: string): Promise<void> {
+  if (!token) return
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (quote) {
+    stageQuoteInChat(quote)
+    return
+  }
+  // No artifacts yet = the meeting is still running. Its record row is
+  // draggable like any other, and it used to answer "quote unavailable" —
+  // the live transcript is the content, so quote that instead.
+  const live = liveMeetingQuote(token, meetingSourceDir(record))
+  if (live) {
+    stageQuoteInChat(live)
+    return
+  }
+  toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
+}
+
+/** The running meeting's quote, when the token is the one being published. */
+function liveMeetingQuote(token: string, sourceDir: string): QuoteData | null {
+  const share = useLiveShare()
+  if (share.token.value !== token) return null
+  return buildLiveMeetingQuote({
+    token,
+    title: share.title.value || '',
+    segments: useLiveNotes().segments.value,
+    sourceDir,
+  })
+}
+
+/**
+ * A mail drag carries only the message id (a dragstart cannot await), so the
+ * email is fetched here before the card is staged — the same shape as the
+ * meeting drop above, and the same builder the reader's button uses.
+ */
+async function handleMailQuote(mailId: number): Promise<void> {
+  if (!mailId) return
+  try {
+    const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${mailId}`)
+    if (!data?.message) return
+    stageQuoteInChat(buildMailQuote(data.message, t('mail.list.noSubject')))
+  } catch (e) {
+    appLog.w(TAG, 'mail quote drop failed', e)
+    toast.show(t('common.operationFailed'), { type: 'error', icon: 'warning' })
+  }
 }
 
 /**
@@ -3774,6 +3848,8 @@ function handleFileQuoteInChat(path: string) {
 }
 const { uploadAndAttach, leaveInputDraft } = useFileUpload()
 const chatDropActive = ref(false)
+/** What the in-flight drag would DO on drop: attach a file, or quote an object. */
+const chatDropKind = ref('attach')
 let chatDropCounter = 0
 
 /** Whether a drag event carries OS files (dragged from the file manager / desktop). */
@@ -3788,15 +3864,22 @@ function onChatColDragEnter(e: DragEvent) {
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
   if (!internal && !quote && !osFiles) return
+  // A quote drag and an attach drag produce completely different things (a quote
+  // card vs an attachment), so the hint has to say which — the ghost looks the
+  // same for both.
+  chatDropKind.value = quote && !internal ? 'quote' : 'attach'
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e: DragEvent) {
   // Allow the drop for internal attach drags (wide-screen), quote drags, and OS
-  // file drops. A quote drag is allowed on narrow screens too: it stages a card
-  // rather than referencing a file path, so there is no wide-screen-only
-  // affordance behind it (the narrow layout IS the chat).
+  // file drops.
+  //
+  // Quote drags are not gated on the layout HERE: every quote drag source gates
+  // itself (a row is draggable only on a wide screen), and duplicating the rule
+  // in the drop handler is how the two drift apart. This handler only has to
+  // accept what a source was willing to start.
   const internal = hasAttachDragData(e.dataTransfer)
   const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
@@ -3846,7 +3929,19 @@ function onChatColDrop(e: DragEvent) {
     // A meeting drag carries identity only (dragstart cannot await); the text
     // is fetched here before the card is staged.
     if (quote.meetingToken) {
+      // A RUNNING meeting carries its transcript in the payload: it has no
+      // record artifacts yet, so there is nothing to fetch and the card is
+      // staged straight from what the stage already holds.
+      if (quote.text) {
+        stageQuoteInChat(quote)
+        return
+      }
       void handleMeetingQuote(quote.meetingToken)
+      return
+    }
+    // Same reason: a mail row carries its id only, so the body is fetched here.
+    if (quote.mailId) {
+      void handleMailQuote(quote.mailId)
       return
     }
     addStagedQuote(quote)
@@ -4842,6 +4937,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
     window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
     window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
+    window.removeEventListener('clawbench-open-mail', handleOpenMail)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)

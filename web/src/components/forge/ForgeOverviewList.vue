@@ -44,7 +44,7 @@
       :key="row.itemKey"
       class="forge-row forge-overview-row"
       :class="{ unread: !isRead(row), read: isRead(row) }"
-      draggable="true"
+      :draggable="isWideScreen"
       @dragstart="onRowDragStart(row, $event)"
       @dragend="cleanupDragGhost()"
       @click="onRowClick(row)"
@@ -81,6 +81,7 @@ import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useFo
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
 import type { ForgeUnreadItem } from '@/utils/forgeApi'
 import { startQuoteDrag, forgeUnreadDragPayload } from '@/utils/quoteDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 
 /**
@@ -109,6 +110,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const { isWideScreen } = useWideScreenLayout()
 
 const unread = useForgeUnreadItems(() => props.projectPath)
 

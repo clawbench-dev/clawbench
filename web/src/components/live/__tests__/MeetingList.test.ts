@@ -247,13 +247,25 @@ describe('MeetingList', () => {
     expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.list.emptyDesc)
   })
 
-  it('prints no hint line under the list', () => {
-    // The old footer explained where records come from ("this project's meeting
-    // database") on every visit. It told the reader nothing they could act on.
+  it('previews the record rows while the first load is in flight', () => {
+    // The rows are cards, so the wait shows that shape. A lone ring said
+    // "waiting" but nothing about what was coming, and collapsed the panel to
+    // one glyph — the dock-panel rule the other tabs already follow.
+    loading.value = true
+    const w = mountList()
+
+    const skeleton = w.find('.panel-skeleton')
+    expect(skeleton.exists()).toBe(true)
+    expect(skeleton.classes()).toContain('panel-skeleton--list')
+    expect(w.findAll('.meeting-row')).toHaveLength(0)
+  })
+
+  it('shows the records instead of the placeholder once loaded', () => {
     sessions.value = [record()]
     const w = mountList()
 
-    expect(w.find('.meeting-hint').exists()).toBe(false)
+    expect(w.find('.panel-skeleton').exists()).toBe(false)
+    expect(w.findAll('.meeting-row')).toHaveLength(1)
   })
 
   it('lists a record with no artifacts instead of hiding it', () => {

@@ -507,6 +507,14 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			-- never advanced while disabled, so its next turn injects the whole
 			-- backlog). Always 0 for non-member rows.
 			disabled INTEGER NOT NULL DEFAULT 0,
+			-- removed marks a group MEMBER row the user deleted (移出群聊). The
+			-- row is kept so its past speech in the group timeline still
+			-- resolves to its own name/avatar (chat_history.agent_id points at
+			-- this row), but the member is gone from the roster, the @-mention
+			-- menu and every scheduling path. Unlike disabled it is one-way:
+			-- re-adding the same agent creates a NEW instance. Always 0 for
+			-- non-member rows.
+			removed INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			-- awaiting_user_at marks a GROUP session whose last finished turn
 			-- handed the floor back to the human and that the user has not read
@@ -1697,6 +1705,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasDisabled == 0 {
 		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add disabled column: %w", err)
+		}
+	}
+
+	// Migrate: add chat_sessions.removed — the group member "移出群聊" flag (see
+	// the DDL comment). Additive with a 0 default, so existing rows need no
+	// backfill: no member was ever removed through this flag before it existed.
+	var hasRemoved int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='removed'").Scan(&hasRemoved)
+	if hasRemoved == 0 {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN removed INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add removed column: %w", err)
 		}
 	}
 

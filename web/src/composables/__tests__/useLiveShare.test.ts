@@ -308,8 +308,10 @@ let audioResumeHangs = false
 let releaseAudioResume: (() => void) | null = null
 
 class FakeAudioCtx {
+  static instances: FakeAudioCtx[] = []
   state = 'running'
   dests: FakeDest[] = []
+  private readonly listeners = new Map<string, Array<() => void>>()
   resume = vi.fn(() => {
     if (!audioResumeHangs) return Promise.resolve()
     // Stays pending until the test releases it: the caller must not wait for it.
@@ -317,6 +319,34 @@ class FakeAudioCtx {
     return new Promise<void>((resolve) => { releaseAudioResume = resolve })
   })
   close = vi.fn(async () => undefined)
+
+  constructor() {
+    FakeAudioCtx.instances.push(this)
+  }
+
+  /** The AudioContext is an EventTarget in every real engine. */
+  addEventListener(type: string, fn: () => void): void {
+    const list = this.listeners.get(type) ?? []
+    list.push(fn)
+    this.listeners.set(type, list)
+  }
+
+  private emit(type: string): void {
+    for (const fn of this.listeners.get(type) ?? []) fn()
+  }
+
+  /** What the system does when the audio device changes or the machine sleeps. */
+  suspendFromSystem(): void {
+    this.state = 'suspended'
+    this.emit('statechange')
+  }
+
+  /** ...and what happens once `resume()` succeeds. */
+  markRunning(): void {
+    this.state = 'running'
+    this.emit('statechange')
+  }
+
   createMediaStreamDestination() {
     const d = new FakeDest(String(this.dests.length))
     this.dests.push(d)
@@ -399,6 +429,7 @@ function installGlobals() {
   FakeWS.instances = []
   FakeDataChannel.instances = []
   holdSocketOpen = false
+  FakeAudioCtx.instances = []
   vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket)
   vi.stubGlobal('RTCPeerConnection', FakePC as unknown as typeof RTCPeerConnection)
   vi.stubGlobal('AudioContext', FakeAudioCtx as unknown as typeof AudioContext)
@@ -1185,13 +1216,48 @@ describe('stop', () => {
     expect(lastWS().sentJSON()).toContainEqual({ type: 'set-picture', video: false, camera: false, screen: false })
   })
 
-  it('stops when the publisher socket closes', async () => {
+  it('reconnects instead of ending the meeting when the socket closes', async () => {
+    const { share } = await startSharing()
+    await vi.waitFor(() => expect(share.state.value).toBe('publishing'))
+    const first = lastWS()
+    expect(FakeWS.instances).toHaveLength(1)
+
+    first.onclose?.()
+
+    // A second socket is dialled on the same token, and the meeting keeps
+    // running: the media is peer-to-peer and never touched the server.
+    await vi.waitFor(() => expect(FakeWS.instances).toHaveLength(2))
+    expect(FakeWS.instances[1].url).toBe(first.url)
+    await vi.waitFor(() => expect(FakeWS.instances[1].readyState).toBe(1))
+    expect(share.state.value).toBe('publishing')
+    // The room learns the publisher's state again, not just that it is back.
+    expect(FakeWS.instances[1].sentJSON().map((m) => m.type)).toContain('publish')
+  })
+
+  it('ends the meeting when every reconnect attempt fails', async () => {
     const { share } = await startSharing()
     await vi.waitFor(() => expect(share.state.value).toBe('publishing'))
 
+    // The real schedule spans seven seconds; the behaviour under test is the
+    // give-up path, not the spacing.
+    const { _setPublisherReconnectDelaysForTest } = await import('../useLiveShare')
+    _setPublisherReconnectDelaysForTest([0, 0, 0])
+
+    // Keep every new dial in CONNECTING so it can be failed deterministically
+    // (an auto-opened socket would count as a successful reconnect).
+    holdSocketOpen = true
     lastWS().onclose?.()
 
-    await vi.waitFor(() => expect(share.state.value).toBe('idle'))
+    await vi.waitFor(
+      () => {
+        for (const sock of FakeWS.instances.slice(1)) {
+          if (sock.readyState === 0) sock.onerror?.()
+        }
+        expect(share.state.value).toBe('idle')
+      },
+      { timeout: 5_000 },
+    )
+    expect(share.error.value).toBeTruthy()
   })
 })
 
@@ -2509,5 +2575,109 @@ describe('relay mode', () => {
       expect.anything(),
       expect.objectContaining({ t: 'chat' }),
     )
+  })
+})
+
+/**
+ * A microphone that goes away is the quietest failure in the whole meeting:
+ * the recorder keeps running, keeps producing perfectly valid silence, and the
+ * transcript simply stops growing. These cover the two halves of the fix —
+ * noticing it, and getting the device back.
+ */
+describe('microphone recovery', () => {
+  it('re-opens the device when the track ends unexpectedly', async () => {
+    const { share } = await startSharing()
+    await vi.waitFor(() => expect(share.state.value).toBe('publishing'))
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const before = gum.mock.calls.length
+
+    const replacement = new FakeStream([new FakeTrack('audio', 'mic2')])
+    gum.mockResolvedValueOnce(replacement)
+
+    // The device disappears: the track ends without anyone stopping it.
+    micStream.tracks[0].emitEnded()
+
+    await vi.waitFor(() => expect(gum.mock.calls.length).toBe(before + 1))
+    await vi.waitFor(() => expect(share.micRecovering.value).toBe(false))
+    expect(share.error.value).toBe('')
+  })
+
+  it('does not chase a device it stopped on purpose', async () => {
+    const { share } = await startSharing()
+    await vi.waitFor(() => expect(share.state.value).toBe('publishing'))
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    const before = gum.mock.calls.length
+
+    // Switching inputs stops the old track; that is not a failure.
+    gum.mockResolvedValueOnce(new FakeStream([new FakeTrack('audio', 'mic2')]))
+    await share.switchMicDevice('mic-2')
+    micStream.tracks[0].emitEnded()
+
+    // Give a stray recovery a chance to start before asserting it did not.
+    await Promise.resolve()
+    expect(gum.mock.calls.length).toBe(before + 1)
+  })
+
+  it('reports the loss and offers a retry when every attempt fails', async () => {
+    const { share } = await startSharing()
+    await vi.waitFor(() => expect(share.state.value).toBe('publishing'))
+    const { _setMicRecoveryDelaysForTest } = await import('../useLiveShare')
+    _setMicRecoveryDelaysForTest([0, 0])
+
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockRejectedValue(new Error('no such device'))
+
+    micStream.tracks[0].emitEnded()
+
+    await vi.waitFor(() => expect(share.error.value).toBeTruthy(), { timeout: 3_000 })
+    // A resolved translation, not the raw key: the panel prints this string.
+    expect(share.error.value).not.toContain('liveShare.')
+    expect(share.micRecovering.value).toBe(false)
+  })
+
+  it('recovers again on demand after the automatic attempts gave up', async () => {
+    const { share } = await startSharing()
+    await vi.waitFor(() => expect(share.state.value).toBe('publishing'))
+    const { _setMicRecoveryDelaysForTest } = await import('../useLiveShare')
+    _setMicRecoveryDelaysForTest([0])
+
+    const gum = navigator.mediaDevices.getUserMedia as unknown as ReturnType<typeof vi.fn>
+    gum.mockRejectedValueOnce(new Error('gone'))
+    micStream.tracks[0].emitEnded()
+    await vi.waitFor(() => expect(share.error.value).toBeTruthy(), { timeout: 3_000 })
+
+    // The user plugs the headset back in and presses 重新连接.
+    const replacement = new FakeStream([new FakeTrack('audio', 'mic2')])
+    gum.mockResolvedValueOnce(replacement)
+    share.retryMicrophone()
+
+    await vi.waitFor(() => expect(gum.mock.calls.length).toBeGreaterThan(1))
+    await vi.waitFor(() => expect(share.error.value).toBe(''))
+  })
+})
+
+/**
+ * A suspended AudioContext produces no samples at all, which the recorder
+ * cannot distinguish from a silent room. The system suspends it for real
+ * reasons, so the fix is to resume — and to say so when resuming does not work.
+ */
+describe('audio graph watchdog', () => {
+  it('reports a suspension and clears it once the graph is running again', async () => {
+    const { _resetLiveNotesForTest } = await import('../useLiveNotes')
+    _resetLiveNotesForTest()
+    const { useLiveNotes } = await import('../useLiveNotes')
+    const notes = useLiveNotes()
+
+    await startSharing()
+    const ctx = FakeAudioCtx.instances[FakeAudioCtx.instances.length - 1]
+    expect(ctx).toBeDefined()
+    expect(notes.audioSuspended.value).toBe(false)
+
+    ctx.suspendFromSystem()
+    await vi.waitFor(() => expect(notes.audioSuspended.value).toBe(true))
+    expect(ctx.resume).toHaveBeenCalled()
+
+    ctx.markRunning()
+    await vi.waitFor(() => expect(notes.audioSuspended.value).toBe(false))
   })
 })

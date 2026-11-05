@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeVersion, isVersionedBuild, compareVersions, shouldGate } from './version'
+import { normalizeVersion, isVersionedBuild, compareVersions, shouldGate, shouldGateClient } from './version'
 
 describe('normalizeVersion', () => {
   it('strips a leading v so the server and the app agree on one version', () => {
@@ -126,5 +126,37 @@ describe('shouldGate', () => {
     expect(shouldGate('a0f87a96', 'v0.99.1', { packaged: true })).toBe(false)
     expect(shouldGate('0.99.1', 'dev', { packaged: true })).toBe(false)
     expect(shouldGate('0.99.1', '', { packaged: true })).toBe(false)
+  })
+})
+
+describe('shouldGateClient', () => {
+  const base = {
+    clientProtocol: 3,
+    serverProtocol: 3,
+    clientVersion: '0.129.0',
+    serverVersion: 'v0.130.0',
+    packaged: true,
+  }
+
+  it('accepts a newer server when the protocol is unchanged', () => {
+    // The reuse case: the shell is the previous build, the server moved on, the
+    // contract did not. Re-downloading an identical ~150MB app would be waste.
+    expect(shouldGateClient(base)).toBe(false)
+  })
+
+  it('blocks when the protocol differs, even if the versions match', () => {
+    expect(shouldGateClient({ ...base, serverVersion: '0.129.0', serverProtocol: 4 })).toBe(true)
+    expect(shouldGateClient({ ...base, serverProtocol: 2 })).toBe(true)
+  })
+
+  it('falls back to comparing versions when either protocol is unknown', () => {
+    // An older shell or server predating the field keeps the strict behaviour.
+    expect(shouldGateClient({ ...base, clientProtocol: 0 })).toBe(true)
+    expect(shouldGateClient({ ...base, serverProtocol: 0 })).toBe(true)
+    expect(shouldGateClient({ ...base, clientProtocol: 0, serverVersion: '0.129.0' })).toBe(false)
+  })
+
+  it('never gates an unpackaged dev build', () => {
+    expect(shouldGateClient({ ...base, packaged: false, serverProtocol: 4 })).toBe(false)
   })
 })

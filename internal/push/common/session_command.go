@@ -35,7 +35,7 @@ func ParseSessionCommand(text string) (string, string, bool) {
 	return m[1], strings.TrimSpace(m[2]), true
 }
 
-// Session list / reply / stop / new commands. Only these exact words are
+// Session list / reply / stop / new / help commands. Only these exact words are
 // commands; everything else is ordinary text for the AI.
 const (
 	// SessionListCommand lists recent sessions.
@@ -46,6 +46,8 @@ const (
 	SessionStopCommand = "/stop"
 	// SessionNewCommand creates a session, or lists projects when bare.
 	SessionNewCommand = "/new"
+	// SessionHelpCommand replies with the command reference.
+	SessionHelpCommand = "/help"
 )
 
 // RouteKind identifies how an inbound IM message should be handled.
@@ -69,6 +71,10 @@ const (
 	// (a 1-based index into the project list, or a full path); empty means the
 	// user wants the project list.
 	RouteNewSession
+	// RouteHelp asks for the command reference ("/help"). It needs no session
+	// and no argument, so it is the one command that works before any target is
+	// picked.
+	RouteHelp
 	// RouteNoTarget means the user sent something routable but has no sticky
 	// session yet. The caller must reply with the "/ls" hint.
 	RouteNoTarget
@@ -84,7 +90,7 @@ const (
 // typed is lost.
 func (k RouteKind) IsCommand() bool {
 	return k == RouteListSessions || k == RouteShowLastReply ||
-		k == RouteStopSession || k == RouteNewSession
+		k == RouteStopSession || k == RouteNewSession || k == RouteHelp
 }
 
 // CommandWord returns the slash word that produced this kind, or "" when the
@@ -100,6 +106,8 @@ func (k RouteKind) CommandWord() string {
 		return SessionStopCommand
 	case RouteNewSession:
 		return SessionNewCommand
+	case RouteHelp:
+		return SessionHelpCommand
 	}
 	return ""
 }
@@ -116,7 +124,7 @@ type Route struct {
 //
 // Precedence: an explicit "@{shortID}" always wins — which doubles as the
 // escape hatch for sending a literal command word to a session; then a leading
-// command word (/ls, /show, /stop, /new); then any other text goes to the
+// command word (/ls, /show, /stop, /new, /help); then any other text goes to the
 // sticky session (shortID left empty for the caller to resolve). An
 // empty/whitespace-only text with no sticky session is RouteNoTarget — the same
 // hint a bare file gets when nothing was ever chosen.
@@ -153,6 +161,12 @@ func ClassifyIncoming(text, stickySessionID string) Route {
 			return Route{Kind: RouteStopSession, Arg: arg}
 		case SessionNewCommand:
 			return Route{Kind: RouteNewSession, Arg: arg}
+		case SessionHelpCommand:
+			// Same rule as "/ls": a trailing argument means the user meant
+			// something else, so fall through to the session path.
+			if arg == "" {
+				return Route{Kind: RouteHelp}
+			}
 		}
 	}
 

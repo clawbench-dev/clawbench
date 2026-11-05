@@ -31,6 +31,12 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 ./build.sh --restart [--restart-skip-build] [--restart-port=8080]
 ```
 
+### 运维：一个数据目录只能跑一个服务
+
+服务启动时在数据目录下取一把独占锁（`.instance.lock`，进程退出即由系统释放，不存在残留锁）。同一个数据目录已有实例在跑时，新进程最多等 10 秒（覆盖重启时旧进程还没退完的窗口）后**拒绝启动**并报错。
+
+原因不是抢端口，而是两个实例共用一个数据库会互相破坏：启动恢复把「库里还有 `streaming=1`」当成「上个进程崩溃了」，于是把对方**正在跑**的那一轮改写成「已取消 + 服务重启中断」并自己重跑一遍，用户看到的就是「消息内容显示已结束，但终止按钮和列表动画还在」。要在本地起第二个实例做实验，必须显式给 `--data-dir /tmp/<某个临时目录>`。
+
 ### 运维：僵尸进程清理
 
 `./scripts/kill-zombies.sh` 清理僵尸（defunct）进程及其孤儿进程树。默认 dry-run 列出僵尸与将要杀的进程树；`--kill` 实际清理（`--force` 跳过确认）；`--port 8080` 额外保护 8080 端口的服务器。
@@ -83,6 +89,7 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 | `internal/tunnel/` | h2 流隧道的传输无关内核（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面）：`bind.go`（端口分配 + 白名单/保留端口）、`guard.go`（`PortGuard` 镜像 `internal/ssh` 的端口策略，保证 h2 与 SSH 同一套规则）、`claim.go`（`-R` 的单次 token 认领）、`ndjson.go`（控制流分帧）、`relay.go`（双向转发 + 半关闭）、`target.go`（目标地址解析） |
 | `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎；**服务端总开关 `forge.enabled`（默认开）**——关闭即停轮询、不再自动绑定、并清空全部项目的仓库绑定且打 opt-out 标记（重新启用不自动恢复），关的是出站流量与凭据故必须服务端一致而非每设备偏好。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片）、`wechat/`（个人微信，经 openilink SDK 长轮询；**扫码登录、没有静态密钥**——出站消息必须带只有用户先给机器人发消息才下发的 `context_token`，因此「登录成功」不等于「推送可达」，面板要分开表达） |
+| `internal/mail/` | 内置邮件客户端的协议层（不认识 DB 与 HTTP）：连接、`LIST`/`FETCH`/`STORE`/`MOVE`/`APPEND`、MIME 解析、发信、错误归类（auth/connect/tls/timeout/server）。`Client` 是接口、`Dialer` 可替换，故 service 层用内存假客户端测、协议层用内存 IMAP 服务器测。持久化与编排在 `internal/service/mail_*.go`（账号、3 分钟增量同步 worker、按需拉正文、发信、`mail_task_trigger.go` 邮件触发任务去重），端点在 `internal/handler/mail.go`；**服务端总开关 `mail.enabled`**（关闭即停同步与触发任务、前端隐藏页签）。信头抓完整 `HEADER` 而非 `ENVELOPE`——QQ 的 ENVELOPE 不合 RFC 9051 文法，会让整条连接作废、一封坏信拖垮整个账号 |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
 | `internal/skill/` | 后端无关的跨智能体 Skill 发现框架（Skill = 含 `SKILL.md` 的目录）。只依赖 `internal/model`（不得 import `internal/ai`/`backends`，否则成环）：`scanner.go` 递归扫描（有界深度、跳过 `.git`/`node_modules` 等）、`registry.go` 按 `SourceKind`（本智能体原生 > 项目 `.agents/skills` > 用户目录 > git > 其他原生）去重、`git.go`+`worker.go` clone/pull git 源（单例 worker，启动 + 定时 + 手动 `POST /api/skills/refresh` 三触发）。**项目级来源**：按会话项目根扫 `<projectPath>/.agents/skills`（`InjectedForProject` / `AllForProject`，`GET /api/skills` 按项目 Cookie 只列当前项目；qoder/codewhale 在 cwd=项目根时也读它，故总是注入）。**本地目录新增走 PATCH 同步重扫、Git 仓库新增由前端在 addRepo 成功后自动调一次 refresh**（PATCH 只落盘不联网，避免在 config 写锁内做网络 IO）；`POST /api/skills/rescan` 是**纯本地重扫**（不联网、不写同步状态）。系统提示词注入在 `service.AppendSkillsSection`，**两个 `ai.ChatRequest.SystemPrompt` 生产者都必须调用**（`chat_request.go` 与 `scheduler.go`）。`AutoLoadsNativeSkills` 决定后端是否自加载（codebuddy=false 必须注入；其余多为 true），取值由 `internal/ai/backends/native_skills_test.go` 双向表钉住 |
 | `internal/liveshare/` | 屏幕/声音共享的房间模型与发言授权状态机。**只依赖标准库**（不 import 任何 internal 包、不 import websocket），以便整体抽离为独立中继应用：连接用 `Sink` 接口表示而非 `*websocket.Conn`。`room.go` 房间注册表（按 token 与 projectKey 双索引、幂等创建、**按模式设上限**（P2P 8 人 / 中继无上限）、空闲回收）+ `talk.go` 发言状态机（只有 `none ↔ talking` 两态：发布端一个房间级开关（默认关）+ 每个观众自己的麦克风开关，**刻意没有逐人审批**——房间开关本身就是安全边界；非法转移一律返回错误而非静默忽略）+ `signal.go` 协议结构体（与前端镜像，含**成员反向共享屏幕**的房间开关与 `screen-state`/`screen-denied`：一次只允许一人，转发成本随共享者数量平方增长）+ `livekit.go` 中继（HS256 自签 token + 管理接口，**仍只用标准库**，因此这个包能整体抽走）。**媒体不经过服务端**：handler 只转发 SDP/ICE；中继模式下媒体交给独立部署的 LiveKit，服务端只签发 token、管房间、同步禁言。HTTP/WS 绑定在 `internal/handler/live_share.go`（+ `live_sfu.go` 配置端点、`live_relay.go` 权限同步、`live_proxy.go` 仅回环的 `/livekit/*` 反代）；**AI 听记与会议记录**在 `internal/service/live_notes.go`（`live_notes` 表一行 = 一场会，发布端连上信令即创建、断开即收尾，与「录没录到东西」无关；按信道落库 + 按 `startedAt` 重排 + 纪要 map-reduce；会议结束后把逐信道录音片段**重封装**成整场 + 每信道各一个文件，转写存 WebVTT（cue id 承载信道、`<v 称谓>` 承载显示名）；未命名会议先以开始时间占位，纪要生成后由摘要模型改名，**只替换占位名**），`live_notes_artifacts.go` / `live_notes_regen.go`（三个产物各有内容轴与任务轴，可单独重新生成、向上/向下级联、DB 事务抢占单任务、10 分钟无心跳判中断；转写「重新生成」= 重跑 ASR，`live_notes_audio_split.go` 按 Cluster 切片），`live_notes_shots.go`（关键画面：配额、落库），上传端点在 `internal/handler/live_notes.go`，采集只能在发布端——纯 P2P 下服务端收不到音频，而发布端是唯一保留信道分离的地方 |
@@ -97,7 +104,9 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 
 源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。**同一时刻只允许一个标签页跑应用**（`useSingleTab.ts` 选举，第二标签页只显示阻塞屏、不挂载应用）：服务端按 `localStorage` 里的 `client_id` 键控 WS 订阅槽，同源所有标签页共用同一个 id，两个标签页会互相顶掉 socket 并各自重连，实测 17 分钟 1402 次 subscribe、约 2900 请求/分钟。新增全局唯一资源的消费者前先确认是否也受此约束。选举优先用 **Web Locks**（`navigator.locks` 单一独占锁；锁在上下文消亡时由浏览器自动释放，故 owner 崩溃/关闭/导航都不会留下"幽灵占用"永久阻塞等待方），不支持时回退 **BroadcastChannel**（jsdom、老浏览器/WebView）。owner 在**每次** `pagehide` 都释放槽位（含 bfcache 进入——冻结页无法运行代码，持锁会阻塞等待方最长 ~10 分钟），`pageshow` 时重新认领。
 
-Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Meeting/Live、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
+Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Meeting/Live、Mail、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
+
+**邮件面板**（`components/mail/`）按宽度自适应：窄时列表 → 阅读 / 写信逐层下钻，宽时列表与右侧内容用共享 `SplitView` 并排（比例存布局记忆 `mailSplitRatio`）。写邮件是面板内的一个视图而不是弹窗，返回手势按来源分派（回复回那封信、新建回列表）。`mail.enabled` 关闭时页签从 Dock 注册表里消失，程序化跳转也要一并拒绝。
 
 **界面缩放只有一个机制：根字号**（`utils/uiScale.ts` 写 `--ui-scale`，`base.css` 乘进 `html { font-size }`，所有几何尺寸用 `--dp` = `1rem / 15` 表达）。CSS `zoom` 与 Electron 原生 `setZoomFactor` 都已废弃——它们不缩放布局视口，会让 `100vw`/`dvh`/媒体查询/ResizeObserver 全部失真。三条必守：几何尺寸写 `calc(N * var(--dp))` 而非裸 px（发丝线保持字面 `1px`）；**同时出现在 CSS 与 JS 里的数字必须在 JS 侧乘 `uiScale`**（`getBoundingClientRect()` 返回已缩放值，直接比较会算错「放得下几个」）；画进 canvas 的表面（xterm、图表）读不到 CSS 变量，得自己乘，且**存储值保持设计值**。缩放变化不触发 `resize`，靠 `UI_SCALE_EVENT` 广播，宽屏断点用有效宽度 `innerWidth / uiScale`。
 
@@ -116,6 +125,8 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 `web/src/share/` 是分享链接的独立只读 SPA（文件分享=类型分派渲染 + TOC + 下载；会话分享=快照对话 + 目录导航 + 导出 JSON），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
 `web/landing/` 是**项目主页**（单页营销站，纯静态 HTML/CSS/JS + 中英双语切换），同样**不进根 Vite 构建**，也不由 `build.sh` 产出——它由 `.github/workflows/deploy-landing.yml` 在推送 `main` 时用 wrangler 直传 Cloudflare Pages（`_headers` 声明安全头与缓存策略：`/img/*` 一年 immutable，因此**图片只换新文件名、不原地改**；`index.html` 不缓存）。**不用 Cloudflare 的 Git 集成**：其构建器克隆后会无条件跑 `git submodule update --init --recursive`，而本仓库根没有 `.gitmodules`，任何 gitlink 都会让它在构建开始前就失败。同一目录另由 `.github/workflows/deploy-landing-pages.yml` 发布到 GitHub Pages 项目页（`https://clawbench-dev.github.io/clawbench/`）：上传预构建产物，因此**不带 `_headers`**（Pages 无此语法，会被当成普通文件下发）并补 `.nojekyll`；仓库需一次性把 Settings → Pages 的 Source 设为 GitHub Actions，否则 deploy job 报 "Get Pages site failed"。页面里的下载按钮写死 `href` 为 Releases 页，脚本再按 `api.github.com/.../releases/latest` 的 `tag_name` 改写成直链——资产名带版本号，不存在 `/releases/latest/download/<name>` 这种稳定地址，取不到 tag 时保留回落链接。`web/landing/landing.test.ts` 覆盖翻译残留、图片 404、灯箱与画廊循环、下载资产名与 `release.yml` 的一致性——改页面后跑 `npx vitest run web/landing/landing.test.ts`。
+
+**用户手册站点**（`/docs/`）由 `web/docs/build.mjs` 从 `docs/user-guide/*.md` 生成，`npm run docs` 输出到 `web/landing/docs/`（已 gitignore），两个部署工作流则 `--out dist/docs`。三条不变量：①**样式不复制**——页面只引用 `../css/landing.css` + 自己的 `docs.css`，落地页换主题手册自动跟随；②**锚点与 GitHub 一致**（`slugify` 去标点/转小写/空格换 `-`），手册里 `settings.md#用量`、`#54-用户称谓` 这类深链靠它才不落空，改算法等于废掉已发布链接；③**侧栏目录取自 `docs/user-guide/README.md` 的结构**，不另立清单。渲染用 `marked` + `highlight.js`（与前端应用内同一套），mermaid 只在真有流程图时随包带 3MB 脚本。新增/重命名手册文件不需要改任何清单，重跑构建即可；`web/docs/build.test.ts` 会校验「每个 `.md` 都成页、站内链接与锚点全部可达、引用的截图都被拷出、页面都引了 landing.css」——改渲染器后跑 `npx vitest run web/docs/build.test.ts`。
 
 ### 桌面端（Electron）
 

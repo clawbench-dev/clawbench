@@ -104,7 +104,7 @@ const mediaErrorKind = computed<'image' | 'video' | 'audio' | 'file'>(() => {
 
 /** Drag the previewed image onto the chat column → attach this path (no upload). */
 function onImageDragStart(e: DragEvent) {
-  startAttachDrag(e, props.path, fileName.value)
+  startAttachDrag(e, props.path, { name: fileName.value })
 }
 
 function onImageDragEnd() {

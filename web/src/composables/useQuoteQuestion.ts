@@ -361,6 +361,10 @@ function deriveQuoteData(sel: Selection, container: HTMLElement): QuoteData | nu
       ...(source.sessionId ? { sessionId: source.sessionId } : {}),
       ...(source.messageId !== undefined ? { messageId: source.messageId } : {}),
       ...(source.executionId ? { executionId: source.executionId } : {}),
+      // The meeting token was READ from the region but never copied out, so a
+      // quote made by selecting minutes/transcript text had no way back to its
+      // meeting: the card said "会议" and the jump button did nothing.
+      ...(source.meetingToken ? { meetingToken: source.meetingToken } : {}),
     }
   }
 
@@ -418,7 +422,10 @@ function deriveQuoteData(sel: Selection, container: HTMLElement): QuoteData | nu
  * drawer could only show a generic label.
  */
 function quotableContainer(sel: Selection): HTMLElement | null {
-  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll')
+  // `.transcript` and `.live-chat` are the meeting's own content: the minutes
+  // and the chat are text the user may want to quote, and the meeting body
+  // carries the token that makes the quote addressable.
+  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll, .transcript, .live-chat')
 }
 
 function onSelectionChange() {

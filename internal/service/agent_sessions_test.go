@@ -27,6 +27,7 @@ func setupAgentSessionsSchema(t *testing.T) *sql.DB {
 			agent_id TEXT DEFAULT '', agent_name TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			group_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0,
+			removed INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

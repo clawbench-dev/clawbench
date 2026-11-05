@@ -147,21 +147,51 @@ export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean 
 }
 
 /**
- * Begin an internal attach drag for a known file path: writes the attach
- * payload, sets effectAllowed and installs the custom drag ghost. Used by drag
- * sources that already hold the path (image previews) so they attach the
- * existing file instead of triggering an OS re-upload.
- *
- * Returns false when the event carries no dataTransfer (synthetic events) or
- * the path is empty. Callers must call cleanupDragGhost() from their dragend.
+ * Everything a drag source can vary. One shape for all sources, so a source
+ * that needs a range or a multi-selection does not hand-roll the payload +
+ * ghost sequence (five copies of it had already drifted: only some set
+ * effectAllowed, only some labelled the ghost).
  */
-export function startAttachDrag(e: DragEvent, path: string, name: string, isDir = false): boolean {
+export interface AttachDragOptions {
+  /** Ghost label; defaults to the path's basename. */
+  name?: string
+  isDir?: boolean
+  /** Inclusive source line range: attaches a RANGE reference, not the file. */
+  startLine?: number
+  endLine?: number
+  /** Multi-selection: the whole dragged set (line ranges never combine with it). */
+  entries?: AttachDragEntry[]
+  /** `move` for file-manager browse rows, which can also be dropped on a folder. */
+  effectAllowed?: 'copy' | 'move'
+}
+
+/**
+ * Begin an internal attach drag: write the payload, set effectAllowed and
+ * install the custom drag ghost.
+ *
+ * The single entry point for every attach drag source — file-manager rows,
+ * breadcrumbs, the file header, markdown images and mermaid diagrams. Returns
+ * false when the event carries no dataTransfer (synthetic events) or the path
+ * is empty, so the caller can skip the drag instead of starting one that would
+ * drop nothing. Callers must call `cleanupDragGhost()` from their `dragend`.
+ */
+export function startAttachDrag(e: DragEvent, path: string, opts: AttachDragOptions = {}): boolean {
   const dt = e.dataTransfer
   if (!dt || !path) return false
-  dt.effectAllowed = 'copy'
-  setAttachDragData(dt, path, isDir)
-  const ghost = buildAttachDragImage(name || path, isDir)
-  dt.setDragImage(ghost, 14, 16)
+  const { name, isDir = false, startLine, endLine, entries, effectAllowed = 'copy' } = opts
+
+  if (entries && entries.length > 1) {
+    setMultiAttachDragData(dt, path, isDir, entries)
+  } else {
+    setAttachDragData(dt, path, isDir, startLine, endLine)
+  }
+  dt.effectAllowed = effectAllowed
+
+  const label = name || path
+  const ghostLabel = typeof startLine === 'number'
+    ? `${label}:${startLine}${endLine && endLine !== startLine ? `-${endLine}` : ''}`
+    : label
+  dt.setDragImage(buildAttachDragImage(ghostLabel, isDir), 14, 16)
   return true
 }
 

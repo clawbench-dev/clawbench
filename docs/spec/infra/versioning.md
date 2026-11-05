@@ -150,10 +150,24 @@ flowchart TD
 versionName 参与的下游判断：
 
 - 服务端 `/api/health` 返回的 `version`，供[应用自升级](self-upgrade.md)做版本检查
-- **客户端版本一致性拦截**：客户端与服务器版本**任一方向不一致**即提示（不只是客户端落后——客户端较新也可能依赖服务器没有的功能）。两端形态不同：
-  - **Android**：原生层在加载 WebView **之前**用 `VersionCompare.shouldShowMismatch` 对比 APK 与服务器版本（走 versionName，任一侧不可解析则 fail-open），不一致则弹阻塞式原生对话框（`isClientNewer` 决定文案方向）。
-  - **桌面端（Electron）**：主进程复用启动 splash 的原生遮罩（`desktop/src/main/versionGate.ts` + `splash.ts`），判定用 `desktop/src/shared/version.ts` 的 `shouldGate`，连服务器时（冷启动与 `connect-to-server`）各检查一次。未打包（`app.isPackaged === false`）的开发壳豁免，避免仓库内占位版本 `0.1.0` 被误判。
-  - 三端比较语义同源：`internal/version/compare.go`（Go）、`web/src/utils/version.ts`、`android/.../VersionCompare.java`、`desktop/src/shared/version.ts` 互为镜像（剥 `v` 前缀与 `-MMDDHHMM` 构建后缀；同核心时带 pre-release 后缀者更新）。
+- **客户端兼容性拦截比「协议号」，不再比版本字符串**。版本号每次发布都变，而壳（APK / 桌面端）依赖服务端的只有很小一撮契约，绝大多数发布根本没碰它。判据是 `internal/version/client_protocol.txt` 里的一个整数：
+  - 服务端把它放进 `/api/health` 与 `/api/desktop/latest` 的 `protocol` 字段；Android 由 Gradle 直接读该文件写进 `BuildConfig.CLIENT_PROTOCOL`，桌面端镜像为 `desktop/src/shared/protocol.ts`（有对拍测试，漂移即失败）。
+  - **协议号相等即放行**，版本号差多少都不管；不等则弹原来的升级框。任一侧没有该字段（老客户端 / 老服务端）**退回版本比较**，行为与之前完全一致——这也是老客户端的单向升级路径。
+  - 只在**破坏性契约变更**时 +1：原生桥方法集、启动/升级接口、登录握手。Web UI 与 WS 事件**不算**——它们由服务端现发，永远是最新的。
+  - **Android**：`VersionCompare.shouldShowMismatch(app, server, clientProtocol, serverProtocol)`；**桌面端**：`desktop/src/shared/version.ts` 的 `shouldGateClient`，`evaluateGate` 据此决定是否抬遮罩，未打包的开发壳仍豁免。
+  - 三端版本比较语义仍同源：`internal/version/compare.go`、`web/src/utils/version.ts`、`android/.../VersionCompare.java`、`desktop/src/shared/version.ts`（仅用于老版本回退与文案方向）。
+
+## 客户端产物复用（release 不再每次都编客户端）
+
+APK 与桌面端都是薄壳（Web UI 由服务端下发），一次普通发布两者都没变。`release.yml` 的 `client-guard` job（`scripts/lib/client-guard.mjs`）因此决定「编还是搬」：
+
+- 比较上一个 release tag 与本次 tag：`android/`、`desktop/` 任一有改动 → 该客户端重编；都没动 → **复用上个 Release 的产物**：下载 → 改名挂到新 Release → 同名 artifact 交给下游（Go 二进制照常 embed APK，`/api/apk` 不受影响）。
+- **协议号 +1 → 两端都重编**（号码编进壳里，旧壳按定义不兼容）。
+- **上一个 release 还不认识协议号 → 两端都重编**。否则老壳仍按版本比较，会「下载 → 仍不匹配 → 再下载」死循环。
+- **复用失败**（资产缺失 / 下载损坏）→ 回退成真编译，不让 release 静默缺件。
+- **契约文件改了但协议号没变 → release 直接失败**。契约文件清单在 `client-guard.mjs` 的 `CONTRACT_PATHS`（共享桥接接口、`/api/health` handler、桌面 preload、Android 桥）。宁可卡一次发布，也不发出一对互不兼容的客户端与服务端。
+- 桌面端 `/api/desktop/latest` 因此新增 `clientVersion`：复用发布时它是被复用那个构建的版本，安装目录按它命名。用服务端版本命名会让 `app.getVersion()` 与指针版本不一致，启动交接随即删掉指针并静默回退升级。
+
 
 ## 发布资产文件名
 

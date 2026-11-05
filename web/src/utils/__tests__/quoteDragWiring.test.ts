@@ -86,15 +86,23 @@ describe('draggable item rows', () => {
   it.each(ROWS)('%s (%s) declares draggable + dragstart + dragend', (path) => {
     const src = readWebFile(path)
 
-    // GitCommitList is conditionally draggable (`:draggable="canDragCommit(c)"`):
-    // its working-tree row has no commit to reference. Everything else is
-    // unconditionally draggable. Both shapes are accepted here; the specific
-    // GitCommitList rule is asserted behaviourally in its own test file.
-    expect(src).toMatch(/:?draggable="(true|canDragCommit\(c\))"/)
+    // Every quote row is gated on the wide layout: the drop target is the chat
+    // column, which a narrow layout never shows at the same time as the drag
+    // source. Without the gate the row still LOOKS draggable on a phone and
+    // then drops nowhere.
+    //
+    // GitCommitList additionally skips its working-tree row (no commit to
+    // reference); that per-row rule is asserted in its own test file.
+    expect(src).toMatch(/:draggable="isWideScreen(?: && canDragCommit\(c\))?"/)
     expect(src).toMatch(/@dragstart="on\w*DragStart\(/)
     // The ghost is a real DOM node kept alive until dragend; without the cleanup
     // it leaks a node into the document on every drag.
     expect(src).toMatch(/@dragend="cleanupDragGhost\(\)"/)
+
+    // The record row of a RUNNING meeting drags too, and the server has no
+    // artifacts for it yet — App must fall back to the live transcript instead
+    // of answering "quote unavailable".
+    expect(readWebFile('src/App.vue')).toMatch(/buildLiveMeetingQuote\(/)
   })
 
   it.each(ROWS)('%s (%s) starts the drag through startQuoteDrag', (path) => {
@@ -104,5 +112,69 @@ describe('draggable item rows', () => {
     // payload is either built inline or hoisted to a local first (GitCommitList
     // hoists it so it can cancel the drag when the row has no commit).
     expect(src).toMatch(/startQuoteDrag\(e, (\w+DragPayload\(|payload\))/)
+  })
+
+  it('every other quote source is gated on the wide layout too', () => {
+    for (const path of [
+      'src/components/live/MeetingList.vue',
+      'src/components/live/MeetingDetail.vue',
+      'src/components/mail/MailListItem.vue',
+    ]) {
+      expect(readWebFile(path), `${path} must not look draggable on a phone`)
+        .toMatch(/:draggable="isWideScreen/)
+    }
+  })
+
+  it('the running meeting offers both gestures: click and drag', () => {
+    // The record list only had drag, and the detail only had a button. A
+    // meeting IN PROGRESS had neither, which is when its content is most
+    // worth quoting.
+    const src = readWebFile('src/components/live/MeetingStage.vue')
+
+    expect(src, 'the stage body must be a quotable region').toMatch(/data-quote-meeting-token/)
+    expect(src, 'click opens the composer').toMatch(/@click="quoteLiveMeeting"/)
+    expect(src, 'the same control drags').toMatch(/@dragstart="onQuoteDragStart"/)
+    expect(src, 'and is gated like every other drag source').toMatch(/:draggable="isWideScreen"/)
+    expect(src).toMatch(/@dragend="cleanupDragGhost\(\)"/)
+  })
+
+  it('the drop handler resolves the payloads that carry identity only', () => {
+    // A meeting row and a mail row cannot inline their content at dragstart
+    // (it would need an await), so the drop path has to fetch it. Dropping one
+    // without this branch stages an empty card — or nothing at all.
+    const src = readWebFile('src/App.vue')
+
+    expect(src).toMatch(/if \(quote\.meetingToken\)/)
+    expect(src).toMatch(/if \(quote\.mailId\)/)
+    // A LIVE meeting arrives with its transcript already in the payload, so the
+    // drop must stage it instead of asking the server for a record that does
+    // not exist yet.
+    expect(src).toMatch(/if \(quote\.text\)/)
+  })
+
+  it('a chat message is dragged by its quote button, not the bubble', () => {
+    // `draggable` on the message body would kill text selection, and selecting
+    // text inside a message is how a snippet quote is made. The meta-bar button
+    // is the drag handle instead.
+    const src = readWebFile('src/components/chat/ChatMessageItem.vue')
+
+    expect(src).toMatch(/:draggable="quoteDragEnabled"/)
+    expect(src).toMatch(/@dragstart="onQuoteDragStart"/)
+    // Same wide-screen rule as every other quote source.
+    expect(src).toMatch(/isWideScreen\.value && !props\.readOnly/)
+  })
+
+  it('the commit and task rows also expose a quote BUTTON', () => {
+    // Drag alone is undiscoverable: nothing on the row says it can be quoted.
+    // The button opens the shared quote bar (so it can carry an annotation),
+    // and must not trigger the row's own click (select / open).
+    for (const path of [
+      'src/components/git/GitCommitList.vue',
+      'src/components/task/TaskListPage.vue',
+    ]) {
+      const src = readWebFile(path)
+      expect(src, `${path} must offer a quote button`).toMatch(/@click\.stop="quote\w+\(/)
+      expect(src, `${path} must open the shared composer`).toMatch(/openComposer\(/)
+    }
   })
 })

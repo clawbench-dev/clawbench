@@ -1,9 +1,15 @@
 <template>
   <div class="meeting-resources">
-    <div v-if="loading" class="res-center">
-      <LoadingIndicator size="sm" inline />
-      {{ t('common.loading') }}
-    </div>
+    <!-- First load: the tab is a list of file rows, so the placeholder draws
+         those rows (glyph + name + meta) instead of a lone ring. -->
+    <PanelSkeleton
+      v-if="loading"
+      class="res-skeleton"
+      variant="list"
+      :rows="6"
+      :meta="false"
+      :label="t('common.loading')"
+    />
 
     <div v-else-if="error" class="res-center res-center--error">
       <span>{{ t('meeting.resources.loadFailed') }}</span>
@@ -77,7 +83,7 @@
           class="res-row"
           role="button"
           tabindex="0"
-          draggable="true"
+          :draggable="isWideScreen"
           :title="item.displayPath"
           @click="open(item)"
           @keydown.enter.prevent="open(item)"
@@ -171,7 +177,7 @@ import {
   Paperclip,
 } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
-import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import MeetingEmpty from './MeetingEmpty.vue'
 import { useToast } from '@/composables/useToast'
@@ -184,6 +190,7 @@ import { formatFileSize } from '@/utils/fileType'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import { isThumbableExt } from '@/utils/fileManager'
 import { mediaVersionFor } from '@/composables/useMediaWatch'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 
 const props = defineProps<{
   groups: MeetingResourceGroup[]
@@ -198,6 +205,11 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ reload: [] }>()
+
+// Attaching a resource by dragging it onto the chat is a wide-screen gesture —
+// on a narrow layout the chat column is never on screen next to this list.
+// (The per-row "add to conversation" button is the touch fallback.)
+const { isWideScreen } = useWideScreenLayout()
 
 const { t, locale } = useI18n()
 const toast = useToast()
@@ -258,7 +270,7 @@ function attach(item: MeetingResourceItem): void {
 }
 
 function onDragStart(event: DragEvent, item: MeetingResourceItem): void {
-  startAttachDrag(event, item.path, item.name, item.isDir)
+  startAttachDrag(event, item.path, { name: item.name, isDir: item.isDir })
 }
 
 async function copy(text: string): Promise<void> {
@@ -314,6 +326,11 @@ function metaFor(item: MeetingResourceItem): string {
   color: var(--text-muted);
 }
 .res-center--error { color: var(--color-red); }
+
+/* `.res-row` insets its own text by 6dp and the tab body adds no padding, so
+   the placeholder repeats that inset — otherwise the list jumps sideways the
+   moment the rows arrive. */
+.res-skeleton { --panel-skeleton-inset: calc(6 * var(--dp)); }
 
 .res-head {
   display: flex;

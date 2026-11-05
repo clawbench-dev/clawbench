@@ -43,6 +43,17 @@ describe('chat message quote — shared builder', () => {
         .not.toContain("sourceKind: 'message'")
     }
   })
+
+  // The THIRD entry point: dragging the message's quote button into the chat.
+  // Same card, so it has to use the same builder — otherwise a dragged quote
+  // would lose the session/message locators the click path carries.
+  it('the drag handle builds its payload with buildMessageQuote', () => {
+    const src = readWebFile('src/components/chat/ChatMessageItem.vue')
+
+    expect(src).toContain('buildMessageQuote(')
+    expect(src).toMatch(/import[^\n]*buildMessageQuote[^\n]*from '@\/utils\/quoteItem/)
+    expect(src).not.toContain("sourceKind: 'message'")
+  })
 })
 
 /**

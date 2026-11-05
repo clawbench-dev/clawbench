@@ -1155,7 +1155,8 @@ func setupUsageSchema(t *testing.T, db *sql.DB) {
 			id TEXT PRIMARY KEY, project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT DEFAULT '', session_type TEXT NOT NULL DEFAULT 'chat',
-			group_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0
+			group_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0,
+			removed INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL DEFAULT 0,

@@ -106,7 +106,7 @@ const agentSessionsUnion = `
 	FROM chat_sessions m
 	LEFT JOIN chat_sessions g ON g.id = m.group_id
 	LEFT JOIN projects p ON p.id = g.project_id
-	WHERE m.session_type = ? AND m.agent_id = ? AND m.archived = 0
+	WHERE m.session_type = ? AND m.agent_id = ? AND m.archived = 0 AND m.removed = 0
 `
 
 // ListAgentSessions returns one page of the conversations that use agentID,

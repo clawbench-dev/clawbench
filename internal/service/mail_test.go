@@ -71,6 +71,8 @@ type fakeMailClient struct {
 	appended []string
 	closed   bool
 	failOn   string
+	// appendGate, when set, holds Append until the test closes it.
+	appendGate chan struct{}
 	// failStatus makes Status fail for specific folders, simulating one broken
 	// mailbox among healthy ones.
 	failStatus map[string]bool
@@ -213,6 +215,11 @@ func (f *fakeMailClient) Delete(_ context.Context, folder string, uid uint32) er
 }
 
 func (f *fakeMailClient) Append(_ context.Context, folder string, raw []byte, seen bool) error {
+	// appendGate lets a test hold the Sent copy in flight and observe that the
+	// send itself already returned.
+	if f.appendGate != nil {
+		<-f.appendGate
+	}
 	f.appended = append(f.appended, fmt.Sprintf("%s/%d/%v", folder, len(raw), seen))
 	return nil
 }
@@ -659,10 +666,16 @@ func TestSendMailAppendsToSent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
+	// The Sent copy is written in the background so a server that never
+	// answers APPEND cannot delay the send.
+	waitMailAppends()
 	if len(f.appended) != 1 || !strings.HasPrefix(f.appended[0], "Sent/") {
 		t.Fatalf("expected append to Sent, got %+v", f.appended)
 	}
 }
+
+// waitMailAppends blocks until every background Sent-folder copy has finished.
+func waitMailAppends() { mailAppendWG.Wait() }
 
 type fakeSender struct{}
 

@@ -29,24 +29,18 @@
           {{ t('chat.pending.addAttachment') }}
         </button>
 
-        <!-- Quotes are rendered here rather than through AttachmentTags: that
-             component deliberately drops quote entries (they carry no path),
-             and a quote is still an attachment the user may want to remove. -->
-        <span
+        <!-- Quotes are rendered through the SAME card as the input and a sent
+             bubble: this sheet is where the user edits the message, so the
+             quote must read the same as it will once sent (type icon, line
+             range, annotation marker). `removable` is the one thing this sheet
+             adds — removing an attachment is the point of the editor. -->
+        <QuoteCard
           v-for="q in quoteEntries"
           :key="fileEntryKey(q)"
-          class="qme-chip qme-chip-quote"
-          :title="q.text || q.path"
-        >
-          <span class="qme-chip-label">{{ q.path || t('chat.pending.fileReference') }}</span>
-          <button
-            type="button"
-            class="qme-chip-remove"
-            data-action="queue-edit-remove-quote"
-            :title="t('common.remove')"
-            @click="removeEntry(q)"
-          >×</button>
-        </span>
+          :quote="fromFileEntry(q)"
+          removable
+          @remove="removeEntry(q)"
+        />
 
         <!-- `clickable: false` — this sheet has no viewer to open a file into,
              so the cards keep their "×" (removal is the whole point here) but
@@ -97,10 +91,12 @@ import { useI18n } from 'vue-i18n'
 import { Paperclip } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
+import QuoteCard from '@/components/chat/QuoteCard.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { fileEntryKey, isQuoteEntry, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { fromFileEntry } from '@/utils/quoteItem'
 import type { QueuedMessage } from '@/composables/useMessageQueue'
 
 const props = defineProps<{
@@ -257,7 +253,7 @@ function save() {
   border-color: var(--accent-color);
 }
 
-/* One row: the add control, quote chips, then the shared attachment cards.
+/* One row: the add control, the quote cards, then the shared attachment cards.
    The cards keep their own horizontal scroll, so a long list never pushes the
    add control out of reach — it stays pinned at the left. */
 .qme-chips {
@@ -275,38 +271,6 @@ function save() {
   min-width: 0;
   padding: 0;
   gap: var(--space-2);
-}
-
-.qme-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(4 * var(--dp));
-  max-width: 60%;
-  padding: 1px var(--space-2) 1px var(--space-3);
-  border-radius: var(--radius-full);
-  background: rgba(127, 127, 127, 0.14);
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.qme-chip-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qme-chip-remove {
-  background: none;
-  border: none;
-  padding: 0 var(--space-1);
-  cursor: pointer;
-  color: inherit;
-  font-size: var(--font-size-md);
-  line-height: 1;
-}
-
-.qme-chip-remove:hover {
-  color: var(--text-primary);
 }
 
 /* Same height and corner radius as the attachment cards it sits next to, so the

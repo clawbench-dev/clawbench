@@ -301,8 +301,33 @@ func TestClassifyIncoming_NewCommands(t *testing.T) {
 		{
 			// Unknown slash commands fall through to the session, so a user can
 			// still type them to the AI.
-			name: "unknown slash command goes to session", text: "/help me", sticky: "s1",
+			name: "unknown slash command goes to session", text: "/frobnicate me", sticky: "s1",
+			wantKind: RouteToSession, wantMsg: "/frobnicate me",
+		},
+		{
+			name: "help bare", text: "/help", sticky: "s1",
+			wantKind: RouteHelp,
+		},
+		{
+			// /help must work before any target is picked, so no sticky session
+			// is required (and none may turn it into RouteNoTarget).
+			name: "help without sticky session", text: "/help", sticky: "",
+			wantKind: RouteHelp,
+		},
+		{
+			name: "help with padding", text: "  /help  ", sticky: "",
+			wantKind: RouteHelp,
+		},
+		{
+			// Same rule as /ls: a trailing argument means the user meant
+			// something else, so it stays ordinary text for the AI.
+			name: "help with argument is plain text", text: "/help me", sticky: "s1",
 			wantKind: RouteToSession, wantMsg: "/help me",
+		},
+		{
+			// "@id" beats /help exactly as it beats the other commands.
+			name: "explicit target beats help", text: "@a1b2c3d4 /help", sticky: "",
+			wantKind: RouteToSession, wantShort: "a1b2c3d4", wantMsg: "/help",
 		},
 	}
 
@@ -402,6 +427,7 @@ func TestRouteKind_IsCommandAndWord(t *testing.T) {
 		RouteShowLastReply: SessionShowCommand,
 		RouteStopSession:   SessionStopCommand,
 		RouteNewSession:    SessionNewCommand,
+		RouteHelp:          SessionHelpCommand,
 	}
 	for kind, word := range commands {
 		if !kind.IsCommand() {

@@ -257,6 +257,60 @@ let audioCtx: AudioContext | null = null
 let mixer: LiveMixer | null = null
 let displayStream: MediaStream | null = null
 let micStream: MediaStream | null = null
+
+/**
+ * Tracks this client stopped on purpose.
+ *
+ * `stop()` ends a track, which fires the same `ended` event as a headset that
+ * was unplugged. The recovery handler must not treat our own device switch (or
+ * the end of the meeting) as a failure and grab the microphone back.
+ */
+const stoppedMicTracks = new WeakSet<MediaStreamTrack>()
+/**
+ * A recovery attempt is in flight, so a burst of events cannot stack up.
+ *
+ * A ref, not a plain flag: the transcript status bar distinguishes "the
+ * microphone is gone" from "we are trying to get it back", and that difference
+ * is what stops the user reaching for the device list while it recovers.
+ */
+const micRecovering = ref(false)
+let micRecoverTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Delays between microphone recovery attempts.
+ *
+ * The first is immediate: a device that came back (a Bluetooth headset that
+ * reconnected) is available at once, and waiting would only widen the gap in
+ * the transcript. The rest ride out a device that takes a moment to enumerate.
+ * After the last one the panel offers a manual retry — silently giving up is
+ * the failure mode this whole change exists to remove.
+ */
+const MIC_RECOVERY_DELAYS_MS = [0, 1_000, 3_000]
+let micRecoveryDelays = MIC_RECOVERY_DELAYS_MS
+/** The audio graph has been running at least once (so a suspension is news). */
+let audioRunning = false
+
+/**
+ * Publisher frames written while the socket is down.
+ *
+ * A reconnect takes a second or two and the user keeps typing, so a chat line
+ * sent during the gap must not vanish. ICE candidates are the exception: a
+ * candidate gathered for a connection that has since moved is worse than none,
+ * and every peer keeps gathering.
+ */
+let publisherOutbox: string[] = []
+const PUBLISHER_OUTBOX_MAX = 100
+/**
+ * Reconnect attempt schedule, in ms.
+ *
+ * Three attempts, and each dial is bounded (PUBLISHER_CONNECT_TIMEOUT_MS), so
+ * the whole loop finishes inside the server's 15s grace window even when the
+ * network black-holes the handshake instead of refusing it.
+ */
+const PUBLISHER_RECONNECT_DELAYS_MS = [0, 1_000, 2_000]
+/** How long one reconnect dial may hang before it counts as failed. */
+const PUBLISHER_CONNECT_TIMEOUT_MS = 3_000
+let publisherReconnectDelays = PUBLISHER_RECONNECT_DELAYS_MS
+let reconnecting = false
 /** The Android native capture, when the share runs through MediaProjection. */
 let androidCapture: AndroidCaptureHandle | null = null
 /** The mixed track sent to viewers (video + mixed audio). */
@@ -473,9 +527,25 @@ function resetSession(): void {
     void audioCtx.close().catch(() => undefined)
     audioCtx = null
   }
-  for (const s of [displayStream, micStream, cameraStream]) {
+  audioRunning = false
+  // A microphone we stop ourselves must not be mistaken for a device that
+  // disappeared — see `stoppedMicTracks`.
+  for (const s of [displayStream, cameraStream]) {
     s?.getTracks().forEach((t) => t.stop())
   }
+  micStream?.getAudioTracks().forEach((t) => {
+    stoppedMicTracks.add(t)
+    t.stop()
+  })
+  if (micRecoverTimer !== null) {
+    clearTimeout(micRecoverTimer)
+    micRecoverTimer = null
+  }
+  micRecovering.value = false
+  // A queued frame belongs to the meeting that is ending; flushing it into the
+  // next one would send stale chat and stale switches to a fresh room.
+  publisherOutbox = []
+  reconnecting = false
   // Ends the native projection as well; stopping the tracks alone would leave
   // the foreground service capturing (and the system "screen is shared" badge
   // showing) with nobody reading the frames.
@@ -518,11 +588,34 @@ function resetSession(): void {
 }
 
 function send(payload: Record<string, unknown>): void {
-  if (!ws || ws.readyState !== 1) return
+  const frame = JSON.stringify(payload)
+  if (!ws || ws.readyState !== 1) {
+    // While the publisher is reconnecting, keep what the user asked for. A
+    // chat line typed during the gap is still a message they sent.
+    if (state.value === 'publishing' && payload.type !== 'ice' && publisherOutbox.length < PUBLISHER_OUTBOX_MAX) {
+      publisherOutbox.push(frame)
+    }
+    return
+  }
   try {
-    ws.send(JSON.stringify(payload))
+    ws.send(frame)
   } catch (e) {
     appLog.w(TAG, 'send failed', e)
+  }
+}
+
+/** Replays what was written while the socket was down. */
+function flushPublisherOutbox(): void {
+  const frames = publisherOutbox
+  publisherOutbox = []
+  if (!ws || ws.readyState !== 1) return
+  for (const frame of frames) {
+    try {
+      ws.send(frame)
+    } catch (e) {
+      appLog.w(TAG, 'outbox flush failed', e)
+      return
+    }
   }
 }
 
@@ -1334,6 +1427,7 @@ export function useLiveShare() {
         try {
           micStream = await acquireMic({ audio: micConstraints(opts.micDeviceId ?? '') })
           activeMicDevice.value = opts.micDeviceId ?? ''
+          watchMicTrack(micStream)
         } catch (e) {
           // A denied microphone must not abort the share: the audience still
           // gets the screen and (possibly) system audio. The notes channel is
@@ -1411,6 +1505,7 @@ export function useLiveShare() {
       //    with only a picture and chat is a normal meeting, and a context that
       //    is allowed to run later starts producing sound at that point.
       audioCtx = new AudioContext({ sampleRate: 48000 })
+      watchAudioContext(audioCtx)
       void audioCtx.resume().catch((e: unknown) => {
         appLog.w(TAG, `audio context resume failed, continuing without audio: ${String(e)}`)
       })
@@ -1538,15 +1633,138 @@ export function useLiveShare() {
       next.getTracks().forEach((track) => track.stop())
       return false
     }
-    micStream?.getAudioTracks().forEach((track) => track.stop())
+    applyMicStream(next, deviceId)
+    return true
+  }
+
+  /** Swaps the live microphone, keeping every consumer in sync. */
+  function applyMicStream(next: MediaStream, deviceId: string): void {
+    // Marked BEFORE stopping: `stop()` fires `ended`, which is also how an
+    // unplugged device announces itself.
+    micStream?.getAudioTracks().forEach((track) => {
+      stoppedMicTracks.add(track)
+      track.stop()
+    })
     micStream = next
     activeMicDevice.value = deviceId
     next.getAudioTracks().forEach((track) => {
       track.enabled = micEnabled.value
     })
+    watchMicTrack(next)
     mixer?.setMicStream(next)
     useLiveNotes().setMicStream(next)
-    return true
+  }
+
+  /**
+   * Keep the audio graph running, and say so when it is not.
+   *
+   * A suspended context produces no samples at all: the recorder still runs,
+   * still cuts segments, and uploads nothing — indistinguishable from a quiet
+   * room. The system suspends it for real reasons (audio device change, the
+   * machine sleeping, an Android WebView going to the background), so the fix
+   * is to resume; the report matters for the cases where resuming fails, which
+   * is exactly when the transcript silently stops.
+   *
+   * `audioRunning` guards the report: a context that has never run (no output
+   * device) is not "suspended by the system", it is simply unavailable, and
+   * calling that an interruption on every meeting start would be noise.
+   */
+  function watchAudioContext(ctx: AudioContext): void {
+    audioRunning = ctx.state === 'running'
+    // Not every AudioContext implementation is an EventTarget (embedded
+    // WebViews and the fakes used in tests); a missing listener must never cost
+    // the meeting its audio graph.
+    if (typeof ctx.addEventListener !== 'function') return
+    ctx.addEventListener('statechange', () => {
+      if (audioCtx !== ctx) return
+      if (ctx.state === 'running') {
+        audioRunning = true
+        useLiveNotes().setAudioSuspended(false)
+        return
+      }
+      if (ctx.state === 'suspended' && audioRunning) {
+        useLiveNotes().setAudioSuspended(true)
+        void ctx.resume().catch((e: unknown) => {
+          appLog.w(TAG, `audio context resume after suspend failed: ${String(e)}`)
+        })
+      }
+    })
+  }
+
+  /**
+   * Watch the live microphone for the moment the device goes away.
+   *
+   * A headset that disconnects, a USB interface that is unplugged or a system
+   * input change ends the track. Nothing throws and nothing goes silent in the
+   * audio graph — it keeps producing perfect silence, so the recorder simply
+   * stops producing transcript lines and the panel keeps saying "listening".
+   * This listener is what turns that into a recoverable event.
+   */
+  function watchMicTrack(stream: MediaStream | null): void {
+    stream?.getAudioTracks().forEach((track) => {
+      track.addEventListener('ended', () => {
+        if (stoppedMicTracks.has(track)) return
+        onMicTrackLost()
+      })
+    })
+  }
+
+  function onMicTrackLost(): void {
+    if (state.value !== 'publishing' || micRecovering.value) return
+    appLog.w(TAG, 'microphone track ended unexpectedly, re-acquiring')
+    void recoverMic(0)
+  }
+
+  /**
+   * Re-open the microphone after the device disappeared.
+   *
+   * The first attempt reuses the same device (a Bluetooth headset usually comes
+   * back); later ones fall back to the system default, because a device that is
+   * gone stays gone. Only after every attempt fails does the panel show the
+   * manual retry — the transcript must never just stop with no explanation.
+   */
+  async function recoverMic(attempt: number): Promise<void> {
+    if (micRecovering.value || state.value !== 'publishing') return
+    micRecovering.value = true
+    const gen = sessionGen
+    const deviceId = attempt === 0 ? activeMicDevice.value : ''
+    try {
+      const next = await acquireMic({ audio: micConstraints(deviceId) })
+      if (gen !== sessionGen || state.value !== 'publishing') {
+        next.getTracks().forEach((track) => track.stop())
+        return
+      }
+      applyMicStream(next, deviceId)
+      error.value = ''
+      appLog.i(TAG, 'microphone recovered')
+    } catch (e) {
+      appLog.w(TAG, `microphone recovery ${attempt + 1} failed: ${describeMicError(e)}`)
+      if (attempt + 1 < micRecoveryDelays.length) {
+        micRecoverTimer = setTimeout(() => {
+          micRecoverTimer = null
+          void recoverMic(attempt + 1)
+        }, micRecoveryDelays[attempt + 1])
+      } else {
+        fail(i18n.global.t('liveShare.micLost'))
+      }
+    } finally {
+      micRecovering.value = false
+    }
+  }
+
+  /**
+   * Manual retry from the transcript status bar.
+   *
+   * Same path as the automatic one, restarted from the top: by the time the
+   * user clicks, the device may well be back.
+   */
+  function retryMicrophone(): void {
+    if (micRecoverTimer !== null) {
+      clearTimeout(micRecoverTimer)
+      micRecoverTimer = null
+    }
+    micRecovering.value = false
+    void recoverMic(0)
   }
 
   /**
@@ -1651,13 +1869,45 @@ export function useLiveShare() {
   }
 
   async function openSocket(): Promise<void> {
+    await connectPublisherSocket()
+  }
+
+  /**
+   * Opens the publisher socket and greets the room.
+   *
+   * Used both for the first connection and for every reconnect: the greeting
+   * carries state the server only learns from these frames, so a socket that
+   * came back without it would be attached but mute (no title, no nickname, no
+   * 听记 flag).
+   */
+  async function connectPublisherSocket(timeoutMs = 0): Promise<void> {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${proto}://${window.location.host}/api/live-share/publish/ws?token=${encodeURIComponent(token.value)}`
     const socket = new WebSocket(url)
     ws = socket
 
     await new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const fail = (err: Error) => {
+        if (timer !== null) clearTimeout(timer)
+        reject(err)
+      }
+      // A dial that never settles (a black-holed route) would leave the panel
+      // saying "reconnecting" forever, which is the silent-stuck failure this
+      // whole path exists to remove. The first connection keeps waiting: the
+      // user is watching that one and a slow handshake is not a failure.
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          try {
+            socket.close()
+          } catch {
+            /* already closed */
+          }
+          fail(new Error('publisher socket timeout'))
+        }, timeoutMs)
+      }
       socket.onopen = () => {
+        if (timer !== null) clearTimeout(timer)
         socket.send(JSON.stringify({ type: 'publish', title: title.value, name: hostName.value }))
         // The capability may already have been decided before this socket
         // existed (the panel probes the injector at mount, and a capture can
@@ -1679,16 +1929,59 @@ export function useLiveShare() {
         ownsRoom = true
         resolve()
       }
-      socket.onerror = () => reject(new Error('publisher socket failed'))
+      socket.onerror = () => fail(new Error('publisher socket failed'))
     })
 
     socket.onmessage = (ev) => void onMessage(ev.data)
     socket.onclose = () => {
-      if (state.value === 'publishing') {
-        // The server went away: the share is over.
-        appLog.w(TAG, 'publisher socket closed')
-        void stop()
+      // A socket we already replaced must not end the meeting it no longer owns.
+      if (ws !== socket) return
+      if (state.value !== 'publishing') return
+      appLog.w(TAG, 'publisher socket closed')
+      void reconnectPublisher()
+    }
+  }
+
+  /**
+   * Ride out a dropped publisher socket instead of ending the meeting.
+   *
+   * The server keeps the room for a few seconds after the socket goes away
+   * precisely so this can work: the media is peer-to-peer and never touched the
+   * server, so the call is still running — only the control channel is gone.
+   * Ending the meeting here (what this used to do) threw away the room, the
+   * recording and everyone's connection over a Wi-Fi blip.
+   *
+   * When the server really is gone, every attempt fails and the meeting ends as
+   * before — with the panel saying why for the few seconds it takes.
+   */
+  async function reconnectPublisher(): Promise<void> {
+    if (reconnecting) return
+    reconnecting = true
+    const gen = sessionGen
+    useLiveNotes().setConnectionState('reconnecting')
+    try {
+      for (const delay of publisherReconnectDelays) {
+        if (delay > 0) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, delay)
+          })
+        }
+        if (gen !== sessionGen || state.value !== 'publishing') return
+        try {
+          await connectPublisherSocket(PUBLISHER_CONNECT_TIMEOUT_MS)
+          useLiveNotes().setConnectionState('online')
+          flushPublisherOutbox()
+          appLog.i(TAG, 'publisher socket reconnected')
+          return
+        } catch (e) {
+          appLog.w(TAG, 'publisher reconnect attempt failed', e)
+        }
       }
+      useLiveNotes().setConnectionState('offline')
+      fail(i18n.global.t('liveShare.publisherLost'))
+      await stop()
+    } finally {
+      reconnecting = false
     }
   }
 
@@ -2379,6 +2672,8 @@ export function useLiveShare() {
     setMicEnabled,
     switchMicDevice,
     setMicChoice,
+    retryMicrophone,
+    micRecovering,
     activeMicDevice,
     setCameraDevice,
     startScreen,
@@ -2391,6 +2686,21 @@ export function useLiveShare() {
   }
 }
 
+/**
+ * Test seam: compress the reconnect schedule.
+ *
+ * The real one spans seven seconds on purpose (it has to fit the server's
+ * grace window), which no unit test should sit through.
+ */
+export function _setPublisherReconnectDelaysForTest(delays: number[]): void {
+  publisherReconnectDelays = delays.length > 0 ? delays : PUBLISHER_RECONNECT_DELAYS_MS
+}
+
+/** Test seam: compress the microphone recovery schedule (see above). */
+export function _setMicRecoveryDelaysForTest(delays: number[]): void {
+  micRecoveryDelays = delays.length > 0 ? delays : MIC_RECOVERY_DELAYS_MS
+}
+
 /** Test seam: the strokes the key-frame capture would composite. */
 export function _inkMirrorForTest(): InkStroke[] {
   return inkMirror.strokes.value
@@ -2399,6 +2709,8 @@ export function _inkMirrorForTest(): InkStroke[] {
 /** Test seam: drop all module state without touching the network. */
 export function _resetLiveShareForTest(): void {
   resetSession()
+  publisherReconnectDelays = PUBLISHER_RECONNECT_DELAYS_MS
+  micRecoveryDelays = MIC_RECOVERY_DELAYS_MS
   _resetMeetingShotsForTest()
   controlHandlers.clear()
   useLiveNotes().reset()

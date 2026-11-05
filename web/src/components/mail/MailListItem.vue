@@ -3,6 +3,9 @@
     class="mail-row"
     :class="{ 'is-unread': !msg.seen, 'is-active': active }"
     :aria-current="active ? 'true' : undefined"
+    :draggable="isWideScreen"
+    @dragstart="onDragStart"
+    @dragend="cleanupDragGhost()"
     @click="emit('open', msg.id)"
   >
     <span class="mail-row__main">
@@ -47,11 +50,28 @@ import {
   mailSenderLabel,
   type MailMessage,
 } from '@/utils/mailTypes'
+import { mailQuoteLabel } from '@/utils/mailQuote'
+import { mailDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 
 const props = defineProps<{ msg: MailMessage; active?: boolean }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
 const { t } = useI18n()
+const { isWideScreen } = useWideScreenLayout()
+
+/**
+ * Drag a row into the chat → the same quote the reader's button produces.
+ *
+ * Identity only (a dragstart cannot await): the drop handler fetches the body.
+ * Wide-screen only, like every other quote drag source — the drop target is the
+ * chat column, which a narrow layout never shows next to this list.
+ */
+function onDragStart(e: DragEvent): void {
+  const payload = mailDragPayload({ id: props.msg.id, label: mailQuoteLabel(props.msg, t('mail.list.noSubject')) })
+  if (!startQuoteDrag(e, payload)) e.preventDefault()
+}
 
 const dayLabel = computed(() => mailDayLabel(props.msg.sentAt))
 const clockTime = computed(() => mailClockTime(props.msg.sentAt))

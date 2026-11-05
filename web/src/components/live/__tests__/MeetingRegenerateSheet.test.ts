@@ -57,7 +57,6 @@ function mountSheet(plan: RegenPlan | null = minutesPlan, over: Record<string, u
           props: ['open', 'title'],
           template: '<div class="bs"><div class="bs-title">{{ title }}</div><slot /><slot name="footer" /></div>',
         },
-        LoadingIndicator: true,
       },
     },
   })
@@ -108,8 +107,13 @@ describe('MeetingRegenerateSheet', () => {
     expect(w.find('[data-action="regen-start"]').attributes('disabled')).toBeDefined()
   })
 
-  it('shows a preparing state before the plan arrives', () => {
+  it('shows a preparing placeholder before the plan arrives', () => {
     const w = mountSheet(null, { loading: true })
+    // The plan is a short stack of lines, so the wait previews that shape
+    // instead of a lone ring that says nothing about what is coming.
+    expect(w.find('.panel-skeleton').exists()).toBe(true)
+    // The preparing wording is still announced: the skeleton carries it for
+    // assistive tech (its own blocks are decorative).
     expect(w.text()).toContain(enMessages.meeting.detail.regen.preparing)
     expect(w.find('[data-action="regen-start"]').attributes('disabled')).toBeDefined()
   })

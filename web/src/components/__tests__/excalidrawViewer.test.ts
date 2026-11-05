@@ -274,3 +274,93 @@ describe('ExcalidrawViewer', () => {
     expect(useFileEditor().isEditing()).toBe(false)
   })
 })
+
+/**
+ * Read-only preview — the public share page mounts this same viewer, but it is
+ * anonymous and has no write endpoint. Everything that makes the app's mount an
+ * editor (dirty tracking, exit confirmation, save) must be switched off.
+ */
+describe('ExcalidrawViewer — read-only preview', () => {
+  let wrapper: ReturnType<typeof mount> | null = null
+
+  beforeEach(() => {
+    _resetForTesting()
+    mockSaveFile.mockClear()
+    mockDialogChoice = true
+    store.state.currentFile = file as never
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    contentWindowMock = null
+    vi.restoreAllMocks()
+  })
+
+  it('tells the iframe to open in view mode', async () => {
+    const post = mockContentWindow()
+    wrapper = mount(ExcalidrawViewer, { props: { file, readonly: true } })
+    post.mockClear()
+
+    sendFromIframe('ready')
+    await nextTick()
+
+    const parsed = JSON.parse(post.mock.calls[0][0])
+    expect(parsed.event).toBe('load')
+    expect(parsed.data.readonly).toBe(true)
+    // The editable mount must keep sending the explicit false, not omit the key.
+    expect(parsed.data.content).toBe(file.content)
+  })
+
+  it('sends readonly:false for the in-app editor', async () => {
+    const post = mockContentWindow()
+    wrapper = mount(ExcalidrawViewer, { props: { file } })
+    post.mockClear()
+
+    sendFromIframe('ready')
+    await nextTick()
+
+    const parsed = JSON.parse(post.mock.calls[0][0])
+    expect(parsed.data.readonly).toBe(false)
+  })
+
+  it('does not mark itself as editing or dirty', async () => {
+    wrapper = mount(ExcalidrawViewer, { props: { file, readonly: true } })
+    const fileEditor = useFileEditor()
+
+    expect(fileEditor.isEditing()).toBe(false)
+    sendFromIframe('changed')
+    await nextTick()
+    expect(fileEditor.isEditorDirty()).toBe(false)
+  })
+
+  it('ignores a save payload instead of writing the file', async () => {
+    wrapper = mount(ExcalidrawViewer, { props: { file, readonly: true } })
+    sendFromIframe('save', { content: file.content })
+    await nextTick()
+
+    expect(mockSaveFile).not.toHaveBeenCalled()
+  })
+
+  it('never asks for a save on exit', async () => {
+    mockContentWindow()
+    wrapper = mount(ExcalidrawViewer, { props: { file, readonly: true } })
+    sendFromIframe('ready')
+    await nextTick()
+
+    await expect(wrapper.vm.requestExit()).resolves.toBe(true)
+    expect(mockSaveFile).not.toHaveBeenCalled()
+  })
+
+  it('leaves another editor’s editing flag alone on unmount', () => {
+    const fileEditor = useFileEditor()
+    fileEditor.setEditing(true)
+
+    wrapper = mount(ExcalidrawViewer, { props: { file, readonly: true } })
+    wrapper.unmount()
+    wrapper = null
+
+    // The read-only preview never owned the flag, so it must not clear it.
+    expect(fileEditor.isEditing()).toBe(true)
+  })
+})

@@ -824,3 +824,62 @@ func TestDeleteAgentWithTakeover_CorruptArchivedFlagFailsLoudly(t *testing.T) {
 
 	assertTakeoverRolledBack(t, db, "s-corrupt-flag")
 }
+
+// Removed group members are historical attribution rows, not live memberships:
+// deleting their agent must not rebind them (that would swap the backend/avatar
+// their past speech renders with), must not count them in the confirm dialog's
+// number, and must not write a "changed hands" notice for a group they already
+// left.
+func TestDeleteAgentWithTakeover_LeavesRemovedMembersAlone(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	// g1: one ACTIVE member (m1) plus one already-removed member (m2), both the
+	// deleted agent. g2: only a removed member, so no live conversation remains.
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
+		VALUES ('g1', 1, 'claude', 'group', 'claude', 'group', '{"group_mode":"host","host_member_id":"m1"}')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id)
+		VALUES ('m1', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g1')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, removed)
+		VALUES ('m2', 1, 'claude', '', 'Gone', 'claude', 'group_member', 'g1', 1)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
+		VALUES ('g2', 1, 'claude', 'group2', 'claude', 'group', '{"group_mode":"free"}')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, removed)
+		VALUES ('m3', 1, 'claude', '', 'Gone2', 'claude', 'group_member', 'g2', 1)`)
+	require.NoError(t, err)
+
+	res, err := service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Sessions, "removed memberships must not be counted")
+
+	// The removed rows keep their original agent/backend/name: their speech is
+	// rendered from these values.
+	for _, id := range []string{"m2", "m3"} {
+		var agentID, backend, name, takeoverFrom string
+		require.NoError(t, db.QueryRow(
+			`SELECT agent_id, backend, agent_name, agent_takeover_from FROM chat_sessions WHERE id = ?`, id,
+		).Scan(&agentID, &backend, &name, &takeoverFrom))
+		assert.Equal(t, "claude", agentID, id)
+		assert.Equal(t, "claude", backend, id)
+		assert.Empty(t, takeoverFrom, id)
+		assert.NotEmpty(t, name, id)
+	}
+
+	// g2 had no live membership left, so its timeline gets no notice.
+	var g2Notices int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'g2'").Scan(&g2Notices))
+	assert.Zero(t, g2Notices)
+
+	// g1's live member still produces exactly one notice.
+	var g1Notices int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'g1'").Scan(&g1Notices))
+	assert.Equal(t, 1, g1Notices)
+}

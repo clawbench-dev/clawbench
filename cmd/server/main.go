@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -83,6 +84,11 @@ const (
 	// against it stay in sync.
 	schemeHTTP  = "http"
 	schemeHTTPS = "https"
+
+	// instanceLockWait is how long a starting process waits for the outgoing
+	// one to release the data directory. It only has to cover a restart's
+	// shutdown drain (build.sh starts us as soon as the PORT is free).
+	instanceLockWait = 10 * time.Second
 )
 
 // forgeNotifierAdapter bridges the service package's ForgeNotifier interface to
@@ -1098,11 +1104,38 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 	}
 
+	// One server per data directory. Two instances sharing one do not merely
+	// fight over the port — they corrupt each other: startup reads a
+	// streaming=1 row as proof that the previous process died mid-turn, so the
+	// second instance rewrites the first one's in-flight reply into
+	// "cancelled + server restarted" and starts a duplicate turn. The user then
+	// sees a finished bubble while the still-running turn keeps the stop button
+	// and the session-list animation alive. Refuse to start instead.
+	//
+	// The wait covers a RESTART: build.sh launches the new process as soon as
+	// the port is free, which happens before the outgoing process finishes
+	// draining, so the lock is briefly still held. A genuine second instance
+	// still fails, just after the window.
+	instanceLock, lockErr := platform.AcquireInstanceLock(model.DataDir, instanceLockWait)
+	if lockErr != nil {
+		if errors.Is(lockErr, platform.ErrDataDirInUse) {
+			slog.Error("refusing to start: another ClawBench instance is using this data directory",
+				slog.String("data_dir", model.DataDir),
+				slog.String("hint", "stop the running instance, or start this one with a different --data-dir"))
+		} else {
+			slog.Error("refusing to start: cannot lock the data directory",
+				slog.String("data_dir", model.DataDir),
+				slog.String("err", lockErr.Error()))
+		}
+		os.Exit(1) //nolint:gocritic // nothing is open yet: no defer would run meaningfully
+	}
+	defer instanceLock.Release()
+
 	// Initialize SQLite database (runFromServer=true: clean up orphaned streaming messages)
 	if err := service.InitDB(true); err != nil {
 		slog.Error("failed to initialize database", slog.String("err", err.Error()))
 		store.Close()
-		os.Exit(1) //nolint:gocritic // exitAfterDefer: CloseDB called explicitly above; defer is for normal path
+		os.Exit(1)
 	}
 	defer store.Close()
 

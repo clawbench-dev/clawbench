@@ -131,6 +131,13 @@ paths:
                     type: string
                   version:
                     type: string
+                  protocol:
+                    type: integer
+                    description: |
+                      客户端兼容协议号。Android 端用它判断是否需要升级，
+                      而不是比较版本字符串——版本号每次发布都变，协议号只在
+                      壳与服务的契约发生破坏性变化时才 +1。老客户端不读该字段
+                      时仍按版本比较，行为不变。
 
   /api/me:
     get:
@@ -7918,6 +7925,13 @@ paths:
         载荷**只经 npm 分发**（不随 GitHub Release 发布——在 Release 资产里
         放一个 3MB 的 zip 会让人误以为它可直接安装）。因此每个平台的候选
         列表只有 npm tarball 一项。
+
+        `protocol` 是客户端兼容协议号：桌面端用它判断是否需要升级，而不是
+        比较版本字符串。`clientVersion` 是这些下载地址实际指向的构建版本——
+        若本次发布没有改动客户端，服务端会沿用上一个 Release 的产物，此时
+        `clientVersion` 是那个旧版本，而 `version` 仍是服务端自己的版本。
+        安装器必须按 `clientVersion` 建目录，否则 `app.getVersion()` 与指针
+        版本不一致，启动交接会删掉指针并静默回退升级。
       operationId: desktopLatest
       security: []
       responses:
@@ -7931,6 +7945,17 @@ paths:
                   version:
                     type: string
                     description: 服务端版本号，即桌面端目标版本
+                  clientVersion:
+                    type: string
+                    description: |
+                      下载地址实际指向的客户端构建版本。普通发布与 `version`
+                      相同；若本次发布沿用了上一个 Release 的桌面端产物，
+                      这里是那个旧版本号（安装目录按它命名）。
+                  protocol:
+                    type: integer
+                    description: |
+                      客户端兼容协议号。桌面端据此判断是否兼容，而不是比较
+                      版本字符串；服务端未提供该字段时客户端退回版本比较。
                   tag:
                     type: string
                     description: 对应的 GitHub Release tag；dev 构建为空字符串
@@ -8008,7 +8033,9 @@ paths:
       tags: [Group]
       summary: 列出群成员
       description: |
-        返回群的全部成员，含已禁用（`disabled=true`）的成员。`isHost` 标识主持人。
+        返回群的全部成员，含已禁用（`disabled=true`）与已移出（`removed=true`）的成员。
+        `isHost` 标识主持人。已移出的行只为历史消息的发言人归属而保留，客户端不应
+        把它当作群成员展示或参与调度。
         同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）、
         `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
         `false` 即串行）与 `cruise`（自动巡航开关；缺省 `false`）。成员发言次数
@@ -8046,6 +8073,13 @@ paths:
                             该成员当前是否禁用。禁用只是**调度时不安排它发言**，成员行、
                             上下文窗口与历史全部保留；启用后它会看到禁用期间的全部内容
                             （禁用期间 seen_cursor 不推进）。
+                        removed:
+                          type: boolean
+                          description: |
+                            该成员已被移出群聊（删除）。行仍返回是为了让历史消息的发言人
+                            名字/头像继续解析；客户端必须把它从花名册、@ 菜单与任何调度
+                            入口过滤掉。它与 `disabled` 正交：删除是不可逆的，重新添加
+                            同一智能体会创建新实例。
                         isHost: {type: boolean}
                         model:
                           type: string
@@ -8111,7 +8145,7 @@ paths:
           description: 成员数超过上限（`msgKey=GroupMemberLimitReached`）
     patch:
       tags: [Group]
-      summary: 禁用 / 启用（成员不会被移除）
+      summary: 禁用 / 启用（可逆，不删除成员）
       description: |
         禁用只是**调度时不安排该成员发言**：成员行、它的上下文窗口与全部历史都
         保留，任何入口都能随时启用。启用后该成员能读到禁用期间的所有内容——禁用
@@ -8151,6 +8185,52 @@ paths:
             - 目标是最后一位可发言成员（`msgKey=CannotDisableLastMember`）——
               群里没人能接话，之后一个回合都跑不起来；
             - 启用会让可发言成员超过上限（`msgKey=GroupMemberLimitReached`）。
+    delete:
+      tags: [Group]
+      summary: 删除成员（移出群聊）
+      description: |
+        把成员从群聊中删除。与 `PATCH`（禁用）不同，这个操作从用户视角是**不可逆**
+        的：成员从花名册、@ 菜单和所有调度路径中消失，重新添加同一智能体会创建
+        **新实例**（新的名字序号与上下文窗口）。
+
+        成员行本身**保留**（`removed=1`）：`chat_history.agent_id` 指向该行，删掉行
+        会让时间线里所有历史发言失去发言人的名字与头像。因此 `GET /api/group/members`
+        仍会返回这一行（带 `removed=true`），客户端只应把它用于解析历史发言人。
+
+        拒绝的情况：
+        - 群正在执行本轮讨论（`409 msgKey=GroupRunning`）——删除会掐断成员正在进行的
+          回复，请等本轮结束后再删；
+        - 目标是主持人（`409 msgKey=CannotRemoveHost`）——它是群唯一的调度器；
+        - 目标是最后一位**可发言**成员（`409 msgKey=CannotRemoveLastMember`）——
+          群会没有成员能接话，之后一个回合都跑不起来（删除已禁用成员不触发此守卫，
+          但也不能把花名册删空）。
+
+        重复删除同一成员是幂等的（不重复写系统行）。成功时会在群时间线追加一行系统
+        消息（`{{Name}} 已被移出群聊`），并关闭该成员自己的 ACP 连接。
+      operationId: groupMembersRemove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 要删除的成员行 id（不是智能体 id）
+      responses:
+        "200":
+          description: 删除成功（或该成员已被删除，幂等）
+        "400":
+          description: 缺少 groupId / memberId
+        "409":
+          description: |
+            拒绝删除：
+            - 群正在执行本轮讨论（`msgKey=GroupRunning`）；
+            - 目标是主持人（`msgKey=CannotRemoveHost`）；
+            - 目标是最后一位可发言成员（`msgKey=CannotRemoveLastMember`）。
 
   /api/group/host:
     patch:
@@ -8704,7 +8784,13 @@ paths:
     post:
       tags: [Mail]
       summary: 发送邮件
-      description: 发送成功后会尝试 APPEND 一份到「已发送」；APPEND 失败不影响发送结果。
+      description: |
+        发送成功后会尝试 APPEND 一份到「已发送」；APPEND 失败不影响发送结果（副本在后台写入，不阻塞响应）。
+
+        地址里的**域名**含非 ASCII 字符时服务端自动转成 punycode 再发（`bob@例子.com` →
+        `bob@xn--fsqu00a.com`），信封与信头一起改写。只有**本地部分**含非 ASCII 才要求服务器支持
+        `SMTPUTF8`：不支持就**直接拒绝**（`400` + `MailUnsupportedAddress`），不会把 UTF-8 字节
+        硬塞进 `MAIL FROM` / `RCPT TO` 让服务端退回一封语焉不详的退信。
       operationId: mailSend
       requestBody:
         required: true

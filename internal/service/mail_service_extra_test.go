@@ -655,11 +655,163 @@ func TestSendMailCarriesAttachmentsAndDropsDraft(t *testing.T) {
 	if len(got.Attachments) != 1 || string(got.Attachments[0].Data) != "attached" {
 		t.Fatalf("attachment not read from disk: %+v", got.Attachments)
 	}
+	waitMailAppends()
 	if len(f.appended) != 1 || !strings.HasPrefix(f.appended[0], "Sent/") {
 		t.Fatalf("the sent copy should be appended: %+v", f.appended)
 	}
 	if _, err := GetMailDraft(draft.ID); err == nil {
 		t.Fatal("the draft should be deleted after a successful send")
+	}
+}
+
+// A server that accepts APPEND but never answers it must not hold the send
+// open. The copy is best effort, so the response cannot wait for it.
+func TestSendMailReturnsWithoutWaitingForTheSentCopy(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "Sent", mail.SpecialUseSent)
+	installFakeDialer(t, f)
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	prevSender := mailSender
+	mailSender = fakeSender{}
+	t.Cleanup(func() { mailSender = prevSender })
+
+	gate := make(chan struct{})
+	f.appendGate = gate
+	defer func() {
+		// Never leave the background goroutine parked if an assertion fails.
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+		waitMailAppends()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- SendMail(context.Background(), MailSendRequest{
+			AccountID: acc.ID,
+			To:        []string{"bob@example.com"},
+			Subject:   "hi",
+			Text:      "hello",
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SendMail blocked on the Sent copy")
+	}
+	if len(f.appended) != 0 {
+		t.Fatalf("the copy was still supposed to be in flight: %v", f.appended)
+	}
+
+	close(gate)
+	waitMailAppends()
+	if len(f.appended) != 1 {
+		t.Fatalf("the copy must still land in the background: %v", f.appended)
+	}
+}
+
+// A message another client flagged \Deleted is not ours to expunge (see
+// imapClient.expungeOne), so the cache has to drop it instead of re-adding it
+// on every sync.
+func TestSyncSkipsMessagesFlaggedDeleted(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 3, time.Now())
+	f.headers["INBOX"][2].Deleted = true
+	installFakeDialer(t, f)
+
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	msgs, _ := listAccountMessages(t, acc.ID)
+	if len(msgs) != 2 {
+		t.Fatalf("the \\Deleted message must not be cached, got %d rows", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.UID == 3 {
+			t.Fatal("UID 3 is flagged \\Deleted and should be absent")
+		}
+	}
+}
+
+// The same applies after the fact: a message that gets flagged between two
+// syncs must leave the cache, otherwise it keeps showing up.
+func TestSyncDropsCachedMessageThatBecameDeleted(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 2, time.Now())
+	installFakeDialer(t, f)
+
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if msgs, _ := listAccountMessages(t, acc.ID); len(msgs) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(msgs))
+	}
+
+	f.headers["INBOX"][0].Deleted = true
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	msgs, _ := listAccountMessages(t, acc.ID)
+	if len(msgs) != 1 || msgs[0].UID != 2 {
+		t.Fatalf("the deleted message should be gone, got %+v", msgs)
+	}
+}
+
+// A batch fetched without BODYSTRUCTURE has no attachment flag. Decoding the
+// body is the other way to learn it, so the paperclip must come back.
+func TestBodyDecodeBackfillsHasAttachments(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 1, time.Now())
+	f.raw["INBOX"][1] = []byte("From: Alice <alice@example.com>\r\n" +
+		"Subject: with attachment\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n" +
+		"--BOUND\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nbody\r\n" +
+		"--BOUND\r\nContent-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=\"a.pdf\"\r\n\r\nPDF\r\n--BOUND--\r\n")
+	// Over the prefetch ceiling, so the body is still undecoded after the sync.
+	f.headers["INBOX"][0].Size = mailPrefetchMaxSize + 1
+	installFakeDialer(t, f)
+
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	msgs, _ := listAccountMessages(t, acc.ID)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(msgs))
+	}
+	if msgs[0].HasAttachments {
+		t.Fatal("the seeded header claims no attachments; the body has not been decoded yet")
+	}
+
+	if _, err := GetMailMessageDetail(context.Background(), msgs[0].ID, false); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	updated, err := GetMailMessage(msgs[0].ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !updated.HasAttachments {
+		t.Fatal("decoding the body should set has_attachments")
 	}
 }
 

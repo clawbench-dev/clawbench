@@ -168,6 +168,20 @@ type DesktopLatestResult struct {
 	// Tag is the GitHub release tag the downloads point at, or "" when the
 	// server is a dev build with no matching release (Downloads is then empty).
 	Tag string `json:"tag"`
+	// ClientVersion is the version of the desktop package these URLs actually
+	// ship. It equals Version for an ordinary release, and the previous
+	// release's version when this release reused that build untouched (see
+	// release.yml's client-guard job). The installer keys the side-by-side
+	// install directory off it: installing a v0.129 app under app-0.130 makes
+	// app.getVersion() disagree with the pointer, and the startup handoff then
+	// deletes the pointer, silently reverting the upgrade.
+	ClientVersion string `json:"clientVersion"`
+	// Protocol is the client/server compatibility number (see
+	// internal/version/client_protocol.txt). The desktop gate compares it with
+	// the number compiled into the shell instead of comparing version strings,
+	// which is what lets an unchanged client keep working against a newer
+	// server.
+	Protocol int `json:"protocol"`
 	// Downloads maps a platform key to an ordered list of candidate URLs. The
 	// client tries them in order, so one dead mirror degrades the download
 	// rather than breaking it.
@@ -209,10 +223,12 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	v := version.Get()
 	tag := version.ReleaseTag(v)
 	res := &DesktopLatestResult{
-		Version:   v,
-		Tag:       tag,
-		Downloads: map[string][]string{},
-		Payloads:  map[string][]string{},
+		Version:       v,
+		Tag:           tag,
+		ClientVersion: version.GetClientBuildVersion(),
+		Protocol:      version.ClientProtocol,
+		Downloads:     map[string][]string{},
+		Payloads:      map[string][]string{},
 	}
 	if tag == "" {
 		// Dev or untagged build: no release exists, so offer nothing rather

@@ -12,7 +12,7 @@
  * pair from here; nothing per-image is needed.
  */
 
-import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
+import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 
 /** Whether the image src is served by one of our local file endpoints. */
 export function isApiServedSrc(img: HTMLImageElement): boolean {
@@ -55,16 +55,12 @@ export function resolveMdImageDragTarget(e: DragEvent): { img: HTMLImageElement;
 export function onMdImageDragStart(e: DragEvent): void {
   const hit = resolveMdImageDragTarget(e)
   if (!hit) return
-  const dt = e.dataTransfer
-  if (!dt) return
+  if (!e.dataTransfer) return
   // Stop bubbling so enclosing OS-file drop surfaces / other drag logic never
   // see this internal drag as a foreign payload.
   e.stopPropagation()
-  dt.effectAllowed = 'copy'
   const fileName = hit.path.split('/').pop() || hit.path
-  setAttachDragData(dt, hit.path, false)
-  const ghost = buildAttachDragImage(fileName, false)
-  dt.setDragImage(ghost, 14, 16)
+  startAttachDrag(e, hit.path, { name: fileName })
 }
 
 /** Delegated dragend: remove the custom ghost (must outlive dragstart). */

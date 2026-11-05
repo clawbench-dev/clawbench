@@ -6,6 +6,8 @@ SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old s
 SessionIdRequired: session_id required
 CannotDisableHost: The host is the group's only scheduler and cannot be disabled
 CannotDisableLastMember: The last member who can speak cannot be disabled — the group would have nobody left to answer
+CannotRemoveHost: The host is the group's only scheduler and cannot be removed from the group
+CannotRemoveLastMember: A group must keep at least one member who can speak
 GroupNotHostMode: This group is in free-chat mode and has no host to change
 HostNotMember: Only a member of this group can be made the host
 HostDisabled: That member is disabled — enable it before making it the host
@@ -222,7 +224,7 @@ PushAttachmentsTruncated: '⚠️ Attachment count exceeds the limit ({{.Max}});
 PushUnsupportedMsgType: Unsupported message type ({{.Type}}). Please send text, an image, or a file.
 PushSendMessageFailed: 'Failed to send message: '
 PushMessageSent: Message sent
-PushNoSessionSelected: 'No session selected yet. Send /ls to list sessions, then use @sessionID <message> to pick one.'
+PushNoSessionSelected: 'No session selected yet. Send /ls to list sessions, then use @sessionID <message> to pick one. Send /help for all commands.'
 PushErrorTitle: Error
 PushUnsupportedTitle: Unsupported
 PushSelectSessionTitle: Select a session
@@ -272,6 +274,18 @@ PushNewListFailed: Failed to list projects; please try again.
 PushNewCreateFailed: Failed to create the session; please try again.
 PushStopFailed: Failed to stop the session; please try again.
 PushCommandWithAttachment: 'The command `{{.Command}}` cannot be sent together with attachments. Send the command on its own first, then the files.'
+PushHelpTitle: Commands
+PushHelpBody: |-
+  - **/ls** — list recent sessions (each with an 8-character short ID)
+  - **/show [ID]** — resend the target session's last complete AI reply; omit the ID for your default session
+  - **/stop [ID]** — stop the target session's running turn and clear its queue; omit the ID for your default session
+  - **/new [index|path]** — list projects when sent bare; create a session in the given project otherwise
+  - **/help** — show this command reference
+  - **@ID message** — send to a specific session; this wins over every command
+
+  Text and attachments without an @ go to your default session: the one you last sent to successfully, or the one /new created — until you name another with @.
+
+  Commands only work at the start of a message, and cannot be sent together with attachments.
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
@@ -323,6 +337,7 @@ CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 GroupMemberJoined: '{{.Name}} joined the discussion'
 GroupMemberDisabled: '{{.Name}} was disabled'
 GroupMemberEnabled: '{{.Name}} was enabled'
+GroupMemberRemoved: '{{.Name}} was removed from the group'
 GroupHostChanged: '{{.Name}} is now the host'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'
@@ -486,6 +501,7 @@ MailTLSFailed: The mail server certificate could not be verified
 MailTimeout: The mail server did not respond in time
 MailServerError: The mail server returned an error
 MailNoRecipients: Add at least one recipient
+MailUnsupportedAddress: The part of the address before @ contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent
 MailSyncBusy: This mailbox is already syncing
 TaskTriggerModeInvalid: Trigger mode must be cron, event or email
 TaskMailAccountRequired: Choose a mailbox for an email-triggered task

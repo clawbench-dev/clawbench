@@ -1,6 +1,7 @@
 name: Deploy Landing
 
-# The landing page (`web/landing/`) is hosted on Cloudflare Pages.
+# The landing page (`web/landing/`) is hosted on Cloudflare Pages, together
+# with the user-manual site generated from `docs/user-guide/` into `docs/`.
 #
 # Why a workflow instead of Cloudflare's own Git integration: the Pages
 # builder runs `git submodule update --init --recursive` after cloning and
@@ -15,6 +16,8 @@ on:
     branches: [main]
     paths:
       - 'web/landing/**'
+      - 'web/docs/**'
+      - 'docs/user-guide/**'
       - '.github/workflows/deploy-landing.yml'
   workflow_dispatch:
 
@@ -37,10 +40,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      # `wrangler pages deploy` uploads a directory as-is; there is no build
-      # step for this page. The test file must be excluded — it would
-      # otherwise be published at /landing.test.ts.
+      # The manual site builder (web/docs/build.mjs) renders Markdown with
+      # marked + highlight.js and ships mermaid for the one diagram — all
+      # already in the root package.json, so no extra dependency graph.
+      # --ignore-scripts: the only lifecycle script is `prepare`, which
+      # installs git hooks; the builder needs no native postinstalls.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # `wrangler pages deploy` uploads a directory as-is. The test file must
+      # be excluded — it would otherwise be published at /landing.test.ts.
       #
       # `robots.txt` / `sitemap.xml` go to this host only: the sitemap lists
       # this host's URL, and a sitemap served from another host is rejected
@@ -53,6 +65,11 @@ jobs:
                 web/landing/index.html web/landing/_headers \
                 web/landing/robots.txt web/landing/sitemap.xml dist/
           rm -f dist/*.test.ts
+
+      # The manual lives at /docs/ next to the landing page and links back to
+      # it via ../css + ../img, so it must land under the staged root.
+      - name: Build user guide
+        run: node web/docs/build.mjs --out dist/docs
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v3

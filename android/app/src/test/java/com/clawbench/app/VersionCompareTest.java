@@ -268,4 +268,34 @@ public class VersionCompareTest {
         assertFalse(VersionCompare.isClientNewer("dev", "v1.0.0"));
         assertFalse(VersionCompare.isClientNewer("v1.0.0", "a0f87a96"));
     }
+
+    // ── shouldShowMismatch: protocol-aware overload ───────────────────
+
+    @Test
+    public void mismatch_sameProtocol_ignoresVersionDifference() {
+        // A release that reused the previous APK ships an older version string
+        // with an unchanged contract; blocking it would force a pointless
+        // download of an identical build.
+        assertFalse(VersionCompare.shouldShowMismatch("v1.0.0", "v2.0.0", 3, 3));
+        assertFalse(VersionCompare.shouldShowMismatch("v2.0.0", "v1.0.0", 3, 3));
+    }
+
+    @Test
+    public void mismatch_differentProtocol_blocksEvenWithEqualVersions() {
+        assertTrue(VersionCompare.shouldShowMismatch("v1.0.0", "v1.0.0", 3, 4));
+        assertTrue(VersionCompare.shouldShowMismatch("v1.0.0", "v1.0.0", 4, 3));
+    }
+
+    @Test
+    public void mismatch_missingProtocolFallsBackToVersionComparison() {
+        // An APK or server predating the field must keep the old behaviour:
+        // a differing version still blocks.
+        assertTrue(VersionCompare.shouldShowMismatch("v1.0.0", "v2.0.0", 0, 3));
+        assertTrue(VersionCompare.shouldShowMismatch("v1.0.0", "v2.0.0", 3, 0));
+        assertTrue(VersionCompare.shouldShowMismatch("v1.0.0", "v2.0.0", 0, 0));
+        // ...and equal versions still pass, as before.
+        assertFalse(VersionCompare.shouldShowMismatch("v1.0.0", "v1.0.0", 0, 0));
+        // Unparseable versions stay fail-open even without a protocol.
+        assertFalse(VersionCompare.shouldShowMismatch("dev", "v2.0.0", 0, 0));
+    }
 }

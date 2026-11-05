@@ -102,7 +102,7 @@ vi.mock('../MailReader.vue', () => ({
     props: { messageId: { type: Number, required: true } },
     emits: ['back', 'reply', 'deleted', 'updated'],
     template:
-      '<div class="reader-stub"><button class="reader-stub-reply" @click="$emit(\'reply\', \'reply\')">reply</button></div>',
+      '<div class="reader-stub" :data-msg="messageId"><button class="reader-stub-reply" @click="$emit(\'reply\', \'reply\')">reply</button></div>',
   }),
 }))
 
@@ -115,6 +115,25 @@ async function openCompose(wrapper: ReturnType<typeof mountPanel>) {
   await wrapper.find('button[title="Compose"]').trigger('click')
   await flushPromises()
 }
+
+describe('MailPanel quote jump', () => {
+  it('opens the reader for the message a quote points at', async () => {
+    mocks.accounts.value = [{ id: 1, lastSyncAt: 123 } as MailAccount]
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('.reader-stub').exists()).toBe(false)
+
+    // App switches the tab; the panel only has to open the reader. The id comes
+    // from the quote, so the message need not be on the loaded list page.
+    window.dispatchEvent(new CustomEvent('clawbench-open-mail', { detail: { messageId: 42 } }))
+    await nextTick()
+
+    const reader = wrapper.find('.reader-stub')
+    expect(reader.exists(), 'the jump must land on the reader').toBe(true)
+    expect(reader.attributes('data-msg')).toBe('42')
+    wrapper.unmount()
+  })
+})
 
 describe('MailPanel compose view', () => {
   it('opens the composer as a drill-down view, not a modal', async () => {

@@ -10,6 +10,7 @@ import {
   pipelineDragPayload,
   forgeUnreadDragPayload,
   meetingDragPayload,
+  mailDragPayload,
 } from '@/utils/quoteDrag'
 import { resolveQuoteType } from '@/utils/quoteItem'
 
@@ -231,9 +232,40 @@ describe('meetingDragPayload', () => {
     expect(p.filePath).toBe('abc123')
   })
 
+  it('carries the transcript when the meeting is still running', () => {
+    // A live meeting has no record artifacts to fetch, so the only way its
+    // content can reach the card is in the payload itself.
+    const p = meetingDragPayload({ token: 'abc123', label: '会议 · 周会', text: '张三: 你好' })!
+    expect(p.text).toBe('张三: 你好')
+    expect(p.meetingToken).toBe('abc123')
+  })
+
   // The drag has nothing to quote without a record to look the text up by.
   it('refuses a record with no token', () => {
     expect(meetingDragPayload({ token: '', label: 'x' })).toBeNull()
     expect(meetingDragPayload(null)).toBeNull()
+  })
+})
+
+describe('mailDragPayload', () => {
+  it('carries the message id and a readable label, and no text', () => {
+    const p = mailDragPayload({ id: 77, label: '周报 · 张三' })!
+
+    expect(p.mailId).toBe(77)
+    // Identity only: the drop handler fetches the body (dragstart cannot await).
+    expect(p.text).toBe('')
+    expect(p.language).toBe('mail')
+    expect(p.sourceKind).toBe('mail')
+    expect(p.filePath).toBe('周报 · 张三')
+    expect(resolveQuoteType(p)).toBe('mail')
+  })
+
+  it('falls back to the id when the caller has no label', () => {
+    expect(mailDragPayload({ id: 9 })!.filePath).toBe('#9')
+  })
+
+  it('refuses a record with no id', () => {
+    expect(mailDragPayload({ id: 0, label: 'x' })).toBeNull()
+    expect(mailDragPayload(null)).toBeNull()
   })
 })

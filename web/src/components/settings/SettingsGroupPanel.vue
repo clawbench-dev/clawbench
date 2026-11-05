@@ -130,10 +130,10 @@
         <button
           type="button"
           class="fbtn group-panel__tunnel-retry"
-          :disabled="tunnelChecking"
-          @click="onRefreshTunnelStatus"
+          :disabled="tunnelChecking || probingTunnel"
+          @click="canProbeTunnel ? onProbeTunnel() : onRefreshTunnelStatus()"
         >
-          {{ t('proxy.retryCheck') }}
+          {{ tunnelActionLabel }}
         </button>
       </div>
     </template>
@@ -825,6 +825,14 @@ async function applyTransportDraft(): Promise<boolean> {
   }
   transportInitial.value = value
 
+  // With zero enabled mappings the native service is stopped on purpose, so a
+  // reconnect has nothing to rebuild and reports failure (Android answers
+  // false immediately when the service is not running). The write above IS the
+  // whole job then; the next check or link probe speaks for the new wire.
+  // Without this, saving a transport change on an idle host reported
+  // "重连失败，端口映射暂不可用" even though nothing was wrong.
+  if (!hasEnabledPorts.value) return true
+
   try {
     return await reconnectTunnel()
   } catch (err) {
@@ -837,7 +845,8 @@ async function applyTransportDraft(): Promise<boolean> {
 
 const {
   tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
-  sshInfo, transportAllowsH2, loadSSHInfo,
+  sshInfo, transportAllowsH2, loadSSHInfo, ports,
+  probingTunnel, probeTunnelLink, transportAnnotation,
 } = usePortForward()
 
 /**
@@ -866,6 +875,17 @@ const serverCarriesForwards = computed(() =>
   !!sshInfo.value?.enabled || transportAllowsH2.value
 )
 
+/**
+ * Whether the native tunnel has any enabled mapping to carry — the same
+ * predicate the port panel's banners and `syncToNative` use.
+ *
+ * With none, the native service stops itself on purpose (it would otherwise
+ * hold an SSH/h2 session and burn battery for no work), so `tunnelStatus` reads
+ * `disconnected` in a perfectly healthy idle state. Reporting that as a failure
+ * told users "port mapping unavailable" when the only thing missing was a port.
+ */
+const hasEnabledPorts = computed(() => ports.value.some(p => p.enabled))
+
 /** Web-mode probe in flight. Separate from `tunnelChecking` because the web
  *  branch re-reads SSH info rather than running the client-side health check. */
 const webStatusChecking = ref(false)
@@ -880,10 +900,17 @@ const tunnelStatusBusy = computed(() => webStatusChecking.value || tunnelCheckin
  *
  * Web mode derives its own state from server readiness: there is no client
  * tunnel to be ok/degraded/disconnected, so "ready" is the only healthy answer.
+ *
+ * Native mode has two states that are NOT failures and must not borrow the red
+ * dot: an unsaved transport draft (the verdict on screen still describes the
+ * old wire, so showing it would contradict the picker right above) and an empty
+ * mapping list (the tunnel is idle by design).
  */
 const tunnelStatusState = computed(() => {
   if (tunnelStatusBusy.value) return 'checking'
   if (isWebApp.value) return serverCarriesForwards.value ? 'ok' : 'disconnected'
+  if (transportDirty.value) return 'unknown'
+  if (!hasEnabledPorts.value) return 'unknown'
   if (tunnelStatus.value === 'ok') return 'ok'
   if (tunnelStatus.value === 'degraded') return 'degraded'
   if (tunnelStatus.value === 'disconnected') return 'disconnected'
@@ -904,6 +931,8 @@ const tunnelStatusText = computed(() => {
     if (transportAllowsH2.value) return t('settings.items.tunnelStatusServerReadyH2')
     return t('settings.items.tunnelStatusUnavailable')
   }
+  if (transportDirty.value) return t('settings.items.tunnelStatusDraftPending')
+  if (!hasEnabledPorts.value) return t('settings.items.tunnelStatusNoPorts')
   if (tunnelStatus.value === 'ok') return t('settings.items.tunnelStatusConnected')
   if (tunnelMessage.value) return tunnelMessage.value
   return t('settings.items.tunnelStatusUnknown')
@@ -924,6 +953,60 @@ async function onRefreshTunnelStatus() {
   }
   if (tunnelChecking.value) return
   await checkTunnelHealth()
+}
+
+// ── Link probe ──
+
+/**
+ * The probe replaces "重新检测" whenever there is nothing to carry: with zero
+ * enabled mappings the native service is stopped by design, so a plain health
+ * check can only ever answer "disconnected" and the user has no way to tell
+ * whether the chosen transport actually works. The probe opens a temporary
+ * mapping to the server itself, reports the verdict, and removes it.
+ */
+const canProbeTunnel = computed(() => !isWebApp.value && !hasEnabledPorts.value)
+
+/** Label for the single action button in the status row. */
+const tunnelActionLabel = computed(() => {
+  if (probingTunnel.value) return t('proxy.probeLinkBusy')
+  if (!canProbeTunnel.value) return t('proxy.retryCheck')
+  // A pending draft would be tested on the OLD wire; make the implicit save
+  // explicit instead of reporting a verdict for a transport the user is no
+  // longer looking at.
+  return transportDirty.value ? t('proxy.probeLinkAndSave') : t('proxy.probeLink')
+})
+
+async function onProbeTunnel() {
+  if (probingTunnel.value || tunnelChecking.value) return
+  if (transportDirty.value) {
+    saving.value = true
+    try {
+      if (!(await applyTransportDraft())) {
+        toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
+        return
+      }
+    } finally {
+      saving.value = false
+    }
+  }
+
+  const verdict = await probeTunnelLink()
+  if (verdict === 'unsupported') {
+    // Host predates the port primitives — fall back to the plain check rather
+    // than reporting a verdict it never measured.
+    await checkTunnelHealth()
+    return
+  }
+
+  const transport = transportAnnotation()
+  if (verdict === 'ok') {
+    toast.show(t('portForward.tunnelProbeOk', { transport }), { icon: 'link', type: 'success', duration: 4000 })
+  } else {
+    toast.show(t('portForward.tunnelProbeFailed', { transport }), { icon: 'blocked', type: 'error', duration: 6000 })
+  }
+  // The probe removed its temporary mapping, so the tunnel is idle again; this
+  // only refreshes the transport label and the idle-state copy.
+  await checkTunnelHealth(true)
 }
 
 // ── Save ──
@@ -948,6 +1031,13 @@ async function onSave() {
         toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
       }
       return
+    }
+    if (switchingTransport) {
+      // The verdict on screen is a string rendered at check time, so after a
+      // transport switch it still names the OLD wire until the next check.
+      // Recompute now that the preference and the live tunnel have moved.
+      // Silent keeps the row's current verdict instead of flashing "unknown".
+      await checkTunnelHealth(true)
     }
   } finally {
     if (switchingTransport) saving.value = false

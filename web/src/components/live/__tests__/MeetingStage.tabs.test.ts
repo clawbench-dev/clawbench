@@ -63,14 +63,22 @@ const archivedChat = vi.hoisted(() => ({
   /** Set by a test that wants the history request to stay in flight. */
   pending: null as Promise<void> | null,
 }))
-vi.mock('@/composables/useMeetingHistory', () => ({
-  useMeetingHistory: () => ({
-    chat: async () => {
-      if (archivedChat.pending) await archivedChat.pending
-      return { messages: archivedChat.messages, count: archivedChat.messages.length }
-    },
-  }),
-}))
+// importOriginal, not a bare replacement: the stage also imports
+// `meetingQuoteLabel` from this module (the quote card's label), and a
+// whitelist mock that omits it makes the component fail to mount — the whole
+// suite then reports "no export" instead of an assertion.
+vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useMeetingHistory')>()
+  return {
+    ...actual,
+    useMeetingHistory: () => ({
+      chat: async () => {
+        if (archivedChat.pending) await archivedChat.pending
+        return { messages: archivedChat.messages, count: archivedChat.messages.length }
+      },
+    }),
+  }
+})
 
 vi.mock('@/composables/useMarkdownRenderer', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
@@ -119,6 +127,8 @@ vi.mock('@/composables/useLiveShare', async () => {
     micEnabled: r(true),
     setMicEnabled: vi.fn(),
     setMicChoice: vi.fn(async () => true),
+    retryMicrophone: vi.fn(),
+    micRecovering: r(false),
     activeMicDevice: r(''),
     setCameraDevice: vi.fn(async () => true),
     startScreen: vi.fn(async () => true),
@@ -167,6 +177,13 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
     pending: r(0),
     lost: r(0),
     truncated: r(false),
+    health: r('ok'),
+    silentForMs: r(0),
+    deadChannels: r([]),
+    connection: r('online'),
+    audioSuspended: r(false),
+    setConnectionState: vi.fn(),
+    setAudioSuspended: vi.fn(),
     start: vi.fn(),
     addViewer: vi.fn(),
     removeViewer: vi.fn(),
@@ -220,6 +237,11 @@ beforeEach(() => {
   ;(shareApi.captureSourceId as { value: string }).value = ''
   ;(notesApi.phase as { value: string }).value = 'idle'
   ;(notesApi.segments as { value: unknown[] }).value = []
+  ;(notesApi.health as { value: string }).value = 'ok'
+  ;(notesApi.silentForMs as { value: number }).value = 0
+  ;(notesApi.pending as { value: number }).value = 0
+  ;(notesApi.lost as { value: number }).value = 0
+  ;(shareApi.micRecovering as { value: boolean }).value = false
   // The chosen input is a module singleton shared with the create form.
   useMeetingOptions().micChoice.value = 'default'
 })
@@ -466,6 +488,61 @@ describe('MeetingStage tabs', () => {
     expect(pane.text()).not.toContain('AI notes were off')
     // The tab bar carries the "still recording" dot while another tab is open.
     expect(tab(wrapper, 'notes').find('.live-tab__rec').exists()).toBe(true)
+  })
+
+  /**
+   * The pane used to look identical whether nobody had spoken yet or the
+   * microphone had died — the same empty card, with no way to tell which. The
+   * bar is the difference, and it must appear without any new line arriving.
+   */
+  it('says the microphone is gone instead of drawing the listening card', async () => {
+    ;(notesApi.phase as { value: string }).value = 'recording'
+    ;(notesApi.health as { value: string }).value = 'micDead'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await tab(wrapper, 'notes').trigger('click')
+
+    const pane = wrapper.find('[data-role="notes-pane"]')
+    expect(pane.find('[data-role="notes-status"]').attributes('data-health')).toBe('micDead')
+    expect(pane.text()).toContain('The microphone disconnected')
+    // "Listening…" would be a lie, and it is the lie this replaces.
+    expect(pane.find('[data-role="notes-listening"]').exists()).toBe(false)
+  })
+
+  it('offers the reconnect action when recovery gave up', async () => {
+    ;(notesApi.phase as { value: string }).value = 'recording'
+    ;(notesApi.health as { value: string }).value = 'micDead'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await tab(wrapper, 'notes').trigger('click')
+    await wrapper.find('[data-role="notes-retry-mic"]').trigger('click')
+
+    expect(shareApi.retryMicrophone).toHaveBeenCalled()
+  })
+
+  it('turns the tab dot into an alert while the recorder is not producing', async () => {
+    ;(notesApi.phase as { value: string }).value = 'recording'
+    ;(notesApi.health as { value: string }).value = 'silent'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Visible from another tab: that is the point of putting it here.
+    expect(tab(wrapper, 'notes').find('.live-tab__rec--alert').exists()).toBe(true)
+  })
+
+  it('keeps the status bar out of the way when nothing has happened yet', async () => {
+    ;(notesApi.phase as { value: string }).value = 'recording'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await tab(wrapper, 'notes').trigger('click')
+
+    // Healthy and empty: the listening card says it, one voice is enough.
+    expect(wrapper.find('[data-role="notes-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="notes-listening"]').exists()).toBe(true)
   })
 
   it('returns to the setup tab when a share ends and a new one starts', async () => {

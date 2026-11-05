@@ -381,27 +381,40 @@ func TestWriteMailErrorMapping(t *testing.T) {
 		name string
 		err  error
 		want int
+		key  string
 	}{
-		{"account not found", service.ErrMailAccountNotFound, http.StatusNotFound},
-		{"message not found", service.ErrMailMessageNotFound, http.StatusNotFound},
-		{"folder not found", service.ErrMailFolderNotFound, http.StatusNotFound},
-		{"draft not found", service.ErrMailDraftNotFound, http.StatusNotFound},
-		{"attachment not found", service.ErrMailAttachmentNotFound, http.StatusNotFound},
-		{"invalid account", service.ErrMailAccountInvalid, http.StatusBadRequest},
-		{"sync busy", service.ErrMailSyncBusy, http.StatusConflict},
-		{"no recipients", service.ErrMailNoRecipients, http.StatusBadRequest},
-		{"auth", &mail.Error{Kind: mail.KindAuth, Err: errors.New("bad password")}, http.StatusBadRequest},
-		{"connect", &mail.Error{Kind: mail.KindConnect, Err: errors.New("refused")}, http.StatusBadGateway},
-		{"tls", &mail.Error{Kind: mail.KindTLS, Err: errors.New("cert")}, http.StatusBadGateway},
-		{"timeout", &mail.Error{Kind: mail.KindTimeout, Err: errors.New("slow")}, http.StatusGatewayTimeout},
-		{"server", &mail.Error{Kind: mail.KindServer, Err: errors.New("no")}, http.StatusBadGateway},
-		{"unclassified", errors.New("whatever"), http.StatusBadGateway},
+		{"account not found", service.ErrMailAccountNotFound, http.StatusNotFound, ""},
+		{"message not found", service.ErrMailMessageNotFound, http.StatusNotFound, ""},
+		{"folder not found", service.ErrMailFolderNotFound, http.StatusNotFound, ""},
+		{"draft not found", service.ErrMailDraftNotFound, http.StatusNotFound, ""},
+		{"attachment not found", service.ErrMailAttachmentNotFound, http.StatusNotFound, ""},
+		{"invalid account", service.ErrMailAccountInvalid, http.StatusBadRequest, ""},
+		{"sync busy", service.ErrMailSyncBusy, http.StatusConflict, ""},
+		{"no recipients", service.ErrMailNoRecipients, http.StatusBadRequest, ""},
+		{"auth", &mail.Error{Kind: mail.KindAuth, Err: errors.New("bad password")}, http.StatusBadRequest, ""},
+		{"connect", &mail.Error{Kind: mail.KindConnect, Err: errors.New("refused")}, http.StatusBadGateway, ""},
+		{"tls", &mail.Error{Kind: mail.KindTLS, Err: errors.New("cert")}, http.StatusBadGateway, ""},
+		{"timeout", &mail.Error{Kind: mail.KindTimeout, Err: errors.New("slow")}, http.StatusGatewayTimeout, ""},
+		{"server", &mail.Error{Kind: mail.KindServer, Err: errors.New("no")}, http.StatusBadGateway, ""},
+		{"unclassified", errors.New("whatever"), http.StatusBadGateway, ""},
+		{"unsupported", &mail.Error{Kind: mail.KindUnsupported, Err: errors.New("no SMTPUTF8")}, http.StatusBadRequest, "MailUnsupportedAddress"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
 		writeMailError(rec, httptest.NewRequest(http.MethodGet, "/api/mail/x", http.NoBody), c.err)
 		if rec.Code != c.want {
 			t.Errorf("%s: status = %d, want %d", c.name, rec.Code, c.want)
+		}
+		if c.key != "" {
+			var resp struct {
+				MsgKey string `json:"msgKey"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("%s: decode body: %v", c.name, err)
+			}
+			if resp.MsgKey != c.key {
+				t.Errorf("%s: msgKey = %q, want %q", c.name, resp.MsgKey, c.key)
+			}
 		}
 	}
 }

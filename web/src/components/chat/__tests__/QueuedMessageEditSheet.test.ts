@@ -95,10 +95,12 @@ describe('QueuedMessageEditSheet (draft seeding)', () => {
     })
     await nextTick()
 
-    const quoteChips = wrapper.findAll('.qme-chip-quote')
-    expect(quoteChips, 'a quote is an attachment the user may remove').toHaveLength(1)
-    expect(quoteChips[0].text()).toContain('main.go:12')
-    expect(wrapper.findAll('.chat-file-attachment')).toHaveLength(1)
+    const quoteCards = wrapper.findAll('.attachment-quote')
+    expect(quoteCards, 'a quote is an attachment the user may remove').toHaveLength(1)
+    expect(quoteCards[0].text()).toContain('main.go:12')
+    // The non-quote file still renders through the shared attachment strip, so
+    // the two kinds sit side by side rather than one replacing the other.
+    expect(wrapper.findAll('.chat-file-attachment:not(.attachment-quote)')).toHaveLength(1)
   })
 
   it('does NOT re-seed while open when the entry prop changes', async () => {
@@ -160,13 +162,13 @@ describe('QueuedMessageEditSheet (attachments)', () => {
     expect(payload.files).toEqual([{ path: '/project/new.pdf', isDir: false }])
   })
 
-  it('removes a quote attachment through its own chip', async () => {
+  it('removes a quote attachment through its card’s remove control', async () => {
     const wrapper = mountSheet({
       entry: entry({ files: [{ path: 'main.go:12', kind: 'quote', id: 'quote-1', text: 'x' }] }),
     })
     await nextTick()
 
-    await wrapper.find('.qme-chip-remove').trigger('click')
+    await wrapper.find('.attachment-quote .attachment-close-btn').trigger('click')
     await wrapper.find('[data-action="queue-edit-save"]').trigger('click')
 
     const payload = wrapper.emitted('save')![0][0] as { files: unknown[] }
@@ -270,9 +272,9 @@ describe('QueuedMessageEditSheet (attachments)', () => {
     })
     await nextTick()
 
-    const chips = wrapper.findAll('.qme-chip-quote')
+    const chips = wrapper.findAll('.attachment-quote')
     expect(chips).toHaveLength(2)
-    await chips[0].find('.qme-chip-remove').trigger('click')
+    await chips[0].find('.attachment-close-btn').trigger('click')
     await wrapper.find('[data-action="queue-edit-save"]').trigger('click')
 
     const payload = wrapper.emitted('save')![0][0] as { files: Array<{ id?: string }> }

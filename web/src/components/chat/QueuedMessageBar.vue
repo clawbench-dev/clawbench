@@ -50,16 +50,15 @@
       <li v-for="msg in messages" :key="msg.queueId" class="queued-bar-item">
         <div class="queued-bar-text">{{ msg.text || t('chat.pending.attachment') }}</div>
         <div v-if="msg.files.length > 0" class="queued-bar-files">
-          <!-- Quotes carry no path, so the shared attachment cards skip them
-               (a card would render as an empty pill); they keep the reference
-               chip. Everything else renders through the SAME component the
-               input box uses — thumbnail for images, icon + name otherwise —
-               so a queued attachment looks exactly like an attached one. -->
-          <span
-            v-for="q in quoteFiles(msg)"
-            :key="q.id || q.path"
-            class="queued-bar-file"
-          >{{ t('chat.pending.fileReference') }}</span>
+          <!-- Quotes render through the SAME card as the input and a sent
+               bubble. They used to be a generic "file ref" pill, which lost the
+               label, the source type and the line range — the card told the
+               user nothing about what was actually queued. -->
+          <QuoteCard
+            v-for="(q, qi) in quoteFiles(msg)"
+            :key="q.id || ('q' + qi)"
+            :quote="fromFileEntry(normalizeFileEntry(q))"
+          />
           <AttachmentTags :files="plainFiles(msg)" readonly />
         </div>
         <div class="queued-bar-actions">
@@ -127,7 +126,9 @@ import { useI18n } from 'vue-i18n'
 import { ChevronDown, Zap, Square, Merge, Pencil } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
-import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
+import QuoteCard from '@/components/chat/QuoteCard.vue'
+import { isQuoteEntry, normalizeFileEntry } from '@/utils/fileAttachmentUtils'
+import { fromFileEntry } from '@/utils/quoteItem'
 
 const props = defineProps({
   /** Queued messages for the active session (from useMessageQueue). */
@@ -337,20 +338,6 @@ function plainFiles(msg) {
   min-width: 0;
   padding: 0;
   gap: var(--space-2);
-}
-
-/* Reference chip for quoted snippets (the shared cards skip them: a quote has
-   no path, so a card would render as an empty pill). */
-.queued-bar-file {
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  background: rgba(127, 127, 127, 0.14);
-  border-radius: var(--radius-full);
-  padding: 0 var(--space-2);
-  max-width: 40vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .queued-bar-actions {

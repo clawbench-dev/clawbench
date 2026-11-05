@@ -16,6 +16,7 @@
     "lint:fix": "cd web && npx eslint src/ --fix",
     "lint:css": "cd web && npx stylelint \"src/**/*.{css,vue}\" \"css/**/*.css\"",
     "lint:css:fix": "cd web && npx stylelint \"src/**/*.{css,vue}\" \"css/**/*.css\" --fix",
+    "docs": "node web/docs/build.mjs",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "dependencies": {

@@ -5,4 +5,8 @@
   <url>
     <loc>https://clawbench.pages.dev/</loc>
   </url>
+  <!-- 用户手册站点入口：各章节页由 docs 站点自身的互链覆盖，这里只列入口 -->
+  <url>
+    <loc>https://clawbench.pages.dev/docs/</loc>
+  </url>
 </urlset>
