@@ -8198,6 +8198,8 @@ paths:
         仍会返回这一行（带 `removed=true`），客户端只应把它用于解析历史发言人。
 
         拒绝的情况：
+        - 群正在执行本轮讨论（`409 msgKey=GroupRunning`）——删除会掐断成员正在进行的
+          回复，请等本轮结束后再删；
         - 目标是主持人（`409 msgKey=CannotRemoveHost`）——它是群唯一的调度器；
         - 目标是最后一位**可发言**成员（`409 msgKey=CannotRemoveLastMember`）——
           群会没有成员能接话，之后一个回合都跑不起来（删除已禁用成员不触发此守卫，
@@ -8226,6 +8228,7 @@ paths:
         "409":
           description: |
             拒绝删除：
+            - 群正在执行本轮讨论（`msgKey=GroupRunning`）；
             - 目标是主持人（`msgKey=CannotRemoveHost`）；
             - 目标是最后一位可发言成员（`msgKey=CannotRemoveLastMember`）。
 

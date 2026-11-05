@@ -211,3 +211,25 @@ func TestForkContext_ClearPreservesOtherState(t *testing.T) {
 	assert.Equal(t, "", GetForkContext(sid))
 	assert.EqualValues(t, 42, GetMemberCursor(sid))
 }
+
+// A REMOVED member's past speech must keep its name in fork background too: the
+// fork renders the whole timeline, and an unattributed line would read as a
+// generic "成员". Attribution is not scheduling, so this lookup includes removed
+// rows (mirrors ListGroupMembersIncludingRemoved).
+func TestRenderGroupForkContext_KeepsRemovedSpeakerName(t *testing.T) {
+	groupID, hostID := setupGroupForkDB(t)
+	project := GetSessionProjectPathAnyPath(groupID)
+
+	leaverID, err := AddGroupMember(project, groupID, "claude", "claude-peer", "Claude")
+	require.NoError(t, err)
+	addGroupRow(t, project, groupID, "assistant", "我先说两句", leaverID)
+	addGroupRow(t, project, groupID, "assistant", "主持人接话", hostID)
+
+	removed, err := RemoveGroupMember(groupID, leaverID)
+	require.NoError(t, err)
+	require.True(t, removed)
+
+	out := RenderGroupForkContext(groupID, 0, ForkContextOptions{BudgetChars: 10000})
+	assert.Contains(t, out, "Claude: 我先说两句", "removed speaker must keep its name")
+	assert.NotContains(t, out, "成员: 我先说两句", "must not degrade to a generic speaker label")
+}

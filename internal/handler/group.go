@@ -432,6 +432,8 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
 		case errors.Is(err, service.ErrCannotRemoveLastMember):
 			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveLastMember")
+		case errors.Is(err, service.ErrGroupRunning):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
 		default:
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		}

@@ -2801,3 +2801,58 @@ func TestRemoveGroupMember_RefusesLastSpeakerWithDisabledMembersLeft(t *testing.
 		t.Fatalf("roster = %+v, want only A", active)
 	}
 }
+
+// The free group's row mirrors its FIRST member. Removing that member must move
+// the group's identity to the next active member, or the session list keeps
+// showing the deleted member's agent icon.
+func TestRemoveGroupMember_RecomputesFreeGroupIdentity(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-identity"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+
+	var before string
+	if err := store.ReadDB().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", groupID).Scan(&before); err != nil {
+		t.Fatalf("read group identity: %v", err)
+	}
+	if before != "agent-a" {
+		t.Fatalf("fixture: group identity = %q, want the first member's agent-a", before)
+	}
+
+	if _, err := RemoveGroupMember(groupID, byName["A"]); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	var after string
+	if err := store.ReadDB().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", groupID).Scan(&after); err != nil {
+		t.Fatalf("read group identity after removal: %v", err)
+	}
+	if after != "agent-b" {
+		t.Fatalf("group identity after removing the first member = %q, want agent-b", after)
+	}
+}
+
+// A running turn owns every member connection; removing one would kill its
+// in-flight reply. The deletion is refused until the turn ends.
+func TestRemoveGroupMember_RefusesWhileGroupRunning(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest-remove-running"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	SetSessionRunning(groupID, true)
+	t.Cleanup(func() { SetSessionRunning(groupID, false) })
+
+	if _, err := RemoveGroupMember(groupID, byName["B"]); !errors.Is(err, ErrGroupRunning) {
+		t.Fatalf("removing a member while the group runs must be refused, got %v", err)
+	}
+	active, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("a refused removal must not change the roster, got %d", len(active))
+	}
+}

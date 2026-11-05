@@ -436,6 +436,14 @@ describe('GroupSettingsSheet', () => {
     expect(parked.attributes('data-action')).toBe('remove-member')
   })
 
+  it('keeps removal inert while the group is running', () => {
+    const w = mountSheet(MEMBERS, { groupRunning: true })
+    const aliceRow = w.findAll('.gm-row').find(r => r.text().includes('Alice'))!
+    const btn = aliceRow.find('.gm-remove-toggle')
+    expect(btn.attributes('disabled')).toBeDefined()
+    expect(btn.attributes('title')).toBe('group.removeRunning')
+  })
+
   it('surfaces a failed removal instead of doing nothing visible', async () => {
     mockRemove.mockRejectedValueOnce(new Error('boom'))
     const w = mountSheet(MEMBERS)

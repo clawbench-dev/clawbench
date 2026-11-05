@@ -493,12 +493,16 @@ const activeMemberCount = computed(() => props.members.filter(m => !m.removed).l
  *  has to leave the roster non-empty. */
 function canRemove(m: GroupMemberInfo): boolean {
   if (m.isHost || m.removed) return false
+  // A running turn owns every member connection; the server refuses removal
+  // then (it would kill an in-flight reply).
+  if (props.groupRunning) return false
   if (activeMemberCount.value <= 1) return false
   return m.disabled || speakingMemberCount.value > 1
 }
 
 function removeTitle(m: GroupMemberInfo): string {
   if (m.isHost) return t('group.hostCannotRemove')
+  if (props.groupRunning) return t('group.removeRunning')
   if (!canRemove(m)) return t('group.lastMemberCannotRemove')
   return t('group.remove')
 }

@@ -81,4 +81,48 @@ test.describe.serial('group member removal', () => {
     expect(removed?.removed).toBe(true)
     expect(after.members.find(m => m.isHost)?.removed).toBe(false)
   })
+
+  test('keeps the last speaking member unremovable in a free group', async ({ page }) => {
+    // Free mode has no host, so after one removal the remaining member is the
+    // only voice — the server must refuse a second removal and the sheet must
+    // grey the control out (an empty group can never run a turn again).
+    const created = await page.evaluate(async () => {
+      const resp = await fetch('/api/group/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberAgentIds: ['acp-mock', 'acp-mock-b'] }),
+      })
+      return { status: resp.status, body: await resp.json() }
+    })
+    expect(created.body.ok, `group create failed: ${JSON.stringify(created.body)}`).toBe(true)
+    const groupId = String(created.body.groupId ?? '')
+    expect(groupId).toBeTruthy()
+
+    const before = await page.evaluate(async (gid) => {
+      const r = await fetch(`/api/group/members?groupId=${gid}`)
+      return (await r.json()) as { members: { id: string }[] }
+    }, groupId)
+    expect(before.members).toHaveLength(2)
+
+    await page.locator('[data-action="session"]').click()
+    const sessionDrawer = page.locator('.bs-panel.session-drawer-sheet')
+    await expect(sessionDrawer).toBeVisible({ timeout: 10000 })
+    await sessionDrawer.locator(`[data-session-id="${groupId}"]`).first().click()
+
+    await expect(page.locator('.group-avatar-stack')).toBeVisible({ timeout: 20000 })
+    await page.locator('.group-avatar-stack').click()
+
+    const rows = page.locator('.gm-list .gm-row')
+    await expect(rows).toHaveCount(2, { timeout: 10000 })
+    const first = before.members[0].id
+    await page.locator(`.gm-list .gm-row[data-member-id="${first}"] [data-action="remove-member"]`).click()
+    await expect(page.locator('.dlg-box')).toBeVisible({ timeout: 10000 })
+    await page.locator('.dlg-ok').click()
+
+    await expect(rows).toHaveCount(1, { timeout: 10000 })
+    // The remaining member is the last one: removal must be inert.
+    const remaining = page.locator('.gm-list .gm-row').first()
+    await expect(remaining.locator('.gm-remove-toggle')).toBeDisabled()
+    await expect(page.locator('[data-action="remove-member"]')).toHaveCount(0)
+  })
 })

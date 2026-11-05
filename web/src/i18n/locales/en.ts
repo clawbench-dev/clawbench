@@ -1492,6 +1492,7 @@ export default {
     removeFailed: 'Failed to remove the member',
     hostCannotRemove: 'The host is the group\u2019s only scheduler and cannot be removed',
     lastMemberCannotRemove: 'A group must keep at least one member who can speak',
+    removeRunning: 'The group is working on a turn \u2014 you can remove members when it finishes',
     memberDetail: {
       open: 'View this member\u2019s settings',
       agent: 'Agent',

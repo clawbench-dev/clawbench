@@ -1496,6 +1496,7 @@ export default {
     removeFailed: '删除成员失败',
     hostCannotRemove: '主持人是群的唯一调度者，不能删除',
     lastMemberCannotRemove: '群聊至少要保留一位可发言的成员',
+    removeRunning: '群聊正在执行本轮讨论，结束后才能删除成员',
     memberDetail: {
       open: '查看该成员设置',
       agent: '智能体',

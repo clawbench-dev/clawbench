@@ -1046,9 +1046,9 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 		args = append(args, id)
 	}
 
-	// disabled = 0 keeps disabled members out of the list preview (the full roster,
-	// disabled members included, is only in GET /api/group/members). Order matches
-	// ListGroupMembers so the stack is stable across reloads.
+	// disabled = 0 and removed = 0 keep non-speaking and deleted members out of
+	// the list preview (the full roster is only in GET /api/group/members).
+	// Order matches ListGroupMembers so the stack is stable across reloads.
 	//
 	// is_host comes from the GROUP row's context_state (the host pointer is
 	// stored there, not on the member row), so it is resolved with a correlated
@@ -1083,11 +1083,12 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 }
 
 // GroupMemberSpeakersForGroups returns each group's member-row-id → display-name
-// map, INCLUDING disabled members. It is the speaker-resolution companion to
-// GroupMembersForGroups (which is disabled-filtered, for the avatar stack): a
-// message's chat_history.agent_id may name a member who is currently disabled, and
-// their speech must still resolve to their own name rather than a generic
-// "Assistant" (mirrors ListGroupMembers' include-disabled rule).
+// map, INCLUDING disabled AND removed members. It is the speaker-resolution
+// companion to GroupMembersForGroups (which is disabled/removed-filtered, for the
+// avatar stack): a message's chat_history.agent_id may name a member who is
+// currently disabled or has been removed from the group, and their speech must
+// still resolve to their own name rather than a generic "Assistant" (mirrors
+// ListGroupMembersIncludingRemoved).
 //
 // One query for all ids. Groups with no members are absent from the map; empty
 // input returns an empty map without touching the DB.
@@ -1371,6 +1372,12 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 	if memberID == "" || groupID == "" {
 		return false, nil
 	}
+	// A running turn owns every member connection. Removing a member now would
+	// kill its in-flight subprocess mid-reply and leave a half-written row, so the
+	// deletion is refused until the turn ends (same rule as member compaction).
+	if IsSessionRunning(groupID) {
+		return false, ErrGroupRunning
+	}
 	if memberID == GetGroupHostMember(groupID) {
 		return false, ErrCannotRemoveHost
 	}
@@ -1380,10 +1387,20 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 		return false, err
 	}
 
+	// The guard is ALSO expressed in the UPDATE's WHERE clause, so two concurrent
+	// removals cannot both pass the pre-check above and empty the roster. SQLite
+	// serialises writers, so the subqueries see the other deletion's commit.
 	res, err := store.WriteExec(
 		`UPDATE chat_sessions SET removed = 1, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND group_id = ? AND session_type = ? AND removed = 0`,
+		 WHERE id = ? AND group_id = ? AND session_type = ? AND removed = 0
+		   AND (SELECT COUNT(*) FROM chat_sessions
+		        WHERE group_id = ? AND session_type = ? AND removed = 0) > 1
+		   AND (disabled = 1
+		        OR (SELECT COUNT(*) FROM chat_sessions
+		            WHERE group_id = ? AND session_type = ? AND removed = 0 AND disabled = 0) > 1)`,
 		memberID, groupID, groupMemberSessionType,
+		groupID, groupMemberSessionType,
+		groupID, groupMemberSessionType,
 	)
 	if err != nil {
 		return false, err
@@ -1393,6 +1410,16 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 		return false, err
 	}
 	if affected == 0 {
+		// Distinguish "the atomic guard refused it" (the row is still active)
+		// from "already removed / unknown id" (nothing to do).
+		still, lerr := ListGroupMembers(groupID)
+		if lerr == nil {
+			for _, m := range still {
+				if m.ID == memberID {
+					return false, ErrCannotRemoveLastMember
+				}
+			}
+		}
 		return false, nil
 	}
 	// Best-effort: the member is already removed, so a write failure must not
@@ -1406,6 +1433,12 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 		} else {
 			emitGroupSystemMessage(groupID, msgID, text)
 		}
+	}
+	// The group row mirrors its host (host mode) or its FIRST member (free mode).
+	// If that member was just removed, the session-list icon must move on to the
+	// next active member. Best-effort: the removal is already committed.
+	if err := recomputeGroupIdentity(groupID); err != nil {
+		slog.Warn("group: recomputing identity after member removal failed", "group", groupID, "err", err)
 	}
 	return true, nil
 }
