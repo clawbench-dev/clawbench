@@ -444,6 +444,19 @@ func failLiveNoteImport(token string, cause error) {
 	}
 }
 
+// runMediaCommand is the process boundary for ffmpeg/ffprobe. A variable for
+// the same reason as lookPath above: CI runners do not ship ffmpeg, so without
+// a seam every test past this line would skip — and the parsing, pairing and
+// selection around it is the part that can actually be wrong.
+var runMediaCommand = func(ctx context.Context, name string, args ...string) (stdout, stderr []byte, err error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	return out.Bytes(), errBuf.Bytes(), err
+}
+
 // ffmpegTranscode turns any container into the mono 16 kHz Opus track the rest
 // of the pipeline expects, and reports the source duration in milliseconds.
 func ffmpegTranscode(ctx context.Context, src, dst string) (int64, error) {
@@ -456,18 +469,15 @@ func ffmpegTranscode(ctx context.Context, src, dst string) (int64, error) {
 	}
 	// -vn drops a video track; a file with no audio stream fails here, which is
 	// the honest answer ("there is nothing to transcribe").
-	cmd := exec.CommandContext(
-		ctx, bin,
+	_, stderr, runErr := runMediaCommand(ctx, bin,
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-i", src,
 		"-vn", "-ac", "1", "-ar", "16000",
 		"-c:a", "libopus", "-b:a", "32k",
 		"-f", "webm", dst,
 	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if runErr := cmd.Run(); runErr != nil {
-		return 0, fmt.Errorf("%w: %s", service.ErrLiveNoteImport, lastLogLine(stderr.String(), runErr))
+	if runErr != nil {
+		return 0, fmt.Errorf("%w: %s", service.ErrLiveNoteImport, lastLogLine(string(stderr), runErr))
 	}
 	if duration := probeDurationMS(ctx, dst); duration > 0 {
 		return duration, nil
@@ -483,11 +493,10 @@ func probeDurationMS(ctx context.Context, path string) int64 {
 	if err != nil {
 		return 0
 	}
-	out, err := exec.CommandContext(
-		ctx, bin,
+	out, _, err := runMediaCommand(ctx, bin,
 		"-v", "error", "-show_entries", "format=duration",
 		"-of", "default=nw=1:nk=1", path,
-	).Output()
+	)
 	if err != nil {
 		return 0
 	}

@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -73,22 +72,18 @@ func extractImportFrames(ctx context.Context, video, dir string, limit int) ([]i
 		`select='eq(n\,0)+gt(scene\,%s)',metadata=print:file=-,scale='min(%d,iw)':-2`,
 		liveNoteImportSceneThreshold, liveNoteImportFrameMaxWidth,
 	)
-	cmd := exec.CommandContext(
-		ctx, bin,
+	cmdOut, stderr, runErr := runMediaCommand(ctx, bin,
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-i", video,
 		"-vf", filter,
 		"-vsync", "vfr", "-q:v", "4",
 		filepath.Join(dir, "frame-%04d.jpg"),
 	)
-	var meta, stderr bytes.Buffer
-	cmd.Stdout = &meta
-	cmd.Stderr = &stderr
-	if runErr := cmd.Run(); runErr != nil {
-		return nil, fmt.Errorf("%w: %s", service.ErrLiveNoteImport, lastLogLine(stderr.String(), runErr))
+	if runErr != nil {
+		return nil, fmt.Errorf("%w: %s", service.ErrLiveNoteImport, lastLogLine(string(stderr), runErr))
 	}
 
-	times := parseSceneTimes(meta.String())
+	times := parseSceneTimes(string(cmdOut))
 	files, err := filepath.Glob(filepath.Join(dir, "frame-*.jpg"))
 	if err != nil {
 		return nil, fmt.Errorf("import: list frames: %w", err)
@@ -122,11 +117,10 @@ func hasVideoStream(ctx context.Context, path string) bool {
 		// failure as "no frames".
 		return true
 	}
-	out, err := exec.CommandContext(
-		ctx, bin,
+	out, _, err := runMediaCommand(ctx, bin,
 		"-v", "error", "-select_streams", "v:0",
 		"-show_entries", "stream=codec_type", "-of", "csv=p=0", path,
-	).Output()
+	)
 	if err != nil {
 		return true
 	}

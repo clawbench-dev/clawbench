@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"mime/multipart"
@@ -303,6 +304,252 @@ func TestSaveImportFrames_ReportsAppendFailure(t *testing.T) {
 		assert.NotEqual(t, ".jpg", filepath.Ext(entry.Name()),
 			"the frame that could not be recorded must not stay on disk")
 	}
+}
+
+// The happy path of the frame writer, driven without ffmpeg: CI runners do not
+// ship it, and the row (offset, size, file on disk) is what the record page
+// reads — the extraction that produced the file is a separate concern.
+func TestSaveImportFrames_RecordsFrames(t *testing.T) {
+	setupLiveNotesDB(t)
+	project := t.TempDir()
+	pid := cacheProjectID(t, project)
+	startedAt := int64(1_700_000_000_000)
+	token := "importtoken0000000000000000000003"
+	paths, err := service.EnsureMeetingDir(token, pid, project, "帧", startedAt)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	first := filepath.Join(dir, "frame-0001.jpg")
+	second := filepath.Join(dir, "frame-0002.jpg")
+	require.NoError(t, os.WriteFile(first, realPNG(t, 4, 2), 0o644))
+	require.NoError(t, os.WriteFile(second, realPNG(t, 8, 6), 0o644))
+
+	saveImportFrames(context.Background(), token, pid, paths, startedAt, []importFrame{
+		{OffsetMS: 0, Path: first},
+		{OffsetMS: 5_000, Path: second},
+	})
+
+	shots, err := service.ListLiveNoteShots(token)
+	require.NoError(t, err)
+	require.Len(t, shots, 2)
+	assert.Equal(t, startedAt, shots[0].At)
+	assert.Equal(t, startedAt+5_000, shots[1].At)
+	assert.Equal(t, 4, shots[0].Width)
+	assert.Equal(t, 2, shots[0].Height)
+	assert.Equal(t, service.LiveNoteShotReasonChange, shots[0].Reason)
+	assert.FileExists(t, filepath.Join(paths.Dir, shots[0].FileName))
+}
+
+// failingReader hands out its bytes and then fails: an upload cut short by a
+// dropped connection, at the level the writer sees it.
+type failingReader struct {
+	data []byte
+	err  error
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, r.err
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+func TestWriteImportFile_ReportsCopyError(t *testing.T) {
+	_, err := writeImportFile(&failingReader{data: []byte("partial"), err: errors.New("connection reset")}, "a.mp3")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection reset")
+}
+
+// A read error in a small field must degrade to an empty value rather than
+// failing the whole import: the file part is what matters.
+func TestReadImportField_ReturnsEmptyOnError(t *testing.T) {
+	got := readImportField(&failingReader{data: []byte("title"), err: errors.New("connection reset")})
+	assert.Equal(t, "", got)
+}
+
+// A file part whose bytes stop early must be reported as a bad request and the
+// partial scratch file removed.
+func TestReceiveLiveNoteImport_ReportsFileWriteError(t *testing.T) {
+	body := "--BOUND\r\n" +
+		"Content-Disposition: form-data; name=\"file\"; filename=\"a.mp3\"\r\n\r\n" +
+		"partial"
+	req := httptest.NewRequest(http.MethodPost, "/x",
+		&failingReader{data: []byte(body), err: errors.New("connection reset")})
+	req.Header.Set("Content-Type", `multipart/form-data; boundary=BOUND`)
+
+	_, err := receiveLiveNoteImport(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection reset")
+}
+
+// stubMediaCommand replaces the ffmpeg/ffprobe process for one test.
+func stubMediaCommand(t *testing.T, fn func(ctx context.Context, name string, args ...string) ([]byte, []byte, error)) {
+	t.Helper()
+	prev := runMediaCommand
+	runMediaCommand = fn
+	t.Cleanup(func() { runMediaCommand = prev })
+}
+
+// isProbeCall tells the two commands apart by a flag only ffprobe gets.
+func isProbeCall(args []string) bool {
+	for _, arg := range args {
+		if arg == "-select_streams" {
+			return true
+		}
+	}
+	return false
+}
+
+// isDurationCall matches the ffprobe invocation that reads format=duration.
+func isDurationCall(args []string) bool {
+	for _, arg := range args {
+		if arg == "-show_entries" {
+			return true
+		}
+	}
+	return false
+}
+
+// writeFrames writes n jpgs next to the output pattern, the way ffmpeg does.
+func writeFrames(t *testing.T, pattern string, n int) {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		path := filepath.Join(filepath.Dir(pattern), fmt.Sprintf("frame-%04d.jpg", i))
+		require.NoError(t, os.WriteFile(path, []byte("jpg"), 0o644))
+	}
+}
+
+// The pairing between ffmpeg's timestamps and the files it wrote is positional;
+// getting it wrong attaches a picture to the wrong moment of the meeting.
+func TestExtractImportFrames_PairsTimestampsWithFiles(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffmpeg", nil })
+	stubMediaCommand(t, func(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+		if isProbeCall(args) {
+			return []byte("video\n"), nil, nil
+		}
+		writeFrames(t, args[len(args)-1], 2)
+		// 20s apart: the minimum gap keeps the second frame instead of
+		// treating it as a flip-book transition.
+		return []byte("frame:0 pts:0 pts_time:0\nlavfi.scene_score=0.5\n" +
+			"frame:1 pts:1 pts_time:20\nlavfi.scene_score=0.6\n"), nil, nil
+	})
+
+	frames, err := extractImportFrames(context.Background(), "video.mp4", t.TempDir(), 10)
+	require.NoError(t, err)
+	require.Len(t, frames, 2)
+	assert.Equal(t, int64(0), frames[0].OffsetMS)
+	assert.Equal(t, int64(20_000), frames[1].OffsetMS)
+	assert.Contains(t, frames[1].Path, "frame-0002.jpg")
+}
+
+// A mismatch means the filter chain changed shape; guessing would attach wrong
+// timestamps, so it is an error.
+func TestExtractImportFrames_RejectsTimestampMismatch(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffmpeg", nil })
+	stubMediaCommand(t, func(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+		if isProbeCall(args) {
+			return []byte("video\n"), nil, nil
+		}
+		writeFrames(t, args[len(args)-1], 2)
+		return []byte("frame:0 pts:0 pts_time:0\n"), nil, nil
+	})
+
+	_, err := extractImportFrames(context.Background(), "video.mp4", t.TempDir(), 10)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2 frames but 1 timestamps")
+}
+
+// A decoder that succeeds without writing anything (an empty video) is "no
+// pictures", not an error.
+func TestExtractImportFrames_ReturnsNothingWhenNoFrameWritten(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffmpeg", nil })
+	stubMediaCommand(t, func(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+		if isProbeCall(args) {
+			return []byte("video\n"), nil, nil
+		}
+		return nil, nil, nil
+	})
+
+	frames, err := extractImportFrames(context.Background(), "video.mp4", t.TempDir(), 10)
+	require.NoError(t, err)
+	assert.Nil(t, frames)
+}
+
+func TestExtractImportFrames_ReportsDecoderFailure(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffmpeg", nil })
+	stubMediaCommand(t, func(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+		if isProbeCall(args) {
+			return []byte("video\n"), nil, nil
+		}
+		return nil, []byte("Invalid data found when processing input\n"), errors.New("exit status 1")
+	})
+
+	_, err := extractImportFrames(context.Background(), "video.mp4", t.TempDir(), 10)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, service.ErrLiveNoteImport)
+	assert.Contains(t, err.Error(), "Invalid data found")
+}
+
+func TestHasVideoStream_ReadsTheStreamType(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffprobe", nil })
+
+	stubMediaCommand(t, func(context.Context, string, ...string) ([]byte, []byte, error) {
+		return []byte("audio\n"), nil, nil
+	})
+	assert.False(t, hasVideoStream(context.Background(), "a.wav"), "an audio-only import skips frame extraction")
+
+	stubMediaCommand(t, func(context.Context, string, ...string) ([]byte, []byte, error) {
+		return []byte("video\n"), nil, nil
+	})
+	assert.True(t, hasVideoStream(context.Background(), "a.mp4"))
+}
+
+func TestProbeDurationMS_ParsesSeconds(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffprobe", nil })
+
+	stubMediaCommand(t, func(context.Context, string, ...string) ([]byte, []byte, error) {
+		return []byte("12.5\n"), nil, nil
+	})
+	assert.Equal(t, int64(12_500), probeDurationMS(context.Background(), "a.webm"))
+
+	stubMediaCommand(t, func(context.Context, string, ...string) ([]byte, []byte, error) {
+		return []byte("N/A\n"), nil, nil
+	})
+	assert.Equal(t, int64(0), probeDurationMS(context.Background(), "a.webm"), "an unparseable duration is 'unknown'")
+}
+
+// The converted file's own duration is what the meeting is measured by; the
+// source is only the fallback.
+func TestFFmpegTranscode_ReportsConvertedDuration(t *testing.T) {
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffmpeg", nil })
+	stubMediaCommand(t, func(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+		if isDurationCall(args) {
+			return []byte("12.5\n"), nil, nil
+		}
+		return nil, nil, nil
+	})
+
+	duration, err := ffmpegTranscode(context.Background(), "src.mp4", "dst.webm")
+	require.NoError(t, err)
+	assert.Equal(t, int64(12_500), duration)
+}
+
+// A video the decoder reports as having no frames leaves the transcript as the
+// only product, without failing the meeting.
+func TestExtractAndSaveFrames_NoFrames(t *testing.T) {
+	setupLiveNotesDB(t)
+	stubLookPath(t, func(string) (string, error) { return "/usr/bin/ffmpeg", nil })
+	stubMediaCommand(t, func(_ context.Context, _ string, args ...string) ([]byte, []byte, error) {
+		if isProbeCall(args) {
+			return []byte("video\n"), nil, nil
+		}
+		return nil, nil, nil
+	})
+
+	extractAndSaveFrames(context.Background(), "token", 1,
+		service.LiveNotesPaths{Dir: t.TempDir()}, 1_700_000_000_000, "video.mp4")
 }
 
 func TestImageSize(t *testing.T) {
