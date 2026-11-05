@@ -107,9 +107,20 @@ func TestHelpText_ListsEveryCommand(t *testing.T) {
 		if strings.TrimSpace(body) == "" || body == "PushHelpBody" {
 			t.Fatalf("%s: help body is missing or untranslated: %q", lang, body)
 		}
+		// Each command must be its own list item. Markdown renderers (DingTalk,
+		// Feishu cards) merge consecutive plain lines into a single paragraph, so
+		// a one-line-per-command body without bullets arrives as one run-on blob.
+		lines := strings.Split(body, "\n")
 		for _, word := range words {
-			if !strings.Contains(body, word) {
-				t.Errorf("%s: help body does not mention %q", lang, word)
+			documented := false
+			for _, line := range lines {
+				if strings.HasPrefix(line, "- ") && strings.Contains(line, word) {
+					documented = true
+					break
+				}
+			}
+			if !documented {
+				t.Errorf("%s: %q must be documented as its own list item, got body:\n%s", lang, word, body)
 			}
 		}
 		// The "@{shortID}" form is not a command, but it is the other half of
