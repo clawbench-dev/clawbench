@@ -47,8 +47,13 @@ test.describe('Meeting tab', () => {
     const micOff = form.locator('[data-role="device-choice"][data-kind="audio"] [data-device="__off__"]')
 
     // A picture source is pre-selected (a screen when one can be enumerated),
-    // so the only thing missing is the required nickname.
+    // so the only thing missing is the required nickname. Clear it first: the
+    // field is prefilled from the ACCOUNT nickname, which another browser
+    // project in the same run sets when it creates a meeting (the server is
+    // shared), and "empty nickname blocks start" must not depend on whether
+    // that already happened.
     const start = page.locator('[data-action="meeting-start"]')
+    await page.locator('[data-role="meeting-nick"]').fill('')
     await expect(start).toBeDisabled()
     await page.locator('[data-role="meeting-nick"]').fill('E2E 用户')
     await expect(start).toBeEnabled()
