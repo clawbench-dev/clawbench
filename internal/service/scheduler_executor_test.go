@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	compacted INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	disabled INTEGER NOT NULL DEFAULT 0,
+	removed INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	last_read_at DATETIME,
 	awaiting_user_at DATETIME,
