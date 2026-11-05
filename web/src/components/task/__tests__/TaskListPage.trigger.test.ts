@@ -34,6 +34,8 @@ vi.mock('lucide-vue-next', () => {
     Repeat: stub('Repeat'),
     CheckCheck: stub('CheckCheck'),
     Zap: stub('Zap'),
+    // Rendered by the expanded row's execution detail.
+    MessageSquare: stub('MessageSquare'),
   }
 })
 
@@ -42,6 +44,10 @@ vi.mock('@/composables/useTaskTab', () => ({
 }))
 
 vi.mock('@/composables/useAgents', () => ({
+  // useSessionIdentity registers its updaters at module evaluation time, and the
+  // component imports it transitively (through useQuoteQuestion). A whitelist
+  // mock without this export throws before any test in this file can run.
+  registerIdentityUpdaters: vi.fn(),
   useAgents: () => ({
     loadAgents: vi.fn(),
     getAgentBackend: () => 'acp',

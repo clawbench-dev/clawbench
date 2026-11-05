@@ -2655,7 +2655,7 @@ func TestRemoveGroupMember_ForeignMemberIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup A: %v", err)
 	}
-	groupB, memberB, err := CreateGroup(projectB, "B 组", "codebuddy", "agent-host", "Host")
+	_, memberB, err := CreateGroup(projectB, "B 组", "codebuddy", "agent-host", "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup B: %v", err)
 	}
@@ -2669,7 +2669,6 @@ func TestRemoveGroupMember_ForeignMemberIsNoOp(t *testing.T) {
 	if len(active) != 1 || active[0].ID != hostA {
 		t.Fatalf("group A roster must be unchanged, got %+v", active)
 	}
-	_ = groupB
 }
 
 // Removal writes one system line; repeating it writes none (idempotent).
@@ -2723,8 +2722,12 @@ func TestRemoveGroupMember_WorksOnDisabledMember(t *testing.T) {
 	if _, err := RemoveGroupMember(groupID, byName["B"]); err != nil {
 		t.Fatalf("removing a disabled member must work: %v", err)
 	}
-	if _, err := ListGroupMembers(groupID); err != nil {
+	active, err := ListGroupMembers(groupID)
+	if err != nil {
 		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(active) != 1 || active[0].ID != byName["A"] {
+		t.Fatalf("roster = %+v, want only A", active)
 	}
 }
 

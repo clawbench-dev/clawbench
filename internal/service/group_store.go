@@ -519,24 +519,12 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 	// about how many agents can be scheduled to speak at once.
 	active := countSpeakingMembers(members)
 
-	// Each spec is a new (enabled) instance, so every non-empty spec consumes a slot.
-	netNew := 0
-	for _, s := range specs {
-		if s.AgentID != "" {
-			netNew++
-		}
-	}
-	if active+netNew > maxGroupMembers {
-		return nil, ErrGroupMemberLimit
-	}
-
 	// Drop empty specs (defensive; callers never send them) so ids, names and
-	// rows stay aligned.
-	kept := make([]GroupMemberSpec, 0, len(specs))
-	for _, s := range specs {
-		if s.AgentID != "" {
-			kept = append(kept, s)
-		}
+	// rows stay aligned. Every kept spec is a new (enabled) instance, so each
+	// one consumes a slot.
+	kept := keepNonEmptySpecs(specs)
+	if active+len(kept) > maxGroupMembers {
+		return nil, ErrGroupMemberLimit
 	}
 	if len(kept) == 0 {
 		return nil, nil
@@ -593,6 +581,18 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		writeMemberSystemEvent(projectPath, groupID, s.AgentID, s.DisplayName, "GroupMemberJoined")
 	}
 	return memberIDs, nil
+}
+
+// keepNonEmptySpecs drops specs without an agent id (defensive; callers never
+// send them) so ids, names and rows stay aligned.
+func keepNonEmptySpecs(specs []GroupMemberSpec) []GroupMemberSpec {
+	kept := make([]GroupMemberSpec, 0, len(specs))
+	for _, s := range specs {
+		if s.AgentID != "" {
+			kept = append(kept, s)
+		}
+	}
+	return kept
 }
 
 // insertGroupMemberRowsTx inserts the member rows for AddGroupMembers in one
@@ -1376,27 +1376,8 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 	}
 	// Only an ACTIVE member can be the last one; re-asserting removal of an
 	// already-removed row must stay a no-op success.
-	members, err := ListGroupMembers(groupID)
-	if err != nil {
+	if err := assertMemberRemovable(groupID, memberID); err != nil {
 		return false, err
-	}
-	found := false
-	targetDisabled := false
-	for _, m := range members {
-		if m.ID == memberID {
-			found = true
-			targetDisabled = m.Disabled
-			break
-		}
-	}
-	if found {
-		// An empty group can never run a turn, and so can a group whose only
-		// remaining members are all disabled. Removing a DISABLED member never
-		// reduces the speaking count, so only the enabled case needs the second
-		// check.
-		if len(members) <= 1 || (!targetDisabled && countSpeakingMembers(members) <= 1) {
-			return false, ErrCannotRemoveLastMember
-		}
 	}
 
 	res, err := store.WriteExec(
@@ -1427,6 +1408,31 @@ func RemoveGroupMember(groupID, memberID string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// assertMemberRemovable refuses a removal that would leave the group with
+// nobody able to answer. It is a no-op when memberID is not an active member:
+// the UPDATE in RemoveGroupMember is scoped to active rows, so such a call is
+// an idempotent success.
+func assertMemberRemovable(groupID, memberID string) error {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return err
+	}
+	for _, m := range members {
+		if m.ID != memberID {
+			continue
+		}
+		// An empty group can never run a turn, and so can a group whose only
+		// remaining members are all disabled. Removing a DISABLED member never
+		// reduces the speaking count, so only the enabled case needs the second
+		// check.
+		if len(members) <= 1 || (!m.Disabled && countSpeakingMembers(members) <= 1) {
+			return ErrCannotRemoveLastMember
+		}
+		return nil
+	}
+	return nil
 }
 
 // memberDisplayName returns a member row's display name (empty if unknown).
@@ -1546,6 +1552,39 @@ func ChangeGroupHost(projectPath, groupID, memberID string) error {
 	return nil
 }
 
+// loadHostCandidate reads and validates the member row that is about to become
+// the host. It must run inside the caller's transaction: a read on the shared
+// handle while a write transaction is open would deadlock in the
+// single-connection test fixture.
+func loadHostCandidate(tx *sql.Tx, groupID, memberID string) (agentID, backend, name string, err error) {
+	var memberGroup string
+	var disabled, removed int
+	if err = tx.QueryRowContext(
+		context.Background(),
+		"SELECT COALESCE(group_id, ''), COALESCE(agent_id, ''), COALESCE(backend, ''), "+
+			"COALESCE(agent_name, ''), COALESCE(disabled, 0), COALESCE(removed, 0) "+
+			"FROM chat_sessions WHERE id = ? AND session_type = ?",
+		memberID, groupMemberSessionType,
+	).Scan(&memberGroup, &agentID, &backend, &name, &disabled, &removed); err != nil {
+		// Only "no such row" means the id is not a member of this group. A
+		// database failure must NOT be reported as a 400 the user could "fix" by
+		// picking someone else — it is an outage and belongs in the 500 path.
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", "", ErrHostNotMember
+		}
+		return "", "", "", err
+	}
+	// A removed member is no longer part of the group, so it cannot become the
+	// router even if a stale client still holds its row id.
+	if memberGroup != groupID || removed != 0 {
+		return "", "", "", ErrHostNotMember
+	}
+	if disabled != 0 {
+		return "", "", "", ErrHostDisabled
+	}
+	return agentID, backend, name, nil
+}
+
 // changeGroupHostTx validates and applies the swap in ONE transaction, taking
 // and releasing the write lock itself so the caller can run the best-effort
 // system message afterwards without deadlocking.
@@ -1588,33 +1627,9 @@ func changeGroupHostTx(groupID, memberID string) (changed bool, name string, err
 
 	// The target must be a member OF THIS GROUP and must be able to speak: a
 	// disabled member would become a router that never takes a turn.
-	var memberGroup, memberAgentID, memberBackend, memberName string
-	var disabled, removed int
-	if qerr := tx.QueryRowContext(
-		context.Background(),
-		"SELECT COALESCE(group_id, ''), COALESCE(agent_id, ''), COALESCE(backend, ''), "+
-			"COALESCE(agent_name, ''), COALESCE(disabled, 0), COALESCE(removed, 0) "+
-			"FROM chat_sessions WHERE id = ? AND session_type = ?",
-		memberID, groupMemberSessionType,
-	).Scan(&memberGroup, &memberAgentID, &memberBackend, &memberName, &disabled, &removed); qerr != nil {
-		// Only "no such row" means the id is not a member of this group. A
-		// database failure must NOT be reported as a 400 the user could "fix" by
-		// picking someone else — it is an outage and belongs in the 500 path.
-		if errors.Is(qerr, sql.ErrNoRows) {
-			return false, "", ErrHostNotMember
-		}
-		return false, "", qerr
-	}
-	if memberGroup != groupID {
-		return false, "", ErrHostNotMember
-	}
-	// A removed member is no longer part of the group, so it cannot become the
-	// router even if a stale client still holds its row id.
-	if removed != 0 {
-		return false, "", ErrHostNotMember
-	}
-	if disabled != 0 {
-		return false, "", ErrHostDisabled
+	memberAgentID, memberBackend, memberName, err := loadHostCandidate(tx, groupID, memberID)
+	if err != nil {
+		return false, "", err
 	}
 
 	hostJSON, jerr := json.Marshal(memberID)

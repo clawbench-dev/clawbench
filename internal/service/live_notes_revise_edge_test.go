@@ -59,10 +59,10 @@ func TestParseLiveNoteSplitLine_WithoutArrowIsNotASplit(t *testing.T) {
 // than half-parsed.
 func TestLiveNoteClockBody_RejectsMalformedClocks(t *testing.T) {
 	cases := []string{
-		"no bracket at all",   // no "[" prefix
-		"[]body",              // empty bracket
-		"[",                   // no closing bracket
-		"[   ]body",           // whitespace-only clock
+		"no bracket at all", // no "[" prefix
+		"[]body",            // empty bracket
+		"[",                 // no closing bracket
+		"[   ]body",         // whitespace-only clock
 	}
 	for _, line := range cases {
 		clock, body, ok := liveNoteClockBody(line)
@@ -97,8 +97,8 @@ func TestSplitLiveNoteLineAt_LineWithoutClockIsUnchanged(t *testing.T) {
 }
 
 // Two cuts in the same line must be applied left to right, and a cut that
-// lands inside an earlier one must be skipped — otherwise the same words would
-// be emitted twice.
+// starts at or before the previous one must be skipped — otherwise the same
+// words would be emitted twice.
 func TestSplitLiveNoteLineAt_OrdersCutsAndSkipsOverlappingOnes(t *testing.T) {
 	line := "[00:00] 我：甲乙丙丁"
 	splits := []liveNoteSplit{
@@ -110,5 +110,5 @@ func TestSplitLiveNoteLineAt_OrdersCutsAndSkipsOverlappingOnes(t *testing.T) {
 	require.Len(t, got, 3, "two real cuts produce three lines: %v", got)
 	assert.Equal(t, "[00:00] 我：", got[0], "the cut happens BEFORE the word, so it stays with the first speaker")
 	assert.Equal(t, "[00:00] 甲 speaker|甲乙", got[1])
-	assert.Equal(t, "[00:00] 乙 speaker|丙丁", got[2], "the third cut lands inside the second one and must be skipped")
+	assert.Equal(t, "[00:00] 乙 speaker|丙丁", got[2], "the third cut starts at the same offset as the second and must be skipped")
 }

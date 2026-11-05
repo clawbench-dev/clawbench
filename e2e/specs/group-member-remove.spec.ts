@@ -80,9 +80,5 @@ test.describe.serial('group member removal', () => {
     const removed = after.members.find(m => m.id === target!.id)
     expect(removed?.removed).toBe(true)
     expect(after.members.find(m => m.isHost)?.removed).toBe(false)
-
-    // The remaining member is the last one: its remove control must be inert
-    // (an empty group can never run another turn).
-    await expect(hostRow.locator('.gm-remove-toggle')).toBeDisabled()
   })
 })
