@@ -17,6 +17,7 @@
     :active-tab="sideTab"
     :notes-available="notesAvailable"
     participants-available
+    :participant-count="roster.length"
     @update:active-tab="setSideTab"
     @close="closeSide"
     @resize="syncInkRect"
@@ -371,6 +372,12 @@
       <!-- The audience's view of the room. No actions here on purpose: only the
            host can mute or remove somebody, so a member list that offered
            buttons would be a set of controls that always fail. -->
+      <!-- Headcount first, then the rows: the same number the tab carries, so
+           the pane answers "how many" on its own after the tab bar scrolls out
+           of view. -->
+      <p v-if="roster.length > 0" class="live-members-total" data-role="members-total">
+        {{ t('share.live.memberCount', { n: roster.length }) }}
+      </p>
       <ul v-if="roster.length > 0" class="live-members" data-role="members-list">
         <li v-for="m in roster" :key="m.id" class="live-member" :data-member-id="m.id">
           <SpeakerAvatar class="live-member__avatar" :name="memberName(m)" />
@@ -2156,6 +2163,15 @@ onBeforeUnmount(() => {
 }
 
 /* ── 成员 tab ──────────────────────────────────────────────────────────────── */
+
+/* Headcount above the rows: a caption, aligned with the first row's text. The
+   pane is a plain flex column with no gap, so the space lives here. */
+.live-members-total {
+  margin: 0 0 var(--space-3, 6px);
+  padding: 0 var(--space-3, 6px);
+  color: var(--text-muted, #8b949e);
+  font-size: var(--font-size-xs, 11px);
+}
 
 .live-members {
   list-style: none;

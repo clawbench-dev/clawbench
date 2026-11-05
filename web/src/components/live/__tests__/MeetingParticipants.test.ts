@@ -137,4 +137,14 @@ describe('MeetingParticipants', () => {
     expect(w.find('[data-role="participants-empty"]').exists()).toBe(true)
     expect(w.findAll('.mp-row')).toHaveLength(1)
   })
+
+  it('prints the headcount above the rows, host included', () => {
+    // The host is a row, so the list of two rows is two people — not "one
+    // viewer". The same number is on the tab that opens this pane.
+    const w = mountList({ viewers: [viewer({ id: 'v1' })] })
+    expect(w.find('[data-role="participants-total"]').text()).toBe('2 in the meeting')
+
+    const alone = mountList()
+    expect(alone.find('[data-role="participants-total"]').text()).toBe('1 in the meeting')
+  })
 })

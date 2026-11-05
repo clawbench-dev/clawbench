@@ -105,6 +105,7 @@ const i18n = createI18n({
           memberTalking: '说话中',
           memberMuted: '已静音',
           membersEmpty: '还没有其他人的信息。',
+          memberCount: '共 {n} 人',
         },
       },
     },
@@ -688,6 +689,32 @@ describe('LiveShareView 成员 tab', () => {
     await flushPromises()
 
     expect(w.find('[data-role="members-empty"]').exists()).toBe(true)
+    // No roster yet: neither the tab nor the pane may claim "0 people".
+    expect(w.find('[data-role="participants-count"]').exists()).toBe(false)
+    expect(w.find('[data-role="members-total"]').exists()).toBe(false)
+
+    w.unmount()
+  })
+
+  it('shows the headcount on the tab and above the rows', async () => {
+    const w = mountView()
+    await flushPromises()
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onRoster?.([
+      { id: 'host', name: '泷泽', host: true },
+      { id: 'v1', name: '小明' },
+      { id: 'v2', name: '小红' },
+    ])
+    await flushPromises()
+
+    // Visible without opening the tab.
+    expect(w.find('[data-tab="participants"] [data-role="participants-count"]').text()).toBe('3')
+
+    await w.find('[data-tab="participants"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-role="members-total"]').text()).toBe('共 3 人')
 
     w.unmount()
   })

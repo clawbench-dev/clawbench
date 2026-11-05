@@ -77,6 +77,7 @@ const i18n = createI18n({
           memberTalking: '说话中',
           memberMuted: '已静音',
           membersEmpty: '还没有其他人的信息。',
+          memberCount: '共 {n} 人',
           qualityGood: '流畅',
           qualityFair: '一般',
           qualityPoor: '较差',
