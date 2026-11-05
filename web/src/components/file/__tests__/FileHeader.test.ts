@@ -29,8 +29,8 @@ const i18n = createI18n({
     en: {
       nav: {
         refresh: 'Refresh',
-        maximizePane: 'Maximize the left panel (hide chat)',
-        restorePane: 'Restore the split (show chat)',
+        hideChat: 'Hide chat area',
+        showChat: 'Show chat area',
       },
       common: { download: 'Download', delete: 'Delete', close: 'Close' },
       chat: {
@@ -280,12 +280,12 @@ describe('FileHeader', () => {
     })
   })
 
-  describe('maximize / restore pane button', () => {
-    // The pane could previously only be maximized from the collapse handle that
-    // appears on the split divider under the cursor: a ~14px target on a 6px
-    // line, hard to hit and easy to trigger while aiming at the scrollbar. The
-    // header button is the same operation with a full-size target, next to the
-    // refresh button the user already reaches for.
+  describe('collapse / restore chat pane button', () => {
+    // The chat pane could previously only be collapsed from the divider handle
+    // that appears under the cursor: a ~14px target on a 6px line, hard to hit
+    // and easy to trigger while aiming at the scrollbar. The header button is
+    // the same operation with a full-size target, next to the refresh button
+    // the user already reaches for.
     beforeEach(() => {
       mockIsWideScreen.value = true
       mockChatCollapsed.value = false
@@ -299,9 +299,9 @@ describe('FileHeader', () => {
       const wrapper = mountHeader()
       const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
       const iRefresh = titles.indexOf('Refresh')
-      const iMax = titles.findIndex(t => t.includes('Maximize'))
+      const iMax = titles.findIndex(t => t === 'Hide chat area')
       expect(iRefresh).toBeGreaterThan(-1)
-      expect(iMax, 'the maximize button must be in the inline toolbar').toBeGreaterThan(-1)
+      expect(iMax, 'the chat-toggle button must be in the inline toolbar').toBeGreaterThan(-1)
       expect(iMax).toBe(iRefresh + 1)
     })
 
@@ -311,26 +311,40 @@ describe('FileHeader', () => {
       expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
     })
 
-    it('reads as maximize while the chat pane is visible', () => {
+    it('offers to hide the chat while it is visible', () => {
       const wrapper = mountHeader()
       const btn = maximizeBtn(wrapper)
-      expect(btn.attributes('title')).toBe('Maximize the left panel (hide chat)')
-      // Maximize2 is the "expand" glyph; the button must not already look
-      // like a restore while there is nothing to restore.
-      expect(btn.html()).toContain('lucide-maximize-2')
-      expect(btn.html()).not.toContain('lucide-minimize-2')
+      expect(btn.attributes('title')).toBe('Hide chat area')
+      // PanelRightClose is the "the right pane goes away" glyph. It must NOT
+      // be Maximize2: this same toolbar has a Maximize2 for images ("view full
+      // size"), and two identical glyphs three buttons apart meaning different
+      // things is unreadable (the reported bug).
+      expect(btn.html()).toContain('lucide-panel-right-close')
+      expect(btn.html()).not.toContain('lucide-maximize-2')
     })
 
-    it('reads as restore once the chat pane is collapsed', async () => {
+    it('offers to show the chat once it is collapsed', async () => {
       mockChatCollapsed.value = true
       const wrapper = mountHeader()
       const btn = maximizeBtn(wrapper)
-      expect(btn.attributes('title')).toBe('Restore the split (show chat)')
-      expect(btn.html()).toContain('lucide-minimize-2')
+      expect(btn.attributes('title')).toBe('Show chat area')
+      expect(btn.html()).toContain('lucide-panel-right-open')
       expect(btn.classes()).toContain('active')
-      // Same handler either way: the button toggles, it does not "maximize".
+      // Same handler either way: the button toggles.
       await btn.trigger('click')
       expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
+    })
+
+    it('never shares a glyph with the image full-size button', () => {
+      // The regression this guards: both buttons used Maximize2, so an image
+      // showed two identical icons for two unrelated actions.
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      const chatBtn = maximizeBtn(wrapper)
+      const imageBtn = wrapper.findAll('.header-actions > .file-header-btn')
+        .find(b => (b.attributes('title') ?? '') === 'View image')
+      expect(imageBtn, 'the image full-size button must still exist').toBeTruthy()
+      expect(imageBtn!.html()).toContain('lucide-maximize-2')
+      expect(chatBtn.html()).not.toContain('lucide-maximize-2')
     })
 
     it('is absent on a narrow screen, where there is no split to maximize', () => {
@@ -355,7 +369,7 @@ describe('FileHeader', () => {
       await nextTick()
       const items = wrapper.findAll('.file-header-dropdown-menu .dropdown-item')
       const texts = items.map(i => i.text())
-      expect(texts.some(t => t.includes('Maximize'))).toBe(true)
+      expect(texts.some(t => t.includes('Hide chat area'))).toBe(true)
     })
 
     it('is offered even when the file has no text content', () => {

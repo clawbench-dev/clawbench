@@ -40,24 +40,33 @@
       <!-- Refresh button — first in the toolbar, and the last to collapse. -->
       <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
 
-      <!-- Maximize / restore the left pane (wide screen only).
-           The existing affordance is the collapse handle that appears on the
-           split divider under the cursor — a ~14px target on a 6px-wide line,
-           which is both hard to hit and easy to trigger by accident while
+      <!-- Collapse / restore the chat pane (wide screen only).
+           The pre-existing affordance is the collapse handle that appears on
+           the split divider under the cursor — a ~14px target on a 6px-wide
+           line, which is both hard to hit and easy to trigger by accident while
            aiming at the scrollbar. This button is a full-size target in the
-           place the user is already looking (the file toolbar) and does the
-           same thing, so the divider handle stays as the discoverable one. -->
+           place the user is already looking, and does the same thing, so the
+           divider handle stays as the discoverable one.
+
+           ICON: PanelRightClose / PanelRightOpen, NOT Maximize2/Minimize2.
+           This toolbar already has a Maximize2 for images ("view full size"),
+           and the two sat three buttons apart wearing the same glyph for
+           completely different actions. Maximize2 also means "open external
+           link", "enlarge a shared screen" and "maximize the OS window"
+           elsewhere in the app — a fifth meaning is unreadable. These two
+           glyphs say what actually happens: the RIGHT pane (chat) closes or
+           opens. -->
       <button
         v-if="isWideScreen && toolbarInlineIds.includes('maximize')"
         class="file-header-btn"
         data-action="toggle-maximize-pane"
         :class="{ active: chatCollapsed }"
         @click.stop="emit('toggleMaximizePane')"
-        :title="chatCollapsed ? t('nav.restorePane') : t('nav.maximizePane')"
-        :aria-label="chatCollapsed ? t('nav.restorePane') : t('nav.maximizePane')"
+        :title="chatCollapsed ? t('nav.showChat') : t('nav.hideChat')"
+        :aria-label="chatCollapsed ? t('nav.showChat') : t('nav.hideChat')"
       >
-        <Minimize2 v-if="chatCollapsed" :size="14" />
-        <Maximize2 v-else :size="14" />
+        <PanelRightOpen v-if="chatCollapsed" :size="14" />
+        <PanelRightClose v-else :size="14" />
       </button>
 
       <!-- TOC button (only for file types that support TOC) -->
@@ -207,9 +216,9 @@
                  vanishes, which would leave the pane maximizable only from the
                  divider handle again (the thing this button exists to fix). -->
             <button v-if="toolbarCollapsedIds.includes('maximize')" class="dropdown-item" :class="{ active: chatCollapsed }" @click="emit('toggleMaximizePane'); menuOpen = false">
-              <Minimize2 v-if="chatCollapsed" :size="14" />
-              <Maximize2 v-else :size="14" />
-              {{ chatCollapsed ? t('nav.restorePane') : t('nav.maximizePane') }}
+              <PanelRightOpen v-if="chatCollapsed" :size="14" />
+              <PanelRightClose v-else :size="14" />
+              {{ chatCollapsed ? t('nav.showChat') : t('nav.hideChat') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click="handleToggleView">
               <Eye :size="14" />
@@ -248,7 +257,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Minimize2 } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'

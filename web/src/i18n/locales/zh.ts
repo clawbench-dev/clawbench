@@ -210,8 +210,6 @@ export default {
     hideLeftPane: '隐藏左侧面板',
     hideChat: '隐藏聊天区域',
     showChat: '显示聊天区域',
-    maximizePane: '放大左侧面板（隐藏聊天区域）',
-    restorePane: '还原布局（显示聊天区域）',
   },
   forge: {
     type: { issues: '议题', prs: '合并', pipelines: '流水线' },
