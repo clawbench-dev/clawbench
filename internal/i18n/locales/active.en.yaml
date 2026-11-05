@@ -275,13 +275,13 @@ PushCommandWithAttachment: 'The command `{{.Command}}` cannot be sent together w
 PushHelpTitle: Commands
 PushHelpBody: |-
   **/ls** — list recent sessions (each with an 8-character short ID)
-  **/show [ID]** — resend the target session's last complete AI reply; omit the ID for the current session
-  **/stop [ID]** — stop the target session's running turn and clear its queue; omit the ID for the current session
+  **/show [ID]** — resend the target session's last complete AI reply; omit the ID for your default session
+  **/stop [ID]** — stop the target session's running turn and clear its queue; omit the ID for your default session
   **/new [index|path]** — list projects when sent bare; create a session in the given project otherwise
   **/help** — show this command reference
   **@ID message** — send to a specific session; this wins over every command
 
-  Plain text goes to the session you last @-mentioned; images and files are sent as attachments to the current session.
+  Text and attachments without an @ go to your default session: the one you last sent to successfully, or the one /new created — until you name another with @.
   Commands only work at the start of a message, and cannot be sent together with attachments.
 NotFound: Not found
 PermissionNotFound: No pending permission request found
