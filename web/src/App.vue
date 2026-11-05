@@ -231,6 +231,7 @@
                   <MeetingPanel
                     :active="panelIsActive('live')"
                     @quote="handleMeetingQuoteButton"
+                    @relay-settings="handleOpenMeetingRelaySettings"
                   />
                 </TabPanel>
 
@@ -753,6 +754,7 @@ import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateBackOverlay, handleBackNavigationOverlay } from './composables/useBackHandler'
 import { useNavigationContext } from './composables/useNavigationContext'
 import { setPendingSettingsCategory } from './composables/useSettingsNavigation'
+import { setMeetingCreateReturn } from './composables/useMeetingViewState'
 import { requestOpen as requestOpenUsageMeter } from './composables/useUsageMeter'
 import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
 import { useAndroidBackPress } from './composables/useAndroidBackPress'
@@ -4246,6 +4248,30 @@ function handleOpenFileManager() {
 function handleOpenPortForwardSettings() {
     beginExternalJump('proxy', surfaceLabel('proxy'))
     setPendingSettingsCategory('portForward')
+    switchTab('settings')
+}
+
+/**
+ * Jump from 创建会议 into the relay (LiveKit) configuration.
+ *
+ * The relay is installation-wide, so it is edited in 设置 → 会议 rather than in
+ * the per-meeting form — but the form is where the user discovers it is
+ * missing, so it carries the action instead of asking them to find the page.
+ *
+ * Two things are parked before the tab switch:
+ *  - the jump origin (`live`), so Back — Android hardware, edge swipe, or the
+ *    header — returns to the meeting tab;
+ *  - the create-form return request, because that tab's own rule is to drop a
+ *    half-filled 创建 form on re-entry. Coming back from a field the form cannot
+ *    edit itself must land on the form, with its typed name intact.
+ *
+ * The category travels through the module-level pending ref: the settings
+ * TabPanel is mounted lazily and may not exist yet when this fires.
+ */
+function handleOpenMeetingRelaySettings() {
+    beginExternalJump('live', surfaceLabel('live'))
+    setMeetingCreateReturn()
+    setPendingSettingsCategory('meeting')
     switchTab('settings')
 }
 

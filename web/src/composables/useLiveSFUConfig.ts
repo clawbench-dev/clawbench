@@ -2,10 +2,9 @@
  * The relay (LiveKit) endpoint + credential, as the create form edits it.
  *
  * One configuration for the whole installation, not per meeting: the relay is
- * deployed once and every meeting that opts in shares it. The secret is
- * write-only — the server answers `hasSecret` and never the value — so the form
- * shows a masked placeholder and sends the field only when the user typed
- * something.
+ * deployed once and every meeting that opts in shares it. The credential is
+ * write-only until the eye button asks for it: `load` only learns `hasSecret`,
+ * and `reveal` is the one call that carries the stored values.
  *
  * Module-level state, like the other meeting singletons: the create form is
  * remounted every time the panel is opened, and re-fetching on each mount would
@@ -28,6 +27,12 @@ const busy = ref(false)
 export interface RelayTestResult {
   ok: boolean
   message: string
+}
+
+/** The stored credential, only available through the explicit reveal. */
+export interface LiveSFURevealed {
+  apiKey: string
+  apiSecret: string
 }
 
 export function useLiveSFUConfig() {
@@ -80,7 +85,18 @@ export function useLiveSFUConfig() {
     }
   }
 
-  return { state, loaded, busy, load, saveAndTest }
+  /**
+   * Ask the server for the stored credential.
+   *
+   * Deliberately not part of `load`: reading the panel must not pull a
+   * plaintext secret into the page. Only the eye button calls this.
+   */
+  async function reveal(): Promise<LiveSFURevealed> {
+    const res = await apiGet<LiveSFURevealed>('/api/live-share/sfu?reveal=1')
+    return { apiKey: res.apiKey ?? '', apiSecret: res.apiSecret ?? '' }
+  }
+
+  return { state, loaded, busy, load, reveal, saveAndTest }
 }
 
 /** @internal Test-only: forget what was loaded. */

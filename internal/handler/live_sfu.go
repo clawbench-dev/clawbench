@@ -7,8 +7,10 @@ package handler
 // dialog is where it is edited because that is where the decision to use it is
 // made — but the values apply to all of them, which the UI says out loud.
 //
-// The secret is write-only. No response below ever carries it; the client is
-// told `hasSecret` and nothing more.
+// The credential is write-only by default: no response carries it unless the
+// client asks with `?reveal=1`, which is the explicit "show me what is stored"
+// behind the eye button in the settings panel. Reading the panel must not pull
+// a plaintext secret into the page.
 
 import (
 	"context"
@@ -31,10 +33,20 @@ type liveSFUResponse struct {
 	UpdatedAt  string `json:"updatedAt,omitempty"`
 }
 
+// liveSFURevealResponse is the one reply that carries the stored credential,
+// and only for GET /api/live-share/sfu?reveal=1 — the explicit "show me what is
+// stored" request behind the eye button in the settings panel.
+type liveSFURevealResponse struct {
+	liveSFUResponse
+	APIKey    string `json:"apiKey"`
+	APISecret string `json:"apiSecret"`
+}
+
 type liveSFUPatchBody struct {
 	URL string `json:"url"`
-	// Nil means "leave what is stored". The UI never receives the secret, so a
-	// save that only changes the URL must not blank the credential.
+	// Nil means "leave what is stored". The UI only receives the secret through
+	// the explicit reveal, so a save that only changes the URL must not blank
+	// the credential.
 	APIKey    *string `json:"apiKey"`
 	APISecret *string `json:"apiSecret"`
 	Clear     bool    `json:"clear"`
@@ -56,13 +68,22 @@ func toLiveSFUResponse(c *service.LiveSFUConfig) liveSFUResponse {
 	}
 }
 
-// ServeLiveSFUConfig handles GET (read, secret-free) and PATCH (edit).
+// ServeLiveSFUConfig handles GET (read, credential-free unless reveal=1) and
+// PATCH (edit).
 func ServeLiveSFUConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		cfg, err := service.GetLiveSFUConfig()
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		if r.URL.Query().Get("reveal") == "1" {
+			writeJSON(w, http.StatusOK, liveSFURevealResponse{
+				liveSFUResponse: toLiveSFUResponse(cfg),
+				APIKey:          cfg.APIKey,
+				APISecret:       cfg.APISecret,
+			})
 			return
 		}
 		writeJSON(w, http.StatusOK, toLiveSFUResponse(cfg))

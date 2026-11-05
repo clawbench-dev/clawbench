@@ -176,9 +176,20 @@
              Only the per-meeting switch lives on this form — the endpoint and
              credential are installation-wide and edited in 设置 → 视频会议
              (MeetingRelaySetting), because three inputs that apply to every
-             meeting do not belong in a form about this one. -->
-        <div class="meeting-section" data-role="meeting-relay-section">
-          {{ t('meeting.create.relay') }}
+             meeting do not belong in a form about this one. The action in the
+             heading row goes there instead of making the user find the page:
+             it records the meeting panel as the jump origin, so Back (edge
+             swipe / Android back) returns to this half-filled form. -->
+        <div class="meeting-section meeting-relay-head" data-role="meeting-relay-section">
+          <span>{{ t('meeting.create.relay') }}</span>
+          <button
+            class="meeting-text-btn"
+            type="button"
+            data-action="meeting-relay-settings"
+            @click="emit('relaySettings')"
+          >
+            {{ t('meeting.create.relaySettings') }}
+          </button>
         </div>
         <div class="meeting-hint">{{ t('meeting.create.relayHint') }}</div>
         <div class="meeting-checks">
@@ -233,7 +244,7 @@
  * independent, every one of them can be changed again during the meeting, and
  * sharing no picture at all is allowed.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen, Radio } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
@@ -264,8 +275,12 @@ import '@/assets/modal-footer-btn.css'
 // The section / field / hint / checkbox primitives, shared with the running
 // meeting's 会议管理 tab so one form has one look.
 import '@/assets/meeting-form.css'
+// The relay heading's word-level action (配置中继服务) — the meeting views'
+// shared inline text button.
+import '@/assets/meeting-text-btn.css'
 
-const emit = defineEmits<{ back: []; started: [] }>()
+const props = defineProps<{ active?: boolean }>()
+const emit = defineEmits<{ back: []; started: []; relaySettings: [] }>()
 
 const { t } = useI18n()
 const toast = useToast()
@@ -573,6 +588,21 @@ onMounted(() => {
     void loadSources()
   }
 })
+
+/**
+ * Re-read the relay state when the form comes back on screen.
+ *
+ * Jumping to 设置 → 视频会议 leaves this component mounted (the tab is only
+ * hidden), so `onMounted` does not run again — without this the switch would
+ * keep reporting the state from before the user configured the relay, and a
+ * relay meeting would stay blocked until the tab was left for good.
+ */
+watch(
+  () => props.active,
+  (active) => {
+    if (active) void loadRelay(true)
+  },
+)
 </script>
 
 <style scoped>
@@ -604,6 +634,17 @@ onMounted(() => {
   padding: var(--space-4) var(--space-5); border-radius: var(--radius-md);
   background: var(--bg-tertiary); color: var(--text-muted);
   font-size: var(--font-size-sm); line-height: 1.6;
+}
+
+/* 中继服务 heading row: section title on the left, the jump to its
+   configuration on the right. The action is a word-level link
+   (.meeting-text-btn) — the form's primary action is the footer's 开始会议, and
+   a second filled button up here would compete with it. */
+.meeting-relay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
 }
 
 .meeting-footer {

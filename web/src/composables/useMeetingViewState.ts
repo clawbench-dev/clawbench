@@ -35,6 +35,8 @@ const DEFAULT_TAB: MeetingDetailTab = 'resources'
 
 const _view = ref<MeetingView>({ token: '', tab: DEFAULT_TAB })
 let _pendingReturn: MeetingView | null = null
+/** One-shot "come back to the create form" request (see setMeetingCreateReturn). */
+let _pendingCreateReturn = false
 
 /** Record what the meeting panel is showing right now. */
 export function setMeetingView(token: string, tab: MeetingDetailTab): void {
@@ -68,8 +70,29 @@ export function takeMeetingReturn(): MeetingView | null {
   return pending
 }
 
+/**
+ * Park "the user left the CREATE form, bring them back to it".
+ *
+ * The create form is deliberately abandoned on a normal tab switch (a
+ * half-filled form is not a place to come back to), but the relay
+ * configuration is the one jump taken FROM that form to finish a field it
+ * cannot edit itself — coming back must land on the form again, not on the
+ * record list. One-shot: taking clears it.
+ */
+export function setMeetingCreateReturn(): void {
+  _pendingCreateReturn = true
+}
+
+/** Take (and clear) the create-form return request, if any. */
+export function takeMeetingCreateReturn(): boolean {
+  const pending = _pendingCreateReturn
+  _pendingCreateReturn = false
+  return pending
+}
+
 /** @internal Reset module state — for tests only. */
 export function _resetMeetingViewForTesting(): void {
   _view.value = { token: '', tab: DEFAULT_TAB }
   _pendingReturn = null
+  _pendingCreateReturn = false
 }

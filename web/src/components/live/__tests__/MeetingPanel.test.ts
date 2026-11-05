@@ -5,6 +5,10 @@ import { nextTick, onUnmounted, ref } from 'vue'
 import enMessages from '@/i18n/locales/en'
 import MeetingPanel from '../MeetingPanel.vue'
 import { _resetWakeLockForTest } from '@/composables/useWakeLock'
+import {
+  _resetMeetingViewForTesting,
+  setMeetingCreateReturn,
+} from '@/composables/useMeetingViewState'
 
 /**
  * Every wrapper is torn down after its test.
@@ -60,7 +64,12 @@ const ListStub = {
 }
 const CreateStub = {
   name: 'MeetingCreate',
-  template: `<div data-view="create"><button data-stub="started" @click="$emit('started')" /></div>`,
+  props: ['active'],
+  emits: ['started', 'back', 'relaySettings'],
+  template: `<div data-view="create" :data-active="active ? 'true' : 'false'">
+    <button data-stub="started" @click="$emit('started')" />
+    <button data-stub="relay-settings" @click="$emit('relaySettings')" />
+  </div>`,
 }
 const JoinStub = { name: 'MeetingJoin', template: '<div data-view="join" />' }
 const StageStub = {
@@ -124,6 +133,10 @@ beforeEach(() => {
   stageLifecycle.mounts = 0
   stageLifecycle.unmounts = 0
   _resetWakeLockForTest()
+  // Module-level view state survives between tests (the panel is mounted and
+  // unmounted, the module is not), and a parked create-return would leak into
+  // whichever test re-enters the tab next.
+  _resetMeetingViewForTesting()
   delete (globalThis as any).ClawBenchNative
 })
 
@@ -142,6 +155,16 @@ describe('MeetingPanel state machine', () => {
     const w2 = mountPanel()
     await w2.find('[data-stub="join"]').trigger('click')
     expect(visibleViews(w2)).toEqual(['join'])
+  })
+
+  it('forwards the create form’s relay-configuration request', async () => {
+    // The panel is the tab's boundary: App.vue owns the tab switch and the
+    // navigation origin, so the request has to reach it as an event.
+    const w = mountPanel()
+    await w.find('[data-stub="create"]').trigger('click')
+    await w.find('[data-stub="relay-settings"]').trigger('click')
+
+    expect(w.emitted('relaySettings')).toHaveLength(1)
   })
 
   /**
@@ -239,6 +262,38 @@ describe('MeetingPanel state machine', () => {
     await w.setProps({ active: true })
     await nextTick()
     expect(visibleViews(w)).toEqual(['meeting'])
+  })
+
+  /**
+   * 创建会议 carries the jump into 设置 → 中继服务, because the relay is
+   * installation-wide and the form only holds the per-meeting switch. Coming
+   * back must land on the half-filled form — the panel's normal rule is to drop
+   * a 创建/加入 page on re-entry, which is exactly wrong for a jump taken FROM
+   * that page to finish a field it cannot edit itself.
+   */
+  it('keeps the create form when returning from the relay configuration', async () => {
+    const w = mountPanel()
+    await w.find('[data-stub="create"]').trigger('click')
+    expect(visibleViews(w)).toEqual(['create'])
+
+    // Away to the settings tab; App.vue parks the return before switching.
+    await w.setProps({ active: false })
+    setMeetingCreateReturn()
+    await w.setProps({ active: true })
+    await nextTick()
+
+    expect(visibleViews(w)).toEqual(['create'])
+  })
+
+  it('drops the create form on a plain re-entry', async () => {
+    // The contrast case: no parked return, so the usual rule still applies.
+    const w = mountPanel()
+    await w.find('[data-stub="create"]').trigger('click')
+    await w.setProps({ active: false })
+    await w.setProps({ active: true })
+    await nextTick()
+
+    expect(visibleViews(w)).toEqual(['list'])
   })
 
   /**

@@ -3996,14 +3996,24 @@ paths:
       summary: 读取中继服务（LiveKit）配置
       description: |
         中继是本安装级的配置（一个地址、一对密钥，所有选择中继的会议共用），
-        不是每场会议一份。密钥只写不读：响应只有 `hasSecret`，从不回显。
+        不是每场会议一份。密钥默认只写不读：普通响应只有 `hasSecret`，不带凭据；
+        只有 `reveal=1` 才回显 `apiKey` / `apiSecret`，那是设置页眼睛按钮的
+        「看一眼已存的值」，读设置页本身不会把明文密钥拉进页面。
 
         中继按普通 ws:// 部署即可，不需要证书：浏览器不直连它，而是连本服务的
         `/livekit`，由服务端转发信令（媒体仍由浏览器直连 LiveKit）。
       operationId: liveShareSFUConfigGet
+      parameters:
+        - name: reveal
+          in: query
+          required: false
+          description: 传 `1` 时额外回显已存的 apiKey / apiSecret（眼睛按钮专用）
+          schema:
+            type: string
+            enum: ["1"]
       responses:
         "200":
-          description: 当前配置（不含密钥）
+          description: 当前配置（不含密钥，除非 reveal=1）
           content:
             application/json:
               schema:
@@ -4018,6 +4028,12 @@ paths:
                     type: boolean
                   updatedAt:
                     type: string
+                  apiKey:
+                    type: string
+                    description: 仅 reveal=1 时出现
+                  apiSecret:
+                    type: string
+                    description: 仅 reveal=1 时出现
     patch:
       tags: [LiveShare]
       summary: 修改中继服务配置
