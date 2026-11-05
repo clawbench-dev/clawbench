@@ -32,7 +32,7 @@ func setupMailDB(t *testing.T) {
 	cleanup := store.SetDBForTest(db, db)
 	prevDataDir := model.DataDir
 	model.DataDir = t.TempDir()
-	// The sync worker honours the mail master switch. These fixtures are about
+	// The sync worker honors the mail master switch. These fixtures are about
 	// the mail machinery itself, so they run with the feature on — the same
 	// state ApplyDefaults produces for a real install.
 	prevConfig := model.ConfigInstance

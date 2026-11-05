@@ -74,6 +74,34 @@ func TestJoinToken_CarriesRoomAndPublishGrant(t *testing.T) {
 	assert.Equal(t, base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), parts[2])
 }
 
+// A token is only accepted if the relay considers it valid *now*, and the two
+// clocks are never exactly equal. nbf has to sit far enough in the past that a
+// local clock running a little fast still produces an already-valid token;
+// exp still bounds when a leaked link stops working.
+func TestJoinToken_BackdatesNotBeforeToAbsorbClockSkew(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1:7880")
+	const ttl = time.Hour
+
+	before := time.Now()
+	token, err := cfg.JoinToken("room-1", "viewer:5", "", false, ttl)
+	require.NoError(t, err)
+	after := time.Now()
+
+	claims := decodeSegment(t, strings.Split(token, ".")[1])
+	nbf := int64(claims["nbf"].(float64))
+	exp := int64(claims["exp"].(float64))
+
+	// At least five minutes of slack, regardless of how long signing took.
+	assert.LessOrEqual(t, nbf, before.Add(-5*time.Minute).Unix(),
+		"nbf must be backdated by at least five minutes")
+	assert.GreaterOrEqual(t, nbf, after.Add(-6*time.Minute).Unix(),
+		"nbf must not be backdated further than the skew budget")
+
+	assert.GreaterOrEqual(t, exp, before.Add(ttl).Unix())
+	assert.LessOrEqual(t, exp, after.Add(ttl).Unix())
+	assert.Greater(t, exp, nbf)
+}
+
 func TestJoinToken_RefusesWithoutConfiguration(t *testing.T) {
 	_, err := LiveKitConfig{}.JoinToken("r", "i", "n", false, time.Hour)
 	require.Error(t, err)
