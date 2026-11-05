@@ -752,6 +752,119 @@ describe('usePortForward', () => {
     })
 
     /**
+     * The one-shot link probe behind the settings row's "测试链路" button.
+     *
+     * Both hosts only open a tunnel as part of binding a forward, and with zero
+     * mappings the native service stays stopped — so the probe must create a
+     * TEMPORARY mapping, wait for it, and remove it. These tests pin the three
+     * things that make it honest: the target is the server's own tunnel port
+     * (not some user service), the verdict follows the real bind (including a
+     * rebind), and nothing is left behind either way.
+     */
+    describe('probeTunnelLink', () => {
+        it('binds a temporary mapping to the tunnel port and removes it', async () => {
+            mockIsAppMode.value = true
+            const add = vi.fn().mockResolvedValue(undefined) // Android: void
+            const remove = vi.fn()
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: add,
+                removeForwardedPort: remove,
+                testPortReachable: vi.fn().mockResolvedValue(true),
+            }
+            mockApiGet.mockResolvedValue({ enabled: true, port: 20001 })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const verdict = await usePortForward().probeTunnelLink()
+
+            expect(verdict).toBe('ok')
+            expect(add).toHaveBeenCalledTimes(1)
+            const [requested, target, host] = add.mock.calls[0]
+            expect(target).toBe(20001)
+            expect(host).toBe('')
+            expect(requested).toBeGreaterThanOrEqual(40000)
+            expect(requested).toBeLessThan(60000)
+            expect(remove).toHaveBeenCalledWith(requested)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('follows the bind result to a rebound port and cleans that one up', async () => {
+            mockIsAppMode.value = true
+            let requested = 0
+            const remove = vi.fn()
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn((localPort: number) => {
+                    requested = localPort
+                    // The real Android bridge is a void call whose verdict
+                    // arrives later; a stale event for another port must not
+                    // decide this probe.
+                    setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                            detail: { localPort: 999, success: false, requestedLocalPort: 1 },
+                        }))
+                        window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                            detail: { localPort: 41234, success: true, requestedLocalPort: localPort },
+                        }))
+                    }, 0)
+                }),
+                removeForwardedPort: remove,
+                testPortReachable: vi.fn().mockResolvedValue(false),
+            }
+            mockApiGet.mockResolvedValue({ enabled: true, port: 20001 })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const verdict = await usePortForward().probeTunnelLink()
+
+            expect(verdict).toBe('ok')
+            expect(requested).toBeGreaterThanOrEqual(40000)
+            // The listener lives on the rebound port, so that is the one to
+            // remove — otherwise the temporary mapping leaks.
+            expect(remove).toHaveBeenCalledWith(41234)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('reports failed when the bind fails, and still cleans up', async () => {
+            mockIsAppMode.value = true
+            const remove = vi.fn()
+            ;(window as any).ClawBenchNative = {
+                // Desktop answers synchronously with the bind verdict.
+                addForwardedPort: vi.fn().mockResolvedValue({ ok: false, reason: 'unreachable' }),
+                removeForwardedPort: remove,
+                testPortReachable: vi.fn().mockResolvedValue(false),
+            }
+            mockApiGet.mockResolvedValue({ enabled: true, port: 20001 })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const verdict = await usePortForward().probeTunnelLink()
+
+            expect(verdict).toBe('failed')
+            expect(remove).toHaveBeenCalledTimes(1)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('is unsupported where no native tunnel exists', async () => {
+            mockIsAppMode.value = false
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn(),
+                removeForwardedPort: vi.fn(),
+                testPortReachable: vi.fn(),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const verdict = await usePortForward().probeTunnelLink()
+
+            expect(verdict).toBe('unsupported')
+
+            delete (window as any).ClawBenchNative
+        })
+    })
+
+    /**
      * The real `transportAnnotation()` — imported from the composable and driven
      * by the real `transportLabelKey`, NOT re-implemented. Two render tests
      * elsewhere hand-roll the same logic (one behind a `vi.mock` of this very

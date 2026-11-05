@@ -138,14 +138,22 @@ vi.mock('@/composables/usePortForward', async () => {
   // zero enabled mappings the native service is stopped on purpose, so
   // "disconnected" describes an idle state rather than a failure.
   const ports = ref<Array<{ localPort: number; port: number; enabled: boolean }>>([])
+  // Link probe: the temporary-mapping test the row offers while there is
+  // nothing to carry. The mock always succeeds; the real flow is pinned in
+  // usePortForward.test.ts.
+  const probingTunnel = ref(false)
+  const probeTunnelLink = vi.fn().mockResolvedValue('ok')
+  const transportAnnotation = vi.fn().mockReturnValue('（SSH）')
   Object.assign(mockTunnel, {
     tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
     sshInfo, transportAllowsH2, loadSSHInfo, ports,
+    probingTunnel, probeTunnelLink, transportAnnotation,
   })
   return {
     usePortForward: () => ({
       tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
       sshInfo, transportAllowsH2, loadSSHInfo, ports,
+      probingTunnel, probeTunnelLink, transportAnnotation,
     }),
   }
 })
@@ -190,7 +198,11 @@ const i18n = createI18n({
           tunnelStatusNoPorts: '暂无转发端口，添加端口后隧道会自动建立',
         },
       },
-      proxy: { transportSsh: 'SSH', transportH2: 'HTTP/2', retryCheck: '重新检测' },
+      proxy: { transportSsh: 'SSH', transportH2: 'HTTP/2', retryCheck: '重新检测', probeLink: '测试链路', probeLinkBusy: '测试中…', probeLinkAndSave: '保存并测试' },
+      portForward: {
+        tunnelProbeOk: '链路可用{transport}',
+        tunnelProbeFailed: '链路不可用{transport}',
+      },
     },
   },
 })
@@ -1045,6 +1057,77 @@ describe('tunnel status row', () => {
     expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--unknown')
     expect(statusRow(wrapper).text()).toContain('保存后')
     expect(statusRow(wrapper).text()).not.toContain('隧道未连接（HTTP/2）')
+  })
+
+  it('offers the link probe instead of a plain recheck when nothing is forwarded', async () => {
+    // With no mappings a plain health check can only ever answer
+    // "disconnected", which leaves the user unable to tell whether the chosen
+    // transport works at all. The probe opens a temporary mapping instead.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.ports as { value: Array<{ enabled: boolean }> }).value = []
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const button = statusRow(wrapper).find('.group-panel__tunnel-retry')
+    expect(button.text()).toBe('测试链路')
+
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(mockTunnel.probeTunnelLink).toHaveBeenCalledOnce()
+    expect(mockToastShow).toHaveBeenCalledWith('链路可用（SSH）', expect.objectContaining({ type: 'success' }))
+  })
+
+  it('applies a pending transport before probing it', async () => {
+    // Probing the saved wire while the picker shows another one is exactly the
+    // contradiction this row must not produce: save first, then measure.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = false
+    let stored = true // h2
+    const setTunnelTransportH2Enabled = vi.fn((on: boolean) => { stored = on })
+    mockNative.current = {
+      getTunnelTransportH2Enabled: () => stored,
+      setTunnelTransportH2Enabled,
+    }
+    ;(mockTunnel.ports as { value: Array<{ enabled: boolean }> }).value = []
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'ssh')
+    await nextTick()
+
+    const button = statusRow(wrapper).find('.group-panel__tunnel-retry')
+    expect(button.text()).toBe('保存并测试')
+
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(setTunnelTransportH2Enabled).toHaveBeenCalledWith(false)
+    expect(mockTunnel.probeTunnelLink).toHaveBeenCalledOnce()
+    // No mappings to rebuild → no reconnect. Asking for one made Android answer
+    // false (service not running) and the panel report "重连失败" for nothing.
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the plain check when the host cannot probe', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.ports as { value: Array<{ enabled: boolean }> }).value = []
+    ;(mockTunnel.probeTunnelLink as ReturnType<typeof vi.fn>).mockResolvedValueOnce('unsupported')
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await statusRow(wrapper).find('.group-panel__tunnel-retry').trigger('click')
+    await flushPromises()
+
+    expect(mockTunnel.checkTunnelHealth).toHaveBeenCalled()
+    expect(mockToastShow).not.toHaveBeenCalledWith('链路可用（SSH）', expect.anything())
   })
 
   it('shows the checking state while a probe is in flight', async () => {

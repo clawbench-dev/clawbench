@@ -52,6 +52,13 @@ export interface SSHInfo {
 
 export type TunnelStatus = 'unknown' | 'ok' | 'disconnected' | 'degraded'
 
+/**
+ * Outcome of the one-shot link probe. `unsupported` means the host cannot run
+ * one at all (web mode, or a bridge that predates the port primitives) — the
+ * caller falls back to the plain health check instead of reporting a verdict.
+ */
+export type TunnelProbeVerdict = 'ok' | 'failed' | 'unsupported'
+
 export type TunnelErrorType = 'auth' | 'network' | 'hostkey' | 'unknown' | ''
 
 /**
@@ -93,6 +100,10 @@ const tunnelErrorType = ref<TunnelErrorType>('')
 // view of the bridge is deliberately NOT preferred, it can contradict the
 // picker (see refreshActiveTransport).
 const activeTransport = ref<TunnelTransport>('')
+
+// True while probeTunnelLink() owns its temporary mapping — drives the probe
+// button's spinner and disables it.
+const probingTunnel = ref(false)
 
 // Ports that are newly registered and waiting for SSH tunnel to become reachable.
 // These show a yellow blinking dot instead of green/grey.
@@ -931,6 +942,93 @@ export function usePortForward() {
   }
 
   /**
+   * Verify that the tunnel can come up with the CONFIGURED transport, without
+   * leaving anything behind.
+   *
+   * There is no way to open a session "for its own sake": both hosts establish
+   * the tunnel as part of binding a forward, and with zero mappings the native
+   * service stays stopped on purpose. So the probe creates a TEMPORARY mapping
+   * to a target that certainly listens on the server (the SSH tunnel port —
+   * pinned on and inside `allowed_ports`), waits for its local listener, then
+   * removes it. The server never learns about it (this is native-only; the
+   * registry is not touched), so it cannot leak into the port list.
+   *
+   * The verdict is the tunnel's, not the target service's: the local listener
+   * only exists once the session is up, which is exactly what is being tested.
+   */
+  async function probeTunnelLink(): Promise<TunnelProbeVerdict> {
+    if (!isAppMode.value) return 'unsupported'
+    const native = getNative()
+    if (!native?.addForwardedPort || !native.removeForwardedPort || !native.testPortReachable) {
+      return 'unsupported'
+    }
+
+    if (!sshInfo.value) await loadSSHInfo()
+    const sshPort = sshInfo.value?.port ?? 0
+    const targetPort = sshPort > 0
+      ? sshPort
+      : Number(location.port) || (location.protocol === 'https:' ? 443 : 80)
+
+    // A random high port: nothing else on this device should hold it, and both
+    // hosts rebind to a free one when it is taken (the actual port comes back
+    // through the result event / the bind result below).
+    const requested = 40000 + Math.floor(Math.random() * 20000)
+    const state: { verdict: '' | 'ok' | 'failed' } = { verdict: '' }
+    let actual = requested
+
+    const onResult = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        { localPort?: number; success?: boolean; requestedLocalPort?: number } | null
+      // Only this probe's mapping: the event is global and a stale one for
+      // another port would otherwise decide the verdict.
+      if (!detail || detail.requestedLocalPort !== requested) return
+      if (typeof detail.localPort === 'number' && detail.localPort > 0) actual = detail.localPort
+      state.verdict = detail.success ? 'ok' : 'failed'
+    }
+
+    probingTunnel.value = true
+    window.addEventListener('clawbench-port-forward-result', onResult as EventListener)
+    try {
+      const added = await native.addForwardedPort(requested, targetPort, '')
+      // Electron answers with the bind verdict; Android is a void
+      // @JavascriptInterface call and answers through the event above.
+      if (added && typeof added === 'object') {
+        if (added.ok === false) return 'failed'
+        if (added.ok && added.port > 0) actual = added.port
+      } else if (added === false) {
+        return 'failed'
+      }
+
+      const deadline = Date.now() + PENDING_BIND_TIMEOUT_MS
+      while (Date.now() < deadline) {
+        if (state.verdict === 'ok') break
+        if (state.verdict === 'failed') return 'failed'
+        if (await native.testPortReachable(actual)) {
+          state.verdict = 'ok'
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 400))
+      }
+      return state.verdict === 'ok' ? 'ok' : 'failed'
+    } catch (err) {
+      appLog.w(TAG, 'tunnel link probe failed', err)
+      return 'failed'
+    } finally {
+      window.removeEventListener('clawbench-port-forward-result', onResult as EventListener)
+      try {
+        await native.removeForwardedPort(actual)
+      } catch {
+        // Best effort: the service stops itself once it has no mappings, so a
+        // failed removal cannot leave a live listener behind for long.
+      }
+      probingTunnel.value = false
+      // The probe may have come up on the newly configured wire — refresh the
+      // label before the caller renders the verdict.
+      await refreshActiveTransport()
+    }
+  }
+
+  /**
    * Parenthesized transport annotation for status copy, or `''` when no single
    * wire is known.
    *
@@ -1446,6 +1544,7 @@ export function usePortForward() {
     tunnelError,
     tunnelErrorType,
     activeTransport,
+    probingTunnel,
     transportAllowsH2,
     connectingPorts,
     localReachable,
@@ -1465,6 +1564,7 @@ export function usePortForward() {
     syncToNative,
     loadSSHInfo,
     checkTunnelHealth,
+    probeTunnelLink,
     refreshPortForward,
     refreshActiveTransport,
     transportAnnotation,
