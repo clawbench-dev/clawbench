@@ -91,6 +91,12 @@ type FileEntry struct {
 	// project-scoped, so the id alone identifies it; the subject and sender
 	// travel in Path as the human-readable label.
 	MailID int64 `json:"mailId,omitempty"`
+	// SourceDir is a PROJECT-RELATIVE directory holding the material a quote
+	// was taken from, when that material is a folder rather than one file —
+	// a meeting's notes folder (transcript, minutes, audio, key frames).
+	// Path stays the human-readable label, so without this the AI could read
+	// the quoted lines but never open the rest of the source.
+	SourceDir string `json:"sourceDir,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.

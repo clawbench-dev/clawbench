@@ -726,7 +726,7 @@ import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useLiveShare } from './composables/useLiveShare.ts'
-import { useMeetingHistory } from './composables/useMeetingHistory.ts'
+import { meetingSourceDir, useMeetingHistory } from './composables/useMeetingHistory.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -3753,7 +3753,7 @@ async function handleMeetingQuote(token: string): Promise<void> {
   // No artifacts yet = the meeting is still running. Its record row is
   // draggable like any other, and it used to answer "quote unavailable" —
   // the live transcript is the content, so quote that instead.
-  const live = liveMeetingQuote(token)
+  const live = liveMeetingQuote(token, meetingSourceDir(record))
   if (live) {
     stageQuoteInChat(live)
     return
@@ -3762,13 +3762,14 @@ async function handleMeetingQuote(token: string): Promise<void> {
 }
 
 /** The running meeting's quote, when the token is the one being published. */
-function liveMeetingQuote(token: string): QuoteData | null {
+function liveMeetingQuote(token: string, sourceDir: string): QuoteData | null {
   const share = useLiveShare()
   if (share.token.value !== token) return null
   return buildLiveMeetingQuote({
     token,
     title: share.title.value || '',
     segments: useLiveNotes().segments.value,
+    sourceDir,
   })
 }
 

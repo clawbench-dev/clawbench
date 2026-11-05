@@ -500,7 +500,7 @@ import {
   withMeetingFileEvents,
   withMeetingShots,
 } from '@/composables/useLiveNotes'
-import { meetingQuoteLabel, useMeetingHistory } from '@/composables/useMeetingHistory'
+import { meetingQuoteLabel, meetingSourceDir, useMeetingHistory } from '@/composables/useMeetingHistory'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { startQuoteDrag } from '@/utils/quoteDrag'
@@ -576,6 +576,9 @@ function liveQuote() {
     token: share.token.value,
     title: share.title.value || '',
     segments: notes.segments.value,
+    // Only once the server has written something: a meeting that produced no
+    // files has no folder to point the AI at.
+    sourceDir: meetingSourceDir({ dir: notes.artifacts.value?.dir }),
   })
 }
 

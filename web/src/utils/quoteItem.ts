@@ -103,6 +103,8 @@ export interface QuoteItem {
   meetingToken?: string
   /** Local mail message id when the quote came from an email. */
   mailId?: number
+  /** Project-relative folder holding the source material (a meeting's notes). */
+  sourceDir?: string
 }
 
 /** The staged-quote shape owned by useChatContext (structurally compatible). */
@@ -123,6 +125,7 @@ export interface StagedQuoteLike {
   executionId?: string
   meetingToken?: string
   mailId?: number
+  sourceDir?: string
 }
 
 /**
@@ -158,6 +161,7 @@ export function fromStagedQuote(q: StagedQuoteLike): QuoteItem {
     executionId: q.executionId,
     meetingToken: q.meetingToken,
     mailId: q.mailId,
+    sourceDir: q.sourceDir,
   }
 }
 
@@ -187,6 +191,7 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
     executionId: f.executionId,
     meetingToken: f.meetingToken,
     mailId: f.mailId,
+    sourceDir: f.sourceDir,
   }
 }
 
@@ -317,6 +322,7 @@ export function toFileEntry(q: QuoteItem): FileEntry {
     // to opening its own LABEL as a file path.
     ...(q.meetingToken ? { meetingToken: q.meetingToken } : {}),
     ...(q.mailId ? { mailId: q.mailId } : {}),
+    ...(q.sourceDir ? { sourceDir: q.sourceDir } : {}),
   }
 }
 

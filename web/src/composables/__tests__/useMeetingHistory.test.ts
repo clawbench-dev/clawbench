@@ -3,9 +3,11 @@ import {
   clipQuoteText,
   isStaleGenerating,
   meetingQuoteLabel,
+  meetingSourceDir,
   useMeetingHistory,
   MEETING_QUOTE_MAX_CHARS,
 } from '../useMeetingHistory'
+import { store } from '@/stores/app'
 
 /**
  * Pure helpers plus the quote builder. The builder is the one place that knows
@@ -47,6 +49,11 @@ describe('meetingQuoteLabel', () => {
 })
 
 describe('useMeetingHistory.buildQuote', () => {
+  // The folder is relativised against the project root, so the test needs one.
+  const prevRoot = store.state.projectRoot
+  beforeEach(() => { store.state.projectRoot = '/proj' })
+  afterEach(() => { store.state.projectRoot = prevRoot })
+
   function stubArtifacts(map: Record<string, string | null>) {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const kind = new URL(url, 'http://x').searchParams.get('kind') ?? ''
@@ -69,6 +76,37 @@ describe('useMeetingHistory.buildQuote', () => {
     stubArtifacts({})
     const quote = await useMeetingHistory().buildQuote({ token: 't1', title: '周会', startedAt: 0 })
     expect(quote).toBeNull()
+  })
+
+  it('names the folder the material lives in, so the AI can open it', async () => {
+    stubArtifacts({ minutes: 'MINUTES' })
+    const quote = await useMeetingHistory().buildQuote({
+      token: 't1', title: '周会', startedAt: 0,
+      dirPath: '/proj/.clawbench/notes/2026-11-05-1430',
+    })
+
+    expect(quote?.sourceDir).toBe('.clawbench/notes/2026-11-05-1430')
+  })
+})
+
+describe('meetingSourceDir', () => {
+  const prevRoot = store.state.projectRoot
+  beforeEach(() => { store.state.projectRoot = '/proj' })
+  afterEach(() => { store.state.projectRoot = prevRoot })
+
+  it('turns the absolute folder into a project-relative one', () => {
+    // The agent's cwd IS the project, so an absolute path from this machine
+    // means nothing to it.
+    expect(meetingSourceDir({ dirPath: '/proj/.clawbench/notes/m1' }))
+      .toBe('.clawbench/notes/m1')
+  })
+
+  it('falls back to the fixed notes root when only the folder name is known', () => {
+    expect(meetingSourceDir({ dir: 'm1' })).toBe('.clawbench/notes/m1')
+  })
+
+  it('is empty when the meeting produced no folder at all', () => {
+    expect(meetingSourceDir({})).toBe('')
   })
 })
 

@@ -1650,6 +1650,50 @@ func TestAIChat_QuoteAttachment_KeepsMailID(t *testing.T) {
 		"the mail locator must survive, or the reloaded quote cannot jump back to its email")
 }
 
+// TestAIChat_QuoteAttachment_KeepsSourceDir verifies the folder a quote came
+// from survives decode → validate → persist.
+//
+// Same failure shape as the locators above: validatedQuoteEntry rebuilds the
+// entry field by field, so a field it does not copy is silently dropped and the
+// AI never learns where the rest of the material is.
+func TestAIChat_QuoteAttachment_KeepsSourceDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-dir", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "看看这场会的原始材料",
+		"files": []map[string]any{{
+			"path": "会议 · 产品评审会", "kind": "quote", "id": "quote-dir-1",
+			"text": "决议：本季度聚焦稳定性", "language": "meeting",
+			"sourceKind": "meeting", "meetingToken": "tok-9",
+			"sourceDir": ".clawbench/notes/2026-11-05-1430",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	queue, err := service.GetQueuedMessages(sessionID)
+	assert.NoError(t, err)
+	require.Len(t, queue, 1)
+	require.Len(t, queue[0].Files, 1)
+
+	got := queue[0].Files[0]
+	assert.Equal(t, "quote", got.Kind)
+	assert.Equal(t, ".clawbench/notes/2026-11-05-1430", got.SourceDir,
+		"the folder must survive, or the AI cannot open the rest of the material")
+}
+
 // TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
 // (no path, message may even be empty) is accepted: files alone satisfy the
 // "message or files required" guard, and an empty Path never reaches

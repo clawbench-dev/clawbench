@@ -218,6 +218,25 @@ func TestApplyAttachmentPrefixes_QuoteRendersMailID(t *testing.T) {
 	assert.Contains(t, got, "(mail: 77)")
 }
 
+// A meeting quote also names the folder its artifacts live in, so the AI can
+// open the transcript / minutes / audio instead of only seeing the pasted
+// lines. The path must be project-relative (the agent's cwd is the project).
+func TestApplyAttachmentPrefixes_QuoteRendersSourceDir(t *testing.T) {
+	entries := []FileEntry{{
+		Path: "会议 · 产品评审会", Kind: "quote", ID: "q1", Language: "meeting",
+		Text: "决议：本季度聚焦稳定性", SourceKind: "meeting", MeetingToken: "tok-9",
+		SourceDir: ".clawbench/notes/2026-11-05-1430",
+	}}
+	parts := ClassifyAttachments(entries, nil)
+
+	require.Len(t, parts.Quotes, 1)
+	assert.Equal(t, ".clawbench/notes/2026-11-05-1430", parts.Quotes[0].SourceDir,
+		"classification must carry the folder")
+
+	got := ApplyAttachmentPrefixes("总结这场会", nil, nil, parts)
+	assert.Contains(t, got, "(meeting: tok-9, dir: .clawbench/notes/2026-11-05-1430)")
+}
+
 // The quote's Path is only a label and may legitimately equal an attached
 // file's path. Checking excludePaths before the quote branch would silently
 // drop the quoted text from the prompt — the single most damaging regression

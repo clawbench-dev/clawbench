@@ -83,6 +83,9 @@ type QuotePrompt struct {
 	MeetingToken string
 	// MailID is the local mail message a mail quote came from.
 	MailID int64
+	// SourceDir is the project-relative folder holding the quote's source
+	// material (a meeting's notes folder), so the AI can open the rest of it.
+	SourceDir string
 }
 
 // ClassifyAttachments splits entries into prompt buckets. excludePaths holds
@@ -112,6 +115,7 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 				ExecutionID:  f.ExecutionID,
 				MeetingToken: f.MeetingToken,
 				MailID:       f.MailID,
+				SourceDir:    f.SourceDir,
 			})
 			continue
 		}
@@ -186,6 +190,11 @@ func quoteSourceKeys(q QuotePrompt) []string {
 	}
 	if q.MailID != 0 {
 		keys = append(keys, fmt.Sprintf("mail: %d", q.MailID))
+	}
+	// The directory goes last: it is the widest handle, and the header stays
+	// readable when the specific id comes first.
+	if q.SourceDir != "" {
+		keys = append(keys, "dir: "+q.SourceDir)
 	}
 	return keys
 }

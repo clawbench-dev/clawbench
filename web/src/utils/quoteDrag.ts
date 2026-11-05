@@ -210,6 +210,8 @@ export function meetingDragPayload(record: {
    * hand it over at dragstart — the stage already holds the segments in memory.
    */
   text?: string
+  /** Project-relative notes folder, when the server has reported one. */
+  sourceDir?: string
 } | null): QuoteDragPayload | null {
   const token = (record?.token || '').trim()
   if (!token) return null
@@ -221,6 +223,7 @@ export function meetingDragPayload(record: {
     endLine: 0,
     sourceKind: 'meeting',
     meetingToken: token,
+    ...(record?.sourceDir ? { sourceDir: record.sourceDir } : {}),
   }
 }
 

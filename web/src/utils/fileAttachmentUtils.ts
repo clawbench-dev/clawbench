@@ -56,6 +56,12 @@ export interface FileEntry {
   meetingToken?: string
   /** Local mail message id, when the quote came from an email. */
   mailId?: number
+  /**
+   * Project-relative folder holding the quote's source material, when that is
+   * a directory rather than one file (a meeting's notes folder). `path` stays
+   * the label, so this is the only thing the AI can actually open.
+   */
+  sourceDir?: string
 }
 
 /** Whether an entry is a quoted snippet rather than a file or URL. */

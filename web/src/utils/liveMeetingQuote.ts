@@ -51,6 +51,12 @@ export function buildLiveMeetingQuote(args: {
   token: string
   title: string
   segments: readonly LiveQuoteSegment[]
+  /**
+   * Project-relative notes folder. Absent until the server has written
+   * something for this meeting — a meeting that has produced no files has no
+   * folder to point the AI at.
+   */
+  sourceDir?: string
 }): QuoteData | null {
   const token = (args.token || '').trim()
   if (!token) return null
@@ -58,5 +64,6 @@ export function buildLiveMeetingQuote(args: {
     token,
     label: meetingQuoteLabel({ title: args.title || '', startedAt: 0 }),
     text: liveTranscriptText(args.segments),
+    sourceDir: args.sourceDir,
   })
 }

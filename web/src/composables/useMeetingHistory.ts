@@ -12,6 +12,11 @@ import { ref } from 'vue'
 import type { QuoteData } from '@/composables/useChatContext'
 import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
+import { normalizeSlashes, toProjectRelative } from '@/utils/path'
+import { store } from '@/stores/app'
+
+/** Mirrors `service.LiveNotesDir` on the server: where meeting artifacts live. */
+const LIVE_NOTES_DIR = '.clawbench/notes'
 
 const TAG = 'MeetingHistory'
 
@@ -197,6 +202,27 @@ export function isLiveRecord(record: Pick<MeetingRecord, 'endedAt' | 'startedAt'
 }
 
 /** `会议 · 发版评审 · 11-01 14:30` — the card's label and the prompt's title. */
+/**
+ * The folder a meeting's artifacts live in, PROJECT-RELATIVE.
+ *
+ * It rides along on the quote so the AI can open the transcript, minutes,
+ * audio and key frames itself instead of only seeing the lines that were
+ * pasted into the prompt. Relative, because the agent's working directory IS
+ * the project — an absolute path from this machine means nothing to it.
+ *
+ * `dirPath` is the publisher's absolute path (the usual case: the host is the
+ * one quoting). A row that only carries the folder name falls back to the fixed
+ * notes root.
+ */
+export function meetingSourceDir(record: Pick<MeetingRecord, 'dir' | 'dirPath'>): string {
+  if (record.dirPath) {
+    const rel = toProjectRelative(record.dirPath, store.state.projectRoot ?? '')
+    return normalizeSlashes(rel).replace(/\/+$/, '')
+  }
+  if (record.dir) return `${LIVE_NOTES_DIR}/${record.dir}`
+  return ''
+}
+
 export function meetingQuoteLabel(record: Pick<MeetingRecord, 'title' | 'startedAt'>): string {
   const title = record.title.trim() || i18n.global.t('meeting.list.untitled')
   if (!record.startedAt) return i18n.global.t('meeting.quote.labelNoTime', { title })
@@ -503,7 +529,7 @@ export function useMeetingHistory() {
    * Returns null when there is nothing to attach — a quote with only a title
    * would waste a prompt slot and tell the model nothing.
    */
-  async function buildQuote(record: Pick<MeetingRecord, 'token' | 'title' | 'startedAt'>): Promise<QuoteData | null> {
+  async function buildQuote(record: Pick<MeetingRecord, 'token' | 'title' | 'startedAt' | 'dir' | 'dirPath'>): Promise<QuoteData | null> {
     const token = record.token
     if (!token) return null
     let content = ''
@@ -515,6 +541,7 @@ export function useMeetingHistory() {
       }
     }
     if (!content.trim()) return null
+    const sourceDir = meetingSourceDir(record)
     return {
       text: clipQuoteText(content),
       filePath: meetingQuoteLabel(record),
@@ -523,6 +550,7 @@ export function useMeetingHistory() {
       endLine: 0,
       sourceKind: 'meeting',
       meetingToken: token,
+      ...(sourceDir ? { sourceDir } : {}),
     }
   }
 

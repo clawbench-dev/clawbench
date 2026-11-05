@@ -398,6 +398,21 @@ describe('mail quotes', () => {
   })
 })
 
+describe('quotes with a source folder', () => {
+  it('round-trips the notes folder through the send entry', () => {
+    // The folder is what lets the AI open the transcript / minutes / audio
+    // instead of only reading the lines pasted into the prompt.
+    const entry = toFileEntry(fromStagedQuote({
+      id: 'q1', text: '决议', filePath: '会议 · 周会', language: 'meeting',
+      startLine: 0, endLine: 0, sourceKind: 'meeting', meetingToken: 'tok-9',
+      sourceDir: '.clawbench/notes/m1',
+    }))
+
+    expect(entry).toMatchObject({ kind: 'quote', sourceDir: '.clawbench/notes/m1' })
+    expect(fromFileEntry(entry).sourceDir).toBe('.clawbench/notes/m1')
+  })
+})
+
 describe('resolveQuoteType', () => {
   function q(over: Partial<QuoteItem> = {}): QuoteItem {
     return {
