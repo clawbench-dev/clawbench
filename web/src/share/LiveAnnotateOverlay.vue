@@ -242,11 +242,21 @@ onBeforeUnmount(() => {
 
 .anno__ink {
   position: absolute;
+  /* Own stacking context, on purpose. The ink canvas inside carries a z-index
+     of its own (it is shared with the viewer layout, where it must sit above
+     the picture), and a z-index on a child of a non-positioned-context parent
+     competes directly with this toolbar. It won: wherever the picture filled
+     the window the canvas covered the bar, so every click on a tool started a
+     stroke instead — the toolbar looked present and was unusable. */
+  z-index: 1;
   pointer-events: none;
 }
 
 .anno__bar {
   position: absolute;
+  /* Above the ink (see `.anno__ink`): the bar is the only way to change tools,
+     and the drawing surface underneath swallows clicks wherever they overlap. */
+  z-index: 2;
   left: 50%;
   bottom: calc(24 * var(--dp) + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
