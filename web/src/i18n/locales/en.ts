@@ -4449,6 +4449,7 @@ export default {
       leaveStay: 'Stay in meeting',
       leaveRefresh: 'End meeting and reload',
       back: 'Back to list',
+      quote: 'Quote in chat',
     },
     detail: {
       back: 'Back to list',

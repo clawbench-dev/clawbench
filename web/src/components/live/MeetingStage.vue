@@ -27,6 +27,24 @@
         <span class="live-panel__dot" />
         {{ t('liveShare.live') }}
       </span>
+      <!-- Quote the running meeting into the chat. Click opens the shared quote
+           bar with the transcript so far; dragging the same button stages the
+           card on drop (a drag cannot open the composer). Two gestures, one
+           control — the same pair a chat message's quote button has. -->
+      <button
+        v-if="share.token.value"
+        class="live-panel__quote"
+        type="button"
+        :title="t('meeting.stage.quote')"
+        :aria-label="t('meeting.stage.quote')"
+        :draggable="isWideScreen"
+        data-action="stage-quote"
+        @dragstart="onQuoteDragStart"
+        @dragend="cleanupDragGhost()"
+        @click="quoteLiveMeeting"
+      >
+        <MessageSquarePlus :size="14" />
+      </button>
     </div>
 
     <!-- While publishing the panel is three surfaces, not one long form: the
@@ -77,7 +95,16 @@
       </button>
     </div>
 
-    <div class="live-panel__body live-dialog" :class="{ 'live-panel__body--fill': fillTab }">
+    <!-- The meeting body is a quotable region: selecting a transcript line or a
+         chat message offers the same 引用/评论 bar as the minutes in the record
+         detail, and the token makes the resulting card jump back here. -->
+    <div
+      class="live-panel__body live-dialog"
+      :class="{ 'live-panel__body--fill': fillTab }"
+      :data-quote-source="stageQuoteLabel"
+      data-quote-language="meeting"
+      :data-quote-meeting-token="share.token.value || ''"
+    >
       <!-- Publishing: four surfaces. 会议管理 holds what is set up once and
            then glanced at (link, picture, devices, room switches); 参会者 holds
            the people and the actions on them; the transcript and the chat get
@@ -449,7 +476,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Captions, ImageIcon, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Captions, ImageIcon, MessageSquarePlus, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
@@ -473,7 +500,12 @@ import {
   withMeetingFileEvents,
   withMeetingShots,
 } from '@/composables/useLiveNotes'
-import { useMeetingHistory } from '@/composables/useMeetingHistory'
+import { meetingQuoteLabel, useMeetingHistory } from '@/composables/useMeetingHistory'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { startQuoteDrag } from '@/utils/quoteDrag'
+import { buildLiveMeetingQuote } from '@/utils/liveMeetingQuote'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTracker'
 import { shotFullUrl, shotThumbUrl } from '@/utils/meetingShots'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
@@ -523,6 +555,41 @@ const toast = useToast()
 const dialog = useDialog()
 const share = useLiveShare()
 const notes = useLiveNotes()
+
+// ── Handing the running meeting to the chat ─────────────────────
+const quoteQuestion = useQuoteQuestion()
+const { isWideScreen } = useWideScreenLayout()
+
+/** Card label: the meeting's name (no start time yet — it is still running). */
+const stageQuoteLabel = computed(() =>
+  meetingQuoteLabel({ title: share.title.value || '', startedAt: 0 }),
+)
+
+/**
+ * The quote for THIS running meeting, built from the segments in memory.
+ *
+ * Shared with the record list's drag path (App falls back to it when a meeting
+ * has no artifacts yet), so both produce the same card.
+ */
+function liveQuote() {
+  return buildLiveMeetingQuote({
+    token: share.token.value,
+    title: share.title.value || '',
+    segments: notes.segments.value,
+  })
+}
+
+/** Click: open the shared quote bar so the user can annotate before sending. */
+function quoteLiveMeeting(): void {
+  const quote = liveQuote()
+  if (!quote) return
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
+}
+
+/** Drag the same button: stage the card on drop, no annotation (same as a message). */
+function onQuoteDragStart(e: DragEvent): void {
+  if (!startQuoteDrag(e, liveQuote())) e.preventDefault()
+}
 const options = useMeetingOptions()
 const shots = useMeetingShots()
 const { serverConfig } = useSettingsConfig()
@@ -1674,6 +1741,28 @@ watch(
 }
 .live-panel__back:hover { background: var(--bg-hover); color: var(--text-primary); }
 .live-panel__back:active { transform: scale(0.92); }
+
+/* Quote-into-chat, pinned to the header's right edge. Same 26px square as the
+   back button so the two ends of the bar match; `margin-left: auto` is what
+   pushes it past the live badge. */
+.live-panel__quote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
+  margin-left: auto;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
+}
+.live-panel__quote:hover { background: var(--bg-hover); color: var(--text-primary); }
+.live-panel__quote:active { transform: scale(0.92); }
 
 .live-panel__title {
   font-size: var(--font-size-md);

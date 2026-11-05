@@ -94,6 +94,7 @@
 | 代码预览（CodeMirror） | `CodeMirrorViewer.vue` → `showBar`（自带 anchor） |
 | HTML / OpenAPI 预览（iframe） | `utils/iframeSelectionQuote.ts` 的 `makeIframeQuoteShowHandler` |
 | 终端 | `TerminalPanelContent.vue`（`sourceKind: 'terminal'`） |
+| 会议中的转写 / 会议聊天 | 白名单里的 `.transcript` / `.live-chat`，身份来自会议面板的 `data-quote-*` |
 | 议题 / PR 详情、CI 详情、Git diff、任务执行详情、会议正文 | 标 `data-quote-*` 属性，由 `quoteQuestionUtils.getQuoteSource` 统一读取 |
 
 `data-quote-*` 是给「一段可选中区域」标注身份的方式：
@@ -119,6 +120,7 @@
 | 文件预览头 | `FileHeader.vue` → `App.vue` `handleFileQuoteInChat` |
 | 议题 / PR 详情头 | `App.vue` `handleForgeQuote` |
 | 会议记录详情头 | `App.vue` `handleMeetingQuoteButton` |
+| 会议中（stage） | `MeetingStage.vue` `quoteLiveMeeting`（正文取当前转写） |
 | Git 提交行 | `GitCommitList.vue` `quoteCommit` |
 | 任务行 | `TaskListPage.vue` `quoteTask` |
 | 邮件阅读器 | `MailReader.vue` `quoteToChat` |
@@ -140,7 +142,7 @@
 | MIME | 产物 | 源 |
 |---|---|---|
 | `application/x-clawbench-attach` | 文件 / 目录附件 | 文件管理器行、面包屑、文件名、Markdown 图片、mermaid 代码块、图片预览、会议资源 |
-| `application/x-clawbench-quote` | 引用卡片 | 提交、任务、议题 / PR、CI、会议记录、邮件、**聊天消息的引用按钮** |
+| `application/x-clawbench-quote` | 引用卡片 | 提交、任务、议题 / PR、CI、会议记录、**会议中**、邮件、**聊天消息的引用按钮** |
 
 落点：
 - **聊天列**（`App.vue` `onChatColDrop`）—— 落到当前会话，提示文案按载荷类型区分（「松开添加到会话」/「松开引用到会话」）
@@ -150,7 +152,8 @@
 - **所有拖拽源都按宽屏门控**（`:draggable="isWideScreen"`）。窄屏下列表栏和聊天栏互斥显示，拖拽源和落点永远不同屏，允许拖拽只会得到「能拖但没反应」。
 - 消息气泡本身**不能**设 `draggable`——那会让文字选不中，而选中文字正是片段引用的入口。拖的是引用按钮。
 - 拖拽产物**没有批注**（拖拽本身已经表达「放进聊天」，再弹输入框是多余步骤）。
-- **只带身份的载荷**（会议、邮件）在 `dragstart` 里无法内联内容（不能 await），由落点处理器补一次请求再落卡片；这类载荷必须同时在 `App.vue` 的 `onChatColDrop` 里有分支，否则拖了等于没拖。
+- **只带身份的载荷**（会议记录、邮件）在 `dragstart` 里无法内联内容（不能 await），由落点处理器补一次请求再落卡片；这类载荷必须同时在 `App.vue` 的 `onChatColDrop` 里有分支，否则拖了等于没拖。
+- **正在进行的会议是个例外**：它还没有产物可拉，所以转写文本在 `dragstart` 时就被塞进载荷（`text` 非空），落点直接落卡片、不再请求。
 - 拖拽预览图是共享的（`buildAttachDragImage`），`dragend` 必须调 `cleanupDragGhost()`。
 
 ### 3.4 附件拖拽的构造器

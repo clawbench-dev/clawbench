@@ -202,11 +202,19 @@ export function meetingDragPayload(record: {
   token?: string
   /** Human-readable label, built by the caller with i18n (`meetingQuoteLabel`). */
   label?: string
+  /**
+   * Transcript text, when the meeting is STILL RUNNING.
+   *
+   * A finished meeting is addressed by token and its body is fetched on drop.
+   * A live one has no artifacts yet, so the only way to carry its content is to
+   * hand it over at dragstart — the stage already holds the segments in memory.
+   */
+  text?: string
 } | null): QuoteDragPayload | null {
   const token = (record?.token || '').trim()
   if (!token) return null
   return {
-    text: '',
+    text: record?.text || '',
     filePath: record?.label || token,
     language: 'meeting',
     startLine: 0,

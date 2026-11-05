@@ -98,6 +98,11 @@ describe('draggable item rows', () => {
     // The ghost is a real DOM node kept alive until dragend; without the cleanup
     // it leaks a node into the document on every drag.
     expect(src).toMatch(/@dragend="cleanupDragGhost\(\)"/)
+
+    // The record row of a RUNNING meeting drags too, and the server has no
+    // artifacts for it yet — App must fall back to the live transcript instead
+    // of answering "quote unavailable".
+    expect(readWebFile('src/App.vue')).toMatch(/buildLiveMeetingQuote\(/)
   })
 
   it.each(ROWS)('%s (%s) starts the drag through startQuoteDrag', (path) => {
@@ -120,6 +125,19 @@ describe('draggable item rows', () => {
     }
   })
 
+  it('the running meeting offers both gestures: click and drag', () => {
+    // The record list only had drag, and the detail only had a button. A
+    // meeting IN PROGRESS had neither, which is when its content is most
+    // worth quoting.
+    const src = readWebFile('src/components/live/MeetingStage.vue')
+
+    expect(src, 'the stage body must be a quotable region').toMatch(/data-quote-meeting-token/)
+    expect(src, 'click opens the composer').toMatch(/@click="quoteLiveMeeting"/)
+    expect(src, 'the same control drags').toMatch(/@dragstart="onQuoteDragStart"/)
+    expect(src, 'and is gated like every other drag source').toMatch(/:draggable="isWideScreen"/)
+    expect(src).toMatch(/@dragend="cleanupDragGhost\(\)"/)
+  })
+
   it('the drop handler resolves the payloads that carry identity only', () => {
     // A meeting row and a mail row cannot inline their content at dragstart
     // (it would need an await), so the drop path has to fetch it. Dropping one
@@ -128,6 +146,10 @@ describe('draggable item rows', () => {
 
     expect(src).toMatch(/if \(quote\.meetingToken\)/)
     expect(src).toMatch(/if \(quote\.mailId\)/)
+    // A LIVE meeting arrives with its transcript already in the payload, so the
+    // drop must stage it instead of asking the server for a record that does
+    // not exist yet.
+    expect(src).toMatch(/if \(quote\.text\)/)
   })
 
   it('a chat message is dragged by its quote button, not the bubble', () => {

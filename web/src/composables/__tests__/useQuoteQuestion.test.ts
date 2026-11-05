@@ -1403,6 +1403,61 @@ describe('useQuoteQuestion', () => {
         wrapper.unmount()
       })
 
+      it('carries the meeting token so a selection in a meeting can jump back', () => {
+        // The token was READ from the region but never copied into the payload,
+        // so a quote made by selecting minutes/transcript text had no way home:
+        // the card rendered fine and "jump to source" did nothing.
+        const wrapper = mountWithComposable()
+        // The attributes live on the PANEL (an ancestor), exactly as in
+        // MeetingStage — `closest()` only walks up, so putting them on a child
+        // would test a shape that never occurs.
+        const body = document.createElement('div')
+        body.setAttribute('data-quote-source', '会议 · 产品评审会')
+        body.setAttribute('data-quote-language', 'meeting')
+        body.setAttribute('data-quote-meeting-token', 'tok-9')
+        const container = document.createElement('div')
+        container.className = 'transcript'
+        const line = document.createElement('span')
+        line.textContent = '决议：本季度聚焦稳定性'
+        container.appendChild(line)
+        body.appendChild(container)
+        document.body.appendChild(body)
+        selectNode(line)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.meetingToken).toBe('tok-9')
+        expect(ctx.quoteData.value?.filePath).toBe('会议 · 产品评审会')
+        expect(ctx.quoteData.value?.language).toBe('meeting')
+
+        wrapper.unmount()
+      })
+
+      it('quotes a selection inside the meeting chat', () => {
+        // `.live-chat` is meeting content too — the whitelist used to cover only
+        // file previews and chat messages, so the bar never appeared here.
+        const wrapper = mountWithComposable()
+        const container = document.createElement('div')
+        container.className = 'live-chat'
+        container.setAttribute('data-quote-source', '会议 · 产品评审会')
+        container.setAttribute('data-quote-language', 'meeting')
+        container.setAttribute('data-quote-meeting-token', 'tok-9')
+        const msg = document.createElement('span')
+        msg.textContent = '这段我同意'
+        container.appendChild(msg)
+        document.body.appendChild(container)
+        selectNode(msg)
+
+        document.dispatchEvent(new Event('selectionchange'))
+        vi.advanceTimersByTime(150)
+
+        expect(ctx.quoteData.value?.text).toBe('这段我同意')
+        expect(ctx.quoteData.value?.meetingToken).toBe('tok-9')
+
+        wrapper.unmount()
+      })
+
       it('still quotes a link selection in a FILE preview (chrome guard is chat-scoped)', () => {
         // The chrome exclusion matches `a`, which in a file preview is real
         // content. Scoping it to .chat-message keeps ordinary prose quotable.

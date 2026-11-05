@@ -232,6 +232,14 @@ describe('meetingDragPayload', () => {
     expect(p.filePath).toBe('abc123')
   })
 
+  it('carries the transcript when the meeting is still running', () => {
+    // A live meeting has no record artifacts to fetch, so the only way its
+    // content can reach the card is in the payload itself.
+    const p = meetingDragPayload({ token: 'abc123', label: '会议 · 周会', text: '张三: 你好' })!
+    expect(p.text).toBe('张三: 你好')
+    expect(p.meetingToken).toBe('abc123')
+  })
+
   // The drag has nothing to quote without a record to look the text up by.
   it('refuses a record with no token', () => {
     expect(meetingDragPayload({ token: '', label: 'x' })).toBeNull()

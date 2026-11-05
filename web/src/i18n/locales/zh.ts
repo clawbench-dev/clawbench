@@ -4440,6 +4440,7 @@ export default {
       leaveStay: '留在会议中',
       leaveRefresh: '结束会议并刷新',
       back: '返回列表',
+      quote: '引用到聊天',
     },
     detail: {
       back: '返回列表',

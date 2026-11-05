@@ -793,6 +793,9 @@ import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
 import { buildMailQuote } from '@/utils/mailQuote'
+import { buildLiveMeetingQuote } from '@/utils/liveMeetingQuote'
+import { useLiveNotes } from './composables/useLiveNotes.ts'
+import type { QuoteData } from '@/composables/useChatContext'
 import { apiGet } from '@/utils/api'
 import type { MailMessageDetail } from '@/utils/mailTypes'
 import SplitView from './components/common/SplitView.vue'
@@ -3727,21 +3730,45 @@ const meetingHistory = useMeetingHistory()
  * written yet produces no card at all — a quote with only a title would spend a
  * prompt slot saying nothing.
  */
-async function handleMeetingQuote(token: string): Promise<void> {
-  if (!token) return
-  const record = await meetingHistory.get(token)
-  if (!record) return
-  const quote = await meetingHistory.buildQuote(record)
-  if (!quote) {
-    toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
-    return
-  }
+/** Stage a quote card into the live input and bring the chat into view. */
+function stageQuoteInChat(quote: QuoteData): void {
   addStagedQuote(quote)
   switchTab('chat')
   toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
     icon: 'chat',
     type: 'success',
     duration: 1800,
+  })
+}
+
+async function handleMeetingQuote(token: string): Promise<void> {
+  if (!token) return
+  const record = await meetingHistory.get(token)
+  if (!record) return
+  const quote = await meetingHistory.buildQuote(record)
+  if (quote) {
+    stageQuoteInChat(quote)
+    return
+  }
+  // No artifacts yet = the meeting is still running. Its record row is
+  // draggable like any other, and it used to answer "quote unavailable" —
+  // the live transcript is the content, so quote that instead.
+  const live = liveMeetingQuote(token)
+  if (live) {
+    stageQuoteInChat(live)
+    return
+  }
+  toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
+}
+
+/** The running meeting's quote, when the token is the one being published. */
+function liveMeetingQuote(token: string): QuoteData | null {
+  const share = useLiveShare()
+  if (share.token.value !== token) return null
+  return buildLiveMeetingQuote({
+    token,
+    title: share.title.value || '',
+    segments: useLiveNotes().segments.value,
   })
 }
 
@@ -3755,14 +3782,7 @@ async function handleMailQuote(mailId: number): Promise<void> {
   try {
     const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${mailId}`)
     if (!data?.message) return
-    const quote = buildMailQuote(data.message, t('mail.list.noSubject'))
-    addStagedQuote(quote)
-    switchTab('chat')
-    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
-      icon: 'chat',
-      type: 'success',
-      duration: 1800,
-    })
+    stageQuoteInChat(buildMailQuote(data.message, t('mail.list.noSubject')))
   } catch (e) {
     appLog.w(TAG, 'mail quote drop failed', e)
     toast.show(t('common.operationFailed'), { type: 'error', icon: 'warning' })
@@ -3908,6 +3928,13 @@ function onChatColDrop(e: DragEvent) {
     // A meeting drag carries identity only (dragstart cannot await); the text
     // is fetched here before the card is staged.
     if (quote.meetingToken) {
+      // A RUNNING meeting carries its transcript in the payload: it has no
+      // record artifacts yet, so there is nothing to fetch and the card is
+      // staged straight from what the stage already holds.
+      if (quote.text) {
+        stageQuoteInChat(quote)
+        return
+      }
       void handleMeetingQuote(quote.meetingToken)
       return
     }

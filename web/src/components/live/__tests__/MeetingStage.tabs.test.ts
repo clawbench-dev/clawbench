@@ -63,14 +63,22 @@ const archivedChat = vi.hoisted(() => ({
   /** Set by a test that wants the history request to stay in flight. */
   pending: null as Promise<void> | null,
 }))
-vi.mock('@/composables/useMeetingHistory', () => ({
-  useMeetingHistory: () => ({
-    chat: async () => {
-      if (archivedChat.pending) await archivedChat.pending
-      return { messages: archivedChat.messages, count: archivedChat.messages.length }
-    },
-  }),
-}))
+// importOriginal, not a bare replacement: the stage also imports
+// `meetingQuoteLabel` from this module (the quote card's label), and a
+// whitelist mock that omits it makes the component fail to mount — the whole
+// suite then reports "no export" instead of an assertion.
+vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useMeetingHistory')>()
+  return {
+    ...actual,
+    useMeetingHistory: () => ({
+      chat: async () => {
+        if (archivedChat.pending) await archivedChat.pending
+        return { messages: archivedChat.messages, count: archivedChat.messages.length }
+      },
+    }),
+  }
+})
 
 vi.mock('@/composables/useMarkdownRenderer', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
