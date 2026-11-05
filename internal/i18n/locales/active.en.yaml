@@ -497,6 +497,7 @@ MailTLSFailed: The mail server certificate could not be verified
 MailTimeout: The mail server did not respond in time
 MailServerError: The mail server returned an error
 MailNoRecipients: Add at least one recipient
+MailUnsupportedAddress: The part of the address before @ contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent
 MailSyncBusy: This mailbox is already syncing
 TaskTriggerModeInvalid: Trigger mode must be cron, event or email
 TaskMailAccountRequired: Choose a mailbox for an email-triggered task

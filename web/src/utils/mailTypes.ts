@@ -185,6 +185,7 @@ export function mailErrorMessage(err: unknown, t: (key: string) => string): stri
     MailServerError: 'mail.err.server',
     MailSyncBusy: 'mail.err.busy',
     MailNoRecipients: 'mail.err.noRecipients',
+    MailUnsupportedAddress: 'mail.err.unsupported',
   }
   const e = err as { msgKey?: string; message?: string } | null
   if (e?.msgKey && keyMap[e.msgKey]) return t(keyMap[e.msgKey])

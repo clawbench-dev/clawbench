@@ -105,21 +105,25 @@ type Address struct {
 // MessageHeader is the metadata shown in the list. It is everything the
 // envelope + bodystructure give us, with no body content.
 type MessageHeader struct {
-	UID            uint32
-	MessageID      string
-	Subject        string
-	FromName       string
-	FromAddr       string
-	To             []Address
-	Cc             []Address
-	ReplyTo        []Address
-	InReplyTo      string
-	References     []string
-	Date           time.Time
-	Size           int64
-	Seen           bool
-	Flagged        bool
-	Answered       bool
+	UID        uint32
+	MessageID  string
+	Subject    string
+	FromName   string
+	FromAddr   string
+	To         []Address
+	Cc         []Address
+	ReplyTo    []Address
+	InReplyTo  string
+	References []string
+	Date       time.Time
+	Size       int64
+	Seen       bool
+	Flagged    bool
+	Answered   bool
+	// Deleted marks a message another client has flagged for removal but not
+	// expunged yet. The sync drops these from the cache so a message we cannot
+	// expunge safely does not reappear on every pass.
+	Deleted        bool
 	HasAttachments bool
 	// Preview is the server-side snippet from RFC 8970 PREVIEW, when the
 	// server supports it. Empty otherwise.

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net"
 	"net/mail"
@@ -24,6 +25,11 @@ import (
 const (
 	dialTimeout = 15 * time.Second
 	opTimeout   = 60 * time.Second
+	// probeTimeout bounds the liveness probe run after a failed command. It is
+	// deliberately much shorter than opTimeout: the probe only decides whether
+	// to redial, and a server that has stopped answering should not cost a
+	// second full timeout.
+	probeTimeout = 5 * time.Second
 )
 
 // imapClient wraps imapclient.Client with a deadline-aware connection.
@@ -32,25 +38,42 @@ const (
 // keep the net.Conn and push a deadline before every command, which turns a
 // hung server into a normal error instead of a permanently stuck sync worker.
 type imapClient struct {
-	c        *imapclient.Client
-	conn     net.Conn
-	selected string
-	readOnly bool
-	closed   bool
+	acc  Account
+	c    *imapclient.Client
+	conn net.Conn
+
+	selected    string
+	readOnly    bool
+	closed      bool
+	uidNext     uint32
+	numMessages uint32
+
+	// degraded holds the folders whose full FETCH died on a malformed
+	// response. Later fetches for them skip BODYSTRUCTURE, the only item in
+	// the request that go-imap parses strictly.
+	degraded map[string]bool
 }
 
 // DialIMAP connects and logs in. The caller owns the returned client.
 func DialIMAP(ctx context.Context, acc Account) (Client, error) {
+	m := &imapClient{acc: acc, degraded: make(map[string]bool)}
+	if err := m.connect(ctx); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (m *imapClient) connect(ctx context.Context) error {
 	dialer := &net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", acc.IMAPAddr())
+	conn, err := dialer.DialContext(ctx, "tcp", m.acc.IMAPAddr())
 	if err != nil {
-		return nil, classify("dial", err)
+		return classify("dial", err)
 	}
 
 	tlsCfg := &tls.Config{
-		ServerName:         acc.IMAPHost,
+		ServerName:         m.acc.IMAPHost,
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: acc.InsecureTLS, // certificate verification is opt-in per account
+		InsecureSkipVerify: m.acc.InsecureTLS, // certificate verification is opt-in per account
 	}
 	opts := &imapclient.Options{
 		TLSConfig:   tlsCfg,
@@ -58,12 +81,12 @@ func DialIMAP(ctx context.Context, acc Account) (Client, error) {
 	}
 
 	var c *imapclient.Client
-	switch acc.IMAPSecurity {
+	switch m.acc.IMAPSecurity {
 	case SecurityTLS:
 		tlsConn := tls.Client(conn, tlsCfg)
 		if herr := tlsConn.HandshakeContext(ctx); herr != nil {
 			_ = conn.Close()
-			return nil, classify("TLS 握手", herr)
+			return classify("TLS 握手", herr)
 		}
 		conn = tlsConn
 		c = imapclient.New(conn, opts)
@@ -71,7 +94,7 @@ func DialIMAP(ctx context.Context, acc Account) (Client, error) {
 		c, err = imapclient.NewStartTLS(conn, opts)
 		if err != nil {
 			_ = conn.Close()
-			return nil, classify("starttls", err)
+			return classify("starttls", err)
 		}
 	default:
 		c = imapclient.New(conn, opts)
@@ -79,14 +102,33 @@ func DialIMAP(ctx context.Context, acc Account) (Client, error) {
 
 	if err := c.WaitGreeting(); err != nil {
 		_ = c.Close()
-		return nil, classify("read greeting", err)
+		return classify("read greeting", err)
 	}
 	_ = conn.SetDeadline(time.Now().Add(opTimeout))
-	if err := c.Login(acc.Username, acc.Password).Wait(); err != nil {
+	if err := c.Login(m.acc.Username, m.acc.Password).Wait(); err != nil {
 		_ = c.Close()
-		return nil, classify("login", err)
+		return classify("login", err)
 	}
-	return &imapClient{c: c, conn: conn}, nil
+	m.c = c
+	m.conn = conn
+	m.selected = ""
+	m.readOnly = false
+	m.closed = false
+	m.uidNext = 0
+	m.numMessages = 0
+	return nil
+}
+
+// reconnect replaces a connection the server has already killed. The old
+// socket is dropped without a LOGOUT round trip: it is dead, so the attempt
+// would only block until the deadline.
+func (m *imapClient) reconnect(ctx context.Context) error {
+	if m.c != nil {
+		_ = m.c.Close()
+	}
+	m.c = nil
+	m.closed = false
+	return m.connect(ctx)
 }
 
 func (m *imapClient) Close() error {
@@ -106,6 +148,46 @@ func (m *imapClient) deadline() {
 	_ = m.conn.SetDeadline(time.Now().Add(opTimeout))
 }
 
+// fail classifies a command error, promoting it to a connection failure when
+// the socket is already gone.
+//
+// go-imap kills the connection on a malformed response instead of skipping the
+// message, so the error that reaches us is the *parse* error while the real
+// problem is that there is no connection left. Classifying that as a server
+// error made the sync worker keep using the dead client for the rest of the
+// pass, losing every remaining folder.
+func (m *imapClient) fail(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if m.connGone() {
+		return &Error{Kind: KindConnect, Op: op, Err: err}
+	}
+	return classify(op, err)
+}
+
+// connGone reports whether the connection can no longer carry a command.
+//
+// The closed channel is checked first because it is free, but it is not enough
+// on its own: go-imap completes the pending command before its read goroutine
+// closes that channel, so a decode error can be observed a moment early. A
+// NOOP settles it — if the connection is healthy it answers immediately, and
+// if it is not the probe fails.
+func (m *imapClient) connGone() bool {
+	if m.c == nil || m.closed {
+		return true
+	}
+	select {
+	case <-m.c.Closed():
+		return true
+	default:
+	}
+	_ = m.conn.SetDeadline(time.Now().Add(probeTimeout))
+	ok := m.c.Noop().Wait() == nil
+	m.deadline()
+	return !ok
+}
+
 // ListFolders returns every selectable mailbox.
 func (m *imapClient) ListFolders(ctx context.Context) ([]Folder, error) {
 	if err := ctx.Err(); err != nil {
@@ -120,7 +202,7 @@ func (m *imapClient) ListFolders(ctx context.Context) ([]Folder, error) {
 		m.deadline()
 		data, err = m.c.List("", "*", nil).Collect()
 		if err != nil {
-			return nil, classify("list folders", err)
+			return nil, m.fail("list folders", err)
 		}
 	}
 
@@ -163,7 +245,7 @@ func (m *imapClient) Status(ctx context.Context, folder string) (Status, error) 
 		UIDValidity: true,
 	}).Wait()
 	if err != nil {
-		return Status{}, classify("status", err)
+		return Status{}, m.fail("status", err)
 	}
 	st := Status{UIDNext: uint32(data.UIDNext), UIDValidity: data.UIDValidity}
 	if data.NumMessages != nil {
@@ -172,23 +254,57 @@ func (m *imapClient) Status(ctx context.Context, folder string) (Status, error) 
 	if data.NumUnseen != nil {
 		st.Unseen = *data.NumUnseen
 	}
+	if st.UIDValidity == 0 {
+		st.UIDValidity = m.uidValidityViaExamine(ctx, folder)
+	}
 	return st, nil
+}
+
+// uidValidityViaExamine reads UIDVALIDITY out of a SELECT response.
+//
+// Some servers accept `STATUS … (UIDVALIDITY)` and answer without the item
+// (measured on a Chinese provider), which leaves the field at zero. Zero is not
+// a harmless value: the sync compares it against the cached one to notice that
+// the mailbox was renumbered, so a permanently-zero field silently disables
+// that reset and every cached UID keeps pointing at a different message.
+// EXAMINE reports the value without disturbing the selected mailbox's flags.
+func (m *imapClient) uidValidityViaExamine(ctx context.Context, folder string) uint32 {
+	if err := ctx.Err(); err != nil {
+		return 0
+	}
+	m.deadline()
+	data, err := m.c.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
+	if err != nil {
+		// Best effort: a missing UIDVALIDITY is not worth failing the whole
+		// folder over, and the caller's counters are still valid.
+		m.deadline()
+		return 0
+	}
+	m.selected = folder
+	m.readOnly = true
+	m.uidNext = uint32(data.UIDNext)
+	m.numMessages = data.NumMessages
+	return data.UIDValidity
 }
 
 func (m *imapClient) selectFolder(ctx context.Context, folder string) (*imap.SelectData, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if m.selected == folder {
+	// A read-only selection is not reusable for anything that writes, so it
+	// only short-circuits when write access is what we already have.
+	if m.selected == folder && !m.readOnly {
 		return nil, nil
 	}
 	m.deadline()
 	data, err := m.c.Select(folder, nil).Wait()
 	if err != nil {
-		return nil, classify("select folder", err)
+		return nil, m.fail("select folder", err)
 	}
 	m.selected = folder
 	m.readOnly = false
+	m.uidNext = uint32(data.UIDNext)
+	m.numMessages = data.NumMessages
 	return data, nil
 }
 
@@ -196,36 +312,23 @@ func (m *imapClient) FetchHeaders(ctx context.Context, folder string, uids []uin
 	if len(uids) == 0 {
 		return nil, nil
 	}
-	if _, err := m.selectFolder(ctx, folder); err != nil {
-		return nil, err
-	}
-	return m.fetchHeadersBySet(ctx, uidSet(uids))
+	return m.fetchHeadersBySet(ctx, folder, uidSet(uids))
 }
 
 func (m *imapClient) FetchNewest(ctx context.Context, folder string, n int) ([]MessageHeader, error) {
 	if n <= 0 {
 		return nil, nil
 	}
-	sel, err := m.selectFolder(ctx, folder)
-	if err != nil {
+	if _, err := m.selectFolder(ctx, folder); err != nil {
 		return nil, err
 	}
-	total := 0
-	if sel != nil {
-		total = int(sel.NumMessages)
-	} else if mb := m.c.Mailbox(); mb != nil {
-		total = int(mb.NumMessages)
-	}
-	if total == 0 {
+	// Address the window by UID, not by sequence number: a UID is stable, so
+	// a retry after a reconnect cannot land on a different message. UIDNEXT
+	// comes from the SELECT response and is cached by selectFolder.
+	if m.uidNext <= 1 {
 		return nil, nil
 	}
-	start := total - n + 1
-	if start < 1 {
-		start = 1
-	}
-	var set imap.SeqSet
-	set.AddRange(uint32(start), uint32(total))
-	return m.fetchHeadersBySet(ctx, set)
+	return m.fetchBefore(ctx, folder, m.uidNext, n)
 }
 
 func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID uint32, n int) ([]MessageHeader, error) {
@@ -235,29 +338,75 @@ func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID u
 	if _, err := m.selectFolder(ctx, folder); err != nil {
 		return nil, err
 	}
-	// UIDs are not contiguous, so fetch a wider window and keep the newest n.
+	return m.fetchBefore(ctx, folder, beforeUID, n)
+}
+
+// fetchBefore returns the newest n messages with a UID below beforeUID.
+//
+// The window has to be expressed in UIDs, but UIDs are not contiguous: a
+// mailbox that has seen a lot of churn can have gaps of millions between two
+// neighboring messages (measured: UIDNEXT ≈ 2.05e9). A fixed window of n*3
+// then matches nothing at all, which reads as "there is no older mail" and
+// stops the scroll-back dead. The window is therefore sized from the average
+// UID span per message, and widened while it still comes up short.
+func (m *imapClient) fetchBefore(ctx context.Context, folder string, beforeUID uint32, n int) ([]MessageHeader, error) {
 	const maxWindow = 1000
 	if n > maxWindow {
 		n = maxWindow
 	}
-	window := uint32(n * 3)
-	if window < 100 {
-		window = 100
-	}
-	lo := uint32(1)
-	if beforeUID > window {
-		lo = beforeUID - window
-	}
-	var set imap.UIDSet
-	set.AddRange(imap.UID(lo), imap.UID(beforeUID-1))
-	headers, err := m.fetchHeadersBySet(ctx, set)
-	if err != nil {
-		return nil, err
+	window := m.uidWindow(n, beforeUID)
+	var headers []MessageHeader
+	for range 6 {
+		lo := uint32(1)
+		if beforeUID > window {
+			lo = beforeUID - window
+		}
+		var set imap.UIDSet
+		set.AddRange(imap.UID(lo), imap.UID(beforeUID-1))
+		found, err := m.fetchHeadersBySet(ctx, folder, set)
+		if err != nil {
+			return nil, err
+		}
+		headers = found
+		if len(headers) >= n || lo == 1 {
+			break
+		}
+		// Widen, but never past the first message: the loop has to terminate
+		// and uint32 has no room for a runaway multiplier.
+		if window > beforeUID/4 {
+			window = beforeUID
+		} else {
+			window *= 4
+		}
 	}
 	if len(headers) > n {
 		headers = headers[len(headers)-n:]
 	}
 	return headers, nil
+}
+
+// uidWindow sizes the UID range worth asking for when n messages are wanted.
+func (m *imapClient) uidWindow(n int, beforeUID uint32) uint32 {
+	if n <= 0 {
+		return 0
+	}
+	size := uint64(n)
+	window := size * 3
+	// UIDNEXT divided by the message count is the average UID span one message
+	// occupies. Doubling it leaves room for the messages that were deleted
+	// without shrinking UIDNEXT.
+	if m.uidNext > 1 && m.numMessages > 0 {
+		if avg := uint64(m.uidNext) / uint64(m.numMessages); avg > 1 {
+			window = size * avg * 2
+		}
+	}
+	if window < 100 {
+		window = 100
+	}
+	if window > uint64(beforeUID) {
+		window = uint64(beforeUID)
+	}
+	return uint32(window)
 }
 
 // headerSectionItem asks for the message's header block, which is parsed with
@@ -268,6 +417,10 @@ func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID u
 // abort with `imapwire: expected ')', got "z"`, which kills the connection and
 // with it the whole account sync. A header block is opaque bytes: a broken
 // header can only cost that one message's fields, never the connection.
+//
+// BODYSTRUCTURE is the one structured item left in the request, so it carries
+// the same risk; fetchHeadersBySet retries without it when a batch dies. Do not
+// add another structured item here without extending that fallback.
 //
 // Deliberately the WHOLE header, not `HEADER.FIELDS (From To …)`: QQ accepts
 // that form and answers with an empty block (measured: 2 bytes, just CRLF), so
@@ -281,22 +434,81 @@ func headerSectionItem() *imap.FetchItemBodySection {
 	}
 }
 
-func (m *imapClient) fetchHeadersBySet(ctx context.Context, set imap.NumSet) ([]MessageHeader, error) {
+func (m *imapClient) fetchHeadersBySet(ctx context.Context, folder string, set imap.UIDSet) ([]MessageHeader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	withStructure := !m.degraded[folder]
+	headers, err := m.fetchHeadersOnce(ctx, folder, set, withStructure)
+	if err == nil {
+		return headers, nil
+	}
+	var decode *decodeError
+	if !errors.As(err, &decode) {
+		// A network failure is not a reason to stop asking for BODYSTRUCTURE;
+		// doing so would cost the attachment flags of every message in the
+		// folder for the rest of the pass.
+		return nil, err
+	}
+	// The batch died on a response go-imap could not parse, and go-imap
+	// answers that by closing the connection. Reconnecting and asking for the
+	// same messages again without BODYSTRUCTURE recovers all of them: the
+	// header block is an opaque literal that no parser can reject, and the
+	// remaining items are plain numbers and flags. The only loss is the
+	// attachment flag for messages whose body has not been decoded yet, which
+	// is a far better trade than the whole folder never syncing.
+	if m.degraded == nil {
+		m.degraded = make(map[string]bool)
+	}
+	m.degraded[folder] = true
+	if rerr := m.reconnect(ctx); rerr != nil {
+		return nil, rerr
+	}
+	return m.fetchHeadersOnce(ctx, folder, set, false)
+}
+
+// decodeError marks a failure to parse a server response, as opposed to one
+// that came from the transport.
+//
+// go-imap closes the connection on a malformed response, so by the time the
+// error surfaces the socket is gone and every classifier calls it a connection
+// failure. The original error is what tells the two apart: a transport failure
+// is a net error (or EOF), a decoder failure is a plain error.
+type decodeError struct{ error }
+
+func (m *imapClient) classifyFetchError(err error) error {
+	var netErr net.Error
+	if errors.As(err, &netErr) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) {
+		return m.fail("fetch headers", err)
+	}
+	return &decodeError{m.fail("fetch headers", err)}
+}
+
+func (m *imapClient) fetchHeadersOnce(ctx context.Context, folder string, set imap.UIDSet, withStructure bool) ([]MessageHeader, error) {
+	if _, err := m.selectFolder(ctx, folder); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	m.deadline()
 	section := headerSectionItem()
-	msgs, err := m.c.Fetch(set, &imap.FetchOptions{
-		UID:           true,
-		Flags:         true,
-		RFC822Size:    true,
-		InternalDate:  true,
-		BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
-		BodySection:   []*imap.FetchItemBodySection{section},
-	}).Collect()
+	opts := &imap.FetchOptions{
+		UID:          true,
+		Flags:        true,
+		RFC822Size:   true,
+		InternalDate: true,
+		BodySection:  []*imap.FetchItemBodySection{section},
+	}
+	if withStructure {
+		opts.BodyStructure = &imap.FetchItemBodyStructure{Extended: true}
+	}
+	msgs, err := m.c.Fetch(set, opts).Collect()
 	if err != nil {
-		return nil, classify("fetch headers", err)
+		return nil, m.classifyFetchError(err)
 	}
 	out := make([]MessageHeader, 0, len(msgs))
 	for _, msg := range msgs {
@@ -416,6 +628,8 @@ func headerFromBuffer(msg *imapclient.FetchMessageBuffer, section *imap.FetchIte
 			h.Flagged = true
 		case imap.FlagAnswered:
 			h.Answered = true
+		case imap.FlagDeleted:
+			h.Deleted = true
 		}
 	}
 	return h
@@ -450,7 +664,7 @@ func (m *imapClient) FetchRawBatch(ctx context.Context, folder string, uids []ui
 		BodySection: []*imap.FetchItemBodySection{section},
 	}).Collect()
 	if err != nil {
-		return nil, classify("fetch body", err)
+		return nil, m.fail("fetch body", err)
 	}
 	out := make(map[uint32][]byte, len(msgs))
 	for _, msg := range msgs {
@@ -474,7 +688,7 @@ func (m *imapClient) StoreFlags(ctx context.Context, folder string, uid uint32, 
 		if err := m.c.Store(set, &imap.StoreFlags{
 			Op: imap.StoreFlagsAdd, Silent: true, Flags: toFlags(add),
 		}, nil).Close(); err != nil {
-			return classify("store flags", err)
+			return m.fail("store flags", err)
 		}
 	}
 	if len(remove) > 0 {
@@ -482,7 +696,7 @@ func (m *imapClient) StoreFlags(ctx context.Context, folder string, uid uint32, 
 		if err := m.c.Store(set, &imap.StoreFlags{
 			Op: imap.StoreFlagsDel, Silent: true, Flags: toFlags(remove),
 		}, nil).Close(); err != nil {
-			return classify("store flags", err)
+			return m.fail("store flags", err)
 		}
 	}
 	return nil
@@ -517,7 +731,7 @@ func (m *imapClient) MarkAllSeen(ctx context.Context, folder string) error {
 	if err := m.c.Store(set, &imap.StoreFlags{
 		Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagSeen},
 	}, nil).Close(); err != nil {
-		return classify("mark all seen", err)
+		return m.fail("mark all seen", err)
 	}
 	return nil
 }
@@ -529,11 +743,28 @@ func (m *imapClient) Move(ctx context.Context, folder string, uid uint32, dest s
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.deadline()
-	if _, err := m.c.Move(imap.UIDSetNum(imap.UID(uid)), dest).Wait(); err != nil {
-		return classify("move message", err)
+	set := imap.UIDSetNum(imap.UID(uid))
+	if m.c.Caps().Has(imap.CapMove) {
+		m.deadline()
+		if _, err := m.c.Move(set, dest).Wait(); err != nil {
+			return m.fail("move message", err)
+		}
+		return nil
 	}
-	return nil
+	// go-imap's own MOVE fallback ends with a bare EXPUNGE, which takes every
+	// other \Deleted message in the mailbox with it. Do the three steps here
+	// so the last one can be targeted.
+	m.deadline()
+	if _, err := m.c.Copy(set, dest).Wait(); err != nil {
+		return m.fail("copy message", err)
+	}
+	m.deadline()
+	if err := m.c.Store(set, &imap.StoreFlags{
+		Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagDeleted},
+	}, nil).Close(); err != nil {
+		return m.fail("move message", err)
+	}
+	return m.expungeOne(ctx, set)
 }
 
 func (m *imapClient) Delete(ctx context.Context, folder string, uid uint32) error {
@@ -543,22 +774,83 @@ func (m *imapClient) Delete(ctx context.Context, folder string, uid uint32) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m.deadline()
 	set := imap.UIDSetNum(imap.UID(uid))
+	m.deadline()
 	if err := m.c.Store(set, &imap.StoreFlags{
 		Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagDeleted},
 	}, nil).Close(); err != nil {
-		return classify("delete message", err)
+		return m.fail("delete message", err)
+	}
+	return m.expungeOne(ctx, set)
+}
+
+// expungeOne removes exactly the given UIDs.
+//
+// UID EXPUNGE (RFC 4315) is the only way to do that safely. Without UIDPLUS a
+// bare EXPUNGE removes *every* \Deleted message in the mailbox, including ones
+// another client has flagged and not committed yet — deleting one message in
+// the Trash would silently wipe unrelated mail. So a bare EXPUNGE is only used
+// after a search proves the message is the only one flagged.
+func (m *imapClient) expungeOne(ctx context.Context, set imap.UIDSet) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	m.deadline()
 	if m.c.Caps().Has(imap.CapUIDPlus) {
 		if err := m.c.UIDExpunge(set).Close(); err != nil {
-			return classify("delete message", err)
+			return m.fail("expunge message", err)
 		}
-	} else if err := m.c.Expunge().Close(); err != nil {
-		return classify("delete message", err)
+		return nil
+	}
+	onlyOurs, err := m.onlyDeleted(ctx, set)
+	if err != nil {
+		return err
+	}
+	if !onlyOurs {
+		// Leave the message flagged. Servers hide \Deleted messages and the
+		// sync drops them from the cache, so it is gone as far as the user is
+		// concerned; the next client that expunges takes it.
+		return nil
+	}
+	m.deadline()
+	if err := m.c.Expunge().Close(); err != nil {
+		return m.fail("expunge message", err)
 	}
 	return nil
+}
+
+// onlyDeleted reports whether every \Deleted message in the selected mailbox is
+// covered by set.
+func (m *imapClient) onlyDeleted(ctx context.Context, set imap.UIDSet) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.deadline()
+	data, err := m.c.UIDSearch(&imap.SearchCriteria{Flag: []imap.Flag{imap.FlagDeleted}}, nil).Wait()
+	if err != nil {
+		return false, m.fail("search deleted", err)
+	}
+	deleted, ok := data.All.(imap.UIDSet)
+	if !ok || len(deleted) == 0 {
+		// An empty result cannot be right — we just flagged this message — so
+		// treat it as "do not know" rather than as permission to expunge.
+		return false, nil
+	}
+	for _, r := range deleted {
+		if !uidRangeWithin(set, r) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func uidRangeWithin(super imap.UIDSet, r imap.UIDRange) bool {
+	for _, s := range super {
+		if r.Start >= s.Start && r.Stop <= s.Stop {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *imapClient) Append(ctx context.Context, folder string, raw []byte, seen bool) error {
@@ -573,13 +865,13 @@ func (m *imapClient) Append(ctx context.Context, folder string, raw []byte, seen
 	cmd := m.c.Append(folder, int64(len(raw)), opts)
 	if _, err := cmd.Write(raw); err != nil {
 		_ = cmd.Close()
-		return classify("append to sent", err)
+		return m.fail("append to sent", err)
 	}
 	if err := cmd.Close(); err != nil {
-		return classify("append to sent", err)
+		return m.fail("append to sent", err)
 	}
 	if _, err := cmd.Wait(); err != nil {
-		return classify("append to sent", err)
+		return m.fail("append to sent", err)
 	}
 	return nil
 }

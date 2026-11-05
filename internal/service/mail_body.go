@@ -130,7 +130,15 @@ func storeMailBody(msg MailMessage, raw []byte, writeFiles bool) error {
 		}
 		atts = append(atts, row)
 	}
-	return SaveMailAttachments(msg.ID, atts)
+	if err := SaveMailAttachments(msg.ID, atts); err != nil {
+		return err
+	}
+	if len(atts) > 0 && !msg.HasAttachments {
+		if err := SetMailMessageHasAttachments(msg.ID); err != nil {
+			slog.Debug("mail: mark attachments failed", "message", msg.ID, "error", err)
+		}
+	}
+	return nil
 }
 
 // prefetchMailBodies decodes the newest messages so the list has preview lines

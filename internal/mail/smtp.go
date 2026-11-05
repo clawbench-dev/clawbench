@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	gomail "github.com/wneessen/go-mail"
+	smtpsend "github.com/wneessen/go-mail/smtp"
 )
 
 // opSend is the operation label used in classified send errors.
@@ -20,16 +24,32 @@ type SMTPSender struct{}
 // Send implements Sender. It returns the exact RFC 5322 bytes so the caller can
 // APPEND the same message to the Sent folder.
 func (SMTPSender) Send(ctx context.Context, acc Account, req SendRequest) ([]byte, error) {
+	// Internationalized domains become punycode before anything is built, so
+	// the envelope and the headers agree and only a non-ASCII local part is
+	// left as an SMTPUTF8 requirement.
+	req = normalizeAddresses(req)
 	msg, err := buildOutgoingMessage(req)
 	if err != nil {
 		return nil, err
 	}
-	client, err := newSMTPClient(acc)
-	if err != nil {
-		return nil, classify("dial smtp", err)
+
+	var sendErr error
+	envelope := envelopeAddresses(req)
+	for _, auth := range smtpAuthSequence(acc.SMTPSecurity) {
+		client, cerr := newSMTPClient(acc, auth)
+		if cerr != nil {
+			return nil, classify("dial smtp", cerr)
+		}
+		sendErr = dialAndSend(ctx, client, msg, envelope)
+		if sendErr == nil {
+			break
+		}
+		if !retryableAuthFailure(sendErr) || ctx.Err() != nil {
+			return nil, sendErr
+		}
 	}
-	if err := dialAndSend(ctx, client, msg); err != nil {
-		return nil, err
+	if sendErr != nil {
+		return nil, sendErr
 	}
 
 	var raw bytes.Buffer
@@ -37,6 +57,37 @@ func (SMTPSender) Send(ctx context.Context, acc Account, req SendRequest) ([]byt
 		return nil, classify("serialize message", err)
 	}
 	return raw.Bytes(), nil
+}
+
+// smtpAuthSequence lists the AUTH mechanisms to try, in order.
+//
+// On an encrypted connection AutoDiscover picks the strongest mechanism the
+// server advertises. It deliberately refuses PLAIN and LOGIN over plaintext, so
+// those have to be named explicitly — and naming exactly one is not enough:
+// servers exist that advertise PLAIN but reject every attempt with 535 while
+// LOGIN works, and go-mail does not fall back on its own. LOGIN goes first
+// because that is the mechanism such servers accept; a server that only
+// advertises PLAIN rejects LOGIN before any credentials are sent, so the retry
+// costs a connection setup and nothing more.
+func smtpAuthSequence(sec Security) []gomail.SMTPAuthType {
+	if sec != SecurityNone {
+		return []gomail.SMTPAuthType{gomail.SMTPAuthAutoDiscover}
+	}
+	return []gomail.SMTPAuthType{gomail.SMTPAuthLoginNoEnc, gomail.SMTPAuthPlainNoEnc}
+}
+
+// retryableAuthFailure reports whether err came from the AUTH step, i.e.
+// whether trying another mechanism is both safe and meaningful.
+//
+// A failure after DATA may have delivered the message already, so retrying it
+// would send a duplicate; only the AUTH step is eligible. go-mail prefixes that
+// step with a fixed string, and the two "mechanism not advertised" errors are
+// returned before any credential is sent.
+func retryableAuthFailure(err error) bool {
+	if errors.Is(err, gomail.ErrLoginAuthNotSupported) || errors.Is(err, gomail.ErrPlainAuthNotSupported) {
+		return true
+	}
+	return strings.Contains(err.Error(), "SMTP AUTH failed")
 }
 
 func buildOutgoingMessage(req SendRequest) (*gomail.Msg, error) {
@@ -95,7 +146,7 @@ func setThreadHeaders(msg *gomail.Msg, req SendRequest) {
 	msg.SetGenHeader(gomail.HeaderReferences, strings.Join(refs, " "))
 }
 
-func newSMTPClient(acc Account) (*gomail.Client, error) {
+func newSMTPClient(acc Account, auth gomail.SMTPAuthType) (*gomail.Client, error) {
 	opts := []gomail.Option{
 		gomail.WithPort(acc.SMTPPort),
 		gomail.WithTimeout(dialTimeout),
@@ -111,22 +162,36 @@ func newSMTPClient(acc Account) (*gomail.Client, error) {
 	}
 	switch acc.SMTPSecurity {
 	case SecurityTLS:
-		opts = append(opts, gomail.WithSSLPort(false), gomail.WithSMTPAuth(gomail.SMTPAuthAutoDiscover))
+		opts = append(opts, gomail.WithSSLPort(false))
 	case SecurityStartTLS:
-		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory), gomail.WithSMTPAuth(gomail.SMTPAuthAutoDiscover))
+		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory))
 	default:
-		// AutoDiscover deliberately refuses PLAIN/LOGIN on an unencrypted
-		// connection, which would make a plaintext localhost relay unusable.
-		opts = append(opts, gomail.WithTLSPolicy(gomail.NoTLS), gomail.WithSMTPAuth(gomail.SMTPAuthPlainNoEnc))
+		opts = append(opts, gomail.WithTLSPolicy(gomail.NoTLS))
 	}
+	opts = append(opts, gomail.WithSMTPAuth(auth))
 	return gomail.NewClient(acc.SMTPHost, opts...)
 }
 
 // dialAndSend bounds the exchange: go-mail has no context support, so a dead
 // server would otherwise pin the request goroutine forever.
-func dialAndSend(ctx context.Context, client *gomail.Client, msg *gomail.Msg) error {
+//
+// The connection is opened separately from the send so the server's advertised
+// extensions can be read before the envelope is written (see
+// ensureEnvelopeEncodable).
+func dialAndSend(ctx context.Context, client *gomail.Client, msg *gomail.Msg, envelope []string) error {
 	done := make(chan error, 1)
-	go func() { done <- client.DialAndSend(msg) }()
+	var conn smtpConn
+
+	go func() {
+		c, err := client.DialToSMTPClientWithContext(ctx)
+		if err != nil {
+			done <- fmt.Errorf("dial failed: %w", err)
+			return
+		}
+		conn.set(c)
+		done <- exchange(client, c, msg, envelope)
+	}()
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -134,12 +199,88 @@ func dialAndSend(ctx context.Context, client *gomail.Client, msg *gomail.Msg) er
 		}
 		return nil
 	case <-ctx.Done():
-		_ = client.Close()
+		conn.close(client)
 		return classify(opSend, ctx.Err())
 	case <-time.After(opTimeout):
-		_ = client.Close()
+		conn.close(client)
 		return timeoutError(opSend, opTimeout)
 	}
+}
+
+// smtpConn hands the open connection from the worker goroutine to the timeout
+// path without racing it. A timeout can fire before the dial finishes, in which
+// case there is nothing to close — the dial itself is bounded by its own
+// timeout and closes what it opened on failure.
+type smtpConn struct {
+	mu sync.Mutex
+	c  *smtpsend.Client
+}
+
+func (s *smtpConn) set(c *smtpsend.Client) {
+	s.mu.Lock()
+	s.c = c
+	s.mu.Unlock()
+}
+
+func (s *smtpConn) close(client *gomail.Client) {
+	s.mu.Lock()
+	c := s.c
+	s.mu.Unlock()
+	if c != nil {
+		_ = client.CloseWithSMTPClient(c)
+	}
+}
+
+// exchange runs the rest of the SMTP dialog on an open connection.
+func exchange(client *gomail.Client, conn *smtpsend.Client, msg *gomail.Msg, envelope []string) error {
+	defer func() { _ = client.CloseWithSMTPClient(conn) }()
+	if err := ensureEnvelopeEncodable(conn, envelope); err != nil {
+		return err
+	}
+	if err := client.SendWithSMTPClient(conn, msg); err != nil {
+		return fmt.Errorf("send failed: %w", err)
+	}
+	return nil
+}
+
+// ensureEnvelopeEncodable refuses a message the server cannot represent.
+//
+// SMTPUTF8 (RFC 6531) is what allows a non-ASCII address in MAIL FROM / RCPT TO.
+// Without it the address goes out as raw UTF-8 bytes, which the server either
+// rejects with a 5xx that says nothing about encoding, or accepts after
+// mangling it into a different mailbox. Both are worse than a clear refusal,
+// and both only surface after the message body has already been transmitted.
+func ensureEnvelopeEncodable(conn *smtpsend.Client, addresses []string) error {
+	if ok, _ := conn.Extension("SMTPUTF8"); ok {
+		return nil
+	}
+	for _, addr := range addresses {
+		if isASCII(addr) {
+			continue
+		}
+		return &Error{Kind: KindUnsupported, Op: opSend, Err: fmt.Errorf(
+			"the server does not support non-ASCII addresses (no SMTPUTF8): %s", addr)}
+	}
+	return nil
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+// envelopeAddresses lists every address that ends up in MAIL FROM or RCPT TO.
+func envelopeAddresses(req SendRequest) []string {
+	out := make([]string, 0, 1+len(req.To)+len(req.Cc)+len(req.Bcc))
+	out = append(out, req.From)
+	out = append(out, req.To...)
+	out = append(out, req.Cc...)
+	out = append(out, req.Bcc...)
+	return out
 }
 
 // ensureAngle wraps a Message-ID in angle brackets when the server stored it

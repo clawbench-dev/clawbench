@@ -485,6 +485,7 @@ MailTLSFailed: 邮件服务器证书校验失败
 MailTimeout: 邮件服务器响应超时
 MailServerError: 邮件服务器返回错误
 MailNoRecipients: 请至少填一个收件人
+MailUnsupportedAddress: 邮箱地址里 @ 前面那部分含中文等非 ASCII 字符，当前邮件服务器不支持这种地址，这封邮件发不出去
 MailSyncBusy: 这个邮箱正在同步中
 TaskTriggerModeInvalid: 触发方式只能是定时、仓库事件或邮件
 TaskMailAccountRequired: 邮件触发需要选择一个邮箱账号

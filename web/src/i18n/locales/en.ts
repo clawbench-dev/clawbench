@@ -176,6 +176,7 @@ export default {
       server: 'The mail server returned an error.',
       busy: 'This mailbox is already syncing. Try again in a moment.',
       noRecipients: 'Add at least one recipient.',
+      unsupported: 'The part of the address before @ contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent.',
       generic: 'Something went wrong. Try again.',
     },
   },

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbench/internal/mail"
@@ -274,22 +276,45 @@ func SendMail(ctx context.Context, req MailSendRequest) error {
 		return err
 	}
 
-	// Best effort: a mailbox without a Sent folder (or a server that refuses
-	// APPEND) must not turn a successfully delivered message into an error.
+	// Best effort, and in the background: a mailbox without a Sent folder (or a
+	// server that refuses APPEND) must not turn a successfully delivered
+	// message into an error, and a server that accepts APPEND but never answers
+	// it must not delay the response either — that used to hold the request for
+	// the whole 60s operation timeout on every send.
 	if sent, ok := findSpecialFolder(acc.ID, mail.SpecialUseSent); ok {
-		client, derr := mailDialer(ctx, acc.ProtocolAccount())
-		if derr == nil {
-			if aerr := client.Append(ctx, sent.Path, raw, true); aerr != nil {
-				_ = aerr // logged by the caller's sync error surface
-			}
-			_ = client.Close()
-		}
+		appendSentCopy(acc.ProtocolAccount(), sent.Path, raw)
 	}
 
 	if req.DraftID > 0 {
 		_ = DeleteMailDraft(req.DraftID)
 	}
 	return nil
+}
+
+// mailAppendTimeout bounds the background Sent-folder copy.
+const mailAppendTimeout = 60 * time.Second
+
+// mailAppendWG tracks the background copies so tests can wait for one instead
+// of racing the scheduler (and so they never leave a goroutine talking to the
+// real network after the fake dialer has been restored).
+var mailAppendWG sync.WaitGroup
+
+func appendSentCopy(acc mail.Account, folder string, raw []byte) {
+	mailAppendWG.Add(1)
+	go func() {
+		defer mailAppendWG.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), mailAppendTimeout)
+		defer cancel()
+		client, err := mailDialer(ctx, acc)
+		if err != nil {
+			slog.Warn("mail: sent copy not stored, cannot connect", "folder", folder, "error", err)
+			return
+		}
+		defer func() { _ = client.Close() }()
+		if err := client.Append(ctx, folder, raw, true); err != nil {
+			slog.Warn("mail: sent copy not stored", "folder", folder, "error", err)
+		}
+	}()
 }
 
 // ErrMailNoRecipients is returned when the composer has no recipient at all.

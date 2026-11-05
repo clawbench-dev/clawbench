@@ -614,6 +614,8 @@ func writeMailError(w http.ResponseWriter, r *http.Request, err error) {
 			writeLocalizedErrorf(w, r, http.StatusBadGateway, "MailTLSFailed")
 		case mail.KindTimeout:
 			writeLocalizedErrorf(w, r, http.StatusGatewayTimeout, "MailTimeout")
+		case mail.KindUnsupported:
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "MailUnsupportedAddress")
 		default:
 			writeLocalizedErrorf(w, r, http.StatusBadGateway, "MailServerError")
 		}

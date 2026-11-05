@@ -176,6 +176,7 @@ export default {
       server: '邮件服务器返回错误。',
       busy: '这个邮箱正在同步中，请稍后再试。',
       noRecipients: '请至少填一个收件人。',
+      unsupported: '邮箱地址里 @ 前面那部分含中文等非 ASCII 字符，当前邮件服务器不支持这种地址，这封邮件发不出去。',
       generic: '操作失败，请稍后重试。',
     },
   },

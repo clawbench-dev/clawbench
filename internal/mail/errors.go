@@ -23,6 +23,10 @@ const (
 	KindTLS     Kind = "tls"
 	KindTimeout Kind = "timeout"
 	KindServer  Kind = "server"
+	// KindUnsupported means the request is well-formed but the server cannot
+	// carry it: the protocol has no way to express it. Sending to a non-ASCII
+	// address on a server without SMTPUTF8 is the case that matters.
+	KindUnsupported Kind = "unsupported"
 )
 
 // Error is a classified mail failure.

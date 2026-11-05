@@ -8704,7 +8704,13 @@ paths:
     post:
       tags: [Mail]
       summary: 发送邮件
-      description: 发送成功后会尝试 APPEND 一份到「已发送」；APPEND 失败不影响发送结果。
+      description: |
+        发送成功后会尝试 APPEND 一份到「已发送」；APPEND 失败不影响发送结果（副本在后台写入，不阻塞响应）。
+
+        地址里的**域名**含非 ASCII 字符时服务端自动转成 punycode 再发（`bob@例子.com` →
+        `bob@xn--fsqu00a.com`），信封与信头一起改写。只有**本地部分**含非 ASCII 才要求服务器支持
+        `SMTPUTF8`：不支持就**直接拒绝**（`400` + `MailUnsupportedAddress`），不会把 UTF-8 字节
+        硬塞进 `MAIL FROM` / `RCPT TO` 让服务端退回一封语焉不详的退信。
       operationId: mailSend
       requestBody:
         required: true
