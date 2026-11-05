@@ -660,6 +660,22 @@ function memberName(m: RosterMember): string {
   return m.host ? t('share.live.hostRole') : t('share.live.viewerName', { id: m.id })
 }
 
+/**
+ * Display name for an identity as it arrives on the wire ('host' or a viewer
+ * slot id).
+ *
+ * The level frames and screen-state carry only the slot id; the nickname lives
+ * in the roster. Resolving it here is what keeps the floating "is speaking"
+ * chip and the sharing banner naming a person the same way the 成员 list does.
+ * The numbered fallback covers a frame that arrives before that member's
+ * roster entry (or after they left).
+ */
+function identityName(id: string): string {
+  const m = roster.value.find((x) => x.id === id)
+  if (m) return memberName(m)
+  return id === 'host' ? t('share.live.hostRole') : t('share.live.viewerName', { id })
+}
+
 // ── AI 听记 (viewer side) ────────────────────────────────────────────────────
 /** Whether the publisher is recording 听记 right now. */
 const notesEnabled = ref(false)
@@ -707,11 +723,7 @@ function noteSpeaker(id: string, level: number): void {
   }, 900)
 }
 
-const speakerLabel = computed(() =>
-  speaking.value === 'host'
-    ? t('share.live.host')
-    : t('share.live.viewerName', { id: speaking.value }),
-)
+const speakerLabel = computed(() => (speaking.value ? identityName(speaking.value) : ''))
 
 const inkWrapStyle = computed(() => ({
   left: `${inkRect.value.left}px`,
@@ -1250,7 +1262,9 @@ const canRequestControl = computed(() => controlEnabled.value)
 const screenBanner = computed(() => {
   if (screenError.value) return screenError.value
   if (sharingScreen.value) return t('share.live.youAreSharing')
-  if (screenSharer.value) return t('share.live.viewingSharer', { id: screenSharer.value })
+  if (screenSharer.value) {
+    return t('share.live.viewingSharer', { name: identityName(screenSharer.value) })
+  }
   return ''
 })
 
@@ -1813,6 +1827,9 @@ onBeforeUnmount(() => {
   wakeLock.release('meeting-viewer')
   stopStatsPolling()
   clearNegotiationWatchdog()
+  // The "is speaking" chip clears itself on a timer; leaving it armed would
+  // touch a ref after the view is gone.
+  if (speakerTimer) clearTimeout(speakerTimer)
   document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('keydown', onControlKey, true)
   window.removeEventListener('compositionend', onControlComposition)

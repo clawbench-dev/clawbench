@@ -4274,7 +4274,7 @@ export default {
       shareScreenHint: '把你的屏幕共享给所有人',
       stopSharingHint: '停止共享你的屏幕',
       youAreSharing: '你正在共享屏幕',
-      viewingSharer: '成员 {id} 正在共享屏幕',
+      viewingSharer: '{name} 正在共享屏幕',
       backToHost: '看主持人',
       viewShared: '看共享',
       shareFailed: '无法开始共享，请检查浏览器权限',

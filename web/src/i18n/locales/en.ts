@@ -4281,7 +4281,7 @@ export default {
       shareScreenHint: 'Share your screen with everyone',
       stopSharingHint: 'Stop sharing your screen',
       youAreSharing: 'You are sharing your screen',
-      viewingSharer: 'Viewer {id} is sharing a screen',
+      viewingSharer: '{name} is sharing a screen',
       backToHost: 'Host screen',
       viewShared: 'Shared screen',
       shareFailed: 'Could not start sharing — check the browser permission',

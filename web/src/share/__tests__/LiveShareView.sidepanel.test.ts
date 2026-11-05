@@ -106,6 +106,9 @@ const i18n = createI18n({
           memberMuted: '已静音',
           membersEmpty: '还没有其他人的信息。',
           memberCount: '共 {n} 人',
+          viewingSharer: '{name} 正在共享屏幕',
+          speaking: '{name} 正在说话',
+          host: '主持人',
         },
       },
     },
@@ -676,6 +679,53 @@ describe('LiveShareView 成员 tab', () => {
     expect(rows[1].find('[data-role="member-talking"]').exists()).toBe(true)
     expect(rows[1].find('[data-role="member-sharing"]').exists()).toBe(true)
     expect(rows[2].find('[data-role="member-muted"]').exists()).toBe(true)
+
+    w.unmount()
+  })
+
+  it('names the speaker and the sharer the way the list does', async () => {
+    const w = mountView()
+    await flushPromises()
+    await w.find('[data-action="chat"]').trigger('click')
+    await flushPromises()
+
+    // The level and screen frames carry only the slot id; the nickname lives in
+    // the roster. A chip that printed the id would be describing a person the
+    // list calls something else — and "观众 v1" is not something a human reads
+    // as "小明 is talking".
+    lastViewer?.opts?.callbacks?.onRoster?.([
+      { id: 'host', name: '泷泽', host: true },
+      { id: 'v1', name: '小明' },
+    ])
+    lastViewer?.opts?.callbacks?.onScreenSharer?.('v1')
+    lastViewer?.opts?.callbacks?.onControl?.({ t: 'talk', viewerId: 'v1', level: 1 })
+    await flushPromises()
+
+    const speaker = w.find('[data-role="speaker"]')
+    expect(speaker.text()).toContain('小明')
+    expect(speaker.text()).not.toContain('v1')
+
+    const banner = w.find('[data-role="screen-banner"]')
+    expect(banner.text()).toContain('小明')
+    expect(banner.text()).not.toContain('v1')
+
+    // The host is a person too: their nickname, not the role word.
+    lastViewer?.opts?.callbacks?.onControl?.({ t: 'talk', viewerId: 'host', level: 1 })
+    await flushPromises()
+    expect(w.find('[data-role="speaker"]').text()).toContain('泷泽')
+
+    w.unmount()
+  })
+
+  it('falls back to the numbered name when the roster has not arrived', async () => {
+    const w = mountView()
+    await flushPromises()
+
+    // Frames can beat the roster frame; a missing name must not blank the chip.
+    lastViewer?.opts?.callbacks?.onControl?.({ t: 'talk', viewerId: 'v7', level: 1 })
+    await flushPromises()
+
+    expect(w.find('[data-role="speaker"]').text()).toContain('观众 v7')
 
     w.unmount()
   })
