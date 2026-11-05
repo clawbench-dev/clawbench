@@ -200,6 +200,8 @@ func (m *Manager) handleIncomingText(ctx context.Context, openID, text, bodyText
 		m.handleStopSession(ctx, openID, route.Arg)
 	case common.RouteNewSession:
 		m.handleNewSession(ctx, openID, route.Arg)
+	case common.RouteHelp:
+		m.handleHelp(ctx, openID)
 	case common.RouteNoTarget:
 		m.replyNoTarget(ctx, openID)
 	case common.RouteToSession:
@@ -554,6 +556,13 @@ func (m *Manager) handleNewSession(ctx context.Context, openID, arg string) {
 		body += "\n\n" + common.T("PushNewProjectMissingDir")
 	}
 	_ = m.SendPostMessage(ctx, openID, common.T("PushNewTitle"), body)
+}
+
+// handleHelp replies with the command reference. The body comes from the shared
+// i18n string (see common.HelpText) so all three channels list the same
+// commands.
+func (m *Manager) handleHelp(ctx context.Context, openID string) {
+	_ = m.SendPostMessage(ctx, openID, common.T("PushHelpTitle"), common.HelpText())
 }
 
 // replyNoTarget tells the user how to pick a session.

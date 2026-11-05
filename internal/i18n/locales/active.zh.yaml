@@ -220,7 +220,7 @@ PushAttachmentsTruncated: '⚠️ 附件数量超过上限（{{.Max}}），仅�
 PushUnsupportedMsgType: 暂不支持该消息类型（{{.Type}}）。请发送文字、图片或文件。
 PushSendMessageFailed: '发送消息失败: '
 PushMessageSent: 消息已发送
-PushNoSessionSelected: 尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择。
+PushNoSessionSelected: 尚未选择会话。发送 /ls 查看会话列表，然后用 @会话ID <消息> 选择；发 /help 查看全部命令。
 PushErrorTitle: 错误
 PushUnsupportedTitle: 暂不支持
 PushSelectSessionTitle: 请选择会话
@@ -270,6 +270,17 @@ PushNewListFailed: 获取项目列表失败，请稍后重试。
 PushNewCreateFailed: 创建会话失败，请稍后重试。
 PushStopFailed: 停止会话失败，请稍后重试。
 PushCommandWithAttachment: '命令 `{{.Command}}` 不能和附件一起发送。请先单独发送命令，再发送文件。'
+PushHelpTitle: 命令说明
+PushHelpBody: |-
+  **/ls** — 列出最近会话（每条带 8 位短 ID）
+  **/show [短ID]** — 重发目标会话最后一条完整的 AI 回复；不带 ID 用当前会话
+  **/stop [短ID]** — 停止目标会话正在跑的回合并清空排队消息；不带 ID 用当前会话
+  **/new [序号|路径]** — 不带参数列出项目；带参数在指定项目下新建会话
+  **/help** — 显示这份命令说明
+  **@短ID 消息** — 点名发给某个会话，优先级高于所有命令
+
+  直接发文本会发给上次 @ 过的会话；图片、文件作为附件发给当前会话。
+  命令只在消息开头生效，且不能和附件一起发送。
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在

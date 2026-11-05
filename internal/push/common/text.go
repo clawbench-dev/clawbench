@@ -50,3 +50,13 @@ const (
 func CommandWithAttachmentText(command string) string {
 	return T("PushCommandWithAttachment", map[string]any{TemplateCommand: command})
 }
+
+// HelpText is the command reference returned by "/help".
+//
+// It is one i18n string rather than a list assembled per channel so all three
+// backends show the same commands: a channel composing its own list would drift
+// the moment a command is added. Markdown channels use it verbatim; WeChat
+// strips the emphasis markers first.
+func HelpText() string {
+	return T("PushHelpBody")
+}

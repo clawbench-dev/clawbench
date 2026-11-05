@@ -155,6 +155,8 @@ func (m *Manager) handleIncomingText(ctx context.Context, data *chatbot.BotCallb
 		m.handleStopSession(ctx, data, staffID, route.Arg)
 	case common.RouteNewSession:
 		m.handleNewSession(ctx, data, staffID, route.Arg)
+	case common.RouteHelp:
+		m.handleHelp(ctx, data)
 	case common.RouteNoTarget:
 		m.replyNoTarget(ctx, data)
 	case common.RouteToSession:
@@ -542,6 +544,16 @@ func (m *Manager) handleNewSession(ctx context.Context, data *chatbot.BotCallbac
 	}
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
 		[]byte(common.T("PushNewTitle")), []byte(body))
+}
+
+// handleHelp replies with the command reference. The body comes from the shared
+// i18n string (see common.HelpText) so all three channels list the same
+// commands.
+func (m *Manager) handleHelp(ctx context.Context, data *chatbot.BotCallbackDataModel) {
+	replier := chatbot.NewChatbotReplier()
+	body := "### " + common.T("PushHelpTitle") + "\n\n" + common.HelpText()
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+		[]byte(common.T("PushHelpTitle")), []byte(body))
 }
 
 // replyNoTarget tells the user how to pick a session. It is the fallback when

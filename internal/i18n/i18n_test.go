@@ -333,6 +333,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PushNewCreateFailed",
 		"PushStopFailed",
 		"PushCommandWithAttachment",
+		"PushHelpTitle",
+		"PushHelpBody",
 		"PushInvalidSessionID",
 		"PushShowRunning",
 	}

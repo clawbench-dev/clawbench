@@ -85,3 +85,37 @@ func TestCommandWithAttachmentText_NamesTheCommand(t *testing.T) {
 		t.Fatal("reply must not be empty")
 	}
 }
+
+// /help is the only way an IM user discovers the commands, so every command the
+// parser accepts must appear in the body. The text is hand-written prose, which
+// is exactly why a command added without a matching line would stay invisible.
+func TestHelpText_ListsEveryCommand(t *testing.T) {
+	orig := model.Language
+	defer func() { model.Language = orig }()
+
+	words := []string{
+		SessionListCommand,
+		SessionShowCommand,
+		SessionStopCommand,
+		SessionNewCommand,
+		SessionHelpCommand,
+	}
+
+	for _, lang := range []string{"en", "zh"} {
+		model.Language = lang
+		body := HelpText()
+		if strings.TrimSpace(body) == "" || body == "PushHelpBody" {
+			t.Fatalf("%s: help body is missing or untranslated: %q", lang, body)
+		}
+		for _, word := range words {
+			if !strings.Contains(body, word) {
+				t.Errorf("%s: help body does not mention %q", lang, word)
+			}
+		}
+		// The "@{shortID}" form is not a command, but it is the other half of
+		// the addressing model — a body without it omits how to target a session.
+		if !strings.Contains(body, "@") {
+			t.Errorf("%s: help body does not explain the @sessionID form", lang)
+		}
+	}
+}
