@@ -13,12 +13,18 @@ import (
 func ServeHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(healthResponse{
-		App:     "clawbench",
-		Version: version.Get(),
+		App:      "clawbench",
+		Version:  version.Get(),
+		Protocol: version.ClientProtocol,
 	})
 }
 
 type healthResponse struct {
 	App     string `json:"app"`
 	Version string `json:"version"`
+	// Protocol is the client/server compatibility number. The Android gate
+	// compares it with the value baked into the APK instead of comparing
+	// version strings, so a release that did not change the contract can keep
+	// shipping the previous APK.
+	Protocol int `json:"protocol"`
 }

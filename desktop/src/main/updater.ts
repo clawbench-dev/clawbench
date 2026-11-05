@@ -28,6 +28,20 @@ export function latestInfoUrl(serverUrl: string): string {
 export interface DesktopLatest {
   /** The version the server reports for itself — the target desktop version. */
   version: string
+  /**
+   * Version of the package these URLs actually ship. Equal to `version` for an
+   * ordinary release, and the PREVIOUS release's version when this release
+   * reused that build untouched. The installer keys the side-by-side directory
+   * off it: installing a v0.129 app under app-0.130 makes app.getVersion()
+   * disagree with the pointer, and the startup handoff then deletes the
+   * pointer, silently reverting the upgrade.
+   */
+  clientVersion: string
+  /**
+   * Client/server compatibility number. 0 means the server predates the field,
+   * which makes the gate fall back to comparing version strings.
+   */
+  protocol: number
   /** GitHub release tag, or '' on a dev/untagged server (urls are then empty). */
   tag: string
   /** Candidate download URLs for the FULL package, best-first (mirror first in China, github.com last). */
@@ -43,6 +57,8 @@ export interface DesktopLatest {
 
 interface DesktopLatestResponse {
   version?: string
+  clientVersion?: string
+  protocol?: number
   tag?: string
   downloads?: Record<string, string[]>
   payloads?: Record<string, string[]>
@@ -147,5 +163,11 @@ export async function fetchDesktopLatest(
   // servers predating the feature — both mean "use the full package".
   const payloadUrls = info.payloads?.[key] ?? []
 
-  return { version, tag: info.tag || '', urls, payloadUrls }
+  // Both fields are absent on servers predating the protocol guard. 0 makes the
+  // gate fall back to comparing versions, which is exactly the old behaviour;
+  // an absent clientVersion means the download really is this release's build.
+  const protocol = typeof info.protocol === 'number' ? info.protocol : 0
+  const clientVersion = info.clientVersion || version
+
+  return { version, clientVersion, protocol, tag: info.tag || '', urls, payloadUrls }
 }

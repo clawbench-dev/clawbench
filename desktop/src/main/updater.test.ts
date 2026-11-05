@@ -60,6 +60,35 @@ describe('fetchDesktopLatest', () => {
     expect(info!.urls).toEqual(['https://mirror/x.zip', 'https://github.com/x.zip'])
   })
 
+  it('parses the protocol number and the version of the shipped build', async () => {
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Buffer.from(JSON.stringify({
+        version: 'v0.130.0',
+        clientVersion: 'v0.129.0',
+        protocol: 3,
+        downloads: { 'linux-x64': ['https://mirror/x.zip'] },
+      })),
+    )
+
+    const info = await fetchDesktopLatest('https://example.com:20000')
+    expect(info!.protocol).toBe(3)
+    // The release reused the previous desktop build: the download really is the
+    // v0.129 app, and the installer must key its directory off that.
+    expect(info!.clientVersion).toBe('v0.129.0')
+  })
+
+  it('defaults a missing protocol and clientVersion to the old behaviour', async () => {
+    // A server predating the guard: 0 makes the gate compare versions, and an
+    // absent clientVersion means the download really is this release's build.
+    ;(httpGetBuffer as ReturnType<typeof vi.fn>).mockResolvedValue(
+      Buffer.from(JSON.stringify({ version: 'v2.0.0', downloads: { 'linux-x64': ['https://mirror/x.zip'] } })),
+    )
+
+    const info = await fetchDesktopLatest('https://example.com:20000')
+    expect(info!.protocol).toBe(0)
+    expect(info!.clientVersion).toBe('v2.0.0')
+  })
+
   it('verifies the server certificate normally when none is remembered', async () => {
     // A self-hosted server may be self-signed, but the main process must not
     // simply stop checking: the answer decides which binary is downloaded and

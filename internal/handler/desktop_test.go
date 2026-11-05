@@ -19,10 +19,12 @@ func TestServeDesktopLatest(t *testing.T) {
 
 	fetchDesktopLatest = func() (*service.DesktopLatestResult, error) {
 		return &service.DesktopLatestResult{
-			Version:   "v0.98.0",
-			Tag:       "v0.98.0",
-			Downloads: map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/x.zip"}},
-			Payloads:  map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/p.zip"}},
+			Version:       "v0.98.0",
+			ClientVersion: "v0.97.0",
+			Protocol:      3,
+			Tag:           "v0.98.0",
+			Downloads:     map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/x.zip"}},
+			Payloads:      map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/p.zip"}},
 		}, nil
 	}
 
@@ -35,6 +37,12 @@ func TestServeDesktopLatest(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
 	assert.Equal(t, "v0.98.0", body.Version)
 	assert.Equal(t, "v0.98.0", body.Tag)
+	// The desktop gate compares `protocol`, and the installer keys its directory
+	// off `clientVersion` — both must survive the JSON round-trip or the client
+	// silently falls back to comparing version strings / installs under the
+	// wrong version.
+	assert.Equal(t, 3, body.Protocol)
+	assert.Equal(t, "v0.97.0", body.ClientVersion)
 	require.Len(t, body.Downloads["win32-x64"], 1)
 	assert.Equal(t, "https://github.com/o/r/releases/download/v0.98.0/x.zip", body.Downloads["win32-x64"][0])
 	// The payload list must survive the JSON round-trip; the desktop client

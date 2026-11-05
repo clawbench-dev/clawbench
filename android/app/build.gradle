@@ -64,9 +64,40 @@ def autoVersionCode() {
     }
 }
 
+/**
+ * Client/server compatibility number, read from the repository's single source
+ * of truth (`internal/version/client_protocol.txt`). The Go server embeds the
+ * same file and reports it from /api/health; the desktop shell mirrors it with a
+ * parity test.
+ *
+ * The native gate compares this number with the server's instead of comparing
+ * version strings, so a release that did not change the contract can keep
+ * shipping the previous APK and existing installs are not asked to upgrade.
+ *
+ * Fails the build when the file is missing or malformed: a silent 0 would make
+ * every client "unknown" and fall back to the strict version comparison.
+ */
+def clientProtocol() {
+    def f = rootProject.file('../internal/version/client_protocol.txt')
+    if (!f.exists()) {
+        throw new GradleException("client protocol file not found: ${f}")
+    }
+    def raw = f.text.trim()
+    if (!(raw ==~ /[0-9]+/) || raw.toInteger() <= 0) {
+        throw new GradleException("client protocol must be a positive integer, got '${raw}' in ${f}")
+    }
+    return raw.toInteger()
+}
+
 android {
     namespace 'com.clawbench.app'
     compileSdk 36
+
+    buildFeatures {
+        // AGP 8 defaults buildConfig to false; the gate reads
+        // BuildConfig.CLIENT_PROTOCOL.
+        buildConfig true
+    }
 
     defaultConfig {
         applicationId "com.clawbench.app"
@@ -74,6 +105,7 @@ android {
         targetSdk 34
         versionCode autoVersionCode()
         versionName autoVersionName()
+        buildConfigField "int", "CLIENT_PROTOCOL", "${clientProtocol()}"
 
     }
 

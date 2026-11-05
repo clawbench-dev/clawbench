@@ -115,6 +115,31 @@ final class VersionCompare {
     }
 
     /**
+     * Protocol-aware gate: the installed APK and the server agree when they speak
+     * the same client protocol, regardless of their version strings.
+     *
+     * <p>This is what lets a release that did not change the shell<->server
+     * contract keep shipping the previous APK: the versions differ (the server
+     * moved on), the protocol did not, so nothing is blocked and no one is asked
+     * to download an identical build.
+     *
+     * <p>Falls back to {@link #shouldShowMismatch(String, String)} when either
+     * side reports no protocol number — an APK built before this field existed,
+     * or an older server. That keeps the pre-protocol behaviour exactly as it
+     * was, which is also the one-time upgrade path for existing installs.
+     *
+     * @param clientProtocol protocol number compiled into this APK (0 = unknown)
+     * @param serverProtocol protocol number reported by {@code /api/health} (0 = unknown)
+     */
+    static boolean shouldShowMismatch(String appVersion, String serverVersion,
+                                      int clientProtocol, int serverProtocol) {
+        if (clientProtocol > 0 && serverProtocol > 0) {
+            return clientProtocol != serverProtocol;
+        }
+        return shouldShowMismatch(appVersion, serverVersion);
+    }
+
+    /**
      * Whether the installed APK is NEWER than the server.
      *
      * <p>Only meaningful when {@link #shouldShowMismatch} is true; used to pick

@@ -133,6 +133,9 @@ flowchart TD
 
 `/api/desktop/latest` **不查询任何外部服务**（不查 npm、不查 GitHub API），直接返回服务端自身版本 + Release 资产地址。桌面端与服务端同版本发布，服务端即权威。
 
+**兼容性判据是协议号，不是版本号**。桌面端与 Android 一样，用 `desktop/src/shared/protocol.ts` 的 `CLIENT_PROTOCOL` 对比服务端返回的 `protocol`：相等即放行（版本号差多少都不管），不等才抬版本遮罩；任一侧缺失则退回 `shouldGate` 的版本比较，行为与之前一致。这样一次没有改动客户端的发布可以**直接复用上一个 Release 的桌面包**（见 [versioning.md](../infra/versioning.md) 的「客户端产物复用」），不会让所有人白下 150MB。响应里的 `clientVersion` 是下载地址**实际指向的构建版本**——复用发布时它是旧版本，安装目录按它命名；用服务端版本命名会让 `app.getVersion()` 与指针版本不一致，启动交接随即删掉指针并静默回退升级。
+
+
 改为 Release 优先的直接原因是体积：Electron 44 的运行时让桌面端 tarball 达到 ~120MiB，超过 npm 的 100MiB 文档上限，而裁剪 locale/LICENSES 只能省约 4.7MiB（实测），瘦身不可行。原先 npm registry 是**唯一**渠道，一旦超限不发 npm，自升级与官网下载入口会双双静默失效。
 
 桌面端**全量包因此不再发布到 npm**（`npm/desktop-main/` 已移除）；服务端的 `publish-npm` 只发 CLI `@xulongzhe/clawbench`，与桌面端无关。但 `publish-npm-desktop` 仍然存在——它只发**载荷包**（`clawbench-desktop-<plat>-payload`，约 3MB，远低于 npm 上限），这也是载荷的唯一分发渠道。

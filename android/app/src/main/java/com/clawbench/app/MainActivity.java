@@ -1775,20 +1775,28 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Navigate to {@code url}, unless the installed APK and the server versions differ —
-     * in which case show the blocking upgrade dialog first and only navigate if the user
-     * force-skips.
+     * Navigate to {@code url}, unless the installed APK is incompatible with the
+     * server — in which case show the blocking upgrade dialog first and only
+     * navigate if the user force-skips.
+     *
+     * <p>Compatibility is decided by the client PROTOCOL number, not by the
+     * version string: a release that did not change the shell&lt;-&gt;server contract
+     * ships the previous APK unchanged, so the versions differ while the protocol
+     * does not. Both sides reporting no protocol (an APK or server predating the
+     * field) falls back to the old version comparison.
      *
      * <p>Must be called on the UI thread (it may construct an AlertDialog). Fails open:
      * an unparseable or missing version on either side navigates immediately.
      *
-     * @param url           server base URL being connected to
-     * @param serverVersion version reported by {@code /api/health}, may be null
-     * @param proceed       navigation to run when there is no mismatch (or after skip)
+     * @param url            server base URL being connected to
+     * @param serverVersion  version reported by {@code /api/health}, may be null
+     * @param serverProtocol protocol reported by {@code /api/health}, 0 when absent
+     * @param proceed        navigation to run when there is no mismatch (or after skip)
      */
-    void gateVersionMismatchAndProceed(String url, String serverVersion, Runnable proceed) {
+    void gateVersionMismatchAndProceed(String url, String serverVersion, int serverProtocol, Runnable proceed) {
         String appVersion = getAppVersionName();
-        if (VersionCompare.shouldShowMismatch(appVersion, serverVersion)) {
+        if (VersionCompare.shouldShowMismatch(appVersion, serverVersion,
+                BuildConfig.CLIENT_PROTOCOL, serverProtocol)) {
             showVersionMismatchDialog(url, appVersion, serverVersion, proceed);
         } else {
             proceed.run();
@@ -2208,7 +2216,8 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
                 final String serverVersion = result.serverVersion;
-                runOnUiThread(() -> gateVersionMismatchAndProceed(url, serverVersion, () -> {
+                final int serverProtocol = result.serverProtocol;
+                runOnUiThread(() -> gateVersionMismatchAndProceed(url, serverVersion, serverProtocol, () -> {
                     webView.loadUrl(url);
                     startConnectionTimeout();
                 }));
@@ -2223,7 +2232,8 @@ public class MainActivity extends AppCompatActivity {
                             return;
                         }
                         final String retryServerVersion = result.serverVersion;
-                        runOnUiThread(() -> gateVersionMismatchAndProceed(url, retryServerVersion, () -> {
+                        final int retryServerProtocol = result.serverProtocol;
+                        runOnUiThread(() -> gateVersionMismatchAndProceed(url, retryServerVersion, retryServerProtocol, () -> {
                             webView.loadUrl(url);
                             startConnectionTimeout();
                         }));
@@ -2258,15 +2268,19 @@ public class MainActivity extends AppCompatActivity {
                 AppLog.w(TAG, "Health check failed: response does not identify as clawbench: " + body);
                 return HealthCheckResult.fail(userLangString(R.string.conn_err_not_clawbench));
             }
-            // Extract server version
+            // Extract server version and the client protocol number. The gate
+            // compares the protocol; the version is only used for the prompt
+            // wording and for the pre-protocol fallback.
             String serverVersion = null;
+            int serverProtocol = 0;
             try {
                 org.json.JSONObject json = new org.json.JSONObject(body);
                 serverVersion = json.optString("version", null);
+                serverProtocol = json.optInt("protocol", 0);
             } catch (Exception e) {
                 AppLog.w(TAG, "Failed to parse version from health response", e);
             }
-            return HealthCheckResult.success(serverVersion);
+            return HealthCheckResult.success(serverVersion, serverProtocol);
         }
     }
 
@@ -2325,18 +2339,26 @@ public class MainActivity extends AppCompatActivity {
     static class HealthCheckResult {
         final String error;         // null on success
         final String serverVersion; // version from /api/health response
+        final int serverProtocol;   // client protocol from /api/health, 0 when absent
 
-        HealthCheckResult(String error, String serverVersion) {
+        HealthCheckResult(String error, String serverVersion, int serverProtocol) {
             this.error = error;
             this.serverVersion = serverVersion;
+            this.serverProtocol = serverProtocol;
         }
 
         static HealthCheckResult success(String version) {
-            return new HealthCheckResult(null, version);
+            // Unknown protocol: the gate then falls back to comparing versions,
+            // which is the pre-protocol behaviour.
+            return new HealthCheckResult(null, version, 0);
+        }
+
+        static HealthCheckResult success(String version, int protocol) {
+            return new HealthCheckResult(null, version, protocol);
         }
 
         static HealthCheckResult fail(String error) {
-            return new HealthCheckResult(error, null);
+            return new HealthCheckResult(error, null, 0);
         }
     }
 
@@ -2387,7 +2409,8 @@ public class MainActivity extends AppCompatActivity {
             // Health check passed — prompt if the APK is older than the server, otherwise
             // promote the server to head of the list and navigate.
             final String serverVersion = healthResult.serverVersion;
-            runOnUiThread(() -> gateVersionMismatchAndProceed(url, serverVersion, () -> {
+            final int serverProtocol = healthResult.serverProtocol;
+            runOnUiThread(() -> gateVersionMismatchAndProceed(url, serverVersion, serverProtocol, () -> {
                 saveServerInternal(url, password);
                 webView.loadUrl(url);
                 startConnectionTimeout();

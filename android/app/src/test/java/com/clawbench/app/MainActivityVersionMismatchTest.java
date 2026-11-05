@@ -131,6 +131,49 @@ public class MainActivityVersionMismatchTest {
     }
 
     @Test
+    public void gate_sameProtocolDifferentVersions_proceedsWithoutDownload() throws Exception {
+        // The whole point of the protocol number: a release that did not change
+        // the contract ships the previous APK unchanged, so the version strings
+        // differ while the client is still compatible.
+        doReturn("v1.0.0").when(activity).getAppVersionName();
+        doNothing().when(activity).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
+
+        AtomicBoolean proceeded = new AtomicBoolean(false);
+        invokeGate(TEST_URL, "v2.0.0", BuildConfig.CLIENT_PROTOCOL, () -> proceeded.set(true));
+
+        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
+        assertTrue("same protocol must not block navigation", proceeded.get());
+    }
+
+    @Test
+    public void gate_differentProtocol_showsDialogEvenWithEqualVersions() throws Exception {
+        // A breaking contract change is flagged even when the version strings
+        // happen to match (two builds of the same tag).
+        doReturn("v1.0.0").when(activity).getAppVersionName();
+        doNothing().when(activity).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
+
+        AtomicBoolean proceeded = new AtomicBoolean(false);
+        invokeGate(TEST_URL, "v1.0.0", BuildConfig.CLIENT_PROTOCOL + 1, () -> proceeded.set(true));
+
+        verify(activity).showVersionMismatchDialog(eq(TEST_URL), eq("v1.0.0"), eq("v1.0.0"), any(Runnable.class));
+        assertFalse(proceeded.get());
+    }
+
+    @Test
+    public void gate_serverProtocolMissing_fallsBackToVersionComparison() throws Exception {
+        // Rolling upgrade: an older server reports no protocol, so the APK must
+        // keep the strict version gate it had before.
+        doReturn("v1.0.0").when(activity).getAppVersionName();
+        doNothing().when(activity).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
+
+        AtomicBoolean proceeded = new AtomicBoolean(false);
+        invokeGate(TEST_URL, "v2.0.0", 0, () -> proceeded.set(true));
+
+        verify(activity).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
+        assertFalse(proceeded.get());
+    }
+
+    @Test
     public void gate_apkNewerThanServer_showsDialogAndDoesNotProceed() throws Exception {
         // Bidirectional gate: a newer APK is flagged too (it may rely on features
         // the server lacks). Previously it proceeded silently.
@@ -310,10 +353,17 @@ public class MainActivityVersionMismatchTest {
     // =====================================================
 
     private void invokeGate(String url, String serverVersion, Runnable proceed) throws Exception {
+        // Protocol 0 = unknown, which exercises the pre-protocol version
+        // fallback these cases were written for.
+        invokeGate(url, serverVersion, 0, proceed);
+    }
+
+    private void invokeGate(String url, String serverVersion, int serverProtocol, Runnable proceed)
+            throws Exception {
         Method m = findMethod(MainActivity.class, "gateVersionMismatchAndProceed",
-                String.class, String.class, Runnable.class);
+                String.class, String.class, int.class, Runnable.class);
         m.setAccessible(true);
-        m.invoke(activity, url, serverVersion, proceed);
+        m.invoke(activity, url, serverVersion, serverProtocol, proceed);
     }
 
     private void invokeCheckConnectivityAndNavigate(String url) throws Exception {

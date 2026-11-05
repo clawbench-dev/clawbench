@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/version"
 )
 
 func TestServeHealth(t *testing.T) {
@@ -23,4 +25,9 @@ func TestServeHealth(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "clawbench", resp.App)
 	assert.NotEmpty(t, resp.Version)
+	// The gate compares this number instead of the version string, so a zero
+	// here would silently fall back to the strict version comparison on every
+	// client.
+	assert.Equal(t, version.ClientProtocol, resp.Protocol)
+	assert.Greater(t, resp.Protocol, 0)
 }

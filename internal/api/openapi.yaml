@@ -131,6 +131,13 @@ paths:
                     type: string
                   version:
                     type: string
+                  protocol:
+                    type: integer
+                    description: |
+                      客户端兼容协议号。Android 端用它判断是否需要升级，
+                      而不是比较版本字符串——版本号每次发布都变，协议号只在
+                      壳与服务的契约发生破坏性变化时才 +1。老客户端不读该字段
+                      时仍按版本比较，行为不变。
 
   /api/me:
     get:
@@ -7918,6 +7925,13 @@ paths:
         载荷**只经 npm 分发**（不随 GitHub Release 发布——在 Release 资产里
         放一个 3MB 的 zip 会让人误以为它可直接安装）。因此每个平台的候选
         列表只有 npm tarball 一项。
+
+        `protocol` 是客户端兼容协议号：桌面端用它判断是否需要升级，而不是
+        比较版本字符串。`clientVersion` 是这些下载地址实际指向的构建版本——
+        若本次发布没有改动客户端，服务端会沿用上一个 Release 的产物，此时
+        `clientVersion` 是那个旧版本，而 `version` 仍是服务端自己的版本。
+        安装器必须按 `clientVersion` 建目录，否则 `app.getVersion()` 与指针
+        版本不一致，启动交接会删掉指针并静默回退升级。
       operationId: desktopLatest
       security: []
       responses:
@@ -7931,6 +7945,17 @@ paths:
                   version:
                     type: string
                     description: 服务端版本号，即桌面端目标版本
+                  clientVersion:
+                    type: string
+                    description: |
+                      下载地址实际指向的客户端构建版本。普通发布与 `version`
+                      相同；若本次发布沿用了上一个 Release 的桌面端产物，
+                      这里是那个旧版本号（安装目录按它命名）。
+                  protocol:
+                    type: integer
+                    description: |
+                      客户端兼容协议号。桌面端据此判断是否兼容，而不是比较
+                      版本字符串；服务端未提供该字段时客户端退回版本比较。
                   tag:
                     type: string
                     description: 对应的 GitHub Release tag；dev 构建为空字符串

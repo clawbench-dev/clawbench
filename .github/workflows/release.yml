@@ -127,6 +127,46 @@ jobs:
           fi
           exit $exit_code
 
+  client-guard:
+    name: Client Build Guard
+    # Decides whether this release has to rebuild the APK and the desktop
+    # packages, and enforces the protocol-bump discipline. The clients are thin
+    # shells that load the web UI from the server, so a normal release changes
+    # neither — rebuilding five jobs (four desktop platforms, macOS twice) for
+    # byte-identical output was the single largest cost of a release.
+    #
+    # Reuse is only safe because both gates compare the client PROTOCOL number
+    # instead of version strings (internal/version/client_protocol.txt), so an
+    # older shell keeps working against a newer server as long as the contract
+    # did not change. The job fails the release when a contract file changed
+    # without a bump — shipping an incompatible pair is worse than a slow one.
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prev_tag: ${{ steps.guard.outputs.prev_tag }}
+      protocol: ${{ steps.guard.outputs.protocol }}
+      android_changed: ${{ steps.guard.outputs.android_changed }}
+      desktop_changed: ${{ steps.guard.outputs.desktop_changed }}
+      android_source: ${{ steps.guard.outputs.android_source }}
+      desktop_source: ${{ steps.guard.outputs.desktop_source }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Diffing against the previous release tag needs both the tags and the
+          # commits they point at. A shallow clone silently finds no previous
+          # tag, which would force a rebuild every time (safe, but pointless).
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Decide what to rebuild
+        id: guard
+        run: node scripts/lib/client-guard.mjs
+
   build-frontend:
     name: Build Frontend
     needs: test
@@ -165,7 +205,7 @@ jobs:
 
   build-linux:
     name: Build Linux amd64
-    needs: [build-frontend, build-android]
+    needs: [build-frontend, build-android, client-guard]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -199,7 +239,7 @@ jobs:
           CGO_ENABLED: 1
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-linux ./cmd/server
+          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
           echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
 
       - name: Verify Linux binary
@@ -231,7 +271,7 @@ jobs:
 
   build-linux-arm64:
     name: Build Linux arm64
-    needs: [build-frontend, build-android]
+    needs: [build-frontend, build-android, client-guard]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -265,7 +305,7 @@ jobs:
           CGO_ENABLED: 1
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-linux-arm64 ./cmd/server
+          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux-arm64 ./cmd/server
           echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
 
       - name: Verify Linux arm64 binary
@@ -293,7 +333,7 @@ jobs:
 
   build-android-go:
     name: Build Android arm64 Go binary
-    needs: [build-frontend, build-android]
+    needs: [build-frontend, build-android, client-guard]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -327,7 +367,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          GOOS=android GOARCH=arm64 go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-android-arm64 ./cmd/server
+          GOOS=android GOARCH=arm64 go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-android-arm64 ./cmd/server
 
       - name: Verify Android arm64 binary
         run: |
@@ -353,7 +393,7 @@ jobs:
 
   build-windows:
     name: Build Windows amd64
-    needs: [build-frontend, build-android]
+    needs: [build-frontend, build-android, client-guard]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -388,7 +428,7 @@ jobs:
           CGO_ENABLED: 1
         run: |
           $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench.exe ./cmd/server
+          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench.exe ./cmd/server
 
       - name: Package Windows
         shell: pwsh
@@ -409,7 +449,7 @@ jobs:
 
   build-macos-arm64:
     name: Build macOS arm64
-    needs: [build-frontend, build-android]
+    needs: [build-frontend, build-android, client-guard]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -443,7 +483,7 @@ jobs:
           CGO_ENABLED: 1
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-arm64 ./cmd/server
+          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-arm64 ./cmd/server
 
       - name: Package macOS arm64
         run: |
@@ -464,7 +504,7 @@ jobs:
 
   build-macos-amd64:
     name: Build macOS amd64
-    needs: [build-frontend, build-android]
+    needs: [build-frontend, build-android, client-guard]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -501,7 +541,7 @@ jobs:
           CXX: clang++ -target x86_64-apple-macos13.0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-amd64 ./cmd/server
+          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-amd64 ./cmd/server
 
       - name: Package macOS amd64
         run: |
@@ -522,6 +562,7 @@ jobs:
 
   build-android:
     name: Build Android APK
+    needs: [client-guard]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -529,12 +570,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Decide whether to rebuild
+        # Defaults to the guard's decision; the reuse step below flips it
+        # back to true if the previous artifact cannot be fetched, so a
+        # broken mirror degrades to a slow release rather than a missing
+        # package.
+        shell: bash
+        run: echo "NEEDS_BUILD=${{ needs.client-guard.outputs.android_changed }}" >> "$GITHUB_ENV"
+
+      - name: Reuse the previous release's APK
+        if: env.NEEDS_BUILD != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_TAG: ${{ needs.client-guard.outputs.android_source }}
+        shell: bash
+        run: |
+          if ./scripts/lib/reuse-client-artifact.sh apk "$SOURCE_TAG" \
+               android/app/build/outputs/apk/release/clawbench-android.apk; then
+            echo "reusing the APK from $SOURCE_TAG (client protocol unchanged)"
+          else
+            echo "::warning::could not reuse the APK from $SOURCE_TAG; rebuilding instead"
+            echo "NEEDS_BUILD=true" >> "$GITHUB_ENV"
+          fi
+
+
       - uses: actions/setup-java@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Setup Android SDK
+        if: env.NEEDS_BUILD == 'true'
         uses: android-actions/setup-android@v3
         with:
           # The action's default is 'tools platform-tools'. cmdline-tools 16.0
@@ -545,12 +612,15 @@ jobs:
           packages: 'platform-tools'
 
       - name: Install Android SDK components
+        if: env.NEEDS_BUILD == 'true'
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
       - name: Decode keystore
+        if: env.NEEDS_BUILD == 'true'
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/clawbench.jks
 
       - name: Fetch version tags only
+        if: env.NEEDS_BUILD == 'true'
         # The versionCode needs a version tag, not the commit graph. Fetching
         # just the tag refs keeps this cheap — no history is pulled.
         # Explicit refspec because actions/checkout runs `fetch --no-tags`
@@ -560,6 +630,7 @@ jobs:
         run: git fetch --depth=1 --no-tags origin '+refs/tags/v*:refs/tags/v*'
 
       - name: Build release APK
+        if: env.NEEDS_BUILD == 'true'
         working-directory: android
         env:
           KEYSTORE_FILE: ../clawbench.jks
@@ -680,24 +751,55 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test]
+    needs: [test, client-guard]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
+      - name: Decide whether to rebuild
+        # Defaults to the guard's decision; the reuse step below flips it
+        # back to true if the previous artifact cannot be fetched, so a
+        # broken mirror degrades to a slow release rather than a missing
+        # package.
+        shell: bash
+        run: echo "NEEDS_BUILD=${{ needs.client-guard.outputs.desktop_changed }}" >> "$GITHUB_ENV"
+
+      - name: Reuse the previous release's desktop build
+        if: env.NEEDS_BUILD != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_TAG: ${{ needs.client-guard.outputs.desktop_source }}
+        shell: bash
+        run: |
+          if ./scripts/lib/reuse-client-artifact.sh desktop \
+               clawbench-desktop-linux-x64 \
+               "@xulongzhe/clawbench-desktop-linux-x64-payload" \
+               "$SOURCE_TAG" \
+               "desktop/release/clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" \
+               "desktop/release/linux-unpacked-payload"; then
+            echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
+          else
+            echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
+            echo "NEEDS_BUILD=true" >> "$GITHUB_ENV"
+          fi
+
+
       - uses: actions/setup-node@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
       - uses: actions/setup-go@v5
+        if: env.NEEDS_BUILD == 'true'
         with:
           go-version: '1.25'
 
       - name: Set desktop version from tag
+        if: env.NEEDS_BUILD == 'true'
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
         # version published to npm — so leaving it unset makes every startup
@@ -710,12 +812,14 @@ jobs:
           echo "desktop version set to $VERSION"
 
       - name: Build desktop (Linux)
+        if: env.NEEDS_BUILD == 'true'
         run: |
           cd desktop
           npm ci
           npm run build
 
       - name: Write shell fingerprint (Linux)
+        if: env.NEEDS_BUILD == 'true'
         # Records the shell's IDENTITY (electron-builder.yml + icon sources)
         # into the build, so a later payload install can verify it is being
         # applied over a shell of the same identity. The value must be written
@@ -728,6 +832,7 @@ jobs:
         run: node desktop/scripts/shell-fingerprint.mjs desktop/release/linux-unpacked
 
       - name: Zip desktop (Linux)
+        if: env.NEEDS_BUILD == 'true'
         # Archive the CONTENTS of the unpacked directory, not the directory
         # itself. `zip -r ... linux-unpacked` prefixes every entry with
         # `linux-unpacked/`, so anyone unzipping the release lands in a
@@ -740,6 +845,7 @@ jobs:
           zip -r "../clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" .
 
       - name: Build desktop payload (Linux)
+        if: env.NEEDS_BUILD == 'true'
         # The payload is the same app WITHOUT the Electron runtime (~3MB vs
         # ~150MB), for the incremental-upgrade path. It is NOT attached to the
         # GitHub Release: the ~150MB full package is what a Release download is
@@ -760,6 +866,7 @@ jobs:
           files: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           name: desktop-linux-package
           path: desktop/release/linux-unpacked/
@@ -780,24 +887,55 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test]
+    needs: [test, client-guard]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
+      - name: Decide whether to rebuild
+        # Defaults to the guard's decision; the reuse step below flips it
+        # back to true if the previous artifact cannot be fetched, so a
+        # broken mirror degrades to a slow release rather than a missing
+        # package.
+        shell: bash
+        run: echo "NEEDS_BUILD=${{ needs.client-guard.outputs.desktop_changed }}" >> "$GITHUB_ENV"
+
+      - name: Reuse the previous release's desktop build
+        if: env.NEEDS_BUILD != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_TAG: ${{ needs.client-guard.outputs.desktop_source }}
+        shell: bash
+        run: |
+          if ./scripts/lib/reuse-client-artifact.sh desktop \
+               clawbench-desktop-linux-arm64 \
+               "@xulongzhe/clawbench-desktop-linux-arm64-payload" \
+               "$SOURCE_TAG" \
+               "desktop/release/clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" \
+               "desktop/release/linux-arm64-unpacked-payload"; then
+            echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
+          else
+            echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
+            echo "NEEDS_BUILD=true" >> "$GITHUB_ENV"
+          fi
+
+
       - uses: actions/setup-node@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
       - uses: actions/setup-go@v5
+        if: env.NEEDS_BUILD == 'true'
         with:
           go-version: '1.25'
 
       - name: Set desktop version from tag
+        if: env.NEEDS_BUILD == 'true'
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
         # version published to npm — so leaving it unset makes every startup
@@ -810,22 +948,26 @@ jobs:
           echo "desktop version set to $VERSION"
 
       - name: Build desktop (Linux arm64)
+        if: env.NEEDS_BUILD == 'true'
         run: |
           cd desktop
           npm ci
           npm run build -- --arm64
 
       - name: Write shell fingerprint (Linux arm64)
+        if: env.NEEDS_BUILD == 'true'
         # See the x64 job — must run before the zip, since it ships inside it.
         run: node desktop/scripts/shell-fingerprint.mjs desktop/release/linux-arm64-unpacked
 
       - name: Zip desktop (Linux arm64)
+        if: env.NEEDS_BUILD == 'true'
         # Contents, not the directory — see the x64 step above.
         run: |
           cd desktop/release/linux-arm64-unpacked
           zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
       - name: Build desktop payload (Linux arm64)
+        if: env.NEEDS_BUILD == 'true'
         # Staged for the npm publish job only — not attached to the Release.
         # See the x64 payload step for the rationale.
         run: |
@@ -838,6 +980,7 @@ jobs:
           files: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           name: desktop-linux-arm64-package
           path: desktop/release/linux-arm64-unpacked/
@@ -854,24 +997,55 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test]
+    needs: [test, client-guard]
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
+      - name: Decide whether to rebuild
+        # Defaults to the guard's decision; the reuse step below flips it
+        # back to true if the previous artifact cannot be fetched, so a
+        # broken mirror degrades to a slow release rather than a missing
+        # package.
+        shell: bash
+        run: echo "NEEDS_BUILD=${{ needs.client-guard.outputs.desktop_changed }}" >> "$GITHUB_ENV"
+
+      - name: Reuse the previous release's desktop build
+        if: env.NEEDS_BUILD != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_TAG: ${{ needs.client-guard.outputs.desktop_source }}
+        shell: bash
+        run: |
+          if ./scripts/lib/reuse-client-artifact.sh desktop \
+               clawbench-desktop-windows-x64 \
+               "@xulongzhe/clawbench-desktop-windows-x64-payload" \
+               "$SOURCE_TAG" \
+               "desktop/release/clawbench-desktop-windows-x64-${RELEASE_TAG}.zip" \
+               "desktop/release/win-unpacked-payload"; then
+            echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
+          else
+            echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
+            echo "NEEDS_BUILD=true" >> "$GITHUB_ENV"
+          fi
+
+
       - uses: actions/setup-node@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
       - uses: actions/setup-go@v5
+        if: env.NEEDS_BUILD == 'true'
         with:
           go-version: '1.25'
 
       - name: Set desktop version from tag
+        if: env.NEEDS_BUILD == 'true'
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
         # version published to npm — so leaving it unset makes every startup
@@ -884,18 +1058,21 @@ jobs:
           echo "desktop version set to $VERSION"
 
       - name: Build desktop (Windows)
+        if: env.NEEDS_BUILD == 'true'
         run: |
           cd desktop
           npm ci
           npm run build
 
       - name: Write shell fingerprint (Windows)
+        if: env.NEEDS_BUILD == 'true'
         # See the Linux job. Windows needs it too: it installs the full package
         # first, and without the sidecar that install could never verify a
         # payload and would re-download ~150MB on every upgrade.
         run: node desktop/scripts/shell-fingerprint.mjs desktop/release/win-unpacked
 
       - name: Zip desktop (Windows)
+        if: env.NEEDS_BUILD == 'true'
         # The trailing `/*` is load-bearing: `-Path <dir>` would put a
         # `win-unpacked/` level inside the archive, so unzipping the release
         # would give users a pointless extra folder. With the wildcard the
@@ -911,6 +1088,7 @@ jobs:
         run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
 
       - name: Build desktop payload (Windows)
+        if: env.NEEDS_BUILD == 'true'
         # `node` (not Copy-Item) because resources/ contains dotfiles — notably
         # cpu-features' .eslintrc.js and .clang-format — and PowerShell's `*`
         # glob silently SKIPS hidden items. That would ship an incomplete
@@ -928,6 +1106,7 @@ jobs:
           node scripts/stage-payload.mjs release/win-unpacked
 
       - name: Verify payload directory (Windows)
+        if: env.NEEDS_BUILD == 'true'
         # The payload is no longer zipped here, so this asserts the staged
         # directory that the npm job packs. A partial payload installs cleanly
         # then fails at runtime, and the entries it depends on include a dotfile
@@ -956,6 +1135,7 @@ jobs:
           Write-Host "payload OK: shell $($json.shell)"
 
       - name: Verify full package (Windows)
+        if: env.NEEDS_BUILD == 'true'
         # The fingerprint sidecar must be IN the full package: an install
         # without it can never verify a payload, so every upgrade would fall
         # back to the full download. A `*` glob skipping it is the realistic
@@ -976,6 +1156,7 @@ jobs:
           files: desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           name: desktop-windows-package
           path: desktop/release/win-unpacked/
@@ -992,24 +1173,63 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test]
+    needs: [test, client-guard]
     runs-on: macos-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
+      - name: Decide whether to rebuild
+        # Defaults to the guard's decision; the reuse step below flips it
+        # back to true if the previous artifact cannot be fetched, so a
+        # broken mirror degrades to a slow release rather than a missing
+        # package.
+        shell: bash
+        run: echo "NEEDS_BUILD=${{ needs.client-guard.outputs.desktop_changed }}" >> "$GITHUB_ENV"
+
+      - name: Reuse the previous release's desktop build
+        if: env.NEEDS_BUILD != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_TAG: ${{ needs.client-guard.outputs.desktop_source }}
+        shell: bash
+        run: |
+          # macOS has no payload (replacing app.asar inside a signed .app
+          # breaks the signature seal), so only the full packages are fetched.
+          if ./scripts/lib/reuse-client-artifact.sh desktop \
+               clawbench-desktop-darwin-arm64 \
+               "@xulongzhe/clawbench-desktop-darwin-arm64-payload" \
+               "$SOURCE_TAG" \
+               "desktop/release/clawbench-desktop-darwin-arm64-${RELEASE_TAG}.zip" \
+               "-" && \
+             ./scripts/lib/reuse-client-artifact.sh desktop \
+               clawbench-desktop-darwin-x64 \
+               "@xulongzhe/clawbench-desktop-darwin-x64-payload" \
+               "$SOURCE_TAG" \
+               "desktop/release/clawbench-desktop-darwin-x64-${RELEASE_TAG}.zip" \
+               "-"; then
+            echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
+          else
+            echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
+            echo "NEEDS_BUILD=true" >> "$GITHUB_ENV"
+          fi
+
+
       - uses: actions/setup-node@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: desktop/package-lock.json
 
       - uses: actions/setup-go@v5
+        if: env.NEEDS_BUILD == 'true'
         with:
           go-version: '1.25'
 
       - name: Set desktop version from tag
+        if: env.NEEDS_BUILD == 'true'
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
         # app.getVersion() reads it, and the updater compares that against the
         # version published to npm — so leaving it unset makes every startup
@@ -1022,11 +1242,13 @@ jobs:
           echo "desktop version set to $VERSION"
 
       - name: Install desktop deps
+        if: env.NEEDS_BUILD == 'true'
         run: |
           cd desktop
           npm ci
 
       - name: Set macOS signing cert env (only if secret exists)
+        if: env.NEEDS_BUILD == 'true'
         env:
           MAC_CERT: ${{ secrets.MAC_CERT }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -1039,6 +1261,7 @@ jobs:
           fi
 
       - name: Build desktop (macOS arm64 + x64)
+        if: env.NEEDS_BUILD == 'true'
         # CSC_LINK is only set when the MAC_CERT secret exists (see step above).
         # Without it electron-builder skips signing (ad-hoc) instead of failing.
         run: |
@@ -1051,6 +1274,7 @@ jobs:
           npx electron-builder --dir --x64
 
       - name: Zip desktop (macOS)
+        if: env.NEEDS_BUILD == 'true'
         # No shell-fingerprint sidecar here, unlike the Linux/Windows jobs: it
         # is only ever read when INSTALLING a payload, and macOS never does
         # (replacing app.asar inside a signed .app breaks the signature seal),
@@ -1083,6 +1307,7 @@ jobs:
             desktop/release/clawbench-desktop-darwin-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
+        if: env.NEEDS_BUILD == 'true'
         with:
           name: desktop-macos-package
           path: desktop/release/mac*/

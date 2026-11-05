@@ -252,3 +252,43 @@ func TestReleaseAssetURLs_MirrorPrefixesAreWellFormed(t *testing.T) {
 			"mirror must wrap the canonical URL verbatim: %q", u)
 	}
 }
+
+func TestFetchDesktopLatest_ReportsProtocolAndClientVersion(t *testing.T) {
+	// The desktop gate compares the protocol number, not the version string.
+	// A response without it silently reverts every client to the strict version
+	// comparison — which is the behavior the number exists to replace.
+	withVersion(t, "v0.98.0")
+
+	res, err := FetchDesktopLatest()
+	require.NoError(t, err)
+	assert.Equal(t, version.ClientProtocol, res.Protocol)
+	assert.Positive(t, res.Protocol)
+	// An ordinary (rebuilt) release ships a client built from this same tag.
+	assert.Equal(t, "v0.98.0", res.ClientVersion)
+}
+
+func TestFetchDesktopLatest_ClientVersionFollowsTheReusedBuild(t *testing.T) {
+	// A release that reused the previous desktop package must report THAT
+	// package's version: the installer keys the side-by-side directory off it,
+	// and installing a v0.129 app under app-0.130 makes the startup handoff
+	// delete the pointer and revert the upgrade.
+	withVersion(t, "v0.130.0")
+	orig := version.ClientBuildVersion
+	version.ClientBuildVersion = "v0.129.0"
+	t.Cleanup(func() { version.ClientBuildVersion = orig })
+
+	res, err := FetchDesktopLatest()
+	require.NoError(t, err)
+	assert.Equal(t, "v0.130.0", res.Version, "the server's own version is unchanged")
+	assert.Equal(t, "v0.129.0", res.ClientVersion, "downloads point at the reused build")
+}
+
+func TestFetchDesktopLatest_DevBuildStillReportsProtocol(t *testing.T) {
+	// Even with no release to offer, the protocol must be present: a client on
+	// a dev server still needs to know whether it is compatible.
+	withVersion(t, "dev")
+
+	res, err := FetchDesktopLatest()
+	require.NoError(t, err)
+	assert.Equal(t, version.ClientProtocol, res.Protocol)
+}
