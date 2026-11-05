@@ -402,10 +402,11 @@ func GetAgentUsage(agentID string) (AgentUsageCounts, error) {
 	}
 
 	// Group chats the agent is a member of (members the user disabled count too —
-	// disabling only takes them off the schedule). Counted here (not from the group
-	// row, which names only the host) and folded into Sessions.
+	// disabling only takes them off the schedule; REMOVED members do not count,
+	// they are no longer in the group). Counted here (not from the group row,
+	// which names only the host) and folded into Sessions.
 	err = store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0",
+		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND session_type = ? AND archived = 0 AND removed = 0",
 		agentID, store.SessionTypeGroupMember,
 	).Scan(&u.Memberships)
 	if err != nil {
@@ -463,7 +464,7 @@ func GetAllAgentUsage() (map[string]AgentUsageCounts, error) {
 	// so it folds into Sessions (see GetAgentUsage). Also kept as Memberships
 	// for the UI.
 	if err := scan(
-		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type = ? AND archived = 0 GROUP BY agent_id",
+		"SELECT agent_id, COUNT(*) FROM chat_sessions WHERE agent_id != '' AND session_type = ? AND archived = 0 AND removed = 0 GROUP BY agent_id",
 		func(u *AgentUsageCounts, c int) { u.Memberships = c; u.Sessions += c },
 		store.SessionTypeGroupMember,
 	); err != nil {

@@ -120,6 +120,22 @@
             <Play v-if="m.disabled" :size="14" />
             <Ban v-else :size="14" />
           </button>
+          <!-- Remove (删除成员). Deliberately AFTER the disable toggle: disabling
+               is the reversible, everyday action, removal is the destructive
+               one. Like the other trailing controls it is rendered on EVERY row
+               (inert on the host / the last member) so the column keeps its
+               width and the usage chip stays aligned across rows. -->
+          <button
+            class="gm-remove-toggle"
+            :class="{ 'gm-remove-toggle--inert': !canRemove(m) }"
+            :disabled="!canRemove(m)"
+            :title="removeTitle(m)"
+            :aria-label="removeTitle(m)"
+            :data-action="canRemove(m) ? 'remove-member' : undefined"
+            @click="canRemove(m) ? removeMember(m) : undefined"
+          >
+            <Trash2 :size="14" />
+          </button>
         </li>
       </ul>
 
@@ -229,7 +245,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Crown, Activity, Ban, Play } from 'lucide-vue-next'
+import { Plus, Crown, Activity, Ban, Play, Trash2 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
@@ -237,8 +253,9 @@ import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
-import { addGroupMembers, generateMemberAvatars, setGroupHost, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { addGroupMembers, generateMemberAvatars, removeGroupMember, setGroupHost, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/useSessionIdentity'
+import { useDialog } from '@/composables/useDialog'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useToast } from '@/composables/useToast'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
@@ -268,6 +285,7 @@ const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
 const toast = useToast()
+const dialog = useDialog()
 // Model resolution for the roster's model line. `useAgents()` is the singleton
 // store accessor (no fetch — loadAgents is called by the app shell), so reading
 // it here costs nothing and keeps the row's label in step with a model refresh.
@@ -459,6 +477,45 @@ async function toggleDisabled(m: GroupMemberInfo) {
     await setGroupMemberDisabled(props.groupId, m.id, !m.disabled)
     emit('changed')
   } catch { /* ignore */ }
+}
+
+// ── Remove member (删除成员) ──
+// The roster only ever receives ACTIVE members, but count defensively so a
+// caller that passes the raw API list cannot offer a removal that empties the
+// group.
+const activeMemberCount = computed(() => props.members.filter(m => !m.removed).length)
+
+/** Whether this row may be removed. Mirrors the server guards
+ *  (ErrCannotRemoveHost / ErrCannotRemoveLastMember) so the button explains
+ *  itself instead of the click coming back as a 409. The host is the group's
+ *  only router; a group with nobody left to answer can never run another turn.
+ *  Removing a DISABLED member does not reduce the speaking count, so it only
+ *  has to leave the roster non-empty. */
+function canRemove(m: GroupMemberInfo): boolean {
+  if (m.isHost || m.removed) return false
+  if (activeMemberCount.value <= 1) return false
+  return m.disabled || speakingMemberCount.value > 1
+}
+
+function removeTitle(m: GroupMemberInfo): string {
+  if (m.isHost) return t('group.hostCannotRemove')
+  if (!canRemove(m)) return t('group.lastMemberCannotRemove')
+  return t('group.remove')
+}
+
+/** removeMember deletes the member from the group (移出群聊). Irreversible from
+ *  the UI (re-adding the agent creates a NEW instance), so it asks first. Past
+ *  speech stays in the timeline with the original name. */
+async function removeMember(m: GroupMemberInfo) {
+  const confirmed = await dialog.confirm(t('group.removeConfirm', { name: m.name }), { dangerous: true })
+  if (!confirmed) return
+  try {
+    await removeGroupMember(props.groupId, m.id)
+    emit('changed')
+  } catch (e) {
+    appLog.w('GroupSettings', 'remove member failed', e)
+    toast.show(t('group.removeFailed'))
+  }
 }
 
 /** A member's reported usage, or null when it never reported any.
@@ -789,6 +846,24 @@ defineExpose({ open: openSheet })
   border-radius: var(--radius-sm);
   transition: background var(--duration-base), color var(--duration-base);
 }
+/* Remove control (删除成员): same footprint as the disable toggle so the
+   trailing column reads as one action cluster; only its hover hue differs, which
+   is what marks it as the destructive one. */
+.gm-remove-toggle {
+  flex-shrink: 0;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
+}
 @media (hover: hover) {
   .gm-disable-toggle:hover {
     color: var(--text-primary);
@@ -798,6 +873,10 @@ defineExpose({ open: openSheet })
     color: var(--accent-color, #0066cc);
     background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
+  .gm-remove-toggle:hover {
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  }
 }
 .gm-disable-toggle.is-disabled {
   color: var(--accent-color, #0066cc);
@@ -805,7 +884,9 @@ defineExpose({ open: openSheet })
 /* Host's disable control: present but inert, so every row has the same trailing
    column (the usage chip keeps its x-position across rows). */
 .gm-disable-toggle--inert,
-.gm-disable-toggle--inert:hover {
+.gm-disable-toggle--inert:hover,
+.gm-remove-toggle--inert,
+.gm-remove-toggle--inert:hover {
   color: var(--text-muted);
   background: none;
   opacity: var(--opacity-disabled);
@@ -823,7 +904,8 @@ defineExpose({ open: openSheet })
 }
 
 .gm-disable-toggle:focus-visible,
-.gm-host-toggle:focus-visible {
+.gm-host-toggle:focus-visible,
+.gm-remove-toggle:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
   outline-offset: 1px;
 }

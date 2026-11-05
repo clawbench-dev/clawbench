@@ -1487,6 +1487,11 @@ export default {
     disabled: 'Disabled',
     disable: 'Disable (stop scheduling it to speak)',
     enable: 'Enable (resume speaking, with everything it missed)',
+    remove: 'Remove from group (past messages are kept)',
+    removeConfirm: 'Remove \u201c{name}\u201d from the group? Its past messages stay, but adding it back creates a new member.',
+    removeFailed: 'Failed to remove the member',
+    hostCannotRemove: 'The host is the group\u2019s only scheduler and cannot be removed',
+    lastMemberCannotRemove: 'A group must keep at least one member who can speak',
     memberDetail: {
       open: 'View this member\u2019s settings',
       agent: 'Agent',

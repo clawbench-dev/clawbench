@@ -54,7 +54,9 @@ func AcquireInstanceLock(dir string, wait time.Duration) (*InstanceLock, error) 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, instanceLockFile), os.O_CREATE|os.O_RDWR, 0o644)
+	// 0600: the lock file carries no data, but it lives in the data directory
+	// and a restrictive mode keeps it from being world-readable/writable.
+	f, err := os.OpenFile(filepath.Join(dir, instanceLockFile), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open instance lock: %w", err)
 	}

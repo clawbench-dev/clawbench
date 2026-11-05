@@ -177,4 +177,27 @@ describe('useGroupMembers', () => {
 
     expect(cruise.value).toBe(true)
   })
+
+  // A removed member is gone from the roster but its past messages must still
+  // show its own name/avatar (the server keeps the row and flags it).
+  it('hides removed members from the roster but still resolves their speech', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        members: [
+          { id: 'm1', agentId: 'a1', name: 'Host', backend: 'claude', disabled: false, isHost: true },
+          { id: 'm2', agentId: 'a2', name: 'Gone', backend: 'claude', disabled: false, isHost: false, removed: true },
+        ],
+      }),
+    })))
+
+    const sid = ref('group-removed')
+    const { members, resolveSpeaker, resolveByName } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(members.value.map(m => m.id)).toEqual(['m1'])
+    expect(resolveSpeaker('m2')?.name).toBe('Gone')
+    expect(resolveByName('Gone')?.name).toBe('Gone')
+  })
 })

@@ -62,11 +62,11 @@ func TestAcquireInstanceLock_ReusableAfterRelease(t *testing.T) {
 func TestAcquireInstanceLock_DifferentDataDirsDoNotConflict(t *testing.T) {
 	a, err := platform.AcquireInstanceLock(t.TempDir(), 0)
 	require.NoError(t, err)
-	defer a.Release()
+	t.Cleanup(a.Release)
 
 	b, err := platform.AcquireInstanceLock(t.TempDir(), 0)
 	require.NoError(t, err)
-	defer b.Release()
+	t.Cleanup(b.Release)
 }
 
 // The data directory may not exist yet on a first run (e.g. --data-dir pointing

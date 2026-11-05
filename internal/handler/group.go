@@ -211,15 +211,18 @@ func ServeGroupHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// ServeGroupMembers lists, adds, or (un)disables group members.
+// ServeGroupMembers lists, adds, (un)disables, or removes group members.
 //
-//	GET   /api/group/members?groupId=                          -> {ok, members:[...]}
-//	POST  /api/group/members  {groupId, agentIds:[]}           -> {ok, memberIds:[]}
-//	PATCH /api/group/members  {groupId, memberId, disabled:bool}  -> {ok}
+//	GET    /api/group/members?groupId=                             -> {ok, members:[...]}
+//	POST   /api/group/members  {groupId, agentIds:[]}              -> {ok, memberIds:[]}
+//	PATCH  /api/group/members  {groupId, memberId, disabled:bool}  -> {ok}
+//	DELETE /api/group/members  {groupId, memberId}                 -> {ok}
 //
-// There is no removal: a member can only be disabled (禁用), which takes it off the
-// schedule without touching its row, context or history — unmuting restores it
-// with everything it missed. See service.SetGroupMemberDisabled.
+// PATCH only disables (禁用), which is reversible and keeps the member's row,
+// context and history. DELETE removes the member from the group (移出群聊); the
+// row is kept with removed=1 so past speech still resolves to its own name, but
+// the member disappears from the roster and every scheduling path. See
+// service.SetGroupMemberDisabled / service.RemoveGroupMember.
 func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
@@ -232,12 +235,18 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 		serveGroupMembersAdd(w, r, projectPath)
 	case http.MethodPatch:
 		serveGroupMembersSetDisabled(w, r, projectPath)
+	case http.MethodDelete:
+		serveGroupMembersRemove(w, r, projectPath)
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
 }
 
 // serveGroupMembersList handles GET /api/group/members?groupId=.
+//
+// Removed members are INCLUDED with removed=true: the client keeps them only for
+// speaker attribution of past messages, and filters them out of the roster. They
+// are not part of the group for scheduling purposes.
 func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath string) {
 	groupID := r.URL.Query().Get("groupId")
 	if groupID == "" {
@@ -247,7 +256,7 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 	if !requireSessionOwnership(w, r, groupID, projectPath) {
 		return
 	}
-	members, err := service.ListGroupMembers(groupID)
+	members, err := service.ListGroupMembersIncludingRemoved(groupID)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
@@ -283,6 +292,7 @@ func serveGroupMembersList(w http.ResponseWriter, r *http.Request, projectPath s
 			"avatar":    m.Avatar,
 			"agentName": agentName,
 			"disabled":  m.Disabled,
+			"removed":   m.Removed,
 			"isHost":    m.ID == hostMemberID,
 			jsonModel:   c.Model,
 			// usage is null (not {}) when the member never reported any: the
@@ -394,6 +404,43 @@ func serveGroupMembersSetDisabled(w http.ResponseWriter, r *http.Request, projec
 		}
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// serveGroupMembersRemove handles DELETE /api/group/members {groupId, memberId}.
+// The member disappears from the group; past speech keeps its attribution
+// because the row is retained with removed=1 (see service.RemoveGroupMember).
+func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath string) {
+	var req struct {
+		GroupID  string `json:"groupId"`
+		MemberID string `json:"memberId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || req.MemberID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	if err := service.RemoveGroupMember(req.GroupID, req.MemberID); err != nil {
+		switch {
+		case errors.Is(err, service.ErrCannotRemoveHost):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
+		case errors.Is(err, service.ErrCannotRemoveLastMember):
+			writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveLastMember")
+		default:
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		}
+		return
+	}
+	// The member owns its own ACP connection (keyed by the member row id), so it
+	// must be closed here — otherwise the agent subprocess keeps running for a
+	// member the user just deleted. Async like every other close path: close()
+	// may block on cmd.Wait().
+	go ai.GetACPConnManager().CloseConn(req.MemberID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

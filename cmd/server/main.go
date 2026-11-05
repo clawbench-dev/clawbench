@@ -1135,7 +1135,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	if err := service.InitDB(true); err != nil {
 		slog.Error("failed to initialize database", slog.String("err", err.Error()))
 		store.Close()
-		os.Exit(1) //nolint:gocritic // exitAfterDefer: CloseDB called explicitly above; defer is for normal path
+		os.Exit(1)
 	}
 	defer store.Close()
 

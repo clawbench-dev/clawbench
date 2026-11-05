@@ -531,7 +531,10 @@ func closeGroupMemberConns(sessionID string) {
 	if !service.IsGroupSession(sessionID) {
 		return
 	}
-	members, err := service.ListGroupMembers(sessionID)
+	// Including REMOVED rows: removal closes the connection itself, but a process
+	// that died between the DB write and the close would leave one behind, and
+	// the group teardown is the last chance to reap it.
+	members, err := service.ListGroupMembersIncludingRemoved(sessionID)
 	if err != nil {
 		slog.Warn("acp: listing group members to close connections failed", "session_id", sessionID, "err", err)
 		return

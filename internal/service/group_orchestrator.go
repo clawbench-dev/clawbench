@@ -529,6 +529,14 @@ func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) 
 	}
 	finalizeGroupOrphans(groupID)
 	byID, byName := memberLookups(members)
+	// Speaker NAMES include removed members: the timeline still holds their past
+	// speech, and injected context must attribute it to their own name rather
+	// than a generic "成员". Scheduling and routing use `members` (active only),
+	// so this map is display-only.
+	allMembers, err := ListGroupMembersIncludingRemoved(groupID)
+	if err != nil {
+		return groupTurnSetup{}, fmt.Errorf("list group members: %w", err)
+	}
 	// The user's own private notes (密送) are stored here — the ONE point both
 	// modes share, before any speaker runs, so a note to a member who speaks
 	// THIS turn is already pending when that member's turn is built. Honored in
@@ -536,7 +544,7 @@ func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) 
 	o.storeUserNotes(groupID, byID, byName)
 	return groupTurnSetup{
 		members:      members,
-		names:        memberNameMap(members),
+		names:        memberNameMap(allMembers),
 		byID:         byID,
 		byName:       byName,
 		runner:       runner,

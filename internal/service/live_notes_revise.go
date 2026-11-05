@@ -291,26 +291,15 @@ func parseLiveNoteAnswer(raw string) ([]liveNotePair, []liveNoteSplit, error) {
 			}
 			continue
 		}
-		left, right, ok := strings.Cut(line, "=>")
-		if !ok {
+		pair, isPair, ok := parseLiveNotePairLine(line)
+		if !isPair {
 			unparsed = append(unparsed, line)
 			continue
 		}
-		from := liveNotePairSide(left)
-		to := liveNotePairSide(right)
-		// A pair that cannot be applied is dropped rather than fatal: the rest
-		// of the chunk's corrections are still good, and the raw text is what
-		// survives for this one.
-		if from == "" || to == "" || from == to {
+		if !ok {
 			continue
 		}
-		if n := utf8.RuneCountInString(from); n < 2 || n > liveNoteRevisePairMaxRunes {
-			continue
-		}
-		if utf8.RuneCountInString(to) > liveNoteRevisePairMaxRunes {
-			continue
-		}
-		pairs = append(pairs, liveNotePair{From: from, To: to})
+		pairs = append(pairs, pair)
 	}
 	if len(pairs) == 0 && len(splits) == 0 {
 		sample := ""
@@ -320,6 +309,40 @@ func parseLiveNoteAnswer(raw string) ([]liveNotePair, []liveNoteSplit, error) {
 		return nil, nil, fmt.Errorf("%w (first line: %q)", ErrLiveNoteReviseFormat, sample)
 	}
 	return pairs, splits, nil
+}
+
+// parseLiveNotePairLine reads one `原词 => 新词` replacement line.
+//
+// It reports three things, because the caller must treat the two failure
+// modes differently:
+//
+//   - isPair: the line actually carries a `=>` separator. A line without one is
+//     not a malformed pair, it is a line the model did not answer in the
+//     requested format — and that IS a format error.
+//   - ok: the pair can be applied. A pair that cannot be applied is dropped
+//     rather than fatal: the rest of the chunk's corrections are still good,
+//     and the raw text is what survives for this one.
+//
+// A pair is applicable when both sides are non-empty, differ from each other,
+// the source side is at least two runes long, and neither side exceeds
+// liveNoteRevisePairMaxRunes.
+func parseLiveNotePairLine(line string) (pair liveNotePair, isPair bool, ok bool) {
+	left, right, found := strings.Cut(line, "=>")
+	if !found {
+		return liveNotePair{}, false, false
+	}
+	from := liveNotePairSide(left)
+	to := liveNotePairSide(right)
+	if from == "" || to == "" || from == to {
+		return liveNotePair{}, true, false
+	}
+	if n := utf8.RuneCountInString(from); n < 2 || n > liveNoteRevisePairMaxRunes {
+		return liveNotePair{}, true, false
+	}
+	if utf8.RuneCountInString(to) > liveNoteRevisePairMaxRunes {
+		return liveNotePair{}, true, false
+	}
+	return liveNotePair{From: from, To: to}, true, true
 }
 
 // parseLiveNoteSplitLine reads one `[mm:ss] 原词 ==> 新说话人` line.

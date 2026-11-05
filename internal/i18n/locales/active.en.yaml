@@ -6,6 +6,8 @@ SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old s
 SessionIdRequired: session_id required
 CannotDisableHost: The host is the group's only scheduler and cannot be disabled
 CannotDisableLastMember: The last member who can speak cannot be disabled — the group would have nobody left to answer
+CannotRemoveHost: The host is the group's only scheduler and cannot be removed from the group
+CannotRemoveLastMember: A group must keep at least one member who can speak
 GroupNotHostMode: This group is in free-chat mode and has no host to change
 HostNotMember: Only a member of this group can be made the host
 HostDisabled: That member is disabled — enable it before making it the host
@@ -335,6 +337,7 @@ CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
 GroupMemberJoined: '{{.Name}} joined the discussion'
 GroupMemberDisabled: '{{.Name}} was disabled'
 GroupMemberEnabled: '{{.Name}} was enabled'
+GroupMemberRemoved: '{{.Name}} was removed from the group'
 GroupHostChanged: '{{.Name}} is now the host'
 GroupMemberCompactionStarted: '{{.Name}} is compacting its context…'
 GroupMemberCompactionDone: '{{.Name}} compacted its context ({{.Before}} → {{.After}})'

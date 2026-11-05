@@ -1491,6 +1491,11 @@ export default {
     disabled: '已禁用',
     disable: '禁用（调度时不再安排它发言）',
     enable: '启用（恢复发言，并让它看到禁用期间的内容）',
+    remove: '删除成员（移出群聊，历史发言保留）',
+    removeConfirm: '确定把「{name}」移出群聊吗？它的历史发言会保留，但之后要重新加入只能作为新成员。',
+    removeFailed: '删除成员失败',
+    hostCannotRemove: '主持人是群的唯一调度者，不能删除',
+    lastMemberCannotRemove: '群聊至少要保留一位可发言的成员',
     memberDetail: {
       open: '查看该成员设置',
       agent: '智能体',

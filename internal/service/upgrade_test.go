@@ -121,9 +121,7 @@ func TestGetUserRegistryBase_EnvVarPriorityOverNpmrc(t *testing.T) {
 }
 
 func TestGetUserRegistryBase_InvalidEnvVarIgnored(t *testing.T) {
-	orig := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
-	os.Setenv("NPM_CONFIG_REGISTRY", "default")
+	setNpmRegistryEnv(t, "default")
 
 	// Should fall through to .npmrc, not return the invalid value.
 	withTempHome(t)
@@ -178,9 +176,7 @@ func TestGetUserRegistryBase_DegenerateValuesIgnored(t *testing.T) {
 }
 
 func TestGetUserRegistryBase_NoSchemeIgnored(t *testing.T) {
-	orig := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
-	os.Setenv("NPM_CONFIG_REGISTRY", "registry.example.com")
+	setNpmRegistryEnv(t, "registry.example.com")
 	withTempHome(t)
 
 	assert.Equal(t, "", getUserRegistryBase())
@@ -194,9 +190,7 @@ func TestRegistryCandidates_NoUserMirror(t *testing.T) {
 	platform.ChinaMirrorChecked.Store(2)
 
 	// Ensure no user mirror.
-	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
-	os.Unsetenv("NPM_CONFIG_REGISTRY")
+	setNpmRegistryEnv(t, "")
 	withTempHome(t)
 
 	assert.Equal(t, []string{"https://registry.npmjs.org"}, registryCandidates())
@@ -421,6 +415,35 @@ func withTempHome(t *testing.T) {
 	origUp := os.Getenv("USERPROFILE")
 	os.Setenv("USERPROFILE", dir)
 	t.Cleanup(func() { os.Setenv("USERPROFILE", origUp) })
+}
+
+// setNpmRegistryEnv sets the upper-case NPM_CONFIG_REGISTRY to value and
+// clears the lower-case npm_config_registry for the duration of the test.
+//
+// Both spellings are consulted by getUserRegistryBase (upper-case first), so
+// a test that only sets the upper-case one is still reading the ambient
+// lower-case value. npm exports that variable in every shell that ever ran
+// `npm install`, so these tests used to fail or pass depending on how the
+// suite happened to be launched — a result that had nothing to do with the
+// code under test.
+func setNpmRegistryEnv(t *testing.T, value string) {
+	t.Helper()
+	origUpper, hasUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
+	origLower, hasLower := os.LookupEnv("npm_config_registry")
+	os.Setenv("NPM_CONFIG_REGISTRY", value)
+	os.Unsetenv("npm_config_registry")
+	t.Cleanup(func() {
+		if hasUpper {
+			os.Setenv("NPM_CONFIG_REGISTRY", origUpper)
+		} else {
+			os.Unsetenv("NPM_CONFIG_REGISTRY")
+		}
+		if hasLower {
+			os.Setenv("npm_config_registry", origLower)
+		} else {
+			os.Unsetenv("npm_config_registry")
+		}
+	})
 }
 
 func clearNpmEnv(t *testing.T) {

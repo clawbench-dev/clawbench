@@ -8033,7 +8033,9 @@ paths:
       tags: [Group]
       summary: 列出群成员
       description: |
-        返回群的全部成员，含已禁用（`disabled=true`）的成员。`isHost` 标识主持人。
+        返回群的全部成员，含已禁用（`disabled=true`）与已移出（`removed=true`）的成员。
+        `isHost` 标识主持人。已移出的行只为历史消息的发言人归属而保留，客户端不应
+        把它当作群成员展示或参与调度。
         同时返回 `mode`（`"host"` 主持人模式 / `"free"` 自由聊天模式）、
         `parallelDefault`（自由模式 actionbar「并发执行」开关的服务端值；缺省
         `false` 即串行）与 `cruise`（自动巡航开关；缺省 `false`）。成员发言次数
@@ -8071,6 +8073,13 @@ paths:
                             该成员当前是否禁用。禁用只是**调度时不安排它发言**，成员行、
                             上下文窗口与历史全部保留；启用后它会看到禁用期间的全部内容
                             （禁用期间 seen_cursor 不推进）。
+                        removed:
+                          type: boolean
+                          description: |
+                            该成员已被移出群聊（删除）。行仍返回是为了让历史消息的发言人
+                            名字/头像继续解析；客户端必须把它从花名册、@ 菜单与任何调度
+                            入口过滤掉。它与 `disabled` 正交：删除是不可逆的，重新添加
+                            同一智能体会创建新实例。
                         isHost: {type: boolean}
                         model:
                           type: string
@@ -8136,7 +8145,7 @@ paths:
           description: 成员数超过上限（`msgKey=GroupMemberLimitReached`）
     patch:
       tags: [Group]
-      summary: 禁用 / 启用（成员不会被移除）
+      summary: 禁用 / 启用（可逆，不删除成员）
       description: |
         禁用只是**调度时不安排该成员发言**：成员行、它的上下文窗口与全部历史都
         保留，任何入口都能随时启用。启用后该成员能读到禁用期间的所有内容——禁用
@@ -8176,6 +8185,49 @@ paths:
             - 目标是最后一位可发言成员（`msgKey=CannotDisableLastMember`）——
               群里没人能接话，之后一个回合都跑不起来；
             - 启用会让可发言成员超过上限（`msgKey=GroupMemberLimitReached`）。
+    delete:
+      tags: [Group]
+      summary: 删除成员（移出群聊）
+      description: |
+        把成员从群聊中删除。与 `PATCH`（禁用）不同，这个操作从用户视角是**不可逆**
+        的：成员从花名册、@ 菜单和所有调度路径中消失，重新添加同一智能体会创建
+        **新实例**（新的名字序号与上下文窗口）。
+
+        成员行本身**保留**（`removed=1`）：`chat_history.agent_id` 指向该行，删掉行
+        会让时间线里所有历史发言失去发言人的名字与头像。因此 `GET /api/group/members`
+        仍会返回这一行（带 `removed=true`），客户端只应把它用于解析历史发言人。
+
+        拒绝的情况：
+        - 目标是主持人（`409 msgKey=CannotRemoveHost`）——它是群唯一的调度器；
+        - 目标是最后一位**可发言**成员（`409 msgKey=CannotRemoveLastMember`）——
+          群会没有成员能接话，之后一个回合都跑不起来（删除已禁用成员不触发此守卫，
+          但也不能把花名册删空）。
+
+        重复删除同一成员是幂等的（不重复写系统行）。成功时会在群时间线追加一行系统
+        消息（`{{Name}} 已被移出群聊`），并关闭该成员自己的 ACP 连接。
+      operationId: groupMembersRemove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 要删除的成员行 id（不是智能体 id）
+      responses:
+        "200":
+          description: 删除成功（或该成员已被删除，幂等）
+        "400":
+          description: 缺少 groupId / memberId
+        "409":
+          description: |
+            拒绝删除：
+            - 目标是主持人（`msgKey=CannotRemoveHost`）；
+            - 目标是最后一位可发言成员（`msgKey=CannotRemoveLastMember`）。
 
   /api/group/host:
     patch:

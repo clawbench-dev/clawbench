@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -37,6 +38,14 @@ type faultyIMAP struct {
 	dropOnFetch bool
 	// deletedUIDs is what `UID SEARCH DELETED` answers.
 	deletedUIDs []uint32
+	// failCommands makes the server answer NO to the listed commands. The
+	// names are the normalized ones the switch below uses ("UID STORE",
+	// "STORE", "UID COPY", "UID EXPUNGE", "EXPUNGE", "APPEND"). It is how the
+	// client's error paths are reached: a server that refuses the command must
+	// surface as an error, not as a silently ignored flag change.
+	failCommands map[string]bool
+	// appended collects the mailboxes an APPEND targeted, in order.
+	appended []string
 
 	mu            sync.Mutex
 	fetches       []string // fetch option lists, in order
@@ -116,6 +125,17 @@ func (s *faultyIMAP) handle(conn net.Conn) {
 			cmd = "UID " + strings.ToUpper(fields[2])
 			fields = append(fields[:2], fields[2:]...)
 		}
+		if cmd == "APPEND" {
+			// The literal has to be consumed before anything else: leaving it
+			// in the socket would make the next command line unreadable.
+			s.handleAppend(w, r, tag, fields)
+			continue
+		}
+		if s.failCommands[cmd] {
+			fmt.Fprintf(w, "%s NO %s refused\r\n", tag, cmd)
+			_ = w.Flush()
+			continue
+		}
 		switch cmd {
 		case "CAPABILITY":
 			fmt.Fprintf(w, "* CAPABILITY %s\r\n%s OK CAPABILITY completed\r\n", strings.Join(s.caps, " "), tag)
@@ -165,6 +185,57 @@ func (s *faultyIMAP) handle(conn net.Conn) {
 		}
 		_ = w.Flush()
 	}
+}
+
+// handleAppend answers an APPEND command: it consumes the literal and either
+// stores the message or refuses it, depending on failCommands.
+func (s *faultyIMAP) handleAppend(w *bufio.Writer, r *bufio.Reader, tag string, fields []string) {
+	mailbox := "INBOX"
+	if len(fields) > 2 {
+		mailbox = strings.Trim(fields[2], "\"")
+	}
+	// The literal size is the last "{n}" on the command line.
+	size := 0
+	for _, f := range fields {
+		if !strings.HasPrefix(f, "{") {
+			continue
+		}
+		n, err := strconv.Atoi(strings.Trim(strings.TrimSuffix(strings.TrimPrefix(f, "{"), "}"), "+"))
+		if err == nil {
+			size = n
+		}
+	}
+	if size > 0 {
+		// IMAP asks the server for permission before the literal: the client
+		// sends the command line and waits for a continuation response.
+		fmt.Fprintf(w, "+ Ready for literal data\r\n")
+		_ = w.Flush()
+		buf := make([]byte, size)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			fmt.Fprintf(w, "%s NO APPEND truncated\r\n", tag)
+			_ = w.Flush()
+			return
+		}
+		// The literal is followed by CRLF.
+		_, _ = r.Discard(2)
+	}
+	if s.failCommands["APPEND"] {
+		fmt.Fprintf(w, "%s NO APPEND refused\r\n", tag)
+		_ = w.Flush()
+		return
+	}
+	s.mu.Lock()
+	s.appended = append(s.appended, mailbox)
+	s.mu.Unlock()
+	fmt.Fprintf(w, "%s OK APPEND completed\r\n", tag)
+	_ = w.Flush()
+}
+
+// appendedMailboxes returns the mailboxes an APPEND targeted, in order.
+func (s *faultyIMAP) appendedMailboxes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.appended...)
 }
 
 func (s *faultyIMAP) writeStatus(w *bufio.Writer, tag string, fields []string) {

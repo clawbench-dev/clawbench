@@ -77,6 +77,7 @@ type GroupMember struct {
 	Backend  string
 	Avatar   string // per-member avatar SVG snapshot (may be empty → fall back to agent avatar)
 	Disabled bool   // disabled=1: stays a member, but the orchestrator never schedules it
+	Removed  bool   // removed=1: deleted from the group (row kept only for history attribution)
 }
 
 // CreateGroup creates a group timeline row plus its host member row. The host
@@ -541,11 +542,18 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 		return nil, nil
 	}
 
-	// Seed unique names. existingCounts counts ALL member rows (disabled included)
-	// per agent, so the ordinal is monotonic across add/disable cycles.
-	existingCounts := make(map[string]int, len(members))
-	taken := make(map[string]bool, len(members))
-	for _, m := range members {
+	// Seed unique names. existingCounts counts ALL member rows — disabled AND
+	// removed included — per agent, so the ordinal is monotonic across
+	// add/disable/remove cycles and a deleted instance's name is not handed to a
+	// brand-new instance (two rows with the same name would make the timeline
+	// ambiguous).
+	allMembers, err := ListGroupMembersIncludingRemoved(groupID)
+	if err != nil {
+		return nil, err
+	}
+	existingCounts := make(map[string]int, len(allMembers))
+	taken := make(map[string]bool, len(allMembers))
+	for _, m := range allMembers {
 		existingCounts[m.AgentID]++
 		taken[m.Name] = true
 	}
@@ -882,9 +890,10 @@ func SetMemberAvatar(groupID, memberID, avatar string) (int64, error) {
 	return n, nil
 }
 
-// ListGroupMembers returns every member row of a group, disabled ones included so
-// the roster can show and toggle them. Members that may speak are those with
-// Disabled == false.
+// ListGroupMembers returns every ACTIVE member row of a group, disabled ones
+// included so the roster can show and toggle them. Members that may speak are
+// those with Disabled == false. Removed members are excluded — they are no
+// longer part of the group.
 //
 // Order is JOIN order (created_at, then rowid): free mode speaks every enabled
 // member in roster order when the user @s nobody, so the order must be stable
@@ -892,12 +901,26 @@ func SetMemberAvatar(groupID, memberID, avatar string) (int64, error) {
 // members added in one transaction tie; rowid (insertion order) breaks the tie
 // deterministically, whereas `id` (a random UUID) would not.
 func ListGroupMembers(groupID string) ([]GroupMember, error) {
-	rows, err := store.ReadDB().Query(
-		`SELECT id, agent_id, agent_name, backend, agent_avatar, disabled FROM chat_sessions
-		 WHERE group_id = ? AND session_type = ?
-		 ORDER BY created_at ASC, rowid ASC`,
-		groupID, groupMemberSessionType,
-	)
+	return listGroupMembers(groupID, false)
+}
+
+// ListGroupMembersIncludingRemoved also returns members the user deleted
+// (removed=1). Used ONLY where a removed member's identity must still resolve:
+// past speech attribution (chat_history.agent_id points at the row) and the
+// roster API that feeds it. Every scheduling / routing path must use
+// ListGroupMembers instead, or a deleted member would be asked to speak again.
+func ListGroupMembersIncludingRemoved(groupID string) ([]GroupMember, error) {
+	return listGroupMembers(groupID, true)
+}
+
+func listGroupMembers(groupID string, includeRemoved bool) ([]GroupMember, error) {
+	query := `SELECT id, agent_id, agent_name, backend, agent_avatar, disabled, removed FROM chat_sessions
+		 WHERE group_id = ? AND session_type = ?`
+	if !includeRemoved {
+		query += ` AND removed = 0`
+	}
+	query += ` ORDER BY created_at ASC, rowid ASC`
+	rows, err := store.ReadDB().Query(query, groupID, groupMemberSessionType)
 	if err != nil {
 		return nil, err
 	}
@@ -906,11 +929,12 @@ func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	members := make([]GroupMember, 0)
 	for rows.Next() {
 		var m GroupMember
-		var disabled int
-		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &m.Avatar, &disabled); err != nil {
+		var disabled, removed int
+		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &m.Avatar, &disabled, &removed); err != nil {
 			return nil, err
 		}
 		m.Disabled = disabled != 0
+		m.Removed = removed != 0
 		members = append(members, m)
 	}
 	return members, rows.Err()
@@ -1035,7 +1059,7 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 		       (m.id = COALESCE(json_extract(g.context_state, '$.host_member_id'), '')) AS is_host
 		FROM chat_sessions m
 		LEFT JOIN chat_sessions g ON g.id = m.group_id
-		WHERE m.group_id IN (%s) AND m.session_type = ? AND m.disabled = 0
+		WHERE m.group_id IN (%s) AND m.session_type = ? AND m.disabled = 0 AND m.removed = 0
 		ORDER BY m.group_id, m.created_at ASC, m.id ASC`, placeholders)
 	args = append(args, groupMemberSessionType)
 
@@ -1119,6 +1143,16 @@ func GroupMemberSpeakersForGroups(groupIDs []string) (map[string]map[string]stri
 	}
 	return out, rows.Err()
 }
+
+// ErrCannotRemoveHost is returned when a caller tries to remove the group's host
+// member. The host is the only router, so dropping it would strand the group.
+var ErrCannotRemoveHost = errors.New("cannot remove the group host")
+
+// ErrCannotRemoveLastMember is returned when removing the target would leave the
+// group with no member who can speak (or with no member at all). A free group has
+// no host, so unlike the disable path there is nothing left to route — the group
+// would be permanently dead.
+var ErrCannotRemoveLastMember = errors.New("cannot remove the last speaking member")
 
 // ErrCannotDisableHost is returned when a caller tries to disable the group's host
 // member. The host is the only router, so a disabled host would leave the group
@@ -1218,7 +1252,7 @@ func SetGroupMemberDisabled(groupID, memberID string, disabled bool) error {
 	// DIFFERENT group, which matches no row) cannot append a duplicate
 	// "已禁用 / 已启用" line to the timeline.
 	res, err := store.WriteExec(
-		"UPDATE chat_sessions SET disabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ? AND session_type = ? AND disabled != ?",
+		"UPDATE chat_sessions SET disabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ? AND session_type = ? AND disabled != ? AND removed = 0",
 		flag, memberID, groupID, groupMemberSessionType, flag,
 	)
 	if err != nil {
@@ -1309,6 +1343,86 @@ func writeDisabledSystemEvent(groupID, memberID string, disabled bool) {
 		return
 	}
 	emitGroupSystemMessage(groupID, msgID, text)
+}
+
+// RemoveGroupMember deletes a member from the group (移出群聊). Idempotent.
+//
+// Unlike disabling, this is one-way from the user's point of view: the member
+// disappears from the roster, the @-mention menu and every scheduling path, and
+// re-adding the same agent creates a NEW instance. The row itself is KEPT with
+// removed = 1, because chat_history.agent_id points at it — deleting the row
+// would make every past speech in the group timeline lose its speaker name and
+// avatar. The flag is therefore an attribution anchor, not a scheduling state.
+//
+// The host member cannot be removed (ErrCannotRemoveHost): it is the group's only
+// router, so dropping it would strand the group. Removing the LAST SPEAKING
+// member is refused too (ErrCannotRemoveLastMember) — a free group has no host,
+// and a group with nobody left to answer can never run a turn again. Removing a
+// disabled member never triggers that guard (it does not reduce the speaking
+// count), but it still cannot empty the roster.
+//
+// The UPDATE is scoped by group_id and `removed = 0`, so a repeated call or a
+// member id belonging to a DIFFERENT group is a no-op and writes no system line.
+func RemoveGroupMember(groupID, memberID string) error {
+	if memberID == "" || groupID == "" {
+		return nil
+	}
+	if memberID == GetGroupHostMember(groupID) {
+		return ErrCannotRemoveHost
+	}
+	// Only an ACTIVE member can be the last one; re-asserting removal of an
+	// already-removed row must stay a no-op success.
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return err
+	}
+	found := false
+	targetDisabled := false
+	for _, m := range members {
+		if m.ID == memberID {
+			found = true
+			targetDisabled = m.Disabled
+			break
+		}
+	}
+	if found {
+		// An empty group can never run a turn, and so can a group whose only
+		// remaining members are all disabled. Removing a DISABLED member never
+		// reduces the speaking count, so only the enabled case needs the second
+		// check.
+		if len(members) <= 1 || (!targetDisabled && countSpeakingMembers(members) <= 1) {
+			return ErrCannotRemoveLastMember
+		}
+	}
+
+	res, err := store.WriteExec(
+		`UPDATE chat_sessions SET removed = 1, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND group_id = ? AND session_type = ? AND removed = 0`,
+		memberID, groupID, groupMemberSessionType,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nil
+	}
+	// Best-effort: the member is already removed, so a write failure must not
+	// surface as a failed removal.
+	if name := memberDisplayName(memberID); name != "" {
+		// A note awaiting this member can never be delivered now.
+		deletePendingBccForTarget(groupID, name)
+		text := i18n.T(i18n.LocalizerForLocale(model.Language), "GroupMemberRemoved", map[string]any{i18nNameKey: name})
+		if msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text); err != nil {
+			slog.Warn("group: writing removal system event failed", "group", groupID, "err", err)
+		} else {
+			emitGroupSystemMessage(groupID, msgID, text)
+		}
+	}
+	return nil
 }
 
 // memberDisplayName returns a member row's display name (empty if unknown).
@@ -1471,14 +1585,14 @@ func changeGroupHostTx(groupID, memberID string) (changed bool, name string, err
 	// The target must be a member OF THIS GROUP and must be able to speak: a
 	// disabled member would become a router that never takes a turn.
 	var memberGroup, memberAgentID, memberBackend, memberName string
-	var disabled int
+	var disabled, removed int
 	if qerr := tx.QueryRowContext(
 		context.Background(),
 		"SELECT COALESCE(group_id, ''), COALESCE(agent_id, ''), COALESCE(backend, ''), "+
-			"COALESCE(agent_name, ''), COALESCE(disabled, 0) "+
+			"COALESCE(agent_name, ''), COALESCE(disabled, 0), COALESCE(removed, 0) "+
 			"FROM chat_sessions WHERE id = ? AND session_type = ?",
 		memberID, groupMemberSessionType,
-	).Scan(&memberGroup, &memberAgentID, &memberBackend, &memberName, &disabled); qerr != nil {
+	).Scan(&memberGroup, &memberAgentID, &memberBackend, &memberName, &disabled, &removed); qerr != nil {
 		// Only "no such row" means the id is not a member of this group. A
 		// database failure must NOT be reported as a 400 the user could "fix" by
 		// picking someone else — it is an outage and belongs in the 500 path.
@@ -1488,6 +1602,11 @@ func changeGroupHostTx(groupID, memberID string) (changed bool, name string, err
 		return false, "", qerr
 	}
 	if memberGroup != groupID {
+		return false, "", ErrHostNotMember
+	}
+	// A removed member is no longer part of the group, so it cannot become the
+	// router even if a stale client still holds its row id.
+	if removed != 0 {
 		return false, "", ErrHostNotMember
 	}
 	if disabled != 0 {
