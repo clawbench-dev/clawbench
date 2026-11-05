@@ -603,7 +603,13 @@ describe('usePortForward', () => {
     })
 
     describe('activeTransport', () => {
-        it('reports the transport that actually carried the session', async () => {
+        it('reports the configured transport, not a stale live session', async () => {
+            // There is no automatic mode: the preference names the single wire
+            // every attempt uses. A live h2 session can belong to something else
+            // (Android keeps one for native background WebSocket work) or be the
+            // last successful connect (Electron), so preferring it made the
+            // status copy contradict the picker — the reported bug was
+            // "selected SSH, status says HTTP/2".
             mockIsAppMode.value = true
             ;(window as any).ClawBenchNative = {
                 getActiveTunnelTransport: async () => 'h2',
@@ -615,7 +621,23 @@ describe('usePortForward', () => {
 
             await refreshActiveTransport()
 
-            // The live wire wins over the stored preference.
+            expect(activeTransport.value).toBe('ssh')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('falls back to the live wire when the host cannot report a preference', async () => {
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => 'h2',
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
             expect(activeTransport.value).toBe('h2')
 
             delete (window as any).ClawBenchNative

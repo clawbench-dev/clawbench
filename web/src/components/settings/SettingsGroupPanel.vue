@@ -837,7 +837,7 @@ async function applyTransportDraft(): Promise<boolean> {
 
 const {
   tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
-  sshInfo, transportAllowsH2, loadSSHInfo,
+  sshInfo, transportAllowsH2, loadSSHInfo, ports,
 } = usePortForward()
 
 /**
@@ -866,6 +866,17 @@ const serverCarriesForwards = computed(() =>
   !!sshInfo.value?.enabled || transportAllowsH2.value
 )
 
+/**
+ * Whether the native tunnel has any enabled mapping to carry — the same
+ * predicate the port panel's banners and `syncToNative` use.
+ *
+ * With none, the native service stops itself on purpose (it would otherwise
+ * hold an SSH/h2 session and burn battery for no work), so `tunnelStatus` reads
+ * `disconnected` in a perfectly healthy idle state. Reporting that as a failure
+ * told users "port mapping unavailable" when the only thing missing was a port.
+ */
+const hasEnabledPorts = computed(() => ports.value.some(p => p.enabled))
+
 /** Web-mode probe in flight. Separate from `tunnelChecking` because the web
  *  branch re-reads SSH info rather than running the client-side health check. */
 const webStatusChecking = ref(false)
@@ -880,10 +891,17 @@ const tunnelStatusBusy = computed(() => webStatusChecking.value || tunnelCheckin
  *
  * Web mode derives its own state from server readiness: there is no client
  * tunnel to be ok/degraded/disconnected, so "ready" is the only healthy answer.
+ *
+ * Native mode has two states that are NOT failures and must not borrow the red
+ * dot: an unsaved transport draft (the verdict on screen still describes the
+ * old wire, so showing it would contradict the picker right above) and an empty
+ * mapping list (the tunnel is idle by design).
  */
 const tunnelStatusState = computed(() => {
   if (tunnelStatusBusy.value) return 'checking'
   if (isWebApp.value) return serverCarriesForwards.value ? 'ok' : 'disconnected'
+  if (transportDirty.value) return 'unknown'
+  if (!hasEnabledPorts.value) return 'unknown'
   if (tunnelStatus.value === 'ok') return 'ok'
   if (tunnelStatus.value === 'degraded') return 'degraded'
   if (tunnelStatus.value === 'disconnected') return 'disconnected'
@@ -904,6 +922,8 @@ const tunnelStatusText = computed(() => {
     if (transportAllowsH2.value) return t('settings.items.tunnelStatusServerReadyH2')
     return t('settings.items.tunnelStatusUnavailable')
   }
+  if (transportDirty.value) return t('settings.items.tunnelStatusDraftPending')
+  if (!hasEnabledPorts.value) return t('settings.items.tunnelStatusNoPorts')
   if (tunnelStatus.value === 'ok') return t('settings.items.tunnelStatusConnected')
   if (tunnelMessage.value) return tunnelMessage.value
   return t('settings.items.tunnelStatusUnknown')
@@ -948,6 +968,13 @@ async function onSave() {
         toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
       }
       return
+    }
+    if (switchingTransport) {
+      // The verdict on screen is a string rendered at check time, so after a
+      // transport switch it still names the OLD wire until the next check.
+      // Recompute now that the preference and the live tunnel have moved.
+      // Silent keeps the row's current verdict instead of flashing "unknown".
+      await checkTunnelHealth(true)
     }
   } finally {
     if (switchingTransport) saving.value = false

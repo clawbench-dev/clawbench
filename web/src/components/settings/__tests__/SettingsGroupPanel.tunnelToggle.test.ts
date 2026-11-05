@@ -134,14 +134,18 @@ vi.mock('@/composables/usePortForward', async () => {
   const sshInfo = ref<{ enabled: boolean; port?: number } | null>(null)
   const transportAllowsH2 = ref(false)
   const loadSSHInfo = vi.fn().mockResolvedValue(undefined)
+  // The status row gates its verdict on there being something to carry: with
+  // zero enabled mappings the native service is stopped on purpose, so
+  // "disconnected" describes an idle state rather than a failure.
+  const ports = ref<Array<{ localPort: number; port: number; enabled: boolean }>>([])
   Object.assign(mockTunnel, {
     tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
-    sshInfo, transportAllowsH2, loadSSHInfo,
+    sshInfo, transportAllowsH2, loadSSHInfo, ports,
   })
   return {
     usePortForward: () => ({
       tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
-      sshInfo, transportAllowsH2, loadSSHInfo,
+      sshInfo, transportAllowsH2, loadSSHInfo, ports,
     }),
   }
 })
@@ -182,6 +186,8 @@ const i18n = createI18n({
           tunnelStatusUnavailable: '端口映射不可用：SSH 隧道服务器已关闭，且当前传输方式不支持 H2',
           tunnelStatusChecking: '正在检测隧道状态…',
           tunnelStatusUnknown: '隧道状态未知',
+          tunnelStatusDraftPending: '传输方式已修改，保存后自动重连生效',
+          tunnelStatusNoPorts: '暂无转发端口，添加端口后隧道会自动建立',
         },
       },
       proxy: { transportSsh: 'SSH', transportH2: 'HTTP/2', retryCheck: '重新检测' },
@@ -251,6 +257,12 @@ beforeEach(() => {
   ;(mockTunnel.sshInfo as { value: unknown }).value = null
   ;(mockTunnel.transportAllowsH2 as { value: boolean }).value = false
   ;(mockTunnel.loadSSHInfo as ReturnType<typeof vi.fn>).mockClear()
+  // One enabled mapping by default: the status row only reports a tunnel
+  // verdict when there is something for the tunnel to carry (see the idle-state
+  // cases below, which empty this list on purpose).
+  ;(mockTunnel.ports as { value: unknown }).value = [
+    { localPort: 3000, port: 3000, enabled: true },
+  ]
 })
 
 afterEach(() => {
@@ -456,6 +468,9 @@ describe('transport picker: Android draft + save', () => {
     // The picker's 'h2' is the Android bridge's boolean true.
     expect(setter).toHaveBeenCalledWith(true)
     expect(mockReconnectTunnel.fn).toHaveBeenCalledOnce()
+    // The status verdict is a string rendered at check time; after switching
+    // wires it must be recomputed or it keeps naming the OLD transport.
+    expect(mockTunnel.checkTunnelHealth).toHaveBeenCalledWith(true)
     // Committed: the draft is now the persisted value, so the panel is clean
     // again (otherwise Save stays enabled forever).
     expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
@@ -488,6 +503,9 @@ describe('transport picker: Android draft + save', () => {
     await flushPromises()
 
     expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+    // No wire change → nothing to recompute; a check here would flash the row
+    // on every unrelated settings save.
+    expect(mockTunnel.checkTunnelHealth).not.toHaveBeenCalled()
   })
 
   it('keeps the draft and warns when the native write rejects', async () => {
@@ -981,6 +999,52 @@ describe('tunnel status row', () => {
 
     expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--disconnected')
     expect(statusRow(wrapper).text()).toContain('隧道未连接（SSH）')
+  })
+
+  it('shows a neutral idle state instead of the disconnected verdict when nothing is forwarded', async () => {
+    // With zero enabled mappings the native service stops itself on purpose
+    // (battery), so `tunnelStatus` reads `disconnected` in a healthy idle
+    // state. Screaming "隧道未连接，端口映射将无法使用" there told users port
+    // mapping was broken when they simply had no ports — the same verdict the
+    // port panel deliberately keeps out of its banners.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelStatus as { value: string }).value = 'disconnected'
+    ;(mockTunnel.tunnelMessage as { value: string }).value = '隧道未连接（SSH），端口映射将无法使用'
+    ;(mockTunnel.ports as { value: Array<{ enabled: boolean }> }).value = []
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--unknown')
+    expect(statusRow(wrapper).text()).toContain('暂无转发端口')
+    expect(statusRow(wrapper).text()).not.toContain('端口映射将无法使用')
+  })
+
+  it('shows a pending hint instead of the old wire while the transport draft is unsaved', async () => {
+    // The verdict is a string rendered at check time and describes the SAVED
+    // preference; with an unsaved draft it would name a transport the picker
+    // no longer shows ("selected SSH, status says HTTP/2").
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'h2', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelStatus as { value: string }).value = 'disconnected'
+    ;(mockTunnel.tunnelMessage as { value: string }).value = '隧道未连接（HTTP/2），端口映射将无法使用'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Draft starts clean, so the stale verdict is honest.
+    expect(statusRow(wrapper).text()).toContain('隧道未连接（HTTP/2）')
+
+    // Change the picker → the verdict about the saved wire is retired.
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'ssh')
+    await nextTick()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--unknown')
+    expect(statusRow(wrapper).text()).toContain('保存后')
+    expect(statusRow(wrapper).text()).not.toContain('隧道未连接（HTTP/2）')
   })
 
   it('shows the checking state while a probe is in flight', async () => {

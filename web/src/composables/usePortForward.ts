@@ -85,10 +85,13 @@ const tunnelChecking = ref(false)
 const tunnelError = ref('')
 const tunnelErrorType = ref<TunnelErrorType>('')
 
-// The transport that actually carried the tunnel ('ssh' | 'h2'), or '' when it
+// The transport the tunnel is configured to use ('ssh' | 'h2'), or '' when it
 // cannot be determined (web mode, or a host that predates the bridge methods).
-// Read from the native layer rather than the server config because only the
-// native tunnel knows which wire it ended up on.
+// Read from the native layer rather than the server config because the
+// preference lives in the host's own store. There is no automatic mode, so this
+// is also the wire any successful connect carries — the "last live session"
+// view of the bridge is deliberately NOT preferred, it can contradict the
+// picker (see refreshActiveTransport).
 const activeTransport = ref<TunnelTransport>('')
 
 // Ports that are newly registered and waiting for SSH tunnel to become reachable.
@@ -884,10 +887,20 @@ export function usePortForward() {
   /**
    * Refresh `activeTransport` from the native tunnel.
    *
-   * Prefers `getActiveTunnelTransport()` (the wire the session actually came up
-   * on) and falls back to the configured preference when nothing has connected
-   * yet. Both bridge methods are optional, so an older host simply leaves the
-   * value unknown — never throws, never invents a transport.
+   * Prefers the CONFIGURED transport (`getTunnelTransport`) and falls back to
+   * the live one. There is no automatic mode any more: the preference names the
+   * single wire every attempt uses, so "what the tunnel runs on" and "what the
+   * user chose" cannot legitimately differ. Reading the live value first made
+   * the status copy contradict the picker above it:
+   *
+   *  - Android reports a live h2 stream whenever one exists, including the one
+   *    kept alive for native background WebSocket work — so a client configured
+   *    for SSH was told `隧道未连接（HTTP/2）`.
+   *  - Electron's live value is the wire of the LAST SUCCESSFUL connect, which
+   *    survives switching to a wire that has not connected yet.
+   *
+   * Both bridge methods are optional, so an older host simply leaves the value
+   * unknown — never throws, never invents a transport.
    */
   async function refreshActiveTransport(): Promise<void> {
     if (!isAppMode.value) {
@@ -913,8 +926,8 @@ export function usePortForward() {
         return ''
       }
     }
-    const active = await read(native.getActiveTunnelTransport)
-    activeTransport.value = active || await read(native.getTunnelTransport)
+    const configured = await read(native.getTunnelTransport)
+    activeTransport.value = configured || await read(native.getActiveTunnelTransport)
   }
 
   /**
