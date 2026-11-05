@@ -85,8 +85,33 @@ describe('LiveChatPanel', () => {
     expect(w.findAll('.chat-row')).toHaveLength(0)
   })
 
+  it('opens on the newest message instead of the first one ever sent', async () => {
+    // The 聊天 tab is re-created when it is switched back to, and the side
+    // panel is `v-show`: opening it used to land on the first message of the
+    // meeting, with no new line able to bring the reader back down.
+    const w = mountPanel()
+    let scrollTop = 0
+    const list = w.find('.live-chat__list').element
+    Object.defineProperty(list, 'scrollHeight', { value: 900, configurable: true })
+    Object.defineProperty(list, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(list, 'scrollTop', {
+      get: () => scrollTop,
+      set: (v: number) => {
+        scrollTop = v
+      },
+      configurable: true,
+    })
+
+    await w.vm.$nextTick()
+    expect(scrollTop).toBe(900)
+  })
+
   it('scrolls to the bottom only when the reader is already there', async () => {
     const w = mountPanel({ messages: [] })
+    // Let the mount-time "open on the newest line" pass run against the real
+    // (empty) jsdom box: the geometry below describes messages that arrive
+    // afterwards.
+    await w.vm.$nextTick()
     const list = w.find('.live-chat__list').element
     let scrollTop = 0
     Object.defineProperty(list, 'scrollHeight', { value: 1000, configurable: true })
