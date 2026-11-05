@@ -227,12 +227,13 @@
       </div>
 
       <!-- TOC rail (wide screens). Narrow screens render a slide-in drawer. -->
-      <div v-if="hasToc && tocOpen && !isNarrow" class="share-toc">
+      <div v-if="hasToc && tocOpen && !isNarrow" class="share-toc" ref="tocRailRef">
         <div class="share-toc-title">{{ t('share.toc') }}</div>
         <button
           v-for="item in tocItems"
           :key="item.id"
           class="share-toc-item"
+          :class="{ active: item.id === activeTocId }"
           :data-level="item.level"
           :style="{ paddingLeft: (8 + (item.level - 1) * 14) + 'px' }"
           :title="item.text"
@@ -245,12 +246,13 @@
     <Teleport to="body">
       <div v-if="isNarrow && hasToc && tocOpen" class="share-toc-drawer">
         <div class="share-toc-backdrop" @click="tocOpen = false" />
-        <aside class="share-toc share-toc-panel">
+        <aside class="share-toc share-toc-panel" ref="tocDrawerRef">
           <div class="share-toc-title">{{ t('share.toc') }}</div>
           <button
             v-for="item in tocItems"
             :key="item.id"
             class="share-toc-item"
+            :class="{ active: item.id === activeTocId }"
             :data-level="item.level"
             :style="{ paddingLeft: (8 + (item.level - 1) * 14) + 'px' }"
             :title="item.text"
@@ -268,7 +270,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent, provide, readonly, nextTick } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch, defineAsyncComponent, provide, readonly, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Download, Eye, FileX2, List, ArrowLeft } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -370,6 +372,11 @@ function syncNarrow() {
 const wordWrap = ref(false)
 const contentRef = ref<HTMLElement | null>(null)
 const tocItems = ref<TocItem[]>([])
+/** Id of the section the reader is currently in; drives `.share-toc-item.active`
+ *  in both the wide rail and the narrow drawer. */
+const activeTocId = ref('')
+const tocRailRef = ref<HTMLElement | null>(null)
+const tocDrawerRef = ref<HTMLElement | null>(null)
 /** 'rendered' (preview) | 'raw' (source code). Only used by file types that
  *  have both a rendered preview and a viewable source (markdown/html/openapi). */
 const viewMode = ref<'rendered' | 'raw'>('rendered')
@@ -552,6 +559,7 @@ async function loadFile(targetPath: string) {
   // Reset the TOC up front: a failed load must not leave the previous file's
   // outline on screen.
   tocItems.value = []
+  activeTocId.value = ''
   try {
     const url = targetPath
       ? `${shareApiUrl('content')}?path=${encodeURIComponent(targetPath)}`
@@ -586,6 +594,10 @@ async function loadFile(targetPath: string) {
         tocItems.value = extractToc(data.content, lang)
       }
     }
+    // A freshly opened document is read from the top: start the outline on its
+    // first section (mirrors the in-app TocPanel).
+    releaseTocFollowHold()
+    activeTocId.value = tocItems.value[0]?.id || ''
     // Keep store project/home roots empty so markdown file-path annotations
     // inside the shared doc cannot resolve to clickable in-app file opens.
     store.state.projectRoot = store.state.projectRoot || ''
@@ -672,10 +684,108 @@ function scrollToHeading(id: string) {
   flashElement(el)
 }
 
+// ─── TOC scroll-follow ───
+// Highlight the section currently in view, so the outline tracks reading
+// instead of only reacting to clicks. Two drivers, mirroring the in-app
+// TocPanel: rendered markdown follows the content scroller's geometry, and
+// CodeMirror-rendered bodies (raw source view) follow the editor's
+// `cm-editor-viewport-line` event, because it virtualizes its DOM.
+
+/** A heading becomes "current" once its top passes this distance from the top
+ *  of the content viewport. */
+const TOC_SPY_OFFSET = 60
+let tocSpyFrame = 0
+
+function syncActiveTocFromScroll() {
+  const root = contentRef.value
+  const items = tocItems.value
+  if (!root || !items.length || showRawSourceView.value) return
+  // While the smooth jump from a TOC click is still animating, the viewport
+  // sweeps across every section in between — keep the clicked item instead.
+  if (tocFollowHeld()) return
+  const rootTop = root.getBoundingClientRect().top
+  let current = items[0]
+  for (const item of items) {
+    const el = root.querySelector(`#${CSS.escape(item.id)}`)
+    if (!el) continue
+    if (el.getBoundingClientRect().top - rootTop > TOC_SPY_OFFSET) break
+    current = item
+  }
+  activeTocId.value = current.id
+}
+
+function onContentScroll() {
+  if (tocSpyFrame) return
+  tocSpyFrame = requestAnimationFrame(() => {
+    tocSpyFrame = 0
+    syncActiveTocFromScroll()
+  })
+}
+
+/** Raw/source view: highlight the deepest entry at or above the line at the
+ *  middle of the editor's viewport. */
+function onEditorViewportLine(e: Event) {
+  if (!showRawSourceView.value || tocFollowHeld()) return
+  const detail = (e as CustomEvent).detail
+  const line = detail?.line
+  if (typeof line !== 'number') return
+  // Only this document's editor: another viewer (a stacked panel) may emit too.
+  if (detail.path && detail.path !== file.value?.path) return
+  let match: TocItem | null = null
+  for (const item of tocItems.value) {
+    if (typeof item.line !== 'number') continue
+    if (item.line > line) break
+    match = item
+  }
+  if (match) activeTocId.value = match.id
+}
+
+/** After a TOC click, hold the clicked item for the duration of the smooth
+ *  scroll (and the heading flash) so the follow does not flicker through the
+ *  sections it passes on the way. Same window as the in-app TocPanel. */
+const TOC_FOLLOW_HOLD_MS = 1500
+let tocFollowHoldUntil = 0
+let tocFollowHoldTimer: ReturnType<typeof setTimeout> | null = null
+
+function holdTocFollow() {
+  tocFollowHoldUntil = Date.now() + TOC_FOLLOW_HOLD_MS
+  if (tocFollowHoldTimer) clearTimeout(tocFollowHoldTimer)
+  tocFollowHoldTimer = setTimeout(() => {
+    tocFollowHoldUntil = 0
+    tocFollowHoldTimer = null
+  }, TOC_FOLLOW_HOLD_MS)
+}
+
+function tocFollowHeld() {
+  return Date.now() < tocFollowHoldUntil
+}
+
+function releaseTocFollowHold() {
+  if (tocFollowHoldTimer) clearTimeout(tocFollowHoldTimer)
+  tocFollowHoldTimer = null
+  tocFollowHoldUntil = 0
+}
+
+// Keep the active entry inside the outline's visible area when scroll-follow
+// moves past the fold (and when a drawer is opened mid-document, so it starts
+// on the section being read rather than at the top of the list).
+// `block: 'nearest'` is a no-op for an already-visible row, so normal scrolling
+// produces no feedback loop.
+watch([activeTocId, tocOpen, isNarrow], () => {
+  nextTick(() => {
+    const panel = isNarrow.value ? tocDrawerRef.value : tocRailRef.value
+    const el = panel?.querySelector<HTMLElement>('.share-toc-item.active')
+    el?.scrollIntoView?.({ block: 'nearest' })
+  })
+})
+
 // ─── View toggle ───
 
 function toggleViewMode() {
   viewMode.value = viewMode.value === 'rendered' ? 'raw' : 'rendered'
+  // The body DOM is replaced by the toggle, so re-derive the highlight from the
+  // view that just appeared (CodeMirror reports its own line as it settles).
+  nextTick(syncActiveTocFromScroll)
 }
 
 // ─── TOC jump routing ───
@@ -735,6 +845,10 @@ function scrollToCodeLine(line: number) {
 }
 
 function scrollToTocItem(item: TocItem) {
+  // Highlight the target immediately and hold it through the jump, so the
+  // follow does not trail behind the animation.
+  activeTocId.value = item.id
+  holdTocFollow()
   if (showRawSourceView.value) {
     if (item.line) scrollToCodeLine(item.line)
     return
@@ -761,11 +875,20 @@ onMounted(() => {
   void loadFile(props.initialPath || targetFromUrl())
   window.addEventListener(SHARE_OPEN_FILE_EVENT, onShareOpenFile)
   window.addEventListener('popstate', onPopState)
+  // Scroll-follow of the outline (rendered view) + the editor's viewport line
+  // (raw source view).
+  contentRef.value?.addEventListener('scroll', onContentScroll, { passive: true })
+  window.addEventListener('cm-editor-viewport-line', onEditorViewportLine)
 })
 
 onBeforeUnmount(() => {
   tocMq?.removeEventListener('change', syncNarrow)
   tocMq = null
+  contentRef.value?.removeEventListener('scroll', onContentScroll)
+  if (tocSpyFrame) cancelAnimationFrame(tocSpyFrame)
+  tocSpyFrame = 0
+  releaseTocFollowHold()
+  window.removeEventListener('cm-editor-viewport-line', onEditorViewportLine)
   window.removeEventListener(SHARE_OPEN_FILE_EVENT, onShareOpenFile)
   window.removeEventListener('popstate', onPopState)
 })
