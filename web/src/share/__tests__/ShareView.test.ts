@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // ── Child component mocks ──────────────────────────────────────────────────
 // ShareView mounts a chain of heavy preview components (PdfPreview pulls
@@ -73,6 +75,13 @@ const asyncComponentStubs = {
   },
   OfficePreview: baseStub('OfficePreview'),
   OpenApiPreview: baseStub('OpenApiPreview'),
+  // Read-only canvas viewer (the real one is an iframe host). Exposes the
+  // readonly prop so the share page can be held to mounting it read-only.
+  ExcalidrawViewer: {
+    name: 'ExcalidrawViewer',
+    props: { file: Object, readonly: { type: Boolean, default: false } },
+    template: '<div class="excalidrawviewer-stub" :data-readonly="String(readonly)" />',
+  },
 }
 
 import ShareView from '@/share/ShareView.vue'
@@ -434,6 +443,129 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
   })
 })
 
+describe('ShareView — TOC follows the scroll position', () => {
+  /** jsdom has no layout, so heading geometry is injected: each heading reports
+   *  a viewport top derived from the current scroll offset. */
+  function rect(top: number): DOMRect {
+    return {
+      top, bottom: top + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y: top,
+      toJSON: () => ({}),
+    } as DOMRect
+  }
+
+  function addHeading(content: HTMLElement, id: string, viewportTop: () => number) {
+    const el = document.createElement('h2')
+    el.id = id
+    content.appendChild(el)
+    el.getBoundingClientRect = () => rect(viewportTop())
+    return el
+  }
+
+  /** One animation frame — the scroll handler throttles through rAF. */
+  async function nextFrame() {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  }
+
+  /** Mount a doc with three sections and wire their geometry to `state`. */
+  async function mountWithSections() {
+    const wrapper = await mountShare({
+      name: 'doc.md',
+      path: '/repo/doc.md',
+      content: '# Alpha\n\nbody\n\n## Beta\n\nbody\n\n## Gamma\n\nbody',
+    })
+    const content = wrapper.find('.share-content').element as HTMLElement
+    const state = { scrollTop: 0 }
+    content.getBoundingClientRect = () => rect(0)
+    // jsdom does not implement Element.scrollTo (the TOC jump uses it).
+    content.scrollTo = vi.fn()
+    // Document tops of the three headings, in page coordinates.
+    const tops: Record<string, number> = { alpha: 20, beta: 600, gamma: 1200 }
+    for (const id of Object.keys(tops)) addHeading(content, id, () => tops[id] - state.scrollTop)
+    return { wrapper, content, state }
+  }
+
+  it('highlights the section whose heading last passed the top of the viewport', async () => {
+    const { wrapper, content, state } = await mountWithSections()
+    const items = wrapper.findAll('.share-toc-item')
+    expect(items).toHaveLength(3)
+    // Opened at the top → first section is current.
+    expect(items[0].classes()).toContain('active')
+
+    state.scrollTop = 700
+    content.dispatchEvent(new Event('scroll'))
+    await nextFrame()
+    expect(items[1].classes()).toContain('active')
+    expect(items[0].classes()).not.toContain('active')
+
+    // Back to the very top: the first section wins again.
+    state.scrollTop = 0
+    content.dispatchEvent(new Event('scroll'))
+    await nextFrame()
+    expect(items[0].classes()).toContain('active')
+  })
+
+  it('keeps the clicked entry highlighted while the jump is still animating', async () => {
+    const { wrapper, content, state } = await mountWithSections()
+    const items = wrapper.findAll('.share-toc-item')
+
+    await items[2].trigger('click')
+    expect(items[2].classes()).toContain('active')
+
+    // The smooth scroll sweeps past the earlier sections; the follow must not
+    // steal the highlight back to one of them mid-flight.
+    state.scrollTop = 100
+    content.dispatchEvent(new Event('scroll'))
+    await nextFrame()
+    expect(items[2].classes()).toContain('active')
+  })
+
+  it('follows the source view through cm-editor-viewport-line', async () => {
+    const wrapper = await mountShare({
+      name: 'README.md',
+      path: '/repo/README.md',
+      content: '# Alpha\n\ntext\n\n## Beta\n\nmore',
+    })
+    const items = wrapper.findAll('.share-toc-item')
+    expect(items).toHaveLength(2)
+    // Opened at the top → first section is current.
+    expect(items[0].classes()).toContain('active')
+
+    // Rendered view has no editor: the event must not move the highlight.
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', { detail: { line: 6, path: '/repo/README.md' } }))
+    await nextTick()
+    expect(items[1].classes()).not.toContain('active')
+
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+
+    // Source view: highlight the deepest entry at or above the reported line.
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', { detail: { line: 6, path: '/repo/README.md' } }))
+    await nextTick()
+    expect(items[1].classes()).toContain('active')
+
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', { detail: { line: 2, path: '/repo/README.md' } }))
+    await nextTick()
+    expect(items[0].classes()).toContain('active')
+    expect(items[1].classes()).not.toContain('active')
+  })
+
+  it('ignores viewport-line events from another file', async () => {
+    const wrapper = await mountShare({
+      name: 'README.md',
+      path: '/repo/README.md',
+      content: '# Alpha\n\ntext\n\n## Beta\n\nmore',
+    })
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    const items = wrapper.findAll('.share-toc-item')
+
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', { detail: { line: 6, path: '/repo/other.md' } }))
+    await nextTick()
+    expect(items[1].classes()).not.toContain('active')
+    expect(items[0].classes()).toContain('active')
+  })
+})
+
 describe('ShareView — in-place navigation to referenced files', () => {
   // Files served by the mocked token endpoints, keyed by the ?path= value.
   const SHARED = { name: 'README.md', path: '/repo/README.md', content: '# Root\n[Guide](./docs/guide.md)' }
@@ -700,5 +832,169 @@ describe('ShareView — over-cap files fall back to download', () => {
     })
     expect(wrapper.find('.pdfpreview-stub').exists()).toBe(true)
     expect(wrapper.find('.share-unsupported').exists()).toBe(false)
+  })
+})
+
+describe('ShareView — Excalidraw canvas', () => {
+  it('renders a .xdraw scene in the canvas viewer, not as raw JSON', async () => {
+    const wrapper = await mountShare({
+      name: 'flow.xdraw',
+      path: '/repo/flow.xdraw',
+      content: '{"type":"excalidraw","version":2,"elements":[]}',
+      subtype: 'excalidraw',
+    })
+
+    const canvas = wrapper.find('.excalidrawviewer-stub')
+    expect(canvas.exists()).toBe(true)
+    // The share page is anonymous and read-only: the viewer must be mounted in
+    // read-only mode (no toolbars, no save button, no write endpoint).
+    expect(canvas.attributes('data-readonly')).toBe('true')
+    expect(wrapper.find('.cm-viewer-stub').exists()).toBe(false)
+    expect(wrapper.find('.share-unsupported').exists()).toBe(false)
+    // A diagram has no heading outline, and no source view to toggle to.
+    expect(wrapper.find('.share-view-toggle').exists()).toBe(false)
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(false)
+  })
+
+  it('treats .excalidraw exactly like .xdraw', async () => {
+    const wrapper = await mountShare({
+      name: 'flow.excalidraw',
+      path: '/repo/flow.excalidraw',
+      content: '{"type":"excalidraw","version":2,"elements":[]}',
+      subtype: 'excalidraw',
+    })
+    expect(wrapper.find('.excalidrawviewer-stub').exists()).toBe(true)
+  })
+})
+
+/**
+ * Preview parity guard: every file kind the in-app file viewer can render must
+ * also render on the public share page.
+ *
+ * Two halves, because either one alone can rot:
+ *   1. Behaviour — mount the share view with one fixture per kind and require a
+ *      real viewer, never the "download only" fallback card.
+ *   2. Source — read FileViewer.vue's preview branches and require each kind to
+ *      have a branch in ShareView.vue. This is what catches the NEXT type: add
+ *      `file.isSvg` to the app viewer and this fails until share handles it.
+ */
+const PREVIEW_FLAGS: Record<string, string> = {
+  isPdf: 'pdf',
+  isImage: 'image',
+  isAudio: 'audio',
+  isVideo: 'video',
+  isOffice: 'office',
+  isExcalidraw: 'excalidraw',
+}
+
+/** Branches that are fallbacks rather than previews (download cards). */
+const NON_PREVIEW_FLAGS = new Set(['isBinary'])
+
+const COMPUTED_KINDS: Array<{ kind: string; match: RegExp }> = [
+  { kind: 'markdown', match: /\bisMarkdown\b/ },
+  { kind: 'html', match: /\bisHtml\b/ },
+  { kind: 'openapi', match: /\bisOpenapi\b/ },
+  // The app calls its table branch `isTableRenderedView`; the share page uses
+  // `isTable` (rendered-vs-source is a single toggle there).
+  { kind: 'table', match: /\bisTable(RenderedView)?\b/ },
+]
+
+const PREVIEW_FIXTURES: Array<{
+  kind: string
+  file: Record<string, unknown>
+  selector: string
+}> = [
+  { kind: 'markdown', file: { name: 'a.md', path: '/repo/a.md', content: '# hi' }, selector: '.markdown-preview-stub' },
+  { kind: 'table', file: { name: 'a.csv', path: '/repo/a.csv', content: 'a,b\n1,2' }, selector: '.table-preview-stub' },
+  { kind: 'pdf', file: { name: 'a.pdf', path: '/repo/a.pdf', content: '' }, selector: '.pdfpreview-stub' },
+  { kind: 'image', file: { name: 'a.png', path: '/repo/a.png', content: '' }, selector: '.share-image-view' },
+  { kind: 'audio', file: { name: 'a.mp3', path: '/repo/a.mp3', content: '' }, selector: '.audiopreview-stub' },
+  { kind: 'video', file: { name: 'a.mp4', path: '/repo/a.mp4', content: '' }, selector: '.videopreview-stub' },
+  { kind: 'office', file: { name: 'a.docx', path: '/repo/a.docx', content: '' }, selector: '.officepreview-stub' },
+  { kind: 'openapi', file: { name: 'api.yaml', path: '/repo/api.yaml', content: 'openapi: 3.0.0', subtype: 'openapi' }, selector: '.openapipreview-stub' },
+  { kind: 'html', file: { name: 'a.html', path: '/repo/a.html', content: '<h1>x</h1>' }, selector: '.share-html-iframe' },
+  { kind: 'excalidraw', file: { name: 'flow.xdraw', path: '/repo/flow.xdraw', content: '{"type":"excalidraw","elements":[]}', subtype: 'excalidraw' }, selector: '.excalidrawviewer-stub' },
+  { kind: 'code', file: { name: 'a.go', path: '/repo/a.go', content: 'package main' }, selector: '.cm-viewer-stub' },
+]
+
+const REPO_ROOT = join(__dirname, '..', '..', '..', '..')
+
+/** Every v-if / v-else-if condition in a component source. */
+function branchConditions(source: string): string[] {
+  const out: string[] = []
+  const re = /v-(?:else-)?if="([^"]*)"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(source))) out.push(m[1])
+  return out
+}
+
+/** Preview kinds a component branches on (fallbacks excluded). */
+function previewKindsIn(source: string): Set<string> {
+  const kinds = new Set<string>()
+  for (const cond of branchConditions(source)) {
+    for (const [flag, kind] of Object.entries(PREVIEW_FLAGS)) {
+      // `file.isPdf` in the app viewer, `isExcalidraw` (a computed) in the
+      // share view — both are the same preview kind.
+      if (new RegExp(`\\b${flag}\\b`).test(cond)) kinds.add(kind)
+    }
+    for (const { kind, match } of COMPUTED_KINDS) {
+      if (match.test(cond)) kinds.add(kind)
+    }
+  }
+  return kinds
+}
+
+/** `file.isXxx` flags a component branches on, minus known fallbacks. */
+function fileFlagsIn(source: string): Set<string> {
+  const flags = new Set<string>()
+  for (const cond of branchConditions(source)) {
+    const re = /file\.(is[A-Z]\w*)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(cond))) {
+      if (!NON_PREVIEW_FLAGS.has(m[1])) flags.add(m[1])
+    }
+  }
+  return flags
+}
+
+describe('ShareView — preview parity with the in-app file viewer', () => {
+  it('covers every preview kind with a fixture (keeps the tables honest)', () => {
+    const expected = new Set([
+      ...Object.values(PREVIEW_FLAGS),
+      ...COMPUTED_KINDS.map((k) => k.kind),
+      'code',
+    ])
+    expect(new Set(PREVIEW_FIXTURES.map((f) => f.kind))).toEqual(expected)
+  })
+
+  it('renders a viewer — not the download card — for every preview kind', async () => {
+    for (const fixture of PREVIEW_FIXTURES) {
+      const wrapper = await mountShare(fixture.file)
+      expect(wrapper.find(fixture.selector).exists(), `${fixture.kind} must render on the share page`).toBe(true)
+      expect(wrapper.find('.share-unsupported').exists(), `${fixture.kind} must not fall back to download`).toBe(false)
+      wrapper.unmount()
+      const idx = mountedWrappers.findIndex((w) => w === wrapper)
+      if (idx >= 0) mountedWrappers.splice(idx, 1)
+    }
+  })
+
+  it('has a share branch for every preview branch in FileViewer.vue', () => {
+    const appSource = readFileSync(join(REPO_ROOT, 'web/src/components/file/FileViewer.vue'), 'utf8')
+    const shareSource = readFileSync(join(REPO_ROOT, 'web/src/share/ShareView.vue'), 'utf8')
+
+    const shareKinds = previewKindsIn(shareSource)
+    for (const kind of previewKindsIn(appSource)) {
+      expect(shareKinds.has(kind), `ShareView.vue must render "${kind}" (FileViewer.vue previews it)`).toBe(true)
+    }
+  })
+
+  it('fails loudly when the app viewer gains an unregistered preview flag', () => {
+    // The registry above is the contract: a new `file.isXxx` branch in
+    // FileViewer.vue must be added here AND given a share branch, otherwise it
+    // silently degrades to a download card for every shared link.
+    const appSource = readFileSync(join(REPO_ROOT, 'web/src/components/file/FileViewer.vue'), 'utf8')
+    for (const flag of fileFlagsIn(appSource)) {
+      expect(Object.keys(PREVIEW_FLAGS), `register file.${flag} in PREVIEW_FLAGS and support it in ShareView.vue`).toContain(flag)
+    }
   })
 })

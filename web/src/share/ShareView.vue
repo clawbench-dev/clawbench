@@ -150,6 +150,14 @@
             :file="file"
           />
 
+          <!-- Excalidraw canvas. The in-app viewer IS an editor (there is no
+               browse mode), so the share page mounts it read-only: view mode
+               only (pan/zoom), no toolbars, no save button, and no editor
+               registration on the shared back-gesture state. -->
+          <div v-else-if="isExcalidraw && canRenderInline" class="share-fill-viewer">
+            <ExcalidrawViewer :file="file" :readonly="true" />
+          </div>
+
           <!-- OpenAPI / Swagger spec (rendered docs) -->
           <div v-else-if="isOpenapi && canRenderInline && viewMode === 'rendered'" class="share-fill-viewer">
             <OpenApiPreview :file="file" />
@@ -275,6 +283,8 @@ import TablePreviewBody from '@/components/file/TablePreviewBody.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/CodeMirrorViewer.vue') }))
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
+// Same vendor iframe the app mounts for .excalidraw/.xdraw, in read-only mode.
+const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/ExcalidrawViewer.vue') }))
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadUrlWithProgress } from '@/utils/download.ts'
 import { flashElement } from '@/utils/domFlash'
@@ -432,6 +442,10 @@ const isHtml = computed(() => {
 
 const isOpenapi = computed(() => file.value?.subtype === 'openapi' || false)
 
+/** Excalidraw scene (.excalidraw / .xdraw). The backend reports the subtype by
+ *  extension, exactly like the app's file store does. */
+const isExcalidraw = computed(() => file.value?.isExcalidraw === true)
+
 const isTable = computed(() => {
   if (!file.value) return false
   return !!getFileType(file.value.name)?.isTable
@@ -460,6 +474,9 @@ const showToggleView = computed(() =>
  *  jumps. */
 const showRawSourceView = computed(() => {
   if (!isTextContent.value) return false
+  // A diagram is rendered by the canvas viewer, never as its JSON source: the
+  // app has no source mode for it either.
+  if (isExcalidraw.value) return false
   if (isMarkdown.value || isHtml.value || isOpenapi.value || isTable.value) return viewMode.value === 'raw'
   return true
 })
@@ -488,6 +505,9 @@ const hasToc = computed(() => {
   // sidebar (fileSupportsToc returns false for openapi in rendered view),
   // so no heading outline is extracted or shown.
   if (file.value.subtype === 'openapi') return false
+  // A canvas has no headings to outline — and the scene JSON would produce a
+  // bogus (or empty) outline.
+  if (isExcalidraw.value) return false
   // HTML rendered preview is a sandboxed <iframe srcdoc>: its inner DOM is
   // unreachable from here, so a source-derived outline can neither index the
   // rendered headings nor jump to them. Hide the TOC in that mode — it comes

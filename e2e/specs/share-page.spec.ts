@@ -1,4 +1,7 @@
 import { test, expect } from '../fixtures'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 /**
  * The public share page is served to an ANONYMOUS reader, and the shell is a
@@ -254,6 +257,66 @@ test.describe('Shared folder', () => {
       expect(escaped.status()).toBe(404)
     } finally {
       await anon.close()
+    }
+  })
+})
+
+/**
+ * Shared Excalidraw scene (.xdraw / .excalidraw).
+ *
+ * The in-app viewer IS an editor, so the share page mounts the same iframe host
+ * with `readonly`: Excalidraw's view mode (pan/zoom only), no toolbars, no save
+ * button. Two regressions are silent and both are checked here:
+ *
+ *   - the branch disappears and a shared diagram renders as its raw JSON source
+ *     (what it did before the canvas was supported);
+ *   - the read-only flag is dropped, handing an ANONYMOUS reader the full editor
+ *     whose save button has no endpoint to write to.
+ *
+ * jsdom cannot run the vendor React build, so this has to be a real browser.
+ */
+test.describe('Shared Excalidraw scene', () => {
+  test('renders the canvas read-only instead of the raw JSON source', async ({ page }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'clawbench-xdraw-'))
+    const filePath = join(dir, 'scene.xdraw')
+    writeFileSync(
+      filePath,
+      JSON.stringify({ type: 'excalidraw', version: 2, source: 'e2e', elements: [], appState: {}, files: {} }),
+    )
+
+    try {
+      const shared = await page.evaluate(async (path) => {
+        const resp = await fetch('/api/share', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path }),
+        })
+        if (!resp.ok) throw new Error(`share: ${resp.status}`)
+        return (await resp.json()) as { token: string; path: string }
+      }, filePath)
+
+      const anon = await page.context().browser()!.newContext()
+      try {
+        const sharePage = await anon.newPage()
+        await sharePage.goto(shared.path)
+
+        // The canvas host is mounted (not the code viewer that renders JSON).
+        await expect(sharePage.locator('.excalidraw-viewer iframe.excalidraw-frame')).toBeVisible({ timeout: 15000 })
+        await expect(sharePage.locator('.cm-editor')).toHaveCount(0)
+
+        // The vendor bundle really mounted, and it mounted in VIEW MODE: that
+        // class is applied from `viewModeEnabled`, i.e. from our readonly flag.
+        const frame = sharePage.frameLocator('iframe.excalidraw-frame')
+        await expect(frame.locator('.excalidraw')).toBeVisible({ timeout: 30000 })
+        await expect(frame.locator('.excalidraw--view-mode')).toHaveCount(1)
+
+        // A diagram has no heading outline, so no TOC rail either.
+        await expect(sharePage.locator('.share-toc')).toHaveCount(0)
+      } finally {
+        await anon.close()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
