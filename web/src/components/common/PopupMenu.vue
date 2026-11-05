@@ -320,6 +320,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .popup-menu {
+  /* `position: fixed` must come from the CLASS, not only from the inline style
+     the position pass writes. Before that first pass runs the element has no
+     inline position, and the containing-block probe (utils/fixedPosition.ts)
+     clones it: a static clone is a box in normal flow, so the probe measured
+     the menu's own flow position as the containing block instead of the
+     viewport. The error is exactly the menu's own height, which for a short
+     menu stays INSIDE the viewport — so the sanity gate does not catch it and
+     the popup opens one menu-height too high, on top of its trigger. It looked
+     correct from the second open on, because by then the inline `position:
+     fixed` from the previous open was still in place. */
+  position: fixed;
   background: var(--bg-secondary, #fff);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm);
