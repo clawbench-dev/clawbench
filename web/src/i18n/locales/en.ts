@@ -4504,6 +4504,8 @@ export default {
         updated: '{kind} updated',
         notGenerated: 'Not generated yet',
         noSource: 'No source available',
+        noSourceTranscript: 'No speech was recognized — the transcript cannot be generated',
+        noSourceUpstream: 'No transcript content — nothing to generate from',
         stale: '{upstream} is newer',
       },
       regen: {

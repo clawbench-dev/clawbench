@@ -4494,6 +4494,8 @@ export default {
         updated: '{kind}已更新',
         notGenerated: '还没有生成',
         noSource: '没有可用的来源',
+        noSourceTranscript: '没有识别到语音内容，无法生成转写',
+        noSourceUpstream: '没有可用的转写内容，无法生成',
         stale: '{upstream}已更新',
       },
       regen: {
