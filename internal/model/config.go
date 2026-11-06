@@ -471,10 +471,10 @@ type STTConfig struct {
 
 	// Free-dialog mode: keep the microphone open, send on a trigger word or a
 	// long pause, and resume listening once the reply has been read out.
-	TriggerWords  string `yaml:"trigger_words"`   // Comma-separated send words (default: 发送,好了,就这样)
-	SilenceSendMs int    `yaml:"silence_send_ms"` // Pause that also sends, 0 = never (default: 3000)
-	BargeIn       string `yaml:"barge_in"`        // off | any | keyword (default: any)
-	BargeInWords  string `yaml:"barge_in_words"`  // Comma-separated interrupt words (default: 等等,停一下)
+	TriggerWords       string `yaml:"trigger_words"`        // Comma-separated send words (default: 发送,好了,就这样)
+	SilenceSendSeconds int    `yaml:"silence_send_seconds"` // Pause that also sends, 0 = never (default: 3)
+	BargeIn            string `yaml:"barge_in"`             // off | any | keyword (default: any)
+	BargeInWords       string `yaml:"barge_in_words"`       // Comma-separated interrupt words (default: 等等,停一下)
 }
 
 // FileSearchConfig holds configuration for the file search feature.

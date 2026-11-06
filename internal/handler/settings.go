@@ -124,7 +124,7 @@ var hotReloadFields = map[string]bool{
 	"stt.voice_gate":             true,
 	"stt.voice_gate_sensitivity": true,
 	"stt.trigger_words":          true,
-	"stt.silence_send_ms":        true,
+	"stt.silence_send_seconds":   true,
 	"stt.barge_in":               true,
 	"stt.barge_in_words":         true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
@@ -513,7 +513,7 @@ type configSTT struct {
 	VoiceGate            bool   `json:"voice_gate"`
 	VoiceGateSensitivity string `json:"voice_gate_sensitivity"`
 	TriggerWords         string `json:"trigger_words"`
-	SilenceSendMs        int    `json:"silence_send_ms"`
+	SilenceSendSeconds   int    `json:"silence_send_seconds"`
 	BargeIn              string `json:"barge_in"`
 	BargeInWords         string `json:"barge_in_words"`
 }
@@ -937,7 +937,7 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.voice_gate":                     true,
 	"stt.voice_gate_sensitivity":         true,
 	"stt.trigger_words":                  true,
-	"stt.silence_send_ms":                true,
+	"stt.silence_send_seconds":           true,
 	"stt.barge_in":                       true,
 	"stt.barge_in_words":                 true,
 	"rag.vector_enabled":                 true,
@@ -1148,7 +1148,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			VoiceGate:            cfg.STT.VoiceGate,
 			VoiceGateSensitivity: cfg.STT.VoiceGateSensitivity,
 			TriggerWords:         cfg.STT.TriggerWords,
-			SilenceSendMs:        cfg.STT.SilenceSendMs,
+			SilenceSendSeconds:   cfg.STT.SilenceSendSeconds,
 			BargeIn:              cfg.STT.BargeIn,
 			BargeInWords:         cfg.STT.BargeInWords,
 		},
@@ -1750,8 +1750,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				return fmt.Errorf("stt.barge_in must be one of: off,any,keyword")
 			}
 		}
-		if v, ok := sttVal["silence_send_ms"].(float64); ok && v < 0 {
-			return fmt.Errorf("stt.silence_send_ms must not be negative")
+		if v, ok := sttVal["silence_send_seconds"].(float64); ok && v < 0 {
+			return fmt.Errorf("stt.silence_send_seconds must not be negative")
 		}
 	}
 
@@ -2471,8 +2471,8 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := sttVal["trigger_words"].(string); ok {
 			cfg.STT.TriggerWords = v
 		}
-		if v, ok := sttVal["silence_send_ms"].(float64); ok {
-			cfg.STT.SilenceSendMs = int(v)
+		if v, ok := sttVal["silence_send_seconds"].(float64); ok {
+			cfg.STT.SilenceSendSeconds = int(v)
 		}
 		if v, ok := sttVal["barge_in"].(string); ok {
 			cfg.STT.BargeIn = v

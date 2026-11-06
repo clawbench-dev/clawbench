@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -337,6 +338,10 @@ const sttStreamFinalTimeout = 15 * time.Second
 // sttStreamRelay owns one live-streaming exchange: the engine session, the
 // audio accounting and the result forwarder.
 type sttStreamRelay struct {
+	// Diagnostics: what arrived, and how loud. See close().
+	frames  int
+	peakRMS float64
+
 	conn     *websocket.Conn
 	provider stt.StreamingSTTProvider
 	opts     stt.StreamOptions
@@ -393,7 +398,17 @@ func (r *sttStreamRelay) handle(ctx context.Context, mt websocket.MessageType, m
 // writeAudio forwards one PCM frame, opening the session on the first frame so
 // a preceding start control frame can still shape the options.
 func (r *sttStreamRelay) writeAudio(ctx context.Context, pcm []byte) error {
+	if r.total == 0 {
+		// One line per recording, and the only server-side evidence that the
+		// client is actually producing audio. Without it "the microphone hears
+		// nothing" and "the engine returns nothing" look identical from here.
+		slog.Info("stt ws: audio started", slog.Int("first_frame_bytes", len(pcm)))
+	}
 	r.total += len(pcm)
+	r.frames++
+	if peak := pcmPeakRMS(pcm); peak > r.peakRMS {
+		r.peakRMS = peak
+	}
 	if r.total > sttWSMaxAudioBytes {
 		return errors.New("audio exceeds limit")
 	}
@@ -433,6 +448,9 @@ func (r *sttStreamRelay) handleControl(msg []byte) (bool, error) {
 func (r *sttStreamRelay) openSession(ctx context.Context) error {
 	session, err := r.provider.OpenStream(ctx, r.opts)
 	if err != nil {
+		// The engine failing to open is the difference between "the microphone
+		// is silent" and "the service rejected us"; say which one happened.
+		slog.Warn("stt ws: engine session failed", slog.String("error", err.Error()))
 		return err
 	}
 	r.session = session
@@ -466,6 +484,36 @@ func (r *sttStreamRelay) close() {
 	if r.session != nil {
 		r.session.Close()
 	}
+	// What the microphone actually delivered, so a silent client is
+	// distinguishable from an engine that understood nothing. peak_rms is on
+	// the same 0..1 scale as the client's gate: speech is ~0.02-0.2, room tone
+	// below ~0.002, a muted device ~0.
+	slog.Info("stt ws: session ended",
+		slog.Int("bytes", r.total),
+		slog.Int("frames", r.frames),
+		slog.Float64("peak_rms", math.Round(r.peakRMS*10000)/10000),
+	)
+}
+
+// pcmPeakRMS is the loudest 16-bit sample magnitude in one frame, as a 0..1
+// fraction of full scale. Peak rather than average: a frame of speech with
+// pauses would otherwise average down to nothing.
+func pcmPeakRMS(pcm []byte) float64 {
+	if len(pcm) < 2 {
+		return 0
+	}
+	var peak float64
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8)
+		f := float64(v) / 32768
+		if f < 0 {
+			f = -f
+		}
+		if f > peak {
+			peak = f
+		}
+	}
+	return peak
 }
 
 // applySTTStreamOptions overlays the start control frame onto the defaults.

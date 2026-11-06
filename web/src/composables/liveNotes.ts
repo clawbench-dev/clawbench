@@ -47,12 +47,12 @@ export const NOTES_MIN_SEGMENT_MS = 4_000
 export const NOTES_SILENCE_HOLD_MS = 450
 
 /**
- * RMS below which a 100ms window counts as silence (≈ -40 dBFS).
+ * The value 听记 originally used as its silence floor (≈ -40 dBFS).
  *
- * Kept as the documented "standard" value for 听记: the live threshold now comes
- * from the shared sensitivity setting (`SENSITIVITY_RMS.standard` is this same
- * number), but this constant stays exported because it is the reference the
- * tests and the design notes quote.
+ * No longer the live threshold: it now comes from the shared sensitivity
+ * setting (`SENSITIVITY_RMS`). The old number was lowered after measuring that
+ * it cut most of ordinary speech, so this constant is kept only as the
+ * historical reference the design notes quote.
  */
 export const NOTES_SILENCE_RMS = 0.01
 

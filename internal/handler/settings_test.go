@@ -3040,8 +3040,8 @@ func TestServeConfigPatch_STTVoiceSettingsValidated(t *testing.T) {
 		},
 		{
 			name: "negative pause",
-			body: `{"stt":{"silence_send_ms":-1}}`,
-			want: "stt.silence_send_ms must not be negative",
+			body: `{"stt":{"silence_send_seconds":-1}}`,
+			want: "stt.silence_send_seconds must not be negative",
 		},
 	}
 	for _, tt := range tests {
@@ -3072,7 +3072,7 @@ func TestServeConfigPatch_STTVoiceSettingsRoundTrip(t *testing.T) {
 
 	body := `{"stt":{"mic_echo_cancel":false,"mic_band_filter":false,"voice_gate":false,` +
 		`"voice_gate_sensitivity":"aggressive","trigger_words":"开工,收工",` +
-		`"silence_send_ms":0,"barge_in":"keyword","barge_in_words":"打住"}}`
+		`"silence_send_seconds":0,"barge_in":"keyword","barge_in_words":"打住"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -3084,7 +3084,7 @@ func TestServeConfigPatch_STTVoiceSettingsRoundTrip(t *testing.T) {
 	assert.False(t, model.ConfigInstance.STT.VoiceGate)
 	assert.Equal(t, "aggressive", model.ConfigInstance.STT.VoiceGateSensitivity)
 	assert.Equal(t, "开工,收工", model.ConfigInstance.STT.TriggerWords)
-	assert.Equal(t, 0, model.ConfigInstance.STT.SilenceSendMs)
+	assert.Equal(t, 0, model.ConfigInstance.STT.SilenceSendSeconds)
 	assert.Equal(t, "keyword", model.ConfigInstance.STT.BargeIn)
 	assert.Equal(t, "打住", model.ConfigInstance.STT.BargeInWords)
 }

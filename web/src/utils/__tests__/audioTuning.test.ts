@@ -27,7 +27,7 @@ describe('readVoiceTuning', () => {
     // `{"stt": {"provider": ...}}` — NOT a flat map of dotted keys. Reading
     // flat keys yields undefined for every field, which leaves the defaults in
     // force forever while the settings page happily saves.
-    const t = readVoiceTuning({ stt: { trigger_words: '开工', silence_send_ms: 1500, voice_gate: false } })
+    const t = readVoiceTuning({ stt: { trigger_words: '开工', silence_send_seconds: 1.5, voice_gate: false } })
     expect(t.triggerWords).toEqual(['开工'])
     expect(t.silenceSendMs).toBe(1500)
     expect(t.voiceGate).toBe(false)
@@ -37,7 +37,7 @@ describe('readVoiceTuning', () => {
     // Guards against someone "fixing" this back to flat lookups: with a flat
     // key the value must NOT be picked up, because the real payload cannot
     // produce one.
-    expect(readVoiceTuning({ 'stt.silence_send_ms': 1500 }).silenceSendMs).toBe(3000)
+    expect(readVoiceTuning({ 'stt.silence_send_seconds': 3 }).silenceSendMs).toBe(3000)
   })
 
   it('returns the shipped defaults for an undefined config (not loaded yet)', () => {
@@ -72,14 +72,19 @@ describe('readVoiceTuning', () => {
     expect(readVoiceTuning({ stt: { voice_gate_sensitivity: 'wild' } }).sensitivity).toBe('standard')
   })
 
-  it('keeps 0 for silence_send_ms instead of restoring the default', () => {
-    // 0 is the documented "trigger words only" value; treating it as absent
-    // would silently re-enable auto-send for a user who turned it off.
-    expect(readVoiceTuning({ stt: { silence_send_ms: 0 } }).silenceSendMs).toBe(0)
+  it('converts the stored seconds into the milliseconds the loop uses', () => {
+    expect(readVoiceTuning({ stt: { silence_send_seconds: 5 } }).silenceSendMs).toBe(5000)
+    expect(readVoiceTuning({ stt: { silence_send_seconds: 0.5 } }).silenceSendMs).toBe(500)
   })
 
-  it('rejects a negative silence_send_ms', () => {
-    expect(readVoiceTuning({ stt: { silence_send_ms: -5 } }).silenceSendMs).toBe(3000)
+  it('keeps 0 for silence_send_seconds instead of restoring the default', () => {
+    // 0 is the documented "trigger words only" value; treating it as absent
+    // would silently re-enable auto-send for a user who turned it off.
+    expect(readVoiceTuning({ stt: { silence_send_seconds: 0 } }).silenceSendMs).toBe(0)
+  })
+
+  it('rejects a negative silence_send_seconds', () => {
+    expect(readVoiceTuning({ stt: { silence_send_seconds: -5 } }).silenceSendMs).toBe(3000)
   })
 
   it('falls back to "any" for an unknown barge-in mode', () => {
@@ -142,9 +147,13 @@ describe('rmsThreshold', () => {
     expect(SENSITIVITY_RMS.standard).toBeLessThan(SENSITIVITY_RMS.aggressive)
   })
 
-  it('keeps the value 听记 has always used as "standard"', () => {
-    // Changing this silently changes every existing meeting's segmentation.
-    expect(SENSITIVITY_RMS.standard).toBe(0.01)
+  it('keeps "standard" low enough that ordinary speech is not dropped', () => {
+    // It used to be 0.01 (the value 听记 shipped with). Measured on a real
+    // capture, that line cut roughly four out of five 100 ms windows of speech
+    // — the gate silently swallowed the sentence, which is far worse than
+    // paying for a little silence. It is now just above room tone.
+    expect(SENSITIVITY_RMS.standard).toBeLessThanOrEqual(0.005)
+    expect(SENSITIVITY_RMS.standard).toBeGreaterThan(0.001)
   })
 
   it('resolves through the tuning', () => {

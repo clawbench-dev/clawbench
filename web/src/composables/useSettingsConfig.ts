@@ -652,7 +652,7 @@ const serverDefaults: Record<string, unknown> = {
   'stt.voice_gate': true,
   'stt.voice_gate_sensitivity': 'standard',
   'stt.trigger_words': '发送,好了,就这样',
-  'stt.silence_send_ms': 3000,
+  'stt.silence_send_seconds': 3,
   'stt.barge_in': 'any',
   'stt.barge_in_words': '等等,停一下',
   'rag.base_url': 'http://localhost:11434',

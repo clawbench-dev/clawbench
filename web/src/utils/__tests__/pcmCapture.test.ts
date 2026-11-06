@@ -128,15 +128,15 @@ describe('PcmStreamer', () => {
   })
 
   it('honours the sensitivity setting when deciding what is speech', async () => {
+    // ~0.0046 RMS: above the conservative floor, below the aggressive one.
     const onFrame = vi.fn()
-    // ~0.012 RMS: above standard, below aggressive.
     const s = new PcmStreamer({
       stream,
       tuning: { ...VOICE_TUNING_DEFAULTS, sensitivity: 'aggressive' },
       onFrame,
     })
     await s.start()
-    workletNode.port.onmessage!({ data: frameAt(400) })
+    workletNode.port.onmessage!({ data: frameAt(150) })
     expect(onFrame).not.toHaveBeenCalled()
     s.stop()
 
@@ -147,9 +147,50 @@ describe('PcmStreamer', () => {
       onFrame: onFrame2,
     })
     await s2.start()
-    workletNode.port.onmessage!({ data: frameAt(400) })
+    workletNode.port.onmessage!({ data: frameAt(150) })
     expect(onFrame2).toHaveBeenCalledTimes(1)
     s2.stop()
+  })
+
+  it('sends the frames that led into the first loud one', async () => {
+    // The gate can only react to a frame that is already loud, so without a
+    // pre-roll the first syllable is always lost ("帮我看下" arrives as "看下").
+    const onFrame = vi.fn()
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame })
+    await s.start()
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    expect(onFrame).not.toHaveBeenCalled()
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    // Three withheld frames plus the loud one.
+    expect(onFrame).toHaveBeenCalledTimes(4)
+    s.stop()
+  })
+
+  it('keeps sending for a moment after the level drops', async () => {
+    // Word endings trail off well below the threshold; cutting immediately
+    // clips the last syllable.
+    const onFrame = vi.fn()
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame })
+    await s.start()
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    // Second frame is inside the hangover window.
+    expect(onFrame).toHaveBeenCalledTimes(2)
+    s.stop()
+  })
+
+  it('does not grow the pre-roll buffer without bound', async () => {
+    // A long silence must not accumulate every withheld frame in memory.
+    const onFrame = vi.fn()
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame })
+    await s.start()
+    for (let i = 0; i < 50; i++) workletNode.port.onmessage!({ data: frameAt(0) })
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    // At most PREROLL_FRAMES (3) plus the loud one — not 51.
+    expect(onFrame.mock.calls.length).toBeLessThanOrEqual(4)
+    s.stop()
   })
 
   it('builds a high-pass and a low-pass when the band filter is on', async () => {

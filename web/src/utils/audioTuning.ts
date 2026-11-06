@@ -35,7 +35,7 @@ export interface VoiceTuning {
   sensitivity: VoiceSensitivity
   /** Saying any of these sends the message immediately. */
   triggerWords: string[]
-  /** A pause this long after speech also sends it. 0 disables. */
+  /** A pause this long after the last recognised word also sends it. 0 disables. */
   silenceSendMs: number
   bargeIn: BargeInMode
   /** Only used when `bargeIn === 'keyword'`. */
@@ -52,9 +52,15 @@ export interface VoiceTuning {
  * 0.02; a soft-spoken user at arm's length lands around 0.012.
  */
 export const SENSITIVITY_RMS: Record<VoiceSensitivity, number> = {
-  conservative: 0.006,
-  standard: 0.01,
-  aggressive: 0.02,
+  // Lowered from 0.006 / 0.01 / 0.02 after measuring a real capture: at 0.01
+  // roughly four out of five 100 ms windows of ordinary speech-with-pauses fell
+  // below the line, and with noise suppression engaged the quiet half of a
+  // sentence is even lower. A gate that drops the sentence is worse than no
+  // gate at all, so these now sit just above true room tone (≈0.0005–0.0015)
+  // and leave the engine's own VAD to do the fine judgement.
+  conservative: 0.0015,
+  standard: 0.003,
+  aggressive: 0.008,
 }
 
 export const DEFAULT_TRIGGER_WORDS = ['发送', '好了', '就这样']
@@ -149,7 +155,10 @@ export function readSttField(config: Record<string, unknown> | undefined | null,
 export function readVoiceTuning(config: Record<string, unknown> | undefined | null): VoiceTuning {
   const cfg = sttSection(config)
   const d = VOICE_TUNING_DEFAULTS
-  const silenceRaw = Number(cfg.silence_send_ms)
+  // Stored in seconds (what the settings page shows); the loop below works in
+  // milliseconds because everything else here — the gate, the hangover, the
+  // keepalive — is measured that way.
+  const silenceRaw = Number(cfg.silence_send_seconds)
   return {
     echoCancellation: asBool(cfg.mic_echo_cancel, d.echoCancellation),
     noiseSuppression: asBool(cfg.mic_noise_suppress, d.noiseSuppression),
@@ -158,7 +167,7 @@ export function readVoiceTuning(config: Record<string, unknown> | undefined | nu
     voiceGate: asBool(cfg.voice_gate, d.voiceGate),
     sensitivity: asSensitivity(cfg.voice_gate_sensitivity),
     triggerWords: parseWordList(cfg.trigger_words, d.triggerWords),
-    silenceSendMs: Number.isFinite(silenceRaw) && silenceRaw >= 0 ? silenceRaw : d.silenceSendMs,
+    silenceSendMs: Number.isFinite(silenceRaw) && silenceRaw >= 0 ? Math.round(silenceRaw * 1000) : d.silenceSendMs,
     bargeIn: asBargeIn(cfg.barge_in),
     bargeInWords: parseWordList(cfg.barge_in_words, d.bargeInWords),
   }

@@ -190,8 +190,8 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.STT.TriggerWords != "发送,好了,就这样" {
 		t.Errorf("STT.TriggerWords = %q, want the documented default", cfg.STT.TriggerWords)
 	}
-	if cfg.STT.SilenceSendMs != 3000 {
-		t.Errorf("STT.SilenceSendMs = %d, want 3000", cfg.STT.SilenceSendMs)
+	if cfg.STT.SilenceSendSeconds != 3 {
+		t.Errorf("STT.SilenceSendSeconds = %d, want 3", cfg.STT.SilenceSendSeconds)
 	}
 	if cfg.STT.BargeIn != "any" {
 		t.Errorf("STT.BargeIn = %q, want any", cfg.STT.BargeIn)
@@ -290,7 +290,7 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 
 	// Explicitly set values should be preserved
 	if cfg.Port != 3000 {
-		t.Errorf("Port = %d, want 3000 (explicitly set)", cfg.Port)
+		t.Errorf("Port = %d, want 3 (explicitly set)", cfg.Port)
 	}
 	if cfg.Password != "my-secret" {
 		t.Errorf("Password = %q, want %q (explicitly set)", cfg.Password, "my-secret")
@@ -317,11 +317,11 @@ func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
 
 	cfg := Config{}
 	ApplyDefaults(&cfg, map[string]bool{
-		"stt.mic_echo_cancel":    true,
-		"stt.mic_noise_suppress": true,
-		"stt.voice_gate":         true,
-		"stt.silence_send_ms":    true,
-		"stt.trigger_words":      true,
+		"stt.mic_echo_cancel":      true,
+		"stt.mic_noise_suppress":   true,
+		"stt.voice_gate":           true,
+		"stt.silence_send_seconds": true,
+		"stt.trigger_words":        true,
 	})
 
 	if cfg.STT.MicEchoCancel {
@@ -334,8 +334,8 @@ func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
 		t.Error("STT.VoiceGate = true, want false (explicitly set)")
 	}
 	// 0 is the documented "trigger words only" value and must survive as well.
-	if cfg.STT.SilenceSendMs != 0 {
-		t.Errorf("STT.SilenceSendMs = %d, want 0 (explicitly set)", cfg.STT.SilenceSendMs)
+	if cfg.STT.SilenceSendSeconds != 0 {
+		t.Errorf("STT.SilenceSendSeconds = %d, want 0 (explicitly set)", cfg.STT.SilenceSendSeconds)
 	}
 	// An explicitly cleared word list must stay cleared — otherwise the setting
 	// can never be emptied (the user deletes the words and the defaults return).

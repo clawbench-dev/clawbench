@@ -499,8 +499,8 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// Zero is a legitimate value ("a pause never sends"), so the default has to
 	// be applied on ABSENCE, not on the zero value — the same trap the bool
 	// switches above have.
-	if _, ok := presence["stt.silence_send_ms"]; !ok {
-		cfg.STT.SilenceSendMs = 3000
+	if _, ok := presence["stt.silence_send_seconds"]; !ok {
+		cfg.STT.SilenceSendSeconds = 3
 	}
 	if cfg.STT.BargeIn == "" {
 		cfg.STT.BargeIn = "any"

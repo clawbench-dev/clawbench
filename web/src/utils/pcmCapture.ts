@@ -73,7 +73,25 @@ registerProcessor('clawbench-pcm', ClawbenchPcm)
  * few seconds keeps the session alive at roughly 1% of the cost of streaming
  * silence continuously.
  */
-const KEEPALIVE_MS = 8000
+const KEEPALIVE_MS = 2000
+
+/**
+ * How long the gate stays open after the last loud frame.
+ *
+ * Word endings are quieter than word middles: "…好的" trails off well below the
+ * threshold. Cutting the moment the level drops clips the tail of the last
+ * syllable, and a recogniser with a clipped ending guesses.
+ */
+const HANGOVER_MS = 600
+
+/**
+ * How much gated-out audio is kept to prepend when speech starts.
+ *
+ * The gate can only react to a frame that is ALREADY loud, so without this the
+ * first syllable is always lost — "帮我看下" arrives as "看下". Three frames is
+ * 300 ms, enough to cover the attack of a word.
+ */
+const PREROLL_FRAMES = 3
 
 export interface PcmStreamerOptions {
   /** Microphone to capture from. The streamer does NOT stop its tracks. */
@@ -82,8 +100,11 @@ export interface PcmStreamerOptions {
   /** Called for every frame that passed the voice gate. */
   onFrame: (frame: ArrayBuffer) => void
   /**
-   * Called for every frame with its RMS, gate or no gate. Free-dialog mode uses
-   * this to notice "the user stopped talking"; dictation does not need it.
+   * Called for every frame with its RMS, gate or no gate.
+   *
+   * Not a silence detector: room tone never reaches zero, so anything that
+   * restarts a "user stopped talking" timer from this will restart it forever.
+   * Free-dialog mode measures its pause from recognition output instead.
    */
   onLevel?: (rms: number) => void
 }
@@ -103,6 +124,10 @@ export class PcmStreamer {
   private stopped = false
   /** When a frame was last handed to the sink (epoch ms). */
   private lastSentAt = 0
+  /** Gate stays open until this time (epoch ms) — see HANGOVER_MS. */
+  private gateOpenUntil = 0
+  /** Frames withheld while the gate was shut, oldest first — see PREROLL_FRAMES. */
+  private preroll: ArrayBuffer[] = []
 
   constructor(private readonly opts: PcmStreamerOptions) {}
 
@@ -125,8 +150,11 @@ export class PcmStreamer {
     }
 
     // Seed the keepalive clock: starting at 0 would make the very first silent
-    // frame look like it had been withheld for 8 seconds and leak it through.
+    // frame look like it had been withheld for a full interval and leak it
+    // through.
     this.lastSentAt = Date.now()
+    this.gateOpenUntil = 0
+    this.preroll = []
     const source = ctx.createMediaStreamSource(this.opts.stream)
     let tail: AudioNode = source
     if (this.opts.tuning.bandFilter) {
@@ -162,9 +190,20 @@ export class PcmStreamer {
       const rms = rmsFromInt16(new Int16Array(buf))
       this.opts.onLevel?.(rms)
       const now = Date.now()
-      if (gate && rms < threshold) {
-        // Silence is skipped, but never indefinitely — see KEEPALIVE_MS.
-        if (now - this.lastSentAt < KEEPALIVE_MS) return
+      if (gate && rms >= threshold) {
+        // Speech (re)starts: hand over the frames that led into it, then this
+        // one, and hold the gate open so the tail is not clipped either.
+        for (const pending of this.preroll) this.opts.onFrame(pending)
+        this.preroll = []
+        this.gateOpenUntil = now + HANGOVER_MS
+      } else if (gate && now <= this.gateOpenUntil) {
+        // Inside the hangover window: keep sending, this is the end of a word.
+      } else if (gate && now - this.lastSentAt < KEEPALIVE_MS) {
+        // Shut, and not yet time for the keepalive: hold the frame in case the
+        // next one is speech (see PREROLL_FRAMES).
+        this.preroll.push(buf)
+        if (this.preroll.length > PREROLL_FRAMES) this.preroll.shift()
+        return
       }
       this.lastSentAt = now
       this.opts.onFrame(buf)

@@ -178,16 +178,40 @@ export function stop(): void {
   phase.value = 'idle'
 }
 
-/** Arms the "a pause also sends" timer, restarting it on every frame. */
+/**
+ * Arms the "a pause also sends" timer, restarting it whenever new words arrive.
+ *
+ * Driven by the TRANSCRIPT, not by the microphone level. A microphone in a
+ * normal room never goes quiet — fan hum, a keyboard, a fridge two rooms away
+ * all keep the RMS above zero — so a level-driven timer restarts on every
+ * frame and the pause never fires. Recognition output only moves when something
+ * was actually understood, which is the signal the setting is really about.
+ */
 function restartSilenceTimer() {
   clearSilenceTimer()
   if (tuning.silenceSendMs <= 0) return
+  // Nothing to send yet: arming here would only burn a timer that expires into
+  // an empty utterance.
+  if (!utterance.trim()) return
   silenceTimer = setTimeout(() => {
     silenceTimer = null
     if (phase.value !== 'listening') return
     const text = utterance.trim()
     if (text) sendTurn(text)
   }, tuning.silenceSendMs)
+}
+
+/**
+ * Applies a new transcript, and re-arms the pause timer if it actually changed.
+ *
+ * Engines repeat the same cumulative partial while they chew on audio, so an
+ * unconditional re-arm would push the deadline out on every repeat.
+ */
+function applyTranscript(next: string): void {
+  if (next === utterance) return
+  utterance = next
+  liveTranscript.value = next
+  restartSilenceTimer()
 }
 
 /** Sends the current utterance as a turn and leaves the microphone closed. */
@@ -237,16 +261,14 @@ async function openListening(): Promise<void> {
       const msg = JSON.parse(e.data as string) as { type?: string; text?: string; final?: string; message?: string }
       if (msg.type === 'partial') {
         // Cumulative transcript so far: replace, never append.
-        utterance = msg.text ?? ''
-        liveTranscript.value = utterance
+        applyTranscript(msg.text ?? '')
         checkTrigger()
       } else if (msg.type === 'text' && msg.text) {
-        utterance += msg.text
-        liveTranscript.value = utterance
+        applyTranscript(utterance + msg.text)
         checkTrigger()
       } else if (msg.type === 'done') {
         const final = (msg.final ?? '').trim()
-        if (final) utterance = final
+        if (final) applyTranscript(final)
         checkTrigger()
       } else if (msg.type === 'error') {
         lastError.value = msg.message || gt('chat.voice.transcribeFailed')
@@ -263,11 +285,6 @@ async function openListening(): Promise<void> {
       tuning,
       onFrame: (frame) => {
         if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame)
-      },
-      onLevel: (rms) => {
-        // Any level above the gate threshold restarts the pause timer: the user
-        // is still talking. Frames below it never reach this callback.
-        if (phase.value === 'listening' && rms > 0) restartSilenceTimer()
       },
     })
     streamer = s
@@ -288,7 +305,8 @@ async function openListening(): Promise<void> {
     if (phase.value === 'listening') stop()
   }
   phase.value = 'listening'
-  restartSilenceTimer()
+  // No timer here: the pause is measured from the first recognised word (see
+  // restartSilenceTimer), and the utterance is empty until one arrives.
 }
 
 /**
@@ -317,9 +335,7 @@ function checkTrigger() {
   // A bare "发送" sends nothing — there was no content, and sending an empty
   // message would start a turn the user did not ask for. Clear it so the next
   // utterance does not carry the trigger word along.
-  utterance = ''
-  liveTranscript.value = ''
-  restartSilenceTimer()
+  applyTranscript('')
 }
 
 /**
@@ -391,6 +407,14 @@ export async function startFreeDialog(opts: {
   onSend = opts.onSend
   lastError.value = ''
   tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
+  // The loop is built around the reply being read out: it waits for playback
+  // before reopening the microphone, and interrupting only means anything while
+  // something is being spoken. Starting with read-aloud off leaves a mode that
+  // sends and listens with no voice in between — not what "对话" means.
+  // Turning the mode OFF does not turn read-aloud back off: the user asked for
+  // it by starting the mode, and silently reversing a preference is worse than
+  // leaving one switch on.
+  if (!autoSpeech.enabled.value) autoSpeech.toggle()
   await openListening()
 }
 

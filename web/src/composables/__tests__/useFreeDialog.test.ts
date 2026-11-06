@@ -96,6 +96,7 @@ function installFakes() {
       state,
       speakingText,
       isBusy,
+      toggle: vi.fn(() => { enabled.value = !enabled.value }),
       stopAudio: vi.fn(() => { state.value = 'idle' }),
       speakMessage: vi.fn(),
     }
@@ -113,7 +114,7 @@ function installFakes() {
           voice_gate: true,
           voice_gate_sensitivity: 'standard',
           trigger_words: '发送',
-          silence_send_ms: 3000,
+          silence_send_seconds: 3,
           barge_in: 'any',
           barge_in_words: '等等',
           mic_echo_cancel: true,
@@ -154,6 +155,29 @@ describe('useFreeDialog', () => {
     vi.doUnmock('@/composables/useAutoSpeech')
     vi.doUnmock('@/composables/useSettingsConfig')
     vi.doUnmock('@/composables/useToast')
+  })
+
+  it('turns read-aloud on when the mode starts', async () => {
+    // The loop waits for playback before reopening the microphone; starting
+    // with read-aloud off leaves a mode that sends and listens with no voice.
+    const { startFreeDialog } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = false
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(autoSpeech.enabled.value).toBe(true)
+  })
+
+  it('leaves read-aloud on after the mode stops', async () => {
+    // It was turned on because the user started the mode; reversing their
+    // preference on exit is a surprise, not a courtesy.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = false
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    mod.stop()
+    expect(autoSpeech.enabled.value).toBe(true)
   })
 
   it('starts idle', async () => {
@@ -204,19 +228,51 @@ describe('useFreeDialog', () => {
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
   })
 
-  it('restarts the pause timer while the user keeps talking', async () => {
+  it('restarts the pause timer when more words are recognised', async () => {
     const onSend = vi.fn()
     const { startFreeDialog } = await import('../useFreeDialog')
     await startFreeDialog({ sessionId: 's1', onSend })
     await flush()
-    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
-    speak('第一句话', 'text')
+    speak('第一句话', 'partial')
     vi.advanceTimersByTime(2000)
-    // A frame above the gate threshold means "still talking" — the pause must
-    // start over, or a slow speaker gets cut off mid-sentence.
-    streamer.emit(0.5)
+    // More words arrived: the user is still talking, so the pause starts over —
+    // otherwise a slow speaker gets cut off mid-sentence.
+    speak('第一句话，还有', 'partial')
     vi.advanceTimersByTime(2000)
     expect(onSend).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1000)
+    expect(onSend).toHaveBeenCalledWith('第一句话，还有')
+  })
+
+  it('ignores room noise: the pause is measured from recognised words', async () => {
+    // The bug this guards. The timer used to restart on every microphone frame
+    // whose level was above zero, and a microphone in a normal room never goes
+    // quiet — a fan, a keyboard, traffic — so the pause never fired and nothing
+    // was ever auto-sent.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('这个文件改坏了', 'text')
+    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    for (let i = 0; i < 20; i++) {
+      vi.advanceTimersByTime(200)
+      streamer.emit(0.02)
+    }
+    expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('does not push the deadline out when the engine repeats a partial', async () => {
+    // Streaming engines re-send the same cumulative transcript while they chew
+    // on audio. Re-arming on every message would mean the timer only ever fires
+    // after the engine goes completely silent.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('第一句话', 'partial')
+    vi.advanceTimersByTime(2000)
+    speak('第一句话', 'partial')
     vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledWith('第一句话')
   })
@@ -332,7 +388,7 @@ describe('useFreeDialog', () => {
   it('opens no barge listener when interrupting is switched off', async () => {
     vi.doMock('@/composables/useSettingsConfig', async () => {
       const { ref } = await vi.importActual<typeof import('vue')>('vue')
-      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_ms: 3000 } }) }
+      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_seconds: 3 } }) }
     })
     const { startFreeDialog, setFreeDialogThinking, useFreeDialog } = await import('../useFreeDialog')
     const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
