@@ -176,6 +176,29 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.STT.ShortcutKey != "F9" {
 		t.Errorf("STT.ShortcutKey = %q, want F9", cfg.STT.ShortcutKey)
 	}
+	// Preprocessing and the voice gate default to ON; a zero value would
+	// silently disable them for every existing config.yaml.
+	if !cfg.STT.MicEchoCancel || !cfg.STT.MicNoiseSuppress || !cfg.STT.MicAutoGain || !cfg.STT.MicBandFilter {
+		t.Errorf("mic preprocessing = %+v, want all enabled", cfg.STT)
+	}
+	if !cfg.STT.VoiceGate {
+		t.Error("STT.VoiceGate = false, want true")
+	}
+	if cfg.STT.VoiceGateSensitivity != "standard" {
+		t.Errorf("STT.VoiceGateSensitivity = %q, want standard", cfg.STT.VoiceGateSensitivity)
+	}
+	if cfg.STT.TriggerWords != "发送,好了,就这样" {
+		t.Errorf("STT.TriggerWords = %q, want the documented default", cfg.STT.TriggerWords)
+	}
+	if cfg.STT.SilenceSendMs != 3000 {
+		t.Errorf("STT.SilenceSendMs = %d, want 3000", cfg.STT.SilenceSendMs)
+	}
+	if cfg.STT.BargeIn != "any" {
+		t.Errorf("STT.BargeIn = %q, want any", cfg.STT.BargeIn)
+	}
+	if cfg.STT.BargeInWords != "等等,停一下" {
+		t.Errorf("STT.BargeInWords = %q, want the documented default", cfg.STT.BargeInWords)
+	}
 	if cfg.RAG.SearchPoolSize != 20 {
 		t.Errorf("RAG.SearchPoolSize = %d, want 20", cfg.RAG.SearchPoolSize)
 	}
@@ -282,6 +305,41 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	// Unset values should get defaults
 	if cfg.Upload.MaxFiles != 20 {
 		t.Errorf("Upload.MaxFiles = %d, want 20 (default)", cfg.Upload.MaxFiles)
+	}
+}
+
+// TestApplyDefaults_STTExplicitFalseSurvives pins the presence-map handling for
+// the microphone switches: they default to ON, so "absent" and "explicitly
+// false" must not be treated the same. A plain `if !cfg.X { cfg.X = true }`
+// would silently re-enable a device feature the user turned off.
+func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, map[string]bool{
+		"stt.mic_echo_cancel":    true,
+		"stt.mic_noise_suppress": true,
+		"stt.voice_gate":         true,
+		"stt.silence_send_ms":    true,
+	})
+
+	if cfg.STT.MicEchoCancel {
+		t.Error("STT.MicEchoCancel = true, want false (explicitly set)")
+	}
+	if cfg.STT.MicNoiseSuppress {
+		t.Error("STT.MicNoiseSuppress = true, want false (explicitly set)")
+	}
+	if cfg.STT.VoiceGate {
+		t.Error("STT.VoiceGate = true, want false (explicitly set)")
+	}
+	// 0 is the documented "trigger words only" value and must survive as well.
+	if cfg.STT.SilenceSendMs != 0 {
+		t.Errorf("STT.SilenceSendMs = %d, want 0 (explicitly set)", cfg.STT.SilenceSendMs)
+	}
+	// The switches that were NOT marked present still get their default.
+	if !cfg.STT.MicAutoGain || !cfg.STT.MicBandFilter {
+		t.Errorf("auto gain / band filter = %v/%v, want true/true (absent from config)",
+			cfg.STT.MicAutoGain, cfg.STT.MicBandFilter)
 	}
 }
 

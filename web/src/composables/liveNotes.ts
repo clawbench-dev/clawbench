@@ -19,6 +19,9 @@
  */
 import { appLog } from '@/utils/appLog'
 import { shotLabel } from '@/utils/meetingShots'
+import { SENSITIVITY_RMS, type VoiceSensitivity } from '@/utils/audioTuning'
+
+export type { VoiceSensitivity }
 
 const TAG = 'LiveNotes'
 
@@ -46,8 +49,10 @@ export const NOTES_SILENCE_HOLD_MS = 450
 /**
  * RMS below which a 100ms window counts as silence (≈ -40 dBFS).
  *
- * Speech in a normal microphone or system-audio capture sits well above this;
- * room tone and codec noise sit below it.
+ * Kept as the documented "standard" value for 听记: the live threshold now comes
+ * from the shared sensitivity setting (`SENSITIVITY_RMS.standard` is this same
+ * number), but this constant stays exported because it is the reference the
+ * tests and the design notes quote.
  */
 export const NOTES_SILENCE_RMS = 0.01
 
@@ -366,6 +371,21 @@ export interface LiveNotesCaptureOptions {
   maxPending?: number
   mimeType?: string
   /**
+   * Drop segments that carry no speech instead of uploading them.
+   *
+   * Shared with chat dictation (`stt.voice_gate`): the same judgement applies —
+   * a silent segment costs a round-trip and returns nothing.
+   */
+  voiceGate?: boolean
+  /**
+   * How loud a window must be to count as speech.
+   *
+   * Shared with chat dictation (`stt.voice_gate_sensitivity`). The default is
+   * the value 听记 has always used, so an unconfigured server behaves exactly
+   * as before.
+   */
+  sensitivity?: VoiceSensitivity
+  /**
    * Uploader for the archive-only mix track. Supplying it turns the mix on: the
    * capture then also records every channel mixed together into one file.
    */
@@ -398,6 +418,10 @@ class ChannelRecorder {
   private readonly minSegmentMs: number
   private readonly maxPending: number
   private readonly mimeType: string
+  /** RMS above which a window counts as speech (shared sensitivity setting). */
+  private readonly silenceRms: number
+  /** Whether a segment with no speech is dropped instead of uploaded. */
+  private readonly voiceGate: boolean
 
   private recorder: MediaRecorder | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -441,6 +465,8 @@ class ChannelRecorder {
     this.minSegmentMs = Math.min(opts.minSegmentMs ?? NOTES_MIN_SEGMENT_MS, this.segmentMs)
     this.maxPending = opts.maxPending ?? NOTES_MAX_PENDING
     this.mimeType = opts.mimeType ?? NOTES_MIME
+    this.silenceRms = SENSITIVITY_RMS[opts.sensitivity ?? 'standard']
+    this.voiceGate = opts.voiceGate ?? true
     // A per-channel destination is what makes the channel separation real: the
     // recorder only ever sees this one source.
     this.source = ctx.createMediaStreamSource(stream)
@@ -597,7 +623,7 @@ class ChannelRecorder {
       // segment that does contain speech.
       // A segment that was never metered (shorter than one sample, or no
       // analyser at all) is kept: "unknown" must not mean "silent".
-      const silent = vadSamples > 0 && !speechSeen
+      const silent = this.voiceGate && vadSamples > 0 && !speechSeen
       if (chunks.length > 0 && !silent) {
         this.enqueue({
           blob: new Blob(chunks, { type: rec.mimeType || this.mimeType }),
@@ -619,7 +645,7 @@ class ChannelRecorder {
     this.vadTimer = this.startVad((rms) => {
       vadSamples += 1
       const now = Date.now()
-      if (rms >= NOTES_SILENCE_RMS) {
+      if (rms >= this.silenceRms) {
         speechSeen = true
         segmentVoiceAt = now
         this.lastVoiceAt = now

@@ -111,6 +111,7 @@
       :mentions="stagedMentions"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
+      :freeDialogPhase="freeDialog.phase.value"
       :refreshingSession="refreshingSession"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
@@ -144,6 +145,7 @@
       @open-session-search="$emit('open-session-search')"
       @file-tag-click="handleFileTagClick"
       @toggle-auto-speech="autoSpeech.toggle"
+      @toggle-free-dialog="toggleFreeDialog"
       @create-session="() => manager.createSession()"
       @show-agent-selector="handleShowAgentSelector"
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
@@ -345,6 +347,7 @@ import { sameFilePath } from '@/utils/path.ts'
 import { decidePendingNavigation, jumpFailureMessageKey } from '@/utils/pendingNavigation.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
+import { useFreeDialog, freeDialogSessionId } from '@/composables/useFreeDialog.ts'
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { store } from '@/stores/app.ts'
@@ -584,6 +587,7 @@ async function handleSyncAcpSession() {
 const dialog = useDialog()
 const notification = useNotification()
 const autoSpeech = useAutoSpeech()
+const freeDialog = useFreeDialog()
 const theme = inject('theme', ref('light'))
 const { openFilePath } = useFilePathAnnotation()
 const quoteDetail = useQuoteDetail()
@@ -1009,6 +1013,52 @@ function handleMemberFinalize(messageId) {
     : null
   autoSpeech.speakMessage(msg.id, fullText, speaker?.name || '')
 }
+
+// ── Free-dialog mode (自由对话) ──────────────────────────
+// The loop itself lives in useFreeDialog (a module singleton); this is the
+// panel-side wiring: what to send, when a turn has finished, and when the user
+// switched sessions out from under it.
+
+function toggleFreeDialog() {
+  if (freeDialog.phase.value !== 'idle') {
+    freeDialog.stop()
+    return
+  }
+  if (!identity.currentSessionId.value) return
+  void freeDialog.start({
+    sessionId: identity.currentSessionId.value,
+    onSend: (text) => {
+      // A send that never reached the server leaves `loading` untouched, so the
+      // watcher below would never fire and the loop would sit in 'thinking'
+      // forever with the microphone closed. Release it explicitly.
+      void sendMessage(text).then((ok) => {
+        if (!ok) freeDialog.setThinking(false)
+      })
+    },
+  })
+}
+
+/**
+ * Tells the loop the turn it started is over.
+ *
+ * `loading` is the authority: a turn ends on done, cancel or error, and the loop
+ * only needs to know that the microphone may be reopened. When auto-speech is on
+ * the loop stays in 'speaking' until playback ends — it decides that itself.
+ */
+watch(loading, (now, before) => {
+  if (!before || now) return
+  if (freeDialog.phase.value === 'idle') return
+  freeDialog.setThinking(false)
+})
+
+// Switching sessions ends the loop: the trigger words and the reply belong to
+// the conversation the user was talking to, and sending into a different one
+// would be worse than stopping.
+watch(() => identity.currentSessionId.value, (sid) => {
+  if (freeDialog.phase.value === 'idle') return
+  if (sid === freeDialogSessionId()) return
+  freeDialog.stop()
+})
 
 // onStreamEnd: fires when current session stream completes with a reason
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by

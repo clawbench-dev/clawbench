@@ -25,6 +25,7 @@ import {
   type NotesUploader,
   type NoteTimelineRow,
   type NoteShotEvent,
+  type VoiceSensitivity,
 } from './liveNotes'
 
 const TAG = 'LiveNotes'
@@ -314,6 +315,10 @@ export function useLiveNotes() {
     label?: (channel: string) => string
     resume?: boolean
     autoMinutes?: boolean
+    /** Shared voice-gate switch (`stt.voice_gate`); defaults to on. */
+    voiceGate?: boolean
+    /** Shared sensitivity (`stt.voice_gate_sensitivity`); defaults to standard. */
+    sensitivity?: VoiceSensitivity
   }): void {
     // No recorder on this engine: leave the module idle and say so once. The
     // meeting continues (picture / microphone / chat), it just has no 听记.
@@ -334,6 +339,8 @@ export function useLiveNotes() {
     if (opts.title !== undefined) sessionTitle = opts.title
     if (opts.label) labelFor = opts.label
     capture = new LiveNotesCapture(opts.ctx, uploadSegment(opts.token), {
+      voiceGate: opts.voiceGate,
+      sensitivity: opts.sensitivity,
       // The mix track is the file the user actually listens to: one recording
       // of the whole meeting instead of one per participant.
       archiveUpload: uploadArchiveSegment(opts.token),

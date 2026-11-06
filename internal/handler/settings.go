@@ -103,20 +103,30 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.voice":       true,
 	"tts.openai.stream_mode": true,
 	// STT — speech-to-text config, hot-reloadable
-	"stt.provider":          true,
-	"stt.base_url":          true,
-	"stt.api_key":           true,
-	"stt.model":             true,
-	"stt.resource_id":       true,
-	"stt.language":          true,
-	"stt.streaming":         true,
-	"stt.chunk_ms":          true,
-	"stt.shortcut_key":      true,
-	"stt.enable_itn":        true,
-	"stt.enable_punc":       true,
-	"stt.enable_ddc":        true,
-	"stt.output_zh_variant": true,
-	"stt.end_window_size":   true,
+	"stt.provider":               true,
+	"stt.base_url":               true,
+	"stt.api_key":                true,
+	"stt.model":                  true,
+	"stt.resource_id":            true,
+	"stt.language":               true,
+	"stt.streaming":              true,
+	"stt.chunk_ms":               true,
+	"stt.shortcut_key":           true,
+	"stt.enable_itn":             true,
+	"stt.enable_punc":            true,
+	"stt.enable_ddc":             true,
+	"stt.output_zh_variant":      true,
+	"stt.end_window_size":        true,
+	"stt.mic_echo_cancel":        true,
+	"stt.mic_noise_suppress":     true,
+	"stt.mic_auto_gain":          true,
+	"stt.mic_band_filter":        true,
+	"stt.voice_gate":             true,
+	"stt.voice_gate_sensitivity": true,
+	"stt.trigger_words":          true,
+	"stt.silence_send_ms":        true,
+	"stt.barge_in":               true,
+	"stt.barge_in_words":         true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
 	"summarize.tts_backend":     true,
 	"summarize.auto_junk_ratio": true,
@@ -495,6 +505,17 @@ type configSTT struct {
 	EnableDDC       bool   `json:"enable_ddc"`
 	OutputZHVariant string `json:"output_zh_variant"`
 	EndWindowSize   int    `json:"end_window_size"`
+
+	MicEchoCancel        bool   `json:"mic_echo_cancel"`
+	MicNoiseSuppress     bool   `json:"mic_noise_suppress"`
+	MicAutoGain          bool   `json:"mic_auto_gain"`
+	MicBandFilter        bool   `json:"mic_band_filter"`
+	VoiceGate            bool   `json:"voice_gate"`
+	VoiceGateSensitivity string `json:"voice_gate_sensitivity"`
+	TriggerWords         string `json:"trigger_words"`
+	SilenceSendMs        int    `json:"silence_send_ms"`
+	BargeIn              string `json:"barge_in"`
+	BargeInWords         string `json:"barge_in_words"`
 }
 
 type configRAG struct {
@@ -909,6 +930,16 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.enable_ddc":                     true,
 	"stt.output_zh_variant":              true,
 	"stt.end_window_size":                true,
+	"stt.mic_echo_cancel":                true,
+	"stt.mic_noise_suppress":             true,
+	"stt.mic_auto_gain":                  true,
+	"stt.mic_band_filter":                true,
+	"stt.voice_gate":                     true,
+	"stt.voice_gate_sensitivity":         true,
+	"stt.trigger_words":                  true,
+	"stt.silence_send_ms":                true,
+	"stt.barge_in":                       true,
+	"stt.barge_in_words":                 true,
 	"rag.vector_enabled":                 true,
 	"rag.base_url":                       true,
 	"rag.model":                          true,
@@ -986,6 +1017,17 @@ var validTTSEngines = map[string]bool{
 // sends recordings to a service the user did not configure.
 var validSTTProviders = map[string]bool{
 	"vllm": true, "doubao": true,
+}
+
+// validVoiceSensitivities is the set of voice-gate sensitivity values. The
+// frontend maps each to an RMS threshold (web/src/utils/audioTuning.ts).
+var validVoiceSensitivities = map[string]bool{
+	"conservative": true, "standard": true, "aggressive": true,
+}
+
+// validBargeInModes is the set of "what stops AI read-aloud" values.
+var validBargeInModes = map[string]bool{
+	"off": true, "any": true, "keyword": true,
 }
 
 // validUILanguages is the set of UI languages the bundled i18n tables carry
@@ -1098,6 +1140,17 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			EnableDDC:       cfg.STT.EnableDDC,
 			OutputZHVariant: cfg.STT.OutputZHVariant,
 			EndWindowSize:   cfg.STT.EndWindowSize,
+
+			MicEchoCancel:        cfg.STT.MicEchoCancel,
+			MicNoiseSuppress:     cfg.STT.MicNoiseSuppress,
+			MicAutoGain:          cfg.STT.MicAutoGain,
+			MicBandFilter:        cfg.STT.MicBandFilter,
+			VoiceGate:            cfg.STT.VoiceGate,
+			VoiceGateSensitivity: cfg.STT.VoiceGateSensitivity,
+			TriggerWords:         cfg.STT.TriggerWords,
+			SilenceSendMs:        cfg.STT.SilenceSendMs,
+			BargeIn:              cfg.STT.BargeIn,
+			BargeInWords:         cfg.STT.BargeInWords,
 		},
 		RAG: configRAG{
 			VectorEnabled:  cfg.RAG.VectorEnabled,
@@ -1686,6 +1739,19 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
 			return fmt.Errorf("stt.shortcut_key must not be empty")
+		}
+		if v, ok := sttVal["voice_gate_sensitivity"].(string); ok {
+			if !validVoiceSensitivities[v] {
+				return fmt.Errorf("stt.voice_gate_sensitivity must be one of: conservative,standard,aggressive")
+			}
+		}
+		if v, ok := sttVal["barge_in"].(string); ok {
+			if !validBargeInModes[v] {
+				return fmt.Errorf("stt.barge_in must be one of: off,any,keyword")
+			}
+		}
+		if v, ok := sttVal["silence_send_ms"].(float64); ok && v < 0 {
+			return fmt.Errorf("stt.silence_send_ms must not be negative")
 		}
 	}
 
@@ -2383,6 +2449,36 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["end_window_size"].(float64); ok {
 			cfg.STT.EndWindowSize = int(v)
+		}
+		if v, ok := sttVal["mic_echo_cancel"].(bool); ok {
+			cfg.STT.MicEchoCancel = v
+		}
+		if v, ok := sttVal["mic_noise_suppress"].(bool); ok {
+			cfg.STT.MicNoiseSuppress = v
+		}
+		if v, ok := sttVal["mic_auto_gain"].(bool); ok {
+			cfg.STT.MicAutoGain = v
+		}
+		if v, ok := sttVal["mic_band_filter"].(bool); ok {
+			cfg.STT.MicBandFilter = v
+		}
+		if v, ok := sttVal["voice_gate"].(bool); ok {
+			cfg.STT.VoiceGate = v
+		}
+		if v, ok := sttVal["voice_gate_sensitivity"].(string); ok {
+			cfg.STT.VoiceGateSensitivity = v
+		}
+		if v, ok := sttVal["trigger_words"].(string); ok {
+			cfg.STT.TriggerWords = v
+		}
+		if v, ok := sttVal["silence_send_ms"].(float64); ok {
+			cfg.STT.SilenceSendMs = int(v)
+		}
+		if v, ok := sttVal["barge_in"].(string); ok {
+			cfg.STT.BargeIn = v
+		}
+		if v, ok := sttVal["barge_in_words"].(string); ok {
+			cfg.STT.BargeInWords = v
 		}
 	}
 

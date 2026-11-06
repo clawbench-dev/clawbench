@@ -552,6 +552,9 @@ const stubs = {
   ShieldAlert: true,
   Activity: true,
   Minimize2: true,
+  Mic: true,
+  MicOff: true,
+  AudioLines: true,
 }
 
 describe('ChatInputBar', () => {
@@ -606,6 +609,30 @@ describe('ChatInputBar', () => {
   it('renders the attach button', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
+  })
+
+  it('renders the free-dialog button and emits its toggle', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1' })
+    const btn = wrapper.find('[data-action="free-dialog"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(wrapper.emitted('toggle-free-dialog')).toHaveLength(1)
+  })
+
+  it('marks the free-dialog button active and phase-specific while running', () => {
+    const idle = mountBar({ currentSessionId: 's1', freeDialogPhase: 'idle' })
+    expect(idle.find('[data-action="free-dialog"]').classes()).not.toContain('active')
+    const listening = mountBar({ currentSessionId: 's1', freeDialogPhase: 'listening' })
+    const cls = listening.find('[data-action="free-dialog"]').classes()
+    expect(cls).toContain('active')
+    // The pulse class is what makes "listening" readable without relying on
+    // colour alone (3 of the 36 themes have accent == running orange).
+    expect(cls).toContain('active-flag-listening')
+  })
+
+  it('disables the free-dialog button without a session', () => {
+    const wrapper = mountBar({ currentSessionId: '' })
+    expect(wrapper.find('[data-action="free-dialog"]').attributes('disabled')).toBeDefined()
   })
 
   describe('Android select-all delete recovery', () => {

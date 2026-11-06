@@ -642,6 +642,19 @@ const serverDefaults: Record<string, unknown> = {
   'stt.enable_ddc': false,
   'stt.output_zh_variant': '',
   'stt.end_window_size': 800,
+  // Mirrors model.ApplyDefaults: the preprocessing and gate switches default ON
+  // (only an explicit false turns them off), and the free-dialog defaults are
+  // the ones documented in the settings descriptions.
+  'stt.mic_echo_cancel': true,
+  'stt.mic_noise_suppress': true,
+  'stt.mic_auto_gain': true,
+  'stt.mic_band_filter': true,
+  'stt.voice_gate': true,
+  'stt.voice_gate_sensitivity': 'standard',
+  'stt.trigger_words': '发送,好了,就这样',
+  'stt.silence_send_ms': 3000,
+  'stt.barge_in': 'any',
+  'stt.barge_in_words': '等等,停一下',
   'rag.base_url': 'http://localhost:11434',
   'rag.model': 'bge-m3',
   'rag.api_key': '',

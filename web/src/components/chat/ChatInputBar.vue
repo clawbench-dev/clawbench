@@ -62,6 +62,21 @@
         <Volume2 :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
       </button>
+      <!-- Free-dialog mode: keep the microphone open, send on a trigger word or a
+           pause, and resume listening once the reply has been read out. Sits
+           next to auto-speech because the two are used together (the loop waits
+           for the read-aloud to finish). -->
+      <button class="chat-action-btn free-dialog-btn" :class="['active-flag-' + freeDialogPhase, { active: freeDialogPhase !== 'idle' }]"
+        data-action="free-dialog"
+        :disabled="!currentSessionId"
+        @click="$emit('toggle-free-dialog')"
+        :title="freeDialogTitle">
+        <LoadingIndicator v-if="freeDialogPhase === 'thinking'" size="sm" inline />
+        <Mic v-else-if="freeDialogPhase === 'listening'" :size="14" class="free-dialog-mic" />
+        <AudioLines v-else-if="freeDialogPhase === 'speaking'" :size="14" />
+        <MicOff v-else :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.freeDialog') }}</span>
+      </button>
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
@@ -322,7 +337,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert, Mic, MicOff, AudioLines } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -405,6 +420,15 @@ const acpSyncTitle = computed(() => {
   if (currentSessionRunning.value) return t('chat.actions.acpSyncRunning')
   if (sessionEmpty.value) return t('chat.actions.acpSyncEmpty')
   return t('chat.actions.acpSync')
+})
+
+const freeDialogTitle = computed(() => {
+  switch (props.freeDialogPhase) {
+    case 'listening': return t('chat.actions.freeDialogListening')
+    case 'thinking': return t('chat.actions.freeDialogThinking')
+    case 'speaking': return t('chat.actions.freeDialogSpeaking')
+    default: return t('chat.actions.freeDialog')
+  }
 })
 
 const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
@@ -643,6 +667,8 @@ const props = defineProps({
    *  cards themselves live in useChatContext so they survive a session switch
    *  alongside the file/quote drafts; this is just the render binding. */
   mentions: { type: Array, default: () => [] },
+  /** Free-dialog mode phase ('idle' | 'listening' | 'thinking' | 'speaking'). */
+  freeDialogPhase: { type: String, default: 'idle' },
 })
 
 const emit = defineEmits([
@@ -661,6 +687,7 @@ const emit = defineEmits([
   'open-session-search',
   'file-tag-click',
   'toggle-auto-speech',
+  'toggle-free-dialog',
   'create-session',
   'show-agent-selector',
   'archive-session',
@@ -2568,6 +2595,21 @@ defineExpose({
 /* Auto-speech toggle button */
 .auto-speech-btn {
   flex-shrink: 0;
+}
+
+/* Free-dialog button: the active state comes from `.active`, but the phase
+   adds a motion cue — a pulsing mic while listening, a breathing wave while the
+   reply is being read. Colour alone is not enough here: 3 of the 36 themes have
+   an accent identical to the running orange. */
+.free-dialog-btn {
+  flex-shrink: 0;
+}
+.free-dialog-btn.active-flag-listening .free-dialog-mic {
+  animation: free-dialog-pulse 1.4s ease-in-out infinite;
+}
+@keyframes free-dialog-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.88); }
 }
 
 .chat-action-btn {

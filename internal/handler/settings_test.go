@@ -3018,6 +3018,77 @@ func TestServeConfigPatch_PortForwardTransportInvalidRejected(t *testing.T) {
 		"a rejected value must not be applied")
 }
 
+// The new voice settings are validated at the boundary rather than trusted: an
+// unknown sensitivity would make the frontend fall back to "standard" while the
+// settings page shows the typo, and a negative pause would arm a timer with a
+// negative delay.
+func TestServeConfigPatch_STTVoiceSettingsValidated(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "unknown sensitivity",
+			body: `{"stt":{"voice_gate_sensitivity":"wild"}}`,
+			want: "stt.voice_gate_sensitivity must be one of: conservative,standard,aggressive",
+		},
+		{
+			name: "unknown barge-in mode",
+			body: `{"stt":{"barge_in":"sometimes"}}`,
+			want: "stt.barge_in must be one of: off,any,keyword",
+		},
+		{
+			name: "negative pause",
+			body: `{"stt":{"silence_send_ms":-1}}`,
+			want: "stt.silence_send_ms must not be negative",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
+
+			model.ConfigInstance = model.Config{}
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.want)
+		})
+	}
+}
+
+// A valid voice-settings patch must be applied and echoed back, so the settings
+// page can round-trip without a reload.
+func TestServeConfigPatch_STTVoiceSettingsRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"stt":{"mic_echo_cancel":false,"mic_band_filter":false,"voice_gate":false,` +
+		`"voice_gate_sensitivity":"aggressive","trigger_words":"开工,收工",` +
+		`"silence_send_ms":0,"barge_in":"keyword","barge_in_words":"打住"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.ConfigInstance.STT.MicEchoCancel)
+	assert.False(t, model.ConfigInstance.STT.MicBandFilter)
+	assert.False(t, model.ConfigInstance.STT.VoiceGate)
+	assert.Equal(t, "aggressive", model.ConfigInstance.STT.VoiceGateSensitivity)
+	assert.Equal(t, "开工,收工", model.ConfigInstance.STT.TriggerWords)
+	assert.Equal(t, 0, model.ConfigInstance.STT.SilenceSendMs)
+	assert.Equal(t, "keyword", model.ConfigInstance.STT.BargeIn)
+	assert.Equal(t, "打住", model.ConfigInstance.STT.BargeInWords)
+}
+
 // A non-string transport (e.g. a number or an object) must be refused, not
 // silently ignored: ignoring it would let the value reach config.yaml through
 // mergePatchIntoRaw while never reaching the typed config, and the next startup

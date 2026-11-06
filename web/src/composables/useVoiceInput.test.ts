@@ -388,7 +388,9 @@ describe('useVoiceInput', () => {
     env.getWS()!.onopen!()
     await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
 
-    const frame = new Int16Array([1, 2, 3]).buffer
+    // Loud enough to clear the voice gate: a frame of near-zero samples is
+    // silence and is deliberately NOT forwarded (see the gate tests below).
+    const frame = new Int16Array(160).fill(8000).buffer
     env.workletNode.port.onmessage!({ data: frame })
     expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
 
@@ -419,6 +421,63 @@ describe('useVoiceInput', () => {
     expect(env.getWS()!.send).not.toHaveBeenCalled()
     expect(v.state.value).toBe('idle')
     expect(v.isRecording.value).toBe(false)
+  })
+
+  it('drops a silent PCM frame instead of sending it to the engine', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao', 'stt.voice_gate': true }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    const sendsBefore = env.getWS()!.send.mock.calls.length
+    // Pure silence: not a single sample above the floor.
+    env.workletNode.port.onmessage!({ data: new Int16Array(160).buffer })
+    expect(env.getWS()!.send.mock.calls.length).toBe(sendsBefore)
+    v.cancel()
+  })
+
+  it('forwards a silent frame when the voice gate is switched off', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { 'stt.streaming': true, 'stt.provider': 'doubao', 'stt.voice_gate': false }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    const frame = new Int16Array(160).buffer
+    env.workletNode.port.onmessage!({ data: frame })
+    expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
+    v.cancel()
+  })
+
+  it('opens the microphone with the configured preprocessing constraints', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = {
+      'stt.streaming': true,
+      'stt.provider': 'doubao',
+      'stt.mic_echo_cancel': true,
+      'stt.mic_noise_suppress': false,
+      'stt.mic_auto_gain': true,
+    }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    const constraints = (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(constraints.audio.echoCancellation).toBe(true)
+    expect(constraints.audio.noiseSuppression).toBe(false)
+    expect(constraints.audio.autoGainControl).toBe(true)
+    v.cancel()
+    void env
   })
 
   it('uses MediaRecorder when the provider cannot decode PCM, even with streaming on', async () => {
@@ -460,7 +519,10 @@ describe('useVoiceInput', () => {
     // Raw PCM is only meaningful to an engine that decodes it; sending it to
     // Whisper makes every request fail.
     expect(wsCtor).not.toHaveBeenCalled()
-    expect(audioCtor).not.toHaveBeenCalled()
+    // An AudioContext IS created on this path — but for the level meter that
+    // decides whether the clip has any speech, not for PCM streaming. What must
+    // not happen is a recogniser socket.
+    expect(audioCtor).toHaveBeenCalled()
 
     v.stop()
     await vi.waitFor(() => expect(v.inputText.value).toBe('识别结果'))

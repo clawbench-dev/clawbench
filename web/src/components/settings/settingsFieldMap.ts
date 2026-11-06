@@ -711,6 +711,34 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         ] },
         { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'doubao' } },
         { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
+
+        // Microphone processing. Shared with meetings (the echo/noise/gain trio
+        // is applied when the device is opened, so a meeting audience hears the
+        // result too); the band filter only shapes what the recogniser gets.
+        { labelKey: 'settings.items.sttMicEchoCancel', descriptionKey: 'settings.items.sttMicEchoCancelDesc', key: 'stt.mic_echo_cancel', type: 'switch', source: 'server', sectionHeader: 'settings.items.sttMicHeader' },
+        { labelKey: 'settings.items.sttMicNoiseSuppress', descriptionKey: 'settings.items.sttMicNoiseSuppressDesc', key: 'stt.mic_noise_suppress', type: 'switch', source: 'server' },
+        { labelKey: 'settings.items.sttMicAutoGain', descriptionKey: 'settings.items.sttMicAutoGainDesc', key: 'stt.mic_auto_gain', type: 'switch', source: 'server' },
+        { labelKey: 'settings.items.sttMicBandFilter', descriptionKey: 'settings.items.sttMicBandFilterDesc', key: 'stt.mic_band_filter', type: 'switch', source: 'server' },
+
+        // Voice gate. Shared with 听记, which uses the same threshold to decide
+        // whether a segment has any speech worth uploading.
+        { labelKey: 'settings.items.sttVoiceGate', descriptionKey: 'settings.items.sttVoiceGateDesc', key: 'stt.voice_gate', type: 'switch', source: 'server', sectionHeader: 'settings.items.sttVoiceGateHeader' },
+        { labelKey: 'settings.items.sttVoiceGateSensitivity', descriptionKey: 'settings.items.sttVoiceGateSensitivityDesc', key: 'stt.voice_gate_sensitivity', type: 'select', source: 'server', options: [
+          { labelKey: 'settings.items.sttVoiceGateConservative', value: 'conservative' },
+          { labelKey: 'settings.items.sttVoiceGateStandard', value: 'standard' },
+          { labelKey: 'settings.items.sttVoiceGateAggressive', value: 'aggressive' },
+        ] },
+
+        // Free-dialog mode. These only matter when the mode is switched on from
+        // the chat action bar.
+        { labelKey: 'settings.items.sttTriggerWords', descriptionKey: 'settings.items.sttTriggerWordsDesc', key: 'stt.trigger_words', type: 'text', source: 'server', sectionHeader: 'settings.items.sttFreeDialogHeader' },
+        { labelKey: 'settings.items.sttSilenceSendMs', descriptionKey: 'settings.items.sttSilenceSendMsDesc', key: 'stt.silence_send_ms', type: 'number', source: 'server', min: 0, max: 30000, step: 500 },
+        { labelKey: 'settings.items.sttBargeIn', descriptionKey: 'settings.items.sttBargeInDesc', key: 'stt.barge_in', type: 'select', source: 'server', options: [
+          { labelKey: 'settings.items.sttBargeInOff', value: 'off' },
+          { labelKey: 'settings.items.sttBargeInAny', value: 'any' },
+          { labelKey: 'settings.items.sttBargeInKeyword', value: 'keyword' },
+        ] },
+        { labelKey: 'settings.items.sttBargeInWords', descriptionKey: 'settings.items.sttBargeInWordsDesc', key: 'stt.barge_in_words', type: 'text', source: 'server', dependsOn: { key: 'stt.barge_in', value: 'keyword' } },
       ],
       requiredFields: ['stt.base_url', 'stt.model'],
       hasConnectivityTest: true,

@@ -28,6 +28,8 @@ import { useInkBoard } from '@/share/useInkBoard'
 import { notesRecordingSupported } from './liveNotes'
 import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
+import { buildMicConstraints, readVoiceTuning } from '@/utils/audioTuning'
+import { serverConfig } from '@/composables/useSettingsConfig'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 import {
   CAMERA_BUDGET,
@@ -701,14 +703,12 @@ let lastCameraError: unknown = null
  * "the device I switched to sounds different" bugs.
  */
 function micConstraints(deviceId: string): MediaTrackConstraints {
-  return {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    // A chosen input wins; otherwise the OS default, which is what `audio:
-    // true` means. `{exact: ''}` would fail on every machine.
-    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-  }
+  // Shared with chat dictation (设置 → 语音识别 → 麦克风处理), so one switch
+  // covers both. The band filter is deliberately NOT applied here: it belongs
+  // to the recogniser, and band-limiting the published audio would make every
+  // voice sound like a phone call to the audience.
+  const tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
+  return buildMicConstraints(tuning, deviceId)
 }
 
 /**
@@ -1809,6 +1809,7 @@ export function useLiveShare() {
       appLog.w(TAG, 'MediaRecorder unavailable: notes cannot be turned on')
       return false
     }
+    const tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
     useLiveNotes().start({
       token: token.value,
       ctx: audioCtx,
@@ -1816,6 +1817,8 @@ export function useLiveShare() {
       title: title.value,
       label: notesLabelFn,
       resume: notesStarted,
+      voiceGate: tuning.voiceGate,
+      sensitivity: tuning.sensitivity,
     })
     notesStarted = true
     publishNotes(true)
