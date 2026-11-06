@@ -1052,12 +1052,12 @@ const { isAndroidApp, isTouchPrimary } = usePlatformDetect()
 const { isAppMode } = useAppMode()
 
 function enableVolumeKeys() {
-  if (!isAppMode.value) return
+  if (!isAndroidApp.value) return
   getNative()?.setVolumeKeyMode?.(true)
 }
 
 function disableVolumeKeys() {
-  if (!isAppMode.value) return
+  if (!isAndroidApp.value) return
   getNative()?.setVolumeKeyMode?.(false)
 }
 

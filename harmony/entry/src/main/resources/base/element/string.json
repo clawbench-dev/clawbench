@@ -1,0 +1,6 @@
+{
+  "string": [
+    { "name": "app_name", "value": "ClawBench" },
+    { "name": "module_desc", "value": "ClawBench HarmonyOS client" }
+  ]
+}

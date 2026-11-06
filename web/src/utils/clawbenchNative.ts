@@ -23,8 +23,26 @@ export type AddForwardResult =
   | { ok: true; port: number }
   | { ok: false; reason: 'conflict' | 'unreachable' }
 
+export type NativeHostPlatform = 'android' | 'electron' | 'harmonyos' | 'web'
+
+export interface NativeCapabilities {
+  serverManagement: boolean
+  appearance: boolean
+  keepScreenOn: boolean
+  fileChooser: boolean
+  nativeDownload: boolean
+  nativeShare: boolean
+  nativePush: boolean
+  floatingStatus: boolean
+  liveUpdate: boolean
+  tunnel: boolean
+  screenCapture: boolean
+}
+
 /** Full bridge contract shared by Android and Electron. */
 export interface ClawBenchNative {
+  getHostPlatform?(): NativeHostPlatform
+  getCapabilities?(): NativeCapabilities
   /**
    * Injects one pointer/key event into the local desktop (remote control).
    *
@@ -458,11 +476,26 @@ export interface NotificationNav {
   forgeTarget?: ForgeTarget
 }
 
-const bridgeWindow = window as unknown as { ClawBenchNative?: ClawBenchNative }
+const bridgeWindow = window as unknown as {
+  ClawBenchNative?: ClawBenchNative
+  ClawBenchHarmony?: ClawBenchNative
+}
 
 /** Get the injected bridge, or undefined when running as plain web. */
 export function getNative(): ClawBenchNative | undefined {
-  return bridgeWindow.ClawBenchNative
+  return bridgeWindow.ClawBenchHarmony ?? bridgeWindow.ClawBenchNative
+}
+
+export function getNativeHostPlatform(): NativeHostPlatform {
+  try {
+    if (window !== window.top || getNative()?.isNativeApp() !== true) return 'web'
+    const native = getNative()!
+    const platform = native.getHostPlatform?.()
+    if (platform === 'harmonyos' || platform === 'android' || platform === 'electron') return platform
+    return native.isDesktopApp?.() === true ? 'electron' : 'android'
+  } catch {
+    return 'web'
+  }
 }
 
 /** True when running inside a native host app (top-level frame). */

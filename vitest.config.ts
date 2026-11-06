@@ -88,6 +88,8 @@ export default defineConfig({
     // Don't set maxWorkers — let vitest auto-detect (numCPUs-1).
     // The pool cleanup hang is mitigated by vitest-globalSetup.ts worker kill.
     exclude: [
+      // These contracts use node:test and run in the dedicated HarmonyOS job.
+      '**/harmony/tests/**',
       '**/.worktrees/**',
       '**/.codebuddy/worktrees/**',
       '**/node_modules/**',

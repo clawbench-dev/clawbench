@@ -382,6 +382,12 @@ const renderList = computed(() => {
 
   for (const entry of raw) {
     if (entry.type === 'item') {
+      if (getNative()?.getHostPlatform?.() === 'harmonyos') {
+        const capabilities = getNative()?.getCapabilities?.()
+        if (entry.spec.key === 'floatingStatusWindow' && !capabilities?.floatingStatus) continue
+        if (entry.spec.key === 'liveUpdate' && !capabilities?.liveUpdate) continue
+        if (entry.spec.key === 'downloadAndroidApp' || entry.spec.key === 'downloadDesktopApp') continue
+      }
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue

@@ -27,6 +27,8 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ## Quick Start
 
+An experimental native HarmonyOS client is available for development. See the [HarmonyOS client notes](harmony/README.md) for build instructions, verified capabilities and remaining work. It is not yet a supported release platform.
+
 ### Prerequisites
 
 - **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/user-guide/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { isNativeApp, isDesktopApp as detectDesktopApp } from '@/utils/clawbenchNative'
+import { isNativeApp, isDesktopApp as detectDesktopApp, getNativeHostPlatform } from '@/utils/clawbenchNative'
 
 // Module-level singleton — all consumers share the same state
 const isAppMode = ref(false)
@@ -11,6 +11,7 @@ const isAppMode = ref(false)
 // useGlobalEvents drops the WebSocket when the app is hidden, which on desktop
 // would make notifications impossible to deliver.
 const isDesktopApp = ref(false)
+const isHarmonyApp = ref(false)
 let initialized = false
 
 /**
@@ -49,17 +50,18 @@ export function useAppMode() {
   if (!initialized) {
     initialized = true
     try {
-      if (window !== window.top) return { isAppMode, isDesktopApp }
+      if (window !== window.top) return { isAppMode, isDesktopApp, isHarmonyApp }
       isAppMode.value = isNativeApp()
       isDesktopApp.value = isAppMode.value && detectDesktopApp()
+      isHarmonyApp.value = isAppMode.value && getNativeHostPlatform() === 'harmonyos'
     } catch {
       // window.top access may throw in cross-origin iframe — treat as web mode
     }
     // Android WebView ONLY. See WEBVIEW_MODE_ATTR for why the desktop shell
     // must not get the attribute despite reporting isNativeApp() === true.
-    if (isAppMode.value && !isDesktopApp.value) {
+    if (isAppMode.value && !isDesktopApp.value && !isHarmonyApp.value) {
       document.documentElement.setAttribute(WEBVIEW_MODE_ATTR, '')
     }
   }
-  return { isAppMode, isDesktopApp }
+  return { isAppMode, isDesktopApp, isHarmonyApp }
 }

@@ -2,9 +2,10 @@ import { ref } from 'vue'
 import { useAppMode } from './useAppMode'
 
 const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+export const isHarmonyUA = /HarmonyOS|OpenHarmony/i.test(ua)
 
 /** Android UA (browser) — excludes Windows Phone spoofing */
-export const isAndroidUA = /Android/i.test(ua) && !/Windows Phone/i.test(ua)
+export const isAndroidUA = /Android/i.test(ua) && !/Windows Phone/i.test(ua) && !isHarmonyUA
 
 /** iOS UA (iPhone, iPad, iPod) — classic iOS UA string */
 export const isIOSUA = /iPhone|iPad|iPod/i.test(ua)
@@ -25,7 +26,7 @@ export const isMacDesktopUA = /Macintosh/i.test(ua)
 
 /** Linux desktop browser UA — excludes Android (mobile UA carries Linux + Android) */
 export const isLinuxDesktopUA = /Linux/i.test(ua)
-  && !/Android/i.test(ua)
+  && !/Android/i.test(ua) && !isHarmonyUA
 
 /**
  * Any mobile/touch OS user agent: Android, iOS, or iPadOS in desktop mode.
@@ -35,7 +36,7 @@ export const isLinuxDesktopUA = /Linux/i.test(ua)
  * computer?" must use this, not `!/Android/ && !/iPhone/`, or an iPad is handed
  * the macOS build of the desktop app.
  */
-export const isMobileOSUA = isAndroidUA || isIOSUA || isIPadOSUA
+export const isMobileOSUA = isAndroidUA || isIOSUA || isIPadOSUA || isHarmonyUA
 
 // ─── The three orthogonal axes ────────────────────────────────────────────────
 //
@@ -65,6 +66,7 @@ export const isMobileOSUA = isAndroidUA || isIOSUA || isIPadOSUA
  */
 const isElectron = ref(false)
 const isAndroidApp = ref(false)
+const isHarmonyApp = ref(false)
 const isWebApp = ref(false)
 
 /**
@@ -105,7 +107,7 @@ function detectTouchPrimary(): boolean {
       // Some engines throw on an unsupported query — fall through to the UA.
     }
   }
-  return isAndroidUA || isIOSUA || isIPadOSUA
+  return isMobileOSUA
 }
 
 /**
@@ -120,9 +122,10 @@ function detectTouchPrimary(): boolean {
 export function usePlatformDetect() {
   if (!platformInitialized) {
     platformInitialized = true
-    const { isAppMode, isDesktopApp } = useAppMode()
+    const { isAppMode, isDesktopApp, isHarmonyApp: harmony } = useAppMode()
     isElectron.value = isDesktopApp.value
-    isAndroidApp.value = isAppMode.value && !isDesktopApp.value
+    isHarmonyApp.value = harmony?.value === true
+    isAndroidApp.value = isAppMode.value && !isDesktopApp.value && !isHarmonyApp.value
     isWebApp.value = !isAppMode.value
     // Roll-up: `isAppMode` is isNativeApp() from the bridge, which is true for
     // both shells. Kept as its own ref (rather than a computed) so the test
@@ -130,7 +133,7 @@ export function usePlatformDetect() {
     isNativeApp.value = isAppMode.value
     isTouchPrimary.value = detectTouchPrimary()
   }
-  return { isElectron, isAndroidApp, isWebApp, isNativeApp, isTouchPrimary }
+  return { isElectron, isAndroidApp, isHarmonyApp, isWebApp, isNativeApp, isTouchPrimary }
 }
 
 /** Test hook — force the axes for unit tests. Marks the module initialized so
@@ -138,16 +141,18 @@ export function usePlatformDetect() {
 export function _setPlatformForTest(v: {
   isElectron?: boolean
   isAndroidApp?: boolean
+  isHarmonyApp?: boolean
   isWebApp?: boolean
   isTouchPrimary?: boolean
 }) {
   if (v.isElectron !== undefined) isElectron.value = v.isElectron
   if (v.isAndroidApp !== undefined) isAndroidApp.value = v.isAndroidApp
+  if (v.isHarmonyApp !== undefined) isHarmonyApp.value = v.isHarmonyApp
   if (v.isWebApp !== undefined) isWebApp.value = v.isWebApp
   if (v.isTouchPrimary !== undefined) isTouchPrimary.value = v.isTouchPrimary
   // Derived: keep the native flag consistent with whichever host axes were set,
   // so a test that only names isAndroidApp/isElectron still gets isNativeApp.
-  isNativeApp.value = isElectron.value || isAndroidApp.value
+  isNativeApp.value = isElectron.value || isAndroidApp.value || isHarmonyApp.value
   platformInitialized = true
 }
 
@@ -155,6 +160,7 @@ export function _resetPlatformForTest() {
   platformInitialized = false
   isElectron.value = false
   isAndroidApp.value = false
+  isHarmonyApp.value = false
   isWebApp.value = false
   isNativeApp.value = false
   isTouchPrimary.value = false
