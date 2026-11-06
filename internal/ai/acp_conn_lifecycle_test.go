@@ -213,6 +213,14 @@ func TestBuildInitializeRequest_CapabilitiesAreWired(t *testing.T) {
 	if req.ClientInfo == nil || req.ClientInfo.Name != "clawbench" {
 		t.Errorf("Initialize request must identify the client, got %+v", req.ClientInfo)
 	}
+	// Form elicitation is backend-independent: OpenCode's question tool refuses
+	// to send the form at all unless the client advertises it, and answers the
+	// model with "the question couldn't be shown" (#633). Advertising it while
+	// no handler exists would be worse, so acp_elicitation.go implements the
+	// other half.
+	if req.ClientCapabilities.Elicitation == nil || req.ClientCapabilities.Elicitation.Form == nil {
+		t.Error("Initialize request must advertise form elicitation (OpenCode question tool)")
+	}
 
 	// A non-CodeBuddy agent must get the full capability set — proves the
 	// request is built per-agent rather than from a constant.

@@ -631,6 +631,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/stats", ServeGitStats)
 	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)
+	register("/api/ai/elicitation/respond", ServeElicitationRespond)
 	register("/api/upload/file", UploadFile)
 	register("/api/upload/check", UploadCheck)
 	register("/api/upload/recent", UploadRecent)

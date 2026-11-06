@@ -58,8 +58,10 @@
            PermissionApproval is filtered out upstream in summaryTools) -->
       <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
         <!-- Ask tool absorbed into the merged summary ask card below (only when it
-             actually contributed questions; a malformed ask tool keeps its own card). -->
-        <template v-if="isAskQuestion(tool.name || '') && shouldMergeSummaryAskCards && extractAskQuestions(tool.input).length > 0"></template>
+             actually contributed questions; a malformed ask tool keeps its own card).
+             A live elicitation never contributes to the merged card (see
+             summaryAskSources), so absorbing it would hide it entirely. -->
+        <template v-if="isAskQuestion(tool.name || '') && !tool.input?.elicitationId && shouldMergeSummaryAskCards && extractAskQuestions(tool.input).length > 0"></template>
         <!-- Answerable interactive tool: unified card
              (header strip + body in one box). -->
         <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput" @keydown="handleToolDetailKeydown">
@@ -640,6 +642,13 @@ function isAskQuestion(name: string) {
   return (name || '').toLowerCase() === 'askuserquestion'
 }
 
+/** True when this ask block is a LIVE ACP elicitation (the agent is blocked on
+ *  the answer). Such a card posts its selection back instead of sending a chat
+ *  message, so it must never be merged with other ask cards. */
+function isLiveElicitationAsk(block: any) {
+  return block?.type === 'tool_use' && isAskQuestion(block.name || '') && !!block?.input?.elicitationId
+}
+
 /** True when the tool is PermissionApproval (case-insensitive). */
 function isPermissionApproval(name: string) {
   return (name || '').toLowerCase() === 'permissionapproval'
@@ -1025,6 +1034,12 @@ const answerableAskIndices = computed(() => {
   for (let bi = 0; bi < blocks.length; bi++) {
     const block = blocks[bi]
     if (isChildBlock(block)) continue
+    // A live ACP elicitation card is not mergeable: the agent is BLOCKED on its
+    // own request, and the merged card's single Submit sends one chat message
+    // for every question in it — which would leave the elicitation unanswered
+    // (and the turn hung) while also answering the other cards out of band.
+    // It always renders as its own card.
+    if (isLiveElicitationAsk(block)) continue
     if (askQuestionsOfBlock(bi, block).length > 0) out.push(bi)
   }
   return out
@@ -1127,6 +1142,9 @@ const summaryAskSources = computed<Array<Record<string, unknown>>>(() => {
   }
   for (const tool of summaryTools.value) {
     if (!isAskQuestion(tool?.name || '')) continue
+    // Same reason as answerableAskIndices: a live elicitation is answered by
+    // its own card, never by the merged one.
+    if (tool?.input?.elicitationId) continue
     const questions = extractAskQuestions(tool.input)
     if (questions.length > 0) sources.push({ questions })
   }

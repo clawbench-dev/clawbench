@@ -40,9 +40,20 @@ type ClawBenchACPClient struct {
 	sessionRoutes     map[string]chan<- StreamEvent // acpSessionID → streamCh
 	commands          []acp.AvailableCommand        // cached from available_commands_update
 	pendingPermission map[string]*pendingPermission // PermissionKey → pending request
-	poolEntry         *ACPConn                      // reference to pool entry for cache updates (deprecated alias)
-	connRef           *ACPConn                      // reference to ACPConn for cache updates
-	debouncers        map[string]*toolCallDebouncer // acpSessionID → debouncer
+	// pendingElicitations tracks blocking `elicitation/create` requests (see
+	// acp_elicitation.go). Keyed by the card block id, which is unique per
+	// request and is what the frontend posts back.
+	pendingElicitations map[string]*pendingElicitation
+	// activeSessionID is the ACP session id of the turn currently streaming on
+	// this connection. Elicitation requests carry no session id in the typed SDK
+	// struct, and reading it off ACPConn would take ACPConn.mu from an inbound
+	// request goroutine — the deadlock this client is careful to avoid. One
+	// connection serves one session at a time, so the value set by
+	// RegisterSession is the right one.
+	activeSessionID string
+	poolEntry       *ACPConn                      // reference to pool entry for cache updates (deprecated alias)
+	connRef         *ACPConn                      // reference to ACPConn for cache updates
+	debouncers      map[string]*toolCallDebouncer // acpSessionID → debouncer
 
 	// cwd is the project working directory the agent process was spawned in
 	// (cmd.Dir). Written once by spawnLocked before the connection starts, then
@@ -93,11 +104,12 @@ type ClawBenchACPClient struct {
 // NewClawBenchACPClient creates a new ACP client with session routing support.
 func NewClawBenchACPClient() *ClawBenchACPClient {
 	return &ClawBenchACPClient{
-		sessionRoutes:     make(map[string]chan<- StreamEvent),
-		pendingPermission: make(map[string]*pendingPermission),
-		debouncers:        make(map[string]*toolCallDebouncer),
-		terminals:         make(map[string]*terminalSession),
-		toolInputs:        make(map[string]string),
+		sessionRoutes:       make(map[string]chan<- StreamEvent),
+		pendingPermission:   make(map[string]*pendingPermission),
+		pendingElicitations: make(map[string]*pendingElicitation),
+		debouncers:          make(map[string]*toolCallDebouncer),
+		terminals:           make(map[string]*terminalSession),
+		toolInputs:          make(map[string]string),
 	}
 }
 
@@ -118,6 +130,7 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sessionRoutes[acpSessionID] = ch
+	c.activeSessionID = acpSessionID
 	c.debouncers[acpSessionID] = newToolCallDebouncer(ch, c.connRef)
 	// Reset the tool-input cache for this session at the start of each turn: a
 	// tool_call always precedes its permission request within the same turn, so
@@ -146,6 +159,12 @@ func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.sessionRoutes, acpSessionID)
+
+	// A question still waiting on the user belongs to the turn that just
+	// ended. Leaving it blocked would keep the handler alive and
+	// pendingElicitations > 0 — which disables the stall watchdog for the rest
+	// of the connection's life.
+	c.cancelElicitationsLocked(acpSessionID)
 
 	// Flush and remove debouncer
 	if deb, ok := c.debouncers[acpSessionID]; ok {
