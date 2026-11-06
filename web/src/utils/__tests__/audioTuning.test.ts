@@ -77,6 +77,19 @@ describe('readVoiceTuning', () => {
     expect(readVoiceTuning({ stt: { silence_send_seconds: 0.5 } }).silenceSendMs).toBe(500)
   })
 
+  it('reads the idle exit in seconds, defaulting to a minute', () => {
+    expect(readVoiceTuning({ stt: { idle_exit_seconds: 5 } }).idleExitMs).toBe(5000)
+    expect(readVoiceTuning({}).idleExitMs).toBe(60000)
+  })
+
+  it('keeps 0 for idle_exit_seconds (never leave on its own)', () => {
+    expect(readVoiceTuning({ stt: { idle_exit_seconds: 0 } }).idleExitMs).toBe(0)
+  })
+
+  it('rejects a negative idle_exit_seconds', () => {
+    expect(readVoiceTuning({ stt: { idle_exit_seconds: -1 } }).idleExitMs).toBe(60000)
+  })
+
   it('keeps 0 for silence_send_seconds instead of restoring the default', () => {
     // 0 is the documented "trigger words only" value; treating it as absent
     // would silently re-enable auto-send for a user who turned it off.

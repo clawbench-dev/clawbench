@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { ref } from 'vue'
 
 /**
  * Free-dialog loop tests.
@@ -27,6 +28,11 @@ let sockets: FakeSocket[] = []
 /** One shared toast spy: the real toast is a single slot, so two calls in the
  *  same tick overwrite each other — the count is what proves they do not. */
 let toastShow: ReturnType<typeof vi.fn>
+/** The screen lock is a real browser API; only its acquisition matters here. */
+let wakeAcquire: ReturnType<typeof vi.fn>
+let wakeRelease: ReturnType<typeof vi.fn>
+/** Set false to simulate a host with neither the Web API nor the native bridge. */
+let wakeHeld: { value: boolean }
 
 function installFakes() {
   sockets = []
@@ -131,6 +137,13 @@ function installFakes() {
   vi.doMock('@/composables/useToast', () => ({
     useToast: () => ({ show: toastShow }),
   }))
+
+  const held = ref(false)
+  wakeAcquire = vi.fn(() => { held.value = true })
+  wakeRelease = vi.fn(() => { held.value = false })
+  wakeHeld = held
+  const api = { held, acquire: wakeAcquire, release: wakeRelease }
+  vi.doMock('@/composables/useWakeLock', () => ({ useWakeLock: () => api }))
 }
 
 /** Pushes one recogniser message into the newest socket. */
@@ -156,10 +169,125 @@ describe('useFreeDialog', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
     vi.doUnmock('@/utils/pcmCapture')
     vi.doUnmock('@/composables/useAutoSpeech')
     vi.doUnmock('@/composables/useSettingsConfig')
     vi.doUnmock('@/composables/useToast')
+    vi.doUnmock('@/composables/useWakeLock')
+  })
+
+  it('keeps the screen awake for the whole time the mode is on', async () => {
+    // The loop lives in the page: the moment the screen turns itself off the
+    // app is in the background and Android takes the microphone away, so the
+    // mode stops listening without saying anything. A user thinking out loud
+    // never touches the screen, which is exactly when the system timeout hits.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(wakeAcquire).toHaveBeenCalledWith('free-dialog')
+
+    // The lock must survive the whole cycle, not just the two endpoints: a
+    // release slipped into a phase transition would otherwise go unnoticed.
+    wakeRelease.mockClear()
+    speak('做点事 发送')
+    mod.setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    autoSpeech.state.value = 'idle'
+    await flush()
+    vi.advanceTimersByTime(500)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+    expect(wakeRelease).not.toHaveBeenCalled()
+
+    mod.stop()
+    expect(wakeRelease).toHaveBeenCalledWith('free-dialog')
+  })
+
+  it('keeps the screen awake when it starts while a turn is already running', async () => {
+    // That path returns before `openListening`; a lock taken at the end of the
+    // function would leave this variant without one.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true })
+    await flush()
+    expect(wakeAcquire).toHaveBeenCalledWith('free-dialog')
+    mod.stop()
+    expect(wakeRelease).toHaveBeenCalledWith('free-dialog')
+  })
+
+  it('releases the screen lock when the start fails', async () => {
+    // A denied microphone ends the mode through stop(); leaving the lock held
+    // would keep the display on for a mode that is not running.
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockRejectedValue(new Error('denied')) },
+    })
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+    // It must actually have taken the lock first: without this the test also
+    // passes when the lock is never acquired at all (release is a no-op then).
+    expect(wakeAcquire).toHaveBeenCalledWith('free-dialog')
+    expect(wakeRelease).toHaveBeenCalledWith('free-dialog')
+    // The LAST release is the one from the failure path; the first belongs to
+    // startFreeDialog's own reset, which runs before the lock is taken.
+    expect(wakeAcquire.mock.invocationCallOrder[0])
+      .toBeLessThan(wakeRelease.mock.invocationCallOrder.at(-1)!)
+  })
+
+  it('warns when this host cannot keep the screen awake', async () => {
+    // Plain http on a phone: no `navigator.wakeLock` (secure-context only) and
+    // no native bridge. Without a word the user believes the screen is pinned
+    // on and watches the mode die at the system timeout.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    wakeHeld.value = false
+    toastShow.mockClear()
+    vi.advanceTimersByTime(2600)
+    expect(toastShow).toHaveBeenCalledTimes(1)
+    expect(String(toastShow.mock.calls[0][0])).toMatch(/锁屏|screen/i)
+  })
+
+  it('stays quiet when the screen lock is actually held', async () => {
+    // The warning must be a report of a real failure, not a timer that always
+    // fires — otherwise every start would show two toasts.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+    vi.advanceTimersByTime(2600)
+    expect(toastShow).not.toHaveBeenCalled()
+  })
+
+  it('stops when the microphone is taken away', async () => {
+    // The OS can revoke the device mid-session (a call, another recorder, a
+    // Bluetooth disconnect). The track ends, nothing is captured, but the
+    // socket and the 'listening' phase would keep pretending otherwise.
+    const track = { stop: vi.fn(), addEventListener: vi.fn() }
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getTracks: () => [track],
+          getAudioTracks: () => [track],
+        }),
+      },
+    })
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+
+    const onEnded = track.addEventListener.mock.calls.find(([ev]) => ev === 'ended')?.[1] as (() => void) | undefined
+    expect(onEnded).toBeTypeOf('function')
+    toastShow.mockClear()
+    onEnded!()
+
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+    expect(toastShow).toHaveBeenCalledTimes(1)
+    expect(String(toastShow.mock.calls[0][0])).toMatch(/麦克风|microphone/i)
   })
 
   it('turns read-aloud on when the mode starts', async () => {
@@ -211,6 +339,170 @@ describe('useFreeDialog', () => {
     mod.stop()
     expect((autoSpeech.setEnabled as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled()
     expect(autoSpeech.enabled.value).toBe(false)
+  })
+
+  it('waits for an interrupt instead of listening when a turn is already running', async () => {
+    // The user is still waiting for this answer. Collecting their words as the
+    // NEXT message would queue a second turn behind the one they are watching.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('speaking')
+    // One socket — the interrupt listener. A dictation socket would mean speech
+    // is being turned into a message.
+    expect(sockets.length).toBe(1)
+  })
+
+  it('cancels the running turn when the user interrupts it', async () => {
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt })
+    await flush()
+    speak('等等', 'partial')
+    // Nothing is being spoken yet, so muting would do nothing: the turn itself
+    // has to be cancelled.
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+  })
+
+  it('mutes playback instead of cancelling once the reply is being read', async () => {
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt })
+    await flush()
+    autoSpeech.state.value = 'playing'
+    await flush()
+    speak('等等', 'partial')
+    expect(autoSpeech.stopAudio).toHaveBeenCalled()
+    expect(onInterrupt).not.toHaveBeenCalled()
+  })
+
+  it('starts listening once the running turn ends', async () => {
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true })
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('speaking')
+    mod.setFreeDialogThinking(false)
+    // Same grace window as a turn that started in this mode: the TTS POST is
+    // async, so reopening on the turn-end edge would transcribe the reply's
+    // first sentence. The flush matters — openListening awaits getUserMedia, so
+    // without it the phase reads 'speaking' whatever the implementation does.
+    vi.advanceTimersByTime(1500)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).not.toBe('listening')
+    vi.advanceTimersByTime(500)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+  })
+
+  it('releases the interrupt microphone before listening starts', async () => {
+    // The interrupt listener is a SECOND capture. Entering listening from here
+    // skips the playback watcher, which is the other place that closes it, so
+    // without an explicit stop both microphones stay open.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt: vi.fn() })
+    await flush()
+    speak('等等', 'partial')
+    mod.setFreeDialogThinking(false)
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(500)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+    // Two sockets: the interrupt one (now closed) and the dictation one.
+    expect(sockets.length).toBe(2)
+    expect(sockets[0].readyState).toBe(3)
+  })
+
+  it('waits for the running turn when an earlier reply finishes playing', async () => {
+    // The mode can be opened while a turn is running AND a previous reply is
+    // still being read out. When that playback ends the turn is still going:
+    // reopening the microphone would queue the user's next words behind the
+    // answer they are waiting for.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt: vi.fn() })
+    await flush()
+    autoSpeech.state.value = 'playing'
+    await flush()
+    autoSpeech.state.value = 'idle'
+    await flush()
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('thinking')
+  })
+
+  it('closes a microphone that arrives after the mode was stopped', async () => {
+    // getUserMedia can resolve after the user closed the mode. stopCapture()
+    // ran before the stream existed, so this is the only place that can close
+    // it — otherwise the microphone indicator stays on with nobody reading it.
+    const track = { stop: vi.fn() }
+    let resolveMic: (s: unknown) => void = () => {}
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn(() => new Promise((r) => { resolveMic = r })) },
+    })
+    const mod = await import('../useFreeDialog')
+    const started = mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    mod.stop()
+    resolveMic({ getTracks: () => [track], getAudioTracks: () => [] })
+    await started
+    expect(track.stop).toHaveBeenCalled()
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+  })
+
+  it('keeps the newer interrupt microphone when two opens overlap', async () => {
+    // Entering during a running turn opens a listener, and playback starting
+    // opens another. Both await getUserMedia; whichever answers LAST must close
+    // its own stream instead of overwriting the live one (which would leave a
+    // microphone running with no reference to stop it).
+    const pending: Array<(s: unknown) => void> = []
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn(() => new Promise((r) => { pending.push(r) })) },
+    })
+    const trackA = { stop: vi.fn() }
+    const trackB = { stop: vi.fn() }
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt: vi.fn() })
+    await flush()
+    expect(pending.length).toBe(1)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    expect(pending.length).toBe(2)
+
+    // Newer answers first, older answers last.
+    pending[1]({ getTracks: () => [trackB], getAudioTracks: () => [trackB] })
+    await flush()
+    pending[0]({ getTracks: () => [trackA], getAudioTracks: () => [trackA] })
+    await flush()
+
+    expect(trackA.stop).toHaveBeenCalled()
+    expect(trackB.stop).not.toHaveBeenCalled()
+    // The live one is still reachable and is what stop() closes.
+    mod.stop()
+    expect(trackB.stop).toHaveBeenCalled()
+  })
+
+  it('just waits when interruption is turned off', async () => {
+    // "Never interrupt" means no microphone at all until the turn is over —
+    // opening one to listen for an interrupt the user disabled would be wrong.
+    const settings = await import('@/composables/useSettingsConfig')
+    settings.serverConfig.value = {
+      stt: {
+        voice_gate: true,
+        voice_gate_sensitivity: 'standard',
+        trigger_words: '发送',
+        silence_send_seconds: 3,
+        barge_in: 'off',
+        barge_in_words: '等等',
+        mic_echo_cancel: true,
+      },
+    }
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true })
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('thinking')
+    expect(sockets.length).toBe(0)
   })
 
   it('shows ONE toast on entry, not one per switch it flipped', async () => {
@@ -346,6 +638,46 @@ describe('useFreeDialog', () => {
     speak('第一句话', 'partial')
     vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledWith('第一句话')
+  })
+
+  it('leaves the mode when nothing is recognised for the configured span', async () => {
+    // The failure this prevents: the user walks away with the mode on, the
+    // microphone stays open (and the recogniser keeps billing) forever.
+    const settings = await import('@/composables/useSettingsConfig')
+    settings.serverConfig.value = { stt: { silence_send_seconds: 0, idle_exit_seconds: 5 } }
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+  })
+
+  it('pushes the idle exit back while words keep arriving', async () => {
+    const settings = await import('@/composables/useSettingsConfig')
+    settings.serverConfig.value = { stt: { silence_send_seconds: 0, idle_exit_seconds: 5 } }
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    vi.advanceTimersByTime(4000)
+    speak('还在说', 'partial')
+    vi.advanceTimersByTime(4000)
+    // 4s since the last word: still inside the window.
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+    vi.advanceTimersByTime(1500)
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+  })
+
+  it('never leaves on its own when the idle exit is set to 0', async () => {
+    const settings = await import('@/composables/useSettingsConfig')
+    settings.serverConfig.value = { stt: { silence_send_seconds: 0, idle_exit_seconds: 0 } }
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    vi.advanceTimersByTime(10 * 60 * 1000)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
   })
 
   it('does not send on silence alone (no speech was ever recognised)', async () => {

@@ -37,6 +37,14 @@ export interface VoiceTuning {
   triggerWords: string[]
   /** A pause this long after the last recognised word also sends it. 0 disables. */
   silenceSendMs: number
+  /**
+   * Leave the mode after this long with no recognised words at all. 0 disables.
+   *
+   * A separate number from `silenceSendMs` on purpose: one ends an utterance
+   * (send and keep listening), the other ends the session (the user walked
+   * away and the microphone is still open).
+   */
+  idleExitMs: number
   bargeIn: BargeInMode
   /** Only used when `bargeIn === 'keyword'`. */
   bargeInWords: string[]
@@ -76,6 +84,7 @@ export const VOICE_TUNING_DEFAULTS: VoiceTuning = {
   sensitivity: 'standard',
   triggerWords: [...DEFAULT_TRIGGER_WORDS],
   silenceSendMs: 3000,
+  idleExitMs: 60000,
   bargeIn: 'any',
   bargeInWords: [...DEFAULT_BARGE_IN_WORDS],
 }
@@ -159,6 +168,7 @@ export function readVoiceTuning(config: Record<string, unknown> | undefined | nu
   // milliseconds because everything else here — the gate, the hangover, the
   // keepalive — is measured that way.
   const silenceRaw = Number(cfg.silence_send_seconds)
+  const idleExitRaw = Number(cfg.idle_exit_seconds)
   return {
     echoCancellation: asBool(cfg.mic_echo_cancel, d.echoCancellation),
     noiseSuppression: asBool(cfg.mic_noise_suppress, d.noiseSuppression),
@@ -168,6 +178,7 @@ export function readVoiceTuning(config: Record<string, unknown> | undefined | nu
     sensitivity: asSensitivity(cfg.voice_gate_sensitivity),
     triggerWords: parseWordList(cfg.trigger_words, d.triggerWords),
     silenceSendMs: Number.isFinite(silenceRaw) && silenceRaw >= 0 ? Math.round(silenceRaw * 1000) : d.silenceSendMs,
+    idleExitMs: Number.isFinite(idleExitRaw) && idleExitRaw >= 0 ? Math.round(idleExitRaw * 1000) : d.idleExitMs,
     bargeIn: asBargeIn(cfg.barge_in),
     bargeInWords: parseWordList(cfg.barge_in_words, d.bargeInWords),
   }
