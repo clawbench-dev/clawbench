@@ -939,6 +939,7 @@ export default {
       emptyUploads: 'No recently uploaded files',
       deleteRecent: 'Delete this file',
       clearAll: 'Clear',
+      selectedCount: '{n} selected',
       clearSharesHint: '{n} recent share(s)',
       clearSharesConfirm: 'Delete every file in the recent-shares directory? This cannot be undone.',
       clearSharesDone: 'Cleared {n} recent share file(s)',

@@ -198,6 +198,7 @@ const i18n = createI18n({
           uploading: 'Uploading...',
           deleteRecent: 'Delete this file',
           clearAll: 'Clear',
+          selectedCount: '{n} selected',
           clearSharesHint: '{n} recent share(s)',
           clearSharesConfirm: 'Clear all recent shares?',
           clearSharesDone: 'Cleared {n} recent share file(s)',
@@ -234,9 +235,9 @@ function getRawState(wrapper: ReturnType<typeof mountDrawer>) {
  *
  * The real one reports every file through its per-file callback the moment that
  * file lands, and only then resolves with the whole batch. The drawer depends on
- * that order to commit an upload before its in-flight card unmounts (issue
- * #629), so the mock has to reproduce it — a plain `mockResolvedValue` would
- * let a batch-level implementation pass.
+ * that order to grow the footer list as files arrive, so the mock has to
+ * reproduce it — a plain `mockResolvedValue` would let a batch-level
+ * implementation pass.
  */
 function mockPickedFiles(paths: string[]) {
   mockHandleFileSelect.mockImplementation(async (_e: Event, onUploaded?: (p: string) => void) => {
@@ -1677,6 +1678,37 @@ describe('AttachDrawer footer actions', () => {
 
     expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
       .toEqual(['picked.ts'])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('shows how many are selected and clears them in one tap', async () => {
+    // A bare strip of chips read as decoration: no count, no way out. The head
+    // line answers both, and the count has to track the draft rather than the
+    // composer (the sheet is a picker — a pick is not applied until OK).
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    const state = getRawState(wrapper)
+    expect(wrapper.find('[data-role="attach-selected-count"]').text()).toBe('1 selected')
+
+    state.toggleAttached('src/b.ts')
+    await nextTick()
+    expect(wrapper.find('[data-role="attach-selected-count"]').text()).toBe('2 selected')
+
+    await wrapper.find('[data-action="attach-clear-selection"]').trigger('click')
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+    // Nothing selected → no head line at all (no "0 selected" noise).
+    expect(wrapper.find('[data-role="attach-selected-count"]').exists()).toBe(false)
+  })
+
+  it('clearing the selection leaves OK with nothing to hand over', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    const state = getRawState(wrapper)
+    state.toggleAttached('src/b.ts')
+    await nextTick()
+
+    await wrapper.find('[data-action="attach-clear-selection"]').trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+
     expect(wrapper.emitted('add-attached')).toBeFalsy()
   })
 

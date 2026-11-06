@@ -942,6 +942,7 @@ export default {
       emptyUploads: '暂无最近上传文件',
       deleteRecent: '删除该文件',
       clearAll: '清空',
+      selectedCount: '已选 {n} 项',
       clearSharesHint: '共 {n} 个最近分享',
       clearSharesConfirm: '确认清空最近分享目录下的全部文件？此操作不可恢复。',
       clearSharesDone: '已清空 {n} 个最近分享文件',

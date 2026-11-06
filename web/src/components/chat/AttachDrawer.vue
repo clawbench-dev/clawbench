@@ -228,12 +228,31 @@
          tap is not discoverable and the wide card has its own X. -->
     <template #footer>
       <div class="ad-footer">
-        <AttachmentTags
-          v-if="draft.length > 0"
-          :files="draft"
-          @file-click="emit('file-open', $event)"
-          @remove="removeFromDraft"
-        />
+        <!-- Selected-so-far. A bare strip of chips was not readable as a list:
+             no count, no way to clear it, and no hint that it scrolls sideways.
+             The head line answers "how many" and "get me out", the fades say
+             "there is more this way" (and disappear once scrolled there). -->
+        <div v-if="draft.length > 0" class="ad-selected">
+          <div class="ad-selected-head">
+            <span class="ad-selected-count" data-role="attach-selected-count">
+              {{ t('chat.attach.selectedCount', { n: draft.length }) }}
+            </span>
+            <button type="button" class="ad-selected-clear" data-action="attach-clear-selection" @click="clearDraft">
+              {{ t('chat.attach.clearAll') }}
+            </button>
+          </div>
+          <div
+            ref="selectedStripRef"
+            class="ad-selected-strip"
+            :class="{ 'more-right': selectedMoreRight }"
+          >
+            <AttachmentTags
+              :files="draft"
+              @file-click="emit('file-open', $event)"
+              @remove="removeFromDraft"
+            />
+          </div>
+        </div>
         <div class="ad-footer-actions">
           <button type="button" class="fbtn" data-action="attach-cancel" @click="handleCancel">{{ t('common.cancel') }}</button>
           <button type="button" class="fbtn fbtn-primary" data-action="attach-ok" @click="handleConfirm">{{ t('common.confirm') }}</button>
@@ -601,6 +620,58 @@ function removeFromDraft(entry: FileEntry) {
   draft.value = draft.value.filter(f => f.path !== entry.path)
 }
 
+/** Empty the selection in one tap (the footer's 清空). */
+function clearDraft() {
+  draft.value = []
+  // Nothing of this batch is left in the draft, so "terminate" has nothing to
+  // clear either.
+  batchCommitted = []
+}
+
+// ── Footer selection strip: right-edge fade ──
+// Same rule as the composer's action bar: the fade exists only while there is
+// hidden content on that side. Left opaque on purpose — the strip always starts
+// at scrollLeft 0, so a left fade would dim the first chip for no reason.
+//
+// The scrolling element is AttachmentTags' own root (it owns `overflow-x`), so
+// the listener is attached there rather than on the wrapper — `scroll` does not
+// bubble, and the wrapper never scrolls.
+const selectedStripRef = ref<HTMLElement | null>(null)
+const selectedMoreRight = ref(false)
+
+function selectedScroller(): HTMLElement | null {
+  return (selectedStripRef.value?.firstElementChild as HTMLElement | null) ?? null
+}
+
+function updateSelectedFade() {
+  const el = selectedScroller()
+  if (!el) {
+    selectedMoreRight.value = false
+    return
+  }
+  // 1px tolerance for sub-pixel rounding, mirroring the overflow test used by
+  // the composer's strip.
+  selectedMoreRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+let stopSelectedScroll: (() => void) | null = null
+
+/** Re-bind whenever the strip mounts (it only exists while something is selected). */
+function bindSelectedScroll() {
+  stopSelectedScroll?.()
+  stopSelectedScroll = null
+  const el = selectedScroller()
+  if (!el) return
+  el.addEventListener('scroll', updateSelectedFade, { passive: true })
+  stopSelectedScroll = () => el.removeEventListener('scroll', updateSelectedFade)
+  updateSelectedFade()
+}
+
+watch(selectedStripRef, bindSelectedScroll)
+// Content changes (a file lands, a chip is removed) move the overflow boundary
+// without any scroll event.
+watch(draft, () => nextTick(updateSelectedFade), { deep: true })
+
 /**
  * Forget paths that were destroyed on disk.
  *
@@ -839,6 +910,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('focus', onWindowFocus)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopSelectedScroll?.()
 })
 
 // ── Drawer close handler ──
@@ -1003,13 +1075,31 @@ defineExpose({ activeTab, handleFileDrop })
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
+  position: relative;
   transition: background var(--duration-fast);
 }
 .ad-file-row:active {
   background: var(--bg-hover);
 }
+/* Selected row: the design guide's three-signal pattern — 2px accent bar +
+   12% accent tint + a heavier name. Deliberately NOT the old "dim the whole
+   row" treatment: lowering opacity reads as disabled / unavailable, which is
+   the opposite of "you picked this". The bar is load-bearing (the tint alone
+   measures ~1.09 contrast on light themes). */
 .ad-file-attached {
-  opacity: var(--opacity-disabled);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+.ad-file-attached::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(6 * var(--dp));
+  bottom: calc(6 * var(--dp));
+  width: calc(2 * var(--dp));
+  background: var(--accent-color);
+}
+.ad-file-attached .ad-file-name {
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Icon container: holds icon or thumbnail.
@@ -1091,14 +1181,16 @@ defineExpose({ activeTab, handleFileDrop })
   }
 }
 
-/* Attachment check badge: sits on the bottom-right corner of the icon */
+/* Attachment check badge: sits on the bottom-right corner of the icon.
+   16dp rather than 14: at 14 the tick was unreadable on a phone, and it is the
+   second signal that a row is selected (the accent bar is the first). */
 .ad-icon-wrap .ad-icon-check {
   position: absolute;
   right: calc(-3 * var(--dp));
   bottom: calc(-3 * var(--dp));
-  width: calc(14 * var(--dp));
-  height: calc(14 * var(--dp));
-  padding: var(--space-1);
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
+  padding: calc(2 * var(--dp));
   box-sizing: border-box;
   border-radius: 50%;
   background: var(--accent-color);
@@ -1284,5 +1376,56 @@ defineExpose({ activeTab, handleFileDrop })
   gap: var(--space-4);
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* ── Selected-so-far list ──
+   A bare strip of chips did not read as a list: no count, no way to clear it,
+   and no hint that it scrolls sideways. */
+.ad-selected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ad-selected-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 calc(14 * var(--dp));
+}
+.ad-selected-count {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.ad-selected-clear {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: color var(--duration-fast);
+}
+.ad-selected-clear:active {
+  color: var(--accent-color);
+}
+@media (hover: hover) {
+  .ad-selected-clear:hover {
+    color: var(--accent-color);
+  }
+}
+.ad-selected-strip {
+  min-width: 0;
+}
+/* Edge fade while the strip still has hidden content on the right. A MASK, not
+   an overlay of a background-coloured gradient: the sheet can sit over a
+   wallpaper, so an opaque gradient would paint a visible band. The fade is
+   dropped once the user reaches the end (see `selectedMoreRight`) — otherwise
+   the last chip looks clipped rather than reachable. */
+.ad-selected-strip.more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20 * var(--dp)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20 * var(--dp)), transparent 100%);
 }
 </style>
