@@ -291,6 +291,57 @@ describe('exportMarkdownToHtml', () => {
     expect(result.html).not.toContain('--font-ui:')
   })
 
+  /**
+   * The interface scale is the same kind of value as the fonts: `applyUIScale`
+   * writes `--ui-scale` to the <html> INLINE style, so it is in no stylesheet
+   * rule and `serializeCss` cannot see it. The exported document inherits
+   * `--ui-scale: 1` from variables.css instead — i.e. an export taken from a
+   * 150% UI rendered at 100%, smaller than the page the reader copied it from.
+   * Every length in that document is `--dp`-based, so the whole thing shrinks
+   * together; nothing looks broken, it just looks like a different document.
+   */
+  it('carries the applied interface scale into the export', async () => {
+    const root = document.documentElement
+    root.style.setProperty('--ui-scale', '1.5')
+    try {
+      const result = await exportMarkdownToHtml(opts({ content: 'text' }))
+      expect(result.html).toContain('--ui-scale: 1.5')
+    } finally {
+      root.style.removeProperty('--ui-scale')
+    }
+  })
+
+  it('omits the scale at 100%, where the stylesheet default already matches', async () => {
+    // Not cosmetic: emitting `--ui-scale: 1` on every export would make the
+    // value look like something the exporter chose rather than something it
+    // carried over, and a diff of two exports would always differ.
+    const root = document.documentElement
+    root.style.setProperty('--ui-scale', '1')
+    try {
+      const result = await exportMarkdownToHtml(opts({ content: 'text' }))
+      // The `:root` block is where inline values land; the stylesheet's own
+      // declaration lives in the variables.css copy, so look for the override.
+      expect(result.html).not.toMatch(/--ui-scale:\s*1;?\s*\n\s*}/)
+      expect(result.html).not.toContain('--ui-scale: 1\n')
+    } finally {
+      root.style.removeProperty('--ui-scale')
+    }
+  })
+
+  it('ignores an unparseable scale instead of writing broken CSS', async () => {
+    // A hand-edited or truncated localStorage value reaches the applier; the
+    // exporter must not turn it into a declaration the browser would drop
+    // (which would silently restore 100%).
+    const root = document.documentElement
+    root.style.setProperty('--ui-scale', 'garbage')
+    try {
+      const result = await exportMarkdownToHtml(opts({ content: 'text' }))
+      expect(result.html).not.toContain('--ui-scale: garbage')
+    } finally {
+      root.style.removeProperty('--ui-scale')
+    }
+  })
+
   it('uses a single topbar toggle as the sole TOC on/off control', async () => {
     const result = await exportMarkdownToHtml(opts({ content: '# T' }))
     // No in-panel collapse button / old rail — TOC rail carries only its items.

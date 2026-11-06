@@ -83,7 +83,17 @@ export class NavigationPage {
             if (!wide || !narrow) return false
             const shown = (el: HTMLElement) =>
               getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0
-            const wantWide = window.innerWidth >= 960
+            // The threshold is a DESIGN width: the app divides the viewport by
+            // the applied interface scale before comparing (see
+            // computeIsWideScreen), because scaling grows the panels without
+            // widening the window. Reading `innerWidth >= 960` here would
+            // expect the wide dock on a window that the app has already
+            // collapsed — a 1200px window at 150% is 800 design px.
+            const scale = parseFloat(
+              getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'),
+            )
+            const uiScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+            const wantWide = window.innerWidth / uiScale >= 960
             return wantWide ? shown(wide) && !shown(narrow) : shown(narrow) && !shown(wide)
           }),
         { timeout: 10000, message: 'the dock matching the viewport should be the one rendered' },
