@@ -60,7 +60,7 @@
       :title="cardTitle(fileEntry)">
       <img v-if="showsThumb(fileEntry)"
         class="attachment-thumb-img"
-        :src="thumbUrl(fileEntry.path)" loading="lazy" @error="onThumbError(fileEntry.path)" />
+        :src="thumbUrlFor(fileEntry)" loading="lazy" @error="onThumbError(fileEntry.path)" />
       <!-- Icon + filename fallback: non-images AND images the backend cannot
            thumbnail (SVG/WebP/BMP/… or a failed thumb request) render as a
            file card, never a blank pill. -->
@@ -121,7 +121,32 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const thumbUrl = buildPathThumbUrl
-const { terminateChatUploadBatch } = useFileUpload()
+const { terminateChatUploadBatch, pendingFiles: uploadPendingFiles } = useFileUpload()
+
+/**
+ * Local blob previews for the files this session just uploaded.
+ *
+ * A finished upload keeps its pending entry (the drawer's watcher retains it
+ * while the path is attached, which is what makes the input strip able to drop
+ * the row later) together with the local Blob it was previewed from. The
+ * committed card would otherwise switch to a server thumbnail that still has to
+ * be fetched — leaving an empty tile in exactly the spot where a picture was a
+ * frame earlier, which reads as "the image vanished", i.e. the reported #629
+ * symptom. Reusing the blob makes the hand-off seamless; it is revoked together
+ * with the entry, so the two lifetimes stay aligned.
+ */
+const localPreviews = computed(() => {
+  const map = new Map<string, string>()
+  for (const f of uploadPendingFiles.value) {
+    if (f.path && f.previewUrl && !f.uploading) map.set(f.path, f.previewUrl)
+  }
+  return map
+})
+
+/** Thumbnail source for a committed card: the local blob while we still hold one. */
+function thumbUrlFor(entry: FileEntry): string {
+  return localPreviews.value.get(entry.path) ?? thumbUrl(entry.path)
+}
 
 /** True while the picker's sequential upload still has a file in flight. */
 const hasUploadingPending = computed(() => (props.pendingFiles ?? []).some(f => f.uploading))

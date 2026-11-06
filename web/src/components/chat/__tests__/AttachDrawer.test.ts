@@ -621,17 +621,42 @@ describe('AttachDrawer', () => {
     expect(wrapper.emitted('add-attached')).toHaveLength(1)
   })
 
-  it('keeps the uploaded attachment when the sheet is cancelled', async () => {
-    // Cancel discards the DRAFT, never a finished upload: the bytes are on the
-    // server and the card already lives in the composer. Dropping it here would
-    // resurrect the reported "thumbnail disappears" symptom through a different
-    // door (swipe the sheet away instead of tapping OK).
+  it('cancel undoes the uploads this session committed', async () => {
+    // "取消" has to cancel. The upload is committed as it lands (see above), so
+    // without this the user who picked the wrong photo, saw the card and pressed
+    // Cancel still sent that photo with the next message.
     mockPickedFiles(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer({ attachedFiles: [] })
     await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
     await wrapper.find('[data-action="attach-cancel"]').trigger('click')
     expect(wrapper.emitted('add-attached')).toEqual([['.clawbench/uploads/a.png', false]])
+    expect(wrapper.emitted('remove-attached')).toEqual([
+      [{ path: '.clawbench/uploads/a.png', isDir: false }],
+    ])
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+  })
+
+  it('cancel leaves attachments that were already there before it opened', async () => {
+    // Only THIS session's uploads are undone; the caller's existing attachments
+    // are not the sheet's to remove.
+    mockPickedFiles(['.clawbench/uploads/new.png'])
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/existing.ts' }] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+    expect(wrapper.emitted('remove-attached')).toEqual([
+      [{ path: '.clawbench/uploads/new.png', isDir: false }],
+    ])
+  })
+
+  it('dismissing the sheet is not a cancel: its uploads stay', async () => {
+    // A swipe / back gesture / overlay tap only closes the panel. Treating it as
+    // Cancel would re-create the reported "thumbnail flashes and is gone".
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await getRawState(wrapper).onDrawerClose()
     expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
   })
 
   it('onFileSelect shows the uploads tab while the transfer is still running', async () => {
@@ -757,6 +782,26 @@ describe('AttachDrawer', () => {
     await wrapper.find('[data-action="attach-ok"]').trigger('click')
     // The only add was the original commit; OK re-adds nothing.
     expect(wrapper.emitted('add-attached')).toHaveLength(1)
+  })
+
+  it('terminate clears this sheet’s own commits even when the host never took them', async () => {
+    // The queued-message editor's `addPath` attaches into its OWN draft and
+    // never touches the global composer list, so the shared terminate has
+    // nothing to detach and reports no paths. Reading that return value left the
+    // images the user had just cancelled sitting in the queued message — they
+    // would then be sent with the message the user had just abandoned.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    mockCancelChatUpload.mockReturnValue([])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    await getRawState(wrapper).handleTerminateUpload()
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+    expect(wrapper.emitted('remove-attached')).toEqual([
+      [{ path: '.clawbench/uploads/a.png', isDir: false }],
+    ])
   })
 
   describe('batch terminate button', () => {
