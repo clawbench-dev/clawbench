@@ -1142,7 +1142,7 @@ func ServeLiveShareNoteSegment(w http.ResponseWriter, r *http.Request) {
 
 	startedAt := parseLiveNoteMillis(r.FormValue("startedAt"))
 
-	persistLiveNoteAudio(token, projectID, projectPath, r.FormValue("title"), channel, startedAt, audio)
+	persistAndFoldLiveNoteAudio(token, projectID, projectPath, r.FormValue("title"), channel, startedAt, audio)
 
 	// Archive-only: the whole-meeting mix track exists to be listened to, not
 	// transcribed. It has no single speaker, so a transcript of it would be a
@@ -2166,15 +2166,38 @@ func validLiveNoteChannel(ch string) bool {
 // a mis-recognized sentence or a model upgrade all end with "re-transcribe the
 // file", which needs the file. A write failure is logged and ignored — losing
 // the transcript because the disk was read-only would be the worse trade.
-func persistLiveNoteAudio(token string, projectID int64, projectPath, title, channel string, startedAt int64, audio []byte) {
+// persistAndFoldLiveNoteAudio stores one segment and folds it into the channel's
+// growing recording file.
+func persistAndFoldLiveNoteAudio(token string, projectID int64, projectPath, title, channel string, startedAt int64, audio []byte) {
+	paths, segPath := persistLiveNoteAudio(token, projectID, projectPath, title, channel, startedAt, audio)
+	if segPath == "" {
+		return
+	}
+	if _, err := service.AppendLiveNoteAudio(paths, channel, startedAt, segPath); err != nil {
+		// The segment is still on disk: the end-of-meeting merge will fold it
+		// in, so this is a slower path rather than a lost recording.
+		slog.Warn("live notes: append audio failed", "channel", channel, "err", err)
+	}
+}
+
+// persistLiveNoteAudio writes the segment and folds it into the channel's
+// recording file.
+//
+// Returns the meeting paths and the segment's path so the caller can append it.
+// The append is best-effort: on failure the segment simply stays on disk and the
+// end-of-meeting merge picks it up, which is exactly the old behavior.
+func persistLiveNoteAudio(token string, projectID int64, projectPath, title, channel string, startedAt int64, audio []byte) (service.LiveNotesPaths, string) {
 	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, title, startedAt)
 	if err != nil {
 		slog.Warn("live notes: meeting folder unavailable", "err", err)
-		return
+		return service.LiveNotesPaths{}, ""
 	}
-	if _, err := service.SaveLiveNoteAudio(paths, channel, startedAt, audio); err != nil {
+	segPath, err := service.SaveLiveNoteAudio(paths, channel, startedAt, audio)
+	if err != nil {
 		slog.Warn("live notes: save audio failed", "err", err)
+		return paths, ""
 	}
+	return paths, segPath
 }
 
 // transcribeLiveNoteSegment calls the STT provider under the process-wide

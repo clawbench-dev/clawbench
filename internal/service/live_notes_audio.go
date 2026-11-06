@@ -111,6 +111,17 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 		}
 		out.Segments += len(groups[solo])
 	}
+	// Recordings assembled as the meeting went have no segments left, so the
+	// duplicate above is a whole FILE rather than a pile of segments.
+	if dup := liveNoteSoloMergedFile(paths.Audio, channels, groups, done); dup != "" && out.Meeting != "" {
+		if rmErr := os.Remove(dup); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return out, rmErr
+		}
+		out.Channels = removeString(out.Channels, dup)
+		delete(out.Files, liveNoteAudioChannelSlugOfFile(dup))
+		delete(out.Origins, liveNoteAudioChannelSlugOfFile(dup))
+		delete(out.Durations, liveNoteAudioChannelSlugOfFile(dup))
+	}
 	return out, nil
 }
 
@@ -236,6 +247,56 @@ func liveNoteSoloChannel(channels []string, groups map[string][]audioSegment, do
 		return ""
 	}
 	return solo
+}
+
+// liveNoteSoloMergedFile returns the duplicate channel FILE to drop when the
+// recording was assembled incrementally.
+//
+// Same situation as liveNoteSoloChannel — one participant, so the mix and their
+// channel are the same audio — but there are no segments left to delete, only
+// the finished file.
+func liveNoteSoloMergedFile(dir string, channels []string, groups map[string][]audioSegment, done map[string]string) string {
+	if len(channels) != 2 || len(groups) > 0 {
+		return ""
+	}
+	solo := ""
+	for _, ch := range channels {
+		if ch != LiveNoteMixChannel {
+			solo = ch
+		}
+	}
+	if solo == "" || done[solo] == "" || done[LiveNoteMixChannel] == "" {
+		return ""
+	}
+	// Only a file that was assembled as the meeting went is a duplicate of the
+	// mix. A file produced by an earlier END-OF-MEETING merge is the finished
+	// work of that pass, and a retry must never delete it — the sidecar is what
+	// tells the two apart.
+	sidecar := filepath.Join(dir, liveNoteAppendSidecarName(solo))
+	if _, err := os.Stat(sidecar); err != nil {
+		return ""
+	}
+	return done[solo]
+}
+
+// liveNoteAudioChannelSlugOfFile is the inverse of liveNoteAudioFileName.
+func liveNoteAudioChannelSlugOfFile(path string) string {
+	name := filepath.Base(path)
+	if name == LiveNoteMeetingAudioFile {
+		return LiveNoteMixChannel
+	}
+	return strings.TrimSuffix(name, ".webm")
+}
+
+// removeString drops the first occurrence of s.
+func removeString(list []string, s string) []string {
+	out := list[:0]
+	for _, v := range list {
+		if v != s {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // record files one group's outcome under the right field.
