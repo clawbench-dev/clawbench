@@ -478,15 +478,23 @@ async function onFileSelect(e: Event) {
     sessionCommitted.add(path)
     emit('add-attached', path, false)
   }
-  const uploadedPaths = await handleFileSelect(e, commit)
-  // Terminated mid-batch: the user asked to clear everything, so do not select
-  // the files that had already finished. The terminate handler already dropped
-  // them, and `chatUploadCancelled` is only reset when a new batch starts.
-  if (chatUploadCancelled.value) return
-  if (uploadedPaths.length === 0) return
-  activeTab.value = 'uploads'
+  // Marks the window in which a batch THIS sheet started is still running —
+  // the only window in which Cancel has a transfer of its own to abort (see
+  // `handleCancel`).
+  uploadInFlight = true
+  try {
+    const uploadedPaths = await handleFileSelect(e, commit)
+    // Terminated mid-batch: the user asked to clear everything, so do not
+    // select the files that had already finished. The terminate handler already
+    // dropped them, and `chatUploadCancelled` is only reset when a new batch
+    // starts.
+    if (chatUploadCancelled.value) return
+    if (uploadedPaths.length === 0) return
+    activeTab.value = 'uploads'
+  } finally {
+    uploadInFlight = false
+  }
 }
-
 /**
  * Terminate the whole in-flight upload batch.
  *
@@ -532,10 +540,20 @@ function handleTerminateUpload() {
  * Both are undone here. A swipe / back gesture / overlay tap is NOT this path —
  * that only closes the panel, and its uploads stay (issue #629).
  */
+/**
+ * Whether a batch THIS sheet started is still running.
+ *
+ * Cancel must stop it — but `cancelChatUpload` works on the module-level chat
+ * batch, which a drag-drop or paste can own just as well. Aborting that one
+ * from here silently killed a transfer the user never asked to stop, so the
+ * sheet only reaches for it while its own pick is in flight.
+ */
+let uploadInFlight = false
+
 function handleCancel() {
   // Stop the batch first: `commit` fires per file as it lands, so aborting must
   // happen before the remaining transfers can reach it.
-  cancelChatUpload()
+  if (uploadInFlight) cancelChatUpload()
   for (const path of sessionCommitted) {
     const entry: FileEntry = { path, isDir: false }
     emit('remove-attached', entry)
@@ -672,6 +690,10 @@ function handleConfirm() {
   for (const entry of attachSnapshot.value) {
     if (!now.has(entry.path)) emit('remove-attached', { path: entry.path, isDir: entry.isDir })
   }
+  // The user has accepted this batch's uploads, so a later "terminate" (which
+  // can fire for a batch started elsewhere while the sheet is reopened) must
+  // not detach them again.
+  batchCommitted = []
   emit('close')
 }
 

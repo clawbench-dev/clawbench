@@ -577,6 +577,14 @@ export function useFileUpload() {
       beginDirProgress(toUpload, maxSizeBytes)
       dirUploadErrorMsgs = []
     } else {
+      // A new chat batch SUPERSEDES the one still in flight. Two picks can
+      // overlap — the drawer stays open while the first one uploads — and the
+      // older loop holds its own token, so simply replacing the module-level
+      // one would leave it uploading files the user has already replaced, with
+      // no handle left for terminate/cancel (they only know the current token).
+      // `cancelChatUpload` is exactly "stop that batch, abort its transfer,
+      // drop its rows"; the flag it raises is reset right below for the new one.
+      cancelChatUpload()
       // Fresh chat batch: clear the terminate flag and forget the previous
       // batch's paths, so a new upload never inherits an old cancellation.
       chatBatch = { cancelled: false }

@@ -1157,6 +1157,36 @@ describe('useFileUpload', () => {
       expect(upload.pendingFiles.value.some(f => f.path === '.clawbench/uploads/b.png')).toBe(false)
     })
 
+    it('abandons the batch still in flight when a new one starts', async () => {
+      // Two picks can overlap: the drawer stays open and its upload entry is
+      // still tappable while the first batch runs. The first loop holds the OLD
+      // token, so replacing the module-level one left it uploading files the
+      // user had already replaced — with no handle left for terminate/cancel,
+      // which only know the current token.
+      let firstXhr: any = null
+      let sends = 0
+      xhrSendHandler = (xhr) => {
+        sends++
+        if (sends === 1) { firstXhr = xhr; return } // hold the first batch
+        respondSuccess(xhr, '.clawbench/uploads/second.png')
+      }
+
+      const upload = useFileUpload()
+      const first = upload.handleFileDrop([makeFile('a.png')])
+      await vi.waitFor(() => { expect(sends).toBe(1) })
+
+      const second = upload.handleFileDrop([makeFile('b.png')])
+      await vi.waitFor(() => { expect(sends).toBe(2) })
+      await second
+
+      // The superseded transfer is aborted rather than left running…
+      expect(firstXhr.abort).toHaveBeenCalled()
+      // …and its row is gone instead of hanging at its last percentage.
+      expect(upload.pendingFiles.value.filter(f => f.uploading)).toHaveLength(0)
+      await first
+      expect(upload.pendingFiles.value.some(f => f.path === '.clawbench/uploads/a.png')).toBe(false)
+    })
+
     it('stops a queued batch before the next file starts', async () => {
       // The real FormData is not introspectable in this mock, so count sends
       // by call order: only the first file should ever be sent.

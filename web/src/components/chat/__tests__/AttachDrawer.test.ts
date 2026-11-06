@@ -669,6 +669,32 @@ describe('AttachDrawer', () => {
     resolveUpload([])
   })
 
+  it('cancel leaves an upload this sheet did not start alone', async () => {
+    // A drag-drop or paste upload can be running in the input bar while the
+    // sheet is open. `cancelChatUpload` acts on the module-level batch, so
+    // calling it unconditionally here silently killed a transfer the user never
+    // asked to stop.
+    mockHandleFileSelect.mockResolvedValue([])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+    expect(mockCancelChatUpload).not.toHaveBeenCalled()
+  })
+
+  it('OK accepts the batch: a later terminate must not undo it', async () => {
+    // `batchCommitted` is what "terminate" clears. Once the user presses OK
+    // those uploads are their accepted selection, so a terminate aimed at a
+    // batch started elsewhere (the sheet can be reopened while one runs) must
+    // not detach them.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+
+    await getRawState(wrapper).handleTerminateUpload()
+
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
   it('dismissing the sheet is not a cancel: its uploads stay', async () => {
     // A swipe / back gesture / overlay tap only closes the panel. Treating it as
     // Cancel would re-create the reported "thumbnail flashes and is gone".
