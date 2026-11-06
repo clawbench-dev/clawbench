@@ -36,7 +36,7 @@ if (typeof window !== 'undefined') {
  * - APP mode (native Android): show APK download (for self-update)
  */
 export function usePwaInstall() {
-  const { isAppMode } = useAppMode()
+  const { isAppMode, isHarmonyApp } = useAppMode()
 
   const isAndroid = computed(() => isAndroidUA && !isAppMode.value)
   const isIOS = computed(() => isIOSUA && !isAppMode.value)
@@ -47,7 +47,7 @@ export function usePwaInstall() {
   // Desktop Chrome/Edge: beforeinstallprompt triggers canInstallPwa
   // iOS: no beforeinstallprompt, but isIOSUA is true → show manual steps
   const showPwaInstall = computed(() => !isAppMode.value && !installed.value && (canInstallPwa.value || isIOSUA))
-  const showApkDownload = computed(() => isAndroidUA && !installed.value)
+  const showApkDownload = computed(() => isAndroidUA && !isHarmonyApp?.value && !installed.value)
 
   async function installPwa(): Promise<boolean> {
     if (!deferredPrompt.value) return false

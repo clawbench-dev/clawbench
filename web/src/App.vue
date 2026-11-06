@@ -2125,7 +2125,8 @@ const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTer
 // matters when the listener failed to bind (the reference is retracted and
 // /api/ssh/info reports enabled:false).
 const isPortForwardUnavailable = computed(() =>
-  portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value),
+  portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value,
+    getNative()?.getCapabilities?.().tunnel !== false),
 )
 // Platform unsupported: PTY cannot run on this OS (e.g. Windows lacks ConPTY).
 // The terminal tab is still shown so users see a clear "unsupported" empty state.

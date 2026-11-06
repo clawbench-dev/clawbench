@@ -29,6 +29,8 @@
 
 ## 快速开始
 
+HarmonyOS 原生客户端正在实验性移植中，开发构建、已支持能力及尚未完成的范围见 [HarmonyOS 客户端说明](harmony/README.md)。当前尚未作为正式发行平台。
+
 ### 前置准备
 
 - **一台 PC（Linux / macOS / Windows）或装有 Termux 的安卓手机**：用于运行 ClawBench 服务端，并安装至少一个 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi）
