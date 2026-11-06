@@ -678,6 +678,17 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
 	attachConfigOptionsAfterModelSwitch(resp, sessionID, req.ModelID)
+	// The level list is per MODEL, so a switch changes the picker's options.
+	// The agent reports the new list only inside the set_config_option
+	// RESPONSE (no config_option_update follows), so returning it here is what
+	// keeps the open drawer in step — without it the drawer keeps showing the
+	// previous model's levels until the next turn, and two sessions on the same
+	// agent disagree about the same model.
+	if req.ModelID != "" && !modelSwitchDeferred {
+		if state := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID).Effort; state != nil {
+			resp["thinkingEffortState"] = state
+		}
+	}
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}

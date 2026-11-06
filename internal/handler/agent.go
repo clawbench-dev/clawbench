@@ -720,7 +720,8 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 // isValidThinkingEffort checks if a thinking effort level is valid for an agent
 // in a given session. It checks levels based on the transport that session's
 // turns will actually use:
-//   - ACP mode: only ACP-reported levels from AgentCapabilityRegistry
+//   - ACP mode: the live session's own model list when it has one, otherwise
+//     the agent-level levels from AgentCapabilityRegistry
 //   - CLI mode: only static ThinkingEffortLevels from BackendSpec
 //   - Neither has levels: allow any value (backward compatible)
 //
@@ -748,7 +749,15 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 	reg := ai.GetAgentCapabilityRegistry()
 
 	if transport == "acp-stdio" {
-		// ACP mode: only check ACP-reported levels
+		// ACP mode: prefer the list THIS session's model advertised. The
+		// agent-level registry only remembers whichever session refreshed it
+		// last, and levels are per model — validating a deepseek pick against
+		// glm's list both rejects valid levels and accepts ones the model will
+		// refuse.
+		if offered, known := sessionOffersThinkingEffort(sessionID, level); known {
+			return offered
+		}
+		// ACP-reported agent-level levels
 		if es := reg.GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
 			for _, l := range es.AvailableLevels {
 				if l.ID == level {
@@ -773,6 +782,29 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 
 	// No static levels and not ACP — allow any value
 	return true
+}
+
+// sessionOffersThinkingEffort reports whether the live ACP connection for this
+// session advertises the level. known=false means the session's model list has
+// not been learned (callers fall back to the agent-level registry).
+func sessionOffersThinkingEffort(sessionID, level string) (offered, known bool) {
+	if sessionID == "" {
+		return false, false
+	}
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return false, false
+	}
+	levels, ok := conn.GetSessionThinkingEfforts()
+	if !ok {
+		return false, false
+	}
+	for _, l := range levels {
+		if l.ID == level {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // maxAgentAvatarBytes caps the stored agent avatar (a raw DiceBear SVG string).

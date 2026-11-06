@@ -1613,6 +1613,11 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		switch category {
 		case string(acp.SessionConfigOptionCategoryThoughtLevel):
 			category = "thought_level"
+			// Also record it on the connection: OpenCode's levels are per
+			// model, and this response is the authoritative list for the model
+			// this session just switched to. Without it the session keeps
+			// emitting the PREVIOUS model's levels until the next turn.
+			c.SetSessionThinkingEfforts(levelsFromSelect(sel))
 		case string(acp.SessionConfigOptionCategoryMode):
 			category = "mode"
 		case string(acp.SessionConfigOptionCategoryModel):
@@ -1620,4 +1625,13 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		}
 		reg.UpdateAvailableOptions(agentID, category, sel.Available)
 	}
+}
+
+// levelsFromSelect converts a SelectState's options into thinking-effort defs.
+func levelsFromSelect(sel SelectState) []ThinkingEffortDef {
+	levels := make([]ThinkingEffortDef, 0, len(sel.Available))
+	for _, opt := range sel.Available {
+		levels = append(levels, ThinkingEffortDef(opt))
+	}
+	return levels
 }

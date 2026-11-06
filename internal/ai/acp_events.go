@@ -782,6 +782,13 @@ func applyConfigSelectToSessionCache(sel SelectState, conn *ACPConn, reg *AgentC
 		}
 		conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
 	case "thought_level":
+		// The level LIST is per model too: an agent that reports a new list
+		// through this notification (rather than inside the set_config_option
+		// response) must update the session's own copy, or the stale one would
+		// outrank the freshly updated registry everywhere it is preferred.
+		if newOpts {
+			conn.SetSessionThinkingEfforts(levelsFromSelect(sel))
+		}
 		// Only update session cache when the value actually changed,
 		// to avoid overwriting the user's selection with the agent's default
 		if currentChanged {

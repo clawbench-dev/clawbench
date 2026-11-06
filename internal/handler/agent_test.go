@@ -2986,3 +2986,35 @@ func TestAgentPatch_RenameCollisionReturnsConflict(t *testing.T) {
 		}
 	}
 }
+
+// Issue #637 — thinking levels are per MODEL, so validation must use the
+// session's own list when it has one. The agent-level registry only holds
+// whichever session refreshed it last, which both rejected valid picks and
+// accepted levels the current model refuses.
+func TestIsValidThinkingEffort_UsesSessionLevels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	agent := &model.Agent{ID: "effort-scope-agent", Backend: "opencode", Transport: "acp-stdio"}
+
+	// The agent-level registry describes a DIFFERENT model (another session).
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("effort-scope-agent", &ai.AgentCapability{
+		AvailableThinkingEfforts: []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}},
+	})
+
+	// This session's model offers high/max/default.
+	conn := ai.NewACPConnForTest(agent, "effort-scope-session")
+	conn.SetSessionThinkingEfforts([]ai.ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}})
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest("effort-scope-session", conn)
+	defer mgr.RemoveConn("effort-scope-session")
+
+	assert.True(t, isValidThinkingEffort(agent, "max", "effort-scope-session"),
+		"the session's model offers max")
+	assert.False(t, isValidThinkingEffort(agent, "low", "effort-scope-session"),
+		"only the other model offers low")
+
+	// Without a session (agent settings) the agent-level list still applies.
+	assert.True(t, isValidThinkingEffort(agent, "low", ""))
+	assert.False(t, isValidThinkingEffort(agent, "max", ""))
+}

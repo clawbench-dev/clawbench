@@ -2252,6 +2252,11 @@ paths:
             `thinkingEffortNotRemembered=true` 表示档位本次已生效，但写库失败（agent
             行不存在等），**重启/新会话后会丢失**。客户端应提示用户，否则只会在之后
             莫名其妙地回到默认值。
+
+            `thinkingEffortState` 仅当请求带 `modelId` 且切换未被推迟时出现：思考档位是
+            **按模型**下发的（OpenCode 不同模型分别提供 `low/high/max/default`、
+            `high/max/default`，非推理模型一个都没有），切换模型后客户端必须用它替换
+            选择器的选项，否则会继续显示上一个模型的档位。
           content:
             application/json:
               schema:
@@ -2270,6 +2275,25 @@ paths:
                     type: boolean
                   thinkingEffortNotRemembered:
                     type: boolean
+                  thinkingEffortState:
+                    type: object
+                    description: |
+                      该会话当前模型可选的全部思考档位（档位按模型变化，见上）。
+                    properties:
+                      configId:
+                        type: string
+                        description: agent 自己声明的配置项 id（如 `effort`），未上报时省略。
+                      currentId:
+                        type: string
+                      availableLevels:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            name:
+                              type: string
         "422":
           description: |
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
