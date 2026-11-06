@@ -701,13 +701,22 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Create sessions
-	for range 5 {
-		_, err := service.CreateSession(env.ProjectDir, "codebuddy", "session", "", "", "default", "chat")
+	// Five sessions with strictly increasing updated_at (A oldest → E newest).
+	// created_at starts equal to updated_at, so the two are interchangeable
+	// until the test deliberately diverges one below.
+	ids := make([]string, 0, 5)
+	for i := range 5 {
+		id, err := service.CreateSession(env.ProjectDir, "codebuddy", "session", "", "", "default", "chat")
+		require.NoError(t, err)
+		ids = append(ids, id)
+		_, err = store.UnsafeDBForTest().Exec(
+			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds'), updated_at = datetime('now', ? || ' seconds') WHERE id = ?",
+			fmt.Sprintf("-%d", (4-i)*60), fmt.Sprintf("-%d", (4-i)*60), id,
+		)
 		require.NoError(t, err)
 	}
 
-	// Get first page with limit=2
+	// Get first page with limit=2 → E, D.
 	req := newRequest(t, http.MethodGet, "/api/ai/sessions?limit=2", nil)
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeSessions, req)
@@ -717,24 +726,27 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &firstPage))
 	firstSessions := firstPage["sessions"].([]interface{})
 	require.Len(t, firstSessions, 2)
+	require.Equal(t, ids[4], firstSessions[0].(map[string]interface{})["id"])
+	require.Equal(t, ids[3], firstSessions[1].(map[string]interface{})["id"])
 
-	// Extract cursor from the last session. The paged endpoint orders/filters
-	// by created_at, so the cursor MUST be createdAt — using updatedAt (which
-	// is >= createdAt) would re-return rows from the first page.
+	// The cursor is the last page-1 row's updated_at: the paged endpoint
+	// orders/filters by updated_at (the session list's activity order, #635).
 	lastSession := firstSessions[1].(map[string]interface{})
-	cursorCreatedAt := lastSession["createdAt"].(string)
+	cursorUpdatedAt := lastSession["updatedAt"].(string)
 	cursorID := lastSession["id"].(string)
 
-	// Diverge the last page-1 session's updated_at from its created_at, so a
-	// cursor mix-up (or an ignored cursor) actually produces overlap. Without
-	// this, created_at == updated_at for message-less sessions and the test
-	// cannot distinguish the two cursor fields.
+	// Make the divergence discriminating: C (next in updated_at order) gets a
+	// created_at in the FUTURE relative to the cursor. A cursor predicate on
+	// created_at then drops C from page 2 entirely, while the correct
+	// updated_at predicate still returns it. Without this, created_at ==
+	// updated_at for message-less sessions and both columns produce the same
+	// page.
 	_, err := store.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET updated_at = datetime(updated_at, '+1 day') WHERE id = ?", cursorID)
+		"UPDATE chat_sessions SET created_at = datetime('now', '+1 day') WHERE id = ?", ids[2])
 	require.NoError(t, err)
 
 	// Normalize cursor format (replace T/space, strip Z)
-	cursor := strings.ReplaceAll(cursorCreatedAt, "T", " ")
+	cursor := strings.ReplaceAll(cursorUpdatedAt, "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")
 
 	// Request second page using cursor (properly encode query params)
@@ -751,7 +763,13 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &secondPage))
 
 	secondSessions := secondPage["sessions"].([]interface{})
-	assert.Len(t, secondSessions, 2, "second page should have remaining sessions")
+	require.Len(t, secondSessions, 2, "second page should have remaining sessions")
+
+	// Exact ids, not just "no overlap": a created_at predicate would silently
+	// skip C and return B, A instead — still two rows, still non-overlapping.
+	assert.Equal(t, ids[2], secondSessions[0].(map[string]interface{})["id"],
+		"the cursor must compare updated_at: C is next by activity even though its created_at is in the future")
+	assert.Equal(t, ids[1], secondSessions[1].(map[string]interface{})["id"])
 
 	// Verify no overlap between pages
 	firstIDs := map[string]bool{}
@@ -767,29 +785,28 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 
 // TestServeSessionsPaginationWithPinned verifies the HTTP layer wires
 // cursor_pinned + cursor_sort_order through to the keyset cursor. Ordering is
-// (pinned DESC, sort_order ASC, created_at DESC, id DESC); a pinned row leads
-// regardless of its position in the manual order, so paging on created_at alone
-// re-returns it on every page. Both keys must travel with the cursor.
+// (pinned DESC, sort_order ASC, updated_at DESC, id DESC); a pinned row leads
+// regardless of its position in the manual order, so paging on the timestamp
+// alone re-returns it on every page. Both keys must travel with the cursor.
 func TestServeSessionsPaginationWithPinned(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	// Six sessions, oldest created first. Pin the OLDEST one: it must lead the
-	// list despite having the smallest created_at — the case that a
-	// created_at-only cursor mishandles.
-	var oldestID string
+	// list despite having the smallest updated_at — the case that a
+	// timestamp-only cursor mishandles.
+	allIDs := make([]string, 0, 6)
 	for i, title := range []string{"A", "B", "C", "D", "E", "F"} {
 		id, err := service.CreateSession(env.ProjectDir, "claude", title, "claude", "", "default", "chat")
 		require.NoError(t, err)
-		if i == 0 {
-			oldestID = id
-		}
+		allIDs = append(allIDs, id)
 		_, err = store.UnsafeDBForTest().Exec(
-			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
-			fmt.Sprintf("2024-0%d-01 00:00:00", i+1), id,
+			"UPDATE chat_sessions SET created_at = ?, updated_at = ? WHERE id = ?",
+			fmt.Sprintf("2024-0%d-01 00:00:00", i+1), fmt.Sprintf("2024-0%d-01 00:00:00", i+1), id,
 		)
 		require.NoError(t, err)
 	}
+	oldestID := allIDs[0]
 	require.NoError(t, service.UpdateSessionPinned(oldestID, true))
 
 	fetchPage := func(limit int, cursor, cursorID, cursorSortOrder, cursorPinned string) []map[string]interface{} {
@@ -820,8 +837,16 @@ func TestServeSessionsPaginationWithPinned(t *testing.T) {
 	require.Equal(t, oldestID, page1[0]["id"], "the pinned session must lead the first page")
 	require.Equal(t, true, page1[0]["pinned"])
 
+	// Cursor-column divergence guard: D belongs on page 2 by activity, but give
+	// it a created_at beyond the cursor. A keyset predicate on created_at then
+	// drops it from page 2, and the "both pages cover every session" assertion
+	// below fails — a cursor on updated_at still returns it.
+	_, err := store.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET created_at = '2025-01-01 00:00:00' WHERE id = ?", allIDs[3])
+	require.NoError(t, err)
+
 	last := page1[len(page1)-1]
-	cursor := strings.ReplaceAll(last["createdAt"].(string), "T", " ")
+	cursor := strings.ReplaceAll(last["updatedAt"].(string), "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")
 	// sortOrder is omitempty, so an absent field means 0 (the common case after
 	// a drag, where the rest of the list still shares the default).

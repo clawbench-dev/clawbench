@@ -146,10 +146,10 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// would show "no matches" until the user scrolled far enough.
 		tagName := strings.TrimSpace(r.URL.Query().Get("tag"))
 		// cursor_sort_order + cursor_pinned complete the keyset: the list is
-		// ordered by (pinned DESC, sort_order ASC, created_at DESC, id DESC), so
-		// paging on created_at alone re-returns rows sharing the cursor's
+		// ordered by (pinned DESC, sort_order ASC, updated_at DESC, id DESC), so
+		// paging on the timestamp alone re-returns rows sharing the cursor's
 		// (pinned, sort_order) on every page. Absent/empty keeps the legacy
-		// created_at-only predicate.
+		// timestamp-only predicate.
 		var cursorSortOrder *int
 		if p := r.URL.Query().Get("cursor_sort_order"); p != "" {
 			if v, err := strconv.Atoi(p); err == nil {

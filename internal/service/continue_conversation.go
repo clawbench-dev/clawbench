@@ -178,7 +178,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
 	// sort_order stays at its default 0 so the new session lands at the top of the
-	// manual order (#492) via the created_at DESC tiebreak.
+	// manual order (#492) via the updated_at DESC tiebreak.
 	_, err = store.WriteExec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
 		newSessionID, sessProjectID, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
@@ -534,7 +534,7 @@ const (
 // messages, summaries and detail rows into a new single-chat session.
 func forkChatWithCopiedMessages(req ForkRequest, projectID int64, backend, agentID, agentSource, modelName string, cutBeforeID int64) (string, error) {
 	// sort_order stays at its default 0 so the fork lands at the top of the
-	// manual order (#492) via the created_at DESC tiebreak.
+	// manual order (#492) via the updated_at DESC tiebreak.
 	newSessionID := generateSessionID()
 	_, err := store.WriteExec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",

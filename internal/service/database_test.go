@@ -200,7 +200,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 	}{
 		{
 			name:  "GetSessions",
-			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC",
+			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.updated_at DESC, s.id DESC",
 		},
 		{
 			name:  "GetOverviewSessions",
@@ -208,7 +208,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 		},
 		{
 			name:  "GetSessionsPaged",
-			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC LIMIT 11",
+			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.updated_at DESC, s.id DESC LIMIT 11",
 		},
 	}
 

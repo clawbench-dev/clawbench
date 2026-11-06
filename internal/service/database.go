@@ -3469,19 +3469,20 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 
 // sessionOrderIndexSQL is the desired definition of idx_sessions_order: the
 // covering index for the session list's ORDER BY (pinned DESC, sort_order ASC,
-// created_at DESC, id DESC) under the WHERE (session_type, project_id,
+// updated_at DESC, id DESC) under the WHERE (session_type, project_id,
 // archived) prefix.
-const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC)"
+const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, updated_at DESC, id DESC)"
 
 // rebuildSessionOrderIndexIfNeeded rebuilds idx_sessions_order when its stored
 // definition does not match sessionOrderIndexSQL.
 //
-// The index has been reshaped twice (created_at-only → +pinned → +sort_order →
-// now pinned + sort_order), and each shape change needs a rebuild because
-// CREATE INDEX IF NOT EXISTS silently keeps whatever already exists. Comparing
-// the stored SQL from sqlite_master is what makes the migration idempotent: an
-// install already on the current shape is a no-op, while one on any older shape
-// is rebuilt exactly once.
+// The index has been reshaped repeatedly (created_at-only → +pinned →
+// +sort_order → pinned + sort_order → created_at replaced by updated_at for
+// #635), and each shape change needs a rebuild because CREATE INDEX IF NOT
+// EXISTS silently keeps whatever already exists. Comparing the stored SQL from
+// sqlite_master is what makes the migration idempotent: an install already on
+// the current shape is a no-op, while one on any older shape is rebuilt exactly
+// once.
 //
 // Failure is returned, not swallowed: a missing/mismatched index only costs
 // query planning (the list still returns correctly), but silently leaving a
