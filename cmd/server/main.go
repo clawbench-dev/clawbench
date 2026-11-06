@@ -1932,6 +1932,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// asking, so it must be an opt-in.
 	service.StartRestartResume()
 
+	// Scheduled-task runs interrupted by the same restart. Kept separate from the
+	// call above because they resume at the execution level (same session, same
+	// execution row, same task) rather than as an interactive turn — see
+	// internal/service/task_restart_resume.go.
+	service.StartTaskRestartResume()
+
 	// Start HTTP server using the pre-bound listener (blocking)
 	if scheme == schemeHTTPS {
 		if err := srv.ServeTLS(mainLn, tlsCertFile, tlsKeyFile); err != nil && err != http.ErrServerClosed {

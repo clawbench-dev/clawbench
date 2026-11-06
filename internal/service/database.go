@@ -610,6 +610,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			script_stdout TEXT NOT NULL DEFAULT '',
 			script_stderr TEXT NOT NULL DEFAULT '',
 			script_duration_ms INTEGER NOT NULL DEFAULT 0,
+			restart_interrupted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -1384,6 +1385,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"script_stdout", "ALTER TABLE task_executions ADD COLUMN script_stdout TEXT NOT NULL DEFAULT ''"},
 		{"script_stderr", "ALTER TABLE task_executions ADD COLUMN script_stderr TEXT NOT NULL DEFAULT ''"},
 		{"script_duration_ms", "ALTER TABLE task_executions ADD COLUMN script_duration_ms INTEGER NOT NULL DEFAULT 0"},
+		{"restart_interrupted", "ALTER TABLE task_executions ADD COLUMN restart_interrupted INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)
