@@ -193,6 +193,9 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.STT.SilenceSendSeconds != 3 {
 		t.Errorf("STT.SilenceSendSeconds = %d, want 3", cfg.STT.SilenceSendSeconds)
 	}
+	if cfg.STT.IdleExitSeconds != 60 {
+		t.Errorf("STT.IdleExitSeconds = %d, want 60", cfg.STT.IdleExitSeconds)
+	}
 	if cfg.STT.BargeIn != "any" {
 		t.Errorf("STT.BargeIn = %q, want any", cfg.STT.BargeIn)
 	}
@@ -321,6 +324,7 @@ func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
 		"stt.mic_noise_suppress":   true,
 		"stt.voice_gate":           true,
 		"stt.silence_send_seconds": true,
+		"stt.idle_exit_seconds":    true,
 		"stt.trigger_words":        true,
 	})
 
@@ -336,6 +340,9 @@ func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
 	// 0 is the documented "trigger words only" value and must survive as well.
 	if cfg.STT.SilenceSendSeconds != 0 {
 		t.Errorf("STT.SilenceSendSeconds = %d, want 0 (explicitly set)", cfg.STT.SilenceSendSeconds)
+	}
+	if cfg.STT.IdleExitSeconds != 0 {
+		t.Errorf("STT.IdleExitSeconds = %d, want 0 (explicitly set)", cfg.STT.IdleExitSeconds)
 	}
 	// An explicitly cleared word list must stay cleared — otherwise the setting
 	// can never be emptied (the user deletes the words and the defaults return).

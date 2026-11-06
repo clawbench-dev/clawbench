@@ -473,6 +473,7 @@ type STTConfig struct {
 	// long pause, and resume listening once the reply has been read out.
 	TriggerWords       string `yaml:"trigger_words"`        // Comma-separated send words (default: 发送,好了,就这样)
 	SilenceSendSeconds int    `yaml:"silence_send_seconds"` // Pause that also sends, 0 = never (default: 3)
+	IdleExitSeconds    int    `yaml:"idle_exit_seconds"`    // Leave the mode after this long with no recognised words, 0 = never (default: 60)
 	BargeIn            string `yaml:"barge_in"`             // off | any | keyword (default: any)
 	BargeInWords       string `yaml:"barge_in_words"`       // Comma-separated interrupt words (default: 等等,停一下)
 }

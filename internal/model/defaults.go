@@ -502,6 +502,10 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if _, ok := presence["stt.silence_send_seconds"]; !ok {
 		cfg.STT.SilenceSendSeconds = 3
 	}
+	// Same trap: 0 means "never leave", which is a real choice.
+	if _, ok := presence["stt.idle_exit_seconds"]; !ok {
+		cfg.STT.IdleExitSeconds = 60
+	}
 	if cfg.STT.BargeIn == "" {
 		cfg.STT.BargeIn = "any"
 	}

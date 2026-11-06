@@ -733,6 +733,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         // the chat action bar.
         { labelKey: 'settings.items.sttTriggerWords', descriptionKey: 'settings.items.sttTriggerWordsDesc', key: 'stt.trigger_words', type: 'text', source: 'server', sectionHeader: 'settings.items.sttFreeDialogHeader' },
         { labelKey: 'settings.items.sttSilenceSendSeconds', descriptionKey: 'settings.items.sttSilenceSendSecondsDesc', key: 'stt.silence_send_seconds', type: 'number', source: 'server', min: 0, max: 30, step: 1 },
+        { labelKey: 'settings.items.sttIdleExitSeconds', descriptionKey: 'settings.items.sttIdleExitSecondsDesc', key: 'stt.idle_exit_seconds', type: 'number', source: 'server', min: 0, max: 600, step: 10 },
         { labelKey: 'settings.items.sttBargeIn', descriptionKey: 'settings.items.sttBargeInDesc', key: 'stt.barge_in', type: 'select', source: 'server', options: [
           { labelKey: 'settings.items.sttBargeInOff', value: 'off' },
           { labelKey: 'settings.items.sttBargeInAny', value: 'any' },

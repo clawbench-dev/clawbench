@@ -1028,6 +1028,11 @@ function toggleFreeDialog() {
   if (!identity.currentSessionId.value) return
   void freeDialog.start({
     sessionId: identity.currentSessionId.value,
+    // A turn that is already running changes what the microphone is for: the
+    // user is waiting for this answer, so speaking should cut in rather than
+    // queue a second message behind it.
+    busy: loading.value,
+    onInterrupt: () => { void stream.cancelStream() },
     onSend: (text) => {
       // A send that never reached the server leaves `loading` untouched, so the
       // watcher below would never fire and the loop would sit in 'thinking'
