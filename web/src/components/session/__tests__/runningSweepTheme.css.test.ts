@@ -188,11 +188,11 @@ describe('running-session indicator is theme-derived and visible on every theme'
     // `--running-fill` token should exist to tempt it back.
     expect(rootVars['--running-fill'], '--running-fill should be gone').toBeUndefined()
 
-    // Only rules whose subject IS the running row — `.cross-session-row.running
-    // .cross-session-item:hover` is a descendant rule and legitimately sets a
-    // hover background, so a looser pattern would flag it.
+    // Only rules whose subject IS the running row. Descendant rules (a row's
+    // hover background, for example) legitimately set a background, so a
+    // looser pattern would flag them.
     const runningRules = [
-      ...list.matchAll(/\.(?:session-row|cross-session-row)\.running\s*\{[^}]*\}/g),
+      ...list.matchAll(/\.(?:session-row)\.running\s*\{[^}]*\}/g),
     ].map((m) => m[0])
     expect(runningRules.length, 'running-row rules should exist').toBeGreaterThan(0)
     for (const rule of runningRules) {

@@ -2,18 +2,21 @@
   <div class="session-list">
     <!-- Tag filter bar. Sits above the scroll area (not inside the pane) so it
          stays visible while the list scrolls, and is shared by both hosts
-         (pinned sidebar and mobile drawer) since they both render SessionList.
-         Only meaningful on the project pane — the cross pane lists other
-         projects' sessions, which this project's tags do not describe. -->
+         (pinned sidebar and mobile drawer) since they both render SessionList. -->
     <SessionTagFilterBar
-      v-if="activeTab === 'project'"
       :tags="filterTags"
       :active-tag="activeTag"
       @toggle="toggleTagFilter"
     />
 
+    <!-- The list area is one column split between two live regions: the project
+         pane on top and the other-project strip at the bottom. The split is not
+         a fixed ratio — it is recomputed from the real row counts so the
+         project's own sessions stay fully visible whenever they can, and the
+         strip only takes what is left over (see computeOtherZoneBodyHeight). -->
+    <div ref="bodyRef" class="session-list-body">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
-    <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
+    <div ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
            swapped seamlessly to the new data (see loadSessions). -->
@@ -203,77 +206,77 @@
       </template>
     </div>
 
-    <!-- ── Cross-project pane: active sessions in OTHER projects ── -->
-    <div v-show="activeTab === 'cross'" class="session-list-pane session-list-pane--cross">
-      <PanelSkeleton v-if="crossLoading && !crossLoaded" class="session-list-skeleton" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
-      <div v-else-if="crossGroups.length === 0" class="session-empty">{{ t('session.crossEmpty') }}</div>
-      <template v-else>
-        <div v-for="group in crossGroups" :key="group.name" class="cross-group">
-          <SessionGroupHeader
-            :title="group.displayName"
-            :count="group.sessions.length"
-            :subtitle="group.displayPath"
-            :subtitle-title="group.name"
-            :collapsed="isCrossCollapsed(group.name)"
-            @toggle="toggleCrossCollapsed(group.name)"
+    <!-- ── Other projects: active sessions elsewhere, pinned under the list ──
+         Always on screen beside the project's own sessions — no tab switch, so
+         "did anything happen elsewhere" is answered by looking, not by
+         remembering to look. Rows stay compact (one line, project chip) so the
+         strip can hold several of them without stealing the list's height.
+
+         Its height is computed in JS from real content heights (see
+         computeOtherZoneBodyHeight): the project pane keeps every row it can,
+         the strip takes the remainder, bounded by a two-row floor and a share
+         of the pane. A fixed ratio could not do this — the same split is
+         wasteful with three project sessions and suffocating with thirty. -->
+    <div
+      v-if="crossRows.length > 0"
+      class="other-zone"
+      :class="{ 'is-collapsed': otherZoneCollapsed }"
+      data-other-zone
+    >
+      <button
+        class="other-zone-head"
+        :aria-expanded="!otherZoneCollapsed"
+        :title="t('session.otherProjectsHint')"
+        @click="toggleOtherZone"
+      >
+        <ChevronDown :size="12" class="other-zone-chev" />
+        <span class="other-zone-title">{{ t('session.otherProjects') }}</span>
+        <span class="other-zone-count">{{ crossRows.length }}</span>
+      </button>
+      <div
+        v-show="!otherZoneCollapsed"
+        ref="otherZoneBodyRef"
+        class="other-zone-body"
+        :style="otherZoneBodyStyle"
+      >
+        <div
+          v-for="row in crossRows"
+          :key="row.key"
+          class="other-row"
+          :data-session-id="row.session.id"
+          :style="{ '--other-tint': projectTintVar(row.project) }"
+          @click="selectCrossSession(row.session, row.project)"
+        >
+          <span
+            v-if="row.session.running"
+            class="session-running-line"
+            :class="{ 'is-blocked': row.status === 'pending' }"
+          >
+            <i v-if="row.status === 'pending'" class="session-running-band"></i>
+            <i v-else v-running-sweep class="session-running-band"></i>
+          </span>
+          <!-- Same status language as the project rows: pending outranks
+               unread, running shows nothing here (the comet already says it). -->
+          <span
+            v-if="row.status === 'pending'"
+            class="other-row-pending"
+            :title="statusLabel('pending')"
+            :aria-label="statusLabel('pending')"
+            role="img"
+          ><ShieldAlert :size="12" /></span>
+          <span
+            v-else-if="row.status === 'unread'"
+            class="other-row-dot"
+            :title="statusLabel('unread')"
+            :aria-label="statusLabel('unread')"
+            role="img"
           />
-          <div v-show="!isCrossCollapsed(group.name)" class="cross-group-rows">
-            <div
-              v-for="session in group.sessions"
-              :key="group.name + '/' + session.id"
-              class="cross-session-row"
-              :data-session-id="session.id"
-              :class="{ running: session.running }"
-            >
-              <span v-if="session.running" class="session-running-line" :class="{ 'is-blocked': rowStatus(session) === 'pending' }">
-                <i v-if="rowStatus(session) === 'pending'" class="session-running-band"></i>
-                <i v-else v-running-sweep class="session-running-band"></i>
-              </span>
-              <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
-                <div class="session-item-info">
-                  <div class="session-item-header">
-                    <span class="session-item-title">{{ session.title }}</span>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span v-if="session.sessionType === 'group'" class="session-item-group">
-                      <Users :size="12" />
-                      <GroupMemberStack :members="session.groupMembers || []" />
-                    </span>
-                    <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(session)" :name="sessionAgentName(session)" :avatar="sessionAgentAvatar(session)" size="sm" /> {{ sessionAgentName(session) }}</span>
-                    <!-- Same badge as the project pane; groups excluded for the
-                         same reason (a group changes host, not hands). -->
-                    <span
-                      v-if="session.sessionType !== 'group' && session.agentTakeoverFrom"
-                      class="session-item-takeover"
-                      :title="t('session.takeoverBadgeTip', { name: session.agentTakeoverFrom })"
-                    >{{ t('session.takeoverBadge') }}</span>
-                    <!-- Group mode tag: same independent tag as the project pane. -->
-                    <span v-if="session.sessionType === 'group' && groupModeLabel(session)" class="session-item-group-mode">
-                      <component :is="groupModeIcon(session)" :size="10" />
-                      {{ groupModeLabel(session) }}
-                    </span>
-                    <!-- Same rule as the project pane: a group's model is the
-                         host's, not the group's, so it is not shown. -->
-                    <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ sessionModelLabel(session) }}</span>
-                  </div>
-                </div>
-                <span
-                  v-if="rowStatus(session)"
-                  class="session-status"
-                  :class="`is-${rowStatus(session)}`"
-                  :title="statusLabel(rowStatus(session))"
-                  :aria-label="statusLabel(rowStatus(session))"
-                  role="img"
-                >
-                  <ShieldAlert v-if="rowStatus(session) === 'pending'" :size="14" />
-                </span>
-              </div>
-            </div>
-          </div>
+          <span class="other-row-title">{{ row.session.title }}</span>
+          <span class="other-row-project" :title="row.project">{{ row.projectName }}</span>
         </div>
-      </template>
+      </div>
     </div>
+    </div><!-- /session-list-body -->
 
     <!-- Session menu (pin/rename/tags/archive/remove), opened from the row's ⋮
          button or a right-click on the row. Reuses the shared file-manager
@@ -341,7 +344,6 @@ import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
 import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
-import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
@@ -364,6 +366,8 @@ import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
+import { computeOtherZoneBodyHeight, projectTintVar } from '@/utils/sessionOtherZone'
+import { UI_SCALE_EVENT } from '@/utils/uiScale'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -373,10 +377,9 @@ const props = defineProps({
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
-  activeTab: { type: String, default: 'project' },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
+const emit = defineEmits(['select', 'archive', 'destroy'])
 
 /**
  * How far the pointer may travel before Sortable turns a press on the ⋮ button
@@ -405,7 +408,25 @@ const { isSessionShared, setSharedSessionIds } = useSessionShare()
 const dialog = useDialog()
 const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
-const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
+const { groups: crossGroups } = useCrossProjectSessions()
+
+/**
+ * Flat, ordered list for the bottom strip: groups keep the composable's order
+ * (project path ascending), rows keep "most recent first" inside a group.
+ * Flattened rather than grouped because the strip is one line per session —
+ * a per-project header would cost a row of height for every project.
+ */
+const crossRows = computed(() =>
+  crossGroups.value.flatMap(group =>
+    group.sessions.map(session => ({
+      key: group.name + '/' + session.id,
+      session,
+      project: group.name,
+      projectName: group.displayName,
+      status: rowStatus(session),
+    })),
+  ),
+)
 
 // ── Dropping a quote onto a row ─────────────────────────────────────────────
 // A quote dragged from a commit / task / issue / meeting can be dropped on the
@@ -706,17 +727,74 @@ function findSession(sessionId) {
   return sessionsById.value.get(sessionId)
 }
 
-// Cross-project group collapse state, keyed by absolute project path. In-memory
-// only: the pane is v-show'd (never unmounted) while the app runs, so the state
-// survives tab switches and list reloads, and resets on page reload.
-const crossCollapsed = reactive(new Set())
-function isCrossCollapsed(name) {
-  return crossCollapsed.has(name)
+// ── Other-project strip: collapse state + adaptive height ──────────────────
+//
+// Collapse is in-memory only (the strip is never unmounted while the app runs,
+// so it survives list reloads and resets on page reload). Expanded by default:
+// the whole point of the strip is that other projects' activity is visible
+// without asking for it.
+const otherZoneCollapsed = ref(false)
+function toggleOtherZone() {
+  otherZoneCollapsed.value = !otherZoneCollapsed.value
+  scheduleOtherZoneMeasure()
 }
-function toggleCrossCollapsed(name) {
-  if (crossCollapsed.has(name)) crossCollapsed.delete(name)
-  else crossCollapsed.add(name)
+
+/** Rendered body height of the strip, in CSS px (header excluded). */
+const otherZoneBodyHeight = ref(0)
+const otherZoneBodyStyle = computed(() => ({ height: `${otherZoneBodyHeight.value}px` }))
+
+const bodyRef = ref(null)
+const otherZoneBodyRef = ref(null)
+let otherZoneRaf = 0
+let otherZoneObserver = null
+
+/**
+ * Measure and re-split the two regions.
+ *
+ * `availH` is the whole list column, `currentContentH` the project list's real
+ * content height (the `.session-rows` element — NOT the pane's scrollHeight,
+ * which is clamped to the pane and would make the split circular), and
+ * `otherContentH` the strip's content height (its scrollHeight, which stays the
+ * true content height even while the element is height-constrained).
+ *
+ * All three come from the same coordinate space (CSS px), so no uiScale
+ * multiplication is needed — see the repo rule about mixing JS and CSS numbers.
+ */
+function measureOtherZone() {
+  const body = bodyRef.value
+  if (!body) return
+  if (otherZoneCollapsed.value || crossRows.value.length === 0) {
+    otherZoneBodyHeight.value = 0
+    return
+  }
+  const rowsEl = listRef.value?.querySelector('.session-rows')
+  const zoneBody = otherZoneBodyRef.value
+  const firstRow = zoneBody?.querySelector('.other-row')
+  otherZoneBodyHeight.value = computeOtherZoneBodyHeight({
+    availH: body.clientHeight,
+    currentContentH: rowsEl ? rowsEl.getBoundingClientRect().height : 0,
+    otherContentH: zoneBody ? zoneBody.scrollHeight : 0,
+    rowH: firstRow ? firstRow.getBoundingClientRect().height : 0,
+  })
 }
+
+/** Coalesce the many triggers (data, resize, scale, collapse) into one pass. */
+function scheduleOtherZoneMeasure() {
+  if (typeof requestAnimationFrame !== 'function') {
+    measureOtherZone()
+    return
+  }
+  if (otherZoneRaf) return
+  otherZoneRaf = requestAnimationFrame(() => {
+    otherZoneRaf = 0
+    measureOtherZone()
+  })
+}
+
+watch(
+  [() => crossRows.value.length, () => visibleRows.value.length, otherZoneCollapsed],
+  () => { void nextTick(scheduleOtherZoneMeasure) },
+)
 
 async function loadSessions() {
   // Keep the existing list on screen during background refreshes — only show
@@ -803,12 +881,12 @@ function selectSession(sessionId, backend) {
 }
 
 /**
- * Cross-project row click. Emits the owning project path as a third argument so
+ * Other-project row click. Emits the owning project path as a third argument so
  * App.vue can hot-switch projects before opening the session. The row's class is
- * deliberately `.cross-session-item` (NOT `.session-item`): scrollActiveIntoView
- * maps useListNav's index onto `querySelectorAll('.session-item')`, and the nav
- * count only covers project rows — sharing the class would silently corrupt
- * keyboard navigation.
+ * deliberately `.other-row` (NOT `.session-item`): scrollActiveIntoView maps
+ * useListNav's index onto `querySelectorAll('.session-item')`, and the nav count
+ * only covers project rows — sharing the class would silently corrupt keyboard
+ * navigation.
  */
 function selectCrossSession(session, projectPath) {
   emit('select', session.id, session.backend, projectPath)
@@ -1094,10 +1172,11 @@ const listNav = useListNav({
   },
   onActiveChange: scrollActiveIntoView,
 })
-// Keyboard navigation is scoped to the project tab: cross-project rows are
-// deliberately outside useListNav (click/tap only), so leaving the nav active
-// while the cross pane is shown would let arrow keys scroll invisible rows.
-useListKeys({ isOpen: () => props.isActive && props.activeTab === 'project', nav: listNav })
+// Keyboard navigation covers the project rows only. The other-project strip is
+// deliberately outside useListNav (click/tap only) — its rows are not part of
+// the project's order, and mixing them in would make arrow keys jump between
+// projects mid-list.
+useListKeys({ isOpen: () => props.isActive, nav: listNav })
 
 function scrollActiveIntoView(index) {
   const items = listRef.value?.querySelectorAll('.session-item') || []
@@ -1107,11 +1186,10 @@ function scrollActiveIntoView(index) {
 
 watch(visibleRows, () => listNav.reset())
 
-// Reset to the project tab whenever the current project changes: the session we
-// just opened belongs to the (new) current project and must be visible in the
-// project list, not hidden behind the cross tab.
+// Reset the project-scoped state whenever the current project changes: the
+// session we just opened belongs to the (new) current project, and a tag filter
+// or a share badge carried across the switch would describe the old one.
 watch(() => store.state.projectRoot, () => {
-  if (props.activeTab !== 'project') emit('update:activeTab', 'project')
   // Tags are per-project: a filter carried across a project switch would hide
   // the new project's sessions behind a tag it may not even have.
   activeTag.value = ''
@@ -1188,6 +1266,17 @@ onMounted(() => {
   // deep link) may be a group member whose anchor was never expanded — there is
   // no currentSessionId *change* to observe, so expand once here too.
   expandGroupOf(props.currentSessionId)
+
+  // Re-split the list after any layout change that can move the boundary:
+  // window/sidebar resize, and UI scale changes (which do NOT fire `resize`).
+  if (typeof ResizeObserver !== 'undefined' && bodyRef.value) {
+    otherZoneObserver = new ResizeObserver(() => scheduleOtherZoneMeasure())
+    otherZoneObserver.observe(bodyRef.value)
+  }
+  window.addEventListener('resize', scheduleOtherZoneMeasure)
+  window.addEventListener(UI_SCALE_EVENT, scheduleOtherZoneMeasure)
+  scheduleOtherZoneMeasure()
+
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -1200,14 +1289,19 @@ onUnmounted(() => {
   removeEventHandler?.()
   removeEventHandler = null
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
+  if (otherZoneRaf) { cancelAnimationFrame(otherZoneRaf); otherZoneRaf = 0 }
+  otherZoneObserver?.disconnect()
+  otherZoneObserver = null
+  window.removeEventListener('resize', scheduleOtherZoneMeasure)
+  window.removeEventListener(UI_SCALE_EVENT, scheduleOtherZoneMeasure)
   contextMenu.visible = false
 })
 </script>
 
 <style scoped>
-/* Root is a flex column hosting the two mutually-exclusive panes. The tab bar
-   itself is rendered by the wrapper (sidebar bottom / BottomSheet #footer) so
-   it can stay pinned outside the scroll area. */
+/* Root is a flex column: tag filter bar (fixed) + list area (fills the rest).
+   The tab bar that used to live at the bottom of the host is gone — the other
+   projects' sessions are now a strip inside the list area, always on screen. */
 .session-list {
   display: flex;
   flex-direction: column;
@@ -1215,7 +1309,17 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* Each pane owns its own scrolling so tab switches preserve scroll position. */
+/* The list area is split between the project pane (top, scrolls) and the
+   other-project strip (bottom, height computed in JS). `min-height: 0` on the
+   pane is what lets it shrink below its content so the strip gets real space
+   instead of pushing the pane's overflow out of the column. */
+.session-list-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .session-list-pane {
   flex: 1;
   min-height: 0;
@@ -1954,48 +2058,146 @@ onUnmounted(() => {
 /* The context menu itself uses the shared .context-menu / .context-menu-item
    styles from css/components.css (same as the file manager). */
 
-/* ── Cross-project pane ── */
-
-.cross-group + .cross-group {
-  border-top: 1px solid var(--border-color, #dee2e6);
-}
-
-/* The group header (shared SessionGroupHeader) is the primary visual distinction
-   from project rows: it names the owning project so a row can never be mistaken
-   for a local one. */
-.cross-session-row {
+/* ── Other-project strip ──
+   Sits under the project list and is always on screen, so "did something
+   happen elsewhere" is answered by looking rather than by remembering to
+   switch a tab. Two signals separate it from the project's own rows, and they
+   are deliberately different in kind: a structural one (2px edge + its own
+   surface) and a per-row one (the project chip). Colour alone would fail in
+   themes where the tint is close to the accent. */
+.other-zone {
+  flex: 0 0 auto;
   display: flex;
-  align-items: stretch;
-  position: relative;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 2px solid var(--border-color, #dee2e6);
+  background: var(--bg-primary, #fff);
 }
 
-.cross-session-row.running {
-  overflow: hidden;
-}
-
-.cross-session-item {
-  position: relative;
+.other-zone-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  flex: 1;
+  gap: var(--space-3);
+  width: 100%;
   min-width: 0;
-  min-height: calc(44 * var(--dp));
-  /* Right inset matched to .session-item so the status slot sits at the same
-     distance from the text on both panes — the cross pane has no ⋮ cell, so
-     without this the dot would land in a different place here. */
-  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
-  border-top: 1px solid var(--border-color, #dee2e6);
+  padding: var(--space-4) var(--space-6);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, #495057);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
   cursor: pointer;
-  /* Subtle left rail marks rows as belonging to another project. */
-  box-shadow: inset calc(2 * var(--dp)) 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 @media (hover: hover) {
-  .cross-session-item:hover {
+  .other-zone-head:hover {
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  }
+}
+
+.other-zone-chev {
+  flex: 0 0 auto;
+  color: var(--text-hint, #adb5bd);
+  transition: transform var(--duration-base);
+}
+
+.other-zone.is-collapsed .other-zone-chev {
+  transform: rotate(-90deg);
+}
+
+.other-zone-title {
+  flex: 0 0 auto;
+  font-weight: var(--font-weight-semibold);
+}
+
+.other-zone-count {
+  flex: 0 0 auto;
+  min-width: calc(16 * var(--dp));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-secondary, #495057);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  text-align: center;
+}
+
+.other-zone-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.other-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: calc(36 * var(--dp));
+  padding: var(--space-3) var(--space-6) var(--space-3) var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  cursor: pointer;
+}
+
+.other-row:first-child {
+  border-top: 0;
+}
+
+/* Project rail: the same tint as the row's chip, so a glance down the strip
+   groups rows by project even though they are one flat list. */
+.other-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(2 * var(--dp));
+  background: var(--other-tint, var(--border-color));
+  opacity: 0.55;
+}
+
+@media (hover: hover) {
+  .other-row:hover {
     background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   }
-  .cross-session-row.running .cross-session-item:hover {
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  }
+}
+
+.other-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary, #495057);
+}
+
+.other-row-project {
+  flex: 0 0 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--other-tint, var(--text-primary)) 14%, transparent);
+  color: var(--other-tint, var(--text-secondary));
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.other-row-dot {
+  flex: 0 0 auto;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
+  border-radius: 50%;
+  background: var(--accent-color, #0066cc);
+}
+
+.other-row-pending {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--color-yellow, #a16207);
 }
 </style>

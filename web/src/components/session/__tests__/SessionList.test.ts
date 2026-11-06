@@ -903,92 +903,6 @@ describe('SessionList', () => {
       .toBe('session.statusUnread')
   })
 
-  it('shows the status slot on cross-project rows too', async () => {
-    // The cross pane renders its own row markup, so the slot has to be wired
-    // there as well — it is a separate template block, not a shared component.
-    // A running cross-project row follows the same rule as a local one: no slot.
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-    mockCrossState.groups.value = [{
-      name: '/proj/other',
-      displayName: 'Other',
-      displayPath: '/proj/other',
-      sessions: [
-        { id: 'x1', title: 'X1', agentId: 'a', backend: 'acp', model: '', updatedAt: '2025-01-01', running: true, pendingApproval: false, unreadCount: 0 },
-        { id: 'x2', title: 'X2', agentId: 'a', backend: 'acp', model: '', updatedAt: '2025-01-01', running: false, pendingApproval: true, unreadCount: 0 },
-      ],
-    }]
-    const wrapper = await mountList({ activeTab: 'cross' })
-    await flushPromises()
-
-    expect(wrapper.find('.cross-session-row .session-status.is-pending').exists()).toBe(true)
-    // The running cross-project row keeps its comet but no slot.
-    const runningRow = wrapper.find('.cross-session-row.running')
-    expect(runningRow.find('.session-status').exists(), 'a running cross row has no slot').toBe(false)
-    expect(runningRow.find('.session-running-band').exists(), 'but it keeps the comet').toBe(true)
-  })
-
-  it('renders the server-supplied agent identity on cross-project rows', async () => {
-    // A session in another project may run an agent scoped to THAT project, so
-    // the local agent list (scoped to the current project) cannot resolve it —
-    // the row used to degrade to the raw agent id plus an initial-letter icon.
-    // The server now ships the identity on the row; both panes must prefer it.
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-    // The lookup misses on purpose: this is what an unresolvable agent looks
-    // like to the component.
-    mockGetAgentName.mockReturnValue('scoped-b')
-    mockGetAgentBackend.mockReturnValue('')
-    mockCrossState.groups.value = [{
-      name: '/proj/other',
-      displayName: 'Other',
-      displayPath: '/proj/other',
-      sessions: [{
-        id: 'x1', title: 'X1', agentId: 'scoped-b', agentName: '视觉制作', agentAvatar: '<svg>a</svg>',
-        backend: 'codebuddy', model: '', updatedAt: '2025-01-01',
-        running: false, pendingApproval: false, unreadCount: 1,
-      }],
-    }]
-    const wrapper = await mountList({ activeTab: 'cross' })
-    await flushPromises()
-
-    const row = wrapper.find('.cross-session-row')
-    const chip = row.find('.session-item-agent')
-    expect(chip.text()).toContain('视觉制作')
-    expect(chip.text()).not.toContain('scoped-b')
-
-    const icon = row.findComponent({ name: 'AgentIcon' })
-    expect(icon.props('name')).toBe('视觉制作')
-    expect(icon.props('avatar')).toBe('<svg>a</svg>')
-    // `backend` is a column on the row, so the brand icon resolves even when
-    // the agent lookup misses.
-    expect(icon.props('backend')).toBe('codebuddy')
-
-    mockGetAgentName.mockReturnValue('Agent')
-    mockGetAgentBackend.mockReturnValue('')
-  })
-
-  it('omits the model chip on cross-project group rows too', async () => {
-    // The cross pane renders its own row markup (a separate template block), so
-    // the group rule has to be wired there as well.
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-    mockCrossState.groups.value = [{
-      name: '/proj/other',
-      displayName: 'Other',
-      displayPath: '/proj/other',
-      sessions: [
-        { id: 'xg', title: 'Group', agentId: 'a', backend: 'acp', model: 'gpt-4', sessionType: 'group', groupMembers: [], updatedAt: '2025-01-01', running: false, pendingApproval: false, unreadCount: 0 },
-        { id: 'xp', title: 'Plain', agentId: 'a', backend: 'acp', model: 'gpt-4', updatedAt: '2025-01-01', running: false, pendingApproval: false, unreadCount: 0 },
-      ],
-    }]
-    const wrapper = await mountList({ activeTab: 'cross' })
-    await flushPromises()
-
-    // Cross rows carry no data-session-id; address them by their title text.
-    const groupRow = wrapper.findAll('.cross-session-row').find(r => r.text().includes('Group'))
-    const plainRow = wrapper.findAll('.cross-session-row').find(r => r.text().includes('Plain'))
-    expect(groupRow!.find('.session-item-model').exists()).toBe(false)
-    expect(plainRow!.find('.session-item-model').exists()).toBe(true)
-  })
-
   it('emits archive after confirmation', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
     const wrapper = await mountList()
@@ -1543,7 +1457,7 @@ describe('SessionList', () => {
     expect(mockRemoveEventHandler).toHaveBeenCalled()
   })
 
-  describe('cross-project tab', () => {
+  describe('other-project strip', () => {
     function crossGroup() {
       return {
         name: '/proj/other',
@@ -1556,157 +1470,149 @@ describe('SessionList', () => {
       }
     }
 
-    it('defaults to the project tab', async () => {
+    it('renders other projects under the project list, both visible at once', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
-      expect(wrapper.vm.activeTab).toBe('project')
-      expect(wrapper.find('.session-list-pane--cross').attributes('style')).toContain('display: none')
+
+      // No tab switch: the project's own rows and the strip coexist.
+      expect(wrapper.find('.session-list-pane').attributes('style') || '').not.toContain('display: none')
+      expect(wrapper.find('.session-item').exists()).toBe(true)
+      expect(wrapper.findAll('.other-row').length).toBe(2)
+      expect(wrapper.find('[data-other-zone]').exists()).toBe(true)
     })
 
-    it('renders cross-project groups with a project-name header when the prop flips', async () => {
+    it('names the owning project on every row', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      const wrapper = await mountList()
       await flushPromises()
-      expect(wrapper.findAll('.cross-group').length).toBe(1)
-      // Header markup now comes from the shared SessionGroupHeader component.
-      expect(wrapper.find('.session-group-title').text()).toBe('other')
-      expect(wrapper.find('.session-group-subtitle').text()).toBe('~/proj/other')
-      expect(wrapper.findAll('.cross-session-item').length).toBe(2)
+
+      const chips = wrapper.findAll('.other-row-project')
+      expect(chips.length).toBe(2)
+      for (const chip of chips) expect(chip.text()).toBe('other')
     })
 
-    it('shows the active-session count in the cross-project group header', async () => {
+    it('shows the count in the strip header', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      const wrapper = await mountList()
       await flushPromises()
-      // crossGroup() has two active sessions — the count must reflect the group,
-      // matching the count badge the Pinned/Recent headers already show.
-      expect(wrapper.find('.session-group-count').text()).toBe('2')
+      expect(wrapper.find('.other-zone-count').text()).toBe('2')
     })
 
-    it('renders the group glyph + member stack for a group row in the cross pane', async () => {
+    it('keeps the pending/unread language and the running comet', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [{
         name: '/proj/other',
         displayName: 'other',
         displayPath: '~/proj/other',
         sessions: [
-          {
-            id: 'og1', title: 'Other group', backend: 'cli', agentId: 'agent-host',
-            sessionType: 'group',
-            groupMembers: [
-              { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli' },
-              { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
-            ],
-            running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2025-01-05',
-          },
+          { id: 'p1', title: 'Pending', backend: 'acp', agentId: 'a', running: false, pendingApproval: true, unreadCount: 0, updatedAt: '2025-01-05' },
+          { id: 'u1', title: 'Unread', backend: 'acp', agentId: 'a', running: false, pendingApproval: false, unreadCount: 2, updatedAt: '2025-01-04' },
+          { id: 'r1', title: 'Running', backend: 'acp', agentId: 'a', running: true, pendingApproval: false, unreadCount: 0, updatedAt: '2025-01-03' },
         ],
       }]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      const wrapper = await mountList()
       await flushPromises()
 
-      const row = wrapper.find('.cross-session-item')
-      expect(row.find('.session-item-group').exists()).toBe(true)
-      expect(row.find('.group-member-stack').exists()).toBe(true)
-      expect(row.find('.session-item-agent').exists()).toBe(false)
-      expect(row.findAll('.group-member-stack .avatar-disc').length).toBe(2)
+      expect(wrapper.find('[data-session-id="p1"] .other-row-pending').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="u1"] .other-row-dot').exists()).toBe(true)
+      // A running row says it with the comet, not with a second marker.
+      const running = wrapper.find('[data-session-id="r1"]')
+      expect(running.find('.session-running-band').exists()).toBe(true)
+      expect(running.find('.other-row-pending').exists()).toBe(false)
+      expect(running.find('.other-row-dot').exists()).toBe(false)
     })
 
-    it('collapses and expands a cross-project group from its header', async () => {
+    it('hides the strip entirely when no other project has activity', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-      mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      mockCrossState.groups.value = []
+      const wrapper = await mountList()
       await flushPromises()
-
-      const header = wrapper.find('.cross-group .session-group-header')
-      // Expanded by default: chevron not rotated.
-      expect(wrapper.find('.cross-group .session-group-chevron').classes()).not.toContain('collapsed')
-
-      await header.trigger('click')
-      expect(wrapper.find('.cross-group .session-group-chevron').classes()).toContain('collapsed')
-      // Rows stay mounted (v-show, not v-if) so collapsing never destroys the
-      // fetched snapshot — only the rows container is hidden.
-      expect(wrapper.findAll('.cross-group .cross-session-item').length).toBe(2)
-      expect(wrapper.find('.cross-group-rows').attributes('style')).toContain('display: none')
-
-      await header.trigger('click')
-      expect(wrapper.find('.cross-group .session-group-chevron').classes()).not.toContain('collapsed')
-      expect(wrapper.find('.cross-group-rows').attributes('style') || '').not.toContain('display: none')
+      // An empty bar would cost height and say nothing.
+      expect(wrapper.find('[data-other-zone]').exists()).toBe(false)
     })
 
-    it('keeps each project group collapsed independently', async () => {
-      const second = {
-        name: '/proj/second',
-        displayName: 'second',
-        displayPath: '~/proj/second',
-        sessions: [
-          { id: 't1', title: 'Second 1', backend: 'cli', agentId: 'agent-1', model: '', running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2025-01-03' },
-        ],
-      }
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-      mockCrossState.groups.value = [crossGroup(), second]
-      const wrapper = await mountList({ activeTab: 'cross' })
-      await flushPromises()
-
-      // Collapse only the first group; the second must stay expanded.
-      await wrapper.findAll('.cross-group .session-group-header')[0].trigger('click')
-      const chevrons = wrapper.findAll('.cross-group .session-group-chevron')
-      expect(chevrons[0].classes()).toContain('collapsed')
-      expect(chevrons[1].classes()).not.toContain('collapsed')
-    })
-
-    it('does not use .session-item for cross rows (keyboard nav index isolation)', async () => {
+    it('does not use .session-item for strip rows (keyboard nav index isolation)', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      const wrapper = await mountList()
       await flushPromises()
-      // Project rows keep .session-item; cross rows must not add to that set,
+      // Project rows keep .session-item; strip rows must not add to that set,
       // otherwise querySelectorAll('.session-item') indices no longer match
       // useListNav's count.
       expect(wrapper.findAll('.session-item').length).toBe(1)
-      expect(wrapper.findAll('.cross-session-item').length).toBe(2)
+      expect(wrapper.findAll('.other-row').length).toBe(2)
     })
 
-    it('emits select with the owning project path for cross rows', async () => {
+    it('emits select with the owning project path for strip rows', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      const wrapper = await mountList()
       await flushPromises()
-      await wrapper.findAll('.cross-session-item')[0].trigger('click')
+      await wrapper.findAll('.other-row')[0].trigger('click')
       expect(wrapper.emitted('select')![0]).toEqual(['o1', 'cli', '/proj/other'])
     })
 
-    it('does not render the row action button on cross rows', async () => {
+    it('does not render the row action button on strip rows', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList({ activeTab: 'cross' })
+      const wrapper = await mountList()
       await flushPromises()
-      const crossRows = wrapper.findAll('.cross-session-row')
-      expect(crossRows.length).toBe(2)
-      for (const row of crossRows) {
+      const rows = wrapper.findAll('.other-row')
+      expect(rows.length).toBe(2)
+      for (const row of rows) {
         expect(row.find('.session-more-btn').exists()).toBe(false)
       }
     })
 
-    it('shows the empty state when there are no cross-project groups', async () => {
+    it('collapses and expands the whole strip from its header', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-      mockCrossState.groups.value = []
-      mockCrossState.loaded.value = true
-      const wrapper = await mountList({ activeTab: 'cross' })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
       await flushPromises()
-      expect(wrapper.find('.session-list-pane--cross').text()).toContain('session.crossEmpty')
+
+      const head = wrapper.find('.other-zone-head')
+      expect(head.attributes('aria-expanded')).toBe('true')
+
+      await head.trigger('click')
+      expect(wrapper.find('.other-zone-head').attributes('aria-expanded')).toBe('false')
+      // Rows stay mounted (v-show) so collapsing never destroys the snapshot.
+      expect(wrapper.findAll('.other-row').length).toBe(2)
+      expect(wrapper.find('.other-zone-body').attributes('style')).toContain('display: none')
+      expect(wrapper.find('.other-zone').classes()).toContain('is-collapsed')
+
+      await head.trigger('click')
+      expect(wrapper.find('.other-zone').classes()).not.toContain('is-collapsed')
+      expect(wrapper.find('.other-zone-body').attributes('style') || '').not.toContain('display: none')
     })
 
-    it('shows a loading indicator before the first successful load', async () => {
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-      mockCrossState.groups.value = []
-      mockCrossState.loaded.value = false
-      mockCrossState.loading.value = true
-      const wrapper = await mountList({ activeTab: 'cross' })
+    it('sizes the strip from the real content heights, not a fixed ratio', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
       await flushPromises()
-      expect(wrapper.find('.session-list-pane--cross').find('.skeleton-stub').exists()).toBe(true)
+
+      // jsdom reports 0 for every box, so hand the component the numbers a
+      // real layout would produce and let it run its measure pass.
+      const body = wrapper.find('.session-list-body').element as HTMLElement
+      Object.defineProperty(body, 'clientHeight', { value: 600, configurable: true })
+      const rows = wrapper.find('.session-rows').element as HTMLElement
+      rows.getBoundingClientRect = () => ({ height: 300, top: 0, left: 0, right: 0, bottom: 300, width: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+      const zoneBody = wrapper.find('.other-zone-body').element as HTMLElement
+      Object.defineProperty(zoneBody, 'scrollHeight', { value: 200, configurable: true })
+      const firstRow = wrapper.find('.other-row').element as HTMLElement
+      firstRow.getBoundingClientRect = () => ({ height: 36, top: 0, left: 0, right: 0, bottom: 36, width: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+
+      window.dispatchEvent(new Event('resize'))
+      await new Promise(resolve => setTimeout(resolve, 30))
+      await flushPromises()
+
+      // 600 available, project list needs 300, other projects have 200 of
+      // content -> the strip shows all 200 and the project list stays whole.
+      expect(wrapper.find('.other-zone-body').attributes('style')).toContain('height: 200px')
     })
   })
 
@@ -2661,16 +2567,20 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('hides the filter bar on the cross-project tab', async () => {
+    it('keeps the filter bar visible when the other-project strip has rows', async () => {
+      // The strip shares the column with the project list, but the filter only
+      // describes project sessions — it must not disappear or start filtering
+      // other projects' rows.
       routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
-      const wrapper = await mountList({ activeTab: 'project' })
+      mockCrossState.groups.value = [{
+        name: '/proj/other', displayName: 'other', displayPath: '~/proj/other',
+        sessions: [{ id: 'o1', title: 'Other', backend: 'cli', agentId: 'a', running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2025-01-05' }],
+      }]
+      const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
       expect(wrapper.find('.session-tag-filter').exists()).toBe(true)
-
-      await wrapper.setProps({ activeTab: 'cross' })
-      await nextTick()
-      expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
+      expect(wrapper.findAll('.other-row').length).toBe(1)
       wrapper.unmount()
     })
   })
