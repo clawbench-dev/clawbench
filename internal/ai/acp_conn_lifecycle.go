@@ -168,6 +168,16 @@ func buildInitializeRequest(agent *model.Agent) acp.InitializeRequest {
 		ClientCapabilities: acp.ClientCapabilities{
 			Fs:       fileSystemCapabilities(agent),
 			Terminal: advertiseTerminalCapability(agent),
+			// OpenCode asks questions through `elicitation/create` (form mode)
+			// and, without this flag, never sends the form at all: it answers the
+			// model with "the question couldn't be shown to the user in this
+			// client" and the user loses the choice (#633). The handler lives in
+			// acp_elicitation.go; advertising without it would be worse than not
+			// advertising, because the agent would then send a request nobody
+			// answers.
+			Elicitation: &acp.ElicitationCapabilities{
+				Form: &acp.ElicitationFormCapabilities{},
+			},
 		},
 		ClientInfo: &acp.Implementation{
 			Name:    "clawbench",

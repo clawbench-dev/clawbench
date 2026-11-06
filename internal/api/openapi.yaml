@@ -1714,6 +1714,37 @@ paths:
         "200":
           description: 已回应
 
+  /api/ai/elicitation/respond:
+    post:
+      tags: [Chat]
+      summary: 回应 ACP 表单提问
+      description: >-
+        把用户在选择卡片上选中的答案回传给正在阻塞等待的 ACP
+        `elicitation/create` 请求（OpenCode 的 question 工具走这条链路）。
+        与权限审批不同，这里回传的是按 JSON Schema 属性名组织的答案对象。
+      operationId: elicitationRespond
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                elicitationId:
+                  type: string
+                  description: 提问卡片携带的请求 ID（elic_ 前缀）。
+                content:
+                  type: object
+                  additionalProperties: true
+                  description: 属性名 → 答案；多选为字符串数组。
+      responses:
+        "200":
+          description: 已回应
+        "404":
+          description: 没有对应的待回答问题（卡片已过期或已作答）
+
   /api/chat/quick-send:
     get:
       tags: [Chat]

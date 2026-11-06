@@ -1003,6 +1003,13 @@ type ACPConn struct {
 	// legitimate tools (e.g. `sleep`, builds) are never killed.
 	toolInFlight atomic.Bool
 
+	// pendingElicitations counts `elicitation/create` requests blocking on a
+	// user answer. Like an in-flight tool, that is legitimate waiting, not a
+	// stall — without this the watchdog would kill a connection whose only
+	// "inactivity" is the user reading a question. Atomic so the watchdog can
+	// read it without taking any lock.
+	pendingElicitations atomic.Int64
+
 	// turnOutputEvents counts the model-output notifications observed during
 	// the current turn (agent text, thinking, tool calls). Reset at prompt
 	// start. A turn that ends with stopReason=end_turn and zero output events
@@ -1434,6 +1441,12 @@ func (c *ACPConn) isStalled(timeout time.Duration) bool {
 		return false
 	}
 	if c.toolInFlight.Load() {
+		return false
+	}
+	// A question waiting on the user is legitimate waiting too (see
+	// pendingElicitations). Same reasoning as an in-flight tool: no model
+	// progress is expected until the user answers.
+	if c.pendingElicitations.Load() > 0 {
 		return false
 	}
 	last := c.lastModelProgress.Load()
