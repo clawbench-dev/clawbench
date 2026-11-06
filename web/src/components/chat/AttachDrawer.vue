@@ -334,7 +334,7 @@ const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUpload
 // always the chat draft (the queued-message editor passes its own list).
 // Shadowing them made a file picked from that editor vanish from the footer —
 // the selection only ever reached the caller, never the shared draft.
-const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
+const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, cancelChatUpload, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -435,10 +435,14 @@ async function onFileSelect(e: Event) {
   // the transfer needs somewhere to report progress: jump to the uploads tab
   // before awaiting, which is where the in-flight rows and the terminate
   // button live. A cancelled picker reports 0 and leaves the tab alone.
-  if (readPickedCount(e) > 0) activeTab.value = 'uploads'
-  // A fresh picker batch: the previous batch's committed paths are no longer
-  // this batch's to clear.
-  batchCommitted = []
+  if (readPickedCount(e) > 0) {
+    activeTab.value = 'uploads'
+    // A fresh picker batch: the previous batch's committed paths are no longer
+    // this batch's to clear. Only on a real pick — re-opening the picker and
+    // cancelling it starts no batch, and clearing the list there would leave
+    // the still-running batch's finished files with nobody to clear them.
+    batchCommitted = []
+  }
   // A finished upload commits to the COMPOSER, not just to this sheet's draft.
   //
   // The input bar's only card for an upload in flight is the pending one, and
@@ -487,10 +491,10 @@ async function onFileSelect(e: Event) {
  * Terminate the whole in-flight upload batch.
  *
  * The transfer work lives in useFileUpload.terminateChatUploadBatch, shared
- * with the input bar's attachment strip — that strip is where the user actually
- * is after the sheet closes, and the sheet's own banner is where they are while
- * it stays open. Two copies of "cancel, abort, then detach the finished ones"
- * would drift on exactly that last step.
+ * with the input bar's attachment strip — that strip is what the user sees
+ * once the sheet is dismissed mid-upload, and the sheet's own banner is where
+ * they are while it stays open. Two copies of "cancel, abort, then detach the
+ * finished ones" would drift on exactly that last step.
  */
 function handleTerminateUpload() {
   terminateChatUploadBatch()
@@ -514,14 +518,24 @@ function handleTerminateUpload() {
 }
 
 /**
- * Cancel: drop the draft AND undo whatever this session uploaded.
+ * Cancel: drop the draft, stop the batch, and undo whatever this session
+ * uploaded.
  *
- * "取消" has to cancel. Leaving the uploads behind meant a user who picked the
- * wrong photo, saw the card in the input bar and pressed Cancel still sent that
- * photo with the next message. A swipe / back gesture / overlay tap is NOT this
- * path — that only closes the panel, and its uploads stay (issue #629).
+ * "取消" has to cancel. Two things could otherwise still land after the panel
+ * closed:
+ *   - a file that already finished (its bytes are on the server and the commit
+ *     is already in the composer), and
+ *   - a file still IN FLIGHT — the sheet stays open while the transfer runs, so
+ *     pressing Cancel mid-upload is the most natural gesture there is, and
+ *     without aborting it the transfer completes a few seconds later and the
+ *     image reappears in the input bar.
+ * Both are undone here. A swipe / back gesture / overlay tap is NOT this path —
+ * that only closes the panel, and its uploads stay (issue #629).
  */
 function handleCancel() {
+  // Stop the batch first: `commit` fires per file as it lands, so aborting must
+  // happen before the remaining transfers can reach it.
+  cancelChatUpload()
   for (const path of sessionCommitted) {
     const entry: FileEntry = { path, isDir: false }
     emit('remove-attached', entry)

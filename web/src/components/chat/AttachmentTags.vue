@@ -6,10 +6,10 @@
   >
     <!-- Whole-batch terminate, shown while the picker's sequential upload is
          still running.
-         The drawer's own terminate button is unreachable in practice: picking
-         files closes the drawer, so the only thing on screen during an upload
-         is this strip. Per-card "×" is NOT a substitute — it aborts one file
-         and the loop moves on to the next. -->
+         Two entry points share one implementation: the drawer's banner (while
+         the sheet stays open for the pick) and this pill (the only one left
+         once the sheet is dismissed mid-upload). Per-card "×" is NOT a
+         substitute — it aborts one file and the loop moves on to the next. -->
     <button v-if="hasUploadingPending"
       class="chat-attachment-terminate"
       type="button"

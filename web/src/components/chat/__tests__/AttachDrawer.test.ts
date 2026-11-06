@@ -648,6 +648,27 @@ describe('AttachDrawer', () => {
     ])
   })
 
+  it('cancel aborts a batch that is still in flight', async () => {
+    // The sheet stays open while the transfer runs, so pressing Cancel mid-
+    // upload is the most natural "stop, wrong photo" gesture. The commit is
+    // per file as each one lands, so without aborting, the transfer finishes a
+    // few seconds later and puts the image back into the input bar — after the
+    // panel closed, with nothing left to cancel it.
+    let resolveUpload: (v: string[]) => void = () => {}
+    mockHandleFileSelect.mockReturnValue(new Promise<string[]>((r) => { resolveUpload = r }))
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    void getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await nextTick()
+
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+
+    // Same primitive the input strip's terminate pill uses — one implementation
+    // of "stop the batch and abort the transfer in flight".
+    expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toBeTruthy()
+    resolveUpload([])
+  })
+
   it('dismissing the sheet is not a cancel: its uploads stay', async () => {
     // A swipe / back gesture / overlay tap only closes the panel. Treating it as
     // Cancel would re-create the reported "thumbnail flashes and is gone".
@@ -802,6 +823,24 @@ describe('AttachDrawer', () => {
     expect(wrapper.emitted('remove-attached')).toEqual([
       [{ path: '.clawbench/uploads/a.png', isDir: false }],
     ])
+  })
+
+  it('a cancelled picker does not forget the previous batch’s commits', async () => {
+    // Re-opening the picker and backing out starts no new batch, so the one
+    // still running must keep its committed paths. Clearing them there left
+    // "terminate" with nothing to clear, and a host that tracks its own list
+    // (the queued-message editor) kept the finished images.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    mockHandleFileSelect.mockResolvedValue([])
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+
+    await getRawState(wrapper).handleTerminateUpload()
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
   })
 
   describe('batch terminate button', () => {
