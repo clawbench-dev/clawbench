@@ -464,6 +464,18 @@ func acpStatePayload(event ai.StreamEvent) any {
 		return event.Mode
 	case "config_update":
 		return event.Config
+	case "config_options_update":
+		// Agent-specific select options (e.g. codex's Fast mode). Wrapped in
+		// "options" rather than sent bare so the payload shape stays an object
+		// and can gain sibling fields later without breaking clients.
+		//
+		// An EMPTY (but non-nil) slice is a real signal — the current model no
+		// longer supports the option — so it must not be turned into nil here
+		// (nil makes Emit skip the event and the client keeps a dead toggle).
+		if event.ConfigOptions == nil {
+			return nil
+		}
+		return map[string]any{"options": event.ConfigOptions}
 	case "commands_update":
 		if event.Commands == nil {
 			return nil
@@ -713,7 +725,7 @@ func queueCancelPayload(event ai.StreamEvent) any {
 // SSE re-emit-on-connect behavior.
 func (h *StreamHub) EmitACPStateEvents(clientID, sessionID string) {
 	s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID)
-	if s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil {
+	if s.Mode != nil || s.Config != nil || s.Effort != nil || s.ConfigOptions != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil {
 		h.emitACPState(clientID, sessionID, s)
 	} else if h.getContextUsageFn != nil {
 		// No live ACP connection — fall back to DB for usage only.
@@ -736,6 +748,9 @@ func (h *StreamHub) emitACPState(clientID, sessionID string, s ai.ACPCachedState
 	}
 	if s.Effort != nil {
 		h.emitStateEvent(clientID, sessionID, "thinking_effort_update", s.Effort)
+	}
+	if s.ConfigOptions != nil {
+		h.emitStateEvent(clientID, sessionID, "config_options_update", map[string]any{"options": s.ConfigOptions})
 	}
 	if len(s.Commands) > 0 {
 		h.emitStateEvent(clientID, sessionID, "commands_update", map[string]any{"commands": s.Commands})

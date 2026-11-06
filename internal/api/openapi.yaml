@@ -2069,6 +2069,14 @@ paths:
                     type: object
                     nullable: true
                     description: 与 `GET /api/ai/chat` 的 `thinkingEffortState` 同形
+                  configOptions:
+                    type: array
+                    nullable: true
+                    description: |
+                      与 `GET /api/ai/chat` 的 `configOptions` 同形：agent 自己
+                      声明的通用选项（如 codex 的 `fast-mode`），会话级、随模型
+                      变化，为空表示当前模型不支持。
+                    items: {type: object}
                   modelListState:
                     type: object
                     nullable: true
@@ -2120,6 +2128,16 @@ paths:
                 transport: {type: string, enum: [acp-stdio, cli]}
                 autoApprove: {type: boolean}
                 cruise: {type: boolean}
+                configOptions:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: |
+                    按 **agent 自己声明的配置项 id** 设置选项，例如 codex 的
+                    `{"fast-mode": "on"}`（"1.5x speed, increased usage"）。
+                    这是给 mode / model / thinkingEffort 之外那些「ClawBench 没有
+                    专门管道」的选项留的通用通道；可选值与当前值由 agent 通过
+                    `config_options_update` 事件 / `GET /api/ai/chat` 的
+                    `configOptions` 字段下发，前端直接照抄即可。
       responses:
         "200":
           description: 已应用（`modelSwitchDeferred` 表示模型切换推迟到下一轮）
@@ -2173,6 +2191,13 @@ paths:
                   type: string
                 modelId:
                   type: string
+                configOptions:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: |
+                    按 agent 自己声明的配置项 id 设置选项，例如 codex 的
+                    `{"fast-mode": "on"}`。与 `PATCH /api/ai/session/settings`
+                    的同名字段语义一致。
                 transport:
                   type: string
                 autoApprove:

@@ -911,6 +911,8 @@ export default {
       setAsDefault: 'Set as default',
       setDefaultSuccess: '{name} set as default',
       noModels: 'No models available',
+      advanced: 'Advanced',
+      configOptionSaveFailed: 'Failed to save this option. Please retry.',
       notAvailable: 'Not available in current mode',
       noUsage: 'This session has not reported any context usage yet. Agents on the CLI transport do not report a context window.',
       noSearchResults: 'No matching models',

@@ -914,6 +914,8 @@ export default {
       setAsDefault: '设为默认',
       setDefaultSuccess: '已将 {name} 设为默认',
       noModels: '暂无可用模型',
+      advanced: '高级',
+      configOptionSaveFailed: '该选项保存失败，请重试',
       notAvailable: '当前模式下不可用',
       noUsage: '该会话还没有上报上下文用量。使用 CLI 传输的智能体不上报上下文窗口。',
       noSearchResults: '未找到匹配的模型',

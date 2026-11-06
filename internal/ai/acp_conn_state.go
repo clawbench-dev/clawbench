@@ -34,6 +34,20 @@ type sessionStateExtracted struct {
 	// "effort" where the historical hardcoded guess was "thinkingEffort".
 	effortConfigID string
 	modelConfigID  string
+	// extras are the agent-advertised select options ClawBench has no
+	// dedicated plumbing for (see ExtraConfigOption), and extrasKnown says the
+	// response actually listed configOptions. The flag matters: an agent that
+	// omits configOptions entirely must not be read as "the option is gone"
+	// (that would clear the toggle on every resume), while a response that DOES
+	// list options and no longer contains it is authoritative — codex drops
+	// Fast mode when the user switches to a model that does not support it.
+	//
+	// The test is "listed at least one option", not "the field was present":
+	// agents that never advertise extras omit the field, and treating an empty
+	// list as authoritative would mark every one of them as "advertises extras"
+	// and have them emit an empty event on every turn.
+	extras      []ExtraConfigOption
+	extrasKnown bool
 }
 
 // CacheNewSessionState extracts and caches mode/config/thinking/model state from
@@ -136,6 +150,10 @@ func (c *ACPConn) extractLoadedSessionState(loadResp *acp.LoadSessionResponse) s
 			slog.Info("acp: extracted model list from loaded SessionModelState extension", "current", cached.CurrentModelID, "available", len(cached.Models))
 		}
 	}
+	if len(loadResp.ConfigOptions) > 0 {
+		ext.extras = extractExtraConfigOptions(loadResp.ConfigOptions)
+		ext.extrasKnown = true
+	}
 
 	return ext
 }
@@ -185,6 +203,10 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 		} else {
 			slog.Info("acp: no model list from configOptions")
 		}
+		if len(newResp.ConfigOptions) > 0 {
+			ext.extras = extractExtraConfigOptions(newResp.ConfigOptions)
+			ext.extrasKnown = true
+		}
 	} else {
 		if modeState := extractACPModeStateFromResume(resumeResp); modeState != nil {
 			ext.modes = modeState.AvailableModes
@@ -209,6 +231,10 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 				ext.modelCurrentID = cached.CurrentModelID
 				slog.Info("acp: extracted model list from resumed SessionModelState extension", "current", cached.CurrentModelID, "available", len(cached.Models))
 			}
+		}
+		if len(resumeResp.ConfigOptions) > 0 {
+			ext.extras = extractExtraConfigOptions(resumeResp.ConfigOptions)
+			ext.extrasKnown = true
 		}
 	}
 
@@ -282,6 +308,21 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	// carried through).
 	mcpCaps := reg.GetMCPCapabilities(agentID)
 	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, ext.configState, loadSession, listSessions, mcpCaps.HTTP, mcpCaps.SSE)
+
+	// Generic agent options (codex-acp's Fast mode) are SESSION-scoped: the
+	// agent only advertises them for models that support them, so they must not
+	// go into the agent-level registry above (another session on a different
+	// model would inherit the toggle).
+	//
+	// Two conditions, both required:
+	//   - the response actually listed configOptions (an agent that omits the
+	//     field must not be read as "the option is gone"), and
+	//   - it carries one now, or this session already had one (otherwise every
+	//     ACP agent would be flagged as "advertises extras" and start emitting
+	//     an empty config_options_update on every turn).
+	if ext.extrasKnown && (len(ext.extras) > 0 || c.HasExtraConfigOptions()) {
+		c.SetExtraConfigOptions(ext.extras)
+	}
 }
 
 // mergeWireConfigIDs merges the config-option ids the agent advertised (per
@@ -400,6 +441,20 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	if modelListState := reg.GetModelListState(agentID, c.GetCurrentModelID()); modelListState != nil {
 		slog.Debug("acp: emitting model_list_update for new session", "current", modelListState.CurrentModelID, "available", len(modelListState.Models))
 		forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelListState})
+	}
+
+	// Generic agent options (e.g. codex-acp's Fast mode) ride their own event:
+	// config_update carries a single option and is already used for mode, so
+	// piggy-backing a list onto it would change that payload's shape.
+	//
+	// Emitted even when the list is EMPTY, as long as the agent has advertised
+	// options at some point: that is the "the current model no longer supports
+	// it" signal, and without it a toggle would survive a model switch and
+	// offer a choice the agent rejects.
+	if c.HasExtraConfigOptions() {
+		extras := c.GetExtraConfigOptions()
+		slog.Debug("acp: emitting config_options_update", "count", len(extras))
+		forwardACPEvent(ch, StreamEvent{Type: "config_options_update", ConfigOptions: extras})
 	}
 }
 

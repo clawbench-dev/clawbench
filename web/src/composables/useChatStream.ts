@@ -3,7 +3,7 @@ import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, reconcileThinkingEffort, reconcileModelSelection, currentAgentId, currentModelId, updateUsageState } from './useSessionIdentity'
+import { updateModeState, updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, reconcileThinkingEffort, reconcileModelSelection, currentAgentId, currentModelId, updateUsageState, setConfigOptions } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
@@ -1106,6 +1106,25 @@ export function useChatStream(options: UseChatStreamOptions) {
           // remembered pick for this model and make the agent's "low" default
           // look like the user's choice (issue #552).
           reconcileThinkingEffort(currentId, levels, currentAgentId.value, currentModelId.value, false)
+        }
+        break
+      }
+
+      case 'config_options_update': {
+        // Agent-declared generic options (codex-acp's Fast mode, issue #634).
+        // Replaced wholesale: the list is per-model, so a partial merge would
+        // leave a toggle visible for a model that no longer offers it.
+        if (sessionChanged()) return
+        const optData = payload as { options?: unknown[] }
+        if (Array.isArray(optData.options)) {
+          setConfigOptions(optData.options as Array<{
+            configId: string
+            name?: string
+            description?: string
+            category: string
+            currentValueId?: string
+            values?: Array<{ id: string; name?: string }>
+          }>)
         }
         break
       }
