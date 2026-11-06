@@ -356,9 +356,13 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.Mode = reg.GetModeState(a.ID, "")
-		s.Effort = reg.GetThinkingEffortState(a.ID, "")
+		// Levels are per MODEL (issue #637): resolve them against the same model
+		// the model list below reports as current, so the settings picker and
+		// the chat drawer never describe different models.
+		agentCurrentModel := connManager.GetCurrentModelIDByAgentID(a.ID)
+		s.Effort = reg.GetThinkingEffortStateForModel(a.ID, agentCurrentModel, "")
 		s.Commands = reg.GetCommands(a.ID)
-		s.ModelList = reg.GetModelListState(a.ID, connManager.GetCurrentModelIDByAgentID(a.ID))
+		s.ModelList = reg.GetModelListState(a.ID, agentCurrentModel)
 		states[a.ID] = s
 
 		var acpModels []model.AgentModel
@@ -754,7 +758,7 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 		// last, and levels are per model — validating a deepseek pick against
 		// glm's list both rejects valid levels and accepts ones the model will
 		// refuse.
-		if offered, known := sessionOffersThinkingEffort(sessionID, level); known {
+		if offered, known := sessionOffersThinkingEffort(sessionID, agent.ID, level); known {
 			return offered
 		}
 		// ACP-reported agent-level levels
@@ -784,18 +788,25 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 	return true
 }
 
-// sessionOffersThinkingEffort reports whether the live ACP connection for this
-// session advertises the level. known=false means the session's model list has
-// not been learned (callers fall back to the agent-level registry).
-func sessionOffersThinkingEffort(sessionID, level string) (offered, known bool) {
+// sessionOffersThinkingEffort reports whether the model this session runs
+// advertises the level. known=false means that model's list has not been
+// learned yet (callers fall back to the agent-level registry).
+func sessionOffersThinkingEffort(sessionID, agentID, level string) (offered, known bool) {
 	if sessionID == "" {
 		return false, false
 	}
-	conn := ai.GetACPConnManager().GetConn(sessionID)
-	if conn == nil {
+	// The session row's model is authoritative; a session created without one
+	// will run the agent's default on its first turn.
+	modelID := service.GetSessionModel(sessionID)
+	if modelID == "" {
+		if a := model.GetAgent(agentID); a != nil {
+			modelID = a.DefaultModelID()
+		}
+	}
+	if modelID == "" {
 		return false, false
 	}
-	levels, ok := conn.GetSessionThinkingEfforts()
+	levels, ok := ai.GetAgentCapabilityRegistry().ThinkingEffortsForModel(agentID, modelID)
 	if !ok {
 		return false, false
 	}

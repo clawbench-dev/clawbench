@@ -753,17 +753,11 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 	}
 
 	reg := GetAgentCapabilityRegistry()
-	// The effort list is per MODEL (OpenCode advertises different levels for
-	// different models), so the session's own report wins over the agent-level
-	// registry — otherwise two sessions on the same agent but different models
-	// show each other's levels.
-	effort := conn.SessionThinkingEffortState()
-	if effort == nil {
-		effort = reg.GetThinkingEffortState(agentID, currentThinkingEffortID)
-	}
 	return ACPCachedState{
-		Mode:          reg.GetModeState(agentID, currentModeID),
-		Effort:        effort,
+		Mode: reg.GetModeState(agentID, currentModeID),
+		// Thinking levels are per MODEL (issue #637): resolve against the model
+		// this session is actually running, not the agent's last-written list.
+		Effort:        reg.GetThinkingEffortStateForModel(agentID, currentModelID, currentThinkingEffortID),
 		ConfigOptions: conn.GetExtraConfigOptions(),
 		ModelList:     reg.GetModelListState(agentID, currentModelID),
 		Commands:      reg.GetCommands(agentID),
@@ -1115,16 +1109,6 @@ type ACPConn struct {
 	// emit) from "advertised, and the list is now empty" (the model no longer
 	// supports the option — clients must be told to drop the toggle).
 	extraConfigOptionsKnown bool
-
-	// sessionThinkingEfforts is the thinking-level list THIS session's model
-	// advertises. OpenCode reports levels per model (glm-5.3: low/high/max/
-	// default, deepseek-v4-pro: high/max/default), so the agent-level registry
-	// cannot answer for a session: whichever session refreshed it last would
-	// dictate every other session's picker, making the same model show
-	// different levels depending on where you look. Kept on the connection like
-	// extraConfigOptions, for the same reason. Empty means "not learned yet"
-	// (fall back to the registry). Guarded by stateMu.
-	sessionThinkingEfforts []ThinkingEffortDef
 
 	// lastSetConfig tracks the last values successfully sent to the agent via
 	// setSessionConfigOption. Used to avoid re-sending unchanged values.
@@ -1797,53 +1781,6 @@ func (c *ACPConn) SetCurrentThinkingEffortID(effortID string) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	c.currentThinkingEffortID = effortID
-}
-
-// SetSessionThinkingEfforts records the level list the agent advertised for
-// THIS session's model. Empty lists are ignored: they carry no information
-// (an agent that omits the option on resume must not wipe a known list), and
-// the readers fall back to the agent-level registry when nothing is stored.
-func (c *ACPConn) SetSessionThinkingEfforts(levels []ThinkingEffortDef) {
-	if len(levels) == 0 {
-		return
-	}
-	copied := make([]ThinkingEffortDef, len(levels))
-	copy(copied, levels)
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	c.sessionThinkingEfforts = copied
-}
-
-// GetSessionThinkingEfforts returns this session's level list and whether one
-// is known.
-func (c *ACPConn) GetSessionThinkingEfforts() ([]ThinkingEffortDef, bool) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	if len(c.sessionThinkingEfforts) == 0 {
-		return nil, false
-	}
-	out := make([]ThinkingEffortDef, len(c.sessionThinkingEfforts))
-	copy(out, c.sessionThinkingEfforts)
-	return out, true
-}
-
-// SessionThinkingEffortState builds the thinking-effort state for THIS session.
-//
-// Returns nil when this session never reported a list; callers then fall back
-// to the agent-level registry (backends whose list is genuinely agent-wide).
-func (c *ACPConn) SessionThinkingEffortState() *ThinkingEffortState {
-	levels, ok := c.GetSessionThinkingEfforts()
-	if !ok {
-		return nil
-	}
-	currentID := c.GetCurrentThinkingEffortID()
-	state := &ThinkingEffortState{CurrentID: currentID, AvailableLevels: levels}
-	// Carry the wire config id (claude advertises "effort") so the client and
-	// the senders keep addressing the option the agent actually knows.
-	if base := GetAgentCapabilityRegistry().GetThinkingEffortState(c.AgentID(), currentID); base != nil {
-		state.ConfigID = base.ConfigID
-	}
-	return state
 }
 
 // GetCurrentModelID returns the session's current model ID.

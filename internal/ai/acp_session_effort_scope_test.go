@@ -1,7 +1,9 @@
 package ai
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
@@ -13,11 +15,11 @@ import (
 // Issue #637 — the thinking-level list is per MODEL, not per agent.
 //
 // OpenCode advertises a different set for each model (glm-5.3: low/high/max/
-// default, deepseek-v4-pro: high/max/default, a non-reasoning model: none at
-// all), and the agent-level registry only holds whichever session refreshed it
-// last. Two sessions on the same agent therefore showed each other's levels:
-// the same model looked different depending on which entry point/session you
-// opened, and a level such as "max" could disappear from one of them.
+// default, deepseek-v4-pro: high/max/default), and the agent-level registry
+// only held whichever session refreshed it last. Two sessions on the same
+// agent therefore showed each other's levels: the same model looked different
+// depending on which entry point/session you opened, and a level such as "max"
+// could disappear from one of them.
 
 func thinkingSelectOption(values ...string) acp.SessionConfigOption {
 	cat := acp.SessionConfigOptionCategoryThoughtLevel
@@ -36,6 +38,18 @@ func thinkingSelectOption(values ...string) acp.SessionConfigOption {
 	}
 }
 
+func modelSelectOption(modelID string) acp.SessionConfigOption {
+	cat := acp.SessionConfigOptionCategoryModel
+	return acp.SessionConfigOption{
+		Select: &acp.SessionConfigOptionSelect{
+			Category:     &cat,
+			Id:           "model",
+			Name:         "Model",
+			CurrentValue: acp.SessionConfigValueId(modelID),
+		},
+	}
+}
+
 func effortIDs(levels []ThinkingEffortDef) []string {
 	ids := make([]string, 0, len(levels))
 	for _, l := range levels {
@@ -44,45 +58,56 @@ func effortIDs(levels []ThinkingEffortDef) []string {
 	return ids
 }
 
-func TestSetSessionThinkingEfforts_EmptyDoesNotErase(t *testing.T) {
-	conn := newACPConn(&model.Agent{ID: "effort-scope-set", Backend: "acp-stdio"}, "effort-scope-set")
+func TestThinkingEffortsByModel_ScopedByModel(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
 
-	conn.SetSessionThinkingEfforts([]ThinkingEffortDef{{ID: "low"}, {ID: "max"}})
-	levels, ok := conn.GetSessionThinkingEfforts()
-	require.True(t, ok)
-	assert.Equal(t, []string{"low", "max"}, effortIDs(levels))
+	reg.UpdateThinkingEffortsForModel("effort-scope-a", "glm-5.3",
+		[]ThinkingEffortDef{{ID: "low"}, {ID: "high"}, {ID: "max"}, {ID: "default"}})
+	reg.UpdateThinkingEffortsForModel("effort-scope-a", "deepseek-v4-pro",
+		[]ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}})
 
-	// A response that omits the option must not be read as "the model has no
-	// levels" — that would wipe the picker on every resume.
-	conn.SetSessionThinkingEfforts(nil)
-	levels, ok = conn.GetSessionThinkingEfforts()
-	require.True(t, ok)
-	assert.Equal(t, []string{"low", "max"}, effortIDs(levels))
+	glm := reg.GetThinkingEffortStateForModel("effort-scope-a", "glm-5.3", "max")
+	require.NotNil(t, glm)
+	assert.Equal(t, []string{"low", "high", "max", "default"}, effortIDs(glm.AvailableLevels))
+
+	deepseek := reg.GetThinkingEffortStateForModel("effort-scope-a", "deepseek-v4-pro", "high")
+	require.NotNil(t, deepseek)
+	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(deepseek.AvailableLevels))
+
+	// A model that never reported anything falls back to the agent-level list
+	// (backends whose levels are model-independent rely on this).
+	reg.UpdateThinkingEfforts("effort-scope-a", []ThinkingEffortDef{{ID: "none"}, {ID: "high"}})
+	fallback := reg.GetThinkingEffortStateForModel("effort-scope-a", "unseen-model", "")
+	require.NotNil(t, fallback)
+	assert.Equal(t, []string{"none", "high"}, effortIDs(fallback.AvailableLevels))
 }
 
-func TestSessionThinkingEffortState_UnknownFallsBackToRegistry(t *testing.T) {
-	agent := &model.Agent{ID: "effort-scope-unknown", Backend: "acp-stdio"}
-	conn := newACPConn(agent, "effort-scope-unknown")
+func TestUpdateThinkingEffortsForModel_IgnoresEmpty(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "glm-5.3", []ThinkingEffortDef{{ID: "low"}})
 
-	// Never reported for this session: the caller must fall back to the
-	// agent-level registry rather than showing an empty picker.
-	assert.Nil(t, conn.SessionThinkingEffortState())
+	// Neither an empty list nor an empty model id may create an entry: both
+	// carry no information, and the reader must keep falling back.
+	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "glm-5.3", nil)
+	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "", []ThinkingEffortDef{{ID: "max"}})
+
+	levels, ok := reg.ThinkingEffortsForModel("effort-scope-empty", "glm-5.3")
+	require.True(t, ok)
+	assert.Equal(t, []string{"low"}, effortIDs(levels))
+	_, ok = reg.ThinkingEffortsForModel("effort-scope-empty", "")
+	assert.False(t, ok)
 }
 
-func TestEmitSessionStateEvents_UsesThisSessionsLevels(t *testing.T) {
+func TestEmitSessionStateEvents_UsesTheSessionsModel(t *testing.T) {
 	agent := &model.Agent{ID: "effort-scope-emit", Backend: "acp-stdio", AcpCommand: "echo"}
-	reg := GetAgentCapabilityRegistry()
-	// The agent-level list belongs to whichever session refreshed it last —
-	// here a different model's list.
-	reg.UpdateThinkingEfforts("effort-scope-emit", []ThinkingEffortDef{{ID: "none"}, {ID: "high"}})
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateThinkingEffortsForModel("effort-scope-emit", "glm-5.3",
+		[]ThinkingEffortDef{{ID: "low"}, {ID: "high"}, {ID: "max"}, {ID: "default"}})
+	reg.UpdateThinkingEffortsForModel("effort-scope-emit", "deepseek-v4-pro",
+		[]ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}})
 
 	conn := newACPConn(agent, "effort-scope-emit")
-	conn.SetSessionThinkingEfforts([]ThinkingEffortDef{
-		{ID: "low", Name: "Low"},
-		{ID: "high", Name: "High"},
-		{ID: "max", Name: "Max"},
-		{ID: "default", Name: "Default"},
-	})
+	conn.SetCurrentModelID("deepseek-v4-pro")
 	conn.SetCurrentThinkingEffortID("max")
 
 	ch := make(chan StreamEvent, 16)
@@ -96,129 +121,122 @@ func TestEmitSessionStateEvents_UsesThisSessionsLevels(t *testing.T) {
 	}
 	require.NotNil(t, got, "expected a thinking_effort_update event")
 	assert.Equal(t, "max", got.CurrentID)
-	assert.Equal(t, []string{"low", "high", "max", "default"}, effortIDs(got.AvailableLevels),
-		"the session's own model list must win over the agent-level registry")
+	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(got.AvailableLevels),
+		"the session's model list must win over the other model's")
 }
 
-func TestApplyConfigOptionsFromSetResponse_RefreshesSessionLevels(t *testing.T) {
+func TestApplyConfigOptionsFromSetResponse_RecordsPerModel(t *testing.T) {
 	agent := &model.Agent{ID: "effort-scope-switch", Backend: "acp-stdio", AcpCommand: "echo"}
+	reg := resetGlobalRegistryForTest(t)
 	conn := newACPConn(agent, "effort-scope-switch")
-	conn.SetSessionThinkingEfforts([]ThinkingEffortDef{{ID: "low"}, {ID: "high"}, {ID: "max"}})
+	conn.SetCurrentModelID("glm-5.3")
 
-	// Model switch response for a model whose list is a SUBSET: the previous
-	// (wider) list must not survive.
+	// Model switch response: the new list belongs to the model the response
+	// names, not to the one the session was running before.
 	conn.applyConfigOptionsFromSetResponse([]acp.SessionConfigOption{
+		modelSelectOption("deepseek-v4-pro"),
 		thinkingSelectOption("high", "max", "default"),
 	})
 
-	levels, ok := conn.GetSessionThinkingEfforts()
+	levels, ok := reg.ThinkingEffortsForModel("effort-scope-switch", "deepseek-v4-pro")
 	require.True(t, ok)
 	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(levels))
 
-	// And the agent-level registry is still refreshed as before.
-	reg := GetAgentCapabilityRegistry()
-	es := reg.GetThinkingEffortState("effort-scope-switch", "")
-	require.NotNil(t, es)
-	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(es.AvailableLevels))
+	_, ok = reg.ThinkingEffortsForModel("effort-scope-switch", "glm-5.3")
+	assert.False(t, ok, "the list must not be attributed to the previous model")
 }
 
-func TestGetCachedStateByClawbenchSID_PrefersSessionLevels(t *testing.T) {
-	agent := &model.Agent{ID: "effort-scope-cache", Backend: "acp-stdio", AcpCommand: "echo"}
-	reg := GetAgentCapabilityRegistry()
-	reg.UpdateThinkingEfforts("effort-scope-cache", []ThinkingEffortDef{{ID: "none"}, {ID: "high"}})
-
-	conn := newACPConn(agent, "effort-scope-cache")
-	conn.SetSessionThinkingEfforts([]ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}})
-	conn.SetCurrentThinkingEffortID("high")
-
-	mgr := GetACPConnManager()
-	mgr.SetConnForTest("effort-scope-cache", conn)
-	defer mgr.RemoveConn("effort-scope-cache")
-
-	state := mgr.GetCachedStateByClawbenchSID("effort-scope-cache")
-	require.NotNil(t, state.Effort)
-	assert.Equal(t, "high", state.Effort.CurrentID)
-	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(state.Effort.AvailableLevels))
-}
-
-func TestApplyConfigSelectToSessionCache_UpdatesSessionLevels(t *testing.T) {
+func TestApplyConfigSelectToSessionCache_RecordsPerModel(t *testing.T) {
 	agent := &model.Agent{ID: "effort-scope-notify", Backend: "acp-stdio", AcpCommand: "echo"}
+	reg := resetGlobalRegistryForTest(t)
 	conn := newACPConn(agent, "effort-scope-notify")
-	conn.SetSessionThinkingEfforts([]ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
+	conn.SetCurrentModelID("glm-5.3")
 
 	// The agent pushes a new list through config_option_update instead of the
-	// set_config_option response. The session copy must follow, or it would
-	// outrank the refreshed registry everywhere it is preferred.
+	// set_config_option response.
 	sel := SelectState{
 		Category:  "thought_level",
 		CurrentID: "max",
 		Available: []SelectOptionDef{{ID: "high"}, {ID: "max"}},
 	}
-	applyConfigSelectToSessionCache(sel, conn, GetAgentCapabilityRegistry(), true, true)
+	applyConfigSelectToSessionCache(sel, conn, reg, true, true)
 
-	levels, ok := conn.GetSessionThinkingEfforts()
+	levels, ok := reg.ThinkingEffortsForModel("effort-scope-notify", "glm-5.3")
 	require.True(t, ok)
 	assert.Equal(t, []string{"high", "max"}, effortIDs(levels))
 	assert.Equal(t, "max", conn.GetCurrentThinkingEffortID())
 }
 
-func TestEmitSessionStateEvents_FallsBackToRegistryWithoutSessionList(t *testing.T) {
-	agent := &model.Agent{ID: "effort-scope-fallback", Backend: "acp-stdio", AcpCommand: "echo"}
-	reg := GetAgentCapabilityRegistry()
-	reg.UpdateThinkingEfforts("effort-scope-fallback", []ThinkingEffortDef{{ID: "high", Name: "High"}})
-
-	conn := newACPConn(agent, "effort-scope-fallback")
-	conn.SetCurrentThinkingEffortID("high")
-
-	ch := make(chan StreamEvent, 16)
-	conn.EmitSessionStateEvents(ch)
-
-	var got *ThinkingEffortState
-	for _, e := range drainStreamEvents(ch) {
-		if e.Type == "thinking_effort_update" {
-			got = e.ThinkingEffort
-		}
-	}
-	require.NotNil(t, got, "agent-wide backends must keep their registry fallback")
-	assert.Equal(t, []string{"high"}, effortIDs(got.AvailableLevels))
-}
-
-func TestApplyConfigOptionsFromSetResponse_PartialResponseKeepsLevels(t *testing.T) {
-	agent := &model.Agent{ID: "effort-scope-partial", Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := newACPConn(agent, "effort-scope-partial")
-	conn.SetSessionThinkingEfforts([]ThinkingEffortDef{{ID: "low"}, {ID: "high"}, {ID: "max"}})
-
-	// An agent that answers with ONLY the changed option: a mode change must
-	// not be read as "the model has no thinking levels".
-	modeCat := acp.SessionConfigOptionCategoryMode
-	conn.applyConfigOptionsFromSetResponse([]acp.SessionConfigOption{
-		{
-			Select: &acp.SessionConfigOptionSelect{
-				Category:     &modeCat,
-				Id:           "mode",
-				Name:         "Mode",
-				CurrentValue: acp.SessionConfigValueId("plan"),
-			},
-		},
-	})
-
-	levels, ok := conn.GetSessionThinkingEfforts()
-	require.True(t, ok, "a mode-only response must not clear the level list")
-	assert.Equal(t, []string{"low", "high", "max"}, effortIDs(levels))
-}
-
-func TestApplyExtractedState_RecordsSessionLevels(t *testing.T) {
+func TestApplyExtractedState_RecordsUnderReportedModel(t *testing.T) {
 	agent := &model.Agent{ID: "effort-scope-extract", Backend: "acp-stdio", AcpCommand: "echo"}
+	reg := resetGlobalRegistryForTest(t)
 	conn := newACPConn(agent, "effort-scope-extract")
+	// The user's pick for the NEXT turn is already pre-applied.
+	conn.SetCurrentModelID("user-pick")
 
-	// session/new | resume | load carry the session's own level list.
+	// session/new | resume | load: the list describes the model the agent is
+	// actually running, which may differ from the pre-applied user pick.
 	conn.applyExtractedState(sessionStateExtracted{
 		efforts:         []ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}},
 		effortCurrentID: "high",
+		modelCurrentID:  "reported-model",
 	})
 
-	levels, ok := conn.GetSessionThinkingEfforts()
+	levels, ok := reg.ThinkingEffortsForModel("effort-scope-extract", "reported-model")
 	require.True(t, ok)
 	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(levels))
-	assert.Equal(t, "high", conn.GetCurrentThinkingEffortID())
+
+	_, ok = reg.ThinkingEffortsForModel("effort-scope-extract", "user-pick")
+	assert.False(t, ok, "the list must not be attributed to the not-yet-applied pick")
+	assert.Equal(t, "user-pick", conn.GetCurrentModelID(), "the pre-applied pick is still preserved")
+}
+
+func TestRegistry_ThinkingEffortsByModelSurviveSaveAndLoad(t *testing.T) {
+	db := setupCapabilityDB(t)
+	origDB := getRegistryDB()
+	t.Cleanup(func() { SetRegistryDB(origDB) })
+	SetRegistryDB(db)
+
+	_, err := db.Exec("INSERT INTO agents (id, transport) VALUES ('effort-scope-persist', 'acp-stdio')")
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateThinkingEffortsForModel("effort-scope-persist", "glm-5.3",
+		[]ThinkingEffortDef{{ID: "low"}, {ID: "max"}})
+	reg.UpdateThinkingEffortsForModel("effort-scope-persist", "deepseek-v4-pro",
+		[]ThinkingEffortDef{{ID: "high"}, {ID: "max"}})
+
+	// persistAsync runs in a goroutine; wait for the write to land.
+	require.Eventually(t, func() bool {
+		var raw string
+		if err := db.QueryRow("SELECT acp_thinking_efforts_by_model FROM agents WHERE id = 'effort-scope-persist'").Scan(&raw); err != nil {
+			return false
+		}
+		return raw != "" && raw != "{}"
+	}, 2*time.Second, 20*time.Millisecond, "per-model levels must be persisted")
+
+	reloaded := resetGlobalRegistryForTest(t)
+	reloaded.LoadFromDB(db)
+
+	glm, ok := reloaded.ThinkingEffortsForModel("effort-scope-persist", "glm-5.3")
+	require.True(t, ok, "per-model lists must survive a restart")
+	assert.Equal(t, []string{"low", "max"}, effortIDs(glm))
+	deepseek, ok := reloaded.ThinkingEffortsForModel("effort-scope-persist", "deepseek-v4-pro")
+	require.True(t, ok)
+	assert.Equal(t, []string{"high", "max"}, effortIDs(deepseek))
+}
+
+func TestSetConfigOption_UpdatesCachedModel(t *testing.T) {
+	agent := &model.Agent{ID: "effort-scope-cachemodel", Backend: "opencode", AcpCommand: "echo"}
+	conn := NewACPConnForTest(agent, "effort-scope-cachemodel")
+	conn.alive = true
+	conn.conn = newLiveConnForTest(t)
+	conn.SetCurrentModelID("glm-5.3")
+	conn.SetConfigOptionFnForTest(func(context.Context, string, string, string) error { return nil })
+
+	// The click-time switch goes through this path; the cached model must
+	// follow, or the per-model level list is resolved against the old model.
+	require.NoError(t, conn.setConfigOptionWithCrashCheck(context.Background(), "sid",
+		configOptionSpec{configID: "model", value: "deepseek-v4-pro", label: "model"}))
+	assert.Equal(t, "deepseek-v4-pro", conn.GetCurrentModelID())
 }

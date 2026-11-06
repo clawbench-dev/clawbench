@@ -335,10 +335,10 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thi
 // showing it — the issue's symptom, one layer down.
 //
 // An UNKNOWN level list counts as "offered": not having been told must never
-// discard the user's configured default. For ACP the list arrives at session/new
-// and is refreshed from the set_config_option response (which carries the NEW
-// model's levels), so by the time a switch has happened the list is the right
-// one.
+// discard the user's configured default. For ACP the list is looked up for the
+// model this turn will run (session/new and the set_config_option response both
+// record it per model, issue #637), so the check describes THIS model rather
+// than whichever model reported last.
 func EffectiveThinkingEffortForModel(agent *model.Agent, modelID string, isACP bool) string {
 	if agent == nil {
 		return ""
@@ -352,7 +352,7 @@ func EffectiveThinkingEffortForModel(agent *model.Agent, modelID string, isACP b
 	if global == "" {
 		return ""
 	}
-	if !ThinkingEffortIsOffered(agent, isACP, global) {
+	if !ThinkingEffortIsOffered(agent, isACP, global, modelID) {
 		slog.Info("configured thinking effort not offered by this agent/model, letting the agent decide",
 			"agent_id", agent.ID, "model", modelID, "level", global)
 		return ""
@@ -361,13 +361,17 @@ func EffectiveThinkingEffortForModel(agent *model.Agent, modelID string, isACP b
 }
 
 // ThinkingEffortIsOffered reports whether level is known to be runnable by this
-// agent over the given transport. An unknown list returns true.
-func ThinkingEffortIsOffered(agent *model.Agent, isACP bool, level string) bool {
+// agent+model over the given transport. An unknown list returns true.
+//
+// The ACP list is looked up per MODEL (issue #637): the agent-level list only
+// remembers whichever model reported last, so a default that is valid for one
+// model would be kept (or dropped) based on another model's levels.
+func ThinkingEffortIsOffered(agent *model.Agent, isACP bool, level, modelID string) bool {
 	if level == "" {
 		return false
 	}
 	if isACP {
-		if es := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
+		if es := ai.GetAgentCapabilityRegistry().GetThinkingEffortStateForModel(agent.ID, modelID, ""); es != nil && len(es.AvailableLevels) > 0 {
 			for _, l := range es.AvailableLevels {
 				if l.ID == level {
 					return true

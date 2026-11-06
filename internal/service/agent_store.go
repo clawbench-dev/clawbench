@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_command TEXT NOT NULL DEFAULT '',
 	acp_available_modes TEXT NOT NULL DEFAULT '[]',
 	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
+	acp_thinking_efforts_by_model TEXT NOT NULL DEFAULT '{}',
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
 	acp_available_models TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',

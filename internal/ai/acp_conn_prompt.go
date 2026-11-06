@@ -627,6 +627,13 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 	if cfg.configID == "mode" && !c.IsConfigUnsupported("mode") {
 		c.UpdateCachedCurrent("mode", cfg.value)
 	}
+	// For model: the click-time switch (PATCH /api/ai/session/update) goes
+	// through this path, and the session cache must follow — otherwise the
+	// thinking-level list (which is per MODEL) would be resolved against the
+	// model the session just left, and the response would return the old list.
+	if cfg.configID == "model" && !c.IsConfigUnsupported("model") {
+		c.UpdateCachedCurrent("model", cfg.value)
+	}
 
 	return nil
 }

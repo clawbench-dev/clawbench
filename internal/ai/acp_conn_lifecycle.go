@@ -1595,6 +1595,7 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		return
 	}
 	reg := GetAgentCapabilityRegistry()
+	modelID := c.modelIDFromConfigOptions(opts)
 	for _, opt := range opts {
 		if opt.Select == nil || opt.Select.Category == nil {
 			continue
@@ -1613,11 +1614,10 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		switch category {
 		case string(acp.SessionConfigOptionCategoryThoughtLevel):
 			category = "thought_level"
-			// Also record it on the connection: OpenCode's levels are per
-			// model, and this response is the authoritative list for the model
-			// this session just switched to. Without it the session keeps
-			// emitting the PREVIOUS model's levels until the next turn.
-			c.SetSessionThinkingEfforts(levelsFromSelect(sel))
+			// Record it against the model it belongs to (issue #637): this is
+			// the authoritative list for the model this session just switched
+			// to, and every other session on that model should see it too.
+			reg.UpdateThinkingEffortsForModel(agentID, modelID, levelsFromSelect(sel))
 		case string(acp.SessionConfigOptionCategoryMode):
 			category = "mode"
 		case string(acp.SessionConfigOptionCategoryModel):
@@ -1625,6 +1625,22 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		}
 		reg.UpdateAvailableOptions(agentID, category, sel.Available)
 	}
+}
+
+// modelIDFromConfigOptions returns the model named by a config-option set.
+//
+// The set_config_option response carries the agent's state AFTER the change, so
+// its model option names the model the thinking levels belong to. Agents that
+// answer with only the changed option omit it — fall back to the session's
+// current model.
+func (c *ACPConn) modelIDFromConfigOptions(opts []acp.SessionConfigOption) string {
+	for _, opt := range opts {
+		if opt.Select != nil && opt.Select.Category != nil &&
+			*opt.Select.Category == acp.SessionConfigOptionCategoryModel {
+			return string(opt.Select.CurrentValue)
+		}
+	}
+	return c.GetCurrentModelID()
 }
 
 // levelsFromSelect converts a SelectState's options into thinking-effort defs.

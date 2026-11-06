@@ -852,7 +852,11 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			if ms := reg.GetModeState(sessionAgentID, ""); ms != nil {
 				st.Mode = ms
 			}
-			if es := reg.GetThinkingEffortState(sessionAgentID, ""); es != nil {
+			// Levels are per MODEL (issue #637): use the model this session
+			// will run, not whichever model last refreshed the agent-level
+			// list. The session row survives a restart, so this is also what
+			// makes the drawer correct before the first message after a restart.
+			if es := reg.GetThinkingEffortStateForModel(sessionAgentID, service.GetSessionModel(sessionID), ""); es != nil {
 				st.Effort = es
 			}
 			if cmds := reg.GetCommands(sessionAgentID); len(cmds) > 0 {

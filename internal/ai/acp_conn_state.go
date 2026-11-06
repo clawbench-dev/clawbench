@@ -257,6 +257,11 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 		ext.modeCurrentID = ""
 	}
 
+	// The level list in this response belongs to the model the AGENT is
+	// currently running — capture it before the pre-applied user pick below
+	// overwrites modelCurrentID with the model the next turn will switch to.
+	reportedModelID := ext.modelCurrentID
+
 	currentIDs := map[string]*string{
 		"mode":          &ext.modeCurrentID,
 		"thought_level": &ext.effortCurrentID,
@@ -291,10 +296,10 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	c.SetCurrentThinkingEffortID(ext.effortCurrentID)
 	c.SetCurrentModelID(ext.modelCurrentID)
 
-	// The level LIST is also session-scoped (OpenCode reports it per model), so
-	// keep this session's own copy instead of relying on the agent-level
-	// registry, which whichever session refreshed it last would dictate.
-	c.SetSessionThinkingEfforts(ext.efforts)
+	// The level LIST is per MODEL (OpenCode reports a different set for each
+	// model), so record it under the model it belongs to. The agent-level list
+	// stays as the fallback for agents whose levels are model-independent.
+	GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel(c.AgentID(), reportedModelID, ext.efforts)
 
 	// Force-update agent-level registry (full overwrite, once per process instance)
 	// LoadSession comes from BackendSpec (authoritative), ListSessions from the
@@ -424,17 +429,11 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 		}
 	}
 
-	// Thinking levels are per MODEL, so this session's own report wins over the
-	// agent-level registry. Emitting the registry list here is what made a
-	// session running deepseek show glm's levels (and vice versa), depending on
-	// which session had refreshed the registry last.
-	effort := c.SessionThinkingEffortState()
-	if effort == nil {
-		if sel := reg.GetSelectState(agentID, "thought_level", c.GetCurrentSelection("thought_level")); sel != nil && !sel.IsEmpty() {
-			effort = sel.ToThinkingEffortState()
-		}
-	}
-	if effort != nil {
+	// Thinking levels are per MODEL: resolve them for the model this session is
+	// running. Emitting the agent-level list here is what made a session on
+	// deepseek show glm's levels (and vice versa), depending on which session
+	// had refreshed the registry last.
+	if effort := reg.GetThinkingEffortStateForModel(agentID, c.GetCurrentModelID(), c.GetCurrentSelection("thought_level")); effort != nil {
 		slog.Debug("acp: emitting thinking_effort_update for new session", "current", effort.CurrentID, "available", len(effort.AvailableLevels))
 		forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effort})
 	}
