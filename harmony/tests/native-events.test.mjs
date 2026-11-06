@@ -176,6 +176,7 @@ function harness() {
   const requests = [];
   const responses = [];
   const reports = [];
+  const statusWaiters = new Set();
   const timers = new Map();
   const timerDelays = new Map();
   const permissionReads = [];
@@ -249,7 +250,15 @@ function harness() {
     clearTimeout(id) { timers.delete(id); timerDelays.delete(id); }
   };
   runInNewContext(serviceSource, sandbox);
-  const service = new sandbox.Service((name, detail) => reports.push({ name, detail: JSON.parse(detail) }));
+  const service = new sandbox.Service((name, detail) => {
+    reports.push({ name, detail: JSON.parse(detail) });
+    for (const waiter of statusWaiters) {
+      if (waiter.condition(reports.at(-1).detail)) {
+        statusWaiters.delete(waiter);
+        waiter.resolve();
+      }
+    }
+  });
   const context = { abilityInfo: { bundleName: 'com.clawbench.fixture', name: 'EntryAbility' } };
   return {
     service, context, sockets, requests, published, cancelled, storage, app, reports, timers, responses, permissionReads,
@@ -260,6 +269,17 @@ function harness() {
     setPermission(value) { permissions = value; },
     waitPermission(promise) { permissionWait = promise; },
     setPending(handler) { pendingHandler = handler; },
+    waitStatus(condition) {
+      if (reports.length && condition(reports.at(-1).detail)) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const waiter = { condition, resolve() { clearTimeout(deadline); resolve(); } };
+        const deadline = setTimeout(() => {
+          statusWaiters.delete(waiter);
+          reject(new Error('Expected notification status was not reached'));
+        }, 3000);
+        statusWaiters.add(waiter);
+      });
+    },
     async ready(origin = 'https://fixture.example', foreground = false) {
       cookies.registerServerCookies(origin, ['clawbench_session=fixture; HttpOnly']);
       await service.init(context); await service.bind(origin, 'en', foreground); await service.setEnabled(true);
@@ -271,7 +291,56 @@ function harness() {
   };
 }
 
-test('startup asks for notification permission without a server and never enables a delivery mode', async () => {
+test('binding completes while notification configuration is pending and later starts delivery', async t => {
+  const h = harness();
+  t.after(() => h.service.destroy());
+  h.setPermission(true);
+  cookies.registerServerCookies('https://slow-config.example', ['clawbench_session=fixture; HttpOnly']);
+  await h.service.init(h.context);
+  let finishSettings;
+  h.configResponses.push(() => new Promise(resolve => { finishSettings = resolve; }));
+  let bound = false;
+  const binding = h.service.bind('https://slow-config.example', 'en', true).then(() => { bound = true; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(bound, true, 'An authenticated login must not await /api/config');
+    assert.equal(h.configRequests.length, 1);
+    assert.equal(h.configRequests[0].destroyed, false);
+    assert.equal(h.sockets.length, 0);
+    assert.equal(h.permissionRequests(), 0);
+  } finally {
+    finishSettings({ responseCode: 200, result: '{"push_mode":"native"}' });
+    await binding;
+    await new Promise(setImmediate);
+  }
+  assert.equal(h.sockets.length, 1);
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, true);
+});
+
+test('a failed deferred configuration request reports its error after binding has completed', async t => {
+  const h = harness();
+  t.after(() => h.service.destroy());
+  h.setPermission(true);
+  cookies.registerServerCookies('https://failed-config.example', ['clawbench_session=fixture; HttpOnly']);
+  await h.service.init(h.context);
+  let failSettings;
+  h.configResponses.push(() => new Promise((_, reject) => { failSettings = reject; }));
+  let bound = false;
+  const binding = h.service.bind('https://failed-config.example', 'en', true).then(() => { bound = true; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(bound, true);
+    assert.equal(h.sockets.length, 0);
+  } finally {
+    failSettings(new Error('Fixture timeout'));
+    await binding;
+  }
+  await h.waitStatus(status => /settings unavailable/.test(status.error));
+  assert.equal(h.sockets.length, 0);
+  assert.equal(h.configRequests[0].destroyed, true);
+});
+
+test('an explicit permission request without a server never enables a delivery mode', async () => {
   const h = harness();
   await h.service.init(h.context);
   await h.service.requestStartupPermission();
@@ -385,6 +454,7 @@ test('native server mode starts background delivery without any frontend enable 
   cookies.registerServerCookies('https://automatic.example', ['clawbench_session=automatic; HttpOnly']);
   await h.service.init(h.context);
   await h.service.bind('https://automatic.example', 'en', false);
+  await h.waitStatus(status => status.enabled && h.sockets.length === 1);
   assert.equal(h.sockets.length, 1);
   assert.equal(h.permissionRequests(), 0);
   assert.equal(JSON.parse(h.service.getStatus()).enabled, true);
@@ -406,6 +476,7 @@ test('server disabled and IM modes never activate native delivery', async () => 
     cookies.registerServerCookies('https://mode.example', ['clawbench_session=fixture; HttpOnly']);
     await h.service.init(h.context);
     await h.service.bind('https://mode.example', 'en', false);
+    await h.waitStatus(() => h.cancelled.some(value => value[0] === 'group'));
     assert.equal(h.service.active.enabled, false);
     assert.equal(h.sockets.length, 0);
     assert.equal(h.cancelled.at(-1)[0], 'group');
@@ -480,6 +551,7 @@ test('server switches abort old configuration reads and isolate their late modes
   assert.equal(h.configRequests[0].destroyed, true);
   finishSettings({ responseCode: 200, result: '{"push_mode":"native"}' });
   await oldBind;
+  await new Promise(setImmediate);
   assert.equal(h.service.active.origin, 'https://new.example');
   assert.equal(h.service.active.enabled, false);
   assert.equal(h.sockets.length, 0);
@@ -501,6 +573,7 @@ test('invalid or failed server config reads do not invent an enabled native pref
     h.configResponses.push(() => response);
     await h.service.init(h.context);
     await h.service.bind('https://invalid.example', 'en', false);
+    await h.waitStatus(status => /settings unavailable/.test(status.error));
     assert.equal(h.service.active.enabled, false);
     assert.equal(h.sockets.length, 0);
     assert.match(JSON.parse(h.service.getStatus()).error, /settings unavailable/);
@@ -670,6 +743,44 @@ test('expired pending cursors recover newer unread rows while keeping older hist
   h.service.destroy();
 });
 
+for (const count of [20, 21, 50, 1000]) {
+  test(`an unknown cursor bounds recovery notifications for ${count} newer pending rows`, async t => {
+    const h = harness();
+    t.after(() => h.service.destroy());
+    h.storage.set('servers', JSON.stringify([{
+      origin: 'https://fixture.example', enabled: true,
+      state: { cursor: 'evt_1_1', recentIds: [], baselineInitialized: true }
+    }]));
+    await h.ready();
+    await h.service.queue;
+    const rows = Array.from({ length: count }, (_, i) =>
+      event('session_update', 'completed', `evt_200_${i + 1}`, { message_id: i + 1 }));
+    h.responses.push(backlog(), backlog(...rows));
+    await h.service.enqueueRecovery();
+    assert.equal(h.published.length, count <= 20 ? count : 0);
+    assert.equal(h.service.active.state.cursor, `evt_200_${count}`);
+    h.responses.push(backlog(), backlog(...rows));
+    await h.service.enqueueRecovery();
+    assert.equal(h.published.length, count <= 20 ? count : 0, 'Rebuilding must not replay evicted dedup entries');
+  });
+}
+
+for (const pendingFirst of [false, true]) {
+  test(`cancelled replies notify once with ${pendingFirst ? 'pending' : 'live'} delivery first`, async t => {
+    const h = harness();
+    t.after(() => h.service.destroy());
+    await h.ready();
+    const stored = event('session_update', 'cancelled', 'evt_1700_1', { message_id: 99 });
+    const live = { ...stored, id: 'evt_1700_2' };
+    if (!pendingFirst) await h.message(live);
+    h.responses.push(backlog(stored));
+    await h.service.enqueueRecovery();
+    if (pendingFirst) await h.message(live);
+    assert.equal(h.published.length, 1);
+    assert.equal(h.service.active.state.cursor, stored.id);
+  });
+}
+
 test('switching servers aborts a pending HTTP request and ignores its late response', async () => {
   const h = harness();
   h.responses.push(backlog(event('session_update', 'completed', 'evt_100_1')));
@@ -765,6 +876,7 @@ test('late permission reads cannot overwrite a new server or a newer permission 
   cookies.registerServerCookies('https://new.example', ['clawbench_session=new; HttpOnly']);
   h.configResponses.push(() => ({ responseCode: 200, result: '{"push_mode":"disabled"}' }));
   await h.service.bind('https://new.example', 'en', false);
+  await h.waitStatus(status => status.permission === 'granted');
   finishOld(false);
   await oldRead;
   assert.equal(JSON.parse(h.service.getStatus()).permission, 'granted');
@@ -882,7 +994,7 @@ test('only pending rows advance recovery cursors and completed message dedup nev
   assert.equal(recovered.cursor, stored.id);
   assert.equal(model.nativeEventDecision(event('session_update', 'completed', 'evt_800_3',
     { message_id: 2 }), recovered, false).notify, true);
-  for (const status of ['permission_pending', 'cancelled']) {
+  for (const status of ['permission_pending']) {
     const first = event('session_update', status, 'evt_800_4', { message_id: 2 });
     const seen = model.recordNativeEvent(recovered, first);
     assert.equal(model.nativeEventDecision({ ...first, id: 'evt_800_5' }, seen, false).notify, true);
@@ -922,12 +1034,14 @@ test('an empty initialized baseline survives a restart and later pending replies
   restarted.responses.push(backlog(event('session_update', 'completed', 'evt_1000_1', { message_id: 11 })));
   await restarted.service.init(restarted.context);
   await restarted.service.bind('https://fixture.example', 'en', false);
+  await restarted.waitStatus(() => restarted.published.length === 1);
   assert.equal(restarted.published.length, 1);
   restarted.service.destroy();
 });
 
-test('the first bind awaits a silent baseline before starting live observation', async () => {
+test('binding returns before a slow silent baseline while live observation still waits for it', async t => {
   const h = harness();
+  t.after(() => h.service.destroy());
   h.setPermission(true);
   cookies.registerServerCookies('https://baseline.example', ['clawbench_session=fixture; HttpOnly']);
   await h.service.init(h.context);
@@ -935,11 +1049,17 @@ test('the first bind awaits a silent baseline before starting live observation',
   h.responses.push(() => new Promise(resolve => { finish = resolve; }));
   let bound = false;
   const binding = h.service.bind('https://baseline.example', 'en', false).then(() => { bound = true; });
+  try {
+    await new Promise(setImmediate);
+    assert.equal(bound, true);
+    assert.equal(h.sockets.length, 0);
+  } finally {
+    finish(backlog(event('session_update', 'completed', 'evt_1100_1', { message_id: 12 }))());
+    await binding;
+  }
+  await h.waitStatus(() => h.sockets.length === 1);
   await new Promise(setImmediate);
-  assert.equal(bound, false);
-  assert.equal(h.sockets.length, 0);
-  finish(backlog(event('session_update', 'completed', 'evt_1100_1', { message_id: 12 }))());
-  await binding;
+  assert.equal(h.requests.length, 1, 'The initial baseline must not be fetched twice');
   assert.equal(h.sockets.length, 1);
   assert.equal(h.published.length, 0);
   assert.equal(h.service.active.state.cursor, 'evt_1100_1');

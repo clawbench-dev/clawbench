@@ -8,6 +8,11 @@ const mockTransportAllowsH2 = ref(false)
 const mockEnsurePortRegistered = vi.fn().mockResolvedValue(3000)
 const mockOpenPort = vi.fn()
 const mockToastShow = vi.fn()
+const mockHostTunnel = vi.hoisted(() => ({ supported: true }))
+
+vi.mock('@/utils/clawbenchNative', () => ({
+  getNative: () => ({ getCapabilities: () => ({ tunnel: mockHostTunnel.supported }) }),
+}))
 
 vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
@@ -39,6 +44,7 @@ import {
 } from '@/composables/useLocalhostAnnotation'
 
 describe('useLocalhostAnnotation', () => {
+  beforeEach(() => { mockHostTunnel.supported = true })
   // --- isLocalhostUrl ---
 
   describe('isLocalhostUrl', () => {
@@ -172,6 +178,15 @@ describe('useLocalhostAnnotation', () => {
     it('returns HTML unchanged when SSH is disabled', () => {
       mockIsAppMode.value = true
       mockSshInfo.value = { enabled: false }
+      const html = '<p>Visit http://localhost:3000</p>'
+      expect(annotateLocalhostUrls(html)).toBe(html)
+    })
+
+    it('does not annotate when the host disables tunnels even with both server transports available', () => {
+      mockIsAppMode.value = true
+      mockSshInfo.value = { enabled: true }
+      mockTransportAllowsH2.value = true
+      mockHostTunnel.supported = false
       const html = '<p>Visit http://localhost:3000</p>'
       expect(annotateLocalhostUrls(html)).toBe(html)
     })
@@ -342,6 +357,23 @@ describe('useLocalhostAnnotation', () => {
         expect(mockEnsurePortRegistered).toHaveBeenCalledWith(3000, 'http')
       })
       expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, undefined)
+    })
+
+    it('blocks an old localhost anchor when the host disables tunnels without opening the device loopback', async () => {
+      mockHostTunnel.supported = false
+      mockTransportAllowsH2.value = true
+      const anchor = document.createElement('a')
+      anchor.href = 'http://localhost:5173'
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+      try {
+        expect(handleLocalhostUrlClick(createClickEvent(anchor))).toBe(true)
+        await vi.waitFor(() => { expect(mockToastShow).toHaveBeenCalled() })
+        expect(mockEnsurePortRegistered).not.toHaveBeenCalled()
+        expect(mockOpenPort).not.toHaveBeenCalled()
+        expect(openSpy).not.toHaveBeenCalled()
+      } finally {
+        openSpy.mockRestore()
+      }
     })
 
     it('handles click on .chat-url-open-btn with path', async () => {
