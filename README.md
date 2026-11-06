@@ -23,7 +23,7 @@
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/user-guide/TERMUX.md) 在安卓手机上完全运行
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI（国际版 / 国内版）、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw
 
-📖 **使用手册**：[ClawBench 使用手册](docs/user-guide/README.md)
+📖 **使用手册**：[ClawBench 使用手册](docs/user-guide/README.md) · [在线版（带侧栏目录）](https://clawbench.pages.dev/docs/)
 
 ---
 
@@ -119,7 +119,7 @@ clawbench
 | 🔌 **模型提供商** | 把自建 / 第三方端点登记成一条可复用的「端点 + 凭据」，智能体与摘要模型直接引用；**权威模型目录快照**（models.dev）+ 提供商自带模型清单 + 品牌图标，可对**单个模型**做真实连通性测试；密钥只写不回显、可随时查看 |
 | 🔀 **SSH 隧道** | 全协议透明（HTTP/HTTPS/WS/SSE/gRPC）、**双向端口映射**（正向 ssh -L + 反向 ssh -R）、指定目标地址、自动端口分配、健康检测与重连、Localhost URL 一键打开 |
 | 🎨 **主题外观** | **36 个命名主题**、跟随系统实时切换、**切换主题圆形扩散动效**（从右上角按钮扩散铺满全屏）、**自定义壁纸**（本地图库 / Bing 每日 / **动态风格**三种来源，不透明度/模糊、选择按设备独立）、自定义字体、**无级界面缩放**（50%–200%、步长 1%，整套 UI 由根字号统一放大，含图标与终端字号）、快捷主题选择器 |
-| 📱 **多端** | Android App（原生桥接、**桌面悬浮状态窗**、**灵动岛 Live Updates**、应用自升级、版本不匹配检测、全量国际化）、**桌面客户端**（Electron，Windows / macOS / Linux）、PWA 可安装、Termux 手机本地运行 |
+| 📱 **多端** | Android App（原生桥接、**桌面悬浮状态窗**、**灵动岛 Live Updates**、应用自升级、**按协议号判定兼容性**、全量国际化）、**桌面客户端**（Electron，Windows / macOS / Linux）、PWA 可安装、Termux 手机本地运行 |
 | 🖥️ **桌面客户端** | Electron 壳承载同一套 Web UI；**Windows / Linux 无边框窗口**（顶栏自绘最小化/最大化/关闭，macOS 保留原生交通灯）；原生系统通知（点击跳转会话/任务/仓库）、原生右键菜单、外链走默认浏览器、**自签名证书按「地址 + 指纹」记住信任**（可在设置里一键清除）、**SSH 端口映射**（保活 + 断线自动重连）、多服务器管理（safeStorage 加密凭据，**每个服务端各存各的密码**）、**界面按分辨率自动缩放**（Ctrl+滚轮 / Ctrl+=/-/0 原生缩放）、**应用自升级**（侧装多版本 + 指针切换，可回滚；**增量载荷包**只换 `resources/`、复用 Electron 运行时；国内自动走 GitHub/npm 镜像）、`Ctrl+Shift+R` 强制刷新 / `F12` 开发者工具 |
 | 🔔 **通知** | **通知中心**（左栏页签，把会话/任务/仓库/用量/**会议**事件汇聚成可回溯日志，按项目/类型/时间筛选，与角标刻意分离）、音效 + 触觉反馈、桌面端系统通知、任务完成推送、**钉钉 / 飞书 / 微信机器人推送**（IM 内查看会话与发消息） |
 | 🔒 **安全** | SHA-256 加盐密码、路径穿越防护、Git 参数注入防护、XSS 净化（DOMPurify）、**HMAC 短时令牌**（本机请求不再凭地址免密）、TLS 自动发现、**自签名证书按指纹记忆**（指纹变了重新询问）、多实例 Cookie 隔离 |
