@@ -481,7 +481,7 @@ async function onFileSelect(e: Event) {
   // Marks the window in which a batch THIS sheet started is still running —
   // the only window in which Cancel has a transfer of its own to abort (see
   // `handleCancel`).
-  uploadInFlight = true
+  uploadsInFlight++
   try {
     const uploadedPaths = await handleFileSelect(e, commit)
     // Terminated mid-batch: the user asked to clear everything, so do not
@@ -492,7 +492,7 @@ async function onFileSelect(e: Event) {
     if (uploadedPaths.length === 0) return
     activeTab.value = 'uploads'
   } finally {
-    uploadInFlight = false
+    uploadsInFlight--
   }
 }
 /**
@@ -541,19 +541,23 @@ function handleTerminateUpload() {
  * that only closes the panel, and its uploads stay (issue #629).
  */
 /**
- * Whether a batch THIS sheet started is still running.
+ * How many batches THIS sheet started are still running.
  *
- * Cancel must stop it — but `cancelChatUpload` works on the module-level chat
+ * Cancel must stop them — but `cancelChatUpload` works on the module-level chat
  * batch, which a drag-drop or paste can own just as well. Aborting that one
  * from here silently killed a transfer the user never asked to stop, so the
- * sheet only reaches for it while its own pick is in flight.
+ * sheet only reaches for it while one of its own is in flight.
+ *
+ * A COUNT, not a flag: two picks can overlap (the sheet stays open and the
+ * upload entry stays tappable), and the superseded one settles first — a flag
+ * would read "nothing of mine is running" while the second batch still is.
  */
-let uploadInFlight = false
+let uploadsInFlight = 0
 
 function handleCancel() {
   // Stop the batch first: `commit` fires per file as it lands, so aborting must
   // happen before the remaining transfers can reach it.
-  if (uploadInFlight) cancelChatUpload()
+  if (uploadsInFlight > 0) cancelChatUpload()
   for (const path of sessionCommitted) {
     const entry: FileEntry = { path, isDir: false }
     emit('remove-attached', entry)

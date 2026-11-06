@@ -680,6 +680,31 @@ describe('AttachDrawer', () => {
     expect(mockCancelChatUpload).not.toHaveBeenCalled()
   })
 
+  it('cancel still stops the batch when a second pick superseded the first', async () => {
+    // Two picks can overlap. The superseded one settles first, so a plain
+    // boolean "is my batch running" flag reads false while the second batch is
+    // still uploading — and Cancel would leave it running, which is exactly the
+    // "image reappears after the panel closed" symptom.
+    const resolvers: Array<(v: string[]) => void> = []
+    mockHandleFileSelect.mockImplementation(() => new Promise<string[]>((r) => { resolvers.push(r) }))
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const state = getRawState(wrapper)
+
+    void state.onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await nextTick()
+    void state.onFileSelect({ target: { files: [{ name: 'b.png' }] } })
+    await nextTick()
+
+    // The superseded pick settles while the second one is still in flight.
+    resolvers[0]([])
+    await nextTick()
+
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+
+    expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+    resolvers[1]([])
+  })
+
   it('OK accepts the batch: a later terminate must not undo it', async () => {
     // `batchCommitted` is what "terminate" clears. Once the user presses OK
     // those uploads are their accepted selection, so a terminate aimed at a
