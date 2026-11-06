@@ -611,6 +611,86 @@ describe('ChatInputBar', () => {
     expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
   })
 
+  describe('action bar edge fade', () => {
+    /**
+     * jsdom has no layout: `scrollWidth`/`clientWidth` are 0 and nothing scrolls.
+     * The fade is a function of those numbers, so the test drives them directly
+     * and fires the real `scroll` listener the template binds — that is the part
+     * with behaviour (which side fades, and that a scrolled-to-the-end strip
+     * stops fading).
+     */
+    function setMetrics(el: Element, m: { scrollLeft: number; scrollWidth: number; clientWidth: number }) {
+      Object.defineProperty(el, 'scrollLeft', { value: m.scrollLeft, configurable: true, writable: true })
+      Object.defineProperty(el, 'scrollWidth', { value: m.scrollWidth, configurable: true })
+      Object.defineProperty(el, 'clientWidth', { value: m.clientWidth, configurable: true })
+    }
+
+    function bar(wrapper: ReturnType<typeof mountBar>) {
+      const el = wrapper.find('.chat-top-actions').element
+      return el as HTMLElement
+    }
+
+    it('fades the right edge when buttons are hidden past it', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 600, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const cls = wrapper.find('.chat-top-actions').classes()
+      expect(cls).toContain('more-right')
+      // Nothing is hidden to the left at scrollLeft 0.
+      expect(cls).not.toContain('more-left')
+    })
+
+    it('fades the left edge once the strip has been scrolled', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 100, scrollWidth: 600, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const cls = wrapper.find('.chat-top-actions').classes()
+      expect(cls).toContain('more-left')
+      expect(cls).toContain('more-right')
+    })
+
+    it('stops fading at the end of the strip', async () => {
+      // A fade with nothing hidden behind it reads as clipped content, so the
+      // trailing edge must go fully opaque once the last button is reachable.
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 200, scrollWidth: 600, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const cls = wrapper.find('.chat-top-actions').classes()
+      expect(cls).toContain('more-left')
+      expect(cls).not.toContain('more-right')
+    })
+
+    it('shows no fade at all when every button fits', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 400, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const cls = wrapper.find('.chat-top-actions').classes()
+      expect(cls).not.toContain('more-left')
+      expect(cls).not.toContain('more-right')
+    })
+  })
+
+  it('drives the edge fade from a CSS mask, not an opaque gradient overlay', () => {
+    // Source contract: the composer sits on a translucent island when a
+    // wallpaper is active, so an overlay painted in the background colour would
+    // show two differently-shaded panels. Only a mask works against every
+    // background and all 36 themes.
+    const fs = require('node:fs') as typeof import('node:fs')
+    const path = require('node:path') as typeof import('node:path')
+    const source = fs.readFileSync(path.resolve(__dirname, '..', 'ChatInputBar.vue'), 'utf8')
+    // The scoped block only: the trailing non-scoped <style> is the quick-send menu.
+    const scoped = source.slice(0, source.lastIndexOf('<style>'))
+    const css = scoped.replace(/\/\*[\s\S]*?\*\//g, '')
+
+    const rule = css.match(/\.chat-top-actions\.more-right\s*\{([^}]*)\}/)
+    expect(rule, 'the right-edge fade rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/mask-image:\s*linear-gradient/)
+    // No background-based fake fade on the strip.
+    const base = css.match(/\n\.chat-top-actions\s*\{([^}]*)\}/)
+    expect(base, 'the base .chat-top-actions rule must exist').not.toBeNull()
+    expect(base![1]).not.toMatch(/mask-image/)
+  })
+
   it('renders the free-dialog button and emits its toggle', async () => {
     const wrapper = mountBar({ currentSessionId: 's1' })
     const btn = wrapper.find('[data-action="free-dialog"]')

@@ -2,7 +2,13 @@
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
     <div class="chat-top-actions" ref="actionBarRef"
-      :class="{ 'show-labels': showActionLabels, 'is-overflowing': actionBarOverflow }">
+      :class="{
+        'show-labels': showActionLabels,
+        'is-overflowing': actionBarOverflow,
+        'more-left': actionBarMoreLeft,
+        'more-right': actionBarMoreRight,
+      }"
+      @scroll.passive="onActionBarScroll">
       <button class="chat-action-btn" data-action="session"
         :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
         @click="$emit('open-session-tab', 'sessions')"
@@ -991,6 +997,16 @@ const showActionLabels = ref(false)
  * both gated on this flag so a strip that fits behaves like a normal row.
  */
 const actionBarOverflow = ref(false)
+/**
+ * Whether buttons are hidden past each edge, which drives the edge fade.
+ *
+ * Two flags rather than one: the fade has to disappear on the side the user has
+ * already scrolled to, otherwise "there is more this way" keeps pointing at
+ * nothing and the strip looks permanently cut off. Same rule (and same class
+ * naming) as the message rail's `msg-rail--more-above/below`.
+ */
+const actionBarMoreLeft = ref(false)
+const actionBarMoreRight = ref(false)
 let actionBarObserver = null
 let actionBarMeasureTimer = null
 /** Disposer for the action bar's drag-to-scroll, or null when not attached. */
@@ -1015,6 +1031,26 @@ function syncActionBarDragScroll() {
   }
 }
 
+/**
+ * Recomputes the edge fades from the strip's current scroll position.
+ *
+ * Called after every measure AND on every scroll frame: the two flags are a
+ * function of `scrollLeft`, so a stale value after the user dragged the strip
+ * would leave the wrong side faded.
+ */
+function updateActionBarFade() {
+  const el = actionBarRef.value
+  if (!el) return
+  const { scrollLeft, scrollWidth, clientWidth } = el
+  // 1px tolerance for sub-pixel rounding, mirroring the overflow test.
+  actionBarMoreLeft.value = scrollLeft > 1
+  actionBarMoreRight.value = scrollLeft + clientWidth < scrollWidth - 1
+}
+
+function onActionBarScroll() {
+  updateActionBarFade()
+}
+
 function measureActionLabels() {
   const el = actionBarRef.value
   if (!el) return
@@ -1026,6 +1062,7 @@ function measureActionLabels() {
   el.classList.remove('measure-labels')
   showActionLabels.value = !overflow
   actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  updateActionBarFade()
   syncActionBarDragScroll()
 }
 function scheduleMeasureActionLabels() {
@@ -2570,6 +2607,38 @@ defineExpose({
    to reach the off-screen buttons at all. Mouse dragging needs no touch-action. */
 .chat-top-actions.is-overflowing {
   cursor: grab;
+}
+/* Edge fade: buttons are hidden past this side.
+   A MASK rather than an overlay of background-coloured gradient — the composer
+   sits on a translucent island when a wallpaper is active, so an opaque gradient
+   would paint two visibly different panels. Masking fades the buttons themselves,
+   which works against any background and any of the 36 themes.
+   The fade only exists on a side that actually has hidden content (see
+   `actionBarMoreLeft/Right`); a strip scrolled to the end stays fully opaque,
+   otherwise the last button reads as clipped rather than reachable. */
+.chat-top-actions.more-left {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 calc(20 * var(--dp)));
+  mask-image: linear-gradient(to right, transparent 0, #000 calc(20 * var(--dp)));
+}
+.chat-top-actions.more-right {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
+  mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
+}
+.chat-top-actions.more-left.more-right {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 calc(20 * var(--dp)),
+    #000 calc(100% - 20 * var(--dp)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 calc(20 * var(--dp)),
+    #000 calc(100% - 20 * var(--dp)),
+    transparent 100%
+  );
 }
 .chat-top-actions.is-dragging {
   cursor: grabbing;

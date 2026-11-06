@@ -14,6 +14,7 @@
 | 加一套新主题 | [主题系统](#主题系统) |
 | 摆布局、调头部 / 宽屏 / 安全区 | [布局骨架](#布局骨架) |
 | 做按钮、角标、弹层、菜单 | [组件约定](#组件约定) |
+| 做一条放不下会横向滚动的条 | [横向滚动的条：溢出必须有视觉提示](#横向滚动的条溢出必须有视觉提示) |
 | 加动画 | [动效](#动效) |
 | **写 CSS 前** | [七条红线](#七条红线先读这节再写-css) |
 | 提 PR 前自检 | [改动检查清单](#改动检查清单) |
@@ -336,6 +337,29 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **按钮**：主操作 `.fbtn fbtn-primary`、破坏性 `.fbtn fbtn-danger`、其余 `.fbtn`；页脚按钮里的图标用 14px。**不要新建 `.xxx-btn` 局部类**——会议页签曾各写一份 28px / 圆角 6 的 `.meeting-btn`，和任务页签的药丸按钮并排就是两套语言。
 - **只有正文里的行内小动作**才允许更小的局部类（会议详情的「复制路径」、共享面板的「静音」）：**页脚里不放小按钮，正文里不放 `.fbtn` 大按钮**。
 - 守卫：`components/live/__tests__/meetingFooterButtons.test.ts`（页脚条逐声明对比任务动作条、页脚里只能是 `.fbtn`、组件自己 import 样式表）。
+
+### 横向滚动的条：溢出必须有视觉提示
+
+**凡是「放不下就横向滚动、且隐藏了滚动条」的条，必须让用户看得出还有东西没露出来。** 隐藏滚动条是刻意的（紧凑行里一条经典滚动条就是噪音），但代价是溢出在视觉上完全不可见：桌面端只能靠抓取光标，触屏只能靠盲滑，用户根本不知道右边还有按钮。
+
+**做法是用 `mask-image` 让内容自己淡出，不是盖一层背景色渐变。**
+
+```css
+.strip.more-right {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
+  mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
+}
+```
+
+- **不能用 `background: linear-gradient(… var(--bg-secondary) 25%, transparent)`**。这是最容易想到的写法（终端工具栏早期就是这么写的），但只有**底色不透明且已知**时才成立。聊天输入区在开壁纸时是**半透明的 dock 岛**、底色是 `--text-primary` 混色再乘 `--panel-alpha`，叠一层同色块会露出两块深浅不一的区域——看起来像渲染错误。遮罩只影响元素自身的绘制，任何背景、36 套主题下都成立。**判据：这个条的底色是不是「一个能写死的 token」**；不是就必须用遮罩。
+- **渐隐只在「那一侧真的还有内容」时出现**，滚到头就消失。否则「这头还有更多」一直指着空处，最后那个按钮读起来像是被裁掉了。因此需要两个独立的标志（`more-left` / `more-right`），由 `scrollLeft + clientWidth` 与 `scrollWidth` 比较得出，并在**每次 `scroll` 时重算**——只算一次的话，用户拖过之后错误的一侧还在淡。
+- **宽度取半个按钮左右**（20dp）：够看出「有东西」，又不至于把按钮文字吃掉。
+- **容差 1px**：亚像素舍入会让 `scrollLeft + clientWidth` 与 `scrollWidth` 差 0.5，不加容差会在正好滚到头时留一条假渐隐。
+- **两侧同时溢出**时用一条四段渐变（`transparent 0 → #000 20dp → #000 calc(100% - 20dp) → transparent 100%`），不要叠两个 `::before`/`::after`——那样遮罩会相乘，中间也变淡。
+
+当前实现：`ChatInputBar.vue` 的 `.chat-top-actions.more-left/right`（守卫在 `ChatInputBar.test.ts` 的 `action bar edge fade`，含「必须是遮罩、不能是不透明渐变」的源码断言）。同类场景（会话列表工具栏、任何 `overflow-x: auto` + `scrollbar-width: none` 的行）应照此办理，**不要**再各写一份背景色渐变。
+
+⚠️ **遮罩在 Android WebView 上要真机确认**：`mask-image` 会引入一层绘制，而本仓对聊天子树内的合成层有严格限制（见[红线 6](#红线-6android-webview-的像素级怪癖)）。静态、且元素高度不随回合结束变化时是安全的，但新加一个遮罩条仍要在真机上看一眼有没有残影。
 
 ### 设置面板控件（`.settings-item__switch` / `__slider*`）
 
@@ -688,6 +712,14 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 - [ ] 已有数据的刷新遮罩 / 「加载更多」页脚 / 按钮内联 spinner **不换**骨架屏，继续用 `LoadingIndicator`
 - [ ] 藏在页签或弹层里的首屏同样算首屏（如会议详情的「资源」页签、重新生成计划面板）
 
+### 加一条横向滚动、隐藏滚动条的条
+
+- [ ] 溢出时两侧按需 `mask-image` 淡出（`more-left` / `more-right` 两个独立标志）
+- [ ] **不**用背景色渐变伪造渐隐（半透明/壁纸底色下会露出两块）
+- [ ] `scroll` 时重算，滚到头该侧消失；比较带 1px 容差
+- [ ] 渐隐宽度 `calc(20 * var(--dp))`
+- [ ] 真机（Android）确认没有残影
+
 ### 加一个动效
 
 - [ ] 时长用 `--duration-*` token
@@ -726,6 +758,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
 | `components/chat/__tests__/chatContentMeasure.css.test.ts` | 聊天区阅读栏：度量与 container query 阈值换算（`60rem` = 900 设计 px）、三个 gutter 的 floor（消息列 `0px` / 输入区 `--space-4` / 卡片 `--space-5`）、消费点不得自己重算半宽公式、留白花在滚动容器的 **padding**（用 margin 会把滚动条从会话区边缘拽到消息列边上）、**滚动条宽度只能运行时测**（右侧内边距减去 lane、左侧不减、CSS 不得硬编码、`scrollbar-gutter: stable` 必须在）、`container-type: inline-size` 且不是 `size`、形状随留白翻转（通宽直角色带 + 扁平条 / 有留白圆角卡片 + 只圆上两角的 dock 岛）、岛底色必须是 text 混色且带 `--panel-alpha`、标题栏不收窄 |
 | `components/chat/__tests__/chatCompositingBoundary.css.test.ts` | 聊天树里只有一个合成分界（尺寸稳定的 `.chat-panel-content`），内部禁止 `will-change`/`backdrop-filter`（仅表格菜单例外） |
+| `components/chat/__tests__/ChatInputBar.test.ts`（`action bar edge fade`） | 动作栏溢出的边缘渐隐：两侧按滚动位置各自出现/消失、滚到头不淡、放得下时全无；且**必须是 `mask-image`**，不得改成不透明渐变 |
 | `components/chat/__tests__/chatRowLayerIsolation.css.test.ts` | 聊天行在 App 模式下只 `contain: paint`、**不**提升为合成层 |
 | `components/__tests__/bottomDockLayerIsolation.css.test.ts` | 底部 Dock 包装层在 App 模式下只裁剪、不提升，且只在 `[data-webview-mode]` 下 |
 | `composables/__tests__/useAppMode.test.ts` | `[data-webview-mode]` 只给 Android WebView，**Electron 桌面壳与网页模式都拿不到**（桌面壳也报 `isNativeApp()===true`，门控漏判会把 Android 的合成层/粗体补偿套到桌面引擎上） |
