@@ -1,38 +1,52 @@
 <template>
   <div class="join-gate">
-    <div class="join-gate__card">
-      <div class="join-gate__title">{{ title || t('share.live.joinEnter') }}</div>
-      <div class="join-gate__sub">{{ t('share.live.joinSubtitle') }}</div>
+    <!-- The same topbar chrome every public share page uses. The gate used to
+         be a bare centred card, which left a reader on a 4K screen with no way
+         to enlarge it — the nickname field and the join button are the only way
+         into the meeting, so they have to be comfortable to hit. -->
+    <div class="share-topbar">
+      <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
+      <h1 class="share-file-name join-gate__topbar-title">{{ title || t('share.live.joinEnter') }}</h1>
+      <span class="share-spacer" />
+      <ShareFitButton />
+      <ShareThemeButton />
+    </div>
 
-      <label class="join-gate__label" for="meeting-join-nick">{{ t('share.live.joinNick') }}</label>
-      <input
-        id="meeting-join-nick"
-        v-model="nick"
-        class="join-gate__input"
-        type="text"
-        :maxlength="MEETING_NICK_MAX"
-        autocomplete="nickname"
-        data-role="join-nick"
-        :placeholder="t('share.live.joinNickPlaceholder')"
-        @keydown.enter="submit"
-      />
-      <div class="join-gate__hint">{{ t('share.live.joinNickHint') }}</div>
-      <!-- The server refused this name because somebody in the meeting already
-           uses it. Rendered here rather than as a terminal overlay: the reader
-           is one edit away from getting in. -->
-      <div v-if="error" class="join-gate__error" role="alert" data-role="join-error">
-        {{ error }}
+    <div class="join-gate__body">
+      <div class="join-gate__card">
+        <div class="join-gate__title">{{ title || t('share.live.joinEnter') }}</div>
+        <div class="join-gate__sub">{{ t('share.live.joinSubtitle') }}</div>
+
+        <label class="join-gate__label" for="meeting-join-nick">{{ t('share.live.joinNick') }}</label>
+        <input
+          id="meeting-join-nick"
+          v-model="nick"
+          class="join-gate__input"
+          type="text"
+          :maxlength="MEETING_NICK_MAX"
+          autocomplete="nickname"
+          data-role="join-nick"
+          :placeholder="t('share.live.joinNickPlaceholder')"
+          @keydown.enter="submit"
+        />
+        <div class="join-gate__hint">{{ t('share.live.joinNickHint') }}</div>
+        <!-- The server refused this name because somebody in the meeting already
+             uses it. Rendered here rather than as a terminal overlay: the reader
+             is one edit away from getting in. -->
+        <div v-if="error" class="join-gate__error" role="alert" data-role="join-error">
+          {{ error }}
+        </div>
+
+        <button
+          class="join-gate__btn"
+          type="button"
+          data-action="join-meeting"
+          :disabled="!canJoin"
+          @click="submit"
+        >
+          {{ t('share.live.joinEnter') }}
+        </button>
       </div>
-
-      <button
-        class="join-gate__btn"
-        type="button"
-        data-action="join-meeting"
-        :disabled="!canJoin"
-        @click="submit"
-      >
-        {{ t('share.live.joinEnter') }}
-      </button>
     </div>
   </div>
 </template>
@@ -49,6 +63,8 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MEETING_NICK_MAX, isValidMeetingNick, readMeetingNick, saveMeetingNick } from './meetingNickname'
+import ShareFitButton from './ShareFitButton.vue'
+import ShareThemeButton from './ShareThemeButton.vue'
 
 defineProps<{ title?: string; error?: string }>()
 const emit = defineEmits<{ join: [name: string] }>()
@@ -69,11 +85,26 @@ function submit(): void {
 <style scoped>
 .join-gate {
   display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg-secondary);
+}
+
+/* The card owns the remaining height and centres itself in it, so the topbar
+   stays a fixed row at the top instead of being pushed around by the card. */
+.join-gate__body {
+  display: flex;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
   padding: var(--space-8, 20px);
-  background: var(--bg-secondary);
+}
+
+.join-gate__topbar-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
 }
 
 .join-gate__card {

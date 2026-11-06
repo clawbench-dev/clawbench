@@ -41,15 +41,25 @@ async function shareConversation(page: import('@playwright/test').Page): Promise
     })
     if (!sent.ok) throw new Error(`send: ${sent.status}`)
 
-    const share = await fetch('/api/share/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    })
-    if (!share.ok) {
-      throw new Error(`share: ${share.status} ${await share.text()} (sessionId=${sessionId})`)
+    // The reply (and the persistence of the exchange) lands asynchronously:
+    // asking for the share immediately sometimes answers 400
+    // ShareSessionNoContent even though the send succeeded. Poll instead of
+    // sleeping — the share endpoint IS the readiness signal, so a fixed delay
+    // would still be a guess.
+    const deadline = Date.now() + 15000
+    let lastError = ''
+    while (Date.now() < deadline) {
+      const share = await fetch('/api/share/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      if (share.ok) return (await share.json()) as { token: string; path: string }
+      lastError = `${share.status} ${await share.text()}`
+      if (!/ShareSessionNoContent/.test(lastError)) break // a real error, not a race
+      await new Promise((r) => setTimeout(r, 200))
     }
-    return (await share.json()) as { token: string; path: string }
+    throw new Error(`share failed: ${lastError} (sessionId=${sessionId})`)
   })
   return shared.path
 }
@@ -398,6 +408,118 @@ test.describe('Meeting share under a fitted page', () => {
         // Whatever the dock ended up doing, the space reserved above it must be
         // at least as tall as the dock itself.
         expect(geometry!.reserved).toBeGreaterThanOrEqual(geometry!.dockHeight - 2)
+      } finally {
+        await ctx.close()
+      }
+    } finally {
+      await endRoom(page, room.token)
+    }
+  })
+})
+
+/**
+ * The two meeting surfaces that used to be a dead end.
+ *
+ * A share link can open straight into the nickname gate, and once joined it
+ * becomes a full-bleed picture. Neither had a topbar, so a reader on a 1440p or
+ * 4K screen had no way to enlarge the page — the gate's field and join button
+ * are the only way into the meeting, and the dock is the only way to control it.
+ */
+test.describe('Meeting pages carry the switch', () => {
+  async function createRoom(page: import('@playwright/test').Page): Promise<{ token: string; path: string }> {
+    return await page.evaluate(async () => {
+      const resp = await fetch('/api/live-share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'e2e 缩放' }),
+      })
+      if (!resp.ok) throw new Error(`create room: ${resp.status}`)
+      return (await resp.json()) as { token: string; path: string }
+    })
+  }
+
+  async function endRoom(page: import('@playwright/test').Page, token: string): Promise<void> {
+    await page.evaluate(async (tok) => {
+      await fetch(`/api/live-share?token=${encodeURIComponent(tok)}`, { method: 'DELETE' })
+    }, token)
+  }
+
+  test('the nickname gate has a topbar and grows on click', async ({ page }) => {
+    const room = await createRoom(page)
+    try {
+      const ctx = await page.context().browser()!.newContext({
+        viewport: { width: 1100, height: 800 },
+        screen: HI_DPI_SCREEN,
+      })
+      try {
+        const viewer = await ctx.newPage()
+        await viewer.goto(room.path)
+        await expect(viewer.locator('.join-gate')).toBeVisible({ timeout: 15000 })
+
+        // The gate's own topbar, not just any bar on the page.
+        await expect(viewer.locator('.join-gate .share-topbar')).toBeVisible()
+        const btn = viewer.locator('[data-action="share-fit"]')
+        await expect(btn).toBeVisible()
+        await expect(btn).toHaveAttribute('aria-pressed', 'false')
+
+        // 44dp at 100% ≈ 44px.
+        const before = await viewer.locator('[data-role="join-nick"]').boundingBox()
+        expect(before).not.toBeNull()
+
+        await btn.click()
+        await expect.poll(() => rootFontPx(viewer)).toBeGreaterThan(18)
+
+        // 44dp × 1.33 ≈ 58.5px — the field the reader has to hit grew with it.
+        const after = await viewer.locator('[data-role="join-nick"]').boundingBox()
+        expect(after).not.toBeNull()
+        expect(after!.height).toBeGreaterThan(before!.height + 8)
+
+        // Nothing spilled: the topbar is the row that would overflow first.
+        const overflow = await viewer.evaluate(() => {
+          const doc = document.documentElement
+          return { scrollW: doc.scrollWidth, clientW: doc.clientWidth }
+        })
+        expect(overflow.scrollW).toBeLessThanOrEqual(overflow.clientW + 1)
+      } finally {
+        await ctx.close()
+      }
+    } finally {
+      await endRoom(page, room.token)
+    }
+  })
+
+  test('the live shell has a topbar, and dock labels follow the measured width', async ({ page }) => {
+    // 600px is wide enough for labels at 100% (threshold 520) and too narrow
+    // once the page is fitted (600 / 1.33 ≈ 451 design px). Same window, same
+    // dock — only the scale moved. A media query cannot see that.
+    const room = await createRoom(page)
+    try {
+      const ctx = await page.context().browser()!.newContext({
+        viewport: { width: 600, height: 800 },
+        screen: HI_DPI_SCREEN,
+      })
+      try {
+        const viewer = await ctx.newPage()
+        await viewer.goto(room.path)
+        await viewer.locator('[data-role="join-nick"]').fill('E2E 观众')
+        await viewer.locator('[data-action="join-meeting"]').click()
+        await expect(viewer.locator('.live-share-view')).toBeVisible({ timeout: 15000 })
+
+        await expect(viewer.locator('.live-topbar')).toBeVisible()
+        const labels = viewer.locator('.live-dock-label').first()
+        await expect(labels).toBeVisible()
+
+        await viewer.locator('.live-topbar [data-action="share-fit"]').click()
+        await expect.poll(() => rootFontPx(viewer)).toBeGreaterThan(18)
+
+        // Labels are the first thing to drop, and they must drop NOW — not when
+        // the reader happens to resize the window past 520 CSS px.
+        await expect(labels).toBeHidden()
+
+        // Turning it back off brings them back (the decision is not one-way).
+        await viewer.locator('.live-topbar [data-action="share-fit"]').click()
+        await expect.poll(() => rootFontPx(viewer)).toBeCloseTo(15, 1)
+        await expect(labels).toBeVisible()
       } finally {
         await ctx.close()
       }

@@ -198,41 +198,64 @@ describe('the entry point applies it before mounting', () => {
   })
 })
 
-describe('the switch is reachable from every share topbar', () => {
-  // Four pages carry the shared chrome: a file, a folder, a conversation and a
-  // finished meeting record. A reader who lands on one of them must be able to
-  // resize it — an unlisted page would be a dead end for exactly the people the
-  // switch exists for.
-  const pages = [
-    'src/share/ShareView.vue',
-    'src/share/DirShareView.vue',
-    'src/share/SessionShareView.vue',
-    'src/share/MeetingShareDetail.vue',
+describe('the switch is reachable from every share page', () => {
+  // Every surface a share link can open. A reader who lands on one of them must
+  // be able to resize it — a page without the switch is a dead end for exactly
+  // the people it exists for, and the meeting pages were that dead end: the
+  // gate and the live shell used to have no topbar at all.
+  //
+  // Each entry names the element that follows the topbar, so the check is about
+  // "inside the bar" rather than about one page's layout.
+  const pages: Array<[file: string, afterTopbar: string]> = [
+    ['src/share/ShareView.vue', 'class="share-body"'],
+    ['src/share/DirShareView.vue', 'class="share-body"'],
+    ['src/share/SessionShareView.vue', 'class="share-body"'],
+    ['src/share/MeetingShareDetail.vue', 'class="share-meeting__meta"'],
+    ['src/share/LiveJoinGate.vue', 'class="join-gate__body"'],
+    ['src/share/LiveShareView.vue', '<LiveStageLayout'],
   ]
 
-  it.each(pages)('%s renders the button in the topbar', (file) => {
+  it.each(pages)('%s renders the button in the topbar', (file, afterTopbar) => {
     const src = readWebFile(file)
     expect(src, `${file} must import the button`).toContain(
       "import ShareFitButton from './ShareFitButton.vue'",
     )
-    // Scoped to the topbar REGION, not to a single element: a non-greedy
-    // `<div …>[\s\S]*?</div>` stops at the first nested close tag (the action
-    // group), so it would miss a button placed after it.
-    //
-    // The region runs from the opening tag to the next top-level sibling, which
-    // differs per page: the file/folder/conversation views open `.share-body`
-    // and the finished-meeting record opens `.share-meeting__meta`. Anchoring
-    // on either of them keeps the check about "inside the bar" rather than
-    // about one page's layout.
-    const start = src.indexOf('<div class="share-topbar">')
-    expect(start, `${file} has no .share-topbar`).toBeGreaterThan(-1)
-    const end = src
-      .slice(start)
-      .search(/<div class="(share-body|share-meeting__meta)"/)
-    expect(end, `${file} has no element after the topbar to bound it`).toBeGreaterThan(0)
+    const topbarAt = src.indexOf('class="share-topbar')
+    expect(topbarAt, `${file} has no .share-topbar`).toBeGreaterThan(-1)
+    const endAt = src.indexOf(afterTopbar, topbarAt)
+    expect(endAt, `${file} has no "${afterTopbar}" after the topbar`).toBeGreaterThan(topbarAt)
     expect(
-      src.slice(start, start + end),
+      src.slice(topbarAt, endAt),
       `${file} must render the switch in the topbar`,
     ).toContain('<ShareFitButton />')
+  })
+})
+
+describe('space-dependent chrome uses the design width, not a media query', () => {
+  // A media query compares against the window's CSS width, which interface
+  // scaling never changes: at 1.33× a 640px window still claims 640px of room
+  // while only ~480 design px are available. So the two "drop the optional
+  // bits when space runs out" rules measure through the applied scale instead.
+  it('drops the dock labels by measured design width', () => {
+    const src = readWebFile('src/share/LiveDockButton.vue')
+    expect(src).toContain("import { useDesignWidthAtMost } from './useDesignWidth'")
+    expect(src).toMatch(/useDesignWidthAtMost\(520\)/)
+    expect(src, 'the fixed 520px query must be gone').not.toMatch(
+      /@media[^{]*max-width:\s*520px/,
+    )
+    // The class the composable drives must actually hide the label.
+    expect(src).toMatch(/\.live-dock-btn--compact \.live-dock-label\s*\{[^}]*display:\s*none/)
+  })
+
+  it('drops the folder date column by measured design width', () => {
+    const src = readWebFile('src/share/DirShareView.vue')
+    expect(src).toContain("import { useDesignWidthAtMost } from './useDesignWidth'")
+    expect(src).toMatch(/useDesignWidthAtMost\(640\)/)
+    expect(src, 'the fixed 640px query must be gone').not.toMatch(
+      /@media[^{]*max-width:\s*640px/,
+    )
+    expect(src).toMatch(/\.dir-share-content--compact \.dir-row-date\s*\{\s*display:\s*none/)
+    // ...and the class is bound on the listing container, or the rule is dead.
+    expect(src).toContain("'dir-share-content--compact': compact")
   })
 })

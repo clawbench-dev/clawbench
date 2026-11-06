@@ -36,7 +36,7 @@
     </div>
 
     <div class="share-body">
-      <div class="share-content dir-share-content">
+      <div class="share-content dir-share-content" :class="{ 'dir-share-content--compact': compact }">
         <nav v-if="crumbs.length > 1" class="dir-crumbs" :aria-label="t('share.dir.title')">
           <template v-for="(crumb, i) in crumbs" :key="crumb.path">
             <span v-if="i > 0" class="dir-crumb-sep" aria-hidden="true">/</span>
@@ -120,12 +120,20 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ShareThemeButton from './ShareThemeButton.vue'
 import ShareFitButton from './ShareFitButton.vue'
+import { useDesignWidthAtMost } from './useDesignWidth'
 import ShareView from './ShareView.vue'
 import { setShareToken, shareApiUrl } from './shareMode'
 import { shareDeepLink } from './shareLinks'
 import { formatFileSize } from '@/utils/fileType'
 import { joinPath } from '@/utils/path'
 import { downloadUrlWithProgress } from '@/utils/download'
+
+/**
+ * Below this design width the listing drops its date column: it is the widest
+ * optional column and the first one whose content stops being readable. A
+ * design width, so it is measured through the applied scale.
+ */
+const compact = useDesignWidthAtMost(640)
 
 /** One row of a shared folder's listing (mirrors shareListEntry in Go). */
 interface ShareListEntry {
@@ -454,9 +462,11 @@ onBeforeUnmount(() => {
   .dir-row-download { opacity: 1; }
 }
 
-@media (max-width: 640px) {
-  .dir-row-date { display: none; }
-}
+/* The date is the first column to go when space runs out. Set from script
+   rather than a media query: the threshold is a DESIGN width, and interface
+   scaling narrows the design width of a window without narrowing the window
+   (see useDesignWidthAtMost). */
+.dir-share-content--compact .dir-row-date { display: none; }
 
 /* ── Empty / error ── */
 .dir-empty,
