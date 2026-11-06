@@ -68,9 +68,10 @@ function installFakes() {
   vi.doMock('@/utils/pcmCapture', () => ({
     PCM_SAMPLE_RATE: 16000,
     PcmStreamer: class {
+      stopped = false
       constructor(private readonly opts: { onFrame: (f: ArrayBuffer) => void; onLevel?: (rms: number) => void }) {}
       start() { (globalThis as Record<string, unknown>).__streamer = this; return Promise.resolve() }
-      stop() { /* no-op */ }
+      stop() { this.stopped = true }
       emit(rms: number) { this.opts.onLevel?.(rms) }
       frame() { this.opts.onFrame(new ArrayBuffer(4)) }
     },
@@ -101,17 +102,22 @@ function installFakes() {
     return { useAutoSpeech: () => api }
   })
 
+  // NESTED, exactly like `GET /api/config` (`configResponse.STT` is
+  // `json:"stt"`). A flat fixture here would let a flat reader pass while the
+  // real payload leaves every setting on its default.
   vi.doMock('@/composables/useSettingsConfig', async () => {
     const { ref } = await vi.importActual<typeof import('vue')>('vue')
     return {
       serverConfig: ref({
-        'stt.voice_gate': true,
-        'stt.voice_gate_sensitivity': 'standard',
-        'stt.trigger_words': '发送',
-        'stt.silence_send_ms': 3000,
-        'stt.barge_in': 'any',
-        'stt.barge_in_words': '等等',
-        'stt.mic_echo_cancel': true,
+        stt: {
+          voice_gate: true,
+          voice_gate_sensitivity: 'standard',
+          trigger_words: '发送',
+          silence_send_ms: 3000,
+          barge_in: 'any',
+          barge_in_words: '等等',
+          mic_echo_cancel: true,
+        },
       }),
     }
   })
@@ -233,6 +239,10 @@ describe('useFreeDialog', () => {
     speak('做点事 发送')
     expect(useFreeDialog().phase.value).toBe('thinking')
     setFreeDialogThinking(false)
+    // The turn end opens a grace window (the TTS POST is async, so "is the
+    // reply going to be read aloud?" is not answerable yet), then the reopen
+    // delay.
+    vi.advanceTimersByTime(1500)
     vi.advanceTimersByTime(500)
     await flush()
     expect(useFreeDialog().phase.value).toBe('listening')
@@ -322,7 +332,7 @@ describe('useFreeDialog', () => {
   it('opens no barge listener when interrupting is switched off', async () => {
     vi.doMock('@/composables/useSettingsConfig', async () => {
       const { ref } = await vi.importActual<typeof import('vue')>('vue')
-      return { serverConfig: ref({ 'stt.barge_in': 'off', 'stt.trigger_words': '发送', 'stt.silence_send_ms': 3000 }) }
+      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_ms: 3000 } }) }
     })
     const { startFreeDialog, setFreeDialogThinking, useFreeDialog } = await import('../useFreeDialog')
     const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
@@ -337,6 +347,105 @@ describe('useFreeDialog', () => {
     // opened while the reply is being read out.
     expect(sockets.length).toBe(1)
     expect(useFreeDialog().phase.value).toBe('speaking')
+  })
+
+  it('fires the trigger from a live partial, not only from "done"', async () => {
+    // The streaming relay only emits `done` after the client sends `end`, and
+    // free-dialog mode never sends `end` while listening — so a trigger that
+    // waited for `done` would never fire at all.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('帮我看下这个报错 发送', 'partial')
+    expect(onSend).toHaveBeenCalledWith('帮我看下这个报错')
+  })
+
+  it('does not fire while the trigger word is mid-sentence', async () => {
+    // Partial results are revised as the user keeps talking; a trigger matched
+    // anywhere would send the moment the word is heard, then keep talking.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('把那个文件改好了', 'partial')
+    expect(onSend).not.toHaveBeenCalled()
+    speak('把那个文件改好了再告诉我', 'partial')
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('reopens the microphone when the reply has nothing to read out', async () => {
+    // auto-speech is on, but the reply has no speakable text (or TTS failed):
+    // playback never starts, so the loop must not wait for it forever.
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = true
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    // No playback ever begins.
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(500)
+    await flush()
+    expect(useFreeDialog().phase.value).toBe('listening')
+  })
+
+  it('does not reopen the microphone while a queued speaker is still playing', async () => {
+    // Group runs read several replies in sequence: state goes playing → idle →
+    // synthesizing between items. Reopening on that dip transcribes item 2.
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    // Hand-off between two queued speakers.
+    autoSpeech.state.value = 'idle'
+    await flush()
+    autoSpeech.state.value = 'synthesizing'
+    await flush()
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(useFreeDialog().phase.value).toBe('speaking')
+  })
+
+  it('stops dictation before the assistant starts talking', async () => {
+    // The user can tap read-aloud on any message while the mode is listening.
+    // The dictation capture must go first, or the recogniser transcribes the
+    // assistant and a second microphone is opened on top of it.
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(useFreeDialog().phase.value).toBe('listening')
+    const streamer = (globalThis as Record<string, { stopped: boolean }>).__streamer
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    expect(streamer.stopped).toBe(true)
+    expect(useFreeDialog().phase.value).toBe('speaking')
+  })
+
+  it('closes the barge-in socket when playback ends', async () => {
+    const { startFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    expect(sockets.length).toBe(2)
+    const barge = sockets[sockets.length - 1]
+    autoSpeech.state.value = 'idle'
+    await flush()
+    // Without this the recogniser session (and its server-side engine session)
+    // is leaked once per read-aloud.
+    expect(barge.readyState).toBe(3)
   })
 
   it('stops cleanly and returns to idle', async () => {

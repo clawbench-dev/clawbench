@@ -85,7 +85,21 @@ let reopenTimer: ReturnType<typeof setTimeout> | null = null
 /** Barge-in listener state: the mic is open only while the assistant talks. */
 let bargeStreamer: PcmStreamer | null = null
 let bargeStream: MediaStream | null = null
+let bargeWs: WebSocket | null = null
 let bargeTriggered = false
+/**
+ * Grace window after a turn ends, while we wait to find out whether the reply
+ * is going to be read aloud.
+ *
+ * The TTS POST is asynchronous, so `loading` turns false BEFORE playback
+ * starts. Reopening the microphone on that edge would transcribe the first
+ * sentence of the reply; waiting forever would leave the loop stuck whenever
+ * there is nothing to say (an empty reply, a TTS failure, `auto-speech` on but
+ * the message having no speakable text). A short window resolves both: playback
+ * starting cancels it, and if it fires with nothing playing, listening resumes.
+ */
+let settleTimer: ReturnType<typeof setTimeout> | null = null
+const SETTLE_GRACE_MS = 1500
 /** Generation guard: every stop() bumps this so late async work bails out. */
 let gen = 0
 
@@ -102,6 +116,13 @@ function clearReopenTimer() {
   if (reopenTimer !== null) {
     clearTimeout(reopenTimer)
     reopenTimer = null
+  }
+}
+
+function clearSettleTimer() {
+  if (settleTimer !== null) {
+    clearTimeout(settleTimer)
+    settleTimer = null
   }
 }
 
@@ -129,6 +150,14 @@ function stopCapture() {
 function stopBargeListener() {
   bargeStreamer?.stop()
   bargeStreamer = null
+  if (bargeWs) {
+    bargeWs.onmessage = null
+    bargeWs.onopen = null
+    bargeWs.onerror = null
+    bargeWs.onclose = null
+    try { bargeWs.close() } catch { /* already closed */ }
+    bargeWs = null
+  }
   if (bargeStream) {
     bargeStream.getTracks().forEach((t) => t.stop())
     bargeStream = null
@@ -140,6 +169,7 @@ export function stop(): void {
   gen += 1
   clearSilenceTimer()
   clearReopenTimer()
+  clearSettleTimer()
   stopCapture()
   stopBargeListener()
   utterance = ''
@@ -184,6 +214,10 @@ function wsUrl(path: string): string {
 async function openListening(): Promise<void> {
   const myGen = gen
   const toast = useToast()
+  // Defensive: every caller already stops the capture, but a leaked second
+  // capture means a microphone indicator that never goes out and frames being
+  // written into a socket nobody reads. Idempotent, so it costs nothing.
+  stopCapture()
   try {
     micStream = await acquireMic({ audio: { echoCancellation: tuning.echoCancellation, noiseSuppression: tuning.noiseSuppression, autoGainControl: tuning.autoGainControl } })
   } catch (e) {
@@ -202,14 +236,18 @@ async function openListening(): Promise<void> {
     try {
       const msg = JSON.parse(e.data as string) as { type?: string; text?: string; final?: string; message?: string }
       if (msg.type === 'partial') {
-        liveTranscript.value = msg.text ?? ''
+        // Cumulative transcript so far: replace, never append.
+        utterance = msg.text ?? ''
+        liveTranscript.value = utterance
+        checkTrigger()
       } else if (msg.type === 'text' && msg.text) {
         utterance += msg.text
         liveTranscript.value = utterance
+        checkTrigger()
       } else if (msg.type === 'done') {
         const final = (msg.final ?? '').trim()
         if (final) utterance = final
-        handleUtterance()
+        checkTrigger()
       } else if (msg.type === 'error') {
         lastError.value = msg.message || gt('chat.voice.transcribeFailed')
         toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
@@ -254,33 +292,33 @@ async function openListening(): Promise<void> {
 }
 
 /**
- * Handles one finished utterance: strip a trigger word and send, or keep
- * listening.
+ * Looks for a trigger word at the end of what has been recognised so far.
  *
- * The recogniser's "done" only fires when the engine decides the sentence ended
- * (`stt.end_window_size`), so this is not the same thing as the pause timer —
- * they race, and whichever fires first sends.
+ * Runs on EVERY recognition update, not on "done": the streaming relay only
+ * emits `done` after the client sends `end`, and free-dialog mode never sends
+ * `end` while it is listening (that would close the session). Waiting for
+ * `done` means the trigger path never fires at all and the mode degenerates to
+ * "send after a 3 second pause".
+ *
+ * Running on partials is safe because the match is anchored to the END of the
+ * transcript: a revision that adds words after the trigger simply stops
+ * matching until the user says it again.
  */
-function handleUtterance() {
+function checkTrigger() {
   if (phase.value !== 'listening') return
   const text = utterance.trim()
-  if (!text) {
-    restartSilenceTimer()
-    return
-  }
+  if (!text) return
   const { matched, text: rest } = extractTrigger(text, tuning.triggerWords)
-  if (matched) {
-    // Everything except the trigger word goes out. A bare "发送" sends nothing —
-    // there was no content, and sending an empty message would start a turn
-    // the user did not ask for.
-    if (rest) sendTurn(rest)
-    else {
-      utterance = ''
-      liveTranscript.value = ''
-      restartSilenceTimer()
-    }
+  if (!matched) return
+  if (rest) {
+    sendTurn(rest)
     return
   }
+  // A bare "发送" sends nothing — there was no content, and sending an empty
+  // message would start a turn the user did not ask for. Clear it so the next
+  // utterance does not carry the trigger word along.
+  utterance = ''
+  liveTranscript.value = ''
   restartSilenceTimer()
 }
 
@@ -308,6 +346,9 @@ async function openBargeListener(): Promise<void> {
     return
   }
   const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
+  // Tracked at module scope: a local would leave the socket (and the engine
+  // session behind it) open forever once playback ends.
+  bargeWs = sock
   const s = new PcmStreamer({
     stream: bargeStream,
     tuning,
@@ -363,12 +404,22 @@ export function setFreeDialogThinking(thinking: boolean): void {
     }
     return
   }
-  // Turn finished. If auto-speech is going to read the reply, the phase moves to
-  // 'speaking' (see the playback watcher) and listening resumes when it ends;
-  // otherwise resume right away.
-  if (phase.value === 'thinking') {
-    if (!autoSpeech.enabled.value) resumeListening()
-  }
+  // Turn finished. Two ways out, and BOTH are needed:
+  //   - playback starts (the watcher below flips the phase to 'speaking' and
+  //     cancels this window), or
+  //   - nothing is ever played (auto-speech off, the reply has no speakable
+  //     text, TTS failed) and this window expires.
+  // Without the window, "auto-speech on but nothing to say" leaves the phase in
+  // 'thinking' forever: the button spins and the microphone never reopens.
+  if (phase.value !== 'thinking') return
+  clearSettleTimer()
+  const myGen = gen
+  settleTimer = setTimeout(() => {
+    settleTimer = null
+    if (myGen !== gen || phase.value !== 'thinking') return
+    if (autoSpeech.isBusy()) return
+    resumeListening()
+  }, SETTLE_GRACE_MS)
 }
 
 /** Reopens the microphone after the reply has been dealt with. */
@@ -378,6 +429,9 @@ function resumeListening(): void {
   reopenTimer = setTimeout(() => {
     reopenTimer = null
     if (myGen !== gen || phase.value === 'idle' || phase.value === 'listening') return
+    // Re-check: a queued speaker may have started another read-aloud inside the
+    // 500 ms window. Opening the microphone then would transcribe the assistant.
+    if (autoSpeech.isBusy()) return
     void openListening()
   }, REOPEN_DELAY_MS)
 }
@@ -401,6 +455,13 @@ watch(
     const playing = now === 'playing'
     const wasPlaying = before === 'playing'
     if (playing && !wasPlaying) {
+      // Playback started. Whatever the phase was, the dictation capture must go
+      // first: it is listening to the speakers, and leaving it running while a
+      // SECOND capture opens would leak a microphone track (the indicator stays
+      // on) and feed the reply back into the recogniser. This happens whenever
+      // the user taps read-aloud on some message while the mode is listening.
+      clearSettleTimer()
+      if (phase.value === 'listening') stopCapture()
       phase.value = 'speaking'
       void openBargeListener()
     } else if (!playing && wasPlaying) {
@@ -413,20 +474,35 @@ watch(
 watch(
   () => autoSpeech.isBusy(),
   (busy, wasBusy) => {
-    if (!wasBusy || busy) return
-    if (phase.value !== 'speaking') return
+    // Playback is coming: cancel the "nothing to say" window opened when the
+    // turn ended, otherwise it fires mid-read-aloud and reopens the mic.
+    if (busy) {
+      clearSettleTimer()
+      return
+    }
+    if (!wasBusy) return
     stopBargeListener()
-    settleAfterPlayback()
+    if (phase.value === 'speaking' || phase.value === 'thinking') settleAfterPlayback()
   },
 )
 
 /**
  * Decides what follows a finished read-aloud: another turn is in flight, so
- * wait; otherwise reopen the microphone.
+ * wait; another SPEAKER is queued, so stay in 'speaking'; otherwise reopen the
+ * microphone.
+ *
+ * The middle case is not theoretical: a group chat, or any run where several
+ * replies are read in sequence, hands off between items with `state` going
+ * playing → synthesizing. Without the `isBusy()` check the mic opens in the
+ * middle of the second item and transcribes it.
  */
 function settleAfterPlayback(): void {
   if (turnInFlight) {
     phase.value = 'thinking'
+    return
+  }
+  if (autoSpeech.isBusy()) {
+    phase.value = 'speaking'
     return
   }
   resumeListening()

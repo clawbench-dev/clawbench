@@ -103,12 +103,15 @@ function asBargeIn(value: unknown): BargeInMode {
  * transcript (`includes('')` is always true).
  */
 export function parseWordList(value: unknown, fallback: string[]): string[] {
+  // Absent (an older server that does not know the field) keeps the defaults.
   if (typeof value !== 'string') return [...fallback]
-  const words = value
+  // An explicitly empty string is a real choice — "no trigger words, use the
+  // pause instead" — and must not be silently replaced by the defaults, or the
+  // setting can never be cleared.
+  return value
     .split(/[,，;；\n\r]+/)
     .map((w) => w.trim())
     .filter((w) => w.length > 0)
-  return words.length > 0 ? words : [...fallback]
 }
 
 /** Serialises a word list back into the settings text field. */
@@ -117,27 +120,47 @@ export function formatWordList(words: string[]): string {
 }
 
 /**
- * Reads the tuning out of the flat `stt.*` server config record.
+ * The `stt` section of `GET /api/config`.
+ *
+ * The response is NESTED (`{"stt": {"provider": ...}}`), not a flat map of
+ * dotted keys — `useSettingsConfig.getServerValue` walks it by dot-path for
+ * exactly that reason. Reading `config['stt.provider']` yields undefined for
+ * every field, which silently leaves the defaults in force forever: the
+ * settings page saves fine, the server stores fine, and nothing the user
+ * changes has any effect.
+ */
+function sttSection(config: Record<string, unknown> | undefined | null): Record<string, unknown> {
+  const section = (config ?? {}).stt
+  return section && typeof section === 'object' ? (section as Record<string, unknown>) : {}
+}
+
+/** One field of the `stt` section, for callers outside this module. */
+export function readSttField(config: Record<string, unknown> | undefined | null, key: string): unknown {
+  return sttSection(config)[key]
+}
+
+/**
+ * Reads the tuning out of the server config.
  *
  * Every field falls back to the shipped default, so a server that predates
  * these settings (or a page that has not loaded config yet) behaves exactly
  * like the old code instead of suddenly gating audio with a 0 threshold.
  */
 export function readVoiceTuning(config: Record<string, unknown> | undefined | null): VoiceTuning {
-  const cfg = config ?? {}
+  const cfg = sttSection(config)
   const d = VOICE_TUNING_DEFAULTS
-  const silenceRaw = Number(cfg['stt.silence_send_ms'])
+  const silenceRaw = Number(cfg.silence_send_ms)
   return {
-    echoCancellation: asBool(cfg['stt.mic_echo_cancel'], d.echoCancellation),
-    noiseSuppression: asBool(cfg['stt.mic_noise_suppress'], d.noiseSuppression),
-    autoGainControl: asBool(cfg['stt.mic_auto_gain'], d.autoGainControl),
-    bandFilter: asBool(cfg['stt.mic_band_filter'], d.bandFilter),
-    voiceGate: asBool(cfg['stt.voice_gate'], d.voiceGate),
-    sensitivity: asSensitivity(cfg['stt.voice_gate_sensitivity']),
-    triggerWords: parseWordList(cfg['stt.trigger_words'], d.triggerWords),
+    echoCancellation: asBool(cfg.mic_echo_cancel, d.echoCancellation),
+    noiseSuppression: asBool(cfg.mic_noise_suppress, d.noiseSuppression),
+    autoGainControl: asBool(cfg.mic_auto_gain, d.autoGainControl),
+    bandFilter: asBool(cfg.mic_band_filter, d.bandFilter),
+    voiceGate: asBool(cfg.voice_gate, d.voiceGate),
+    sensitivity: asSensitivity(cfg.voice_gate_sensitivity),
+    triggerWords: parseWordList(cfg.trigger_words, d.triggerWords),
     silenceSendMs: Number.isFinite(silenceRaw) && silenceRaw >= 0 ? silenceRaw : d.silenceSendMs,
-    bargeIn: asBargeIn(cfg['stt.barge_in']),
-    bargeInWords: parseWordList(cfg['stt.barge_in_words'], d.bargeInWords),
+    bargeIn: asBargeIn(cfg.barge_in),
+    bargeInWords: parseWordList(cfg.barge_in_words, d.bargeInWords),
   }
 }
 
@@ -242,36 +265,58 @@ export function looksLikeOwnSpeech(heard: string, spokenText: string): boolean {
   const h = norm(heard)
   const s = norm(spokenText)
   if (h.length < 4 || s.length === 0) return false
-  // A short fragment must appear verbatim; a long one is compared by overlap so
-  // that recognition errors on a couple of characters do not defeat the guard.
-  if (h.length <= 12) return s.includes(h)
+  // Exact containment is the strongest signal and covers the common case where
+  // recognition got the fragment right.
+  if (s.includes(h)) return true
+  // Otherwise compare overlapping bigrams. Character-exact matching is too
+  // brittle for the job: one substituted character (or a leading filler like
+  // 嗯) defeats a substring test entirely, and the leak this guards against is
+  // exactly the kind that comes back slightly wrong. Bigrams tolerate that
+  // while still rejecting unrelated speech, because unrelated Chinese shares
+  // almost no two-character sequences with what is being read.
+  if (h.length < 2) return false
   let matched = 0
-  for (let i = 0; i + 4 <= h.length; i += 4) {
-    if (s.includes(h.slice(i, i + 4))) matched += 4
+  let total = 0
+  for (let i = 0; i + 2 <= h.length; i++) {
+    total++
+    if (s.includes(h.slice(i, i + 2))) matched++
   }
-  return matched / h.length >= 0.6
+  // Short fragments need a higher ratio: "好的" shares a bigram with almost any
+  // polite Chinese sentence, and treating that as the assistant's own voice
+  // would swallow a real interruption.
+  const threshold = h.length <= 6 ? 0.75 : 0.6
+  return total > 0 && matched / total >= threshold
 }
 
+/** Trailing punctuation a transcript may carry after the spoken trigger. */
+const TRAILING_PUNCT_RE = /[\s,.!?;:，。！？；：、）》」』…—~～]+$/
+
 /**
- * Finds a trigger word in a transcript and returns the text with it removed.
+ * Matches a trigger word at the END of a transcript, and removes it.
  *
- * The trigger is stripped from wherever it appears, not only from the end: a
- * user saying "发送" mid-sentence means the same thing, and leaving the word in
- * the message would make the AI read an instruction that was meant for the UI.
+ * Tail-only on purpose. The trigger means "I am done, send it", which is a
+ * statement about the end of an utterance — matching it anywhere would fire on
+ * ordinary speech that merely contains the word. The default list is the
+ * clearest case: 好了 is an extremely common verb suffix ("把文件改好了再告诉我"
+ * would send immediately AND ship "把文件改再告诉我" to the model). Same for
+ * 就这样, which is a normal way to end a sentence.
+ *
+ * Punctuation and whitespace after the word are tolerated, because recognition
+ * output is punctuated: "帮我改一下，发送。" still matches.
  *
  * @returns `{ matched, text }` — `matched` is false when no trigger was found.
  */
 export function extractTrigger(text: string, words: string[]): { matched: boolean; text: string } {
-  let matched = false
-  let rest = text
-  for (const word of words) {
-    if (!word) continue
-    if (rest.includes(word)) {
-      matched = true
-      rest = rest.split(word).join('')
-    }
+  const trimmed = text.replace(TRAILING_PUNCT_RE, '')
+  // Longest first: with both 发送 and 发送并关闭 configured, the longer word has
+  // to win or the remainder keeps a dangling fragment.
+  const ordered = [...words].filter((w) => w.length > 0).sort((a, b) => b.length - a.length)
+  for (const word of ordered) {
+    if (!trimmed.endsWith(word)) continue
+    const rest = trimmed.slice(0, trimmed.length - word.length).replace(TRAILING_PUNCT_RE, '')
+    return { matched: true, text: rest.trim() }
   }
-  return { matched, text: rest.trim() }
+  return { matched: false, text: text.trim() }
 }
 
 /** Whether a transcript asks the assistant to stop talking. */

@@ -19,6 +19,7 @@ import { acquireMic, classifyMicError, describeMicError, logMicEnv } from '@/uti
 import {
   VOICE_TUNING_DEFAULTS,
   buildMicConstraints,
+  readSttField,
   readVoiceTuning,
   rmsFromByteTimeDomain,
   rmsThreshold,
@@ -123,14 +124,17 @@ export function useVoiceInput() {
     toast.show(msg, { icon: 'warning', type: 'error', duration: 6000 })
   }
 
-  const shortcutKey = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'F9'
-  const streaming = () =>
-    Boolean((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.streaming'] ?? false)
-  const provider = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.provider'] as string | undefined ?? 'vllm'
-  const language = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.language'] as string | undefined
+  // `/api/config` is NESTED (`{"stt": {...}}`), not a flat map of dotted keys —
+  // see `readSttField`. These used to index `['stt.streaming']`, which is
+  // always undefined, so every engine setting silently kept its default: the
+  // 流式识别 switch never turned streaming on and 识别语言 was never sent.
+  const sttField = (key: string) =>
+    readSttField(settings.serverConfig.value as Record<string, unknown> | undefined, key)
+
+  const shortcutKey = () => (sttField('shortcut_key') as string | undefined) ?? 'F9'
+  const streaming = () => Boolean(sttField('streaming') ?? false)
+  const provider = () => (sttField('provider') as string | undefined) ?? 'vllm'
+  const language = () => sttField('language') as string | undefined
 
   /** The tuning currently in effect (read by free-dialog mode as well). */
   const currentTuning = () => tuning

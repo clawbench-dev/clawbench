@@ -1031,11 +1031,51 @@ function toggleFreeDialog() {
       // A send that never reached the server leaves `loading` untouched, so the
       // watcher below would never fire and the loop would sit in 'thinking'
       // forever with the microphone closed. Release it explicitly.
-      void sendMessage(text).then((ok) => {
+      void sendVoiceMessage(text).then((ok) => {
         if (!ok) freeDialog.setThinking(false)
       })
     },
   })
+}
+
+/**
+ * Sends a spoken message WITHOUT touching the composer.
+ *
+ * `sendMessage` is the composer's send: it consumes the staged quotes, mention
+ * cards, attachments and pending uploads, and clears the textarea. That is
+ * right for every entry point that starts from the composer, and wrong for the
+ * voice loop — the user may well have a half-typed message or a staged file
+ * while talking, and having "发送" swallow it (or ship the attachment with a
+ * spoken sentence) is data loss they did not ask for.
+ */
+async function sendVoiceMessage(text) {
+  const clean = text.trim()
+  if (!clean) return false
+  if (loading.value) {
+    // Session busy: queue it, same as the composer path, but leave the composer
+    // alone. The queue panel is the feedback.
+    try {
+      await enqueueAndMaybeStart({
+        sessionId: identity.currentSessionId.value,
+        text: clean,
+        attachedFiles: [],
+        pendingFiles: [],
+        onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+        enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
+      })
+      return true
+    } catch (err) {
+      appLog.w(TAG, 'voice enqueue failed', err)
+      return false
+    }
+  }
+  try {
+    await sendMessageNow(clean, [], [])
+    return true
+  } catch (err) {
+    appLog.w(TAG, 'voice send failed', err)
+    return false
+  }
 }
 
 /**

@@ -359,7 +359,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 当前实现：`ChatInputBar.vue` 的 `.chat-top-actions.more-left/right`（守卫在 `ChatInputBar.test.ts` 的 `action bar edge fade`，含「必须是遮罩、不能是不透明渐变」的源码断言）。同类场景（会话列表工具栏、任何 `overflow-x: auto` + `scrollbar-width: none` 的行）应照此办理，**不要**再各写一份背景色渐变。
 
-⚠️ **遮罩在 Android WebView 上要真机确认**：`mask-image` 会引入一层绘制，而本仓对聊天子树内的合成层有严格限制（见[红线 6](#红线-6android-webview-的像素级怪癖)）。静态、且元素高度不随回合结束变化时是安全的，但新加一个遮罩条仍要在真机上看一眼有没有残影。
+⚠️ **遮罩会引入一层绘制，聊天子树里要先过红线 6**：`mask-image` 在 Chromium 上会把元素提升为合成层，而 Android WebView 恰恰会画错「尺寸变化中的合成层」。判据不是「静态」，是**被遮的那条轴尺寸稳不稳**——回合结束时会变高的是高度轴；宽度轴随窗格变（侧栏折叠、拖分隔条、转屏），所以要在「回合进行中窗格不会变宽」这个前提下才算安全。新加一个遮罩条时：①确认被遮的轴在回合边界上不变；②把它加进 `chatCompositingBoundary.css.test.ts` 的 `ALLOWED` 白名单并写明理由（**不加等于没审查**，测试会红）；③真机上看一眼有没有残影。
 
 ### 设置面板控件（`.settings-item__switch` / `__slider*`）
 

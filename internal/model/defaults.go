@@ -490,7 +490,10 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.VoiceGateSensitivity == "" {
 		cfg.STT.VoiceGateSensitivity = "standard"
 	}
-	if cfg.STT.TriggerWords == "" {
+	// An EMPTY word list is a real choice ("no trigger words, use the pause"),
+	// so the default applies on absence only — the same presence-map trap as the
+	// bool switches above.
+	if _, ok := presence["stt.trigger_words"]; !ok {
 		cfg.STT.TriggerWords = "发送,好了,就这样"
 	}
 	// Zero is a legitimate value ("a pause never sends"), so the default has to
@@ -502,7 +505,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.BargeIn == "" {
 		cfg.STT.BargeIn = "any"
 	}
-	if cfg.STT.BargeInWords == "" {
+	if _, ok := presence["stt.barge_in_words"]; !ok {
 		cfg.STT.BargeInWords = "等等,停一下"
 	}
 

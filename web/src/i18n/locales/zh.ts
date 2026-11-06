@@ -3471,7 +3471,7 @@ export default {
       sttVoiceGateAggressive: '激进（只送明显的人声）',
       sttFreeDialogHeader: '自由对话',
       sttTriggerWords: '触发词',
-      sttTriggerWordsDesc: '说到其中任意一个就把消息发出去。多个词用逗号分隔',
+      sttTriggerWordsDesc: '在句尾说到其中任意一个就把消息发出去（说在句子中间不算）。多个词用逗号分隔',
       sttSilenceSendMs: '停顿多久算说完(ms)',
       sttSilenceSendMsDesc: '不说话超过这么久也自动发送，不必非说触发词。填 0 表示只认触发词',
       sttBargeIn: '朗读时插话',

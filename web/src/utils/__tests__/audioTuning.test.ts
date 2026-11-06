@@ -22,6 +22,24 @@ describe('readVoiceTuning', () => {
     expect(t).toEqual(VOICE_TUNING_DEFAULTS)
   })
 
+  it('reads the nested stt section, which is what /api/config returns', () => {
+    // `configResponse.STT` is `json:"stt"`, so the payload is
+    // `{"stt": {"provider": ...}}` — NOT a flat map of dotted keys. Reading
+    // flat keys yields undefined for every field, which leaves the defaults in
+    // force forever while the settings page happily saves.
+    const t = readVoiceTuning({ stt: { trigger_words: '开工', silence_send_ms: 1500, voice_gate: false } })
+    expect(t.triggerWords).toEqual(['开工'])
+    expect(t.silenceSendMs).toBe(1500)
+    expect(t.voiceGate).toBe(false)
+  })
+
+  it('ignores a flat dotted key, which the server never sends', () => {
+    // Guards against someone "fixing" this back to flat lookups: with a flat
+    // key the value must NOT be picked up, because the real payload cannot
+    // produce one.
+    expect(readVoiceTuning({ 'stt.silence_send_ms': 1500 }).silenceSendMs).toBe(3000)
+  })
+
   it('returns the shipped defaults for an undefined config (not loaded yet)', () => {
     // The settings page and the chat panel both read this before /api/config
     // resolves. Falling back to "gate everything off with a 0 threshold" here
@@ -31,11 +49,13 @@ describe('readVoiceTuning', () => {
 
   it('reads the boolean switches and treats an explicit false as false', () => {
     const t = readVoiceTuning({
-      'stt.mic_echo_cancel': false,
-      'stt.mic_noise_suppress': false,
-      'stt.mic_auto_gain': false,
-      'stt.mic_band_filter': false,
-      'stt.voice_gate': false,
+      stt: {
+        mic_echo_cancel: false,
+        mic_noise_suppress: false,
+        mic_auto_gain: false,
+        mic_band_filter: false,
+        voice_gate: false,
+      },
     })
     expect(t.echoCancellation).toBe(false)
     expect(t.noiseSuppression).toBe(false)
@@ -45,25 +65,25 @@ describe('readVoiceTuning', () => {
   })
 
   it('accepts a stringified boolean (a config written by an older page)', () => {
-    expect(readVoiceTuning({ 'stt.voice_gate': 'false' }).voiceGate).toBe(false)
+    expect(readVoiceTuning({ stt: { voice_gate: 'false' } }).voiceGate).toBe(false)
   })
 
   it('falls back to standard for an unknown sensitivity', () => {
-    expect(readVoiceTuning({ 'stt.voice_gate_sensitivity': 'wild' }).sensitivity).toBe('standard')
+    expect(readVoiceTuning({ stt: { voice_gate_sensitivity: 'wild' } }).sensitivity).toBe('standard')
   })
 
   it('keeps 0 for silence_send_ms instead of restoring the default', () => {
     // 0 is the documented "trigger words only" value; treating it as absent
     // would silently re-enable auto-send for a user who turned it off.
-    expect(readVoiceTuning({ 'stt.silence_send_ms': 0 }).silenceSendMs).toBe(0)
+    expect(readVoiceTuning({ stt: { silence_send_ms: 0 } }).silenceSendMs).toBe(0)
   })
 
   it('rejects a negative silence_send_ms', () => {
-    expect(readVoiceTuning({ 'stt.silence_send_ms': -5 }).silenceSendMs).toBe(3000)
+    expect(readVoiceTuning({ stt: { silence_send_ms: -5 } }).silenceSendMs).toBe(3000)
   })
 
   it('falls back to "any" for an unknown barge-in mode', () => {
-    expect(readVoiceTuning({ 'stt.barge_in': 'sometimes' }).bargeIn).toBe('any')
+    expect(readVoiceTuning({ stt: { barge_in: 'sometimes' } }).bargeIn).toBe('any')
   })
 })
 
@@ -72,8 +92,15 @@ describe('parseWordList / formatWordList', () => {
     expect(parseWordList('发送,好了；就这样\n停', ['x'])).toEqual(['发送', '好了', '就这样', '停'])
   })
 
-  it('falls back when every entry is blank', () => {
-    expect(parseWordList(' , ，', ['默认'])).toEqual(['默认'])
+  it('treats an explicitly cleared list as empty, not as "use the defaults"', () => {
+    // Otherwise the setting can never be cleared: the user deletes the words,
+    // saves, and the defaults come back.
+    expect(parseWordList(' , ，', ['默认'])).toEqual([])
+    expect(parseWordList('', ['默认'])).toEqual([])
+  })
+
+  it('keeps the defaults only when the field is absent', () => {
+    expect(parseWordList(undefined, ['默认'])).toEqual(['默认'])
   })
 
   it('never yields an empty string entry (it would match every transcript)', () => {
@@ -194,10 +221,20 @@ describe('extractTrigger', () => {
     expect(extractTrigger('帮我看下这个报错 发送', ['发送'])).toEqual({ matched: true, text: '帮我看下这个报错' })
   })
 
-  it('strips a trigger word from the middle of the sentence', () => {
-    // A user saying 发送 mid-sentence means the same thing; leaving the word in
-    // would send an instruction that was meant for the UI.
-    expect(extractTrigger('看下这个 发送 报错', ['发送']).text).toBe('看下这个  报错')
+  it('does NOT match a trigger word in the middle of a sentence', () => {
+    // The default list contains 好了, which is an ordinary verb suffix. Matching
+    // anywhere would send "把那个文件改好了再告诉我" the moment it is spoken,
+    // and hand the model "把那个文件改再告诉我".
+    expect(extractTrigger('把那个文件改好了再告诉我', ['好了']).matched).toBe(false)
+    expect(extractTrigger('看下这个 发送 报错', ['发送']).matched).toBe(false)
+  })
+
+  it('matches a trigger word followed by punctuation', () => {
+    expect(extractTrigger('帮我改一下，发送。', ['发送'])).toEqual({ matched: true, text: '帮我改一下' })
+  })
+
+  it('prefers the longest matching trigger word', () => {
+    expect(extractTrigger('帮我改一下 发送并关闭', ['发送', '发送并关闭']).text).toBe('帮我改一下')
   })
 
   it('reports no match when no trigger word is present', () => {

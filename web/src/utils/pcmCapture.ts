@@ -64,6 +64,17 @@ class ClawbenchPcm extends AudioWorkletProcessor {
 registerProcessor('clawbench-pcm', ClawbenchPcm)
 `
 
+/**
+ * How long the gate may withhold audio before one frame is forwarded anyway.
+ *
+ * Free-dialog mode keeps one recogniser session open for minutes. Sending
+ * nothing at all for that long is what gets an idle stream closed by the
+ * server, and a closed stream silently ends the mode. One 100 ms frame every
+ * few seconds keeps the session alive at roughly 1% of the cost of streaming
+ * silence continuously.
+ */
+const KEEPALIVE_MS = 8000
+
 export interface PcmStreamerOptions {
   /** Microphone to capture from. The streamer does NOT stop its tracks. */
   stream: MediaStream
@@ -90,6 +101,8 @@ export class PcmStreamer {
   private source: MediaStreamAudioSourceNode | null = null
   private filterTail: AudioNode | null = null
   private stopped = false
+  /** When a frame was last handed to the sink (epoch ms). */
+  private lastSentAt = 0
 
   constructor(private readonly opts: PcmStreamerOptions) {}
 
@@ -111,6 +124,9 @@ export class PcmStreamer {
       return
     }
 
+    // Seed the keepalive clock: starting at 0 would make the very first silent
+    // frame look like it had been withheld for 8 seconds and leak it through.
+    this.lastSentAt = Date.now()
     const source = ctx.createMediaStreamSource(this.opts.stream)
     let tail: AudioNode = source
     if (this.opts.tuning.bandFilter) {
@@ -139,12 +155,18 @@ export class PcmStreamer {
       const buf = e.data
       if (buf.byteLength < 2) {
         // "Cannot tell" must never mean "discard".
+        this.lastSentAt = Date.now()
         this.opts.onFrame(buf)
         return
       }
       const rms = rmsFromInt16(new Int16Array(buf))
       this.opts.onLevel?.(rms)
-      if (gate && rms < threshold) return
+      const now = Date.now()
+      if (gate && rms < threshold) {
+        // Silence is skipped, but never indefinitely — see KEEPALIVE_MS.
+        if (now - this.lastSentAt < KEEPALIVE_MS) return
+      }
+      this.lastSentAt = now
       this.opts.onFrame(buf)
     }
     tail.connect(node)

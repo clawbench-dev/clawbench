@@ -321,6 +321,7 @@ func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
 		"stt.mic_noise_suppress": true,
 		"stt.voice_gate":         true,
 		"stt.silence_send_ms":    true,
+		"stt.trigger_words":      true,
 	})
 
 	if cfg.STT.MicEchoCancel {
@@ -335,6 +336,11 @@ func TestApplyDefaults_STTExplicitFalseSurvives(t *testing.T) {
 	// 0 is the documented "trigger words only" value and must survive as well.
 	if cfg.STT.SilenceSendMs != 0 {
 		t.Errorf("STT.SilenceSendMs = %d, want 0 (explicitly set)", cfg.STT.SilenceSendMs)
+	}
+	// An explicitly cleared word list must stay cleared — otherwise the setting
+	// can never be emptied (the user deletes the words and the defaults return).
+	if cfg.STT.TriggerWords != "" {
+		t.Errorf("STT.TriggerWords = %q, want empty (explicitly cleared)", cfg.STT.TriggerWords)
 	}
 	// The switches that were NOT marked present still get their default.
 	if !cfg.STT.MicAutoGain || !cfg.STT.MicBandFilter {

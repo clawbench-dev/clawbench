@@ -3476,7 +3476,7 @@ export default {
       sttVoiceGateAggressive: 'Aggressive (loud speech only)',
       sttFreeDialogHeader: 'Free dialog',
       sttTriggerWords: 'Trigger words',
-      sttTriggerWordsDesc: 'Saying any of these sends the message. Separate with commas',
+      sttTriggerWordsDesc: 'Saying any of these at the END of a sentence sends the message (mid-sentence does not count). Separate with commas',
       sttSilenceSendMs: 'Pause that counts as done (ms)',
       sttSilenceSendMsDesc: 'Also send after this much silence, without a trigger word. 0 means trigger words only',
       sttBargeIn: 'Interrupt read-aloud',
