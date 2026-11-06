@@ -463,7 +463,8 @@ async function onFileSelect(e: Event) {
   // The draft mirrors the entry so the footer shows it, and the snapshot moves
   // with it: OK diffs against the snapshot, so leaving it untouched would emit
   // a second `add-attached` for a file the composer already holds. Cancel does
-  // undo these commits (see `handleCancel`); dismissing the sheet does not.
+  // undo these commits (see `handleCancel`), and so does any way of leaving
+  // the sheet without pressing OK.
   const commit = (path: string) => {
     // `isAttached` looks at the draft only, but a path can also already sit in
     // the baseline (seeded from the composer on open). Chat uploads never
@@ -527,21 +528,6 @@ function handleTerminateUpload() {
 }
 
 /**
- * Cancel: drop the draft, stop the batch, and undo whatever this session
- * uploaded.
- *
- * "取消" has to cancel. Two things could otherwise still land after the panel
- * closed:
- *   - a file that already finished (its bytes are on the server and the commit
- *     is already in the composer), and
- *   - a file still IN FLIGHT — the sheet stays open while the transfer runs, so
- *     pressing Cancel mid-upload is the most natural gesture there is, and
- *     without aborting it the transfer completes a few seconds later and the
- *     image reappears in the input bar.
- * Both are undone here. A swipe / back gesture / overlay tap is NOT this path —
- * that only closes the panel, and its uploads stay (issue #629).
- */
-/**
  * How many batches THIS sheet started are still running.
  *
  * Cancel must stop them — but `cancelChatUpload` works on the module-level chat
@@ -555,6 +541,22 @@ function handleTerminateUpload() {
  */
 let uploadsInFlight = 0
 
+/**
+ * Undo whatever this sheet uploaded, stop its in-flight batch, and close.
+ *
+ * This is the ONE meaning of leaving the sheet without pressing OK, whatever
+ * the gesture got you here: the Cancel button, a swipe, the back gesture, an
+ * overlay tap or the header ×. "取消" has to cancel — otherwise the image the
+ * user just walked away from still rides along with the next message.
+ *
+ * Two things could otherwise land after the panel closed:
+ *   - a file that already finished (its bytes are on the server and the commit
+ *     is already in the composer), and
+ *   - a file still IN FLIGHT — the sheet stays open while the transfer runs, so
+ *     leaving mid-upload is the most natural gesture there is, and without
+ *     aborting it the transfer completes a few seconds later and the image
+ *     reappears in the input bar.
+ */
 function handleCancel() {
   // Stop the batch first: `commit` fires per file as it lands, so aborting must
   // happen before the remaining transfers can reach it.
@@ -603,8 +605,8 @@ watch(uploadingFiles, (now) => {
  * committed immediately (see `onFileSelect`). Its bytes are already on the
  * server, the input bar's in-flight card for it is about to unmount, and
  * leaving it in the draft alone meant it vanished whenever the sheet was
- * dismissed — issue #629. Cancel undoes exactly these commits (see
- * `handleCancel`); dismissing the sheet leaves them in place.
+ * dismissed — issue #629. Leaving without OK undoes exactly these commits (see
+ * `handleCancel`), whether by the Cancel button or by any dismiss gesture.
  *
  * Seeded from the caller's list when the sheet opens (see the open watcher);
  * the composer's own `attachedFiles` is read only to compute the OK delta.
@@ -906,7 +908,10 @@ onUnmounted(() => {
 // closeGuard prop handles all close blocking while the native file
 // picker is open.
 function onDrawerClose() {
-  emit('close')
+  // Swipe / back / overlay tap / header × — every way of leaving without OK is
+  // a dismissal, and a dismissal is a cancel: same handler, so the two can
+  // never drift on whether the uploads stay (issue #629 follow-up).
+  handleCancel()
 }
 
 // Expose for parent: activeTab + handleFileDrop (for drag-and-drop from ChatInputBar)

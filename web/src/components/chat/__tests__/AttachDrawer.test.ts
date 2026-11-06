@@ -720,15 +720,38 @@ describe('AttachDrawer', () => {
     expect(wrapper.emitted('remove-attached')).toBeFalsy()
   })
 
-  it('dismissing the sheet is not a cancel: its uploads stay', async () => {
-    // A swipe / back gesture / overlay tap only closes the panel. Treating it as
-    // Cancel would re-create the reported "thumbnail flashes and is gone".
+  it('dismissing the sheet is a cancel: its uploads go away', async () => {
+    // Swipe / back / overlay tap / header × are all "I am leaving this picker".
+    // Leaving without OK must mean the same as Cancel — otherwise the image the
+    // user just walked away from still rides along with the next message.
     mockPickedFiles(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer({ attachedFiles: [] })
     await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
-    await getRawState(wrapper).onDrawerClose()
-    expect(wrapper.emitted('remove-attached')).toBeFalsy()
     expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    await getRawState(wrapper).onDrawerClose()
+
+    expect(wrapper.emitted('remove-attached')).toEqual([
+      [{ path: '.clawbench/uploads/a.png', isDir: false }],
+    ])
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('a dismiss gesture and the Cancel button do the same thing', async () => {
+    // Pins the two entry points together: whatever the sheet does on a swipe it
+    // must also do on Cancel (and vice versa), so a future edit cannot make one
+    // of them keep the uploads.
+    const run = async (how: 'cancel' | 'dismiss') => {
+      mockPickedFiles(['.clawbench/uploads/a.png'])
+      const wrapper = mountDrawer({ attachedFiles: [] })
+      await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+      if (how === 'cancel') await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+      else await getRawState(wrapper).onDrawerClose()
+      return wrapper.emitted('remove-attached')
+    }
+
+    expect(await run('dismiss')).toEqual(await run('cancel'))
   })
 
   it('onFileSelect shows the uploads tab while the transfer is still running', async () => {
