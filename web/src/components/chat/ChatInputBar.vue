@@ -14,26 +14,26 @@
         @click="$emit('open-session-tab', 'sessions')"
         :title="t('chat.actions.session')">
         <List :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.session') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.session') }}</span>
       </button>
       <button class="chat-action-btn"
         @click="handleCreateClick"
         @contextmenu.prevent="emit('create-session')"
         :title="t('chat.create.selectAgentOrLongPress')">
         <Plus :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.create') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.create') }}</span>
       </button>
       <button class="chat-action-btn"
         @click="$emit('open-session-search')"
         :title="t('chat.actions.sessionSearch')">
         <Search :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.search') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.search') }}</span>
       </button>
       <button class="chat-action-btn"
         @click="$emit('open-user-msg-index')"
         :title="t('chat.actions.userMsgIndex')">
         <MessagesSquare :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
       </button>
       <button
         v-if="isACPTransport && !isGroupSession"
@@ -46,13 +46,13 @@
       >
         <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
         <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
       </button>
       <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
         @click="handleShare"
         :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
         <MessageSquareShare :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.share') }}</span>
       </button>
       <!-- Archive sits LAST: it is the destructive/terminal action on the
            session, so it is separated from the navigation buttons. -->
@@ -60,13 +60,13 @@
         @click="handleArchive"
         :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
         <Archive :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
       </button>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
         <Volume2 :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
       </button>
       <!-- Continuous conversation mode: keep the microphone open, send on a
            trigger word or a pause, and resume listening once the reply has been
@@ -85,10 +85,10 @@
         <Mic v-else-if="freeDialogPhase === 'listening'" :size="14" class="free-dialog-mic" />
         <AudioLines v-else-if="freeDialogPhase === 'speaking'" :size="14" />
         <MessageCircleMore v-else :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.freeDialog') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.freeDialog') }}</span>
       </button>
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
     </div>
     <!-- Free-dialog status strip: what the microphone is hearing right now.
@@ -410,6 +410,7 @@ import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
@@ -1015,12 +1016,10 @@ const rootRef = ref(null)
 const textareaRef = ref(null)
 const actionBarRef = ref(null)
 /**
- * Action-bar labels visibility: labels are shown only when the chat pane is
- * wide enough to hold them. We force labels on, measure whether the action bar
- * overflows its container, and toggle a flag. This keeps labels off on narrow
- * chat panes regardless of wide-screen mode.
+ * Action-bar labels visibility: shown only when the chat pane is wide enough to
+ * hold them (the shared measure-then-toggle rule — see useActionBarLabels).
+ * This keeps labels off on narrow chat panes regardless of wide-screen mode.
  */
-const showActionLabels = ref(false)
 /**
  * Whether the action bar actually overflows its pane — i.e. some buttons are
  * off-screen. The strip's scrollbar is hidden, so in that state a plain mouse
@@ -1038,8 +1037,6 @@ const actionBarOverflow = ref(false)
  */
 const actionBarMoreLeft = ref(false)
 const actionBarMoreRight = ref(false)
-let actionBarObserver = null
-let actionBarMeasureTimer = null
 /** Disposer for the action bar's drag-to-scroll, or null when not attached. */
 let stopDragScroll = null
 
@@ -1082,27 +1079,22 @@ function onActionBarScroll() {
   updateActionBarFade()
 }
 
-function measureActionLabels() {
-  const el = actionBarRef.value
-  if (!el) return
-  // Force the labels-on layout synchronously via .measure-labels (shows the
-  // label spans) so scrollWidth reflects the intended final width, then compare
-  // against the available clientWidth.
-  el.classList.add('measure-labels')
-  const overflow = el.scrollWidth > el.clientWidth + 2
-  el.classList.remove('measure-labels')
-  showActionLabels.value = !overflow
-  actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
-  updateActionBarFade()
-  syncActionBarDragScroll()
-}
-function scheduleMeasureActionLabels() {
-  if (actionBarMeasureTimer) clearTimeout(actionBarMeasureTimer)
-  actionBarMeasureTimer = setTimeout(() => {
-    actionBarMeasureTimer = null
-    measureActionLabels()
-  }, 50)
-}
+/**
+ * Labels + the strip's own overflow/fade/drag state all come from the same
+ * measurement, so the shared composable calls back into them after each one.
+ */
+const { showLabels: showActionLabels, measure: measureActionLabels } = useActionBarLabels(
+  () => actionBarRef.value,
+  {
+    onMeasured: () => {
+      const el = actionBarRef.value
+      if (!el) return
+      actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+      updateActionBarFade()
+      syncActionBarDragScroll()
+    },
+  },
+)
 const isPasteOver = ref(false)
 let pasteOverlayTimer = 0
 const attachDrawer = useTabDrawer('chat')
@@ -2351,11 +2343,6 @@ onMounted(() => {
   // Caret moves (clicks / arrow keys) can enter or leave an @ trigger without
   // changing the text, so the @ menu must re-evaluate on selection changes.
   document.addEventListener('selectionchange', onTextareaSelectionChange)
-  measureActionLabels()
-  if (typeof ResizeObserver !== 'undefined' && actionBarRef.value) {
-    actionBarObserver = new ResizeObserver(() => scheduleMeasureActionLabels())
-    actionBarObserver.observe(actionBarRef.value)
-  }
 })
 
 onBeforeUnmount(() => {
@@ -2385,16 +2372,8 @@ onBeforeUnmount(() => {
   voiceInput.cancel()
   endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
-  if (actionBarObserver) {
-    actionBarObserver.disconnect()
-    actionBarObserver = null
-  }
   stopDragScroll?.()
   stopDragScroll = null
-  if (actionBarMeasureTimer) {
-    clearTimeout(actionBarMeasureTimer)
-    actionBarMeasureTimer = null
-  }
   stopPlaceholderRotation()
 })
 
@@ -2688,21 +2667,6 @@ defineExpose({
   cursor: grabbing;
   /* The pointer is captured, so the drag must not start a text selection. */
   user-select: none;
-}
-
-/* Wide-screen short label next to the action icon. Always in the DOM so the
-   action bar can be measured with labels forced on (see .measure-labels);
-   hidden unless the container proves it has room for them. */
-.chat-action-label {
-  font-size: var(--font-size-xs);
-  line-height: 1;
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: none;
-}
-.chat-top-actions.show-labels .chat-action-label,
-.chat-top-actions.measure-labels .chat-action-label {
-  display: inline-block;
 }
 
 /* Auto-speech toggle button */

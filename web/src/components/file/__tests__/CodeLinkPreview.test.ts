@@ -697,9 +697,11 @@ describe('CodeLinkPreview.vue', () => {
 
     const detailsBtn = floating?.querySelector('button[title="View details / Download"]')
     expect(detailsBtn).not.toBeNull()
-    // It is an icon button, and it does not dump its label into the tool row.
+    // Still one icon button: the only text it can carry is the shared
+    // `.action-label` (shown when the row is wide enough), never a bespoke wide
+    // text button of its own.
     expect(detailsBtn?.querySelector('svg')).not.toBeNull()
-    expect(detailsBtn?.textContent?.trim()).toBe('')
+    expect(detailsBtn?.querySelector('.action-label')?.textContent?.trim()).toBe('View details / Download')
     // No second, plain "Open file" button appears alongside it.
     expect(floating?.querySelector('button[title="Open file"]')).toBeNull()
   })

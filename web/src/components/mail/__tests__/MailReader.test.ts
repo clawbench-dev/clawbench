@@ -126,7 +126,7 @@ describe('MailReader', () => {
       expect(b.attributes('title'), 'every icon needs a tooltip').toBeTruthy()
       expect(b.attributes('aria-label'), 'every icon needs an accessible name').toBeTruthy()
       expect(
-        b.find('.mail-action-label').exists(),
+        b.find('.action-label').exists(),
         'labels stay in the DOM so the row can be measured with them on',
       ).toBe(true)
     }

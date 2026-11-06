@@ -622,7 +622,7 @@ describe('ChatInputBar — action labels by container width', () => {
     return wrapper.find('.chat-top-actions')
   }
   function labelTexts(wrapper: ReturnType<typeof mount>) {
-    return wrapper.findAll('.chat-action-label').map(el => el.text())
+    return wrapper.findAll('.action-label').map(el => el.text())
   }
   function mockBarWidth(wrapper: ReturnType<typeof mount>, scrollWidth: number, clientWidth: number) {
     const bar = actionBar(wrapper).element as HTMLElement

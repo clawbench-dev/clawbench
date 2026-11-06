@@ -1,5 +1,5 @@
 <template>
-  <div class="session-list-header-content">
+  <div ref="headerRef" class="session-list-header-content" :class="{ 'show-labels': showLabels }">
     <div class="session-header-leading">
       <List :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('session.title') }}</span>
@@ -22,12 +22,16 @@
       <slot name="actions" />
       <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
         <Search :size="16" />
+        <span class="action-label">{{ t('sessionSearch.title') }}</span>
       </button>
       <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
+        <span class="action-label">{{ t('session.newSession') }}</span>
       </button>
       <template v-if="pinned">
-        <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh" />
+        <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh">
+          <span class="action-label">{{ t('session.refresh') }}</span>
+        </RefreshButton>
       </template>
       <!-- Trailing slot: hosts put the sidebar pin/unpin toggle here so it is the
            right-most control in the header, after search/create/refresh. The
@@ -38,10 +42,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { List, Search, Plus } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 
 const props = defineProps({
   sessionCount: { type: Number, default: 0 },
@@ -61,6 +66,13 @@ function triggerRefresh() {
 }
 
 const { t } = useI18n()
+
+/**
+ * Header labels: shown only when the header can hold them without squeezing the
+ * title (shared measure-then-toggle rule — see useActionBarLabels).
+ */
+const headerRef = ref(null)
+const { showLabels } = useActionBarLabels(() => headerRef.value)
 
 const sessionPct = computed(() => props.sessionMaxCount > 0 ? Math.min((props.sessionCount / props.sessionMaxCount) * 100, 100) : 0)
 const sessionBarColor = computed(() => {
@@ -152,6 +164,11 @@ const sessionBarColor = computed(() => {
   align-items: center;
   justify-content: flex-end;
 }
+/* While measuring, the leading group keeps its natural width so an overflow
+   means the LABELS do not fit, instead of the title simply being squeezed. */
+.session-list-header-content.measure-labels .session-header-leading {
+  flex: 0 0 auto;
+}
 </style>
 
 <style>
@@ -163,6 +180,7 @@ const sessionBarColor = computed(() => {
   margin-left: var(--space-3);
   width: calc(24 * var(--dp));
   height: calc(24 * var(--dp));
+  gap: calc(4 * var(--dp));
   border: none;
   background: none;
   color: var(--accent-color, #0066cc);
@@ -177,5 +195,11 @@ const sessionBarColor = computed(() => {
   .header-action-btn:hover {
     background: rgba(0, 102, 204, 0.1);
   }
+}
+/* Labelled header buttons grow with their text instead of staying 24px squares
+   (labels appear only when the header can hold them — see useActionBarLabels). */
+.session-list-header-content.show-labels .header-action-btn {
+  width: auto;
+  padding: 0 calc(8 * var(--dp));
 }
 </style>

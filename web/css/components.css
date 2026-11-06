@@ -1506,3 +1506,32 @@
     opacity: var(--opacity-muted);
     flex-shrink: 0;
 }
+
+/* ==========================================================================
+   Action-bar labels
+   Used by: every row of icon buttons that shows its labels when there is room
+            (chat action bar, mail reader, code preview toolbar, list headers)
+
+   GLOBAL, not per component: the display toggle and the label typography must
+   be identical everywhere, and a scoped rule would have to be re-declared by
+   each adopter. Only the geometry of a labelled button (how wide it grows, how
+   much padding it gains) stays in the bar's own stylesheet, because that
+   depends on the button shape it already has.
+
+   Contract:
+     - the bar carries `.show-labels` when the labels fit;
+     - the bar briefly carries `.measure-labels` while being measured;
+     - every label is `<span class="action-label">`.
+   See docs/spec/client/design-guide.md 「图标按钮：空间够就带上文字标签」.
+   ========================================================================== */
+.action-label {
+    display: none;
+    font-size: var(--font-size-xs);
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.show-labels .action-label,
+.measure-labels .action-label {
+    display: inline;
+}

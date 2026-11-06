@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { readWebFile } from '@/testUtils/readWebFile'
 
@@ -146,5 +147,26 @@ describe('SessionListHeader', () => {
     // Refresh completes → spin ends
     await wrapper.setProps({ refreshing: false })
     expect(btn.classes()).not.toContain('refresh-spin--active')
+  })
+})
+
+describe('SessionListHeader — action labels', () => {
+  it('shows the action labels when the header can hold them', async () => {
+    // jsdom has no layout, so the header measures 0 wide and assumes there is
+    // room — the wide-header case. The measure/overflow maths lives in
+    // useActionBarLabels.test.ts; this pins the wiring.
+    const wrapper = mountHeader()
+    // The measurement runs on mount and flips the flag on the next render.
+    await nextTick()
+    const content = wrapper.find('.session-list-header-content')
+    expect(content.classes()).toContain('show-labels')
+    expect(wrapper.findAll('.header-action-btn .action-label').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('labels the refresh action too when the sidebar is pinned', async () => {
+    const wrapper = mountHeader({ pinned: true })
+    await nextTick()
+    const refresh = wrapper.find('.header-action-btn[data-action="refresh"]')
+    expect(refresh.find('.action-label').exists()).toBe(true)
   })
 })

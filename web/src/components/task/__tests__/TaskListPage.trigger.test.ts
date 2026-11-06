@@ -261,3 +261,22 @@ describe('TaskListPage — trigger-type distinction', () => {
     expect(wrapper.find('.task-item-events').exists()).toBe(true)
   })
 })
+
+describe('TaskListPage — header labels', () => {
+  beforeEach(() => {
+    mockStore.state.tasks = []
+    mockStore.state.taskUnreadCount = 0
+    vi.clearAllMocks()
+  })
+
+  it('shows the action labels when the header can hold them', async () => {
+    // jsdom has no layout, so the header measures 0 wide and assumes there is
+    // room — the wide-pane case. The mechanism itself is covered by
+    // useActionBarLabels.test.ts; this pins the wiring (class binding + label
+    // spans) so a refactor cannot silently drop it.
+    const wrapper = await mountWith([])
+    const header = wrapper.find('.list-header')
+    expect(header.classes()).toContain('show-labels')
+    expect(header.findAll('.action-label').length).toBeGreaterThanOrEqual(2)
+  })
+})

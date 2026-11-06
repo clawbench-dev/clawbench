@@ -346,15 +346,24 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 **做法：标签始终在 DOM 里，先强制显示量一次，放不下才退回纯图标。**
 
-1. 标签 span 默认 `display: none`；`.show-labels`（最终态）与 `.measure-labels`（量宽用）两个类都让它显示。
-2. 量的时候**同步**加上 `.measure-labels` → 读 `scrollWidth > clientWidth + 2` → 移除 → `showLabels = !overflow`。不先强制显示，量到的是「没有标签」的宽度，结论永远是有空间。
-3. 用 `ResizeObserver` 盯住**这条按钮本身**（不是 `window`），变化后去抖 50ms 再量。面板折叠、拖分隔条、转屏都会触发它。
+逻辑只有一份：`web/src/composables/useActionBarLabels.ts`。接一条新按钮条只需要三件事：
+
+1. 容器 `ref` + `:class="{ 'show-labels': showLabels }"`，然后 `useActionBarLabels(() => barRef.value)`。它负责 `ResizeObserver`、50ms 去抖、`scrollWidth > clientWidth + 2` 的判定（容差 2px：亚像素舍入会让刚好放下的一行被判成溢出）。
+2. 每个按钮里放一个 `<span class="action-label">文字</span>`。样式是**全局**的（`web/css/components.css`）：默认 `display: none`，`.show-labels`（最终态）与 `.measure-labels`（量宽用的临时态）两处都让它显示。量的时候**必须**先强制显示，否则量到的是「没有标签」的宽度，结论永远是有空间。
+3. 在自己组件的样式里加「带标签时按钮变宽」的规则：从固定方格改成 `width: auto` + 左右内边距 + 图标与文字之间的 `gap`。这部分必须留在组件里——每条按钮的形状（24/26/28px、圆角、选中态）本来就不同。
+
+**有标题/面包屑的条要多一步**：这类条的左侧是 `flex: 1` 的自适应块，标签变宽时它会先被压扁，`scrollWidth` 永远不溢出，于是「放不下」永远测不出来。给这种条加一条测量期的规则，把左侧块钉回自然宽度：
+
+```css
+.list-header.measure-labels .task-breadcrumb { flex: 0 0 auto; }
+```
+
+这样溢出就只可能来自标签，判据才成立。
+
 4. 只有图标时，每个按钮必须有 `title` 与 `aria-label`。标签是锦上添花，**不能是唯一的名称来源**。
-5. 容差 2px：亚像素舍入会让刚好放下的一行被判成溢出，标签就永远不出现。
+5. 复制按钮走 `CopyButton` 自己的 `label` prop（`:label="showLabels ? t(…) : ''"`），它用的是 `.copy-btn-label`；别给它再套一个 `.action-label`。
 
-配套样式：带标签时按钮宽度从固定方格改成 `width: auto` + 左右内边距，并加大按钮之间的间距；否则文字会顶在 26px 的方框里。
-
-实现基准：`ChatInputBar.vue` 的 `.chat-top-actions` / `measureActionLabels`；`MailReader.vue` 按同一套实现。守卫：`ChatInputBar.test.ts` 与 `MailReader.test.ts` 的「drops the labels when the row cannot fit them」。
+已接入：聊天输入区、邮件阅读器、代码预览工具条、任务列表头部、会话列表头部。守卫：`useActionBarLabels.test.ts`（判定与去抖）+ 各条自己的「labels 出现在 DOM / `show-labels` 已绑定」测试。
 
 ### 横向滚动的条：溢出必须有视觉提示
 

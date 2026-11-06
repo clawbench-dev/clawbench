@@ -7,7 +7,12 @@
        `.code-preview-sheet-row2` + a bottom pill-button footer while the other
        two rendered this row, so the same preview had two different toolbars.
        Keep the surfaces on this markup: any divergence here is the bug. -->
-  <div class="code-preview-meta" @pointerdown="onRowPointerDown">
+  <div
+    ref="rowRef"
+    class="code-preview-meta"
+    :class="{ 'show-labels': showLabels }"
+    @pointerdown="onRowPointerDown"
+  >
     <div class="code-preview-meta-info">
       <span>{{ metaText || t('file.codePreview.title') }}</span>
     </div>
@@ -28,6 +33,7 @@
         @click="$emit('toggle-render-view')"
       >
         <Eye :size="12" />
+        <span class="action-label">{{ isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView') }}</span>
       </button>
       <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
       <button
@@ -43,6 +49,7 @@
         @click="$emit('toggle-search')"
       >
         <Search :size="12" />
+        <span class="action-label">{{ t('file.codePreview.findInPreview') }}</span>
       </button>
       <button
         v-if="showTextTools && !isRenderedView"
@@ -57,6 +64,7 @@
         @click="$emit('toggle-word-wrap')"
       >
         <TextWrap :size="12" />
+        <span class="action-label">{{ isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap') }}</span>
       </button>
       <button
         v-if="showTextTools && !isRenderedView"
@@ -71,6 +79,7 @@
         @click="$emit('toggle-line-numbers')"
       >
         <Hash :size="12" />
+        <span class="action-label">{{ t('file.header.lineNumbers') }}</span>
       </button>
       <button
         class="code-preview-btn"
@@ -82,6 +91,7 @@
         @click="$emit('refresh')"
       >
         <RefreshCw :size="12" />
+        <span class="action-label">{{ t('file.codePreview.refresh') }}</span>
       </button>
 
       <span class="code-preview-actions-divider" />
@@ -100,11 +110,13 @@
         @click="$emit('quote')"
       >
         <MessageSquare :size="12" />
+        <span class="action-label">{{ t('file.codePreview.quoteToChat') }}</span>
       </button>
       <CopyButton
         v-if="showTextTools && !isRenderedView"
         :copied="copied"
         :size="12"
+        :label="showLabels ? (copied ? t('file.codePreview.copied') : t('file.codePreview.copy')) : ''"
         title-key="file.codePreview.copy"
         copied-key="file.codePreview.copied"
         class="code-preview-btn"
@@ -118,6 +130,7 @@
       <CopyButton
         :copied="isPathCopied"
         :size="12"
+        :label="showLabels ? (isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')) : ''"
         title-key="file.codePreview.copyPath"
         copied-key="file.codePreview.pathCopied"
         class="code-preview-btn copy-path-btn"
@@ -137,6 +150,7 @@
         @click="$emit('reveal')"
       >
         <Folder :size="12" />
+        <span class="action-label">{{ t('file.codePreview.revealInTree') }}</span>
       </button>
       <!-- Open File / View Details.
            A too-large file used to swap this for a wide text button reading
@@ -157,6 +171,7 @@
         @click="$emit('open-full')"
       >
         <ExternalLink :size="12" />
+        <span class="action-label">{{ tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull') }}</span>
       </button>
       <!-- Zoom image (image targets only): opens the shared Lightbox.
            Sits directly beside Open File — both are file-level actions, so
@@ -172,6 +187,7 @@
         @click="$emit('view-lightbox')"
       >
         <Maximize2 :size="12" />
+        <span class="action-label">{{ t('file.codePreview.openLightbox') }}</span>
       </button>
     </div>
   </div>
@@ -182,8 +198,17 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquare, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 
 const { t } = useI18n()
+
+/**
+ * Labels ride next to the icons only when the row can hold them. The row is
+ * measured, not the action group: the group is `flex-shrink: 0`, so it always
+ * matches its own content and could never report an overflow.
+ */
+const rowRef = ref<HTMLElement | null>(null)
+const { showLabels } = useActionBarLabels(() => rowRef.value)
 
 withDefaults(defineProps<{
   /** Line/size (or entry-count) summary shown on the left. Empty falls back to

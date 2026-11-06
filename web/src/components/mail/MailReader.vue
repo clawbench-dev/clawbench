@@ -23,17 +23,17 @@
       <button class="mail-icon-btn" :title="t('mail.reader.reply')" :aria-label="t('mail.reader.reply')"
         :disabled="busy" @click="emit('reply', 'reply')">
         <Reply />
-        <span class="mail-action-label">{{ t('mail.reader.reply') }}</span>
+        <span class="action-label">{{ t('mail.reader.reply') }}</span>
       </button>
       <button class="mail-icon-btn" :title="t('mail.reader.replyAll')" :aria-label="t('mail.reader.replyAll')"
         :disabled="busy" @click="emit('reply', 'replyAll')">
         <ReplyAll />
-        <span class="mail-action-label">{{ t('mail.reader.replyAll') }}</span>
+        <span class="action-label">{{ t('mail.reader.replyAll') }}</span>
       </button>
       <button class="mail-icon-btn" :title="t('mail.reader.forward')" :aria-label="t('mail.reader.forward')"
         :disabled="busy" @click="emit('reply', 'forward')">
         <Forward />
-        <span class="mail-action-label">{{ t('mail.reader.forward') }}</span>
+        <span class="action-label">{{ t('mail.reader.forward') }}</span>
       </button>
       <!-- Quote this email into a conversation. It goes through the SAME quote
            bar as a commit / task / issue, so it can carry an annotation and be
@@ -41,7 +41,7 @@
       <button class="mail-icon-btn" :title="t('mail.reader.quoteToChat')" :aria-label="t('mail.reader.quoteToChat')"
         @click="quoteToChat">
         <MessageSquare />
-        <span class="mail-action-label">{{ t('mail.reader.quoteToChat') }}</span>
+        <span class="action-label">{{ t('mail.reader.quoteToChat') }}</span>
       </button>
       <span class="mail-reader__spacer" />
       <button class="mail-icon-btn" :title="detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead')"
@@ -49,12 +49,12 @@
         :disabled="busy" @click="toggleSeen">
         <Mail v-if="detail?.seen" />
         <MailOpen v-else />
-        <span class="mail-action-label">{{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}</span>
+        <span class="action-label">{{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}</span>
       </button>
       <button class="mail-icon-btn mail-icon-btn--danger" :title="t('mail.reader.delete')"
         :aria-label="t('mail.reader.delete')" :disabled="busy" @click="remove">
         <Trash2 />
-        <span class="mail-action-label">{{ t('mail.reader.delete') }}</span>
+        <span class="action-label">{{ t('mail.reader.delete') }}</span>
       </button>
     </div>
 
@@ -128,7 +128,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Forward, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
 import MailEmpty from './MailEmpty.vue'
@@ -146,6 +146,7 @@ import {
   type MailMessageDetail,
 } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useToast } from '@/composables/useToast'
@@ -169,47 +170,13 @@ const allowRemoteImages = ref(false)
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
 
 // ── Action-row labels ─────────────────────────────────────────
-// Same pattern as the chat action bar: the labels are always in the DOM and are
-// shown only when the row proves it can hold them. Forcing them on for one
-// synchronous measurement is what makes that check possible; falling back to
-// icons-only is better than letting the row overflow, because its scrollbar is
-// hidden and a cut-off row would hide actions with no visible cue.
+// Same rule as the chat action bar (shared composable): labels are always in the
+// DOM and shown only when the row proves it can hold them. Falling back to
+// icons-only is better than overflowing a strip whose scrollbar is hidden.
 const actionsRef = ref<HTMLElement | null>(null)
-const showActionLabels = ref(false)
-let actionsObserver: ResizeObserver | null = null
-let actionsMeasureTimer: ReturnType<typeof setTimeout> | null = null
-
-function measureActionLabels(): void {
-  const el = actionsRef.value
-  if (!el) return
-  el.classList.add('measure-labels')
-  const overflow = el.scrollWidth > el.clientWidth + 2
-  el.classList.remove('measure-labels')
-  showActionLabels.value = !overflow
-}
-
-function scheduleMeasureActionLabels(): void {
-  if (actionsMeasureTimer) clearTimeout(actionsMeasureTimer)
-  actionsMeasureTimer = setTimeout(() => {
-    actionsMeasureTimer = null
-    measureActionLabels()
-  }, 50)
-}
-
-onMounted(() => {
-  measureActionLabels()
-  if (typeof ResizeObserver !== 'undefined' && actionsRef.value) {
-    actionsObserver = new ResizeObserver(() => scheduleMeasureActionLabels())
-    actionsObserver.observe(actionsRef.value)
-  }
-})
-
-onBeforeUnmount(() => {
-  actionsObserver?.disconnect()
-  actionsObserver = null
-  if (actionsMeasureTimer) clearTimeout(actionsMeasureTimer)
-  actionsMeasureTimer = null
-})
+const { showLabels: showActionLabels, measure: measureActionLabels } = useActionBarLabels(
+  () => actionsRef.value,
+)
 
 defineExpose({ measureActionLabels })
 
@@ -590,19 +557,6 @@ async function remove(): Promise<void> {
   color: var(--color-red);
 }
 
-/* Labels ride next to the icons only when the row fits them (the chat action
-   bar's measure-then-toggle pattern, see design-guide). Always in the DOM so
-   the row can be measured with them forced on; `display: none` otherwise. */
-.mail-action-label {
-  display: none;
-  font-size: var(--font-size-xs, 11px);
-  line-height: 1;
-  white-space: nowrap;
-}
-.mail-reader__actions.show-labels .mail-action-label,
-.mail-reader__actions.measure-labels .mail-action-label {
-  display: inline;
-}
 /* A labelled button grows with its text instead of staying a 26px square. */
 .mail-reader__actions.show-labels .mail-icon-btn {
   width: auto;

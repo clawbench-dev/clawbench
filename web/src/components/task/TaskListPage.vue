@@ -1,14 +1,18 @@
 <template>
   <div class="task-list-page">
     <!-- Compact header: breadcrumb + refresh + create button -->
-    <div class="list-header">
+    <div ref="headerRef" class="list-header" :class="{ 'show-labels': showLabels }">
       <TaskBreadcrumb />
-      <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh" />
+      <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh">
+        <span class="action-label">{{ t('common.refresh') }}</span>
+      </RefreshButton>
       <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
         <CheckCheck :size="14" />
+        <span class="action-label">{{ t('task.clearUnread') }}</span>
       </button>
       <button class="create-btn" @click="$emit('create')" :title="t('task.form.createTitle')">
         <Plus :size="16" />
+        <span class="action-label">{{ t('task.form.createTitle') }}</span>
       </button>
     </div>
     <div class="task-list-body">
@@ -126,6 +130,7 @@ import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
 import { eventTypesSummary } from '@/utils/forgeEventLabels'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -200,6 +205,13 @@ function mailRowLabel(task: TaskItem): string {
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
+
+/**
+ * Header labels: shown only when the header can hold them without squeezing the
+ * breadcrumb (shared measure-then-toggle rule — see useActionBarLabels).
+ */
+const headerRef = ref<HTMLElement | null>(null)
+const { showLabels } = useActionBarLabels(() => headerRef.value)
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
 const loading = ref(false)
 
@@ -289,6 +301,19 @@ onMounted(refresh)
   justify-content: center;
   flex-shrink: 0;
   transition: all var(--duration-slow) ease;
+}
+
+/* Labelled header buttons grow with their text instead of staying squares.
+   While measuring, the breadcrumb keeps its natural width so an overflow means
+   the LABELS do not fit (otherwise it would just shrink and absorb them). */
+.list-header.measure-labels :deep(.task-breadcrumb) {
+  flex: 0 0 auto;
+}
+.list-header.show-labels .header-btn,
+.list-header.show-labels .create-btn {
+  width: auto;
+  padding: 0 calc(10 * var(--dp));
+  gap: calc(5 * var(--dp));
 }
 
 /* Header icon button (refresh, etc.) */
