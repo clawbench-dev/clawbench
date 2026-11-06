@@ -495,6 +495,7 @@ async function onFileSelect(e: Event) {
     uploadsInFlight--
   }
 }
+
 /**
  * Terminate the whole in-flight upload batch.
  *
