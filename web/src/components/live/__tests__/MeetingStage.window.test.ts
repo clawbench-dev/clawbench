@@ -125,6 +125,7 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
   Object.assign(notesApi, {
     phase: r('idle'),
     segments: r([]),
+    liveLines: r({}),
     minutes: r(''),
     minutesPhase: r('idle'),
     revisePhase: r('idle'),

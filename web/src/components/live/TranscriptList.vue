@@ -11,7 +11,11 @@
       v-for="b in blocks"
       :key="b.key"
       class="transcript__row"
-      :class="{ 'transcript__row--file': b.kind === 'file', 'transcript__row--shot': b.kind === 'shot' }"
+      :class="{
+        'transcript__row--file': b.kind === 'file',
+        'transcript__row--shot': b.kind === 'shot',
+        'transcript__row--pending': b.pending,
+      }"
     >
       <!-- A file event has no speaker: an avatar with the character 文 would
            read as a participant. The glyph says "this is not a person". -->
@@ -439,6 +443,14 @@ const { onScroll } = useStickToBottom(rootRef, () => {
   color: var(--text-primary, #1f2328);
   overflow-wrap: anywhere;
 }
+
+/* The sentence being spoken. Muted rather than a different size or layout, so
+   the line does not jump when it turns into a stored row: the engine revises
+   the words, and a row that re-flowed on every revision would be unreadable. */
+.transcript__row--pending .transcript__text {
+  color: var(--text-muted, #6b7280);
+}
+
 
 /* A file event is a marker on the timeline, not something somebody said: it
    sits back so the conversation still reads as the conversation. */

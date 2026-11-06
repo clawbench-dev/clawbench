@@ -51,6 +51,29 @@ describe('groupNoteSegments', () => {
     expect(blocks[1].speaker).toBe('系统声音')
   })
 
+  it('never folds the line being revised into a stored one', () => {
+    // Merging them would let the engine's next revision rewrite text that is
+    // already in the database, and the row would vanish as a separate entry the
+    // moment the real line arrived.
+    const blocks = groupNoteSegments([
+      seg(1, 'mic', '我', 1_000, '已经存下来的一句'),
+      { ...seg(-1, 'mic', '我', 2_000, '还在改的这一句'), pending: true },
+    ])
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].text).toBe('已经存下来的一句')
+    expect(blocks[0].pending).toBeUndefined()
+    expect(blocks[1].text).toBe('还在改的这一句')
+    expect(blocks[1].pending).toBe(true)
+  })
+
+  it('keeps the pending row keyed per channel so two drafts do not collide', () => {
+    const blocks = groupNoteSegments([
+      { ...seg(-1, 'mic', '我', 1_000, '我说的'), pending: true },
+      { ...seg(-1, 'viewer:2', '小明', 1_000, '他说的'), pending: true },
+    ])
+    expect(new Set(blocks.map((b) => b.key)).size).toBe(2)
+  })
+
   it('does not merge the same speaker across a long gap', () => {
     const blocks = groupNoteSegments([
       seg(1, 'mic', '我', 1_000, '开场'),

@@ -1099,7 +1099,23 @@ const noteBlocks = computed(() => {
       fullUrl: shotFullUrl(token, s.id),
     })),
   )
-  return groupNoteSegments(rows).slice(-40)
+  // What the microphone is hearing right now, per channel. It sits at the end
+  // of the timeline and is replaced by the stored row the moment the engine
+  // settles — this is the "live subtitle" half of streaming; without it the
+  // text only appears once a sentence is finished.
+  const live = Object.entries(notes.liveLines.value)
+    .map(([channel, text]) => ({ channel, text: text.trim() }))
+    .filter((l) => l.text !== '')
+    .map((l) => ({
+      id: -1,
+      channel: l.channel,
+      speaker: [...rows].reverse().find((r) => r.channel === l.channel)?.speaker ?? '',
+      startedAt: Date.now(),
+      durationMs: 0,
+      text: l.text,
+      pending: true,
+    }))
+  return groupNoteSegments([...rows, ...live]).slice(-40)
 })
 
 // ── Runtime capture switches ────────────────────────────────────────────────

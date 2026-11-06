@@ -137,6 +137,15 @@ export interface NoteBlock {
    */
   kind?: 'file' | 'screen' | 'shot'
   /**
+   * The sentence being spoken right now, not yet stored.
+   *
+   * The engine revises it while the person talks, so it must never merge into a
+   * committed block: doing so would let a revision rewrite text that is already
+   * in the database. It renders muted and is replaced by the real row the
+   * moment the line is committed.
+   */
+  pending?: boolean
+  /**
    * The same speaker still talking, split off only because the previous block
    * reached `BLOCK_MAX_SPAN_MS`.
    *
@@ -209,7 +218,7 @@ export function groupNoteSegments(list: NoteTimelineRow[]): NoteBlock[] {
     const last = out[out.length - 1]
     // File events are timeline markers, not speech: merging two consecutive
     // ones would produce "打开 a.md 关闭 a.md" as a single line.
-    const mergeable = last && !s.kind && !last.kind
+    const mergeable = last && !s.kind && !last.kind && !s.pending && !last.pending
     const sameTurn = mergeable && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS
     // Only a block that would otherwise keep growing counts as a continuation:
     // after a real break (a pause, a speaker change, a file marker) the row is
@@ -222,13 +231,14 @@ export function groupNoteSegments(list: NoteTimelineRow[]): NoteBlock[] {
         // Frames and file events both carry negative ids (they are not cues),
         // so the kind is part of the key: two rows sharing a key would make Vue
         // reuse the wrong DOM node.
-        key: s.kind === 'shot' ? `s${s.id}` : `n${s.id}`,
+        key: s.pending ? `p${s.channel}` : s.kind === 'shot' ? `s${s.id}` : `n${s.id}`,
         channel: s.channel,
         speaker: s.speaker,
         startedAt: s.startedAt,
         text: s.text,
         ...(continuation ? { continuation: true } : {}),
         ...(s.kind ? { kind: s.kind } : {}),
+        ...(s.pending ? { pending: true } : {}),
         ...(s.fileAction ? { fileAction: s.fileAction } : {}),
         ...(s.shot ? { shot: s.shot } : {}),
       })
@@ -249,6 +259,8 @@ export type NoteTimelineRow = LiveNoteSegment & {
   kind?: 'file' | 'screen' | 'shot'
   fileAction?: 'open' | 'close'
   shot?: NoteBlock['shot']
+  /** See NoteBlock.pending. */
+  pending?: boolean
 }
 
 /** A stored key frame, placed on the same clock as the rows beside it. */
