@@ -4226,6 +4226,7 @@ export default {
     loading: '加载中...',
     download: '下载原文件',
     toggleToc: '切换目录',
+    fitLabel: '自适应屏幕大小',
     fitOn: '自适应屏幕大小',
     fitOff: '恢复原始大小',
     toc: '目录',

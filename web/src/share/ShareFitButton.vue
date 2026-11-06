@@ -11,13 +11,18 @@
     A single toggle rather than a size slider: the reader's question is "why is
     this tiny on my monitor", not "what percentage do I want", and the answer
     can be computed from the screen.
+
+    Hidden when fitting would not change anything (phones, 1080p): a button that
+    visibly does nothing reads as broken, and in a phone topbar it also costs
+    the file name its last few characters.
   -->
   <button
+    v-if="available"
     class="share-btn share-fit-btn"
     :class="{ active: fit }"
     type="button"
     :title="fit ? t('share.fitOff') : t('share.fitOn')"
-    :aria-label="fit ? t('share.fitOff') : t('share.fitOn')"
+    :aria-label="t('share.fitLabel')"
     :aria-pressed="fit"
     data-action="share-fit"
     @click="toggle"
@@ -29,19 +34,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Scaling } from 'lucide-vue-next'
-import { isShareFitEnabled, setShareFitEnabled } from './shareScale'
+import {
+  SHARE_FIT_KEY,
+  applyShareUIScale,
+  isShareFitEnabled,
+  setShareFitEnabled,
+  shareFitAvailable,
+} from './shareScale'
 
 const { t } = useI18n()
+
+/** Computed once: the screen does not change while the page is open. */
+const available = shareFitAvailable()
 
 /**
  * Local mirror of the stored switch.
  *
  * The applied scale lives on `<html>`, which Vue does not track; this ref is
  * what drives the pressed state, and it is seeded from the same storage the
- * entry point used before mount (so the button is correct on first paint).
+ * entry point read before mount (so the button is correct on first paint).
  */
 const fit = ref(isShareFitEnabled())
 
@@ -49,4 +63,22 @@ function toggle(): void {
   fit.value = !fit.value
   setShareFitEnabled(fit.value)
 }
+
+/**
+ * Follow the same choice made in another tab.
+ *
+ * `storage` fires only in the OTHER tabs, which is exactly the case that needs
+ * syncing: without it, a second tab keeps showing "off" (and the design size)
+ * after the reader turned fitting on in the first one.
+ */
+function onStorage(event: StorageEvent): void {
+  if (event.key !== SHARE_FIT_KEY) return
+  const next = isShareFitEnabled()
+  if (next === fit.value) return
+  fit.value = next
+  applyShareUIScale()
+}
+
+onMounted(() => window.addEventListener('storage', onStorage))
+onBeforeUnmount(() => window.removeEventListener('storage', onStorage))
 </script>

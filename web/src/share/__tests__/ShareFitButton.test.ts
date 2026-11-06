@@ -64,19 +64,31 @@ describe('ShareFitButton', () => {
 
   it('names the RESULT in its tooltip, not the current state', async () => {
     // A tooltip that says "fit to screen" while already fitted tells the reader
-    // nothing about what clicking will do.
+    // nothing about what clicking will do. Asserted against the actual strings:
+    // "the two titles differ" would still pass if they were swapped.
     stubScreen(1440)
     const w = mountButton()
     const btn = w.find('[data-action="share-fit"]')
 
-    const offTitle = btn.attributes('title')
+    expect(btn.attributes('title')).toBe(i18n.global.t('share.fitOn'))
     await btn.trigger('click')
     await nextTick()
-    const onTitle = btn.attributes('title')
+    expect(btn.attributes('title')).toBe(i18n.global.t('share.fitOff'))
+  })
 
-    expect(offTitle).toBeTruthy()
-    expect(onTitle).toBeTruthy()
-    expect(onTitle).not.toBe(offTitle)
+  it('keeps a stable accessible name and reports state separately', async () => {
+    // A toggle whose accessible name changes with its state reads as "恢复原始
+    // 大小, 未按下" — the name and the pressed flag contradict each other. The
+    // name says what the control IS; aria-pressed says whether it is on.
+    stubScreen(1440)
+    const w = mountButton()
+    const btn = w.find('[data-action="share-fit"]')
+
+    const name = btn.attributes('aria-label')
+    expect(name).toBe(i18n.global.t('share.fitLabel'))
+    await btn.trigger('click')
+    await nextTick()
+    expect(btn.attributes('aria-label')).toBe(name)
   })
 
   it('reflects a previously stored choice on first render', () => {
@@ -88,9 +100,34 @@ describe('ShareFitButton', () => {
     expect(w.find('[data-action="share-fit"]').attributes('aria-pressed')).toBe('true')
   })
 
+  it('is absent when the screen already fits', () => {
+    // 1080p maps to exactly 100%, so the switch could not change anything. A
+    // dead control reads as broken, and on a phone it costs the file name room.
+    stubScreen(1080)
+    const w = mountButton()
+    expect(w.find('[data-action="share-fit"]').exists()).toBe(false)
+  })
+
+  it('follows the same choice made in another tab', async () => {
+    // `storage` fires only in the OTHER tabs, which is exactly the case that
+    // needs syncing: otherwise a second tab keeps showing "off" (and the design
+    // size) after the reader turned fitting on in the first one.
+    stubScreen(1440)
+    const w = mountButton()
+    const btn = w.find('[data-action="share-fit"]')
+    expect(btn.attributes('aria-pressed')).toBe('false')
+
+    localStorage.setItem(SHARE_FIT_KEY, '1')
+    window.dispatchEvent(new StorageEvent('storage', { key: SHARE_FIT_KEY, newValue: '1' }))
+    await nextTick()
+
+    expect(btn.attributes('aria-pressed')).toBe('true')
+    expect(Number(document.documentElement.style.getPropertyValue(ROOT_ATTR))).toBeGreaterThan(1)
+  })
+
   it('uses a single icon and no text label', () => {
     // The requirement was "one icon is enough": a labelled button would crowd
-    // the topbar on a phone, where the fit switch matters most.
+    // the topbar on a phone.
     stubScreen(1440)
     const w = mountButton()
     const btn = w.find('[data-action="share-fit"]')

@@ -126,6 +126,16 @@
   }
 }
 
+/* Pressed state for the topbar's toggles (the rendered/source view switch and
+   the fit-to-screen switch). GLOBAL, not scoped to one view: `.share-btn` is a
+   shared base class and all four share pages use it — leaving the rule inside
+   ShareView.vue's scoped block meant the fit switch had no visible pressed
+   state on the folder, conversation and meeting-record pages. */
+.share-btn.active {
+  background: var(--bg-tertiary, #eaeef2);
+  color: var(--accent-color, #0969da);
+}
+
 /* Body: content column + TOC rail */
 .share-body {
   display: flex;

@@ -4233,6 +4233,7 @@ export default {
     loading: 'Loading...',
     download: 'Download original',
     toggleToc: 'Toggle table of contents',
+    fitLabel: 'Fit to screen',
     fitOn: 'Fit to my screen',
     fitOff: 'Use the original size',
     toc: 'Contents',

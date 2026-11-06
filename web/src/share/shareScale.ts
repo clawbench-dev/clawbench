@@ -6,16 +6,6 @@ import {
 } from '@/utils/uiScale'
 
 /**
- * The key `useSettingsConfig` stores the UI scale under.
- *
- * Duplicated rather than imported: that module pulls in the whole settings
- * surface (API client, i18n, theme applier) and this entry is a public,
- * unauthenticated page. `shareAutoScale.test.ts` pins the two together so the
- * copy cannot drift.
- */
-export const SHARE_UI_SCALE_KEY = 'clawbench-settings-uiScale'
-
-/**
  * Whether the reader turned "fit to screen" ON for this share page.
  *
  * Deliberately NOT the app's `uiScale` setting: that is a fixed factor the
@@ -61,6 +51,21 @@ export function applyShareUIScale(): number {
   const factor = resolveShareUIScale()
   applyUIScale(factor)
   return factor
+}
+
+/**
+ * Whether fitting would change anything on THIS screen.
+ *
+ * False when the screen already maps to 100% (a phone, a 1080p monitor) — the
+ * switch would be a control that visibly does nothing, and in a phone topbar it
+ * would also eat the last of the file name's room. Hidden rather than disabled:
+ * a greyed-out button invites the reader to wonder what is broken.
+ *
+ * Deliberately independent of the current ON/OFF state: a reader on a big
+ * screen who turns fitting off must still see the switch to turn it back on.
+ */
+export function shareFitAvailable(): boolean {
+  return computeAutoUIScale(currentScreenShortEdge()) !== 1
 }
 
 /**

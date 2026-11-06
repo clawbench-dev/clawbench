@@ -150,14 +150,36 @@ describe('the narrow-layout threshold follows the applied scale', () => {
     expect(shareNarrowQuery()).toBe(`(max-width: ${SHARE_NARROW_MAX_DESIGN_PX}px)`)
   })
 
-  it('is used by both share views instead of a hard-coded query', () => {
-    // A hard-coded `(max-width: 899px)` in either view would silently ignore
-    // the scale for that view only.
+  it('is re-evaluated when the switch changes, not just on mount', () => {
+    // The threshold is part of the media query STRING, and a MediaQueryList
+    // only fires when the window crosses ITS OWN threshold — which may never
+    // happen after the threshold moves. So a cached list plus "compute once on
+    // mount" leaves the layout frozen: the reader turns fitting on, the rail
+    // should collapse into a drawer, and nothing happens until they resize.
+    //
+    // Checked as a source guard because the failure is a missing WIRING, not a
+    // wrong computation (the e2e covers the resulting behaviour in a browser).
     for (const file of ['src/share/ShareView.vue', 'src/share/SessionShareView.vue']) {
       const src = readWebFile(file)
       expect(src, `${file} must use the shared query`).toContain('shareNarrowQuery()')
       expect(src, `${file} still has a hard-coded narrow query`).not.toMatch(
-        /matchMedia\(\s*'\(max-width: 899px\)'/,
+        /matchMedia\(\s*['"]\(max-width: 899px\)['"]/,
+      )
+      // A rebuild that re-creates the list (and re-reads the new threshold).
+      expect(src, `${file} must rebuild the query on scale changes`).toMatch(
+        /function rebuildNarrowQuery\(\)[\s\S]{0,400}matchMedia\(shareNarrowQuery\(\)\)/,
+      )
+      expect(src, `${file} must subscribe to the scale event`).toContain(
+        "window.addEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)",
+      )
+      expect(src, `${file} must unsubscribe on unmount`).toContain(
+        "window.removeEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)",
+      )
+      // Crossing the breakpoint resets the outline to that mode's default;
+      // otherwise turning fitting ON pops a drawer over the page (covering the
+      // switch), and turning it OFF leaves the outline hidden entirely.
+      expect(src, `${file} must re-decide the outline state`).toContain(
+        'if (isNarrow.value !== wasNarrow) tocOpen.value = !isNarrow.value',
       )
     }
   })

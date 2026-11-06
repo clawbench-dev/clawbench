@@ -261,6 +261,7 @@ import { setShareSessionData, shareApiUrl, type ShareToolCallData } from './shar
 import ShareThemeButton from './ShareThemeButton.vue'
 import ShareFitButton from './ShareFitButton.vue'
 import { shareNarrowQuery } from './shareScale'
+import { UI_SCALE_EVENT } from '@/utils/uiScale'
 import { downloadBlob } from '@/utils/download.ts'
 import { formatDuration } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
@@ -329,6 +330,30 @@ let tocMq: MediaQueryList | null = null
 function syncNarrow() {
   if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
   isNarrow.value = window.matchMedia(shareNarrowQuery()).matches
+}
+/**
+ * Re-create the media query after the interface scale changed.
+ *
+ * `shareNarrowQuery()` bakes the scale into the px threshold, so the query
+ * string is stale the moment the reader flips the fit switch — and the cached
+ * MediaQueryList only fires `change` when the WINDOW crosses its own (old)
+ * threshold, which may never happen. Without this the outline rail stays on a
+ * window that is now too narrow for it, squeezing the conversation, until the
+ * reader happens to resize the window.
+ */
+function rebuildNarrowQuery() {
+  if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
+  tocMq?.removeEventListener('change', syncNarrow)
+  tocMq = window.matchMedia(shareNarrowQuery())
+  tocMq.addEventListener('change', syncNarrow)
+  const wasNarrow = isNarrow.value
+  syncNarrow()
+  // Crossing the breakpoint resets the outline to its mode's default, the same
+  // way opening a conversation does (see `tocOpen = !isNarrow` in the loader).
+  // Without it, turning the switch on leaves the reader staring at a drawer
+  // that appeared unrequested and covers the page — including the switch that
+  // opened it.
+  if (isNarrow.value !== wasNarrow) tocOpen.value = !isNarrow.value
 }
 const contentRef = ref<HTMLElement | null>(null)
 /** Row shape consumed by MessageIndexRow (a structural subset of a parsed
@@ -837,16 +862,17 @@ async function loadSnapshot() {
 }
 
 onMounted(() => {
-  syncNarrow()
-  if (typeof window.matchMedia === 'function') {
-    tocMq = window.matchMedia(shareNarrowQuery())
-    tocMq.addEventListener('change', syncNarrow)
-  }
+  rebuildNarrowQuery()
+  // The scale is part of the query string, so flipping the fit switch needs a
+  // fresh MediaQueryList — see rebuildNarrowQuery. UI_SCALE_EVENT (not `resize`)
+  // is the only signal, because scaling does not change the viewport.
+  window.addEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
   void loadSnapshot()
 })
 
 onBeforeUnmount(() => {
   teardownTocObserver()
+  window.removeEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
   tocMq?.removeEventListener('change', syncNarrow)
   tocMq = null
 })

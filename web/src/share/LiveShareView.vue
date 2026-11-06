@@ -1713,10 +1713,14 @@ function syncFullscreen(): void {
  * wrap can change without the window changing at all (a scale change, a font
  * loading, the brand logo rendering).
  */
-function observeDock(): void {
+function stopObservingDock(): void {
   dockResizeObserver?.disconnect()
   dockResizeObserver = null
   dockHeight.value = 0
+}
+
+function observeDock(): void {
+  stopObservingDock()
   const dock = rootRef.value?.querySelector<HTMLElement>('.live-dock')
   if (!dock) return
   const sync = () => {
@@ -1728,12 +1732,22 @@ function observeDock(): void {
   dockResizeObserver.observe(dock)
 }
 
-// The shell (and therefore the dock) is created by the join, and destroyed when
+// The shell (and therefore the dock) is created by the join and torn down when
 // the meeting ends into the record view.
-watch(joined, (isJoined) => {
-  if (isJoined) void nextTick(observeDock)
-  else observeDock()
-})
+//
+// The teardown must NOT call observeDock: this watcher runs before the DOM is
+// patched, so the shell is still in place and observing again would re-attach
+// to a subtree that is about to be removed (and write the stale height back
+// after it was reset). `post` makes the mount case run after the patch, which
+// is when the dock actually exists.
+watch(
+  joined,
+  (isJoined) => {
+    if (isJoined) observeDock()
+    else stopObservingDock()
+  },
+  { flush: 'post' },
+)
 
 /**
  * Toggle fullscreen for the whole viewer.
@@ -1888,8 +1902,7 @@ onBeforeUnmount(() => {
   // The lock lives in the composable, not in this component: unmounting without
   // releasing it would leave the screen on for the rest of the session.
   wakeLock.release('meeting-viewer')
-  dockResizeObserver?.disconnect()
-  dockResizeObserver = null
+  stopObservingDock()
   stopStatsPolling()
   clearNegotiationWatchdog()
   // The "is speaking" chip clears itself on a timer; leaving it armed would

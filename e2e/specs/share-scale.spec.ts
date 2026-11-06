@@ -146,10 +146,11 @@ test.describe('Share page fit-to-screen switch', () => {
     }
   })
 
-  test('stays at the design size on a screen that already fits', async ({ page }) => {
-    // A 1080p reader presses it and sees no change — correct, not broken: the
-    // page already fits. The pressed state still flips so the control never
-    // looks dead.
+  test('is not offered on a screen that already fits', async ({ page }) => {
+    // A 1080p panel maps to exactly 100%, so the switch could not change
+    // anything. A button that visibly does nothing reads as broken, and in a
+    // phone topbar it would also eat the last of the file name's room — so it
+    // is absent rather than disabled.
     const path = await shareConversation(page)
     const ctx = await page.context().browser()!.newContext({
       viewport: { width: 1200, height: 800 },
@@ -160,10 +161,46 @@ test.describe('Share page fit-to-screen switch', () => {
       await p.goto(path)
       await expect(p.locator('.session-share-messages')).toBeVisible({ timeout: 15000 })
 
-      const btn = p.locator('[data-action="share-fit"]')
-      await btn.click()
-      await expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(await rootFontPx(p)).toBeCloseTo(15, 1)
+      await expect(p.locator('[data-action="share-fit"]')).toHaveCount(0)
+    } finally {
+      await ctx.close()
+    }
+  })
+
+  test('a page loaded with the switch already on can be turned back off', async ({ page }) => {
+    // The other direction of the same state: the document loads while fitted
+    // (so the outline starts as a closed drawer), then the reader turns fitting
+    // off. The rail has to come back — it used to stay hidden because the
+    // panel's open/closed state was only decided when the document loaded.
+    const shared = await page.evaluate(async () => {
+      const resp = await fetch('/api/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'README.md' }),
+      })
+      if (!resp.ok) throw new Error(`share: ${resp.status}`)
+      return (await resp.json()) as { path: string; token: string }
+    })
+
+    const ctx = await page.context().browser()!.newContext({
+      viewport: { width: 1100, height: 800 },
+      screen: HI_DPI_SCREEN,
+    })
+    try {
+      const p = await ctx.newPage()
+      await p.addInitScript(() => localStorage.setItem('clawbench-share-fit-to-screen', '1'))
+      await p.goto(shared.path)
+      await expect(p.locator('.share-topbar')).toBeVisible({ timeout: 15000 })
+
+      // Fitted on load: narrow, and the outline starts closed.
+      expect(await rootFontPx(p)).toBeGreaterThan(18)
+      await expect(p.locator('.share-body > .share-toc')).toHaveCount(0)
+      await expect(p.locator('.share-toc-drawer')).toHaveCount(0)
+
+      await p.locator('[data-action="share-fit"]').click()
+      await expect.poll(() => rootFontPx(p)).toBeCloseTo(15, 1)
+      await expect(p.locator('.share-body > .share-toc')).toBeVisible()
     } finally {
       await ctx.close()
     }
@@ -205,6 +242,67 @@ test.describe('Share page fit-to-screen switch', () => {
       if (overflow.topbar) {
         expect(overflow.topbar.right).toBeLessThanOrEqual(overflow.topbar.vw + 1)
       }
+    } finally {
+      await ctx.close()
+    }
+  })
+
+  test('flipping the switch re-decides the outline layout', async ({ page }) => {
+    // The rail/drawer threshold is a DESIGN width multiplied by the factor
+    // (see shareNarrowQuery), so turning the switch on moves the threshold
+    // ABOVE a window that used to be wide. That decision is cached in a
+    // MediaQueryList, which only fires when the WINDOW crosses its threshold —
+    // never when the threshold itself moves. The reader would keep the rail on
+    // a window too narrow for it, squeezing the text, until they resized.
+    const shared = await page.evaluate(async () => {
+      const resp = await fetch('/api/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: 'README.md' }),
+      })
+      if (!resp.ok) throw new Error(`share: ${resp.status}`)
+      return (await resp.json()) as { path: string; token: string }
+    })
+
+    // 1100px: wide at 100% (threshold 899), narrow at 133% (threshold ≈1196).
+    const ctx = await page.context().browser()!.newContext({
+      viewport: { width: 1100, height: 800 },
+      screen: HI_DPI_SCREEN,
+    })
+    try {
+      const p = await ctx.newPage()
+      await p.goto(shared.path)
+      await expect(p.locator('.share-topbar')).toBeVisible({ timeout: 15000 })
+
+      // The document must HAVE an outline, or the test proves nothing.
+      await expect(p.locator('.share-body > .share-toc')).toBeVisible()
+      await expect(p.locator('.share-toc-drawer')).toHaveCount(0)
+
+      await p.locator('[data-action="share-fit"]').click()
+      await expect.poll(() => rootFontPx(p)).toBeGreaterThan(18)
+
+      // Now the same window is too narrow for the scaled rail. The rail goes
+      // away and — this is the part that used to be wrong — the drawer does NOT
+      // pop open on its own: a drawer that appears because the reader pressed
+      // "fit" covers the page they just enlarged, including the switch.
+      await expect(p.locator('.share-body > .share-toc')).toHaveCount(0)
+      await expect(p.locator('.share-toc-drawer')).toHaveCount(0)
+
+      // The outline is still reachable, on demand.
+      await p.locator('[data-action="share-toc"]').click()
+      // Asserted on the PANEL, not the `.share-toc-drawer` wrapper: that
+      // wrapper has no styles of its own (both children are `position: fixed`),
+      // so it has zero size and any visibility check on it reports "hidden"
+      // even when the drawer is on screen.
+      await expect(p.locator('.share-toc-panel')).toBeVisible()
+      await p.locator('.share-toc-backdrop').click()
+      await expect(p.locator('.share-toc-panel')).toHaveCount(0)
+
+      // ...and turning it back off restores the rail, so the decision is
+      // recomputed in both directions.
+      await p.locator('[data-action="share-fit"]').click()
+      await expect(p.locator('.share-body > .share-toc')).toBeVisible()
+      await expect(p.locator('.share-toc-drawer')).toHaveCount(0)
     } finally {
       await ctx.close()
     }
