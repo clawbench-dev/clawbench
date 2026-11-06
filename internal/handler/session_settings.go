@@ -123,6 +123,7 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 		jsonCruise:            service.GetSessionCruise(sessionID),
 		"modeState":           st.Mode,
 		"thinkingEffortState": st.Effort,
+		"configOptions":       st.ConfigOptions,
 		"modelListState":      st.ModelList,
 		"usageState":          st.Usage,
 		jsonCommands:          st.Commands,
@@ -184,6 +185,10 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		Transport      string `json:"transport"`
 		AutoApprove    *bool  `json:"autoApprove"`
 		Cruise         *bool  `json:"cruise"`
+		// ConfigOptions sets agent-specific select options by the agent's own
+		// config-option id (e.g. {"fast-mode": "on"}). Same semantics as
+		// PATCH /api/ai/session — see applyExtraConfigOptions.
+		ConfigOptions map[string]string `json:"configOptions"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -208,6 +213,7 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		Transport:      req.Transport,
 		AutoApprove:    req.AutoApprove,
 		Cruise:         req.Cruise,
+		ConfigOptions:  req.ConfigOptions,
 	}
 	// Reuse the canonical write path: it already handles the model-last
 	// ordering, per-model effort memory, the cruise→auto-approve hard default,
@@ -236,10 +242,19 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.ModelID != "" && req.ThinkingEffort == "" {
 		effectiveEffort = switchSessionEffortToModel(req.SessionID, req.ModelID, deferred)
 	}
+	applyExtraConfigOptions(req.SessionID, req.ConfigOptions)
 	resp := map[string]any{
 		"ok":                  true,
 		"modelSwitchDeferred": deferred,
 		"effortAccepted":      effortAccepted,
+	}
+	if req.ModelID != "" {
+		// The switch re-stated the agent's option list (see ServeAISessionUpdate).
+		// Only present after a model switch: omitting the key means "unchanged",
+		// which a JSON null would not.
+		if extras := sessionExtraConfigOptions(req.SessionID); extras != nil {
+			resp["configOptions"] = extras
+		}
 	}
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort

@@ -155,6 +155,7 @@
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
       @switch-transport="handleSwitchTransport"
+      @switch-config-option="handleSwitchConfigOption"
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
       @toggle-group-cruise="$emit('toggle-group-cruise', $event)"
@@ -1381,6 +1382,11 @@ async function handleSwitchModel(model) {
       dismissSwitchingToast()
     }
     applyEffortAfterModelSwitch(res, effortBefore)
+    // The new model may not support every agent-declared option (codex only
+    // advertises Fast mode for models with a fast tier). The server returns the
+    // refreshed list after a switch, so drop or keep the toggle immediately
+    // instead of leaving a dead choice on screen until the next turn.
+    if (Array.isArray(res?.configOptions)) identity.setConfigOptions(res.configOptions)
   } catch (err) {
     // Same stale-session guard on the failure path — and the spinner must go,
     // or it hangs on screen for a switch the user has already navigated away from.
@@ -1461,6 +1467,26 @@ function restoreModelSelection(sid) {
       identity.currentModelName.value = fallback.modelName
     })
     .catch(() => { /* best effort — the next loadHistory reconciles */ })
+}
+
+/**
+ * Flip an agent-declared generic option (issue #634, codex "fast-mode").
+ *
+ * Optimistic: the row updates immediately and the server forwards the pick to
+ * the agent. Unlike thinking effort there is no per-model validation here — the
+ * option only exists for models that support it (the agent stops advertising it
+ * otherwise), so there is nothing to reject against.
+ */
+function handleSwitchConfigOption(payload) {
+  const configId = payload?.configId
+  const value = payload?.value
+  if (!configId || !value) return
+  identity.setConfigOptionValue(configId, value)
+  persistSessionUpdate({ configOptions: { [configId]: value } }).then((res) => {
+    if (res?.saveFailed) {
+      toast.show(t('chat.sessionSetting.configOptionSaveFailed'), { icon: 'warning', type: 'error' })
+    }
+  })
 }
 
 function handleSwitchThinkingEffort(level) {
@@ -1548,6 +1574,7 @@ function handleSwitchTransport(transport) {
     identity.clearModeState()
     identity.clearCommandState()
     identity.clearThinkingEffortState()
+    identity.clearConfigOptions()
   }
 }
 

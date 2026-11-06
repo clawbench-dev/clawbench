@@ -712,6 +712,7 @@ type ACPCachedState struct {
 	Mode          *ModeState
 	Config        *ConfigOptionState
 	Effort        *ThinkingEffortState
+	ConfigOptions []ExtraConfigOption
 	Commands      []AvailableCommandInfo
 	ModelList     *ModelListState
 	Plan          *PlanState
@@ -755,6 +756,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 	return ACPCachedState{
 		Mode:          reg.GetModeState(agentID, currentModeID),
 		Effort:        reg.GetThinkingEffortState(agentID, currentThinkingEffortID),
+		ConfigOptions: conn.GetExtraConfigOptions(),
 		ModelList:     reg.GetModelListState(agentID, currentModelID),
 		Commands:      reg.GetCommands(agentID),
 		Config:        conn.SessionConfigState(),
@@ -1085,6 +1087,19 @@ type ACPConn struct {
 	// for those well-known categories. This map is used for any additional
 	// categories and as a unified access pattern. Guarded by stateMu.
 	currentSelections map[string]string
+
+	// extraConfigOptions are the agent-advertised select options ClawBench has
+	// no dedicated plumbing for (see ExtraConfigOption). Kept on the connection
+	// rather than the agent-level registry because the list itself is
+	// session-scoped: codex-acp only advertises "Fast mode" for models that
+	// support the faster tier, so an agent-wide cache would show the toggle in
+	// sessions running a model that cannot honor it. Guarded by stateMu.
+	extraConfigOptions []ExtraConfigOption
+	// extraConfigOptionsKnown records that the agent has actually reported its
+	// generic options. It distinguishes "never advertised any" (nothing to
+	// emit) from "advertised, and the list is now empty" (the model no longer
+	// supports the option — clients must be told to drop the toggle).
+	extraConfigOptionsKnown bool
 
 	// lastSetConfig tracks the last values successfully sent to the agent via
 	// setSessionConfigOption. Used to avoid re-sending unchanged values.
@@ -1816,6 +1831,116 @@ func (c *ACPConn) GetCurrentSelection(category string) string {
 		}
 		return c.currentSelections[category]
 	}
+}
+
+// SetExtraConfigOptions replaces the session's generic config options (see
+// ExtraConfigOption). Called when a session is created/resumed/loaded, i.e.
+// whenever the agent re-states what it offers.
+//
+// The agent-reported current value is adopted ONLY when this session has no pick
+// of its own yet: on a resume the agent reports what IT thinks the value is, and
+// that must not overwrite a toggle the user flipped in this process (the same
+// rule the mode/effort caches follow).
+func (c *ACPConn) SetExtraConfigOptions(extras []ExtraConfigOption) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.extraConfigOptions = extras
+	c.extraConfigOptionsKnown = true
+	if c.currentSelections == nil {
+		c.currentSelections = make(map[string]string)
+	}
+	live := make(map[string]bool, len(extras))
+	for _, e := range extras {
+		live[e.ConfigID] = true
+		if e.CurrentID != "" && c.currentSelections[e.ConfigID] == "" {
+			c.currentSelections[e.ConfigID] = e.CurrentID
+		}
+	}
+	// A pick for an option the agent no longer offers is meaningless. Keeping it
+	// would make the toggle come back "on" for a model that never had it (the
+	// agent would report its own "off" and the stale pick would win).
+	for id := range c.currentSelections {
+		if !live[id] {
+			delete(c.currentSelections, id)
+		}
+	}
+}
+
+// UpsertExtraConfigOption merges ONE agent-reported option into the session's
+// generic list (the config_option_update notification path).
+//
+// Unlike SetExtraConfigOptions this ADOPTS the agent's current value even when
+// the user picked something else: the notification is the agent stating what it
+// is actually running now (after accepting, rewriting, or refusing a pick), so
+// it is the correction path for an optimistic UI update.
+func (c *ACPConn) UpsertExtraConfigOption(extra ExtraConfigOption) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.extraConfigOptionsKnown = true
+	if c.currentSelections == nil {
+		c.currentSelections = make(map[string]string)
+	}
+	for i := range c.extraConfigOptions {
+		if c.extraConfigOptions[i].ConfigID != extra.ConfigID {
+			continue
+		}
+		// An update usually carries only id + current value; keep the labels
+		// and value list learned earlier rather than blanking the picker.
+		if extra.Name == "" {
+			extra.Name = c.extraConfigOptions[i].Name
+		}
+		if extra.Description == "" {
+			extra.Description = c.extraConfigOptions[i].Description
+		}
+		if len(extra.Values) == 0 {
+			extra.Values = c.extraConfigOptions[i].Values
+		}
+		c.extraConfigOptions[i] = extra
+		if extra.CurrentID != "" {
+			c.currentSelections[extra.ConfigID] = extra.CurrentID
+		}
+		return
+	}
+	// The agent started offering an option it had not advertised before.
+	c.extraConfigOptions = append(c.extraConfigOptions, extra)
+	if extra.CurrentID != "" {
+		c.currentSelections[extra.ConfigID] = extra.CurrentID
+	}
+}
+
+// HasExtraConfigOptions reports whether the agent has ever advertised generic
+// options for this session. A true result with an EMPTY list means "it used to
+// offer one and no longer does" — clients must still be told, so the toggle
+// disappears instead of offering a choice the agent would reject.
+func (c *ACPConn) HasExtraConfigOptions() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.extraConfigOptionsKnown
+}
+
+// GetExtraConfigOptions returns the session's generic config options with the
+// CURRENT value resolved from this session. Returns nil when the agent
+// advertised none (e.g. a model that does not support the option).
+func (c *ACPConn) GetExtraConfigOptions() []ExtraConfigOption {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if len(c.extraConfigOptions) == 0 {
+		if c.extraConfigOptionsKnown {
+			// Non-nil so "the list became empty" survives serialization as []
+			// rather than null (a null payload is indistinguishable from "no
+			// data" and would be dropped by the hub).
+			return []ExtraConfigOption{}
+		}
+		return nil
+	}
+	out := make([]ExtraConfigOption, len(c.extraConfigOptions))
+	copy(out, c.extraConfigOptions)
+	for i := range out {
+		if cur := c.currentSelections[out[i].ConfigID]; cur != "" {
+			out[i].CurrentID = cur
+		}
+	}
+	return out
 }
 
 // HasCurrentChanged checks if the given value differs from the session's current

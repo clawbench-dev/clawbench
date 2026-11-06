@@ -170,6 +170,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// both surfaces resolve state the same way.
 		st := sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport)
 		modeState, thinkingEffortState, modelListState := st.Mode, st.Effort, st.ModelList
+		configOptions := st.ConfigOptions
 		planState, usageState := st.Plan, st.Usage
 		commands, replayPending := st.Commands, st.ReplayPending
 		teamState := st.Team
@@ -183,10 +184,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "configOptions": configOptions, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "configOptions": configOptions, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 
@@ -798,6 +799,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 type sessionState struct {
 	Mode          any
 	Effort        any
+	ConfigOptions any
 	ModelList     any
 	Plan          any
 	Usage         any
@@ -825,9 +827,12 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// settings drawer. Only an explicit "cli" opts out; empty falls through to
 	// the agent-level lookups below, which is where the real transport is
 	// resolved.
-	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.Team != nil || s.ReplayPending {
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || s.ConfigOptions != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.Team != nil || s.ReplayPending {
 		st.Mode = s.Mode
 		st.Effort = s.Effort
+		// Assigned even when empty: a non-nil empty list means "the agent used
+		// to offer an option and no longer does", which the drawer must act on.
+		st.ConfigOptions = s.ConfigOptions
 		st.Commands = s.Commands
 		st.ModelList = s.ModelList
 		st.Plan = s.Plan

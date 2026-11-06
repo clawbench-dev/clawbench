@@ -206,6 +206,7 @@
         @switch-thinking-effort="handleSwitchThinkingEffort"
         @switch-mode="handleSwitchMode"
         @switch-transport="handleSwitchTransport"
+        @switch-config-option="handleSwitchConfigOption"
       />
       <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
       <!-- Unified completion menus (shared component).
@@ -672,6 +673,7 @@ const emit = defineEmits([
   'switch-thinking-effort',
   'switch-mode',
   'switch-transport',
+  'switch-config-option',
   'sync-acp-session',
   'toggle-group-cruise',
   'toggle-group-parallel',
@@ -2211,6 +2213,10 @@ function handleSwitchMode(mode) {
 
 function handleSwitchTransport(transport) {
   emit('switch-transport', transport)
+}
+
+function handleSwitchConfigOption(payload) {
+  emit('switch-config-option', payload)
 }
 
 // Menu mutual exclusion: opening one closes the others

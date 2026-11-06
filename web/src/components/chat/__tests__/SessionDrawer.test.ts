@@ -176,6 +176,9 @@ const mockIdentity = {
   toggleAutoApprove: vi.fn(),
   cruise: ref(false),
   toggleCruise: vi.fn(),
+  // Agent-declared generic options (codex fast-mode, issue #634).
+  configOptions: ref([]),
+  setConfigOptionValue: vi.fn(),
   // Usage tab reads these (the single-chat path).
   contextUsed: ref(50000),
   contextSize: ref(200000),
@@ -210,6 +213,8 @@ describe('SessionDrawer', () => {
     mockAgents.agents.value = mockAgents.agents.value.filter(a => !a.id.startsWith('tmp-'))
     mockCompactMember.mockReset().mockResolvedValue({ used: 1000, size: 200000 })
     vi.mocked(patchAgentPref).mockResolvedValue(undefined)
+    mockIdentity.configOptions.value = []
+    mockIdentity.setConfigOptionValue.mockClear()
   })
 
   function mountDrawer(props = {}) {
@@ -245,6 +250,66 @@ describe('SessionDrawer', () => {
     expect(tabs[2].text()).toContain('chat.modeSwitcher.title')
     expect(tabs[3].text()).toContain('chat.transportSwitcher.title')
     expect(tabs[4].text()).toContain('chat.sessionInfo.contextUsage')
+  })
+
+  // ── Agent-declared extra options (issue #634) ──
+  // The first user is codex-acp's "Fast mode": a select the agent advertises
+  // only for models with a fast service tier. ClawBench renders it from the
+  // agent's own name/description, so no copy is hardcoded here.
+  describe('extra options tab', () => {
+    const fastMode = {
+      configId: 'fast-mode',
+      name: 'Fast mode',
+      description: '1.5x speed, increased usage',
+      category: 'model_config',
+      currentValueId: 'off',
+      values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+    }
+
+    it('is hidden when the agent advertises no extra options', () => {
+      const wrapper = mountDrawer()
+      expect(wrapper.findAll('.model-tab').length).toBe(5)
+    })
+
+    it('appears with the agent\'s own labels when one is advertised', async () => {
+      mockIdentity.configOptions.value = [fastMode]
+      const wrapper = mountDrawer()
+
+      const tabs = wrapper.findAll('.model-tab')
+      expect(tabs.length).toBe(6)
+      expect(tabs[4].text()).toContain('chat.sessionSetting.advanced')
+
+      await tabs[4].trigger('click')
+      expect(wrapper.find('.extra-config-title').text()).toBe('Fast mode')
+      expect(wrapper.find('.extra-config-desc').text()).toBe('1.5x speed, increased usage')
+
+      const rows = wrapper.findAll('.extra-config-section .thinking-item')
+      expect(rows.map(r => r.text())).toEqual(['Off', 'On'])
+      expect(rows[0].classes()).toContain('current')
+      expect(rows[1].classes()).not.toContain('current')
+    })
+
+    it('emits the picked value and closes', async () => {
+      mockIdentity.configOptions.value = [fastMode]
+      const wrapper = mountDrawer()
+
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.extra-config-section .thinking-item')[1].trigger('click')
+
+      expect(mockIdentity.setConfigOptionValue).toHaveBeenCalledWith('fast-mode', 'on')
+      expect(wrapper.emitted('switch-config-option')?.[0]).toEqual([{ configId: 'fast-mode', value: 'on' }])
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+
+    it('does nothing when the current value is clicked again', async () => {
+      mockIdentity.configOptions.value = [fastMode]
+      const wrapper = mountDrawer()
+
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.extra-config-section .thinking-item')[0].trigger('click')
+
+      expect(wrapper.emitted('switch-config-option')).toBeFalsy()
+    })
   })
 
   // ── Initial state (model tab is default) ──

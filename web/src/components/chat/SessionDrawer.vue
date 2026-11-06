@@ -54,6 +54,18 @@
            usage numbers live next to the other per-session settings instead of
            only behind a tiny bar in the info row. The info-row popup stays: it
            is the one-tap path while reading. -->
+      <!-- Agent-declared extra options (issue #634). Rendered only when the
+           current agent/model actually advertises some: codex's "Fast mode"
+           exists only for models with a fast service tier, and an empty tab
+           would just be a dead end. -->
+      <button
+        v-if="effectiveConfigOptions.length > 0"
+        class="model-tab"
+        :class="{ active: activeTab === 'extra' }"
+        @click="activeTab = 'extra'"
+      >
+        <Gauge :size="13" />{{ t('chat.sessionSetting.advanced') }}
+      </button>
       <button class="model-tab" :class="{ active: activeTab === 'usage' }" @click="activeTab = 'usage'">
         <Activity :size="13" />{{ t('chat.sessionInfo.contextUsage') }}
       </button>
@@ -249,6 +261,45 @@
       </template>
     </div>
 
+    <!-- Extra agent-declared options tab. Values and labels come straight from
+         the agent, so nothing here needs translating — the row title is the
+         agent's own name (e.g. "Fast mode") and the description is its own
+         explanation of the trade-off. -->
+    <div v-if="activeTab === 'extra'" class="model-tab-content">
+      <div v-if="effectiveConfigOptions.length === 0" class="tab-empty-hint">
+        {{ t('chat.sessionSetting.notAvailable') }}
+      </div>
+      <template v-else>
+      <div
+        v-for="opt in effectiveConfigOptions"
+        :key="opt.configId"
+        class="extra-config-section"
+      >
+        <div class="extra-config-head">
+          <span class="extra-config-title">{{ opt.name || opt.configId }}</span>
+          <span v-if="opt.description" class="extra-config-desc">{{ opt.description }}</span>
+        </div>
+        <div class="model-list">
+          <div
+            v-for="(v, idx) in opt.values || []"
+            :key="v.id"
+            class="model-item-wrapper"
+          >
+            <button
+              class="thinking-item"
+              :class="{ current: v.id === opt.currentValueId }"
+              @click="selectConfigOption(opt, v.id)"
+            >
+              <span class="model-item-indicator" :class="{ active: v.id === opt.currentValueId }"></span>
+              <span class="model-item-name">{{ v.name || v.id }}</span>
+            </button>
+            <div v-if="idx < (opt.values || []).length - 1" class="model-divider"></div>
+          </div>
+        </div>
+      </div>
+      </template>
+    </div>
+
     <!-- Context usage tab. ContextUsageDetail deliberately carries NO outer
          padding of its own (its single-chat host, `.usage-popup`, supplies it),
          so the padding has to come from this wrapper — otherwise the rows sit
@@ -271,7 +322,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, ShieldAlert, Cable, Activity } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Cable, Activity, Gauge } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -310,7 +361,7 @@ const props = defineProps({
   targetSessionId: { type: String, default: '' },
 })
 
-const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'changed'])
+const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'switch-config-option', 'changed'])
 
 /**
  * Client-side budget for one refresh. It covers the agent process starting, the
@@ -346,6 +397,16 @@ const effectiveAutoApprove = computed(() => isTargeted.value ? target.value?.aut
 const effectiveCruise = computed(() => isTargeted.value ? target.value?.cruise === true : cruise.value)
 const effectiveModes = computed(() => isTargeted.value ? (target.value?.modeState?.availableModes || []) : availableModes.value)
 const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.availableLevels || []) : availableThinkingEfforts.value)
+// Agent-declared options (codex "fast-mode"). Same two-source rule as the rest:
+// a group member's drawer must describe THAT member, not the current chat.
+const effectiveConfigOptions = computed(() => isTargeted.value ? (target.value?.configOptions || []) : identity.configOptions.value)
+
+// The tab only exists while options are advertised. If they disappear under the
+// open drawer (model switch drops them), fall back to the model tab instead of
+// leaving an unhighlighted strip with an "unavailable" body.
+watch(effectiveConfigOptions, (opts) => {
+  if (activeTab.value === 'extra' && (!opts || opts.length === 0)) activeTab.value = 'model'
+})
 
 /** Load the targeted session's state. No-op for the single-chat path. */
 async function loadTarget() {
@@ -733,6 +794,40 @@ function selectThinkingEffort(level) {
     return
   }
   emit('switch-thinking-effort', level)
+  emit('close')
+}
+
+// --- Agent-declared options (codex "fast-mode", issue #634) ---
+
+function selectConfigOption(opt, value) {
+  if (!opt?.configId || !value || value === opt.currentValueId) return
+  if (isTargeted.value) {
+    // A member's drawer must write the MEMBER. The shared identity refs
+    // describe the current chat, so going through them would silently change
+    // the wrong session's setting while the panel claims to edit this one.
+    if (target.value?.configOptions) {
+      target.value = {
+        ...target.value,
+        configOptions: target.value.configOptions.map(o =>
+          o.configId === opt.configId ? { ...o, currentValueId: value } : o),
+      }
+    }
+    // NOT persistTargeted(): it reloads the session immediately, and the server
+    // forwards this option to the agent asynchronously — the reload would read
+    // the OLD value and undo the optimistic update. The next load reconciles.
+    apiPatch('/api/ai/session/settings', {
+      sessionId: props.targetSessionId,
+      configOptions: { [opt.configId]: value },
+    }).then(() => emit('changed')).catch((err) => {
+      appLog.w('SessionDrawer', 'switch config option failed', err)
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    })
+    return
+  }
+  // Optimistic: the agent echoes its state back over WS, which replaces the
+  // list wholesale. Closing keeps the click feeling like the other pickers.
+  identity.setConfigOptionValue(opt.configId, value)
+  emit('switch-config-option', { configId: opt.configId, value })
   emit('close')
 }
 
@@ -1374,6 +1469,32 @@ defineExpose({
 }
 
 .auto-approve-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #999);
+  line-height: 1.3;
+}
+
+/* Agent-declared options (codex "Fast mode"): a titled group above its value
+   rows. The title/description are the agent's own words, so they get the same
+   hierarchy as the auto-approve block rather than a translated label. */
+.extra-config-section + .extra-config-section {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.extra-config-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-5) calc(14 * var(--dp)) var(--space-2);
+}
+
+.extra-config-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.extra-config-desc {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   line-height: 1.3;

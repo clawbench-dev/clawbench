@@ -70,6 +70,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
     toggleAutoApprove: vi.fn(),
     cruise: ref(false),
     toggleCruise: vi.fn(),
+    configOptions: ref([]),
+    setConfigOptionValue: vi.fn(),
     contextUsed: ref(0),
     contextSize: ref(0),
     contextInputTokens: ref(0),

@@ -605,11 +605,17 @@ type sessionUpdateRequest struct {
 	ModeID         string `json:"modeId"`
 	ThinkingEffort string `json:"thinkingEffort"`
 	ModelID        string `json:"modelId"`
-	Transport      string `json:"transport"`
-	AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
-	Cruise         *bool  `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
-	Title          string `json:"title"`
-	Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
+	// ConfigOptions sets agent-specific select options by the agent's own
+	// config-option id, e.g. {"fast-mode": "on"}. This is the generic channel
+	// for options ClawBench has no dedicated plumbing for (issue #634);
+	// mode/model/thinkingEffort keep their own fields because they carry
+	// extra behavior (persistence, per-model validation).
+	ConfigOptions map[string]string `json:"configOptions"`
+	Transport     string            `json:"transport"`
+	AutoApprove   *bool             `json:"autoApprove"` // pointer: distinguish "not sent" from false
+	Cruise        *bool             `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
+	Title         string            `json:"title"`
+	Pinned        *bool             `json:"pinned"` // pointer: distinguish "not sent" from false
 	// Tags replaces the session's full tag set when non-nil. A pointer is
 	// required here: `"tags": []` (clear all) must be distinguishable from
 	// the field being absent (leave tags untouched), which a plain slice
@@ -668,7 +674,16 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// of leaving the old level on the chip.
 		effectiveEffort = switchSessionEffortToModel(sessionID, req.ModelID, modelSwitchDeferred)
 	}
+	applyExtraConfigOptions(sessionID, req.ConfigOptions)
+
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
+	if req.ModelID != "" {
+		// A model switch re-states the agent's option list (synchronously, via
+		// the set_config_option response), so the fresh list is available here.
+		if extras := sessionExtraConfigOptions(sessionID); extras != nil {
+			resp["configOptions"] = extras
+		}
+	}
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}
@@ -903,6 +918,53 @@ func applySessionCruise(sessionID string, enabled bool) {
 	service.SetSessionCruise(sessionID, enabled)
 	if enabled {
 		applyAutoApprove(sessionID, true)
+	}
+}
+
+// sessionExtraConfigOptions returns the session's agent-declared options, or
+// nil when the agent has advertised none (callers omit the field then).
+//
+// Used to refresh the drawer right after a MODEL SWITCH: the set_config_option
+// response re-states the option list, and a model without a fast tier drops it.
+// Sending the fresh list back in the PATCH response is what removes the toggle
+// immediately instead of leaving it on screen until the next turn starts.
+func sessionExtraConfigOptions(sessionID string) []ai.ExtraConfigOption {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return nil
+	}
+	return conn.GetExtraConfigOptions()
+}
+
+// applyExtraConfigOptions forwards agent-specific select options (e.g. codex's
+// "fast-mode": on/off) to the session's live connection.
+//
+// Keys are the wire ids the agent itself advertised, so no category resolution
+// is needed. Forwarded asynchronously like mode: the click must not wait on the
+// agent, which echoes its new state back over the WebSocket.
+func applyExtraConfigOptions(sessionID string, opts map[string]string) {
+	if len(opts) == 0 {
+		return
+	}
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return
+	}
+	// Only ids the agent itself advertised for THIS session are accepted. This
+	// is not mere validation: without it the generic channel would be a way to
+	// write "mode"/"model" behind the dedicated paths' backs — no persistence,
+	// no per-model effort validation, no auto-approve bookkeeping.
+	known := make(map[string]bool)
+	for _, extra := range conn.GetExtraConfigOptions() {
+		known[extra.ConfigID] = true
+	}
+	for id, value := range opts {
+		if id == "" || value == "" || !known[id] {
+			slog.Warn("session update: ignoring config option the agent did not advertise",
+				"session_id", sessionID, "config_id", id)
+			continue
+		}
+		forwardSessionConfigOption(sessionID, id, value)
 	}
 }
 

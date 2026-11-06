@@ -95,6 +95,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   reconcileModelSelection: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   updateUsageState: vi.fn(),
+  setConfigOptions: vi.fn(),
   currentAgentId: { value: 'test-agent-1' },
   currentModelId: { value: 'test-model-1' },
 }))
@@ -2332,6 +2333,54 @@ describe('useChatStream', () => {
           { id: 'high', name: 'High' },
         ])
         expect(updateThinkingEffortState).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('config_options_update', () => {
+      // Agent-declared generic options (codex fast-mode, issue #634) replace the
+      // whole list: it is per-model, so a merge would keep a toggle visible for
+      // a model that no longer offers it.
+      it('replaces the generic option list', async () => {
+        const { setConfigOptions } = await import('@/composables/useSessionIdentity')
+        ;(setConfigOptions as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('config_options_update', {
+          options: [{
+            configId: 'fast-mode',
+            name: 'Fast mode',
+            description: '1.5x speed, increased usage',
+            category: 'model_config',
+            currentValueId: 'on',
+            values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+          }],
+        })
+
+        expect(setConfigOptions).toHaveBeenCalledTimes(1)
+        expect(setConfigOptions).toHaveBeenCalledWith([{
+          configId: 'fast-mode',
+          name: 'Fast mode',
+          description: '1.5x speed, increased usage',
+          category: 'model_config',
+          currentValueId: 'on',
+          values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+        }])
+      })
+
+      it('ignores a malformed payload', async () => {
+        const { setConfigOptions } = await import('@/composables/useSessionIdentity')
+        ;(setConfigOptions as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('config_options_update', { options: 'nope' })
+
+        expect(setConfigOptions).not.toHaveBeenCalled()
       })
     })
 

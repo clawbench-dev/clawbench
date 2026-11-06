@@ -347,6 +347,28 @@ type ConfigOptionState struct {
 	Options   []ConfigOptionDef `json:"options,omitempty"`
 }
 
+// ExtraConfigOption is an agent-advertised select option that ClawBench has no
+// dedicated plumbing for (mode / model / thought_level each have their own).
+//
+// The first user is codex-acp's "Fast mode": a select with id "fast-mode",
+// category "model_config" and values on/off, advertised only for models that
+// support the faster service tier. Rather than hardcoding each such option, the
+// UI renders whatever the agent advertises from this generic shape — the name,
+// description and value labels all come from the agent, so no per-option
+// translation is needed.
+//
+// Both the option LIST and its current value are session-scoped: codex only
+// advertises Fast mode for models that support it, so an agent-level cache
+// would leak the toggle into sessions running a different model.
+type ExtraConfigOption struct {
+	ConfigID    string              `json:"configId"` // wire id, e.g. "fast-mode"
+	Name        string              `json:"name,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Category    string              `json:"category"`       // e.g. "model_config"
+	CurrentID   string              `json:"currentValueId"` // empty when the agent reported none
+	Values      []ConfigOptionValue `json:"values,omitempty"`
+}
+
 // AvailableCommandInfo represents a slash command discovered from an ACP agent
 // via the available_commands_update session notification.
 type AvailableCommandInfo struct {
@@ -440,7 +462,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "system_message", "stream_start", "replay_done", "content_reset"
+	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "config_options_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "system_message", "stream_start", "replay_done", "content_reset"
 	Content string // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	// ThinkID is the stable identity of a thinking block, set on Type=thinking
 	// from the moment the block opens (see AccumulateBlock, which mints it and
@@ -465,6 +487,7 @@ type StreamEvent struct {
 	QueueEvent     *QueueEventData        // Queue data (Type=queue_drain, queue_inject, queue_cancel)
 	Mode           *ModeState             // Mode state (Type=mode_update)
 	Config         *ConfigOptionState     // Config option state (Type=config_update)
+	ConfigOptions  []ExtraConfigOption    // Agent-specific select options (Type=config_options_update)
 	Commands       []AvailableCommandInfo // Slash commands (Type=commands_update)
 	ThinkingEffort *ThinkingEffortState   // Thinking effort state (Type=thinking_effort_update)
 	Plan           *PlanState             // Plan state (Type=plan_update)

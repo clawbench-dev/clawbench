@@ -394,3 +394,58 @@ func mapACPSelectOptions(opts acp.SessionConfigSelectOptions, optDef *ConfigOpti
 		}
 	}
 }
+
+// wellKnownConfigCategories are the config-option categories ClawBench has
+// dedicated plumbing for (mode chips, thinking-effort chips, the model list).
+// Every OTHER select option an agent advertises is surfaced generically as an
+// ExtraConfigOption so the UI can render it without new backend code — the
+// first real case is codex-acp's "Fast mode" (category "model_config", issue
+// #634).
+func isWellKnownConfigCategory(category string) bool {
+	switch category {
+	case string(acp.SessionConfigOptionCategoryMode),
+		string(acp.SessionConfigOptionCategoryModel),
+		string(acp.SessionConfigOptionCategoryThoughtLevel):
+		return true
+	}
+	return false
+}
+
+// extractExtraConfigOptions returns the generic select options from a session
+// response: every select whose category is not one of the well-known three and
+// that actually offers values. The result is session-scoped (codex only
+// advertises Fast mode for models that support it), so callers must keep it on
+// the connection, never in the agent-level capability registry.
+func extractExtraConfigOptions(opts []acp.SessionConfigOption) []ExtraConfigOption {
+	var extras []ExtraConfigOption
+	for _, opt := range opts {
+		if opt.Select == nil {
+			continue
+		}
+		sel := opt.Select
+		category := ""
+		if sel.Category != nil {
+			category = string(*sel.Category)
+		}
+		if category == "" || isWellKnownConfigCategory(category) {
+			continue
+		}
+		extra := ExtraConfigOption{
+			ConfigID:  string(sel.Id),
+			Name:      sel.Name,
+			Category:  category,
+			CurrentID: string(sel.CurrentValue),
+		}
+		if sel.Description != nil {
+			extra.Description = *sel.Description
+		}
+		def := ConfigOptionDef{}
+		mapACPSelectOptions(sel.Options, &def)
+		extra.Values = def.Values
+		if len(extra.Values) == 0 {
+			continue
+		}
+		extras = append(extras, extra)
+	}
+	return extras
+}

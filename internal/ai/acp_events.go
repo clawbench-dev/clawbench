@@ -500,6 +500,26 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
 					}
 				}
+
+			default:
+				// Agent-specific option (codex's "model_config" / fast-mode).
+				//
+				// This is the CORRECTION path: the notification states what the
+				// agent is actually running, so it overrides the optimistic value
+				// the drawer applied on click (the agent may have refused or
+				// rewritten the pick). Dropping it — the previous behaviour, the
+				// switch had no default — left the drawer showing a value the agent
+				// never accepted until the next full reload.
+				//
+				// Only this one option is merged; the rest of the list stays, since
+				// a config_option_update may carry a single entry.
+				if conn == nil {
+					continue
+				}
+				if extras := extractExtraConfigOptions([]acp.SessionConfigOption{opt}); len(extras) == 1 {
+					conn.UpsertExtraConfigOption(extras[0])
+					forwardACPEvent(ch, StreamEvent{Type: "config_options_update", ConfigOptions: conn.GetExtraConfigOptions()})
+				}
 			}
 		}
 

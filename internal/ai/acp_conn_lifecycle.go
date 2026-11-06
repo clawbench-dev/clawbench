@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -632,6 +633,9 @@ type cachedConfigSnapshot struct {
 	mode   string
 	model  string
 	effort string
+	// extras are the generic agent options this session had flipped (e.g.
+	// codex's fast-mode: on). Config id → value; nil when nothing was set.
+	extras map[string]string
 }
 
 // snapshotCachedConfig captures current session-level config values before a respawn.
@@ -639,12 +643,18 @@ type cachedConfigSnapshot struct {
 // and stateMu is a leaf lock so acquiring it there is safe.
 func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-	return cachedConfigSnapshot{
-		mode:   c.currentModeID,
-		model:  c.currentModelID,
-		effort: c.currentThinkingEffortID,
+	mode, model, effort := c.currentModeID, c.currentModelID, c.currentThinkingEffortID
+	var extras map[string]string
+	if len(c.extraConfigOptions) > 0 && len(c.currentSelections) > 0 {
+		extras = make(map[string]string, len(c.extraConfigOptions))
+		for _, e := range c.extraConfigOptions {
+			if v := c.currentSelections[e.ConfigID]; v != "" {
+				extras[e.ConfigID] = v
+			}
+		}
 	}
+	c.stateMu.Unlock()
+	return cachedConfigSnapshot{mode: mode, model: model, effort: effort, extras: extras}
 }
 
 // recoverViaLoadSession recovers a session via LoadSession and returns
@@ -777,8 +787,18 @@ func (c *ACPConn) reapplyConfigAfterResume(ctx context.Context, acpSID string, p
 	c.reapplyConfigOption(ctx, acpSID, c.resolveWireConfigIDLocked("mode", "mode"), prevConfig.mode)
 	c.reapplyModelSelection(ctx, acpSID, prevConfig.model)
 	c.reapplyConfigOption(ctx, acpSID, c.resolveWireConfigIDLocked("thought_level", "thinkingEffort"), prevConfig.effort)
+	// Generic agent options (e.g. codex's fast-mode) are re-applied by their own
+	// wire id. Sorted so the RPC order is deterministic for tests and logs.
+	extraIDs := make([]string, 0, len(prevConfig.extras))
+	for id := range prevConfig.extras {
+		extraIDs = append(extraIDs, id)
+	}
+	sort.Strings(extraIDs)
+	for _, id := range extraIDs {
+		c.reapplyConfigOption(ctx, acpSID, id, prevConfig.extras[id])
+	}
 	slog.Info("acp perf: reapplyConfigAfterResume.total", "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(reapplyStart),
-		"mode", prevConfig.mode, "model", prevConfig.model, "effort", prevConfig.effort)
+		"mode", prevConfig.mode, "model", prevConfig.model, "effort", prevConfig.effort, "extras", len(extraIDs))
 }
 
 // reapplyConfigOption sets a config option on the resumed session if the value is non-empty
@@ -1392,15 +1412,10 @@ func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value st
 	c.markConfigSet(wireID, value)
 
 	// Keep the session-level cached current value in sync so re-emitted WS
-	// events reflect the new selection.
-	switch category {
-	case "mode":
-		c.UpdateCachedCurrent("mode", value)
-	case "thought_level":
-		c.UpdateCachedCurrent("thought_level", value)
-	case "model":
-		c.UpdateCachedCurrent("model", value)
-	}
+	// events reflect the new selection. UpdateCachedCurrent already dispatches
+	// on the category, including agent-specific ones (the currentSelections
+	// map) — a switch here would silently drop them.
+	c.UpdateCachedCurrent(category, value)
 }
 
 // isInvalidConfigValue reports whether the agent rejected a config VALUE (as
@@ -1554,6 +1569,17 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 	if len(opts) == 0 {
 		return
 	}
+
+	// Session-scoped generic options (codex's "fast-mode") are refreshed from
+	// the same response: switching to a model without a fast tier REMOVES the
+	// option, and leaving a stale toggle in the drawer would offer a choice the
+	// agent rejects. Only when this response carries one, or the session already
+	// had one — otherwise every agent would be flagged as "advertises extras"
+	// and start emitting empty events on every turn.
+	if extras := extractExtraConfigOptions(opts); len(extras) > 0 || c.HasExtraConfigOptions() {
+		c.SetExtraConfigOptions(extras)
+	}
+
 	agentID := c.AgentID()
 	if agentID == "" {
 		return
@@ -1563,12 +1589,18 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		if opt.Select == nil || opt.Select.Category == nil {
 			continue
 		}
-		sel := buildSelectStateFromACPSelect(opt.Select, string(*opt.Select.Category))
+		category := string(*opt.Select.Category)
+		if !isWellKnownConfigCategory(category) {
+			// Session-scoped (codex's "model_config"): it belongs to THIS
+			// connection, not the agent-level registry, which is shared by every
+			// session and would leak the option into sessions on other models.
+			continue
+		}
+		sel := buildSelectStateFromACPSelect(opt.Select, category)
 		if sel.IsEmpty() {
 			continue
 		}
-		category := sel.Category
-		switch string(*opt.Select.Category) {
+		switch category {
 		case string(acp.SessionConfigOptionCategoryThoughtLevel):
 			category = "thought_level"
 		case string(acp.SessionConfigOptionCategoryMode):

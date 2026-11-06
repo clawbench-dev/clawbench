@@ -587,6 +587,48 @@ func TestStreamEventToPayload_CommandsUpdateNil(t *testing.T) {
 	assert.Nil(t, payload, "nil commands should return nil")
 }
 
+// Agent-declared generic options (codex fast-mode) must reach the client with
+// their full value list; the drawer renders straight from this payload.
+func TestStreamEventToPayload_ConfigOptionsUpdate(t *testing.T) {
+	opts := []ai.ExtraConfigOption{{
+		ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config",
+		CurrentID: "on",
+		Values:    []ai.ConfigOptionValue{{ID: "off", Name: "Off"}, {ID: "on", Name: "On"}},
+	}}
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "config_options_update", ConfigOptions: opts})
+	m, ok := payload.(map[string]any)
+	require.True(t, ok)
+	got, ok := m["options"].([]ai.ExtraConfigOption)
+	require.True(t, ok)
+	require.Len(t, got, 1)
+	assert.Equal(t, "fast-mode", got[0].ConfigID)
+	assert.Equal(t, "on", got[0].CurrentID)
+	assert.Len(t, got[0].Values, 2)
+}
+
+// An EMPTY (non-nil) list is a real signal: the current model no longer
+// supports the option, so the client must drop the toggle. It must survive as
+// {"options": []} — a nil payload would make Emit skip the event entirely and
+// leave a dead toggle on screen.
+func TestStreamEventToPayload_ConfigOptionsUpdateEmptyList(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:          "config_options_update",
+		ConfigOptions: []ai.ExtraConfigOption{},
+	})
+	m, ok := payload.(map[string]any)
+	require.True(t, ok)
+	got, ok := m["options"].([]ai.ExtraConfigOption)
+	require.True(t, ok)
+	assert.Empty(t, got)
+}
+
+// nil means "this event carries nothing" (e.g. an agent that never advertised
+// extras), which Emit skips — same contract as commands_update.
+func TestStreamEventToPayload_ConfigOptionsUpdateNil(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "config_options_update"})
+	assert.Nil(t, payload)
+}
+
 func TestStreamEventToPayload_ThinkingEffortUpdate(t *testing.T) {
 	effort := &ai.ThinkingEffortState{CurrentID: "high"}
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effort})

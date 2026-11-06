@@ -9,7 +9,7 @@ import { appLog } from '@/utils/appLog'
 import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 
 const TAG = 'ChatSession'
-import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions, reconcileThinkingEffort } from '@/composables/useSessionIdentity.ts'
+import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, setConfigOptions, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions, reconcileThinkingEffort } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
@@ -412,6 +412,10 @@ export function useChatSession(options: UseChatSessionOptions) {
         updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
       }
     }
+    // Agent-declared generic options (codex fast-mode, issue #634). Replaced
+    // wholesale on every load: the list is per-model, so a session switch must
+    // not keep the previous session's toggle on screen.
+    setConfigOptions(sessionData.configOptions as Parameters<typeof setConfigOptions>[0])
     if (Array.isArray(sessionData.commands) && (sessionData.commands as Array<unknown>).length > 0 && availableCommands.value.length === 0) {
       updateCommandState(sessionData.commands as Array<{ name: string; description: string; inputHint?: string }>)
     }
