@@ -153,7 +153,7 @@
           @remove="$emit('remove-quote', quote.id)"
         />
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
-        <AttachmentTags :files="attachedFiles" :pending-files="pendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
+        <AttachmentTags :files="attachedFiles" :pending-files="visiblePendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
@@ -1920,11 +1920,20 @@ const hasInputContent = computed(() => inputText.value.trim() || props.attachedF
 // retains completed (non-uploading) entries as a mirror of attachedFiles, but
 // AttachmentTags only draws in-flight ones — counting those mirrors here would
 // mount a childless container whose padding shows as dead vertical space.
+//
+// While the attachment sheet is open the picker owns the progress display (its
+// Uploads tab), and nothing it uploads may reach the composer before OK. Showing
+// the in-flight cards here as well produced the reported #629 flash: the card
+// unmounted the instant `uploading` flipped false, so the strip went from one
+// card to none and the file looked lost.
+const visiblePendingFiles = computed(() =>
+  attachDrawer.effectiveOpen.value ? [] : pendingFiles.value,
+)
 const hasAttachmentTags = computed(() =>
   quoteItems.value.length > 0
   || mentionItems.value.length > 0
   || props.attachedFiles.length > 0
-  || pendingFiles.value.some(f => f.uploading),
+  || visiblePendingFiles.value.some(f => f.uploading),
 )
 
 // Extract recently referenced files from message history

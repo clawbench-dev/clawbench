@@ -123,12 +123,11 @@ test.describe('Chat', () => {
       // three and trips Playwright's strict mode.
       await drawer.locator('input[type="file"]:not([accept])').setInputFiles(testFilePath)
 
-      // The sheet stays open until OK, but the finished upload is already in
-      // the composer (see AttachDrawer.test.ts — "onFileSelect keeps the sheet
-      // open, shows the upload in the draft AND attaches it"): a draft-only
-      // upload vanished from the input bar whenever the sheet was dismissed
-      // (issue #629). The footer chip is still the signal that the background
-      // transfer finished — it appears as the upload commits.
+      // The sheet is a picker: nothing reaches the composer until OK (see
+      // AttachDrawer.test.ts — "onFileSelect keeps the sheet open and puts the
+      // upload in the draft, not the composer"). The footer chip is the signal
+      // that the background transfer finished; confirming before it appears
+      // would commit an empty selection.
       const draftChip = drawer.locator('.ad-footer .chat-file-attachment')
       await expect(draftChip.first()).toBeVisible({ timeout: 20000 })
       await drawer.locator('[data-action="attach-ok"]').click()

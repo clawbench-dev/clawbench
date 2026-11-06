@@ -64,8 +64,8 @@ test.describe('Queued message with an image attachment', () => {
     const drawer = page.locator('.bs-panel').filter({ has: page.locator('.ad-header') })
     await expect(drawer).toBeVisible({ timeout: 10000 })
     await drawer.locator('input[type="file"]:not([accept])').setInputFiles(filePath)
-    // The drawer stays open until OK. A finished upload is already committed to
-    // the composer by then (issue #629), so OK here only closes the sheet.
+    // The drawer stays open until OK: the selection is a local draft, and OK
+    // is what hands it to the caller.
     await drawer.locator('[data-action="attach-ok"]').click()
     await expect(drawer).toBeHidden({ timeout: 10000 })
     // The input bar's attachment strip is the surface the user sees while the

@@ -2216,6 +2216,29 @@ describe('ChatInputBar', () => {
     mockPendingFilesValue.value = []
   })
 
+  it('hides in-flight cards while the attachment sheet is open', async () => {
+    // The picker owns the progress display (its Uploads tab), and nothing it
+    // uploads may reach the composer before OK. Drawing the card here as well
+    // made the strip go from one card to none the instant the transfer
+    // finished, which read as "the thumbnail flashed and the file was lost"
+    // (#629).
+    mockPendingFilesValue.value = [
+      { path: '', previewUrl: null, isImage: true, uploading: true, progress: 40, size: 10 },
+    ]
+    mockEffectiveOpen.value = true
+    const wrapper = mountBar({ attachedFiles: [] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.attachment-pending').exists()).toBe(false)
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(false)
+
+    // Closing the sheet brings them back: the strip is the only progress
+    // display left once the picker is gone.
+    mockEffectiveOpen.value = false
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.attachment-pending').exists()).toBe(true)
+    mockPendingFilesValue.value = []
+  })
+
   it('command menu input watcher opens on / and closes after a space', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
