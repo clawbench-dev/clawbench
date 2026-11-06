@@ -37,7 +37,11 @@
       connection_failed: 'Connection failed: ',
       connect_error: 'Unable to connect. Check address and network.',
       wrong_password: 'Wrong password',
-      too_many_attempts: 'Too many attempts'
+      too_many_attempts: 'Too many attempts',
+      saved_password_placeholder: 'Saved password',
+      saved_password_unavailable: 'The saved password is unavailable. Enter it again or ignore saved credentials.',
+      ignore_credentials: 'Ignore saved credentials',
+      credentials_ignored: 'Passwords will not be read or saved during this session.'
     },
     zh: {
       slogan: '从掌心到桌面',
@@ -67,7 +71,11 @@
       connection_failed: '连接失败: ',
       connect_error: '无法连接到服务器，请检查地址和网络。',
       wrong_password: '密码错误',
-      too_many_attempts: '尝试次数过多'
+      too_many_attempts: '尝试次数过多',
+      saved_password_placeholder: '已保存密码',
+      saved_password_unavailable: '无法读取已保存密码，请重新输入或忽略已保存凭据。',
+      ignore_credentials: '忽略已保存凭据',
+      credentials_ignored: '本次会话不读取或保存密码。'
     }
   };
   var LANG = 'en';
@@ -1344,6 +1352,9 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span data-i18n="add_server">添加服务器</span>
       </button>
+      <button type="button" class="add-server-btn" id="ignoreCredentialsBtn" style="display:none;">
+        <span data-i18n="ignore_credentials">忽略已保存凭据</span>
+      </button>
     </div>
 
     <div class="version" id="version"></div>
@@ -1365,7 +1376,9 @@
 <script src="../system-bars.js"></script>
 <script>
   var connecting = false;
+  var saving = false;
   var savedServers = [];
+  var credentialRecoveryNeeded = false;
 
   // SVG icons
   var SVG_SERVER = '<svg class="server-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>';
@@ -1397,29 +1410,30 @@
     // Event: connect to existing server
     document.getElementById('connectForm').addEventListener('submit', async function(e) {
       e.preventDefault();
-      if (connecting) return;
+      if (connecting || saving) return;
       hideError('errorMsg');
 
+      var connectForm = document.getElementById('connectForm');
+      var url = connectForm.getAttribute('data-url');
+      if (!url) return;
       var passwordEl = document.getElementById('password');
       var passwordVisible = document.getElementById('passwordGroup').style.display !== 'none';
-      var password = passwordVisible ? passwordEl.value : (connectForm.getAttribute('data-saved-password') || '');
+      var reference = connectForm.getAttribute('data-saved-password') || '';
+      var credential = passwordVisible ? { kind: 'plain', value: passwordEl.value } :
+        { kind: 'saved', ref: reference, sourceUrl: url };
 
-      if (!password) {
+      if (passwordVisible ? !credential.value : !reference) {
         showError('errorMsg', t('enter_password'));
         passwordEl.focus();
         return;
       }
 
-      // Current server URL is stored as data attribute on the form
-      var url = document.getElementById('connectForm').getAttribute('data-url');
-      if (!url) return;
-
       setConnecting(true);
       try {
         // The HarmonyOS host saves the credential only after authentication succeeds.
-        await ClawBenchNative.connectToServer(url, password);
+        await ClawBenchNative.connectToServer(url, credential);
       } catch(e) {
-        onConnectError(e.message, e.code);
+        onConnectError(e.message, e.code, url);
       }
     });
 
@@ -1428,7 +1442,7 @@
     // Saving never connects — the user picks the server and presses Connect.
     document.getElementById('addServerForm').addEventListener('submit', async function(e) {
       e.preventDefault();
-      if (connecting) return;
+      if (connecting || saving) return;
       hideError('addErrorMsg');
 
       var editingUrl = document.getElementById('addServerForm').getAttribute('data-edit-url') || '';
@@ -1447,6 +1461,16 @@
         return;
       }
       var password = document.getElementById('addPassword').value;
+      var form = document.getElementById('addServerForm');
+      if (form.getAttribute('data-credential-state') === 'unavailable' &&
+          form.getAttribute('data-password-edited') !== 'true' && !ClawBenchNative.areSavedCredentialsIgnored()) {
+        showError('addErrorMsg', t('saved_password_unavailable'));
+        updateCredentialRecovery();
+        return;
+      }
+      var reference = form.getAttribute('data-password-ref') || '';
+      var credential = reference ? { kind: 'saved', ref: reference, sourceUrl: editingUrl } :
+        { kind: 'plain', value: password };
       var name = normalizeServerName(document.getElementById('addName').value);
       // Renaming onto another saved server would silently overwrite that
       // server's password (saveServer keys on URL). Refuse instead.
@@ -1466,15 +1490,17 @@
 
       setSaving(true);
       try {
-        await ClawBenchNative.saveServerNamed(url, password, name);
+        await ClawBenchNative.saveServerNamed(url, credential, name);
         // URL changed while editing -> the old entry is now a different server,
         // so retire it. Only when it actually differs: deleting the same URL
         // would drop the entry we just saved.
         if (editingUrl && editingUrl !== url) {
           await ClawBenchNative.removeServer(editingUrl);
         }
+        await ClawBenchNative.selectServer(url);
       } catch(e) {
         showError('addErrorMsg', t('connection_failed') + e.message);
+        noteCredentialFailure(e.code);
         setSaving(false);
         return;
       }
@@ -1506,6 +1532,33 @@
     document.getElementById('cancelAddBtn').addEventListener('click', function() {
       hideAddForm();
     });
+    document.getElementById('addPassword').addEventListener('input', function() {
+      var form = document.getElementById('addServerForm');
+      form.removeAttribute('data-password-ref');
+      form.setAttribute('data-password-edited', 'true');
+      this.placeholder = t('password_placeholder');
+    });
+    document.getElementById('ignoreCredentialsBtn').addEventListener('click', async function() {
+      if (connecting || saving) return;
+      saving = true;
+      updateBusyControls();
+      try {
+        await ClawBenchNative.ignoreSavedCredentials();
+        document.getElementById('addPassword').value = '';
+        document.getElementById('addServerForm').removeAttribute('data-password-ref');
+        document.getElementById('addServerForm').style.display = 'none';
+        credentialRecoveryNeeded = false;
+        saving = false;
+        loadServerList();
+      } catch(e) {
+        var errorId = document.getElementById('addServerForm').style.display === 'none' ?
+          'errorMsg' : 'addErrorMsg';
+        showError(errorId, e.message || t('connect_error'));
+      } finally {
+        saving = false;
+        updateBusyControls();
+      }
+    });
   });
 
   function loadServerList() {
@@ -1517,6 +1570,7 @@
       savedServers = [];
     }
     renderServerList();
+    updateCredentialRecovery();
   }
 
   function renderServerList() {
@@ -1534,10 +1588,13 @@
       return;
     }
 
-    // Build server list HTML — default to first server in list
+    var activeUrl = '';
+    try { activeUrl = ClawBenchNative.getActiveServer(); } catch(e) {}
+    var selected = savedServers.find(function(server) { return server.url === activeUrl; }) || savedServers[0];
+
     var html = '';
-    savedServers.forEach(function(srv, idx) {
-      var isActive = (idx === 0);
+    savedServers.forEach(function(srv) {
+      var isActive = srv.url === selected.url;
       // A named server shows its name; an unnamed one falls back to the
       // address. The full address always stays in the title tooltip, so a
       // named row is still identifiable (and copying it is possible).
@@ -1566,27 +1623,22 @@
     connectForm.style.display = 'block';
     addBtn.style.display = 'flex';
 
-    // Select first server by default
-    var selected = savedServers[0];
-
-    connectForm.setAttribute('data-url', selected.url);
-    connectForm.setAttribute('data-saved-password', selected.password || '');
-    // Hide password field if saved password exists; show if no password saved
-    var passwordGroup = document.getElementById('passwordGroup');
-    var passwordEl = document.getElementById('password');
-    if (selected.password) {
-      passwordGroup.style.display = 'none';
-      passwordEl.value = '';
-    } else {
-      passwordGroup.style.display = 'block';
-      passwordEl.value = '';
-      passwordEl.focus();
-    }
+    applyServerSelection(selected.url);
   }
 
   function selectServer(url) {
+    if (connecting || saving) return;
+    if (!applyServerSelection(url)) return;
+    ClawBenchNative.selectServer(url).catch(function(error) {
+      if (document.getElementById('connectForm').getAttribute('data-url') !== url) return;
+      showError('errorMsg', error.message || t('connect_error'));
+      noteCredentialFailure(error.code);
+    });
+  }
+
+  function applyServerSelection(url) {
     var srv = savedServers.find(function(s) { return s.url === url; });
-    if (!srv) return;
+    if (!srv) return false;
 
     // Update active state visually
     var items = document.querySelectorAll('.server-item');
@@ -1613,6 +1665,37 @@
       passwordEl.value = '';
       passwordEl.focus();
     }
+    if (srv.credentialState === 'unavailable') {
+      showError('errorMsg', t('saved_password_unavailable'));
+    } else if (ClawBenchNative.areSavedCredentialsIgnored()) {
+      showError('errorMsg', t('credentials_ignored'));
+    }
+    return true;
+  }
+
+  function noteCredentialFailure(code) {
+    if (code === 'credential_read_failed' || code === 'credential_save_failed' ||
+        code === 'credential_remove_failed') {
+      credentialRecoveryNeeded = true;
+      updateCredentialRecovery();
+    }
+  }
+
+  function updateCredentialRecovery() {
+    var ignored = ClawBenchNative.areSavedCredentialsIgnored();
+    var unavailable = savedServers.some(function(server) { return server.credentialState === 'unavailable'; });
+    document.getElementById('ignoreCredentialsBtn').style.display =
+      !ignored && (unavailable || credentialRecoveryNeeded) ? 'flex' : 'none';
+    if (ignored) {
+      var errorId = document.getElementById('addServerForm').style.display === 'none' ?
+        'errorMsg' : 'addErrorMsg';
+      showError(errorId, t('credentials_ignored'));
+    }
+  }
+
+  function onConnectStart(url) {
+    applyServerSelection(url);
+    setConnecting(true);
   }
 
   function customConfirm(message, opts) {
@@ -1659,13 +1742,20 @@
   }
 
   function deleteServer(url) {
+    if (connecting || saving) return;
     customConfirm(t('delete_server_msg'), { title: t('delete_server_title'), confirmText: t('delete') }).then(async function(ok) {
-      if (!ok) return;
+      if (!ok || connecting || saving) return;
+      saving = true;
+      updateBusyControls();
       try {
         await ClawBenchNative.removeServer(url);
       } catch(e) {
         showError('errorMsg', t('connection_failed') + e.message);
+        noteCredentialFailure(e.code);
         return;
+      } finally {
+        saving = false;
+        updateBusyControls();
       }
       loadServerList();
     });
@@ -1675,19 +1765,25 @@
    * Show the form for adding a NEW server: empty fields, "Add" button.
    */
   function showAddForm() {
+    if (connecting || saving) return;
     var form = document.getElementById('addServerForm');
     // Empty data-edit-url is what marks this as an add, not an edit.
     form.setAttribute('data-edit-url', '');
+    form.removeAttribute('data-password-ref');
+    form.removeAttribute('data-credential-state');
+    form.removeAttribute('data-password-edited');
     document.getElementById('addFormTitle').style.display = 'none';
     document.getElementById('addName').value = '';
     document.getElementById('addAddress').value = '';
     document.getElementById('addPassword').value = '';
+    document.getElementById('addPassword').placeholder = t('password_placeholder');
     document.getElementById('addBtnText').textContent = t('add');
 
     document.getElementById('serverListSection').style.display = 'none';
     document.getElementById('connectForm').style.display = 'none';
     document.getElementById('addServerBtn').style.display = 'none';
     form.style.display = 'block';
+    updateCredentialRecovery();
   }
 
   /**
@@ -1696,18 +1792,24 @@
    * old URL when the address changes.
    */
   function editServer(url) {
+    if (connecting || saving) return;
     var srv = savedServers.find(function(s) { return s.url === url; });
     if (!srv) return;
 
     var form = document.getElementById('addServerForm');
     form.setAttribute('data-edit-url', url);
+    form.setAttribute('data-credential-state', srv.credentialState || '');
+    form.removeAttribute('data-password-edited');
     var title = document.getElementById('addFormTitle');
     title.textContent = t('edit_server');
     title.style.display = 'block';
     document.getElementById('addName').value = normalizeServerName(srv.name);
     document.getElementById('addAddress').value = srv.url;
-    // Prefill the saved password so saving without retyping keeps it.
-    document.getElementById('addPassword').value = srv.password || '';
+    // Keep the reference separate from user input so every literal password stays valid.
+    form.setAttribute('data-password-ref', srv.password || '');
+    document.getElementById('addPassword').value = '';
+    document.getElementById('addPassword').placeholder =
+      t(srv.password ? 'saved_password_placeholder' : 'password_placeholder');
     document.getElementById('addBtnText').textContent = t('save');
 
     document.getElementById('serverListSection').style.display = 'none';
@@ -1716,9 +1818,11 @@
     form.style.display = 'block';
     hideError('addErrorMsg');
     document.getElementById('addAddress').focus();
+    updateCredentialRecovery();
   }
 
   function hideAddForm() {
+    if (connecting || saving) return;
     document.getElementById('addServerForm').style.display = 'none';
     document.getElementById('addErrorMsg').classList.remove('visible');
     // Reload from native rather than re-rendering the stale in-memory array:
@@ -1756,6 +1860,7 @@
 
   function setConnecting(loading, isAddForm) {
     connecting = loading;
+    updateBusyControls();
     var btnId = isAddForm ? 'addConnectBtn' : 'connectBtn';
     var btn = document.getElementById(btnId);
     if (loading) {
@@ -1779,9 +1884,11 @@
    * setConnecting because saving does not authenticate: showing "Authenticating"
    * would misdescribe what is happening.
    */
-  function setSaving(saving) {
+  function setSaving(loading) {
+    saving = loading;
+    updateBusyControls();
     var btn = document.getElementById('addConnectBtn');
-    if (saving) {
+    if (loading) {
       btn.disabled = true;
       btn.innerHTML = '<div class="spinner"></div><span>' + t('saving') + '</span>';
     } else {
@@ -1789,13 +1896,24 @@
     }
   }
 
+  function updateBusyControls() {
+    var busy = connecting || saving;
+    document.querySelectorAll('.server-edit-btn, .server-delete-btn, #addServerBtn, #ignoreCredentialsBtn, #cancelAddBtn, #connectBtn, #addConnectBtn')
+      .forEach(function(button) { button.disabled = busy; });
+    document.querySelectorAll('.server-item').forEach(function(item) {
+      item.setAttribute('aria-disabled', String(busy));
+    });
+  }
+
   // Called by native code on connection failure.
   // msg: localized error text to display. code: optional classification code
   // ("password" / "rate_limit", from MainActivity) so the password field is
   // shown only for auth errors — never matched against localized text.
-  function onConnectError(msg, code) {
+  function onConnectError(msg, code, url) {
+    if (url && document.getElementById('connectForm').getAttribute('data-url') !== url) return;
     setConnecting(false);
     setConnecting(false, true);
+    noteCredentialFailure(code);
     var addForm = document.getElementById('addServerForm');
     if (addForm.style.display !== 'none') {
       showError('addErrorMsg', msg || t('connect_error'));
@@ -1806,7 +1924,8 @@
       // fix a connection issue by entering a different password.
       var passwordGroup = document.getElementById('passwordGroup');
       var passwordEl = document.getElementById('password');
-      var isAuthError = code === 'password' || code === 'rate_limit';
+      var isAuthError = code === 'password' || code === 'rate_limit' ||
+        code === 'credential_ref_invalid' || code === 'credential_read_failed';
       if (!isAuthError && msg) {
         // Fallback for older clients that don't pass a code: match against the
         // known error phrases in the current language and the English defaults.
@@ -1816,6 +1935,7 @@
           || msg.indexOf(I18N['en']['too_many_attempts']) !== -1;
       }
       if (isAuthError) {
+        document.getElementById('connectForm').removeAttribute('data-saved-password');
         passwordGroup.style.display = 'block';
         passwordEl.value = '';
         passwordEl.focus();

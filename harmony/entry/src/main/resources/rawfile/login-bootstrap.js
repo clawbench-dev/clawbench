@@ -4,6 +4,7 @@
       location.hostname.toLowerCase() !== 'rawfile' || location.pathname !== '/login/index.html') return;
   const config = JSON.parse(window.ClawBenchLoginInit.getConfig());
   let state = config.state;
+  let selectedUrl = state.activeUrl || '';
   let port;
   let nextId = 0;
   const pending = new Map();
@@ -17,7 +18,10 @@
       const timer = setTimeout(() => {
         pending.delete(id);
         queued.delete(id);
-        reject(new Error('本地操作超时，请重试'));
+        const error = new Error(state.language === 'en' ?
+          'The local operation timed out. Please try again.' : '本地操作超时，请重试');
+        error.code = 'local_timeout';
+        reject(error);
       }, 45000);
       pending.set(id, { resolve, reject, timer });
       const request = JSON.stringify({ id, method, args: args.map(value => JSON.stringify(value)) });
@@ -43,7 +47,12 @@
       } else {
         try {
           const result = JSON.parse(response.result);
-          if (result.snapshot) state = result.snapshot;
+          if (result.snapshot) {
+            state = result.snapshot;
+            if (!state.servers.some(server => server.url === selectedUrl)) {
+              selectedUrl = state.activeUrl || '';
+            }
+          }
           request.resolve(result.value);
         } catch (error) {
           request.reject(error);
@@ -60,15 +69,22 @@
     getTheme: () => state.theme,
     getAppVersion: () => state.version,
     getServerList: () => JSON.stringify(state.servers),
+    getActiveServer: () => selectedUrl,
+    areSavedCredentialsIgnored: () => state.credentialsIgnored === true,
+    selectServer: url => {
+      selectedUrl = url;
+      return invoke('selectServer', url);
+    },
+    ignoreSavedCredentials: () => invoke('ignoreSavedCredentials'),
     setSystemBarAppearance: (top, bottom) => invoke('setSystemBarAppearance', top, bottom),
     setTheme: theme => {
       state.theme = theme;
       void invoke('setAppearance', state.language, theme).catch(() => {});
     },
-    saveServer: (url, password) => invoke('saveServer', url, password),
-    saveServerNamed: (url, password, name) => invoke('saveServerNamed', url, password, name),
+    saveServer: (url, credential) => invoke('saveServer', url, credential),
+    saveServerNamed: (url, credential, name) => invoke('saveServerNamed', url, credential, name),
     removeServer: url => invoke('removeServer', url),
-    connectToServer: (url, password) => invoke('connectToServer', url, password)
+    connectToServer: (url, credential) => invoke('connectToServer', url, credential)
   };
   Object.defineProperty(window, 'ClawBenchNative', { value: bridge, configurable: false });
   Object.defineProperty(window, '__clawbenchLoginBack', {

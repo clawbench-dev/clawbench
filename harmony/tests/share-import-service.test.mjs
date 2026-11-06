@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm';
 import * as policy from '../entry/src/main/ets/models/ShareImportPolicy.ts';
 import { safeFileName, shareMime } from '../entry/src/main/ets/models/FileTransferPolicy.ts';
 import { parseServerAddress } from '../entry/src/main/ets/models/ServerAddress.ts';
+import { NativeFailure, nativeMessage, formatNativeError } from '../entry/src/main/ets/models/NativeMessages.ts';
 
 const source = readFileSync(new URL(
   '../entry/src/main/ets/services/ShareImportService.ets', import.meta.url
@@ -97,7 +98,7 @@ function createHost({ records = defaultRecords, readWait, responses, uploadWait 
     }
   };
   const context = {
-    ...policy, safeFileName, shareMime, parseServerAddress, fs, http,
+    ...policy, safeFileName, shareMime, parseServerAddress, NativeFailure, nativeMessage, fs, http,
     nativeCookieHeader: (_origin, header) => {
       if (!header.includes('clawbench_session=fixture')) throw new Error('Not authenticated');
       return header;
@@ -239,4 +240,30 @@ test('partial batches report only confirmed paths, stop after failure and never 
   assert.equal(result.cancelled, false);
   assert.equal(host.requests.length, 2);
   assert.ok(host.requests.every(({ options }) => !options.multiFormDataList.some(field => field.name === 'onconflict')));
+});
+
+test('shared-file errors retain stable codes for localization at the active UI boundary', async () => {
+  const invalid = createHost({ records: [{ utd: 'general.file' }] });
+  await assert.rejects(invalid.service.receive({ action: 'ohos.want.action.sendData' }), error => {
+    assert.ok(error instanceof NativeFailure);
+    assert.equal(error.code, 'share_read_failed');
+    assert.equal(formatNativeError(error, 'en'), nativeMessage('share_read_failed', 'en'));
+    return true;
+  });
+  const changed = createHost();
+  await changed.service.receive({ action: 'ohos.want.action.sendData' });
+  await assert.rejects(changed.service.uploadConfirmed('expired-batch', 'https://example.com', '/project'), error => {
+    assert.equal(error.code, 'share_changed');
+    assert.equal(formatNativeError(error, 'en'), nativeMessage('share_changed', 'en'));
+    return true;
+  });
+  changed.setCookie('clawbench_session=fixture; clawbench_project=%2Fanother');
+  await assert.rejects(changed.service.uploadConfirmed(changed.service.summary().id,
+    'https://example.com', '/project'), error => {
+    assert.equal(error.code, 'share_target_changed');
+    assert.equal(formatNativeError(error, 'zh'), nativeMessage('share_target_changed', 'zh'));
+    return true;
+  });
+  assert.equal(changed.requests.length, 0);
+  changed.service.cancel();
 });

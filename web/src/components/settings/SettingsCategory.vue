@@ -388,6 +388,7 @@ const renderList = computed(() => {
         if (entry.spec.key === 'liveUpdate' && !capabilities?.liveUpdate) continue
         if (entry.spec.key === 'downloadAndroidApp' || entry.spec.key === 'downloadDesktopApp') continue
       }
+      if (entry.spec.key === 'trustedCerts' && typeof getNative()?.forgetTrustedCerts !== 'function') continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue

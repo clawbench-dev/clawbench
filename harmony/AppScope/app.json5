@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.clawbench.harmony",
     "vendor": "ClawBench HarmonyOS Maintainers",
-    "versionCode": 202,
-    "versionName": "0.2.2",
+    "versionCode": 203,
+    "versionName": "0.2.3",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

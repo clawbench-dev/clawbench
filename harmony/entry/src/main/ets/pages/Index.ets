@@ -5,13 +5,14 @@ import { window, KeyboardAvoidMode } from '@kit.ArkUI';
 import { KeyCode } from '@kit.InputKit';
 import { ServerStore } from '../services/ServerStore';
 import { ConnectionService, ConnectionFailure } from '../services/ConnectionService';
-import { LoginSession, LoginInitialization } from '../services/LoginSession';
+import { LoginSession, LoginInitialization, LoginCredential } from '../services/LoginSession';
 import { APP_VERSION, isLocalLoginPage } from '../models/AppInfo';
 import { isTrustedAppUrl, parseServerAddress } from '../models/ServerAddress';
 import { normalizeBarColor, barContentColor } from '../models/SystemBars';
 import { SafeInsets, mergeSafeInsets } from '../models/SafeInsets';
 import { externalHttpUrl, portBrowserUrl, selectionText } from '../models/NativeActions';
 import { clearServerCookies } from '../models/NativeCookies';
+import { NativeFailure, nativeMessage, formatNativeError } from '../models/NativeMessages';
 import { navigationEventName, NativeNavigation } from '../models/NativeEvents';
 import { FileTransferService } from '../services/FileTransferService';
 import { NativeEventService } from '../services/NativeEventService';
@@ -61,6 +62,9 @@ struct Index {
   private loginReady: boolean = false;
   private pendingLoginError: string = '';
   private pendingLoginCode: string = '';
+  private loginTargetUrl: string = '';
+  private ignoreSavedCredentials: boolean = false;
+  private credentialQueue: Promise<void> = Promise.resolve();
   private backInFlight: boolean = false;
   private lastBack: number = 0;
   private mainWindow?: window.Window;
@@ -172,7 +176,7 @@ struct Index {
       await this.notificationChanged();
       this.shareErrorChanged();
     } catch (_) {
-      this.fatalError = '本地配置读取失败，请重试';
+      this.fatalError = nativeMessage('config_load_failed', this.store.language);
     }
   }
 
@@ -219,11 +223,11 @@ struct Index {
       return;
     }
     try {
-      const password = await this.store.password(launch.origin);
+      const password = this.ignoreSavedCredentials ? '' : await this.store.password(launch.origin);
       if (!current()) {
         return;
       }
-      const switching = this.showConnection();
+      const switching = this.showConnection('', '', launch.origin);
       connection = this.connectionId;
       loginEpoch = this.loginEpoch;
       await switching;
@@ -231,12 +235,19 @@ struct Index {
         return;
       }
       this.notifications.queueNavigation(launch);
+      if (!password) {
+        this.pendingLoginError = nativeMessage('login_required_for_notification', this.store.language);
+        this.pendingLoginCode = 'password';
+        this.reportLoginError();
+        return;
+      }
       const connecting = this.connect(launch.origin, password);
       connection = this.connectionId;
       await connecting;
     } catch (_) {
       if (current()) {
-        await this.showConnection('请登录通知所属的服务器后重试');
+        await this.showConnection(nativeMessage('login_required_for_notification', this.store.language),
+          'password', launch.origin);
       }
     }
   }
@@ -327,11 +338,13 @@ struct Index {
     ports.length = 0;
   }
 
-  private async showConnection(message: string = '', code: string = ''): Promise<void> {
+  private async showConnection(message: string = '', code: string = '', targetUrl: string = ''): Promise<void> {
     if (this.showWeb) {
       this.shareImport?.cancel();
     }
     this.connectionId++;
+    this.loginTargetUrl = targetUrl ? parseServerAddress(targetUrl).url :
+      this.loginTargetUrl || this.activeUrl || this.store.lastUrl;
     const epoch = ++this.loginEpoch;
     this.connection.cancel();
     this.closePorts(this.ports);
@@ -352,30 +365,51 @@ struct Index {
     this.tunnels?.setServer('');
     this.activePassword = '';
     try {
-      const snapshot = await this.login.snapshot();
+      // Asset writes cannot be cancelled. Read the retry form after any active write settles.
+      await this.credentialQueue.catch(() => {});
+      if (epoch !== this.loginEpoch) {
+        return;
+      }
+      const snapshot = await this.login.snapshot(this.loginTargetUrl, this.ignoreSavedCredentials);
       if (epoch !== this.loginEpoch) {
         return;
       }
       this.loginChannel = util.generateRandomUUID(true);
+      this.loginTargetUrl = snapshot.activeUrl || this.loginTargetUrl;
       this.loginInitialization.configuration = JSON.stringify({ channel: this.loginChannel, state: snapshot });
       this.initialized = true;
     } catch (_) {
       if (epoch === this.loginEpoch) {
-        this.fatalError = '无法打开本地登录页，请重试';
+        this.fatalError = nativeMessage('login_page_failed', this.store.language);
       }
     }
   }
 
   private async connect(url: string, password: string): Promise<void> {
     const id = ++this.connectionId;
+    this.loginTargetUrl = parseServerAddress(url).url;
     this.connecting = true;
+    if (this.loginReady) {
+      this.loginController.runJavaScript(`onConnectStart(${JSON.stringify(this.loginTargetUrl)});`).catch(() => {});
+    }
     try {
-      const address = await this.connection.connect(url, password);
+      const address = await this.connection.connect(url, password, this.store.language);
       if (id !== this.connectionId) {
         return;
       }
-      const existing = this.store.servers.find((server) => server.url === address);
-      await this.store.save(address, password, existing?.name || '');
+      const save = this.credentialQueue.catch(() => {}).then(async (): Promise<void> => {
+        if (id !== this.connectionId) {
+          return;
+        }
+        const existing = this.store.servers.find((server) => server.url === address);
+        if (this.ignoreSavedCredentials) {
+          await this.store.saveMetadata(address, existing?.name || '');
+        } else {
+          await this.store.save(address, password, existing?.name || '');
+        }
+      });
+      this.credentialQueue = save;
+      await save;
       if (id !== this.connectionId) {
         return;
       }
@@ -392,6 +426,7 @@ struct Index {
           theme: this.store.theme, version: APP_VERSION
         })) + '\n' + new util.TextDecoder().decodeWithStream(systemBars);
       this.activeUrl = address;
+      this.loginTargetUrl = address;
       this.activePassword = password;
       await this.notifications.bind(address, this.store.language, this.foreground);
       if (id !== this.connectionId) {
@@ -415,7 +450,7 @@ struct Index {
     clearTimeout(this.pageTimeout);
     this.pageTimeout = setTimeout(() => {
       if (!this.pageReady) {
-        this.showConnection('页面加载超时，请检查网络后重试');
+        this.showConnection(nativeMessage('page_timeout', this.store.language));
       }
     }, 30000);
   }
@@ -437,6 +472,9 @@ struct Index {
     // The local resource has an opaque origin. This controller only accepts the packaged login document.
     this.loginController.postMessage('__clawbench_login_port__:' + this.loginChannel, [ports[1]], '*');
     this.loginReady = true;
+    if (this.connecting) {
+      this.loginController.runJavaScript(`onConnectStart(${JSON.stringify(this.loginTargetUrl)});`).catch(() => {});
+    }
     this.reportLoginError();
     void this.notifications.requestStartupPermission();
   }
@@ -453,44 +491,73 @@ struct Index {
         return;
       }
       const arg = (index: number): string => JSON.parse(request.args[index] || '""') as string;
+      const credential = (): LoginCredential => JSON.parse(request.args[1] || 'null') as LoginCredential;
       switch (request.method) {
         case 'saveServer':
-          await this.login.save(arg(0), arg(1));
+          await this.login.save(arg(0), credential(), undefined, this.ignoreSavedCredentials);
           break;
         case 'saveServerNamed':
-          await this.login.save(arg(0), arg(1), arg(2));
+          await this.login.save(arg(0), credential(), arg(2), this.ignoreSavedCredentials);
           break;
-        case 'removeServer':
-          await this.store.remove(parseServerAddress(arg(0)).url);
-          clearServerCookies(parseServerAddress(arg(0)).url);
+        case 'removeServer': {
+          const removedUrl = parseServerAddress(arg(0)).url;
+          await this.store.remove(removedUrl, this.ignoreSavedCredentials);
+          clearServerCookies(removedUrl);
+          if (this.loginTargetUrl === removedUrl) {
+            this.loginTargetUrl = '';
+          }
+          break;
+        }
+        case 'selectServer':
+          if (!this.connecting) {
+            this.loginTargetUrl = parseServerAddress(arg(0)).url;
+          }
+          break;
+        case 'ignoreSavedCredentials':
+          this.ignoreSavedCredentials = true;
+          this.login.clear();
           break;
         case 'setAppearance':
           await this.store.setAppearance(arg(0), arg(1));
+          this.notifications.setLanguage(this.store.language);
           break;
         case 'setSystemBarAppearance':
           await this.setSystemBarAppearance(arg(0), arg(1));
           break;
         case 'connectToServer': {
-          const password = await this.login.password(arg(1));
-          if (epoch !== this.loginEpoch || this.showWeb || !isLocalLoginPage(this.loginController.getUrl())) {
-            return;
+          const target = parseServerAddress(arg(0)).url;
+          this.loginTargetUrl = target;
+          const attempt = ++this.connectionId;
+          this.connecting = true;
+          try {
+            const password = await this.login.password(credential(), target);
+            if (attempt !== this.connectionId || epoch !== this.loginEpoch || this.showWeb ||
+                !isLocalLoginPage(this.loginController.getUrl())) {
+              return;
+            }
+            await this.connect(target, password);
+          } finally {
+            if (attempt === this.connectionId && epoch === this.loginEpoch) {
+              this.connecting = false;
+            }
           }
-          await this.connect(arg(0), password);
           return;
         }
         default:
-          throw new Error('当前操作不受支持');
+          throw new NativeFailure('unsupported_operation', this.store.language);
       }
-      const snapshot = await this.login.snapshot();
+      const snapshot = await this.login.snapshot(this.loginTargetUrl, this.ignoreSavedCredentials);
       if (epoch === this.loginEpoch && !this.showWeb) {
+        this.loginTargetUrl = snapshot.activeUrl || this.loginTargetUrl;
         port.postMessageEvent(JSON.stringify({ id, result: JSON.stringify({ value: null, snapshot }) }));
       }
     } catch (error) {
       if (epoch === this.loginEpoch && !this.showWeb) {
         try {
           port.postMessageEvent(JSON.stringify({
-            id, error: error instanceof Error ? error.message : '操作失败，请重试',
-            code: error instanceof ConnectionFailure ? error.code : ''
+            id, error: error instanceof Error ? formatNativeError(error, this.store.language) :
+              nativeMessage('operation_failed', this.store.language),
+            code: error instanceof ConnectionFailure || error instanceof NativeFailure ? error.code : ''
           }));
         } catch (_) {}
       }
@@ -501,10 +568,16 @@ struct Index {
     if (!this.loginReady || !this.pendingLoginError) {
       return;
     }
-    const script = `onConnectError(${JSON.stringify(this.pendingLoginError)},${JSON.stringify(this.pendingLoginCode)});`;
+    const epoch = this.loginEpoch;
+    const message = this.pendingLoginError;
+    const code = this.pendingLoginCode;
+    const target = this.loginTargetUrl;
+    const script = `onConnectError(${JSON.stringify(message)},${JSON.stringify(code)},${JSON.stringify(target)});`;
     this.loginController.runJavaScript(script).then(() => {
-      this.pendingLoginError = '';
-      this.pendingLoginCode = '';
+      if (epoch === this.loginEpoch && message === this.pendingLoginError && code === this.pendingLoginCode) {
+        this.pendingLoginError = '';
+        this.pendingLoginCode = '';
+      }
     }).catch(() => {});
   }
 
@@ -525,7 +598,7 @@ struct Index {
       if (document === this.documentId && generation === this.connectionId) {
         this.reportDownloadFailure();
       }
-    });
+    }, this.store.language);
     this.logger = new NativeLogService(this.activeUrl, [this.activePassword]);
     ports[0].onMessageEvent((message: webview.WebMessage) => {
       if (typeof message !== 'string' || message.length > 12 * 1024 * 1024 ||
@@ -557,12 +630,22 @@ struct Index {
       if (generation === this.connectionId && document === this.documentId) {
         port.postMessageEvent(JSON.stringify({ id, result }));
       }
-    } catch (_) {
+    } catch (error) {
       if (generation === this.connectionId && document === this.documentId) {
         if (method === 'downloadFile' || method === 'downloadUrl') {
           this.reportDownloadFailure();
         }
-        try { port.postMessageEvent(JSON.stringify({ id, error: 'HarmonyOS 操作失败或当前不支持' })); } catch (_) {}
+        if (method === 'setSSHPassword' && !this.rendererReady) {
+          // The shared login page has not installed App's native-error listener yet.
+          this.getUIContext().getPromptAction().showToast({
+            message: error instanceof Error ? formatNativeError(error, this.store.language) :
+              nativeMessage('credential_save_failed', this.store.language)
+          });
+        }
+        try {
+          port.postMessageEvent(JSON.stringify({ id, error: error instanceof Error ?
+            formatNativeError(error, this.store.language) : nativeMessage('bridge_failed', this.store.language) }));
+        } catch (_) {}
       }
     }
   }
@@ -591,32 +674,93 @@ struct Index {
         }));
       }
       case 'saveServer':
-      case 'saveServerNamed':
-        await this.store.save(arg(0), arg(1), request.args.length > 2 ? arg(2) : '');
-        break;
-      case 'removeServer':
-        await this.store.remove(parseServerAddress(arg(0)).url);
-        clearServerCookies(parseServerAddress(arg(0)).url);
-        break;
-      case 'connectToServer': {
+      case 'saveServerNamed': {
         const url = parseServerAddress(arg(0)).url;
-        const password = arg(1) || await this.store.password(url);
+        const password = arg(1);
+        const save = this.credentialQueue.catch(() => {}).then(async (): Promise<void> => {
+          if (!current()) {
+            return;
+          }
+          const existing = this.store.servers.find((server) => server.url === url);
+          const name = request.args.length > 2 ? arg(2) : existing?.name || '';
+          if (this.ignoreSavedCredentials) {
+            await this.store.saveMetadata(url, name);
+          } else {
+            await this.store.save(url, password, name);
+          }
+        });
+        this.credentialQueue = save;
+        await save;
+        break;
+      }
+      case 'setSSHPassword': {
         if (!current()) {
           break;
         }
-        const switching = this.showConnection();
+        const origin = this.activeUrl;
+        const password = arg(0);
+        if (typeof password !== 'string' || !password) {
+          throw new NativeFailure('password', this.store.language);
+        }
+        // LoginView sends this without awaiting it. Register redaction before any async work.
+        this.logger?.addSecret(password);
+        this.activePassword = password;
+        const save = this.credentialQueue.catch(() => {}).then(async (): Promise<void> => {
+          // Accepted credentials keep their captured origin even after the page closes.
+          // Later saves, removals and logins use this queue and cannot be overtaken.
+          const existing = this.store.servers.find((server) => server.url === origin);
+          if (!this.ignoreSavedCredentials) {
+            await this.store.save(origin, password, existing?.name || '');
+          }
+        });
+        this.credentialQueue = save;
+        await save;
+        break;
+      }
+      case 'removeServer': {
+        const url = parseServerAddress(arg(0)).url;
+        const remove = this.credentialQueue.catch(() => {}).then(async (): Promise<void> => {
+          if (current()) {
+            await this.store.remove(url, this.ignoreSavedCredentials);
+            clearServerCookies(url);
+          }
+        });
+        this.credentialQueue = remove;
+        await remove;
+        break;
+      }
+      case 'connectToServer': {
+        const url = parseServerAddress(arg(0)).url;
+        let password = arg(1);
+        let readFailed = false;
+        if (!password && !this.ignoreSavedCredentials) {
+          try {
+            password = await this.store.password(url);
+          } catch (_) {
+            readFailed = true;
+          }
+        }
+        if (!current()) {
+          break;
+        }
+        const switching = this.showConnection(readFailed ?
+          nativeMessage('credential_read_failed', this.store.language) : '',
+        readFailed ? 'credential_read_failed' : '', url);
         const switchId = this.connectionId;
         const loginEpoch = this.loginEpoch;
         await switching;
         if (switchId !== this.connectionId || loginEpoch !== this.loginEpoch || this.showWeb) {
           break;
         }
+        if (!password) {
+          break;
+        }
         const connecting = this.connect(url, password);
         const attempt = this.connectionId;
         connecting.catch((error: Error) => {
           if (attempt === this.connectionId && loginEpoch === this.loginEpoch && !this.showWeb) {
-            this.pendingLoginError = error.message;
-            this.pendingLoginCode = error instanceof ConnectionFailure ? error.code : '';
+            this.pendingLoginError = formatNativeError(error, this.store.language);
+            this.pendingLoginCode = error instanceof ConnectionFailure || error instanceof NativeFailure ? error.code : '';
             this.reportLoginError();
           }
         });
@@ -627,6 +771,8 @@ struct Index {
         break;
       case 'setAppearance':
         await this.store.setAppearance(arg(0), arg(1));
+        this.files?.setLanguage(this.store.language);
+        this.notifications.setLanguage(this.store.language);
         break;
       case 'setSystemBarAppearance':
         await this.setSystemBarAppearance(arg(0), arg(1));
@@ -850,7 +996,7 @@ struct Index {
 
   onBackPress(): boolean {
     if (!this.showWeb && this.connecting) {
-      this.showConnection('连接已取消');
+      this.showConnection(nativeMessage('cancelled', this.store.language));
       return true;
     }
     if (!this.showWeb && !this.loginReady) {
@@ -882,7 +1028,7 @@ struct Index {
         this.showConnection();
       } else {
         this.lastBack = Date.now();
-        this.getUIContext().getPromptAction().showToast({ message: '再按一次返回服务器列表' });
+        this.getUIContext().getPromptAction().showToast({ message: nativeMessage('back_again', this.store.language) });
       }
     }).catch(() => {
       if (current()) {
@@ -932,7 +1078,7 @@ struct Index {
             })
             .onErrorReceive((event) => {
               if (event?.request.isMainFrame()) {
-                this.showConnection('页面加载失败，请检查网络和证书');
+                this.showConnection(nativeMessage('page_failed', this.store.language));
               }
             })
             .onShowFileSelector((event) => {
@@ -986,8 +1132,8 @@ struct Index {
           if (!this.pageReady) {
             Column({ space: 16 }) {
               LoadingProgress().width(32).height(32).color('#8DA9E8')
-              Text('正在加载工作台').fontSize(14).fontColor('#BEC3CA')
-              Button('取消').onClick(() => this.showConnection())
+              Text(nativeMessage('loading', this.store.language)).fontSize(14).fontColor('#BEC3CA')
+              Button(nativeMessage('cancel', this.store.language)).onClick(() => this.showConnection())
             }.width('100%').height('100%').justifyContent(FlexAlign.Center).backgroundColor('#17191D')
           }
         }.width('100%').height('100%')
@@ -1013,7 +1159,19 @@ struct Index {
         Column({ space: 16 }) {
           if (this.fatalError) {
             Text(this.fatalError).fontColor('#F1A0A0').fontSize(14)
-            Button('重试').onClick(() => this.initialize())
+            Button(nativeMessage('retry', this.store.language)).onClick(() => {
+              if (this.nativeReady) {
+                this.showConnection();
+              } else {
+                this.initialize();
+              }
+            })
+            if (this.nativeReady) {
+              Button(nativeMessage('ignore_credentials', this.store.language)).onClick(() => {
+                this.ignoreSavedCredentials = true;
+                this.showConnection();
+              })
+            }
           } else {
             LoadingProgress().width(32).height(32).color('#8DA9E8')
           }

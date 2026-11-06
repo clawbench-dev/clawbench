@@ -52,8 +52,8 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
 }
 
 /**
- * True when port forwarding is genuinely unusable: the SSH listener is off AND
- * the configured transport cannot carry the forwards over h2.
+ * True when the host cannot forward ports, or the SSH listener is off AND the
+ * configured transport cannot carry the forwards over h2.
  *
  * This is the ONE expression behind every "port mapping is unavailable" gate in
  * the UI — the dock tab filter, the force-switch watcher, the localhost-URL
@@ -62,11 +62,10 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
  *
  * Since the SSH listener became unconditional (ApplyDefaults pins
  * `port_forward.enabled`) and the server transport is pinned to `both`, the
- * second operand is always true — so this currently always returns false. It is
- * kept rather than deleted because it is still the correct predicate if the
- * listener ever fails to bind (ClearSSHServer retracts the reference, and
- * `/api/ssh/info` then reports enabled:false), and because removing it would
- * mean re-deriving the same reasoning at four call sites.
+ * h2 alternative normally keeps forwarding available on a capable host. The
+ * listener may still fail to bind (ClearSSHServer retracts the reference, and
+ * `/api/ssh/info` then reports enabled:false), so callers must keep both server
+ * transports and the host capability in the decision.
  *
  * `sshEnabled` is the tri-state from `/api/ssh/info`. `undefined`/`null` means
  * "not loaded yet" and must NOT read as disabled — only an explicit `false`
@@ -74,6 +73,10 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
  *
  * `transportAllowsH2` is the caller's read of the server's
  * `port_forward.transport` (see usePortForward's `transportAllowsH2`).
+ *
+ * `hostTunnelSupported` is the native host's tunnel capability. An explicit
+ * false disables forwarding regardless of server configuration; true preserves
+ * the behavior of existing callers and hosts that predate capability reporting.
  */
 export function portForwardUnavailable(
   sshEnabled: boolean | null | undefined,

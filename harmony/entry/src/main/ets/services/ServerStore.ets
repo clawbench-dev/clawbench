@@ -4,6 +4,7 @@ import { asset } from '@kit.AssetStoreKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { parseServerAddress } from '../models/ServerAddress';
+import { NativeFailure } from '../models/NativeMessages';
 
 export interface SavedServer {
   url: string;
@@ -47,7 +48,7 @@ export class ServerStore {
       if ((error as BusinessError).code === 24000002) {
         return '';
       }
-      throw new Error('无法读取安全存储中的密码，请重新输入');
+      throw new NativeFailure('credential_read_failed', this.language);
     }
   }
 
@@ -59,10 +60,19 @@ export class ServerStore {
     attributes.set(asset.Tag.ACCESSIBILITY, asset.Accessibility.DEVICE_FIRST_UNLOCKED);
     attributes.set(asset.Tag.CONFLICT_RESOLUTION, asset.ConflictResolution.OVERWRITE);
     if (password.length > 0) {
-      await asset.add(attributes);
+      try {
+        await asset.add(attributes);
+      } catch (_) {
+        throw new NativeFailure('credential_save_failed', this.language);
+      }
     } else {
       await this.forgetPassword(normalized);
     }
+    await this.saveMetadata(normalized, name);
+  }
+
+  async saveMetadata(url: string, name: string): Promise<void> {
+    const normalized = parseServerAddress(url).url;
     this.servers = [{ url: normalized, name: name.trim().slice(0, 80) },
       ...this.servers.filter((server: SavedServer) => server.url !== normalized)];
     await this.persist();
@@ -75,13 +85,15 @@ export class ServerStore {
       await asset.remove(query);
     } catch (error) {
       if ((error as BusinessError).code !== 24000002) {
-        throw new Error('无法清理安全存储');
+        throw new NativeFailure('credential_remove_failed', this.language);
       }
     }
   }
 
-  async remove(url: string): Promise<void> {
-    await this.forgetPassword(url);
+  async remove(url: string, ignoreCredentials: boolean = false): Promise<void> {
+    if (!ignoreCredentials) {
+      await this.forgetPassword(url);
+    }
     this.servers = this.servers.filter((server: SavedServer) => server.url !== url);
     if (this.lastUrl === url) {
       this.lastUrl = '';
@@ -102,7 +114,7 @@ export class ServerStore {
 
   private async persist(): Promise<void> {
     if (!this.prefs) {
-      throw new Error('服务器存储尚未就绪');
+      throw new NativeFailure('store_not_ready', this.language);
     }
     await this.prefs.put('servers', JSON.stringify(this.servers));
     await this.prefs.put('lastUrl', this.lastUrl);

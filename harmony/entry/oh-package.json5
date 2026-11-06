@@ -1,6 +1,6 @@
 {
   "name": "entry",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "ArkWeb host",
   "main": "",
   "dependencies": {
