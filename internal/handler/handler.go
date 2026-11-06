@@ -705,6 +705,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// merged timeline back, and asks for the minutes once the share ends.
 	register("/api/live-share/notes", ServeLiveShareNotes)
 	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
+	register("/api/live-share/notes/stream", LiveNotesStreamWS)
 	// Folds the per-segment audio into one file per channel plus the
 	// whole-meeting mix; called once the upload queue has drained.
 	register("/api/live-share/notes/audio/merge", ServeLiveNotesAudioMerge)

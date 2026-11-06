@@ -504,7 +504,7 @@ func pcmPeakRMS(pcm []byte) float64 {
 	}
 	var peak float64
 	for i := 0; i+1 < len(pcm); i += 2 {
-		v := int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8)
+		v := int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8) //nolint:gosec // G115: the two bytes ARE a signed 16-bit sample; the wrap is the conversion
 		f := float64(v) / 32768
 		if f < 0 {
 			f = -f
