@@ -138,6 +138,7 @@ struct Index {
         return answer.index === 1;
       });
       await this.notifications.init(this.context());
+      this.notifications.setForeground(this.foreground);
       this.tunnels = new TunnelService(this.context(), async (origin: string): Promise<string> => {
         if (origin !== this.activeUrl || !this.showWeb) {
           throw new Error('Tunnel server changed');
@@ -437,6 +438,7 @@ struct Index {
     this.loginController.postMessage('__clawbench_login_port__:' + this.loginChannel, [ports[1]], '*');
     this.loginReady = true;
     this.reportLoginError();
+    void this.notifications.requestStartupPermission();
   }
 
   private async receiveLoginBridge(message: string, port: webview.WebMessagePort, epoch: number): Promise<void> {
@@ -832,6 +834,9 @@ struct Index {
     this.notifications.setForeground(this.foreground);
     this.tunnels?.setForeground(this.foreground);
     if (this.foreground) {
+      if (this.loginReady || this.pageReady) {
+        void this.notifications.requestStartupPermission();
+      }
       this.handleShareImport();
       this.shareErrorChanged();
     }
@@ -922,6 +927,7 @@ struct Index {
                 this.attachPort(event.url);
                 this.pageReady = true;
                 clearTimeout(this.pageTimeout);
+                void this.notifications.requestStartupPermission();
               }
             })
             .onErrorReceive((event) => {

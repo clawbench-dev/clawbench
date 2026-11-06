@@ -177,9 +177,12 @@ function harness() {
   const reports = [];
   const timers = new Map();
   const permissionReads = [];
+  const configRequests = [];
+  const configResponses = [];
   let permissions = false;
   let grant = true;
   let permissionWait;
+  let permissionRequests = 0;
   let nextUuid = 0;
   const prefs = {
     async get(key, fallback) { return storage.get(key) ?? fallback; },
@@ -195,6 +198,7 @@ function harness() {
         return permissionReads.length ? await permissionReads.shift()() : permissions;
       },
       async requestEnableNotification() {
+        permissionRequests++;
         if (permissionWait) await permissionWait;
         permissions = grant;
       },
@@ -222,9 +226,15 @@ function harness() {
       createHttp() {
         const request = { destroyed: false, async request(url, options) {
           this.url = url; this.options = options;
+          if (url.endsWith('/api/config')) {
+            configRequests.push(request);
+            return configResponses.length ? await configResponses.shift()() :
+              { responseCode: 200, result: '{"push_mode":"native"}' };
+          }
+          requests.push(request);
           return responses.length ? await responses.shift()() : { responseCode: 200, result: '{"events":[]}' };
         }, destroy() { this.destroyed = true; } };
-        requests.push(request); return request;
+        return request;
       },
       RequestMethod: { GET: 'GET' }, HttpDataType: { STRING: 1 }
     },
@@ -236,7 +246,9 @@ function harness() {
   const context = { abilityInfo: { bundleName: 'com.clawbench.fixture', name: 'EntryAbility' } };
   return {
     service, context, sockets, requests, published, cancelled, storage, app, reports, timers, responses, permissionReads,
+    configRequests, configResponses,
     Service: sandbox.Service,
+    permissionRequests: () => permissionRequests,
     setGrant(value) { grant = value; },
     setPermission(value) { permissions = value; },
     waitPermission(promise) { permissionWait = promise; },
@@ -250,6 +262,256 @@ function harness() {
     }
   };
 }
+
+test('startup asks for notification permission without a server and never enables a delivery mode', async () => {
+  const h = harness();
+  await h.service.init(h.context);
+  await h.service.requestStartupPermission();
+  assert.equal(h.permissionRequests(), 1);
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'granted');
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, false);
+  assert.equal(h.sockets.length, 0);
+  assert.equal(h.storage.has('servers'), false);
+  await h.service.requestStartupPermission();
+  h.service.setForeground(false);
+  h.service.setForeground(true);
+  await h.service.requestStartupPermission();
+  assert.equal(h.permissionRequests(), 1);
+  h.service.destroy();
+});
+
+test('startup skips an existing grant and defers permission requests while backgrounded', async () => {
+  const h = harness();
+  await h.service.init(h.context);
+  h.service.setForeground(false);
+  await h.service.requestStartupPermission();
+  assert.equal(h.permissionRequests(), 0);
+  h.setPermission(true);
+  h.service.setForeground(true);
+  await h.service.requestStartupPermission();
+  assert.equal(h.permissionRequests(), 0);
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'granted');
+  h.service.destroy();
+});
+
+test('denying startup permission leaves login usable and does not repeatedly prompt', async () => {
+  const h = harness();
+  h.setGrant(false);
+  await h.service.init(h.context);
+  await h.service.requestStartupPermission();
+  await h.service.requestStartupPermission();
+  assert.equal(h.permissionRequests(), 1);
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'denied');
+  assert.equal(h.sockets.length, 0);
+  await h.service.bind('https://denied.example', 'en', true);
+  assert.equal(h.service.active.origin, 'https://denied.example');
+  assert.equal(h.service.active.enabled, false);
+  h.service.destroy();
+});
+
+test('startup and a concurrent push enable share one system authorization dialog', async () => {
+  const h = harness();
+  await h.service.init(h.context);
+  await h.service.bind('https://fixture.example', 'en', true);
+  let grant;
+  h.waitPermission(new Promise(resolve => { grant = resolve; }));
+  const startup = h.service.requestStartupPermission();
+  const enabling = h.service.setEnabled(true);
+  await new Promise(setImmediate);
+  assert.equal(h.permissionRequests(), 1);
+  grant();
+  await Promise.all([startup, enabling]);
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'granted');
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, true);
+  assert.equal(h.permissionRequests(), 1);
+  h.service.destroy();
+});
+
+test('a startup authorization cannot undo a newer disabled setting', async () => {
+  const h = harness();
+  await h.service.init(h.context);
+  await h.service.bind('https://fixture.example', 'en', true);
+  let grant;
+  h.waitPermission(new Promise(resolve => { grant = resolve; }));
+  const startup = h.service.requestStartupPermission();
+  const enabling = h.service.setEnabled(true);
+  await new Promise(setImmediate);
+  await h.service.setEnabled(false);
+  grant();
+  await Promise.all([startup, enabling]);
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, false);
+  assert.equal(h.service.active.enabled, false);
+  assert.equal(h.sockets.length, 0);
+  h.service.destroy();
+});
+
+test('startup permission service failure does not reject application startup', async () => {
+  const h = harness();
+  await h.service.init(h.context);
+  h.permissionReads.push(
+    () => Promise.reject(new Error('OS service unavailable')),
+    () => Promise.reject(new Error('OS service unavailable'))
+  );
+  await h.service.requestStartupPermission();
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'unknown');
+  assert.equal(h.permissionRequests(), 0);
+  h.service.destroy();
+});
+
+test('disposing the page before a permission query completes prevents a late dialog', async () => {
+  const h = harness();
+  await h.service.init(h.context);
+  let finish;
+  h.permissionReads.push(() => new Promise(resolve => { finish = resolve; }));
+  const startup = h.service.requestStartupPermission();
+  h.service.destroy();
+  finish(false);
+  await startup;
+  assert.equal(h.permissionRequests(), 0);
+  assert.equal(h.sockets.length, 0);
+});
+
+test('native server mode starts background delivery without any frontend enable call', async () => {
+  const h = harness();
+  h.setPermission(true);
+  cookies.registerServerCookies('https://automatic.example', ['clawbench_session=automatic; HttpOnly']);
+  await h.service.init(h.context);
+  await h.service.bind('https://automatic.example', 'en', false);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.permissionRequests(), 0);
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, true);
+  assert.equal(h.configRequests[0].options.header.Cookie, 'clawbench_session=automatic');
+  assert.equal(h.configRequests[0].options.maxRedirects, 0);
+  assert.equal(h.configRequests[0].options.usingCache, false);
+  await h.message(event('session_update', 'completed'));
+  assert.equal(h.published.length, 1);
+  await h.message(event('session_update', 'permission_pending', 'evt_100_2'));
+  assert.equal(h.published.length, 2);
+  h.service.destroy();
+});
+
+test('server disabled and IM modes never activate native delivery', async () => {
+  for (const mode of ['disabled', 'dingtalk', 'feishu', 'wechat']) {
+    const h = harness();
+    h.setPermission(true);
+    h.configResponses.push(() => ({ responseCode: 200, result: JSON.stringify({ push_mode: mode }) }));
+    cookies.registerServerCookies('https://mode.example', ['clawbench_session=fixture; HttpOnly']);
+    await h.service.init(h.context);
+    await h.service.bind('https://mode.example', 'en', false);
+    assert.equal(h.service.active.enabled, false);
+    assert.equal(h.sockets.length, 0);
+    assert.equal(h.cancelled.at(-1)[0], 'group');
+    assert.equal(h.permissionRequests(), 0);
+    h.service.destroy();
+  }
+});
+
+test('background transition rereads server settings before opening a native socket', async () => {
+  const h = harness();
+  await h.ready('https://fixture.example', true);
+  await h.service.queue;
+  let finishSettings;
+  h.configResponses.push(() => new Promise(resolve => { finishSettings = resolve; }));
+  h.service.setForeground(false);
+  await new Promise(setImmediate);
+  assert.equal(h.sockets.length, 0);
+  finishSettings({ responseCode: 200, result: '{"push_mode":"disabled"}' });
+  await new Promise(setImmediate);
+  assert.equal(h.sockets.length, 0);
+  assert.equal(h.service.active.enabled, false);
+  assert.equal(h.configRequests.length, 2);
+  h.service.destroy();
+});
+
+test('native mode selected on an unadapted frontend takes effect on the next background transition', async () => {
+  const h = harness();
+  h.setPermission(true);
+  h.configResponses.push(() => ({ responseCode: 200, result: '{"push_mode":"disabled"}' }));
+  cookies.registerServerCookies('https://mode.example', ['clawbench_session=fixture; HttpOnly']);
+  await h.service.init(h.context);
+  await h.service.bind('https://mode.example', 'en', true);
+  assert.equal(h.sockets.length, 0);
+  h.service.setForeground(false);
+  await new Promise(setImmediate);
+  assert.equal(h.sockets.length, 1);
+  await h.message(event('session_update', 'permission_pending'));
+  assert.equal(h.published.length, 1);
+  h.service.destroy();
+});
+
+test('a late server config read cannot undo an explicit notification disable', async () => {
+  const h = harness();
+  await h.ready();
+  let finishSettings;
+  h.configResponses.push(() => new Promise(resolve => { finishSettings = resolve; }));
+  const syncing = h.service.syncServerSettings();
+  await h.service.setEnabled(false);
+  finishSettings({ responseCode: 200, result: '{"push_mode":"native"}' });
+  await syncing;
+  assert.equal(h.service.active.enabled, false);
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, false);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.sockets[0].closed, true);
+  h.service.destroy();
+});
+
+test('server switches abort old configuration reads and isolate their late modes', async () => {
+  const h = harness();
+  h.setPermission(true);
+  cookies.registerServerCookies('https://old.example', ['clawbench_session=old; HttpOnly']);
+  cookies.registerServerCookies('https://new.example', ['clawbench_session=new; HttpOnly']);
+  await h.service.init(h.context);
+  let finishSettings;
+  h.configResponses.push(() => new Promise(resolve => { finishSettings = resolve; }));
+  const oldBind = h.service.bind('https://old.example', 'en', false);
+  h.configResponses.push(() => ({ responseCode: 200, result: '{"push_mode":"disabled"}' }));
+  await h.service.bind('https://new.example', 'en', false);
+  assert.equal(h.configRequests[0].destroyed, true);
+  finishSettings({ responseCode: 200, result: '{"push_mode":"native"}' });
+  await oldBind;
+  assert.equal(h.service.active.origin, 'https://new.example');
+  assert.equal(h.service.active.enabled, false);
+  assert.equal(h.sockets.length, 0);
+  h.service.destroy();
+});
+
+test('invalid or failed server config reads do not invent an enabled native preference', async () => {
+  for (const response of [
+    { responseCode: 302, result: '' },
+    { responseCode: 401, result: '{}' },
+    { responseCode: 200, result: 'broken' },
+    { responseCode: 200, result: '[]' },
+    { responseCode: 200, result: '{"push_mode":true}' },
+    { responseCode: 200, result: '{"push_mode":"unknown"}' }
+  ]) {
+    const h = harness();
+    h.setPermission(true);
+    cookies.registerServerCookies('https://invalid.example', ['clawbench_session=fixture; HttpOnly']);
+    h.configResponses.push(() => response);
+    await h.service.init(h.context);
+    await h.service.bind('https://invalid.example', 'en', false);
+    assert.equal(h.service.active.enabled, false);
+    assert.equal(h.sockets.length, 0);
+    assert.match(JSON.parse(h.service.getStatus()).error, /settings unavailable/);
+    h.service.destroy();
+  }
+});
+
+test('server native preference is retained under OS denial and resumes after a permission grant', async () => {
+  const h = harness();
+  cookies.registerServerCookies('https://permission.example', ['clawbench_session=fixture; HttpOnly']);
+  await h.service.init(h.context);
+  await h.service.bind('https://permission.example', 'en', true);
+  assert.equal(h.service.active.enabled, true);
+  assert.equal(JSON.parse(h.service.getStatus()).enabled, false);
+  assert.equal(h.permissionRequests(), 0);
+  h.setPermission(true);
+  h.service.setForeground(false);
+  await new Promise(setImmediate);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'granted');
+  h.service.destroy();
+});
 
 test('notification denial is reported and no background connection is started', async () => {
   const h = harness();
@@ -334,6 +596,7 @@ test('foreground suppresses publication and closes background socket; disable ca
   await h.ready();
   const oldSocket = h.sockets.at(-1);
   h.service.setForeground(true);
+  await new Promise(setImmediate);
   await h.service.queue;
   assert.equal(oldSocket.closed, true);
   assert.equal(h.published.length, 0);
@@ -475,6 +738,8 @@ test('late permission reads cannot overwrite a new server or a newer permission 
   let finishOld;
   h.permissionReads.push(() => new Promise(resolve => { finishOld = resolve; }));
   const oldRead = h.service.refreshStatus();
+  cookies.registerServerCookies('https://new.example', ['clawbench_session=new; HttpOnly']);
+  h.configResponses.push(() => ({ responseCode: 200, result: '{"push_mode":"disabled"}' }));
   await h.service.bind('https://new.example', 'en', false);
   finishOld(false);
   await oldRead;

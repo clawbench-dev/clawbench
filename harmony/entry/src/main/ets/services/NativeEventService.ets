@@ -29,6 +29,10 @@ interface PendingResponse {
   events: PendingEvent[];
 }
 
+interface NativePushConfig {
+  push_mode?: string;
+}
+
 interface NativeNotificationStatus {
   enabled: boolean;
   connected: boolean;
@@ -49,6 +53,8 @@ export class NativeEventService {
   private settingEpoch: number = 0;
   private permissionEpoch: number = 0;
   private permission: string = 'unknown';
+  private permissionRequest?: Promise<boolean>;
+  private startupPermissionRequested: boolean = false;
   private socket?: webSocket.WebSocket;
   private requests: http.HttpRequest[] = [];
   private retryTimer: number = -1;
@@ -118,7 +124,110 @@ export class NativeEventService {
     this.foreground = foreground;
     this.lastError = '';
     this.reportStatus();
+    await this.syncServerSettings();
+  }
+
+  async syncServerSettings(): Promise<void> {
+    const record = this.active;
+    if (!record || !this.context) {
+      return;
+    }
+    const generation = this.generation;
+    const settingEpoch = ++this.settingEpoch;
+    const current = (): boolean => generation === this.generation && settingEpoch === this.settingEpoch &&
+      record === this.active;
+    let request: http.HttpRequest | undefined;
+    try {
+      request = http.createHttp();
+      this.requests.push(request);
+      const url = record.origin + '/api/config';
+      const cookie = nativeCookieHeader(record.origin, webview.WebCookieManager.fetchCookieSync(url));
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET, header: { Cookie: cookie }, maxRedirects: 0,
+        connectTimeout: 5000, readTimeout: 5000, maxLimit: 262144,
+        usingCache: false, expectDataType: http.HttpDataType.STRING
+      });
+      if (!current()) {
+        return;
+      }
+      if (response.responseCode !== 200) {
+        throw new Error('Notification settings request failed');
+      }
+      const config = JSON.parse(String(response.result)) as NativePushConfig;
+      if (!config || typeof config !== 'object' || Array.isArray(config) ||
+        (config.push_mode !== undefined && typeof config.push_mode !== 'string')) {
+        throw new Error('Invalid notification settings');
+      }
+      const mode = config.push_mode || 'native';
+      if (!['native', 'disabled', 'dingtalk', 'feishu', 'wechat'].includes(mode)) {
+        throw new Error('Invalid notification mode');
+      }
+      record.enabled = mode === 'native';
+      this.lastError = '';
+      await this.persist();
+    } catch (_) {
+      if (current()) {
+        this.lastError = 'Native notification settings unavailable; retrying on reconnect or resume';
+      }
+    } finally {
+      this.requests = this.requests.filter((item: http.HttpRequest) => item !== request);
+      request?.destroy();
+    }
+    if (!current()) {
+      return;
+    }
     await this.refreshStatus();
+    if (!current()) {
+      return;
+    }
+    if (!record.enabled || this.permission !== 'granted') {
+      this.stopTransport();
+      if (!record.enabled) {
+        await notificationManager.cancelGroup(this.group(record.origin)).catch(() => {});
+      }
+    } else if (this.foreground) {
+      this.enqueueRecovery();
+    } else {
+      this.connect();
+    }
+    this.reportStatus();
+  }
+
+  async requestStartupPermission(): Promise<void> {
+    if (!this.context || !this.foreground || this.startupPermissionRequested) {
+      return;
+    }
+    this.startupPermissionRequested = true;
+    try {
+      await this.requestPermission();
+    } catch (_) {
+      // Permission service failures must not block the local login page.
+    }
+    await this.refreshStatus();
+  }
+
+  private requestPermission(): Promise<boolean> {
+    if (!this.permissionRequest) {
+      this.permissionRequest = this.enablePermission().finally(() => {
+        this.permissionRequest = undefined;
+      });
+    }
+    return this.permissionRequest;
+  }
+
+  private async enablePermission(): Promise<boolean> {
+    const context = this.context;
+    if (!context) {
+      return false;
+    }
+    if (await notificationManager.isNotificationEnabled()) {
+      return true;
+    }
+    if (context !== this.context) {
+      return false;
+    }
+    await notificationManager.requestEnableNotification(context).catch(() => {});
+    return notificationManager.isNotificationEnabled();
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
@@ -134,8 +243,7 @@ export class NativeEventService {
         return;
       }
       if (enabled && !allowed) {
-        await notificationManager.requestEnableNotification(this.context).catch(() => {});
-        allowed = await notificationManager.isNotificationEnabled();
+        allowed = await this.requestPermission();
       }
       if (generation !== this.generation || settingEpoch !== this.settingEpoch) {
         return;
@@ -187,7 +295,7 @@ export class NativeEventService {
 
   async refreshStatus(): Promise<string> {
     const record = this.active;
-    if (!record || !this.context) {
+    if (!this.context) {
       return this.getStatus();
     }
     const generation = this.generation;
@@ -203,13 +311,13 @@ export class NativeEventService {
       this.permission = allowed ? 'granted' : 'denied';
       if (!allowed) {
         this.stopTransport();
-        this.lastError = record.enabled ? 'Notification permission was not granted' : '';
+        this.lastError = record?.enabled ? 'Notification permission was not granted' : '';
       } else {
         if (this.lastError === 'Notification permission was not granted' ||
           this.lastError === 'Notification status or settings are unavailable') {
           this.lastError = '';
         }
-        if (record.enabled && previous !== 'granted') {
+        if (record?.enabled && previous !== 'granted') {
           if (this.foreground) {
             this.enqueueRecovery();
           } else {
@@ -237,14 +345,7 @@ export class NativeEventService {
     this.foreground = foreground;
     this.stopTransport();
     this.reportStatus();
-    if (this.active?.enabled && this.permission === 'granted') {
-      if (foreground) {
-        this.enqueueRecovery();
-      } else {
-        this.connect();
-      }
-    }
-    void this.refreshStatus();
+    void this.syncServerSettings();
   }
 
   async updateLastSeenEventId(id: string): Promise<void> {
@@ -310,6 +411,7 @@ export class NativeEventService {
 
   destroy(): void {
     this.stop();
+    this.context = undefined;
     this.pending = undefined;
   }
 
