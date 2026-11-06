@@ -90,6 +90,16 @@ func AppendLiveNoteAudio(paths LiveNotesPaths, channel string, startedAt int64, 
 	if err != nil {
 		return false, err
 	}
+	if state == nil {
+		// No usable sidecar. If a recording is already there, it was written by
+		// an earlier run whose bookkeeping did not survive (a crash between the
+		// header patch and the sidecar write). Truncating it would throw away
+		// every minute recorded so far, and the segments are already gone — so
+		// leave this one on disk for the end-of-meeting merge instead.
+		if info, statErr := os.Stat(target); statErr == nil && info.Size() > 0 {
+			return false, nil
+		}
+	}
 	if state != nil && startedAt <= state.LastStartedAt {
 		// Already folded in (or older than the file's head). Dropping it keeps
 		// the timeline monotonic, which is the whole point of the shift.

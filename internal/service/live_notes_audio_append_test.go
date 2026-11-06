@@ -70,24 +70,35 @@ func TestAppendLiveNoteAudio_DropsADuplicateDelivery(t *testing.T) {
 	assert.Equal(t, []uint64{0}, clusterTimecodes(t, channel))
 }
 
-func TestAppendLiveNoteAudio_RebuildsWhenTheSidecarIsUnreadable(t *testing.T) {
-	// A corrupt sidecar must not wedge the channel: the next segment rebuilds
-	// the file instead of every upload failing forever.
+func TestAppendLiveNoteAudio_NeverTruncatesAnExistingRecording(t *testing.T) {
+	// A sidecar that did not survive a crash must not cost the recording. The
+	// earlier version treated "no sidecar" as "start a new file" and truncated,
+	// which silently threw away every minute recorded so far — and the segments
+	// it came from were already deleted.
 	paths := audioPaths(t)
 	seg := writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))
 	_, err := AppendLiveNoteAudio(paths, "mic", 1_700_000_000_000, seg)
 	require.NoError(t, err)
 
-	sidecar := filepath.Join(paths.Audio, "mic.append.json")
-	require.NoError(t, os.WriteFile(sidecar, []byte("not json"), 0o644))
+	channel := filepath.Join(paths.Audio, "mic.webm")
+	before, err := os.Stat(channel)
+	require.NoError(t, err)
 
+	// The bookkeeping is gone (crash between the header patch and the sidecar
+	// write), and another segment arrives.
+	require.NoError(t, os.Remove(filepath.Join(paths.Audio, "mic.append.json")))
 	next := writeSegment(t, paths, 1_700_000_009_000, "mic", testSegment(t, testCluster{timecode: 0}))
 	consumed, err := AppendLiveNoteAudio(paths, "mic", 1_700_000_009_000, next)
 	require.NoError(t, err)
-	assert.True(t, consumed)
 
-	// Rebuilt from the new segment: one cluster, no half-written leftovers.
-	assert.Equal(t, []uint64{0}, clusterTimecodes(t, filepath.Join(paths.Audio, "mic.webm")))
+	// The segment is NOT consumed: it stays on disk for the end-of-meeting merge.
+	assert.False(t, consumed)
+	require.FileExists(t, next)
+
+	after, err := os.Stat(channel)
+	require.NoError(t, err)
+	assert.Equal(t, before.Size(), after.Size(), "the existing recording must not be touched")
+	assert.Equal(t, []uint64{0}, clusterTimecodes(t, channel))
 }
 
 func TestMergeLiveNoteAudio_DropsTheDuplicateSoloFileAssembledLive(t *testing.T) {

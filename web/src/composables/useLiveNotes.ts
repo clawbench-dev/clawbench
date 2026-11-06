@@ -280,13 +280,17 @@ function openLiveStream(
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data as string) as {
-          type?: string; text?: string; channel?: string; speaker?: string; startedAt?: number; durationMs?: number
+          type?: string; id?: number; text?: string; channel?: string; speaker?: string
+          startedAt?: number; durationMs?: number
         }
         if (msg.type === 'partial' && msg.text) {
           onPartial(channel, msg.text)
         } else if (msg.type === 'line' && msg.text) {
+          // The server echoes the stored row's id. Without it `mergeNoteSegments`
+          // drops the row (it only keeps ids > 0) and the transcript stays empty
+          // for the whole meeting.
           onLine({
-            id: 0,
+            id: msg.id ?? 0,
             channel: msg.channel ?? channel,
             speaker: msg.speaker ?? speaker,
             startedAt: msg.startedAt ?? Date.now(),
@@ -432,6 +436,10 @@ export function useLiveNotes() {
           speaker,
           (line) => {
             segments.value = mergeNoteSegments(segments.value, [line])
+            // The committed line replaces whatever was still being revised.
+            const rest = { ...liveLines.value }
+            delete rest[line.channel]
+            liveLines.value = rest
           },
           (ch, text) => {
             liveLines.value = { ...liveLines.value, [ch]: text }

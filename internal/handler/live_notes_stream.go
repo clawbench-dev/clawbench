@@ -240,8 +240,13 @@ func (n *notesStreamRelay) forwardResults() {
 		n.mu.Lock()
 		n.current = res.Text
 		n.lastResultAt = time.Now()
+		// The engine returns the WHOLE session's text every time, so what is new
+		// is the part after what has already been stored.
+		partial := strings.TrimPrefix(res.Text, n.committed)
 		n.mu.Unlock()
-		_ = sendNotesStreamMsg(n.conn, map[string]any{sttWSType: "partial", liveNoteTextKey: res.Text})
+		if partial != "" {
+			_ = sendNotesStreamMsg(n.conn, map[string]any{sttWSType: "partial", liveNoteTextKey: partial})
+		}
 	}
 }
 
@@ -268,7 +273,8 @@ func (n *notesStreamRelay) commitIfDue(ctx context.Context) {
 	}
 	now := time.Now()
 	n.mu.Lock()
-	text := strings.TrimSpace(n.current)
+	full := n.current
+	text := strings.TrimSpace(strings.TrimPrefix(full, n.committed))
 	settled := !n.lastResultAt.IsZero() && now.Sub(n.lastResultAt) >= notesStreamCommitAfterMS*time.Millisecond
 	tooLong := !n.lineStart.IsZero() && now.Sub(n.lineStart) >= notesStreamMaxLineMS*time.Millisecond
 	var startedAt time.Time
@@ -280,7 +286,7 @@ func (n *notesStreamRelay) commitIfDue(ctx context.Context) {
 	if text == "" || (!settled && !tooLong) {
 		return
 	}
-	n.commit(ctx, text, startedAt)
+	n.commit(ctx, full, startedAt)
 }
 
 // commitBufferedIfDue transcribes the accumulated chunk once it ends.
@@ -317,7 +323,15 @@ func (n *notesStreamRelay) commitBufferedIfDue(ctx context.Context) {
 }
 
 // commit stores one line and tells the client it is final.
-func (n *notesStreamRelay) commit(ctx context.Context, text string, startedAt time.Time) {
+//
+// `full` is the engine's whole-session text; the line is the part that has not
+// been stored yet. Remembering `full` is what keeps the second line from
+// repeating the first.
+func (n *notesStreamRelay) commit(ctx context.Context, full string, startedAt time.Time) {
+	text := strings.TrimSpace(strings.TrimPrefix(full, n.committed))
+	if text == "" {
+		return
+	}
 	n.mu.Lock()
 	if n.closed {
 		n.mu.Unlock()
@@ -332,7 +346,7 @@ func (n *notesStreamRelay) commit(ctx context.Context, text string, startedAt ti
 	duration := time.Since(startedAt).Milliseconds()
 	// Reset before the write: a slow database must not make the next line
 	// inherit this one's text.
-	n.committed = text
+	n.committed = full
 	n.current = ""
 	n.lastResultAt = time.Time{}
 	n.lineStart = time.Time{}
@@ -376,15 +390,44 @@ func (n *notesStreamRelay) finish(ctx context.Context) {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	n.commitBufferedIfDue(ctx)
+	// Flush whatever is pending regardless of the quiet/age gate: the meeting
+	// is over, so there will never be more audio to satisfy it.
+	n.flushBuffered(ctx)
 	n.mu.Lock()
-	n.closed = true
-	text := strings.TrimSpace(n.current)
+	full := n.current
 	startedAt := n.lineStart
 	n.mu.Unlock()
-	if text != "" {
-		n.commit(ctx, text, startedAt)
+	// Commit BEFORE marking closed: commit() refuses to run on a closed relay,
+	// so the other order silently dropped the last sentence of every meeting.
+	n.commit(ctx, full, startedAt)
+	n.mu.Lock()
+	n.closed = true
+	n.mu.Unlock()
+}
+
+// flushBuffered transcribes everything still buffered, ignoring the gate.
+func (n *notesStreamRelay) flushBuffered(ctx context.Context) {
+	n.mu.Lock()
+	if len(n.pending) < notesStreamSampleRate/2 {
+		n.mu.Unlock()
+		return
 	}
+	pcm := n.pending
+	from := n.pendingFrom
+	n.pending = nil
+	n.pendingFrom = time.Time{}
+	n.mu.Unlock()
+
+	text, err := transcribeLiveNoteSegment(ctx, wavFromPCM(pcm, notesStreamSampleRate))
+	if err != nil {
+		slog.Warn("live notes stream: final transcribe failed", "channel", n.channel, "err", err)
+		return
+	}
+	if text = strings.TrimSpace(text); text == "" {
+		return
+	}
+	_ = sendNotesStreamMsg(n.conn, map[string]any{sttWSType: "partial", liveNoteTextKey: text})
+	n.commit(ctx, text, from)
 }
 
 // notesStreamSilenceFloor is the peak level below which a frame carries no

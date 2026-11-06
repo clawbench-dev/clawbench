@@ -70,7 +70,8 @@ func (s *stubStreamSession) Results() <-chan stt.StreamResult { return s.p.resul
 func (s *stubStreamSession) Close()                           { close(s.p.results) }
 
 // streamDial opens the notes socket the way the publisher does.
-func streamDial(t *testing.T, srv *httptest.Server, project, token, channel string) *websocket.Conn {
+func streamDial(t *testing.T, srv *httptest.Server, project, token string) *websocket.Conn {
+	const channel = "mic"
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -149,7 +150,7 @@ func TestLiveNotesStream_BufferedEngineStoresALine(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(LiveNotesStreamWS))
 	t.Cleanup(srv.Close)
 
-	conn := streamDial(t, srv, project, room.Token(), "mic")
+	conn := streamDial(t, srv, project, room.Token())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, loudPCM(10)))
@@ -178,7 +179,7 @@ func TestLiveNotesStream_StreamingEngineStoresALine(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(LiveNotesStreamWS))
 	t.Cleanup(srv.Close)
 
-	conn := streamDial(t, srv, project, room.Token(), "mic")
+	conn := streamDial(t, srv, project, room.Token())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// One frame per revision: the stub answers each Write with the next one, the
@@ -200,6 +201,81 @@ func TestLiveNotesStream_StreamingEngineStoresALine(t *testing.T) {
 	n, text := countNoteSegments(t, db, "mic")
 	assert.Equal(t, 1, n)
 	assert.Equal(t, "现在让我检查一下这个文件", text)
+}
+
+// A streaming engine re-sends the whole session's text on every update. Without
+// subtracting what was already stored, the second line repeats the first and the
+// transcript grows quadratically.
+func TestLiveNotesStream_SecondLineDoesNotRepeatTheFirst(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+	project := projPath("/proj/a")
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	provider := newStubStreamProvider("你好今天", "你好今天我们讨论")
+	prev := GetSTTProvider()
+	SetSTTProvider(provider)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	srv := httptest.NewServer(http.HandlerFunc(LiveNotesStreamWS))
+	t.Cleanup(srv.Close)
+
+	conn := streamDial(t, srv, project, room.Token())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, loudPCM(1)))
+	first := readUntilLine(t, conn)
+	assert.Equal(t, "你好今天", first["text"])
+
+	// The engine keeps growing the same cumulative text.
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, loudPCM(1)))
+	second := readUntilLine(t, conn)
+	assert.Equal(t, "我们讨论", second["text"], "only the new part is a line")
+
+	var texts []string
+	rows, err := db.Query(`SELECT text FROM live_notes_segments WHERE channel = 'mic' ORDER BY id`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var t2 string
+		require.NoError(t, rows.Scan(&t2))
+		texts = append(texts, t2)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []string{"你好今天", "我们讨论"}, texts)
+}
+
+// The sentence being spoken when the publisher stops must still be stored.
+func TestLiveNotesStream_FinishStoresTheLastLine(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+	project := projPath("/proj/a")
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	provider := newStubStreamProvider("最后一句话")
+	prev := GetSTTProvider()
+	SetSTTProvider(provider)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	srv := httptest.NewServer(http.HandlerFunc(LiveNotesStreamWS))
+	t.Cleanup(srv.Close)
+
+	conn := streamDial(t, srv, project, room.Token())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, loudPCM(1)))
+	// Stop immediately — no 1.2 s of quiet to satisfy the settle rule.
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"end"}`)))
+
+	msg := readUntilLine(t, conn)
+	assert.Equal(t, "最后一句话", msg["text"])
+
+	n, text := countNoteSegments(t, db, "mic")
+	assert.Equal(t, 1, n)
+	assert.Equal(t, "最后一句话", text)
 }
 
 func TestLiveNotesStream_RejectsUnknownChannel(t *testing.T) {
