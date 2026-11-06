@@ -42,6 +42,8 @@ interface NativeNotificationStatus {
   backgroundDelivery: string;
 }
 
+const MAX_MISSING_CURSOR_ALERTS: number = 20;
+
 export class NativeEventService {
   private context?: common.UIAbilityContext;
   private prefs?: preferences.Preferences;
@@ -131,7 +133,8 @@ export class NativeEventService {
     this.foreground = foreground;
     this.lastError = '';
     this.reportStatus();
-    await this.syncServerSettings();
+    // Notification configuration must not delay the authenticated workbench.
+    void this.syncServerSettings();
   }
 
   async syncServerSettings(): Promise<void> {
@@ -183,6 +186,7 @@ export class NativeEventService {
     if (!current()) {
       return;
     }
+    const hadBaseline = record.state.baselineInitialized === true || record.state.cursor.length > 0;
     await this.refreshStatus();
     if (!current()) {
       return;
@@ -194,7 +198,9 @@ export class NativeEventService {
       }
     } else {
       await this.startDelivery();
-      await this.enqueueRecovery();
+      if (hadBaseline) {
+        await this.enqueueRecovery();
+      }
     }
     this.reportStatus();
   }
@@ -634,7 +640,7 @@ export class NativeEventService {
     }
     const cursor = record.state.cursor;
     let events = await this.fetchPending(record.origin, cursor, generation);
-    const fresh = record.state.baselineInitialized !== true && cursor.length === 0;
+    let fresh = record.state.baselineInitialized !== true && cursor.length === 0;
     if (events.length === 0 && cursor) {
       // Missing/expired cursors also return []. Preserve unread newer rows
       // during recovery, including cursors written by older WS-only clients.
@@ -644,6 +650,9 @@ export class NativeEventService {
       } else {
         events = events.filter((item: PendingEvent) => item && item.event_id !== cursor &&
           newestEventId(cursor, item.event_id) === item.event_id);
+        // A restart or expired cursor can expose far more history than the
+        // bounded dedup sets retain. Rebuild large batches without a toast storm.
+        fresh = events.length > MAX_MISSING_CURSOR_ALERTS;
       }
     }
     for (const pending of events) {

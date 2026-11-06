@@ -416,6 +416,7 @@ struct Index {
       await this.store.setActive(address);
       const raw = await this.context().resourceManager.getRawFileContent('harmony-bootstrap.js');
       const systemBars = await this.context().resourceManager.getRawFileContent('system-bars.js');
+      const selectionMenu = await this.context().resourceManager.getRawFileContent('selection-menu.js');
       if (id !== this.connectionId) {
         return;
       }
@@ -424,7 +425,8 @@ struct Index {
         JSON.stringify({
           origin: address, channel: this.channelId, language: this.store.language,
           theme: this.store.theme, version: APP_VERSION
-        })) + '\n' + new util.TextDecoder().decodeWithStream(systemBars);
+        })) + '\n' + new util.TextDecoder().decodeWithStream(systemBars) +
+        '\n' + new util.TextDecoder().decodeWithStream(selectionMenu);
       this.activeUrl = address;
       this.loginTargetUrl = address;
       this.activePassword = password;
@@ -476,7 +478,6 @@ struct Index {
       this.loginController.runJavaScript(`onConnectStart(${JSON.stringify(this.loginTargetUrl)});`).catch(() => {});
     }
     this.reportLoginError();
-    void this.notifications.requestStartupPermission();
   }
 
   private async receiveLoginBridge(message: string, port: webview.WebMessagePort, epoch: number): Promise<void> {
@@ -635,8 +636,8 @@ struct Index {
         if (method === 'downloadFile' || method === 'downloadUrl') {
           this.reportDownloadFailure();
         }
-        if (method === 'setSSHPassword' && !this.rendererReady) {
-          // The shared login page has not installed App's native-error listener yet.
+        if (method === 'setSSHPassword') {
+          // Renderer readiness does not mean the web app handles native-error events.
           this.getUIContext().getPromptAction().showToast({
             message: error instanceof Error ? formatNativeError(error, this.store.language) :
               nativeMessage('credential_save_failed', this.store.language)
@@ -700,7 +701,7 @@ struct Index {
         const origin = this.activeUrl;
         const password = arg(0);
         if (typeof password !== 'string' || !password) {
-          throw new NativeFailure('password', this.store.language);
+          throw new NativeFailure('invalid_password', this.store.language);
         }
         // LoginView sends this without awaiting it. Register redaction before any async work.
         this.logger?.addSecret(password);
@@ -980,7 +981,7 @@ struct Index {
     this.notifications.setForeground(this.foreground);
     this.tunnels?.setForeground(this.foreground);
     if (this.foreground) {
-      if (this.loginReady || this.pageReady) {
+      if (this.showWeb && this.pageReady) {
         void this.notifications.requestStartupPermission();
       }
       this.handleShareImport();

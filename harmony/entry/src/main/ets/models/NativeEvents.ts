@@ -139,7 +139,7 @@ export function nativeEventDecision(event: NativeEvent, state: EventState,
   foreground: boolean, freshBacklog: boolean = false): EventDecision {
   const kind = event.event;
   const status = event.data?.status;
-  const message = completedMessageKey(event);
+  const message = terminalMessageKey(event);
   const duplicate = (validEventId(event.id) && state.recentIds.includes(event.id || '')) ||
     (message.length > 0 && (state.recentMessages || []).includes(message));
   const approval = kind === 'session_update' && status === 'permission_pending';
@@ -160,9 +160,9 @@ export function nativeEventDecision(event: NativeEvent, state: EventState,
   };
 }
 
-function completedMessageKey(event: NativeEvent): string {
+function terminalMessageKey(event: NativeEvent): string {
   const data = event.data;
-  if (event.event !== 'session_update' || data?.status !== 'completed' ||
+  if (event.event !== 'session_update' || (data?.status !== 'completed' && data?.status !== 'cancelled') ||
     typeof data.session_id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(data.session_id) ||
     !Number.isSafeInteger(data.message_id) || (data.message_id || 0) <= 0) {
     return '';
@@ -176,7 +176,7 @@ export function recordNativeEvent(state: EventState, event: NativeEvent, fromPen
   if (validEventId(id)) {
     recent.push(id);
   }
-  const message = completedMessageKey(event);
+  const message = terminalMessageKey(event);
   const messages = (state.recentMessages || []).filter((value: string) => value !== message).slice(-511);
   if (message) {
     messages.push(message);

@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 
 const bootstrapUrl = [
-  new URL('../entry/src/main/resources/rawfile/harmony-bootstrap.js', import.meta.url),
+  new URL('../harmony/entry/src/main/resources/rawfile/harmony-bootstrap.js', import.meta.url),
   new URL('../entry/src/main/resources/rawfile/harmony-bootstrap.js', import.meta.url)
 ].find(existsSync);
 assert.ok(bootstrapUrl, 'the shipped HarmonyOS bootstrap must exist');

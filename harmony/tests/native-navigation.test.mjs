@@ -26,8 +26,11 @@ function between(text, start, end) {
 const methods = [
   between(source, '  private async notificationChanged(', '  private shareErrorChanged('),
   between(source, '  private async showConnection(', '  private startPageTimeout('),
+  between(source, '  private attachLoginPort(', '  private async receiveLoginBridge('),
   between(source, '  private async receiveLoginBridge(', '  private reportLoginError('),
+  between(source, '  private async receiveBridge(', '  private reportDownloadFailure('),
   between(source, '  private async invokeBridge(', '  private async keepScreenOn('),
+  between(source, '  private foregroundChanged(', '  onBackPress(): boolean {'),
   between(source, '  onBackPress(): boolean {', '  build() {')
 ].join('\n');
 const failureClass = between(connectionSource,
@@ -112,7 +115,7 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
         return connections.get(url) || url;
       }
     },
-    notifications: { stop() {}, async bind() {} },
+    notifications: { stop() {}, async bind() {}, setForeground() {} },
     context: () => ({
       resourceManager: {
         async getRawFileContent() { return new TextEncoder().encode('__HARMONY_CONFIG__'); }
@@ -149,6 +152,41 @@ function notificationHost(options = {}, launch = {
   });
   return { ...h, queued, delivered: () => delivered };
 }
+
+test('loading the local login page never requests notification authorization', () => {
+  const h = host({ local: true });
+  const permissionRequests = [];
+  h.instance.notifications.requestStartupPermission = async () => permissionRequests.push(true);
+  h.instance.loginController.createWebMessagePorts = () => [
+    { onMessageEvent() {}, close() {} }, { close() {} }
+  ];
+  h.instance.loginController.postMessage = () => {};
+  h.instance.attachLoginPort();
+  assert.equal(h.instance.loginReady, true);
+  assert.equal(permissionRequests.length, 0);
+});
+
+test('foreground authorization waits for the authenticated workbench to be ready', () => {
+  for (const [showWeb, pageReady, loginReady, foreground, expected] of [
+    [false, false, true, true, 0],
+    [false, true, true, true, 0],
+    [true, false, true, true, 0],
+    [true, true, false, false, 0],
+    [true, true, false, true, 1]
+  ]) {
+    const h = host();
+    const permissionRequests = [];
+    Object.assign(h.instance, {
+      showWeb, pageReady, loginReady, foreground,
+      handleShareImport() {}, shareErrorChanged() {}
+    });
+    h.instance.notifications.requestStartupPermission = async () => permissionRequests.push(true);
+    h.instance.controller.runJavaScript = async () => {};
+    h.instance.foregroundChanged();
+    assert.equal(permissionRequests.length, expected,
+      JSON.stringify({ showWeb, pageReady, loginReady, foreground }));
+  }
+});
 
 test('removing the selected login server clears its temporary retry target', async () => {
   const h = host({ local: true });
@@ -640,6 +678,24 @@ test('a failed secret save does not restore the obsolete tunnel password', async
   assert.equal(h.instance.activePassword, 'new-fixture-password');
 });
 
+test('workbench credential write failures always show a native error even after renderer readiness', async () => {
+  for (const rendererReady of [false, true]) {
+    const h = host();
+    const toasts = [];
+    h.instance.rendererReady = rendererReady;
+    h.instance.getUIContext = () => ({ getPromptAction: () => ({
+      showToast: value => toasts.push(value.message)
+    }) });
+    h.instance.store.save = async () => { throw new NativeFailure('credential_save_failed'); };
+    await h.instance.receiveBridge(JSON.stringify({
+      id: 10, method: 'setSSHPassword', args: [JSON.stringify('fixture-rotated-password')]
+    }), h.port, h.instance.connectionId, h.instance.documentId);
+    assert.deepEqual(toasts, [nativeMessage('credential_save_failed', 'en')]);
+    assert.equal(h.replies.at(-1).error, nativeMessage('credential_save_failed', 'en'));
+    assert.equal(h.instance.activePassword, 'fixture-rotated-password');
+  }
+});
+
 test('late password saves cannot overwrite a different server session', async () => {
   for (const fail of [false, true]) {
     const h = host();
@@ -690,7 +746,7 @@ test('password rotation in recovery mode uses memory only and rejects an empty p
   await h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"session-only-fixture"'] });
   assert.equal(h.instance.activePassword, 'session-only-fixture');
   await assert.rejects(h.instance.invokeBridge({ method: 'setSSHPassword', args: ['""'] }),
-    error => error.code === 'password');
+    error => error.code === 'invalid_password' && error.message === nativeMessage('invalid_password', 'en'));
   assert.equal(h.instance.activePassword, 'session-only-fixture');
 });
 

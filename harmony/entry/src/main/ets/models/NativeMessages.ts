@@ -5,6 +5,7 @@ interface NativeMessage {
 
 const MESSAGES: Record<string, NativeMessage> = {
   password: { zh: '密码不正确', en: 'Wrong password' },
+  invalid_password: { zh: '请输入非空密码', en: 'Enter a non-empty password.' },
   rate_limit: { zh: '登录尝试过于频繁，请稍后重试', en: 'Too many login attempts. Please try again later.' },
   health_failed: { zh: '服务器健康检查失败，请检查服务器状态', en: 'The server health check failed. Check the server status.' },
   invalid_server: { zh: '该地址未返回有效的 ClawBench 服务器信息', en: 'This address did not return a valid ClawBench server response.' },
