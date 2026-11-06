@@ -122,7 +122,21 @@ describe('MailReader', () => {
     await flushPromises()
 
     expect(apiPost).toHaveBeenCalledWith('/api/mail/messages/5/flags', { flagged: true })
-    expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({ flagged: true })
+    // The load itself reports the opened row, so the flag change is the LAST
+    // update — assert on that one rather than the first.
+    expect(wrapper.emitted('updated')?.at(-1)?.[0]).toMatchObject({ flagged: true })
+  })
+
+  it('reports the opened message so the list can drop its unread styling', async () => {
+    // Opening marks the mail read on the server; the row on screen next to the
+    // reader only loses its unread look if the reader hands the new state back.
+    apiGet.mockResolvedValue({ message: detail })
+    const wrapper = mountReader()
+    await flushPromises()
+
+    const updates = wrapper.emitted('updated') ?? []
+    expect(updates).toHaveLength(1)
+    expect(updates[0][0]).toMatchObject({ id: 5, seen: true })
   })
 
   it('deletes through the delete endpoint and reports it', async () => {

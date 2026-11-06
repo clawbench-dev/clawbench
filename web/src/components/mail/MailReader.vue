@@ -214,8 +214,11 @@ async function load(): Promise<void> {
     const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${props.messageId}`)
     if (gen !== generation) return
     detail.value = data.message
-    // Opening marks it read on the server; refresh the badge so the dock count
-    // drops without waiting for the next poll.
+    // Opening marks it read on the server. Tell the list as well: in the wide
+    // layout the row stays on screen next to the reader, and patching it is
+    // the only thing that drops its unread styling without a full reload.
+    emit('updated', data.message)
+    // Same for the dock badge and the folder counters.
     void refreshMailUnread()
   } catch (e) {
     if (gen !== generation) return
