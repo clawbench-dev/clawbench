@@ -19,7 +19,12 @@
  */
 import { appLog } from '@/utils/appLog'
 import { shotLabel } from '@/utils/meetingShots'
-import { SENSITIVITY_RMS, type VoiceSensitivity } from '@/utils/audioTuning'
+import {
+  SENSITIVITY_RMS,
+  VOICE_TUNING_DEFAULTS,
+  type VoiceSensitivity,
+} from '@/utils/audioTuning'
+import { PcmStreamer } from '@/utils/pcmCapture'
 
 export type { VoiceSensitivity }
 
@@ -363,6 +368,19 @@ export interface NotesUploadArgs {
 /** Uploads one segment and resolves to the stored line (null when silent). */
 export type NotesUploader = (args: NotesUploadArgs) => Promise<LiveNoteSegment | null>
 
+/**
+ * One channel's live transcript socket.
+ *
+ * The audio goes up as it is captured, so text appears while the person is
+ * still talking instead of after a pause plus an upload plus a round trip.
+ * The channel's segment files keep being uploaded as well — they are the
+ * recording, and the thing a failed stream can be re-transcribed from.
+ */
+export interface NotesStreamHandle {
+  send(pcm: ArrayBuffer): void
+  close(): void
+}
+
 export interface LiveNotesCaptureOptions {
   /** Hard ceiling for one segment (a pause normally ends it earlier). */
   segmentMs?: number
@@ -385,6 +403,13 @@ export interface LiveNotesCaptureOptions {
    * as before.
    */
   sensitivity?: VoiceSensitivity
+  /**
+   * Opens a live transcript socket for a channel.
+   *
+   * Omitted → no streaming (the segment uploads carry the transcript, as
+   * before). Supplying it moves transcription onto the live socket.
+   */
+  openStream?: (channel: string, speaker: string) => NotesStreamHandle | null
   /**
    * Uploader for the archive-only mix track. Supplying it turns the mix on: the
    * capture then also records every channel mixed together into one file.
@@ -423,6 +448,10 @@ class ChannelRecorder {
   /** Whether a segment with no speech is dropped instead of uploaded. */
   private readonly voiceGate: boolean
 
+  /** Live transcript socket and its PCM capture, when streaming is on. */
+  private liveStream: NotesStreamHandle | null = null
+  private pcm: PcmStreamer | null = null
+
   private recorder: MediaRecorder | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private vadTimer: ReturnType<typeof setInterval> | null = null
@@ -433,6 +462,8 @@ class ChannelRecorder {
   private pumping = false
   private waiters: Array<() => void> = []
   private readonly opts: LiveNotesCaptureOptions
+  /** Kept for the PCM tap: the live socket needs the same source. */
+  private readonly stream: MediaStream
 
   /**
    * When this channel last carried speech, in epoch ms (0 = never).
@@ -461,6 +492,7 @@ class ChannelRecorder {
     mixDest: MediaStreamAudioDestinationNode | null = null,
   ) {
     this.opts = opts
+    this.stream = stream
     this.segmentMs = opts.segmentMs ?? NOTES_SEGMENT_MS
     this.minSegmentMs = Math.min(opts.minSegmentMs ?? NOTES_MIN_SEGMENT_MS, this.segmentMs)
     this.maxPending = opts.maxPending ?? NOTES_MAX_PENDING
@@ -520,11 +552,48 @@ class ChannelRecorder {
   start(): void {
     if (this.stopped || this.recorder) return
     this.recordOnce()
+    this.startStreaming()
+  }
+
+  /**
+   * Taps the same source into the live transcript socket.
+   *
+   * The voice gate is OFF here on purpose: the server needs continuous audio to
+   * decide where a sentence ends, and a client-side gate that drops the quiet
+   * half of a sentence would make that judgement on a different signal than the
+   * audio it actually receives.
+   */
+  private startStreaming(): void {
+    if (!this.opts.openStream) return
+    // The mix bus is the whole meeting in one file. Transcribing it would
+    // produce a second copy of every line with the speaker labels lost.
+    if (this.channel === NOTES_MIX_CHANNEL) return
+    const handle = this.opts.openStream(this.channel, this.speaker())
+    if (!handle) return
+    this.liveStream = handle
+    const streamer = new PcmStreamer({
+      stream: this.stream,
+      tuning: { ...VOICE_TUNING_DEFAULTS, voiceGate: false },
+      onFrame: (frame) => handle.send(frame),
+    })
+    this.pcm = streamer
+    void streamer.start().catch((e) => {
+      appLog.w(TAG, 'live transcript stream failed, segments still record', this.channel, e)
+      this.stopStreaming()
+    })
+  }
+
+  private stopStreaming(): void {
+    this.pcm?.stop()
+    this.pcm = null
+    this.liveStream?.close()
+    this.liveStream = null
   }
 
   stop(): void {
     if (this.stopped) return
     this.stopped = true
+    this.stopStreaming()
     this.stopVad()
     if (this.timer !== null) {
       clearTimeout(this.timer)
