@@ -3,6 +3,7 @@ import { copyText } from '@/utils/clipboard.ts'
 import { flashElement } from '@/utils/domFlash'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { getNative } from '@/utils/clawbenchNative'
 import { isExternalLink, isAnchorLink, slugifyForHeading, stripLeadingNumbering } from '@/utils/doubleClickUtils.ts'
 import type { ToastIconKey } from '@/composables/useToast'
 
@@ -47,7 +48,7 @@ export interface DoubleClickCopyOptions {
  */
 export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
     const toast = inject<ToastShow | null>('toast', null)
-    const { isTouchPrimary, isAndroidApp } = usePlatformDetect()
+    const { isTouchPrimary, isAndroidApp, isHarmonyApp } = usePlatformDetect()
     let lastTarget: EventTarget | null = null
     let lastTime = 0
     const DBLCLICK_THRESHOLD = 300 // ms，与浏览器默认双击间隔一致
@@ -172,14 +173,7 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
         const resolved = resolveTarget(target)
         if (!resolved) return false
 
-        const native = (window as unknown as {
-            ClawBenchNative?: {
-                showSelectionMenu?: (
-                    text: string,
-                    left: number, top: number, right: number, bottom: number,
-                ) => void
-            }
-        }).ClawBenchNative
+        const native = getNative()
         if (!native?.showSelectionMenu) return false
 
         const rect = selectResolved(resolved.element, resolved.isLineMode)
@@ -348,7 +342,7 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
             // Android: hand off to the native selection menu so a double-tap and
             // a long-press produce the SAME menu (Copy / 引用 / 讨论). Falls back
             // to the in-page copy when the bridge is absent (older APK).
-            if (isAndroidApp.value && openNativeSelectionMenu(target, event)) {
+            if ((isAndroidApp.value || isHarmonyApp.value) && openNativeSelectionMenu(target, event)) {
                 return
             }
 

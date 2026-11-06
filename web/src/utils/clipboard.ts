@@ -1,7 +1,9 @@
+import { getNative } from '@/utils/clawbenchNative'
+
 /** Best-effort read of the current clipboard text. Resolves with the text, or rejects if unavailable. */
 export function readClipboardText(): Promise<string> {
     // Prefer the native Android bridge (reliable in WebViews, e.g. ClawBench APK).
-    const native = (window as unknown as { ClawBenchNative?: { readClipboardText?: () => string } }).ClawBenchNative
+    const native = getNative()
     if (native?.readClipboardText) {
         try {
             return Promise.resolve(native.readClipboardText() ?? '')
@@ -30,6 +32,15 @@ export function readClipboardText(): Promise<string> {
 }
 
 export function copyText(text: string, onSuccess?: () => void, onError?: () => void): void {
+    const native = getNative()
+    if (native?.writeClipboardText) {
+        try {
+            Promise.resolve(native.writeClipboardText(text)).then(() => onSuccess?.()).catch(() => onError?.())
+        } catch {
+            onError?.()
+        }
+        return
+    }
     const fallbackCopy = (text: string): boolean => {
         const ta = document.createElement('textarea')
         ta.value = text

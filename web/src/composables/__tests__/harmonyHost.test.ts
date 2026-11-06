@@ -59,4 +59,21 @@ describe('HarmonyOS host compatibility', () => {
     expect(portForwardUnavailable(true, true, true)).toBe(false)
     expect(portForwardUnavailable(false, true)).toBe(false)
   })
+
+  it('enables terminal volume arrows only when the mobile host supports them', async () => {
+    const { supportsNativeVolumeKeys } = await import('@/utils/clawbenchNative')
+    expect(supportsNativeVolumeKeys()).toBe(false)
+    hostWindow.ClawBenchNative = { isNativeApp: () => true }
+    expect(supportsNativeVolumeKeys()).toBe(true)
+    hostWindow.ClawBenchHarmony = {
+      isNativeApp: () => true, getHostPlatform: () => 'harmonyos',
+      getCapabilities: () => ({ volumeKeys: false }),
+    }
+    expect(supportsNativeVolumeKeys()).toBe(false)
+    hostWindow.ClawBenchHarmony = {
+      isNativeApp: () => true, getHostPlatform: () => 'harmonyos',
+      getCapabilities: () => ({ volumeKeys: true }),
+    }
+    expect(supportsNativeVolumeKeys()).toBe(true)
+  })
 })

@@ -1,6 +1,7 @@
 import { http } from '@kit.NetworkKit';
 import { webview } from '@kit.ArkWeb';
 import { compatibleProtocol, parseServerAddress } from '../models/ServerAddress';
+import { registerServerCookies } from '../models/NativeCookies';
 
 interface HealthResponse {
   app: string;
@@ -52,20 +53,21 @@ export class ConnectionService {
       throw new Error('登录失败，请检查服务器状态');
     }
     const headers = auth.header as Record<string, Object>;
-    let cookieCount = 0;
+    const receivedCookies: string[] = [];
     Object.keys(headers).forEach((key: string) => {
       if (key.toLowerCase() === 'set-cookie') {
         const value = headers[key];
         const cookies = Array.isArray(value) ? value as string[] : [String(value)];
         cookies.forEach((cookie: string) => {
           webview.WebCookieManager.configCookieSync(address.url + '/', cookie);
-          cookieCount++;
+          receivedCookies.push(cookie);
         });
       }
     });
-    if (cookieCount === 0) {
+    if (receivedCookies.length === 0) {
       throw new Error('服务器未返回登录凭据');
     }
+    registerServerCookies(address.url, receivedCookies);
     webview.WebCookieManager.saveCookieSync();
     return address.url;
   }

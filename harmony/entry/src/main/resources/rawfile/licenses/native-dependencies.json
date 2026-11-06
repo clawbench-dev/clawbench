@@ -1,0 +1,55 @@
+{
+  "components": [
+    {
+      "name": "libssh2",
+      "version": "1.11.1",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/libssh2/libssh2/tree/libssh2-1.11.1",
+      "archiveSha256": "82b35c61c78b475647bdc981a183c5b5ab0d979e1caee94186e8f9150f2b0d0d",
+      "notice": "libssh2-COPYING.txt"
+    },
+    {
+      "name": "Mbed TLS",
+      "version": "3.6.7",
+      "license": "Apache-2.0",
+      "upstreamLicenseChoice": "Apache-2.0 OR GPL-2.0-or-later",
+      "source": "https://github.com/Mbed-TLS/mbedtls/tree/mbedtls-3.6.7",
+      "archiveSha256": "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6",
+      "notice": "mbedtls-LICENSE.txt",
+      "bundledComponents": [
+        { "name": "Project Everest / HACL / KreMLin", "license": "Apache-2.0", "notice": "everest-NOTICE.txt" },
+        { "name": "p256-m", "license": "Apache-2.0", "notice": "p256-m-NOTICE.txt" }
+      ]
+    },
+    {
+      "name": "nghttp2",
+      "version": "1.71.0",
+      "license": "MIT",
+      "source": "https://github.com/nghttp2/nghttp2/tree/v1.71.0",
+      "archiveSha256": "81c3702fdaee37145c875cb6d1288698e4f755558341fc85335d9750fb718f33",
+      "notice": "nghttp2-COPYING.txt",
+      "bundledComponents": [
+        { "name": "sfparse", "license": "MIT", "notice": "sfparse-NOTICE.txt" }
+      ]
+    },
+    {
+      "name": "JSON for Modern C++",
+      "version": "3.12.0",
+      "license": "MIT",
+      "source": "https://github.com/nlohmann/json/tree/v3.12.0",
+      "archiveSha256": "4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187",
+      "notice": "nlohmann-json-LICENSE.txt",
+      "copyrightNotices": "nlohmann-json-NOTICE.txt"
+    },
+    {
+      "name": "Mozilla CA certificate bundle",
+      "version": "2026-11-05",
+      "license": "MPL-2.0",
+      "source": "https://curl.se/ca/cacert-2026-11-05.pem",
+      "sourceCertificateData": "https://raw.githubusercontent.com/mozilla-firefox/firefox/refs/heads/release/security/nss/lib/ckfw/builtins/certdata.txt",
+      "archiveSha256": "427c064216761a1e72a8b30f0d954d08cb6e4435a82091fb865afd20c8497285",
+      "notice": "mozilla-MPL-2.0.txt"
+    }
+  ],
+  "build": "Source archives and certificate data are pinned by SHA-256 in cpp/ThirdParty.cmake. Only license notices are vendored; dependency source and build output are not part of the application source tree. Mbed TLS and p256-m are used under the Apache-2.0 option."
+}

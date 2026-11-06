@@ -1,4 +1,5 @@
 .hvigor/
+.cxx/
 oh_modules/
 node_modules/
 build/
