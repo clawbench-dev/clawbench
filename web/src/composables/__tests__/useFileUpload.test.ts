@@ -1005,6 +1005,57 @@ describe('useFileUpload', () => {
       expect(paths).toEqual(['.clawbench/uploads/ok.png'])
     })
 
+    it('reports each file through onFileUploaded as it lands, before the batch resolves', async () => {
+      // The attachment drawer commits an upload the instant it finishes: the
+      // input bar's in-flight card for it unmounts right then, so waiting for
+      // the whole batch would leave the file attached to nothing (issue #629).
+      // This pins the per-file signal and, crucially, that it arrives while the
+      // second transfer is still running.
+      let calls = 0
+      let finishSecond: (() => void) | null = null
+      xhrSendHandler = (xhr) => {
+        calls++
+        if (calls === 1) {
+          respondSuccess(xhr, '.clawbench/uploads/a.png')
+          return
+        }
+        // Second file: hold the response until the test releases it.
+        finishSecond = () => respondSuccess(xhr, '.clawbench/uploads/b.png')
+      }
+
+      const upload = useFileUpload()
+      const seen: string[] = []
+      const done = upload.handleFileSelect(
+        { target: { files: [makeFile('a.png'), makeFile('b.png')], value: 'x' } } as any,
+        (p) => seen.push(p),
+      )
+
+      await vi.waitFor(() => { expect(finishSecond).not.toBeNull() })
+      // The first file is already reported while the second is in flight.
+      expect(seen).toEqual(['.clawbench/uploads/a.png'])
+
+      finishSecond!()
+      expect(await done).toEqual(['.clawbench/uploads/a.png', '.clawbench/uploads/b.png'])
+      expect(seen).toEqual(['.clawbench/uploads/a.png', '.clawbench/uploads/b.png'])
+    })
+
+    it('does not report a failed file through onFileUploaded', async () => {
+      let n = 0
+      xhrSendHandler = (xhr) => {
+        n++
+        if (n === 1) respondSuccess(xhr, '.clawbench/uploads/ok.png')
+        else respondError(xhr, 'UploadFailed')
+      }
+
+      const upload = useFileUpload()
+      const seen: string[] = []
+      await upload.handleFileSelect(
+        { target: { files: [makeFile('ok.png'), makeFile('bad.png')], value: 'x' } } as any,
+        (p) => seen.push(p),
+      )
+      expect(seen).toEqual(['.clawbench/uploads/ok.png'])
+    })
+
     it('returns an empty array when the picker is cancelled (no files)', async () => {
       const upload = useFileUpload()
       const ev = { target: { files: [], value: 'x' } }
@@ -1104,6 +1155,36 @@ describe('useFileUpload', () => {
       // The loop stops: the second file is never sent.
       await p
       expect(upload.pendingFiles.value.some(f => f.path === '.clawbench/uploads/b.png')).toBe(false)
+    })
+
+    it('abandons the batch still in flight when a new one starts', async () => {
+      // Two picks can overlap: the drawer stays open and its upload entry is
+      // still tappable while the first batch runs. The first loop holds the OLD
+      // token, so replacing the module-level one left it uploading files the
+      // user had already replaced — with no handle left for terminate/cancel,
+      // which only know the current token.
+      let firstXhr: any = null
+      let sends = 0
+      xhrSendHandler = (xhr) => {
+        sends++
+        if (sends === 1) { firstXhr = xhr; return } // hold the first batch
+        respondSuccess(xhr, '.clawbench/uploads/second.png')
+      }
+
+      const upload = useFileUpload()
+      const first = upload.handleFileDrop([makeFile('a.png')])
+      await vi.waitFor(() => { expect(sends).toBe(1) })
+
+      const second = upload.handleFileDrop([makeFile('b.png')])
+      await vi.waitFor(() => { expect(sends).toBe(2) })
+      await second
+
+      // The superseded transfer is aborted rather than left running…
+      expect(firstXhr.abort).toHaveBeenCalled()
+      // …and its row is gone instead of hanging at its last percentage.
+      expect(upload.pendingFiles.value.filter(f => f.uploading)).toHaveLength(0)
+      await first
+      expect(upload.pendingFiles.value.some(f => f.path === '.clawbench/uploads/a.png')).toBe(false)
     })
 
     it('stops a queued batch before the next file starts', async () => {

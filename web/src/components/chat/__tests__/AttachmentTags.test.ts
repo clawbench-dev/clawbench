@@ -80,6 +80,42 @@ describe('AttachmentTags', () => {
     expect(wrapper.find('.attachment-filename').text()).toContain('diagram.svg')
   })
 
+  it('keeps the local blob preview for a file that just finished uploading', async () => {
+    // The pending card unmounts the moment `uploading` flips false and the
+    // committed card renders instead. That card's thumbnail is a server
+    // request, so for as long as it takes the tile is empty — in exactly the
+    // spot a picture was a frame earlier, which reads as the reported
+    // "thumbnail flashed and vanished". The finished pending entry still holds
+    // the local Blob, so the hand-off uses it.
+    const { useFileUpload } = await import('@/composables/useFileUpload')
+    const upload = useFileUpload()
+    upload.clearPendingFiles()
+    upload.pendingFiles.value.push({
+      path: '.clawbench/uploads/a.png',
+      previewUrl: 'blob:http://localhost/just-uploaded',
+      isImage: true,
+      uploading: false,
+      progress: 100,
+      size: 10,
+    })
+    try {
+      const wrapper = mount(AttachmentTags, {
+        props: { files: [{ path: '.clawbench/uploads/a.png', isDir: false }] },
+      })
+      expect(wrapper.find('img.attachment-thumb-img').attributes('src'))
+        .toBe('blob:http://localhost/just-uploaded')
+
+      // Once the mirror is gone (removed, sent, session switched) the card must
+      // fall back to the server thumbnail rather than keep a dead blob URL.
+      upload.clearPendingFiles()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('img.attachment-thumb-img').attributes('src'))
+        .toBe('http://localhost/thumb/.clawbench/uploads/a.png')
+    } finally {
+      upload.clearPendingFiles()
+    }
+  })
+
   it('emits the full entry on card click and on remove', async () => {
     const wrapper = mount(AttachmentTags, {
       props: {

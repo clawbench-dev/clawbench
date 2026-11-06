@@ -221,8 +221,9 @@
       </template>
     </div>
 
-    <!-- Footer: the DRAFT selection (not the composer's list — nothing is
-         applied until OK) above the shared .fbtn action pair. Always rendered:
+    <!-- Footer: the DRAFT selection (not the composer's list — a pick is not
+         applied until OK, except a finished upload, which is committed as it
+         lands) above the shared .fbtn action pair. Always rendered:
          Cancel/OK are the sheet's only explicit exit, since the narrow header
          tap is not discoverable and the wide card has its own X. -->
     <template #footer>
@@ -234,7 +235,7 @@
           @remove="removeFromDraft"
         />
         <div class="ad-footer-actions">
-          <button type="button" class="fbtn" data-action="attach-cancel" @click="emit('close')">{{ t('common.cancel') }}</button>
+          <button type="button" class="fbtn" data-action="attach-cancel" @click="handleCancel">{{ t('common.cancel') }}</button>
           <button type="button" class="fbtn fbtn-primary" data-action="attach-ok" @click="handleConfirm">{{ t('common.confirm') }}</button>
         </div>
       </div>
@@ -333,7 +334,7 @@ const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUpload
 // always the chat draft (the queued-message editor passes its own list).
 // Shadowing them made a file picked from that editor vanish from the footer —
 // the selection only ever reached the caller, never the shared draft.
-const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
+const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, cancelChatUpload, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -434,34 +435,139 @@ async function onFileSelect(e: Event) {
   // the transfer needs somewhere to report progress: jump to the uploads tab
   // before awaiting, which is where the in-flight rows and the terminate
   // button live. A cancelled picker reports 0 and leaves the tab alone.
-  if (readPickedCount(e) > 0) activeTab.value = 'uploads'
-  const uploadedPaths = await handleFileSelect(e)
-  // Terminated mid-batch: the user asked to clear everything, so do not select
-  // the files that had already finished. The terminate handler already dropped
-  // them, and `chatUploadCancelled` is only reset when a new batch starts.
-  if (chatUploadCancelled.value) return
-  if (uploadedPaths.length === 0) return
-  // Freshly uploaded files join the DRAFT only. They reach the composer on OK,
-  // like every other selection — uploading is not a reason to bypass the
-  // commit step.
-  const known = new Set(draft.value.map(f => f.path))
-  for (const path of uploadedPaths) {
-    if (!known.has(path)) draft.value = [...draft.value, { path, isDir: false }]
+  if (readPickedCount(e) > 0) {
+    activeTab.value = 'uploads'
+    // A fresh picker batch: the previous batch's committed paths are no longer
+    // this batch's to clear. Only on a real pick — re-opening the picker and
+    // cancelling it starts no batch, and clearing the list there would leave
+    // the still-running batch's finished files with nobody to clear them.
+    batchCommitted = []
   }
-  activeTab.value = 'uploads'
+  // A finished upload commits to the COMPOSER, not just to this sheet's draft.
+  //
+  // The input bar's only card for an upload in flight is the pending one, and
+  // it unmounts the moment `uploading` flips false (AttachmentTags renders it
+  // under `v-if="pf.uploading"`). The draft, meanwhile, lives inside a sheet
+  // that any swipe, back gesture or outside tap dismisses — and dismissing it
+  // discards the draft. A draft-only upload therefore produced exactly the
+  // reported symptom on mobile browsers: the thumbnail flashed in the input
+  // area and vanished, and the image never reached the conversation (#629).
+  //
+  // The commit is PER FILE (`onFileUploaded`), not once per batch: with several
+  // files picked, waiting for the batch leaves every finished file in that same
+  // gap for as long as the remaining transfers take.
+  //
+  // Drag-drop and clipboard paste already attach on success (`autoAttach`), so
+  // the picker taking the same path also removes a second, divergent rule.
+  //
+  // The draft mirrors the entry so the footer shows it, and the snapshot moves
+  // with it: OK diffs against the snapshot, so leaving it untouched would emit
+  // a second `add-attached` for a file the composer already holds. Cancel does
+  // undo these commits (see `handleCancel`); dismissing the sheet does not.
+  const commit = (path: string) => {
+    // `isAttached` looks at the draft only, but a path can also already sit in
+    // the baseline (seeded from the composer on open). Chat uploads never
+    // request an overwrite — the server renames a collision — so the same path
+    // cannot come back twice; checking both keeps the snapshot from growing a
+    // duplicate if that ever stops being true.
+    if (isAttached(path) || attachSnapshot.value.some(f => f.path === path)) return
+    const entry: FileEntry = { path, isDir: false }
+    draft.value = [...draft.value, entry]
+    attachSnapshot.value = [...attachSnapshot.value, entry]
+    batchCommitted.push(path)
+    sessionCommitted.add(path)
+    emit('add-attached', path, false)
+  }
+  // Marks the window in which a batch THIS sheet started is still running —
+  // the only window in which Cancel has a transfer of its own to abort (see
+  // `handleCancel`).
+  uploadsInFlight++
+  try {
+    const uploadedPaths = await handleFileSelect(e, commit)
+    // Terminated mid-batch: the user asked to clear everything, so do not
+    // select the files that had already finished. The terminate handler already
+    // dropped them, and `chatUploadCancelled` is only reset when a new batch
+    // starts.
+    if (chatUploadCancelled.value) return
+    if (uploadedPaths.length === 0) return
+    activeTab.value = 'uploads'
+  } finally {
+    uploadsInFlight--
+  }
 }
 
 /**
  * Terminate the whole in-flight upload batch.
  *
- * The action itself lives in useFileUpload.terminateChatUploadBatch, shared
- * with the input bar's attachment strip — that strip is where the user actually
- * is after the sheet closes, and the sheet's own banner is where they are while
- * it stays open. Two copies of "cancel, abort, then detach the finished ones"
- * would drift on exactly that last step.
+ * The transfer work lives in useFileUpload.terminateChatUploadBatch, shared
+ * with the input bar's attachment strip — that strip is what the user sees
+ * once the sheet is dismissed mid-upload, and the sheet's own banner is where
+ * they are while it stays open. Two copies of "cancel, abort, then detach the
+ * finished ones" would drift on exactly that last step.
  */
 function handleTerminateUpload() {
   terminateChatUploadBatch()
+  // "Terminate = clear everything" — including this sheet's own view, and
+  // including a host that never touched the global composer list.
+  //
+  // The shared helper's return value cannot answer this: it reports what it
+  // detached from `attachedFiles`, and the queued-message editor's `addPath`
+  // attaches into its own `draftFiles` without going near that list. Reading it
+  // left the images the user had just cancelled sitting in the queued message
+  // (issue #629 follow-up). So the sheet tracks what IT committed and clears
+  // that, telling the host to drop them too — the composer ignores a removal it
+  // already performed, and the queued editor honours it.
+  if (batchCommitted.length === 0) return
+  const gone = new Set(batchCommitted)
+  batchCommitted = []
+  for (const path of gone) sessionCommitted.delete(path)
+  draft.value = draft.value.filter(f => !gone.has(f.path))
+  attachSnapshot.value = attachSnapshot.value.filter(f => !gone.has(f.path))
+  for (const path of gone) emit('remove-attached', { path, isDir: false })
+}
+
+/**
+ * Cancel: drop the draft, stop the batch, and undo whatever this session
+ * uploaded.
+ *
+ * "取消" has to cancel. Two things could otherwise still land after the panel
+ * closed:
+ *   - a file that already finished (its bytes are on the server and the commit
+ *     is already in the composer), and
+ *   - a file still IN FLIGHT — the sheet stays open while the transfer runs, so
+ *     pressing Cancel mid-upload is the most natural gesture there is, and
+ *     without aborting it the transfer completes a few seconds later and the
+ *     image reappears in the input bar.
+ * Both are undone here. A swipe / back gesture / overlay tap is NOT this path —
+ * that only closes the panel, and its uploads stay (issue #629).
+ */
+/**
+ * How many batches THIS sheet started are still running.
+ *
+ * Cancel must stop them — but `cancelChatUpload` works on the module-level chat
+ * batch, which a drag-drop or paste can own just as well. Aborting that one
+ * from here silently killed a transfer the user never asked to stop, so the
+ * sheet only reaches for it while one of its own is in flight.
+ *
+ * A COUNT, not a flag: two picks can overlap (the sheet stays open and the
+ * upload entry stays tappable), and the superseded one settles first — a flag
+ * would read "nothing of mine is running" while the second batch still is.
+ */
+let uploadsInFlight = 0
+
+function handleCancel() {
+  // Stop the batch first: `commit` fires per file as it lands, so aborting must
+  // happen before the remaining transfers can reach it.
+  if (uploadsInFlight > 0) cancelChatUpload()
+  for (const path of sessionCommitted) {
+    const entry: FileEntry = { path, isDir: false }
+    emit('remove-attached', entry)
+    draft.value = draft.value.filter(f => f.path !== path)
+    attachSnapshot.value = attachSnapshot.value.filter(f => f.path !== path)
+  }
+  sessionCommitted.clear()
+  batchCommitted = []
+  emit('close')
 }
 
 // When uploads complete, remove finished items from pendingFiles
@@ -491,15 +597,50 @@ watch(uploadingFiles, (now) => {
 
 /**
  * The selection being edited. This sheet is a PICKER: tapping a row only
- * changes this draft, and the composer is touched exactly once, on OK. So
- * Cancel needs no undo bookkeeping — the draft is simply dropped.
+ * changes this draft, and the composer is touched on OK.
+ *
+ * ONE exception, and it is deliberate: a file that finished UPLOADING is
+ * committed immediately (see `onFileSelect`). Its bytes are already on the
+ * server, the input bar's in-flight card for it is about to unmount, and
+ * leaving it in the draft alone meant it vanished whenever the sheet was
+ * dismissed — issue #629. Cancel undoes exactly these commits (see
+ * `handleCancel`); dismissing the sheet leaves them in place.
  *
  * Seeded from the caller's list when the sheet opens (see the open watcher);
  * the composer's own `attachedFiles` is read only to compute the OK delta.
  */
 const draft = ref<FileEntry[]>([])
 
-/** The composer's list when the sheet opened — the baseline for OK's delta. */
+/**
+ * Paths this batch committed to the host, in upload order.
+ *
+ * "Terminate" must clear them everywhere, and the sheet cannot ask the shared
+ * helper which ones to clear: `terminateChatUploadBatch` reports only what it
+ * detached from the GLOBAL composer list, while the queued-message editor's
+ * host attaches into its own draft and never touches that list (its `addPath`
+ * writes `draftFiles` and drops the pending mirror). Relying on that return
+ * value left the already-uploaded images in the queued draft after the user
+ * terminated the batch — they would then be sent with the message the user had
+ * just cancelled.
+ */
+let batchCommitted: string[] = []
+
+/**
+ * Paths this sheet committed since it opened.
+ *
+ * The Cancel button undoes exactly these: "取消" must cancel, or the user is
+ * left with an attachment they explicitly discarded (and the next message
+ * carries an image they believe they removed). A dismissal by swipe / back
+ * gesture / overlay tap is NOT a cancel — that only closes the panel, so its
+ * uploads stay (that is the whole point of #629).
+ */
+const sessionCommitted = new Set<string>()
+
+/**
+ * The composer's list when the sheet opened — the baseline for OK's delta.
+ * A per-file upload commit also advances it, so OK cannot re-add what the
+ * composer already holds.
+ */
 const attachSnapshot = ref<FileEntry[]>([])
 
 function isAttached(path: string) {
@@ -554,6 +695,10 @@ function handleConfirm() {
   for (const entry of attachSnapshot.value) {
     if (!now.has(entry.path)) emit('remove-attached', { path: entry.path, isDir: entry.isDir })
   }
+  // The user has accepted this batch's uploads, so a later "terminate" (which
+  // can fire for a batch started elsewhere while the sheet is reopened) must
+  // not detach them again.
+  batchCommitted = []
   emit('close')
 }
 
@@ -702,6 +847,8 @@ watch(() => props.open, async (v) => {
     // the caller's objects.
     attachSnapshot.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
     draft.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
+    // A fresh session: Cancel undoes only what THIS opening uploaded.
+    sessionCommitted.clear()
     loading.value = true
     try {
       await Promise.all([fetchRecentShares(), fetchRecentUploads()])
