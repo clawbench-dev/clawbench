@@ -515,7 +515,23 @@ export function useFileUpload() {
     }
   }
 
-  async function uploadFiles(files: File[], dir?: string, preserveStructure = false): Promise<string[]> {
+  /**
+   * Upload a batch of files picked from a native picker.
+   *
+   * `onFileUploaded` fires the instant ONE chat file lands, before the rest of
+   * the batch is even sent. Callers that mirror the result into another list
+   * (the attachment drawer → the composer) must use it instead of the batch's
+   * return value: the in-flight card unmounts the moment `uploading` flips
+   * false, so a caller that waits for the whole batch leaves a window with
+   * neither a pending card nor a committed one — the reported "缩略图一闪即逝"
+   * (issue #629). With several files that window is a whole file transfer long.
+   */
+  async function uploadFiles(
+    files: File[],
+    dir?: string,
+    preserveStructure = false,
+    onFileUploaded?: (path: string) => void,
+  ): Promise<string[]> {
     const maxFiles = store.state.uploadMaxFiles
     const currentCount = pendingFiles.value.filter(f => !f.uploading).length
     const remaining = maxFiles - currentCount
@@ -604,6 +620,9 @@ export function useFileUpload() {
       } else if (uploadedPath) {
         uploadedPaths.push(uploadedPath)
         chatBatchPaths.push(uploadedPath)
+        // Per-file, not per-batch: the pending card for THIS file is already
+        // gone by the time the next `await` yields to paint (see the doc above).
+        onFileUploaded?.(uploadedPath)
       }
     }
 
@@ -631,13 +650,16 @@ export function useFileUpload() {
     return (e.target as HTMLInputElement)?.files?.length ?? 0
   }
 
-  async function handleFileSelect(e: Event): Promise<string[]> {
+  async function handleFileSelect(
+    e: Event,
+    onFileUploaded?: (path: string) => void,
+  ): Promise<string[]> {
     const files = Array.from((e.target as HTMLInputElement).files || [])
     // Reset input immediately to prevent Android WebView from re-firing
     // the change event with stale file data on picker cancellation
     ;(e.target as HTMLInputElement).value = ''
     if (files.length === 0) return []
-    return uploadFiles(files)
+    return uploadFiles(files, undefined, false, onFileUploaded)
   }
 
   async function handleFileDrop(files: File[]): Promise<string[]> {

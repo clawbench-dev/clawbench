@@ -221,8 +221,9 @@
       </template>
     </div>
 
-    <!-- Footer: the DRAFT selection (not the composer's list — nothing is
-         applied until OK) above the shared .fbtn action pair. Always rendered:
+    <!-- Footer: the DRAFT selection (not the composer's list — a pick is not
+         applied until OK, except a finished upload, which is committed as it
+         lands) above the shared .fbtn action pair. Always rendered:
          Cancel/OK are the sheet's only explicit exit, since the narrow header
          tap is not discoverable and the wide card has its own X. -->
     <template #footer>
@@ -435,19 +436,46 @@ async function onFileSelect(e: Event) {
   // before awaiting, which is where the in-flight rows and the terminate
   // button live. A cancelled picker reports 0 and leaves the tab alone.
   if (readPickedCount(e) > 0) activeTab.value = 'uploads'
-  const uploadedPaths = await handleFileSelect(e)
+  // A finished upload commits to the COMPOSER, not just to this sheet's draft.
+  //
+  // The input bar's only card for an upload in flight is the pending one, and
+  // it unmounts the moment `uploading` flips false (AttachmentTags renders it
+  // under `v-if="pf.uploading"`). The draft, meanwhile, lives inside a sheet
+  // that any swipe, back gesture or outside tap dismisses — and dismissing it
+  // discards the draft. A draft-only upload therefore produced exactly the
+  // reported symptom on mobile browsers: the thumbnail flashed in the input
+  // area and vanished, and the image never reached the conversation (#629).
+  //
+  // The commit is PER FILE (`onFileUploaded`), not once per batch: with several
+  // files picked, waiting for the batch leaves every finished file in that same
+  // gap for as long as the remaining transfers take.
+  //
+  // Drag-drop and clipboard paste already attach on success (`autoAttach`), so
+  // the picker taking the same path also removes a second, divergent rule.
+  //
+  // The draft mirrors the entry so the footer shows it, and the snapshot moves
+  // with it: OK diffs against the snapshot, so leaving it untouched would emit
+  // a second `add-attached` for a file the composer already holds. Cancel
+  // deliberately does NOT detach it — the bytes are on the server, and the
+  // card's own "×" is the way to drop it.
+  const commit = (path: string) => {
+    // `isAttached` looks at the draft only, but a path can also already sit in
+    // the baseline (seeded from the composer on open). Chat uploads never
+    // request an overwrite — the server renames a collision — so the same path
+    // cannot come back twice; checking both keeps the snapshot from growing a
+    // duplicate if that ever stops being true.
+    if (isAttached(path) || attachSnapshot.value.some(f => f.path === path)) return
+    const entry: FileEntry = { path, isDir: false }
+    draft.value = [...draft.value, entry]
+    attachSnapshot.value = [...attachSnapshot.value, entry]
+    emit('add-attached', path, false)
+  }
+  const uploadedPaths = await handleFileSelect(e, commit)
   // Terminated mid-batch: the user asked to clear everything, so do not select
   // the files that had already finished. The terminate handler already dropped
   // them, and `chatUploadCancelled` is only reset when a new batch starts.
   if (chatUploadCancelled.value) return
   if (uploadedPaths.length === 0) return
-  // Freshly uploaded files join the DRAFT only. They reach the composer on OK,
-  // like every other selection — uploading is not a reason to bypass the
-  // commit step.
-  const known = new Set(draft.value.map(f => f.path))
-  for (const path of uploadedPaths) {
-    if (!known.has(path)) draft.value = [...draft.value, { path, isDir: false }]
-  }
   activeTab.value = 'uploads'
 }
 
@@ -461,7 +489,26 @@ async function onFileSelect(e: Event) {
  * would drift on exactly that last step.
  */
 function handleTerminateUpload() {
-  terminateChatUploadBatch()
+  // "Terminate = clear everything" for THIS sheet's view: files committed
+  // per-file (see onFileSelect) are detached from the composer by the shared
+  // implementation, so leaving them in the draft and in the OK baseline would
+  // show cards for attachments that no longer exist and would make a later OK
+  // silently re-add them.
+  //
+  // Scoped to the composer on purpose. The queued-message editor shares this
+  // sheet but its host attaches into its OWN draft and never touches the
+  // global list, so `terminateChatUploadBatch` reports nothing to detach there
+  // — its rows are dropped by the watch below when the batch settles.
+  //
+  // The input bar's own terminate pill is not covered: it can fire while this
+  // sheet is open (the overlay hides it, so in practice it cannot be tapped),
+  // and it does not know about this draft.
+  const detached = terminateChatUploadBatch()
+  if (detached.length > 0) {
+    const gone = new Set(detached)
+    draft.value = draft.value.filter(f => !gone.has(f.path))
+    attachSnapshot.value = attachSnapshot.value.filter(f => !gone.has(f.path))
+  }
 }
 
 // When uploads complete, remove finished items from pendingFiles
@@ -491,15 +538,25 @@ watch(uploadingFiles, (now) => {
 
 /**
  * The selection being edited. This sheet is a PICKER: tapping a row only
- * changes this draft, and the composer is touched exactly once, on OK. So
- * Cancel needs no undo bookkeeping — the draft is simply dropped.
+ * changes this draft, and the composer is touched on OK.
+ *
+ * ONE exception, and it is deliberate: a file that finished UPLOADING is
+ * committed immediately (see `onFileSelect`). Its bytes are already on the
+ * server, the input bar's in-flight card for it is about to unmount, and
+ * leaving it in the draft alone meant it vanished whenever the sheet was
+ * dismissed — issue #629. Cancel therefore does not undo an upload; the card's
+ * own "×" in the composer is how the user drops it.
  *
  * Seeded from the caller's list when the sheet opens (see the open watcher);
  * the composer's own `attachedFiles` is read only to compute the OK delta.
  */
 const draft = ref<FileEntry[]>([])
 
-/** The composer's list when the sheet opened — the baseline for OK's delta. */
+/**
+ * The composer's list when the sheet opened — the baseline for OK's delta.
+ * A per-file upload commit also advances it, so OK cannot re-add what the
+ * composer already holds.
+ */
 const attachSnapshot = ref<FileEntry[]>([])
 
 function isAttached(path: string) {
