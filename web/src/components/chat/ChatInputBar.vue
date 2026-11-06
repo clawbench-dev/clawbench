@@ -87,6 +87,19 @@
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
     </div>
+    <!-- Free-dialog status strip: what the microphone is hearing right now.
+         Without it the mode is a black box — the transcript was collected but
+         never shown, so "did it hear me?" could only be answered by waiting to
+         see whether a message went out. One line: the live transcript while
+         listening, otherwise what the loop is doing. -->
+    <div v-if="freeDialogPhase !== 'idle'" class="free-dialog-slot" data-role="free-dialog-strip">
+      <div class="free-dialog-strip">
+        <span class="free-dialog-dot" :class="'is-' + freeDialogPhase" aria-hidden="true"></span>
+        <span class="free-dialog-text" :class="{ 'is-hint': !freeDialogTranscript }">
+          {{ freeDialogTranscript || freeDialogHint }}
+        </span>
+      </div>
+    </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space.
          Two elements, two motions: the outer slot owns the height collapse (so retiring the banner doesn't
          jolt the message area) while the inner chip owns the accept flight into the input box. Putting both
@@ -428,6 +441,16 @@ const acpSyncTitle = computed(() => {
   return t('chat.actions.acpSync')
 })
 
+/** What the strip says when there is no transcript yet. */
+const freeDialogHint = computed(() => {
+  switch (props.freeDialogPhase) {
+    case 'listening': return t('chat.actions.freeDialogListening')
+    case 'thinking': return t('chat.actions.freeDialogThinking')
+    case 'speaking': return t('chat.actions.freeDialogSpeaking')
+    default: return ''
+  }
+})
+
 const freeDialogTitle = computed(() => {
   switch (props.freeDialogPhase) {
     case 'listening': return t('chat.actions.freeDialogListening')
@@ -675,6 +698,8 @@ const props = defineProps({
   mentions: { type: Array, default: () => [] },
   /** Free-dialog mode phase ('idle' | 'listening' | 'thinking' | 'speaking'). */
   freeDialogPhase: { type: String, default: 'idle' },
+  /** What the microphone has recognised so far in this utterance. */
+  freeDialogTranscript: { type: String, default: '' },
 })
 
 const emit = defineEmits([
@@ -2978,6 +3003,66 @@ defineExpose({
   .recommend-slide-enter-active,
   .recommend-slide-leave-active {
     transition: none;
+  }
+}
+
+/* Free-dialog status strip.
+   Neutral surface rather than the recommendation chip's accent tint: this is a
+   status line, not something to act on, and an accent-tinted bar above the
+   composer reads as a prompt. Background is a text-primary mix so it holds up
+   on the translucent dock island and across all 36 themes (no fixed
+   background step — see design-guide 红线 4). */
+.free-dialog-slot {
+  margin: 0 0 var(--space-3);
+}
+.free-dialog-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  color: var(--text-primary);
+}
+.free-dialog-dot {
+  flex-shrink: 0;
+  width: calc(7 * var(--dp));
+  height: calc(7 * var(--dp));
+  border-radius: 50%;
+  background: var(--text-muted, #999);
+}
+.free-dialog-dot.is-listening {
+  background: var(--accent-color, #0066cc);
+  animation: free-dialog-pulse 1.4s ease-in-out infinite;
+}
+.free-dialog-dot.is-thinking {
+  background: var(--color-orange, #f59e0b);
+  animation: free-dialog-pulse 1.4s ease-in-out infinite;
+}
+.free-dialog-dot.is-speaking {
+  background: var(--color-success, #16a34a);
+}
+.free-dialog-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Nothing recognised yet: this is a hint, not content — muted so it is not
+   mistaken for what the microphone heard. */
+.free-dialog-text.is-hint {
+  color: var(--text-muted, #999);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The dot's pulse is decoration here: the strip's own text already says
+     whether it is listening, thinking or speaking. */
+  .free-dialog-dot.is-listening,
+  .free-dialog-dot.is-thinking {
+    animation: none;
   }
 }
 

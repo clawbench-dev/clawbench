@@ -710,6 +710,32 @@ describe('ChatInputBar', () => {
     expect(cls).toContain('active-flag-listening')
   })
 
+  it('shows the live transcript while free-dialog mode is listening', () => {
+    // The mode collects a transcript; without surfacing it, "did it hear me?"
+    // can only be answered by waiting to see whether a message goes out.
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      freeDialogPhase: 'listening',
+      freeDialogTranscript: '帮我看下这个报错',
+    })
+    const strip = wrapper.find('[data-role="free-dialog-strip"]')
+    expect(strip.exists()).toBe(true)
+    expect(strip.text()).toContain('帮我看下这个报错')
+  })
+
+  it('falls back to the phase hint when nothing has been recognised yet', () => {
+    const wrapper = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogTranscript: '' })
+    const strip = wrapper.find('[data-role="free-dialog-strip"]')
+    expect(strip.exists()).toBe(true)
+    // The hint is muted so it cannot be mistaken for recognised speech.
+    expect(strip.find('.free-dialog-text').classes()).toContain('is-hint')
+  })
+
+  it('renders no strip when the mode is off', () => {
+    const wrapper = mountBar({ currentSessionId: 's1', freeDialogPhase: 'idle' })
+    expect(wrapper.find('[data-role="free-dialog-strip"]').exists()).toBe(false)
+  })
+
   it('disables the free-dialog button without a session', () => {
     const wrapper = mountBar({ currentSessionId: '' })
     expect(wrapper.find('[data-action="free-dialog"]').attributes('disabled')).toBeDefined()

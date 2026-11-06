@@ -112,6 +112,7 @@
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
       :freeDialogPhase="freeDialog.phase.value"
+      :freeDialogTranscript="freeDialog.liveTranscript.value"
       :refreshingSession="refreshingSession"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
