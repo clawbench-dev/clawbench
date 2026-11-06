@@ -214,6 +214,23 @@ export class PcmStreamer {
     node.connect(ctx.destination)
   }
 
+  /**
+   * Drops audio withheld while the gate was shut, and re-opens the keepalive
+   * clock.
+   *
+   * The gate holds the last few frames so the attack of a word is not lost.
+   * When the consumer changes — dictation → interrupt listener → dictation, as
+   * free-dialog mode swaps who reads the same microphone — those withheld
+   * frames belong to whatever was playing before. Flushing them into the new
+   * consumer would hand the assistant's tail to the recogniser as if the user
+   * had said it.
+   */
+  resetGate(): void {
+    this.preroll = []
+    this.gateOpenUntil = 0
+    this.lastSentAt = Date.now()
+  }
+
   /** Tears the graph down. Safe to call more than once, and before `start()`. */
   stop(): void {
     this.stopped = true

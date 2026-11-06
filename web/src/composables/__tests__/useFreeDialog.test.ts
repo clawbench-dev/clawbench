@@ -81,6 +81,7 @@ function installFakes() {
       constructor(private readonly opts: { onFrame: (f: ArrayBuffer) => void; onLevel?: (rms: number) => void }) {}
       start() { (globalThis as Record<string, unknown>).__streamer = this; return Promise.resolve() }
       stop() { this.stopped = true }
+      resetGate() { /* the real gate state is not under test here */ }
       emit(rms: number) { this.opts.onLevel?.(rms) }
       frame() { this.opts.onFrame(new ArrayBuffer(4)) }
     },
@@ -383,29 +384,28 @@ describe('useFreeDialog', () => {
     await flush()
     expect(mod.useFreeDialog().phase.value).toBe('speaking')
     mod.setFreeDialogThinking(false)
-    // Same grace window as a turn that started in this mode: the TTS POST is
-    // async, so reopening on the turn-end edge would transcribe the reply's
-    // first sentence. The flush matters — openListening awaits getUserMedia, so
+    // Same grace window as a turn that started in this mode: playback may be
+    // about to begin, so arming dictation on the turn-end edge would transcribe
+    // the reply. The flush matters — openListening awaits the capture, so
     // without it the phase reads 'speaking' whatever the implementation does.
-    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(600)
     await flush()
     expect(mod.useFreeDialog().phase.value).not.toBe('listening')
-    vi.advanceTimersByTime(500)
+    vi.advanceTimersByTime(250)
     await flush()
     expect(mod.useFreeDialog().phase.value).toBe('listening')
   })
 
   it('releases the interrupt microphone before listening starts', async () => {
-    // The interrupt listener is a SECOND capture. Entering listening from here
-    // skips the playback watcher, which is the other place that closes it, so
-    // without an explicit stop both microphones stay open.
+    // The interrupt recogniser must be gone before dictation starts, or two
+    // sockets each apply a transcript to the same utterance.
     const mod = await import('../useFreeDialog')
     await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt: vi.fn() })
     await flush()
     speak('等等', 'partial')
     mod.setFreeDialogThinking(false)
-    vi.advanceTimersByTime(1500)
-    vi.advanceTimersByTime(500)
+    vi.advanceTimersByTime(600)
+    vi.advanceTimersByTime(250)
     await flush()
     expect(mod.useFreeDialog().phase.value).toBe('listening')
     // Two sockets: the interrupt one (now closed) and the dictation one.
@@ -450,17 +450,17 @@ describe('useFreeDialog', () => {
     expect(mod.useFreeDialog().phase.value).toBe('idle')
   })
 
-  it('keeps the newer interrupt microphone when two opens overlap', async () => {
-    // Entering during a running turn opens a listener, and playback starting
-    // opens another. Both await getUserMedia; whichever answers LAST must close
-    // its own stream instead of overwriting the live one (which would leave a
-    // microphone running with no reference to stop it).
+  it('opens one microphone when two phase changes overlap', async () => {
+    // Entering during a running turn opens the interrupt listener, and playback
+    // starting asks for a listener again. Both want the microphone; acquiring
+    // it twice would leave a second track running that nothing can stop, and
+    // the device churn at playback start is what swallowed the first syllables
+    // of the reply on Android.
     const pending: Array<(s: unknown) => void> = []
     vi.stubGlobal('navigator', {
       mediaDevices: { getUserMedia: vi.fn(() => new Promise((r) => { pending.push(r) })) },
     })
     const trackA = { stop: vi.fn() }
-    const trackB = { stop: vi.fn() }
     const mod = await import('../useFreeDialog')
     const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
     await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), busy: true, onInterrupt: vi.fn() })
@@ -468,19 +468,16 @@ describe('useFreeDialog', () => {
     expect(pending.length).toBe(1)
     autoSpeech.state.value = 'playing'
     await flush()
-    expect(pending.length).toBe(2)
+    // The second listener shares the acquisition already in flight.
+    expect(pending.length).toBe(1)
 
-    // Newer answers first, older answers last.
-    pending[1]({ getTracks: () => [trackB], getAudioTracks: () => [trackB] })
-    await flush()
     pending[0]({ getTracks: () => [trackA], getAudioTracks: () => [trackA] })
     await flush()
 
-    expect(trackA.stop).toHaveBeenCalled()
-    expect(trackB.stop).not.toHaveBeenCalled()
+    expect(trackA.stop).not.toHaveBeenCalled()
     // The live one is still reachable and is what stop() closes.
     mod.stop()
-    expect(trackB.stop).toHaveBeenCalled()
+    expect(trackA.stop).toHaveBeenCalled()
   })
 
   it('just waits when interruption is turned off', async () => {
@@ -729,6 +726,30 @@ describe('useFreeDialog', () => {
     expect(useFreeDialog().phase.value).toBe('listening')
   })
 
+  it('keeps the same microphone across a whole turn', async () => {
+    // One capture for the session. Re-acquiring it at the moment playback
+    // begins changes the audio route on Android and swallows the first
+    // syllables of the reply; the same acquisition is also what made "listen
+    // again once it stops talking" feel like dead air.
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    const getUserMedia = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const streamer = (globalThis as Record<string, { stopped: boolean }>).__streamer
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    autoSpeech.state.value = 'idle'
+    await flush()
+    vi.advanceTimersByTime(250)
+    await flush()
+    expect(useFreeDialog().phase.value).toBe('listening')
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
+    expect(streamer.stopped).toBe(false)
+  })
+
   it('does not reopen the microphone before the settling delay elapses', async () => {
     const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
     const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
@@ -740,14 +761,14 @@ describe('useFreeDialog', () => {
     await flush()
     autoSpeech.state.value = 'idle'
     await flush()
-    // 400 ms in: still settling. Reopening here captures the speaker's tail.
-    // The flush matters: `openListening` awaits `getUserMedia`, so without it a
+    // 200 ms in: still settling. Reopening here captures the speaker's tail.
+    // The flush matters: `openListening` awaits the capture, so without it a
     // zero-delay implementation would still read as 'speaking' and the test
     // would pass on either behaviour.
-    vi.advanceTimersByTime(400)
+    vi.advanceTimersByTime(200)
     await flush()
     expect(useFreeDialog().phase.value).toBe('speaking')
-    vi.advanceTimersByTime(200)
+    vi.advanceTimersByTime(100)
     await flush()
     expect(useFreeDialog().phase.value).toBe('listening')
   })
@@ -871,20 +892,26 @@ describe('useFreeDialog', () => {
     expect(useFreeDialog().phase.value).toBe('speaking')
   })
 
-  it('stops dictation before the assistant starts talking', async () => {
+  it('stops feeding dictation before the assistant starts talking', async () => {
     // The user can tap read-aloud on any message while the mode is listening.
-    // The dictation capture must go first, or the recogniser transcribes the
-    // assistant and a second microphone is opened on top of it.
+    // The dictation recogniser must stop receiving frames, or it transcribes
+    // the assistant as the user's next message.
     const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
     const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    const getUserMedia = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>
     await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
     await flush()
     expect(useFreeDialog().phase.value).toBe('listening')
-    const streamer = (globalThis as Record<string, { stopped: boolean }>).__streamer
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
+    const dictation = sockets[0]
     autoSpeech.state.value = 'playing'
     await flush()
     await flush()
-    expect(streamer.stopped).toBe(true)
+    expect(dictation.readyState).toBe(3)
+    // The device is NOT reopened: the same capture now feeds the interrupt
+    // listener. Re-acquiring here is what made playback start on a freshly
+    // configured audio route and lose its first syllables.
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
     expect(useFreeDialog().phase.value).toBe('speaking')
   })
 

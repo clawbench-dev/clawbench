@@ -193,6 +193,23 @@ describe('PcmStreamer', () => {
     s.stop()
   })
 
+  it('drops withheld frames when the consumer changes', async () => {
+    // Free-dialog mode swaps who reads the same microphone between phases. The
+    // frames withheld before the swap belong to whatever was playing then —
+    // flushing them into the next recogniser would hand it the assistant's
+    // tail as if the user had said it.
+    const onFrame = vi.fn()
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame })
+    await s.start()
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    s.resetGate()
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    // Only the loud frame: the two withheld ones were dropped by the reset.
+    expect(onFrame).toHaveBeenCalledTimes(1)
+    s.stop()
+  })
+
   it('builds a high-pass and a low-pass when the band filter is on', async () => {
     const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
     await s.start()
