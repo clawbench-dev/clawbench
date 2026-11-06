@@ -14,7 +14,7 @@ Brings the full power of AI coding agents to every screen — phone, tablet, and
 
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
 
-- **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
+- **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA, HarmonyOS (experimental)
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI (international / China editions), VeCLI, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode, Cursor, Hermes Agent, Command Code, OpenClaw
 
 📖 **User Guide** (Chinese): [ClawBench User Guide](docs/user-guide/README.md) · [online edition with sidebar](https://clawbench.pages.dev/docs/)

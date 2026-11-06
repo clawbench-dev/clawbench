@@ -35,7 +35,7 @@
 
 ## 前端兼容补丁
 
-补丁和完整基线记录位于 `patches/upstream/`，只发布必要差异，不提交整个原始源码目录。
+适配改动已直接落在本仓库的 `web/src/`（`getHostPlatform()` 与能力表、`isHarmonyApp`、`getNative()` 识别 `window.ClawBenchHarmony`），不在仓库内维护一份"打补丁前的原始源码"。下文列出的基线 commit 用于判断后续上游同步需要复核哪些差异；补丁目录与 `apply-upstream-patch.ps1` 属于维护方本地流程，不在本仓库中。
 
 - 增加 `getHostPlatform()` 和能力表；`getNative()` 显式识别 `window.ClawBenchHarmony`。
 - HarmonyOS 与 Android、Electron、浏览器分别判断；触摸和宽屏轴继续独立。
@@ -49,7 +49,7 @@
 
 本地登录页使用独立 ArkWeb 控制器，仅允许导航到打包的登录文档。CSP 禁止联网、frame、表单导航和外部对象；只读 `ClawBenchLoginInit.getConfig()` 提供语言、主题、版本、服务器名称与临时密码引用，动作通过随机通道的消息端口执行。`javaScriptOnDocumentStart` 不用于本地资源页，避免初始化未执行；该 API 仍用于 HTTP/HTTPS 工作台的宿主注入。远程控制器不注册登录初始化代理。
 
-从锁定上游归档恢复参考目录后，在根目录运行：
+若维护方提供了上游参考目录与补丁脚本，可在该目录下按同一流程复核（`apply-upstream-patch.ps1` 不在本仓库）：
 
 ```powershell
 ./scripts/apply-upstream-patch.ps1
