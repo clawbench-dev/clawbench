@@ -1,7 +1,9 @@
 {
   "name": "entry",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "ArkWeb host",
   "main": "",
-  "dependencies": {}
+  "dependencies": {
+    "libclawbench_tunnel.so": "file:./src/main/cpp/types/libclawbench_tunnel"
+  }
 }

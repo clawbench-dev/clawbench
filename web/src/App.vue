@@ -783,7 +783,7 @@ import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
-import { consumeShareTargetResult, stageShareTargetResult } from './utils/shareTarget.ts'
+import { consumeShareTargetResult, stageShareTargetResult, nativeShareTargetResult } from './utils/shareTarget.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from './composables/useForgeBinding.ts'
 import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
@@ -2841,10 +2841,26 @@ function handleOpenAcpSessionsFromSearch() {
 }
 
 /** Register global DOM event listeners (idempotent — safe to call multiple times). */
+function handleNativeError(event: Event) {
+  const detail = (event as CustomEvent<{ message?: string }>).detail
+  if (typeof detail?.message === 'string') {
+    toast.show(detail.message.slice(0, 240), { icon: 'warning', type: 'error' })
+  }
+}
+
+function handleNativeShareImport(event: Event) {
+  const result = nativeShareTargetResult((event as CustomEvent<unknown>).detail, store.state.projectRoot)
+  if (!result) return
+  const { toastKey, toastParams, variant } = stageShareTargetResult(result, path => addAttachedFile(path, false))
+  toast.show(t(toastKey, toastParams), { icon: variant.icon, type: variant.type, duration: variant.duration })
+}
+
 let appEventListenersRegistered = false
 function registerAppEventListeners() {
   if (appEventListenersRegistered) return
   appEventListenersRegistered = true
+  window.addEventListener('clawbench-native-error', handleNativeError)
+  window.addEventListener('clawbench-share-imported', handleNativeShareImport)
   window.addEventListener('open-file-manager', handleOpenFileManager)
   window.addEventListener('open-file-overlay', handleOpenFileOverlay)
   window.addEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
@@ -4940,6 +4956,8 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
     window.removeEventListener('clawbench-open-mail', handleOpenMail)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
+    window.removeEventListener('clawbench-native-error', handleNativeError)
+    window.removeEventListener('clawbench-share-imported', handleNativeShareImport)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     document.removeEventListener('keydown', handleCtrlG)

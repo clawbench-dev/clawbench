@@ -29,3 +29,19 @@ jobs:
           cache-dependency-path: harmony/package-lock.json
       - run: npm ci --prefix harmony
       - run: npm --prefix harmony test
+
+  native-tests:
+    name: HarmonyOS native tunnel core
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure pinned native dependencies
+        run: cmake -S harmony/tests/native -B build/native-tunnel-tests -G Ninja -DTUNNEL_BUILD_DEPENDENCIES=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: Build native regression
+        run: cmake --build build/native-tunnel-tests --parallel 2
+      - name: Run native regression
+        run: ctest --test-dir build/native-tunnel-tests --output-on-failure

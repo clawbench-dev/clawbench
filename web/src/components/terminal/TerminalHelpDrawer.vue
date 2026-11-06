@@ -29,7 +29,7 @@ const props = defineProps({
   open: Boolean,
   /** Touch-capable platform — gestures only apply here. */
   gestures: Boolean,
-  /** Android app mode — hardware volume keys forward arrows. */
+  /** The mobile host supports hardware volume keys forwarding arrows. */
   appMode: Boolean,
   /** macOS desktop — the copy chord is Cmd+C there, not Ctrl+Shift+C. */
   mac: Boolean,
@@ -108,7 +108,7 @@ const sections = computed<HelpSection[]>(() => {
     { key: 'rightClick', nameKey: 'terminal.helpCommonRightClick', descKey: 'terminal.helpCommonRightClickDesc' },
     { key: 'tools', nameKey: 'terminal.helpCommonTools', descKey: 'terminal.helpCommonToolsDesc' },
   )
-  // Android app mode: hardware volume keys forward arrows.
+  // Native mobile hosts may forward hardware volume keys.
   if (props.appMode) {
     common.push({ key: 'volume', nameKey: 'terminal.helpVolumeKeys', descKey: 'terminal.helpVolumeKeysDesc' })
   }

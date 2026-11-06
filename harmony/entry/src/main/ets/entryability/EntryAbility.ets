@@ -1,9 +1,22 @@
-import { UIAbility, ConfigurationConstant } from '@kit.AbilityKit';
+import { UIAbility, ConfigurationConstant, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { NativeEventService } from '../services/NativeEventService';
+import { ShareImportService } from '../services/ShareImportService';
 
 export default class EntryAbility extends UIAbility {
-  onCreate(): void {
+  onCreate(want: Want): void {
+    NativeEventService.receiveWant(want);
+    ShareImportService.get(this.context).receive(want).catch(() => {
+      AppStorage.setOrCreate('clawbenchShareError', true);
+    });
     this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+  }
+
+  onNewWant(want: Want): void {
+    NativeEventService.receiveWant(want);
+    ShareImportService.get(this.context).receive(want).catch(() => {
+      AppStorage.setOrCreate('clawbenchShareError', true);
+    });
   }
 
   onWindowStageCreate(stage: window.WindowStage): void {

@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.22)
+project(clawbench_tunnel LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+include(ThirdParty.cmake)
+add_library(clawbench_tunnel SHARED napi_init.cpp tunnel_engine.cpp)
+add_dependencies(clawbench_tunnel tunnel_nghttp2 tunnel_ssh2)
+target_include_directories(clawbench_tunnel PRIVATE "${TUNNEL_STAGE}/include" "${tunnel_json_SOURCE_DIR}/single_include"
+  "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(clawbench_tunnel PRIVATE LIBSSH2_LIBRARY NGHTTP2_STATICLIB)
+target_compile_options(clawbench_tunnel PRIVATE -Wall -Wextra -fvisibility=hidden)
+target_link_libraries(clawbench_tunnel PRIVATE ${TUNNEL_LIBRARIES} libace_napi.z.so)

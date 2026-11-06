@@ -17,14 +17,40 @@
       "startWindowIcon": "$media:app_icon",
       "startWindowBackground": "$color:start_window_background",
       "exported": true,
+      "launchType": "singleton",
       "skills": [{
         "entities": ["entity.system.home"],
         "actions": ["ohos.want.action.home"]
+      }, {
+        "actions": ["ohos.want.action.sendData"],
+        "uris": [
+          { "scheme": "file", "utd": "general.file", "maxFileSupported": 20 },
+          { "scheme": "file", "utd": "general.image", "maxFileSupported": 20 },
+          { "scheme": "file", "utd": "general.video", "maxFileSupported": 20 },
+          { "scheme": "file", "utd": "general.audio", "maxFileSupported": 20 },
+          { "scheme": "file", "utd": "general.text", "maxFileSupported": 20 },
+          { "scheme": "file", "utd": "general.archive", "maxFileSupported": 20 }
+        ]
       }]
     }],
     "requestPermissions": [
       { "name": "ohos.permission.INTERNET" },
-      { "name": "ohos.permission.GET_NETWORK_INFO" }
+      { "name": "ohos.permission.GET_NETWORK_INFO" },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:camera_reason",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }
+      },
+      {
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "$string:microphone_reason",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }
+      },
+      {
+        "name": "ohos.permission.READ_PASTEBOARD",
+        "reason": "$string:pasteboard_reason",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }
+      }
     ]
   }
 }

@@ -37,6 +37,12 @@ export interface NativeCapabilities {
   liveUpdate: boolean
   tunnel: boolean
   screenCapture: boolean
+  mediaCapture?: boolean
+  selectionMenu?: boolean
+  clipboard?: boolean
+  systemBrowser?: boolean
+  volumeKeys?: boolean
+  backgroundDelivery?: 'while-process-running'
 }
 
 /** Full bridge contract shared by Android and Electron. */
@@ -274,6 +280,10 @@ export interface ClawBenchNative {
   /** Write the Android local h2 tunnel toggle (SharedPreferences). */
   setTunnelTransportH2Enabled?(enabled: boolean): Promise<void> | void
   getPendingNavigation(): Promise<string>
+  /** HarmonyOS reports permission/delivery state separately from the server's push preference. */
+  getNativePushStatus?(): Promise<string>
+  readClipboardText?(): Promise<string> | string
+  writeClipboardText?(text: string): Promise<void> | void
   /**
    * Forget every self-signed certificate the desktop shell remembered for a
    * server, so the next connection asks again. Resolves with how many entries
@@ -358,7 +368,7 @@ export interface ClawBenchNative {
    * because Android's WebView JavaScript bridge resolves @JavascriptInterface
    * methods by name and overloads collide there.
    */
-  downloadFileWithProgress?(path: string, fileName: string, downloadId: number): Promise<void>
+  downloadFileWithProgress?(path: string, fileName: string, downloadId: number): void | Promise<void>
   /**
    * Cancel an in-flight download started by downloadFileWithProgress().
    * Optional: older hosts lack it, and the UI then only hides the bar.
@@ -520,6 +530,12 @@ export function isDesktopApp(): boolean {
   } catch {
     return false
   }
+}
+
+/** Hardware volume arrows are opt-in outside the legacy Android host. */
+export function supportsNativeVolumeKeys(): boolean {
+  return getNativeHostPlatform() === 'android' ||
+    (getNativeHostPlatform() === 'harmonyos' && getNative()?.getCapabilities?.().volumeKeys === true)
 }
 
 /**
