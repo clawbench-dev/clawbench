@@ -123,3 +123,42 @@ hdc -t DEVICE fport rm tcp:20121 tcp:20121
 
 These checks use h2c and an emulator. They do not certify TLS trust on a
 physical device, OS background survival, or screen capture.
+
+## Notification Delivery With A Legacy Frontend
+
+From the repository root, run `npm ci`, then start this isolated fixture:
+
+```sh
+node harmony/tests/native/notification-fixture.mjs
+hdc -t DEVICE rport tcp:20126 tcp:20126
+```
+
+Use a separate test installation and add `http://127.0.0.1:20126` with the
+public fixture password `fixture-notification-pass`. Allow system
+notifications and connect. The fixture page does not call any native bridge,
+so it reproduces a server frontend without HarmonyOS support.
+
+Press Home, then inspect `http://127.0.0.1:20126/fixture/status` on the host.
+The corrected native client reads the configuration after login and on the
+background transition, then opens a WebSocket (`clients: 1`). Emit both kinds:
+
+```sh
+curl "http://127.0.0.1:20126/fixture/emit?kind=reply"
+curl "http://127.0.0.1:20126/fixture/emit?kind=approval"
+```
+
+Verify both system notifications in the notification drawer. The 0.2.1
+baseline instead has zero config reads and zero clients with this page,
+even after system authorization.
+
+Switch the fixture to `disabled` through
+`/fixture/mode?value=disabled`, resume the app, and press Home again.
+The client must reread the mode and leave no native WebSocket connected.
+Switch back through `/fixture/mode?value=native`, repeat the foreground and
+background transition, and verify delivery resumes. These routes modify only
+the isolated fixture, never the shared test server.
+
+Stop the fixture with Ctrl+C, uninstall only the temporary test bundle, and
+remove the mapping with `hdc -t DEVICE fport rm tcp:20126 tcp:20126`.
+This demonstrates delivery while the process runs; it does not certify
+physical-device background survival or vendor push.
