@@ -22,7 +22,11 @@
     @close="closeSide"
     @resize="syncInkRect"
   >
-    <div class="live-share-view">
+    <div
+      ref="rootRef"
+      class="live-share-view"
+      :style="dockHeight > 0 ? { '--live-dock-height': `${dockHeight}px` } : undefined"
+    >
       <div
         ref="stageRef"
         class="live-stage"
@@ -693,6 +697,24 @@ const notesFiles = ref<NoteFileEvent[]>([])
 // ── Control channel: ink, chat, quality, presence ───────────────────────────
 const board = useInkBoard()
 const stageRef = ref<HTMLElement | null>(null)
+/** The picture column — the containing block of the dock and the control pill. */
+const rootRef = ref<HTMLElement | null>(null)
+/**
+ * How much height the floating dock takes, in CSS px.
+ *
+ * MEASURED, not assumed. It used to be a constant (`34dp`, or `66dp` under a
+ * `(max-width: 520px)` breakpoint) describing "one row" / "two rows". That
+ * cannot survive interface scaling: the buttons are 28dp, so at 1.33× the seven
+ * of them no longer fit a window the breakpoint still calls wide, the dock
+ * wraps, and the control pill above it — positioned with this number — lands on
+ * top of the second row. A breakpoint can only guess where the wrap happens;
+ * the dock itself knows.
+ *
+ * 0 means "not measured yet": the stylesheet's own default then applies, so the
+ * first paint is never worse than before.
+ */
+const dockHeight = ref(0)
+let dockResizeObserver: ResizeObserver | null = null
 const inkRect = ref<ContentRect>({ left: 0, top: 0, width: 0, height: 0 })
 const chatMessages = ref<ChatMessage[]>([])
 const unread = ref(0)
@@ -1673,6 +1695,47 @@ function syncFullscreen(): void {
 }
 
 /**
+ * Track the floating dock's real height.
+ *
+ * The control pill is positioned above the dock, so it needs the dock's height
+ * — and that height is not a constant: the pill wraps to a second row whenever
+ * the seven buttons stop fitting, which depends on the window width AND on the
+ * interface scale (the buttons are 28dp, so a bigger UI wraps on a wider
+ * window). A media query can only guess; observing the element is exact, and it
+ * also covers a label appearing or disappearing inside a button.
+ *
+ * The dock only exists AFTER the viewer joins (before that the page shows the
+ * nickname gate), so this cannot run once at mount — it is driven by the same
+ * `joined` flag that renders the shell, and it tears down its observer when the
+ * shell goes away.
+ *
+ * `ResizeObserver` is used rather than a window `resize` listener because the
+ * wrap can change without the window changing at all (a scale change, a font
+ * loading, the brand logo rendering).
+ */
+function observeDock(): void {
+  dockResizeObserver?.disconnect()
+  dockResizeObserver = null
+  dockHeight.value = 0
+  const dock = rootRef.value?.querySelector<HTMLElement>('.live-dock')
+  if (!dock) return
+  const sync = () => {
+    dockHeight.value = dock.getBoundingClientRect().height
+  }
+  sync()
+  if (typeof ResizeObserver !== 'function') return // jsdom / very old engines
+  dockResizeObserver = new ResizeObserver(sync)
+  dockResizeObserver.observe(dock)
+}
+
+// The shell (and therefore the dock) is created by the join, and destroyed when
+// the meeting ends into the record view.
+watch(joined, (isJoined) => {
+  if (isJoined) void nextTick(observeDock)
+  else observeDock()
+})
+
+/**
  * Toggle fullscreen for the whole viewer.
  *
  * The root element, not the <video>: the dock has to stay reachable, otherwise
@@ -1825,6 +1888,8 @@ onBeforeUnmount(() => {
   // The lock lives in the composable, not in this component: unmounting without
   // releasing it would leave the screen on for the rest of the session.
   wakeLock.release('meeting-viewer')
+  dockResizeObserver?.disconnect()
+  dockResizeObserver = null
   stopStatsPolling()
   clearNegotiationWatchdog()
   // The "is speaking" chip clears itself on a timer; leaving it armed would
@@ -1864,20 +1929,14 @@ onBeforeUnmount(() => {
   /* Positioning context for the floating dock and the banners. */
   position: relative;
   background: var(--bg-primary, #0d1117);
-  /* How much of the bottom the dock occupies — one 28dp row plus the pill's own
-     2 × 2dp padding and its 1px borders. The control pill is positioned above
-     it, so the two cannot drift apart. */
+  /* Fallback for the dock's height, used only until the measurement in
+     `observeDock()` lands (and in jsdom, where nothing is laid out). The real
+     value is written inline by the component: the dock wraps to a second row
+     once its seven 28dp buttons stop fitting, and that point moves with both
+     the window width and the interface scale, so no constant can describe it.
+     The control pill is positioned above the dock with this number — see
+     `.live-screen-banner.live-control-banner`. */
   --live-dock-height: calc(34 * var(--dp));
-}
-
-/* The dock wraps once its buttons stop fitting (seven 28dp controls do not fit
-   a 320dp phone, and interface scaling multiplies the whole pill), so on narrow
-   screens the control pill above it has to clear TWO rows: 2 × 28dp + 4dp gap +
-   2 × 2dp padding + borders. */
-@media (max-width: 520px) {
-  .live-share-view {
-    --live-dock-height: calc(66 * var(--dp));
-  }
 }
 
 .live-stage {
@@ -1953,7 +2012,7 @@ onBeforeUnmount(() => {
 
 .live-retry {
   margin-top: var(--space-4, 8px);
-  padding: 6px 14px;
+  padding: calc(6 * var(--dp)) calc(14 * var(--dp));
   border-radius: var(--radius-md, 6px);
   border: 1px solid var(--border-color, #30363d);
   background: var(--bg-secondary, #161b22);
@@ -2062,7 +2121,7 @@ onBeforeUnmount(() => {
   color: inherit;
   font-size: calc(14 * var(--dp));
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0 calc(2 * var(--dp));
 }
 
 .live-picker {
@@ -2079,7 +2138,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-4, 8px);
-  width: min(calc(360 * var(--dp)), calc(100vw - 32px));
+  width: min(calc(360 * var(--dp)), calc(100vw - calc(32 * var(--dp))));
   max-height: 70vh;
   padding: var(--space-5, 10px);
   border-radius: var(--radius-lg, 10px);

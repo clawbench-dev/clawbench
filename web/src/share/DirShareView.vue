@@ -28,8 +28,10 @@
       <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
       <span v-else-if="error" class="share-status share-error">{{ error }}</span>
       <span class="share-spacer" />
-      <!-- Same fixed right-most slot as the file view: the palette picker is the
-           one control a reader needs even when the listing failed. -->
+      <!-- Same fixed right-most slot as the file view: the palette picker and
+           the fit switch are the controls a reader needs even when the listing
+           failed. -->
+      <ShareFitButton />
       <ShareThemeButton />
     </div>
 
@@ -117,6 +119,7 @@ import { ArrowLeft, Download, FileX2, FolderOpen } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ShareThemeButton from './ShareThemeButton.vue'
+import ShareFitButton from './ShareFitButton.vue'
 import ShareView from './ShareView.vue'
 import { setShareToken, shareApiUrl } from './shareMode'
 import { shareDeepLink } from './shareLinks'

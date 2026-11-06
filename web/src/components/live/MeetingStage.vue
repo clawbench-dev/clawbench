@@ -1800,8 +1800,8 @@ watch(
 }
 
 .live-panel__dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: currentColor;
   animation: live-panel-pulse 1.4s ease-in-out infinite;
@@ -1967,8 +1967,8 @@ watch(
    error or a destructive action in this UI, while a running recorder is normal
    ongoing work. */
 .live-tab__rec {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color, #4a90d9);
   animation: live-panel-pulse 1.4s ease-in-out infinite;

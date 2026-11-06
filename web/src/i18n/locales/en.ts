@@ -4233,6 +4233,8 @@ export default {
     loading: 'Loading...',
     download: 'Download original',
     toggleToc: 'Toggle table of contents',
+    fitOn: 'Fit to my screen',
+    fitOff: 'Use the original size',
     toc: 'Contents',
     invalidTitle: 'Cannot view this share',
     invalidUrl: 'Invalid link format',

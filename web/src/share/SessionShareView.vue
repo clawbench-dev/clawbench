@@ -32,9 +32,10 @@
         >
           <Download :size="16" />
         </button>
-        <!-- Theme picker last: it is the only action available in every state
-             (loading / error / empty snapshot), so it must not shift position
-             when the others appear. -->
+        <!-- These two are the only actions available in every state (loading /
+             error / empty snapshot), so they come last and keep a fixed order:
+             they must not shift position when the others appear. -->
+        <ShareFitButton />
         <ShareThemeButton />
       </div>
     </div>
@@ -258,6 +259,8 @@ import { getBackendDisplayName } from '@/utils/backendNames'
 import { flashElement } from '@/utils/domFlash'
 import { setShareSessionData, shareApiUrl, type ShareToolCallData } from './shareMode'
 import ShareThemeButton from './ShareThemeButton.vue'
+import ShareFitButton from './ShareFitButton.vue'
+import { shareNarrowQuery } from './shareScale'
 import { downloadBlob } from '@/utils/download.ts'
 import { formatDuration } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
@@ -313,12 +316,19 @@ const snapshot = ref<Record<string, unknown> | null>(null)
 // the in-app conversation index uses. Entries ARE the parsed messages: the row
 // component derives its own preview text, so no separate projection is needed.
 const tocOpen = ref(true)
-/** Narrow layout (<900px): the TOC moves to a slide-in drawer over the content. */
+/**
+ * Narrow layout: the TOC moves to a slide-in drawer over the content.
+ *
+ * The threshold is a DESIGN width (900), so it is scaled by the applied factor
+ * — the share page sizes itself to the screen, and a bigger UI needs more
+ * window before a side rail leaves the conversation readable. See
+ * shareNarrowQuery.
+ */
 const isNarrow = ref(false)
 let tocMq: MediaQueryList | null = null
 function syncNarrow() {
   if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
-  isNarrow.value = window.matchMedia('(max-width: 899px)').matches
+  isNarrow.value = window.matchMedia(shareNarrowQuery()).matches
 }
 const contentRef = ref<HTMLElement | null>(null)
 /** Row shape consumed by MessageIndexRow (a structural subset of a parsed
@@ -829,7 +839,7 @@ async function loadSnapshot() {
 onMounted(() => {
   syncNarrow()
   if (typeof window.matchMedia === 'function') {
-    tocMq = window.matchMedia('(max-width: 899px)')
+    tocMq = window.matchMedia(shareNarrowQuery())
     tocMq.addEventListener('change', syncNarrow)
   }
   void loadSnapshot()

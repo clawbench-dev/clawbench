@@ -46,10 +46,12 @@
       >
         <Download :size="16" />
       </button>
-      <!-- Theme picker is the right-most control and is ALWAYS available (not
-           behind hasToc / error): it is the one action a reader needs on a page
-           that failed to load or whose palette is unreadable, and keeping it in
-           a fixed slot means it never shifts when the others appear. -->
+      <!-- Both of these are ALWAYS available (not behind hasToc / error) and
+           in a fixed order, so they never shift when the other actions appear:
+           the theme picker is the one control a reader needs on a page that
+           failed to load or whose palette is unreadable, and the fit switch is
+           the answer to "why is this page so small on my monitor". -->
+      <ShareFitButton />
       <ShareThemeButton />
     </div>
 
@@ -294,6 +296,8 @@ import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl, shareDocUrl, encodeShareDocDir } from '@/share/shareMode'
 import { SHARE_OPEN_FILE_EVENT, shareDeepLink } from '@/share/shareLinks'
 import ShareThemeButton from './ShareThemeButton.vue'
+import ShareFitButton from './ShareFitButton.vue'
+import { shareNarrowQuery } from './shareScale'
 import { shareThemeId } from './shareTheme'
 import { buildLocalFileUrl } from '@/utils/download'
 import { baseName, dirName } from '@/utils/path'
@@ -362,12 +366,18 @@ const sharedPath = ref('')
  *  re-render when a link is followed. */
 const pushedDepth = ref(0)
 const tocOpen = ref(true)
-/** Narrow layout (<900px): TOC moves to a slide-in drawer over the content. */
+/**
+ * Narrow layout: the TOC moves to a slide-in drawer over the content.
+ *
+ * The threshold is a DESIGN width (900), so it is scaled by the applied factor
+ * — the share page sizes itself to the screen, and a bigger UI needs more
+ * window before a side rail leaves the text readable. See shareNarrowQuery.
+ */
 const isNarrow = ref(false)
 let tocMq: MediaQueryList | null = null
 function syncNarrow() {
   if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
-  isNarrow.value = window.matchMedia('(max-width: 899px)').matches
+  isNarrow.value = window.matchMedia(shareNarrowQuery()).matches
 }
 const wordWrap = ref(false)
 const contentRef = ref<HTMLElement | null>(null)
@@ -859,7 +869,7 @@ function scrollToTocItem(item: TocItem) {
 onMounted(() => {
   syncNarrow()
   if (typeof window.matchMedia === 'function') {
-    tocMq = window.matchMedia('(max-width: 899px)')
+    tocMq = window.matchMedia(shareNarrowQuery())
     tocMq.addEventListener('change', syncNarrow)
   }
 
@@ -939,7 +949,7 @@ onBeforeUnmount(() => {
 }
 
 .share-error-title { font-size: var(--font-size-2xl); font-weight: var(--font-weight-semibold); color: var(--text-primary, #1f2328); }
-.share-error-desc { font-size: var(--font-size-md); max-width: 480px; word-break: break-word; }
+.share-error-desc { font-size: var(--font-size-md); max-width: calc(480 * var(--dp)); word-break: break-word; }
 
 .share-html-iframe {
   width: 100%;

@@ -754,7 +754,7 @@ onMounted(() => {
   left: -1px;
   top: -1px;
   bottom: -1px;
-  width: 2px;
+  width: calc(2 * var(--dp));
   background: transparent;
 }
 .meeting-row[data-state="running"]::before { background: var(--accent-color); }

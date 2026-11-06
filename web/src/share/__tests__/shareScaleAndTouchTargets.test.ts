@@ -144,21 +144,45 @@ describe('touch targets', () => {
 
   /**
    * The control pill ("等待主持人批准…" / "结束控制") floats just above the dock.
-   * Once the dock may take two rows, a fixed 52dp offset would put the pill in
-   * the middle of it — covering the very buttons the viewer is reaching for,
-   * and the pill has the higher z-index.
+   * Once the dock may take two rows, a fixed offset would put the pill in the
+   * middle of it — covering the very buttons the viewer is reaching for, and
+   * the pill has the higher z-index.
+   *
+   * The height is MEASURED now, not guessed from a breakpoint. It used to be
+   * `34dp`, or `66dp` under `(max-width: 520px)`, describing "one row" / "two
+   * rows" — and that guess broke as soon as the interface scale was applied to
+   * the share page: the buttons are 28dp, so at 1.33× the seven of them stop
+   * fitting on a window the breakpoint still calls wide. The dock wraps, the
+   * breakpoint says one row, and the pill lands on the second row. No constant
+   * can describe where a wrap happens, because it depends on the scale too.
+   *
+   * So the guard is now about the MEASUREMENT: the pill must read the variable,
+   * and the variable must come from the dock's own box.
    */
-  it('keeps the control pill above the dock when the dock wraps', () => {
+  it('positions the control pill from the dock’s measured height', () => {
     const css = styleBlock('src/share/LiveShareView.vue')
 
     const banner = rules(css).filter((r) => /\.live-control-banner/.test(r.selector))
     expect(banner.length).toBeGreaterThan(0)
     expect(banner.some((r) => /bottom:[^;]*var\(--live-dock-height\)/.test(r.body))).toBe(true)
 
-    // ...and the narrow breakpoint really reserves the two-row height.
-    const narrow = mediaBlock(css, '@media (max-width: 520px)')
-    expect(narrow, 'the ≤520px block is missing').not.toBe('')
-    expect(narrow).toMatch(/--live-dock-height:\s*calc\(66 \* var\(--dp\)\)/)
+    // The constant-based guess must be GONE: a breakpoint that reserves a
+    // two-row height would now fight the measurement (an inline style wins, so
+    // it would be dead weight that only misleads the next reader).
+    expect(css, 'the fixed two-row breakpoint must be gone').not.toMatch(
+      /@media \(max-width: 520px\)[^}]*\{[^}]*--live-dock-height/,
+    )
+
+    // The value is written from the dock element's own height, so a wrap at any
+    // scale is accounted for.
+    const src = readWebFile('src/share/LiveShareView.vue')
+    expect(src).toMatch(/dockHeight\.value\s*=\s*dock\.getBoundingClientRect\(\)\.height/)
+    // ...and it is applied to the containing block the pill is positioned in.
+    expect(src).toMatch(/'--live-dock-height':\s*`\$\{dockHeight\}px`/)
+    // Observed, not sampled once: a wrap can happen without a window resize
+    // (scale change, font loading, a label appearing inside a button).
+    expect(src).toContain('new ResizeObserver(sync)')
+    expect(src).toContain('dockResizeObserver?.disconnect()')
   })
 })
 
