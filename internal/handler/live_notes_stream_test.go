@@ -193,6 +193,10 @@ func TestLiveNotesStream_StreamingEngineStoresALine(t *testing.T) {
 
 	msg := readUntilLine(t, conn)
 	assert.Equal(t, "现在让我检查一下这个文件", msg["text"])
+	// The client merges rows by id and drops any without one. A line message
+	// without its id looked correct here and left the meeting panel empty.
+	id, _ := msg["id"].(float64)
+	assert.Positive(t, int64(id), "the stored row id must reach the client")
 	assert.Positive(t, provider.writes, "the frames must reach the streaming engine")
 
 	// One line, not one per revision: a streaming engine re-sends the whole

@@ -359,12 +359,17 @@ func (n *notesStreamRelay) commit(ctx context.Context, full string, startedAt ti
 		DurationMS: capInt64(duration, liveNoteSegmentMaxDurationMS),
 		Text:       truncateRunes(text, liveNoteTextMaxRunes),
 	}
-	if _, err := service.AppendLiveNoteSegment(ctx, n.token, n.projectID, seg); err != nil {
+	id, err := service.AppendLiveNoteSegment(ctx, n.token, n.projectID, seg)
+	if err != nil {
 		slog.Error("live notes stream: append failed", "err", err)
 		return
 	}
+	// The row id is not decoration: the client merges transcript rows by id and
+	// drops anything without one, so omitting it left the panel empty for the
+	// whole meeting while the database was filling up correctly.
 	_ = sendNotesStreamMsg(n.conn, map[string]any{
-		"type":          "line",
+		sttWSType:       "line",
+		"id":            id,
 		liveNoteTextKey: seg.Text,
 		"channel":       seg.Channel,
 		"speaker":       seg.Speaker,
