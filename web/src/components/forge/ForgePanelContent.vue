@@ -221,7 +221,14 @@
                   <span class="forge-row-time">{{ formatTime(run.updatedAt) }}</span>
                 </div>
               </div>
-              <ChevronRight :size="16" class="forge-row-chevron" />
+              <button
+                class="forge-row-quote"
+                :title="t('file.header.quoteInChat')"
+                :aria-label="t('file.header.quoteInChat')"
+                @click.stop="quotePipeline(run)"
+              >
+                <MessageSquare :size="14" />
+              </button>
             </div>
             <div v-if="pipelines.loadingMore.value" class="forge-loading-more">
               <LoadingIndicator size="sm" />
@@ -316,7 +323,14 @@
                 </span>
               </div>
             </div>
-            <ChevronRight :size="16" class="forge-row-chevron" />
+            <button
+              class="forge-row-quote"
+              :title="t('file.header.quoteInChat')"
+              :aria-label="t('file.header.quoteInChat')"
+              @click.stop="quoteItem(it)"
+            >
+              <MessageSquare :size="14" />
+            </button>
           </div>
           <div v-if="items.loadingMore.value" class="forge-loading-more">
             <LoadingIndicator size="sm" />
@@ -420,6 +434,7 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 import { startQuoteDrag, forgeItemDragPayload, pipelineDragPayload } from '@/utils/quoteDrag'
@@ -433,7 +448,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'request-project'): void
-  (e: 'quote', payload: { item: { type: 'issue' | 'pr' | 'pipeline'; number: number; title: string; url: string; slug: string; label?: string } }): void
 }>()
 
 const { t } = useI18n()
@@ -444,6 +458,7 @@ const pipelines = useForgePipelines(() => props.projectPath)
 // The same count the dock badge shows, so the "mark all read" button reflects
 // the badge rather than a separately-tracked number that could disagree.
 const { forgeUnreadCount } = useForgeUnread()
+const quoteQuestion = useQuoteQuestion()
 
 /**
  * The three peer tabs of the forge panel. Declared as data rather than three
@@ -874,8 +889,17 @@ async function submitBinding(input: {
   }
 }
 
+/**
+ * Quote from the issue/PR detail header.
+ *
+ * Deliberately the same payload builder as the list row: a generic `{url}` chip
+ * rendered the same issue as a plain link, so quoting it from the detail and
+ * from the row produced two different cards.
+ */
 function onQuote(payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }) {
-  emit('quote', payload)
+  const quote = forgeItemDragPayload(payload.item)
+  if (!quote) return
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
 }
 
 /**
@@ -888,6 +912,24 @@ function onForgeItemDragStart(it: ForgeItem, e: DragEvent) {
 }
 
 /**
+ * Quote a list row from its button: the same payload the drag produces, but
+ * through the shared quote bar so the user can annotate it or send it to another
+ * conversation. The bar is a global singleton, so nothing is plumbed through the
+ * host — exactly how the scheduled-task list does it.
+ */
+function quoteItem(it: ForgeItem) {
+  const payload = forgeItemDragPayload(it)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
+}
+
+function quotePipeline(run: ForgePipelineRun) {
+  const payload = pipelineDragPayload(run)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
+}
+
+/**
  * Start dragging a CI run row into the chat. The payload carries both the run's
  * address and the commit it built, which is what distinguishes it from a plain
  * commit quote.
@@ -897,23 +939,14 @@ function onPipelineDragStart(run: ForgePipelineRun, e: DragEvent) {
 }
 
 /**
- * Quote a whole CI run into the chat.
- *
- * The payload carries an explicit `label`, because the generic fallback
- * (`slug#number`) renders a run as `owner/repo#42` — indistinguishable from a
- * pull request number. The label names the run instead.
+ * Quote a whole CI run from its detail header — the same payload builder the
+ * row uses, so the card carries the pipeline marker and the commit it built in
+ * both places.
  */
 function onPipelineQuote(run: ForgePipelineRun) {
-  emit('quote', {
-    item: {
-      type: 'pipeline',
-      number: run.number,
-      title: run.name,
-      url: run.url,
-      slug: run.slug,
-      label: `${run.slug} ${t('forge.type.pipelines')} #${run.number}`,
-    },
-  })
+  const quote = pipelineDragPayload(run)
+  if (!quote) return
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
 }
 
 function errorTitle(code: string): string {

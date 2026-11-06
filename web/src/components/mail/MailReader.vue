@@ -11,20 +11,50 @@
       </button>
     </div>
 
-    <div class="mail-reader__actions">
-      <button class="mail-chip" :disabled="busy" @click="emit('reply', 'reply')">{{ t('mail.reader.reply') }}</button>
-      <button class="mail-chip" :disabled="busy" @click="emit('reply', 'replyAll')">{{ t('mail.reader.replyAll') }}</button>
-      <button class="mail-chip" :disabled="busy" @click="emit('reply', 'forward')">{{ t('mail.reader.forward') }}</button>
+    <!-- One icon row, matching every other quote entry point. Labels ride next
+         to the icons only when the pane can hold them (same measure-then-toggle
+         pattern as the chat action bar): always in the DOM, shown by
+         `.show-labels`, so the row can be measured with them forced on. -->
+    <div
+      ref="actionsRef"
+      class="mail-reader__actions"
+      :class="{ 'show-labels': showActionLabels }"
+    >
+      <button class="mail-icon-btn" :title="t('mail.reader.reply')" :aria-label="t('mail.reader.reply')"
+        :disabled="busy" @click="emit('reply', 'reply')">
+        <Reply />
+        <span class="mail-action-label">{{ t('mail.reader.reply') }}</span>
+      </button>
+      <button class="mail-icon-btn" :title="t('mail.reader.replyAll')" :aria-label="t('mail.reader.replyAll')"
+        :disabled="busy" @click="emit('reply', 'replyAll')">
+        <ReplyAll />
+        <span class="mail-action-label">{{ t('mail.reader.replyAll') }}</span>
+      </button>
+      <button class="mail-icon-btn" :title="t('mail.reader.forward')" :aria-label="t('mail.reader.forward')"
+        :disabled="busy" @click="emit('reply', 'forward')">
+        <Forward />
+        <span class="mail-action-label">{{ t('mail.reader.forward') }}</span>
+      </button>
       <!-- Quote this email into a conversation. It goes through the SAME quote
            bar as a commit / task / issue, so it can carry an annotation and be
            sent to another session; the card jumps back here via `mailId`. -->
-      <button class="mail-chip" @click="quoteToChat">{{ t('mail.reader.quoteToChat') }}</button>
-      <span class="mail-reader__spacer" />
-      <button class="mail-chip" :disabled="busy" @click="toggleSeen">
-        {{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}
+      <button class="mail-icon-btn" :title="t('mail.reader.quoteToChat')" :aria-label="t('mail.reader.quoteToChat')"
+        @click="quoteToChat">
+        <MessageSquare />
+        <span class="mail-action-label">{{ t('mail.reader.quoteToChat') }}</span>
       </button>
-      <button class="mail-chip mail-chip--danger" :disabled="busy" @click="remove">
-        {{ t('mail.reader.delete') }}
+      <span class="mail-reader__spacer" />
+      <button class="mail-icon-btn" :title="detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead')"
+        :aria-label="detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead')"
+        :disabled="busy" @click="toggleSeen">
+        <Mail v-if="detail?.seen" />
+        <MailOpen v-else />
+        <span class="mail-action-label">{{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}</span>
+      </button>
+      <button class="mail-icon-btn mail-icon-btn--danger" :title="t('mail.reader.delete')"
+        :aria-label="t('mail.reader.delete')" :disabled="busy" @click="remove">
+        <Trash2 />
+        <span class="mail-action-label">{{ t('mail.reader.delete') }}</span>
       </button>
     </div>
 
@@ -98,9 +128,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, MailOpen, MessageSquarePlus, Paperclip, Star, TriangleAlert } from 'lucide-vue-next'
+import { ArrowLeft, Forward, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
 import MailEmpty from './MailEmpty.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { apiGet, apiPost } from '@/utils/api'
@@ -137,6 +167,51 @@ const busy = ref(false)
 const allowRemoteImages = ref(false)
 
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
+
+// ── Action-row labels ─────────────────────────────────────────
+// Same pattern as the chat action bar: the labels are always in the DOM and are
+// shown only when the row proves it can hold them. Forcing them on for one
+// synchronous measurement is what makes that check possible; falling back to
+// icons-only is better than letting the row overflow, because its scrollbar is
+// hidden and a cut-off row would hide actions with no visible cue.
+const actionsRef = ref<HTMLElement | null>(null)
+const showActionLabels = ref(false)
+let actionsObserver: ResizeObserver | null = null
+let actionsMeasureTimer: ReturnType<typeof setTimeout> | null = null
+
+function measureActionLabels(): void {
+  const el = actionsRef.value
+  if (!el) return
+  el.classList.add('measure-labels')
+  const overflow = el.scrollWidth > el.clientWidth + 2
+  el.classList.remove('measure-labels')
+  showActionLabels.value = !overflow
+}
+
+function scheduleMeasureActionLabels(): void {
+  if (actionsMeasureTimer) clearTimeout(actionsMeasureTimer)
+  actionsMeasureTimer = setTimeout(() => {
+    actionsMeasureTimer = null
+    measureActionLabels()
+  }, 50)
+}
+
+onMounted(() => {
+  measureActionLabels()
+  if (typeof ResizeObserver !== 'undefined' && actionsRef.value) {
+    actionsObserver = new ResizeObserver(() => scheduleMeasureActionLabels())
+    actionsObserver.observe(actionsRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  actionsObserver?.disconnect()
+  actionsObserver = null
+  if (actionsMeasureTimer) clearTimeout(actionsMeasureTimer)
+  actionsMeasureTimer = null
+})
+
+defineExpose({ measureActionLabels })
 
 // ── Handing this email to the chat ─────────────────────────────
 const quoteQuestion = useQuoteQuestion()
@@ -329,9 +404,6 @@ async function remove(): Promise<void> {
   opacity: 0.5;
   cursor: default;
 }
-.mail-chip--danger {
-  color: var(--color-red);
-}
 .mail-reader__meta {
   display: flex;
   flex-direction: column;
@@ -494,6 +566,7 @@ async function remove(): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: calc(4 * var(--dp));
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
   padding: 0;
@@ -510,6 +583,34 @@ async function remove(): Promise<void> {
 .mail-icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* Delete keeps the red it had as a text chip, so it is not mistaken for one of
+   the neutral actions sitting beside it. */
+.mail-icon-btn--danger {
+  color: var(--color-red);
+}
+
+/* Labels ride next to the icons only when the row fits them (the chat action
+   bar's measure-then-toggle pattern, see design-guide). Always in the DOM so
+   the row can be measured with them forced on; `display: none` otherwise. */
+.mail-action-label {
+  display: none;
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1;
+  white-space: nowrap;
+}
+.mail-reader__actions.show-labels .mail-action-label,
+.mail-reader__actions.measure-labels .mail-action-label {
+  display: inline;
+}
+/* A labelled button grows with its text instead of staying a 26px square. */
+.mail-reader__actions.show-labels .mail-icon-btn {
+  width: auto;
+  min-width: calc(26 * var(--dp));
+  padding: 0 calc(6 * var(--dp));
+}
+.mail-reader__actions.show-labels {
+  gap: var(--space-2, 4px);
 }
 .mail-icon-btn :deep(svg) {
   width: calc(15 * var(--dp));

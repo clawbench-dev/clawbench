@@ -484,10 +484,38 @@
 /* The timestamp is the last thing to give up space, so it never wraps. */
 .forge-row-time { white-space: nowrap; flex-shrink: 0; }
 
-.forge-row-chevron {
-    color: var(--text-hint);
+/* Row-level "quote into a conversation" action, matching the scheduled-task
+   list. It replaced the trailing chevron: the row itself already opens the
+   detail, so an arrow pointing right only repeated that, while the quote action
+   was previously reachable only by dragging the row. Hidden until hover to keep
+   the list dense, always visible on touch where there is no hover at all. */
+.forge-row-quote {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
     align-self: center;
+    width: calc(24 * var(--dp));
+    height: calc(24 * var(--dp));
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
+}
+.forge-row:hover .forge-row-quote,
+.forge-row-quote:focus-visible { opacity: 1; }
+@media (hover: none) {
+    .forge-row-quote { opacity: 1; }
+}
+@media (hover: hover) {
+    .forge-row-quote:hover {
+        color: var(--accent-color, #0066cc);
+        background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    }
 }
 
 /* Centred empty-state block: icon over a title, optionally a hint line. */

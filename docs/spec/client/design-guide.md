@@ -338,6 +338,24 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **只有正文里的行内小动作**才允许更小的局部类（会议详情的「复制路径」、共享面板的「静音」）：**页脚里不放小按钮，正文里不放 `.fbtn` 大按钮**。
 - 守卫：`components/live/__tests__/meetingFooterButtons.test.ts`（页脚条逐声明对比任务动作条、页脚里只能是 `.fbtn`、组件自己 import 样式表）。
 
+### 图标按钮：空间够就带上文字标签（先量再切）
+
+一排只有图标的动作按钮（聊天输入框上方的 `.chat-top-actions`、邮件阅读器的 `.mail-reader__actions`）**放得下时要带文字标签**：只剩图标时，用户只能靠悬停提示猜每个按钮干什么，手机上连悬停都没有。
+
+**不要按窗口宽度猜**（`@media` 判不准）：同一排按钮在宽屏侧栏、窄屏抽屉、分栏后的阅读区里可用宽度都不同。判据是**这条按钮自己的可用宽度**。
+
+**做法：标签始终在 DOM 里，先强制显示量一次，放不下才退回纯图标。**
+
+1. 标签 span 默认 `display: none`；`.show-labels`（最终态）与 `.measure-labels`（量宽用）两个类都让它显示。
+2. 量的时候**同步**加上 `.measure-labels` → 读 `scrollWidth > clientWidth + 2` → 移除 → `showLabels = !overflow`。不先强制显示，量到的是「没有标签」的宽度，结论永远是有空间。
+3. 用 `ResizeObserver` 盯住**这条按钮本身**（不是 `window`），变化后去抖 50ms 再量。面板折叠、拖分隔条、转屏都会触发它。
+4. 只有图标时，每个按钮必须有 `title` 与 `aria-label`。标签是锦上添花，**不能是唯一的名称来源**。
+5. 容差 2px：亚像素舍入会让刚好放下的一行被判成溢出，标签就永远不出现。
+
+配套样式：带标签时按钮宽度从固定方格改成 `width: auto` + 左右内边距，并加大按钮之间的间距；否则文字会顶在 26px 的方框里。
+
+实现基准：`ChatInputBar.vue` 的 `.chat-top-actions` / `measureActionLabels`；`MailReader.vue` 按同一套实现。守卫：`ChatInputBar.test.ts` 与 `MailReader.test.ts` 的「drops the labels when the row cannot fit them」。
+
 ### 横向滚动的条：溢出必须有视觉提示
 
 **凡是「放不下就横向滚动、且隐藏了滚动条」的条，必须让用户看得出还有东西没露出来。** 隐藏滚动条是刻意的（紧凑行里一条经典滚动条就是噪音），但代价是溢出在视觉上完全不可见：桌面端只能靠抓取光标，触屏只能靠盲滑，用户根本不知道右边还有按钮。

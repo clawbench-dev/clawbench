@@ -38,10 +38,20 @@ const LongPressPlugin = {
 }
 
 // ── Mocks ──
-const mockAddAttachedFile = vi.fn()
-const mockHasAttachedFile = vi.fn(() => false)
-const mockRemoveAttachedFileByPath = vi.fn()
-const mockToggleAttachedFile = vi.fn()
+// Hoisted: `useChatContext` is now evaluated while the component modules are
+// imported (the preview pulls in the quote bar), which happens before ordinary
+// top-level consts exist.
+const {
+  mockAddAttachedFile,
+  mockHasAttachedFile,
+  mockRemoveAttachedFileByPath,
+  mockToggleAttachedFile,
+} = vi.hoisted(() => ({
+  mockAddAttachedFile: vi.fn(),
+  mockHasAttachedFile: vi.fn(() => false),
+  mockRemoveAttachedFileByPath: vi.fn(),
+  mockToggleAttachedFile: vi.fn(),
+}))
 
 vi.mock('@/composables/useChatContext', () => ({
   useChatContext: () => ({

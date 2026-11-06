@@ -91,7 +91,9 @@ describe('MailList', () => {
     expect(rows[0].classes()).toContain('is-unread')
     expect(rows[1].classes()).not.toContain('is-unread')
 
-    await rows[0].trigger('click')
+    // Opening is the row's inner button: the row itself also carries the quote
+    // action, and a <button> cannot contain another one.
+    await rows[0].find('.mail-row__open').trigger('click')
     expect(wrapper.emitted('open')?.[0]).toEqual([7])
   })
 
@@ -112,8 +114,9 @@ describe('MailList', () => {
     const rows = wrapper.findAll('.mail-row')
     expect(rows[0].classes()).not.toContain('is-active')
     expect(rows[1].classes()).toContain('is-active')
-    expect(rows[1].attributes('aria-current')).toBe('true')
-    expect(rows[0].attributes('aria-current')).toBeUndefined()
+    // aria-current belongs to the focusable open button, not the row wrapper.
+    expect(rows[1].find('.mail-row__open').attributes('aria-current')).toBe('true')
+    expect(rows[0].find('.mail-row__open').attributes('aria-current')).toBeUndefined()
   })
 
   it('marks no row as active when nothing is open', () => {

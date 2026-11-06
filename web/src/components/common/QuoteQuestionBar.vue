@@ -52,6 +52,18 @@
 
       <!-- Expanded: quoted snippet (full, when there is one) + input. -->
       <div v-else class="quote-bar-expanded">
+        <!-- Explicit close. Clicking outside and Escape both dismiss the bar,
+             but neither is visible: on a phone the bar parks at the top and
+             there was nothing to aim at. -->
+        <button
+          class="qq-close-btn"
+          type="button"
+          :title="t('common.close')"
+          :aria-label="t('common.close')"
+          @click.stop="emit('close')"
+        >
+          <X :size="13" />
+        </button>
         <!-- Destination row (issue #560 follow-up): WHICH conversation this
              comment will land in, shown before the content so it reads as the
              addressee of the message ("To: …", then the body).
@@ -151,7 +163,7 @@
 </template>
 
 <script setup>
-import { Plus, Send, Link, MessageSquare, Quote, ChevronRight } from 'lucide-vue-next'
+import { Plus, Send, Link, MessageSquare, Quote, ChevronRight, X } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { canSendInput } from '@/utils/quoteQuestionUtils'
@@ -731,10 +743,35 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 
 /* ===== Expanded panel ===== */
 .quote-bar-expanded {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
+}
+
+/* Top-right close. Absolute so it costs no row of its own; the target row
+   below reserves the space it occupies (see its padding-right). */
+.qq-close-btn {
+  position: absolute;
+  top: calc(4 * var(--dp));
+  right: calc(4 * var(--dp));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 1;
+}
+.qq-close-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 /* ── Destination row ("To: <session>") ──
@@ -752,7 +789,8 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   gap: var(--space-3);
   width: 100%;
   min-height: calc(22 * var(--dp));
-  padding: 0 0 var(--space-2);
+  /* Right padding clears the close button so the chevron never sits under it. */
+  padding: 0 calc(26 * var(--dp)) var(--space-2) 0;
   margin: 0;
   border: none;
   border-bottom: 1px solid var(--border-color);

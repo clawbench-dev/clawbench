@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import en from '@/i18n/locales/en'
 import MailReader from '../MailReader.vue'
@@ -100,7 +101,8 @@ describe('MailReader', () => {
     const wrapper = mountReader()
     await flushPromises()
 
-    const button = (label: string) => wrapper.findAll('button').find((b) => b.text() === label)!
+    // The action row is icons only, so the label lives in the tooltip.
+    const button = (title: string) => wrapper.findAll('button').find((b) => b.attributes('title') === title)!
     await button('Reply').trigger('click')
     await button('Reply all').trigger('click')
     await button('Forward').trigger('click')
@@ -109,6 +111,50 @@ describe('MailReader', () => {
 
     await wrapper.find('.mail-icon-btn').trigger('click')
     expect(wrapper.emitted('back')).toHaveLength(1)
+  })
+
+  it('names every action even while the label is hidden', async () => {
+    // Labels are only a wide-pane affordance; the icon alone must still be
+    // identifiable to the mouse (tooltip) and to a screen reader.
+    apiGet.mockResolvedValue({ message: detail })
+    const wrapper = mountReader()
+    await flushPromises()
+
+    const buttons = wrapper.find('.mail-reader__actions').findAll('button')
+    expect(buttons.length).toBe(6)
+    for (const b of buttons) {
+      expect(b.attributes('title'), 'every icon needs a tooltip').toBeTruthy()
+      expect(b.attributes('aria-label'), 'every icon needs an accessible name').toBeTruthy()
+      expect(
+        b.find('.mail-action-label').exists(),
+        'labels stay in the DOM so the row can be measured with them on',
+      ).toBe(true)
+    }
+  })
+
+  it('drops the labels when the row cannot fit them', async () => {
+    // Same contract as the chat action bar: force labels on, measure, and fall
+    // back to icons-only rather than overflowing a strip whose scrollbar is
+    // hidden.
+    apiGet.mockResolvedValue({ message: detail })
+    const wrapper = mountReader()
+    await flushPromises()
+
+    const row = wrapper.find('.mail-reader__actions')
+    const el = row.element as HTMLElement
+    const measureWith = (scrollWidth: number, clientWidth: number) => {
+      Object.defineProperty(el, 'scrollWidth', { value: scrollWidth, configurable: true })
+      Object.defineProperty(el, 'clientWidth', { value: clientWidth, configurable: true })
+      ;(wrapper.vm as unknown as { measureActionLabels: () => void }).measureActionLabels()
+    }
+
+    measureWith(600, 300)
+    await nextTick()
+    expect(row.classes(), 'no room → icons only').not.toContain('show-labels')
+
+    measureWith(200, 300)
+    await nextTick()
+    expect(row.classes(), 'room to spare → labels shown').toContain('show-labels')
   })
 
   it('toggles the star through the flags endpoint', async () => {
@@ -145,7 +191,7 @@ describe('MailReader', () => {
     const wrapper = mountReader()
     await flushPromises()
 
-    const del = wrapper.findAll('button').find((b) => b.text() === 'Delete')!
+    const del = wrapper.findAll('button').find((b) => b.attributes('title') === 'Delete')!
     await del.trigger('click')
     await flushPromises()
 
@@ -167,7 +213,7 @@ describe('MailReader', () => {
     const wrapper = mountReader()
     await flushPromises()
 
-    const quoteBtn = wrapper.findAll('button').find((b) => b.text() === 'Quote in chat')!
+    const quoteBtn = wrapper.findAll('button').find((b) => b.attributes('title') === 'Quote in chat')!
     expect(quoteBtn, 'the reader must offer a quote action').toBeTruthy()
     await quoteBtn.trigger('click')
 

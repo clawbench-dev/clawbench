@@ -8,6 +8,7 @@ import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { applyUIScale } from '@/utils/uiScale'
 import { readFileSync } from 'node:fs'
@@ -1213,9 +1214,11 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('routes quoteToChat to the active conversation without a dialog', async () => {
-    // Issue #560: the card is opened FROM the conversation being worked in, so
-    // quoting it back into that same conversation must not ask again.
+  it('opens the shared quote bar with the code instead of staging it directly', async () => {
+    // Every other quote entry point (file header, issue, task, mail, meeting)
+    // opens the bar so the user can add a note. This surface used to put the
+    // card straight into the input, so the same-looking button behaved
+    // differently here than anywhere else.
     const identity = useSessionIdentity()
     const prev = identity.currentSessionId.value
     identity.currentSessionId.value = 's-active'
@@ -1237,21 +1240,24 @@ describe('CodeLinkPreview.vue', () => {
       await flushPromises()
 
       expect(preview.close).toHaveBeenCalled()
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value, 'the quote bar must open').toBe(true)
+      expect(qq.composerAttachment.value).toEqual({ kind: 'quote', label: 'src/main.ts' })
+      // Nothing is staged until the user commits, and no destination is asked
+      // for up front (issue #560).
       expect(usePendingTarget().pickerOpen.value).toBe(false)
       expect(switchTabMock).not.toHaveBeenCalled()
       const chatContext = useChatContext()
-      expect(chatContext.stagedQuotes.value).toHaveLength(1)
-      expect(chatContext.stagedQuotes.value[0].filePath).toBe('src/main.ts')
-      // A quote carries the path + range itself; a second attachment chip would
-      // duplicate it.
+      expect(chatContext.stagedQuotes.value).toHaveLength(0)
       expect(chatContext.attachedFiles.value).toHaveLength(0)
+      qq.hideComposer()
     } finally {
       identity.currentSessionId.value = prev
       useChatContext().clearAll()
     }
   })
 
-  it('falls back to the picker when no session is active', async () => {
+  it('delivers to the active conversation on commit, falling back to the picker only with no session', async () => {
     const switchTabMock = vi.fn()
     const preview = createMockPreviewController()
     mount(CodeLinkPreview, {
@@ -1264,6 +1270,14 @@ describe('CodeLinkPreview.vue', () => {
 
     const quoteBtn = document.querySelector('button[title="Quote to chat"]') as HTMLButtonElement
     quoteBtn.click()
+    await nextTick()
+
+    const qq = useQuoteQuestion()
+    expect(qq.visible.value).toBe(true)
+    expect(usePendingTarget().pickerOpen.value).toBe(false)
+
+    // Committing with no active session is what falls back to the picker.
+    qq.addToConversation('')
     await nextTick()
 
     const { pickerOpen, pending } = usePendingTarget()
@@ -1430,17 +1444,20 @@ describe('CodeLinkPreview.vue', () => {
     openFullBtn.click()
     expect(preview.openFull).toHaveBeenCalled()
 
-    // Quote to Chat closes the sheet and hands the payload to the session
-    // picker (no tab switch, no local staging — see the quoteToChat test).
+    // Quote to Chat closes the sheet and opens the shared quote bar — the same
+    // interaction as every other entry point. The destination is not asked for
+    // until the user commits.
     const quoteBtn = Array.from(actions.querySelectorAll('button'))
       .find(b => (b.getAttribute('title') || '') === 'Quote to chat') as HTMLButtonElement
     expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
     expect(preview.close).toHaveBeenCalled()
-    expect(usePendingTarget().pickerOpen.value).toBe(true)
+    const qq = useQuoteQuestion()
+    expect(qq.visible.value).toBe(true)
+    expect(usePendingTarget().pickerOpen.value).toBe(false)
     expect(switchTabMock).not.toHaveBeenCalled()
-    cancelTarget()
+    qq.hideComposer()
 
     // Reveal in tree lives in the same row. Re-open the sheet first (quote closed it).
     preview.visible.value = true

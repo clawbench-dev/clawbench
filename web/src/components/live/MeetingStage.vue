@@ -43,7 +43,7 @@
         @dragend="cleanupDragGhost()"
         @click="quoteLiveMeeting"
       >
-        <MessageSquarePlus :size="14" />
+        <MessageSquare :size="14" />
       </button>
     </div>
 
@@ -476,7 +476,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Captions, ImageIcon, MessageSquarePlus, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Captions, ImageIcon, MessageSquare, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'

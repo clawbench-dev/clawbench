@@ -130,6 +130,11 @@ vi.mock('@/composables/useForgeUnread', async () => {
   }
 })
 
+const mockOpenComposer = vi.fn()
+vi.mock('@/composables/useQuoteQuestion', () => ({
+  useQuoteQuestion: () => ({ openComposer: mockOpenComposer }),
+}))
+
 const mockFetchRemotes = vi.fn(async () => ({ remotes: [] }))
 const mockSetBinding = vi.fn(async () => ({ binding: {} }))
 const mockDeleteBinding = vi.fn(async () => undefined)
@@ -152,6 +157,7 @@ function makeI18n() {
     messages: {
       en: {
         nav: { refresh: 'Refresh' },
+        file: { header: { quoteInChat: 'Quote in chat' } },
         forge: {
           type: { issues: 'Issues', prs: 'Pull Requests', pipelines: 'Pipelines' },
           state: { open: 'Open', closed: 'Closed', all: 'All', merged: 'Merged' },
@@ -279,6 +285,7 @@ describe('ForgePanelContent', () => {
     state.type.value = 'issue'
     state.state.value = 'open'
     state.mineFilter.value = 'all'
+    pipelineState.pipelines.value = []
   })
 
   it('shows the no-project question card when no project is selected', () => {
@@ -320,6 +327,38 @@ describe('ForgePanelContent', () => {
     expect(wrapper.text()).toContain('A bug')
     expect(wrapper.text()).toContain('#7')
     expect(wrapper.find('.forge-row').exists()).toBe(true)
+  })
+
+  it('replaces the row chevron with a quote action, matching the task list', async () => {
+    // The row click already opens the detail, so the trailing chevron only
+    // repeated that. The quote action used to be reachable only by dragging the
+    // row; the scheduled-task list puts a button in this slot, so forge rows do
+    // the same.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 2, url: 'https://github.com/a/b/issues/7', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
+    ]
+    const wrapper = await mountOnIssues()
+    await new Promise(r => setTimeout(r, 0))
+
+    const row = wrapper.find('.forge-row')
+    expect(row.find('.forge-row-chevron').exists(), 'the chevron must be gone').toBe(false)
+    expect(row.find('.forge-row-quote').exists(), 'a quote action must take its place').toBe(true)
+
+    await row.find('.forge-row-quote').trigger('click')
+
+    expect(mockOpenComposer).toHaveBeenCalledTimes(1)
+    const ctx = mockOpenComposer.mock.calls[0][0] as {
+      quote?: { filePath?: string; language?: string; url?: string }
+      label?: string
+    }
+    expect(ctx.quote?.filePath).toBe('a/b#7')
+    expect(ctx.quote?.language).toBe('issue')
+    expect(ctx.quote?.url).toBe('https://github.com/a/b/issues/7')
+    expect(ctx.label).toBe('a/b#7')
+    // `@click.stop`: quoting must not also drill into the detail.
+    expect(wrapper.find('forge-detail-stub').exists()).toBe(false)
   })
 
   it('shows no count badge in the header', async () => {
@@ -400,6 +439,41 @@ describe('ForgePanelContent', () => {
     // reloaded as a side effect of switching.
     expect(mockPipelinesLoad).toHaveBeenCalled()
     expect(mockSetType).not.toHaveBeenCalled()
+  })
+
+  it('quotes a pipeline run from its row button instead of showing a chevron', async () => {
+    state.binding.value = { platform: 'gitlab', host: 'gitlab.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    pipelineState.pipelines.value = [
+      {
+        platform: 'gitlab', host: 'gitlab.com', owner: 'a', repo: 'b', id: 11, number: 12,
+        name: 'deploy', status: 'success', ref: 'main', sha: 'abcdef1234567', event: 'push',
+        actor: 'alice', url: 'https://gitlab.com/a/b/-/pipelines/11', createdAt: '',
+        updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b',
+      },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.findAll('.forge-tab')[3].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    const row = wrapper.find('.forge-pipeline-row')
+    expect(row.find('.forge-row-chevron').exists()).toBe(false)
+    await row.find('.forge-row-quote').trigger('click')
+
+    expect(mockOpenComposer).toHaveBeenCalledTimes(1)
+    const ctx = mockOpenComposer.mock.calls[0][0] as {
+      quote?: { filePath?: string; language?: string; url?: string; commitSha?: string }
+    }
+    expect(ctx.quote?.language).toBe('pipeline')
+    expect(ctx.quote?.filePath).toBe('deploy #12')
+    expect(ctx.quote?.commitSha).toBe('abcdef1234567')
+    // `@click.stop`: quoting must not also drill into the run.
+    expect(wrapper.findComponent({ name: 'ForgePipelineDetail' }).exists()).toBe(false)
   })
 
   it('shows the pipeline status filters instead of the issue state/mine chips', async () => {
@@ -851,7 +925,7 @@ describe('ForgePanelContent', () => {
     expect(wrapper.find('.forge-error-body').text()).toContain('gitlab.com')
   })
 
-  it('re-emits the detail view\'s quote request', async () => {
+  it('opens the quote bar from the detail view with the same typed payload as the row', async () => {
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
     state.isBound.value = true
     state.items.value = [
@@ -869,9 +943,16 @@ describe('ForgePanelContent', () => {
 
     detail.vm.$emit('quote', { item: { type: 'issue', number: 7, title: 'A bug', url: 'u', slug: 'acme/widgets' } })
 
-    const emitted = wrapper.emitted('quote')
-    expect(emitted).toBeTruthy()
-    expect(emitted![0][0]).toEqual({ item: { type: 'issue', number: 7, title: 'A bug', url: 'u', slug: 'acme/widgets' } })
+    // Same builder as the row: a generic `{url}` chip would render this as a
+    // plain link, so the same issue produced two different cards depending on
+    // where it was quoted.
+    expect(mockOpenComposer).toHaveBeenCalledTimes(1)
+    const ctx = mockOpenComposer.mock.calls[0][0] as {
+      quote?: { filePath?: string; language?: string; url?: string }
+    }
+    expect(ctx.quote?.filePath).toBe('acme/widgets#7')
+    expect(ctx.quote?.language).toBe('issue')
+    expect(ctx.quote?.url).toBe('u')
   })
 })
 

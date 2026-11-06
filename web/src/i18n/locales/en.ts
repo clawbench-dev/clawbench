@@ -1920,7 +1920,7 @@ export default {
       notFound: 'File not found',
       accessDenied: 'Access denied',
       loadError: 'Failed to load code',
-      quoteToChat: 'Quote to chat',
+      quoteToChat: 'Quote in chat',
       quotedToChat: 'Quoted code added to chat',
       copyPath: 'Copy path',
       pathCopied: 'File path copied',

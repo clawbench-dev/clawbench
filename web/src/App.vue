@@ -261,7 +261,6 @@
                     :active="panelIsActive('forge')"
                     :project-path="store.state.projectRoot"
                     @request-project="switchTab('chat')"
-                    @quote="handleForgeQuote"
                   />
                 </TabPanel>
 
@@ -3815,24 +3814,6 @@ async function handleMeetingQuoteButton(token: string): Promise<void> {
     return
   }
   quoteQuestion.openComposer({ quote, label: quote.filePath })
-}
-
-// "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
-// composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
-// text is quoted by default — the user selects the part they care about, then
-// types their message. The attachment only reaches a chat input when the user
-// commits (send / add), so dismissing the bar leaves the input untouched.
-// The bar is global (position: fixed), so no tab switch is needed on open;
-// committing goes through the session picker, whose "add and open" reveals chat.
-function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
-  const it = payload?.item
-  if (!it) return
-  quoteQuestion.openComposer({
-    url: it.url,
-    // A pipeline run has no issue/PR number, so its caller supplies a label
-    // that names the run; otherwise `slug#number` would read like a PR number.
-    label: it.label ?? `${it.slug}#${it.number}`,
-  })
 }
 
 // "Quote in chat" from the file browser header. Same composer as the forge
