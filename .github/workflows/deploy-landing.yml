@@ -37,9 +37,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24 (npm 11) — same as ci.yml / release.yml. Node 22 ships npm 10,
+      # whose stricter `npm ci` lockfile check rejects this repo's lock: the
+      # nested `vite@8` under vitest declares an optional peer
+      # `esbuild ^0.27 || ^0.28`, and npm 10 refuses to install because the
+      # lock only pins the root `esbuild@0.25`. npm 11 accepts it. Do not
+      # downgrade this without regenerating the lockfile with npm 10.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: package-lock.json
 

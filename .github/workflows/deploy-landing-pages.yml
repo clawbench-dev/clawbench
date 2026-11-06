@@ -39,9 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24 (npm 11) — same as ci.yml / release.yml. Node 22 ships npm 10,
+      # whose stricter `npm ci` lockfile check rejects this repo's lock (see
+      # the matching note in deploy-landing.yml). Do not downgrade this
+      # without regenerating the lockfile with npm 10.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: package-lock.json
 
