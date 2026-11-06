@@ -1209,3 +1209,44 @@ describe('useAutoSpeech — sequential auto-speech queue', () => {
     expect(audioInstances.length).toBe(1)
   })
 })
+
+describe('useAutoSpeech — setEnabled', () => {
+  it('flips the switch and confirms with a toast', () => {
+    const { enabled, setEnabled } = useAutoSpeech()
+    enabled.value = false
+    toastShowMock.mockClear()
+    setEnabled(true)
+    expect(enabled.value).toBe(true)
+    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.enabled', expect.anything())
+  })
+
+  it('stays silent when asked to', () => {
+    // Free-dialog mode shows one combined message instead. The toast slot holds
+    // a single message, so a second call would overwrite the first and the user
+    // would only see whichever ran last.
+    const { enabled, setEnabled } = useAutoSpeech()
+    enabled.value = false
+    toastShowMock.mockClear()
+    setEnabled(true, { silent: true })
+    expect(enabled.value).toBe(true)
+    expect(toastShowMock).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the value is already right', () => {
+    const { enabled, setEnabled } = useAutoSpeech()
+    enabled.value = true
+    toastShowMock.mockClear()
+    setEnabled(true)
+    expect(enabled.value).toBe(true)
+    expect(toastShowMock).not.toHaveBeenCalled()
+  })
+
+  it('toggle passes the silent flag through', () => {
+    const { enabled, toggle } = useAutoSpeech()
+    enabled.value = false
+    toastShowMock.mockClear()
+    toggle({ silent: true })
+    expect(enabled.value).toBe(true)
+    expect(toastShowMock).not.toHaveBeenCalled()
+  })
+})

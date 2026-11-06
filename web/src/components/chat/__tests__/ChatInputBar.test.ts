@@ -553,7 +553,7 @@ const stubs = {
   Activity: true,
   Minimize2: true,
   Mic: true,
-  MicOff: true,
+  MessageCircleMore: true,
   AudioLines: true,
 }
 

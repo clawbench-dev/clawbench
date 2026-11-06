@@ -68,10 +68,14 @@
         <Volume2 :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
       </button>
-      <!-- Free-dialog mode: keep the microphone open, send on a trigger word or a
-           pause, and resume listening once the reply has been read out. Sits
-           next to auto-speech because the two are used together (the loop waits
-           for the read-aloud to finish). -->
+      <!-- Continuous conversation mode: keep the microphone open, send on a
+           trigger word or a pause, and resume listening once the reply has been
+           read out. Sits next to auto-speech because the two are used together
+           (the loop waits for the read-aloud to finish).
+
+           Idle icon is a conversation bubble, not a muted microphone: MicOff
+           reads as "microphone is off", which is the opposite of what pressing
+           this button does. -->
       <button class="chat-action-btn free-dialog-btn" :class="['active-flag-' + freeDialogPhase, { active: freeDialogPhase !== 'idle' }]"
         data-action="free-dialog"
         :disabled="!currentSessionId"
@@ -80,7 +84,7 @@
         <LoadingIndicator v-if="freeDialogPhase === 'thinking'" size="sm" inline />
         <Mic v-else-if="freeDialogPhase === 'listening'" :size="14" class="free-dialog-mic" />
         <AudioLines v-else-if="freeDialogPhase === 'speaking'" :size="14" />
-        <MicOff v-else :size="14" />
+        <MessageCircleMore v-else :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.freeDialog') }}</span>
       </button>
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
@@ -356,7 +360,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert, Mic, MicOff, AudioLines } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert, Mic, MessageCircleMore, AudioLines } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'

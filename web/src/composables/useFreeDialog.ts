@@ -1,8 +1,9 @@
 /**
- * Free-dialog mode (自由对话): the microphone stays open, the user talks, and a
- * turn is sent to the assistant when they say a trigger word or simply stop
- * talking. Once the reply has been read out, listening resumes — and if the
- * user starts speaking while it is still talking, the playback is cut short.
+ * Free-dialog mode (shown as 连续对话 in the UI): the microphone stays open,
+ * the user talks, and a turn is sent to the assistant when they say a trigger
+ * word or simply stop talking. Once the reply has been read out, listening
+ * resumes — and if the user starts speaking while it is still talking, the
+ * playback is cut short.
  *
  * State machine:
  *
@@ -164,8 +165,28 @@ function stopBargeListener() {
   }
 }
 
-/** Ends the mode and releases every resource. Safe to call from anywhere. */
-export function stop(): void {
+/**
+ * Whether this mode is the one that turned read-aloud on.
+ *
+ * Recorded so `stop()` can put the switch back: the user asked for a
+ * conversation, not for a permanent change to a setting they had deliberately
+ * left off. Cleared on every stop, so a later start re-reads the real state.
+ */
+let autoSpeechTurnedOnByUs = false
+
+/**
+ * Ends the mode and releases every resource. Safe to call from anywhere.
+ *
+ * `notify: false` suppresses the "dialog closed" toast. The failure paths have
+ * already shown a more specific reason, and `startFreeDialog`'s own reset would
+ * otherwise announce "closed" a millisecond before "opened".
+ */
+export function stop(options: { notify?: boolean } = {}): void {
+  const wasActive = phase.value !== 'idle'
+  // Restore only if we are the ones who turned it on AND the user has not
+  // turned it off in the meantime — re-enabling a switch they just disabled
+  // would be worse than leaving the mode's change behind.
+  const restoreSpeech = autoSpeechTurnedOnByUs && autoSpeech.enabled.value
   gen += 1
   clearSilenceTimer()
   clearReopenTimer()
@@ -176,6 +197,14 @@ export function stop(): void {
   liveTranscript.value = ''
   turnInFlight = false
   phase.value = 'idle'
+  autoSpeechTurnedOnByUs = false
+  if (restoreSpeech) autoSpeech.setEnabled(false, { silent: true })
+  if (options.notify !== false && wasActive) {
+    useToast().show(
+      gt(restoreSpeech ? 'chat.voice.freeDialogOffWithSpeech' : 'chat.voice.freeDialogOff'),
+      { icon: 'mute', type: 'info', duration: 2000 },
+    )
+  }
 }
 
 /**
@@ -248,7 +277,9 @@ async function openListening(): Promise<void> {
     lastError.value = gt(classifyMicError(e) === 'denied' ? 'chat.voice.micDenied' : 'chat.voice.micUnavailable')
     toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
     appLog.e(TAG, `getUserMedia failed ${describeMicError(e)}`)
-    stop()
+    // The reason is already on screen; a second "dialog closed" toast would
+    // overwrite it (the toast slot holds one message).
+    stop({ notify: false })
     return
   }
   if (myGen !== gen) return
@@ -273,7 +304,7 @@ async function openListening(): Promise<void> {
       } else if (msg.type === 'error') {
         lastError.value = msg.message || gt('chat.voice.transcribeFailed')
         toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
-        stop()
+        stop({ notify: false })
       }
     } catch { /* ignore malformed */ }
   }
@@ -292,17 +323,18 @@ async function openListening(): Promise<void> {
       appLog.e(TAG, 'pcm capture failed', err)
       lastError.value = gt('chat.voice.micUnavailable')
       toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
-      stop()
+      stop({ notify: false })
     })
   }
   sock.onerror = () => {
     if (ws !== sock || myGen !== gen) return
     lastError.value = gt('chat.voice.connectFailed')
-    stop()
+    toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
+    stop({ notify: false })
   }
   sock.onclose = () => {
     if (ws !== sock || myGen !== gen) return
-    if (phase.value === 'listening') stop()
+    if (phase.value === 'listening') stop({ notify: false })
   }
   phase.value = 'listening'
   // No timer here: the pause is measured from the first recognised word (see
@@ -402,7 +434,9 @@ export async function startFreeDialog(opts: {
   sessionId: string
   onSend: (text: string) => void
 }): Promise<void> {
-  stop()
+  // Reset without announcing: "closed" followed immediately by "opened" is
+  // noise, and the toast slot only holds one message anyway.
+  stop({ notify: false })
   sessionId = opts.sessionId
   onSend = opts.onSend
   lastError.value = ''
@@ -411,11 +445,20 @@ export async function startFreeDialog(opts: {
   // before reopening the microphone, and interrupting only means anything while
   // something is being spoken. Starting with read-aloud off leaves a mode that
   // sends and listens with no voice in between — not what "对话" means.
-  // Turning the mode OFF does not turn read-aloud back off: the user asked for
-  // it by starting the mode, and silently reversing a preference is worse than
-  // leaving one switch on.
-  if (!autoSpeech.enabled.value) autoSpeech.toggle()
+  //
+  // Opened SILENTLY: the toast slot is a single one, so the "read-aloud on"
+  // message and the "dialog on" message would overwrite each other and the user
+  // would only ever see the second. One combined message is shown below.
+  autoSpeechTurnedOnByUs = !autoSpeech.enabled.value
+  if (autoSpeechTurnedOnByUs) autoSpeech.setEnabled(true, { silent: true })
   await openListening()
+  // A failed start has already shown a more specific reason and stopped itself;
+  // only announce a mode that actually reached the microphone.
+  if (phase.value !== 'listening') return
+  useToast().show(
+    gt(autoSpeechTurnedOnByUs ? 'chat.voice.freeDialogOnWithSpeech' : 'chat.voice.freeDialogOn'),
+    { icon: 'chat', type: 'info', duration: 2500 },
+  )
 }
 
 /** Called by the owner when a turn it started has finished (or failed). */

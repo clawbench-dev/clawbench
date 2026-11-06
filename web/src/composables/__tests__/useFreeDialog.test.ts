@@ -24,6 +24,9 @@ interface FakeSocket {
 }
 
 let sockets: FakeSocket[] = []
+/** One shared toast spy: the real toast is a single slot, so two calls in the
+ *  same tick overwrite each other — the count is what proves they do not. */
+let toastShow: ReturnType<typeof vi.fn>
 
 function installFakes() {
   sockets = []
@@ -97,6 +100,7 @@ function installFakes() {
       speakingText,
       isBusy,
       toggle: vi.fn(() => { enabled.value = !enabled.value }),
+      setEnabled: vi.fn((next: boolean) => { enabled.value = next }),
       stopAudio: vi.fn(() => { state.value = 'idle' }),
       speakMessage: vi.fn(),
     }
@@ -123,8 +127,9 @@ function installFakes() {
     }
   })
 
+  toastShow = vi.fn()
   vi.doMock('@/composables/useToast', () => ({
-    useToast: () => ({ show: vi.fn() }),
+    useToast: () => ({ show: toastShow }),
   }))
 }
 
@@ -168,16 +173,82 @@ describe('useFreeDialog', () => {
     expect(autoSpeech.enabled.value).toBe(true)
   })
 
-  it('leaves read-aloud on after the mode stops', async () => {
-    // It was turned on because the user started the mode; reversing their
-    // preference on exit is a surprise, not a courtesy.
+  it('restores read-aloud to the state it found on exit', async () => {
+    // The mode turns read-aloud on because the loop is built around the reply
+    // being spoken, but that is a change the user did not ask for: leaving it
+    // on means their "read-aloud off" setting silently became "on".
     const mod = await import('../useFreeDialog')
     const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
     autoSpeech.enabled.value = false
     await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
     await flush()
+    expect(autoSpeech.enabled.value).toBe(true)
+    mod.stop()
+    expect(autoSpeech.enabled.value).toBe(false)
+  })
+
+  it('leaves read-aloud alone when it was already on', async () => {
+    // Nothing was changed on entry, so nothing may be changed on exit.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = true
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
     mod.stop()
     expect(autoSpeech.enabled.value).toBe(true)
+  })
+
+  it('does not switch read-aloud back on when the user turned it off mid-dialog', async () => {
+    // They changed it themselves; undoing that on exit would be the mode
+    // overriding a live choice.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = false
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    autoSpeech.setEnabled(false)
+    ;(autoSpeech.setEnabled as ReturnType<typeof vi.fn>).mockClear()
+    mod.stop()
+    expect((autoSpeech.setEnabled as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled()
+    expect(autoSpeech.enabled.value).toBe(false)
+  })
+
+  it('shows ONE toast on entry, not one per switch it flipped', async () => {
+    // The toast slot holds a single message: showing "read-aloud on" and then
+    // "dialog on" means the first is visible for a few milliseconds.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = false
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(toastShow).toHaveBeenCalledTimes(1)
+    // And read-aloud was flipped without its own toast.
+    expect(autoSpeech.setEnabled).toHaveBeenCalledWith(true, { silent: true })
+  })
+
+  it('shows one toast on exit and says read-aloud was restored', async () => {
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = false
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+    mod.stop()
+    expect(toastShow).toHaveBeenCalledTimes(1)
+    expect(String(toastShow.mock.calls[0][0])).toMatch(/朗读|read-aloud/i)
+  })
+
+  it('stays quiet when a failure has already explained itself', async () => {
+    // A microphone error shows its own toast; a "dialog closed" message right
+    // after it would replace the reason the user needs to read.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.enabled.value = false
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+    mod.stop({ notify: false })
+    expect(toastShow).not.toHaveBeenCalled()
   })
 
   it('starts idle', async () => {

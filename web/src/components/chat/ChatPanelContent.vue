@@ -1015,7 +1015,7 @@ function handleMemberFinalize(messageId) {
   autoSpeech.speakMessage(msg.id, fullText, speaker?.name || '')
 }
 
-// ── Free-dialog mode (自由对话) ──────────────────────────
+// ── Free-dialog mode (UI name: 连续对话) ────────────────
 // The loop itself lives in useFreeDialog (a module singleton); this is the
 // panel-side wiring: what to send, when a turn has finished, and when the user
 // switched sessions out from under it.
