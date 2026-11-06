@@ -7,6 +7,7 @@ import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { parseServerAddress } from '../models/ServerAddress';
 import { nativeCookieHeader } from '../models/NativeCookies';
+import { NativeFailure, nativeMessage } from '../models/NativeMessages';
 import {
   MAX_DOWNLOAD_BYTES, MAX_SHARE_BYTES, MAX_SHARED_CACHE_BYTES, MAX_SHARE_FILES, MAX_SHARE_TEXT_LENGTH,
   TransferProgress, TransferProgressState, projectDownloadUrl, resolveDownloadAddress,
@@ -42,18 +43,24 @@ export class FileTransferService {
   private pickerBusy: boolean = false;
   private reservedShareBytes: number = 0;
   private cachePath: string;
+  private language: string;
 
   constructor(context: common.UIAbilityContext, origin: string, emit: (progress: TransferProgress) => void,
-    onLegacyFailure: () => void = () => {}) {
+    onLegacyFailure: () => void = () => {}, language: string = 'zh') {
     this.context = context;
     this.origin = parseServerAddress(origin).url;
     this.emit = emit;
     this.onLegacyFailure = onLegacyFailure;
+    this.language = language;
     this.cachePath = context.cacheDir + '/clawbench-transfers';
     if (!fs.accessSync(this.cachePath)) {
       fs.mkdirSync(this.cachePath);
     }
     this.pruneCache();
+  }
+
+  setLanguage(language: string): void {
+    this.language = language === 'en' ? 'en' : 'zh';
   }
 
   startDownload(path: string, fileName: string, id: number): void {
@@ -117,7 +124,7 @@ export class FileTransferService {
     } catch (_) {
       this.fail(job);
       if (!job.state.cancelled) {
-        throw new Error('无法保存文件，请重试');
+        throw new NativeFailure('file_save_failed', this.language);
       }
     } finally {
       this.removeTemporary(temp);
@@ -127,7 +134,7 @@ export class FileTransferService {
 
   async shareText(text: string): Promise<void> {
     if (this.disposed || typeof text !== 'string' || !text || text.length > MAX_SHARE_TEXT_LENGTH) {
-      throw new Error('分享文本为空或超过长度限制');
+      throw new NativeFailure('share_text_invalid', this.language);
     }
     const data = new systemShare.SharedData({
       utd: uniformTypeDescriptor.UniformDataType.PLAIN_TEXT, content: text
@@ -160,7 +167,7 @@ export class FileTransferService {
       job = this.createJob(this.internalId--, budget);
     } catch (_) {
       this.reservedShareBytes -= budget;
-      throw new Error('已有文件操作正在进行，请稍后重试');
+      throw new NativeFailure('file_busy', this.language);
     }
     const temporary: string[] = [];
     let handedOver = false;
@@ -196,7 +203,7 @@ export class FileTransferService {
     } catch (_) {
       this.fail(job);
       if (!job.state.cancelled) {
-        throw new Error('无法分享文件，请检查网络后重试');
+        throw new NativeFailure('file_share_failed', this.language);
       }
     } finally {
       this.reservedShareBytes -= budget;
@@ -209,7 +216,7 @@ export class FileTransferService {
 
   private createJob(id: number, limit: number): TransferJob {
     if (this.disposed || this.jobs.has(id) || this.jobs.size >= 3) {
-      throw new Error('已有文件操作正在进行，请稍后重试');
+      throw new NativeFailure('file_busy', this.language);
     }
     const job = new TransferJob(id, this.epoch, limit);
     this.jobs.set(id, job);
@@ -286,7 +293,7 @@ export class FileTransferService {
               job.state.setTotal(job.state.received + length);
             }
           } catch (_) {
-            fail('文件超过传输大小限制');
+            fail(nativeMessage('file_too_large', this.language));
           }
         });
         activeRequest.on('dataReceive', (buffer: ArrayBuffer) => {
@@ -297,11 +304,11 @@ export class FileTransferService {
             job.state.receive(buffer.byteLength);
             queuedBytes += buffer.byteLength;
             if (queuedBytes > MAX_QUEUED_BYTES) {
-              fail('存储写入过慢，请重试');
+              fail(nativeMessage('storage_slow', this.language));
               return;
             }
           } catch (_) {
-            fail('文件超过传输大小限制');
+            fail(nativeMessage('file_too_large', this.language));
             return;
           }
           // Bound queued buffers while native async writes run off the UI thread.
@@ -313,7 +320,7 @@ export class FileTransferService {
             await this.writeAll(job, file.fd, buffer);
           }).catch(() => {
             if (this.active(job)) {
-              fail('文件写入失败，请检查剩余存储空间');
+              fail(nativeMessage('file_write_failed', this.language));
             }
           }).finally(() => {
             queuedBytes -= buffer.byteLength;
@@ -336,7 +343,7 @@ export class FileTransferService {
         }).then((response: number) => {
           status = response;
           if (status < 200 || status >= 300) {
-            fail('服务器拒绝下载或要求重新登录');
+            fail(nativeMessage('download_rejected', this.language));
           } else if (ended) {
             resolve(status);
           }
@@ -424,7 +431,7 @@ export class FileTransferService {
   }
 
   private fail(job: TransferJob): void {
-    if (job.state.finish(job.failure || '文件操作失败，请重试')) {
+    if (job.state.finish(job.failure || nativeMessage('file_operation_failed', this.language))) {
       this.progress(job, true);
     }
   }
@@ -464,7 +471,7 @@ export class FileTransferService {
     });
     const available = MAX_SHARED_CACHE_BYTES - used - this.reservedShareBytes;
     if (available <= 0) {
-      throw new Error('分享缓存已满，请稍后重试');
+      throw new NativeFailure('share_cache_full', this.language);
     }
     const budget = Math.min(MAX_SHARE_BYTES, available);
     this.reservedShareBytes += budget;

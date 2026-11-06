@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import * as policy from '../entry/src/main/ets/models/FileTransferPolicy.ts';
 import { parseServerAddress } from '../entry/src/main/ets/models/ServerAddress.ts';
+import { NativeFailure, nativeMessage } from '../entry/src/main/ets/models/NativeMessages.ts';
 
 const source = readFileSync(new URL(
   '../entry/src/main/ets/services/FileTransferService.ets', import.meta.url
@@ -19,7 +20,7 @@ function deferred() {
 }
 
 function createHost({ select, status = 200, payload = 'fixture file', waitForData, cachedBytes = 0,
-  failCreateRequest = false } = {}) {
+  failCreateRequest = false, language = 'zh' } = {}) {
   const files = new Map([['file://selected/report.txt', Buffer.from('existing file')]]);
   const descriptors = new Map();
   const requests = [];
@@ -103,7 +104,7 @@ function createHost({ select, status = 200, payload = 'fixture file', waitForDat
     }
   };
   const context = {
-    ...policy, parseServerAddress, fs, http, systemShare,
+    ...policy, parseServerAddress, NativeFailure, nativeMessage, fs, http, systemShare,
     // The cookie-scope policy is independently covered by native event tests.
     nativeCookieHeader: (_origin, header) => header,
     webview: { WebCookieManager: { fetchCookieSync: () => 'clawbench_session=fixture; clawbench_project=fixture-project' } },
@@ -127,7 +128,7 @@ function createHost({ select, status = 200, payload = 'fixture file', waitForDat
   const service = new context.Service({ cacheDir: '/cache' }, 'https://example.com', event => {
     events.push(JSON.parse(JSON.stringify(event)));
     if (event.done) completed.resolve(event);
-  }, () => legacyFailures++);
+  }, () => legacyFailures++, language);
   return { service, files, requests, events, shares, completed, descriptors,
     legacyFailures: () => legacyFailures };
 }
@@ -281,4 +282,58 @@ test('remaining share-cache quota bounds incoming bytes and failed reservations 
   assert.equal(host.shares.length, 0);
   await assert.rejects(host.service.shareFile('two.txt', 'text/plain'), /无法分享文件/);
   assert.equal(host.requests.length, 2);
+});
+
+for (const language of ['zh', 'en']) {
+  test(`download progress errors use the active language (${language})`, async () => {
+    const rejected = createHost({ status: 403, language });
+    rejected.service.startDownload('report.txt', '', 51);
+    const serverError = await rejected.completed.promise;
+    assert.equal(serverError.error, nativeMessage('download_rejected', language));
+    assert.equal(serverError.cancelled, false);
+    assert.equal(rejected.files.get('file://selected/report.txt').toString(), 'existing file');
+
+    const unavailable = createHost({ failCreateRequest: true, language });
+    unavailable.service.startDownload('report.txt', '', 52);
+    const localError = await unavailable.completed.promise;
+    assert.equal(localError.error, nativeMessage('file_operation_failed', language));
+    assert.equal(localError.cancelled, false);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(unavailable.descriptors.size, 0);
+    assert.equal([...unavailable.files.keys()].filter(path => path.startsWith('/cache/')).length, 0);
+  });
+
+  test(`share and save failures expose stable codes and localized messages (${language})`, async () => {
+    const expectFailure = code => error => {
+      assert.ok(error instanceof NativeFailure);
+      assert.equal(error.code, code);
+      assert.equal(error.message, nativeMessage(code, language));
+      return true;
+    };
+    const empty = createHost({ language });
+    await assert.rejects(empty.service.shareText(''), expectFailure('share_text_invalid'));
+    assert.equal(empty.shares.length, 0);
+
+    const full = createHost({ cachedBytes: policy.MAX_SHARED_CACHE_BYTES, language });
+    await assert.rejects(full.service.shareFile('report.txt', 'text/plain'), expectFailure('share_cache_full'));
+    assert.equal(full.requests.length, 0);
+
+    const rejected = createHost({ status: 403, language });
+    await assert.rejects(rejected.service.shareFile('report.txt', 'text/plain'), expectFailure('file_share_failed'));
+    assert.equal(rejected.shares.length, 0);
+
+    const storage = createHost({ select: () => { throw new Error('Storage unavailable'); }, language });
+    await assert.rejects(storage.service.downloadBlob('YQ==', 'report.txt'), expectFailure('file_save_failed'));
+    assert.equal(storage.files.get('file://selected/report.txt').toString(), 'existing file');
+  });
+}
+
+test('changing the interface language updates native errors without reconnecting', async () => {
+  const host = createHost({ language: 'zh' });
+  host.service.setLanguage('en');
+  await assert.rejects(host.service.shareText(''), error =>
+    error.code === 'share_text_invalid' && error.message === nativeMessage('share_text_invalid', 'en'));
+  host.service.setLanguage('zh');
+  await assert.rejects(host.service.shareText(''), error =>
+    error.code === 'share_text_invalid' && error.message === nativeMessage('share_text_invalid', 'zh'));
 });

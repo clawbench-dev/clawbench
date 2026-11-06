@@ -112,6 +112,16 @@
     getAppVersion: async () => config.version,
     // Authentication remains in the native host; remote pages never receive saved passwords.
     getPassword: async () => '',
+    setSSHPassword: password => {
+      const operation = invoke('setSSHPassword', password);
+      // Shared login callers may fire and forget; awaited callers still receive rejection.
+      void operation.catch(error => {
+        if (!closed) window.dispatchEvent(new CustomEvent('clawbench-native-error', {
+          detail: { method: 'setSSHPassword', message: error.message }
+        }));
+      });
+      return operation;
+    },
     isScreenCaptureSupported: async () => bridge.getCapabilities().screenCapture,
     isFloatingWindowEnabled: () => false,
     canPostPromotedNotifications: () => false,

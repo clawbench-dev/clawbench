@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm';
 import { isTrustedAppUrl, parseServerAddress } from '../entry/src/main/ets/models/ServerAddress.ts';
 import { APP_VERSION, isLocalLoginPage } from '../entry/src/main/ets/models/AppInfo.ts';
 import { portBrowserUrl } from '../entry/src/main/ets/models/NativeActions.ts';
+import { NativeFailure, nativeMessage, formatNativeError } from '../entry/src/main/ets/models/NativeMessages.ts';
 
 const source = readFileSync(new URL(
   '../entry/src/main/ets/pages/Index.ets', import.meta.url
@@ -46,10 +47,16 @@ function request(url, password = '') {
   return { id: 1, method: 'connectToServer', args: [JSON.stringify(url), JSON.stringify(password)] };
 }
 
+function localRequest(url, password = 'fixture-password') {
+  return request(url, { kind: 'plain', value: password });
+}
+
 function host({ local = false, passwordWait, snapshotWait, connections = new Map() } = {}) {
   const passwordCalls = [];
   const networkCalls = [];
   const saved = [];
+  const metadata = [];
+  const snapshotArgs = [];
   const reports = [];
   const replies = [];
   let snapshotCalls = 0;
@@ -58,6 +65,7 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
   let nextUuid = 0;
   const { Navigation, ConnectionFailure } = runInNewContext(code, {
     isTrustedAppUrl, parseServerAddress, APP_VERSION, isLocalLoginPage, portBrowserUrl, Error,
+    NativeFailure, nativeMessage, formatNativeError,
     clearServerCookies() {}, clearTimeout() {},
     util: {
       generateRandomUUID: () => 'fixture-' + ++nextUuid,
@@ -71,9 +79,10 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
     connectionId: 1, documentId: 1, loginEpoch: 1,
     showWeb: !local, activeUrl: 'https://current.example', activePassword: '',
     foreground: true, ports: [], loginPorts: [], pendingLoginError: '', pendingLoginCode: '',
+    ignoreSavedCredentials: false, loginTargetUrl: '', credentialQueue: Promise.resolve(),
     loginInitialization: { configuration: '' },
     controller: { getUrl: () => remoteUrl || instance.activeUrl + '/' },
-    loginController: { getUrl: () => localUrl },
+    loginController: { getUrl: () => localUrl, async runJavaScript() {} },
     store: {
       servers: [], language: 'en', theme: 'dark',
       async password(url) {
@@ -81,6 +90,7 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
         return passwordWait || 'fixture-password';
       },
       async save(url, password, name) { saved.push({ url, password, name }); },
+      async saveMetadata(url, name) { metadata.push({ url, name }); },
       async setActive(url) { instance.selectedServer = url; }
     },
     login: {
@@ -89,9 +99,10 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
         passwordCalls.push({ source: 'login', value });
         return passwordWait || 'fixture-password';
       },
-      async snapshot() {
+      async snapshot(activeUrl, credentialsIgnored) {
+        snapshotArgs.push({ activeUrl, credentialsIgnored });
         const sequence = ++snapshotCalls;
-        return sequence === 1 && snapshotWait ? snapshotWait : { sequence };
+        return sequence === 1 && snapshotWait ? snapshotWait : { sequence, activeUrl, credentialsIgnored };
       }
     },
     connection: {
@@ -114,7 +125,7 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
     reportLoginError() { reports.push({ message: this.pendingLoginError, code: this.pendingLoginCode }); }
   });
   return {
-    instance, passwordCalls, networkCalls, saved, reports, replies, ConnectionFailure,
+    instance, passwordCalls, networkCalls, saved, metadata, snapshotArgs, reports, replies, ConnectionFailure,
     port: { postMessageEvent: value => replies.push(JSON.parse(value)) },
     snapshots: () => snapshotCalls,
     setLocalUrl: value => { localUrl = value; },
@@ -138,6 +149,19 @@ function notificationHost(options = {}, launch = {
   });
   return { ...h, queued, delivered: () => delivered };
 }
+
+test('removing the selected login server clears its temporary retry target', async () => {
+  const h = host({ local: true });
+  h.instance.loginTargetUrl = 'https://removed.example';
+  const removed = [];
+  h.instance.store.remove = async url => removed.push(url);
+  await h.instance.receiveLoginBridge(JSON.stringify({
+    id: 4, method: 'removeServer', args: ['"https://removed.example"']
+  }), h.port, h.instance.loginEpoch);
+  assert.deepEqual(removed, ['https://removed.example']);
+  assert.equal(h.snapshotArgs.at(-1).activeUrl, '');
+  assert.equal(h.instance.loginTargetUrl, '');
+});
 
 test('a current notification connects its server and retains the requested navigation', async () => {
   const h = notificationHost();
@@ -311,6 +335,7 @@ test('a stale login-page snapshot cannot start an older requested connection', a
   const snapshot = deferred();
   const h = host({ snapshotWait: snapshot.promise });
   const switching = h.instance.invokeBridge(request('https://old.example', 'fixture-password'));
+  await tick();
   assert.equal(h.snapshots(), 1);
   assert.equal(h.networkCalls.length, 0);
   await h.instance.showConnection('Newer login state', 'CURRENT');
@@ -355,7 +380,7 @@ test('local login passwords are discarded after an epoch, document or host trans
     const password = deferred();
     const h = host({ local: true, passwordWait: password.promise });
     const operation = h.instance.receiveLoginBridge(
-      JSON.stringify(request('https://old.example', 'password-token')), h.port, h.instance.loginEpoch
+      JSON.stringify(localRequest('https://old.example')), h.port, h.instance.loginEpoch
     );
     assert.equal(h.passwordCalls.length, 1);
     invalidate(h);
@@ -370,7 +395,7 @@ test('a previous local login failure cannot reply into the next login document',
   const network = deferred();
   const h = host({ local: true, connections: new Map([['https://old.example', network.promise]]) });
   const operation = h.instance.receiveLoginBridge(
-    JSON.stringify(request('https://old.example', 'password-token')), h.port, h.instance.loginEpoch
+    JSON.stringify(localRequest('https://old.example')), h.port, h.instance.loginEpoch
   );
   await tick();
   assert.equal(h.networkCalls.length, 1);
@@ -393,7 +418,7 @@ test('both current native entry points still complete the real connection flow',
   assert.equal(remote.passwordCalls[0].source, 'store');
   const local = host({ local: true });
   await local.instance.receiveLoginBridge(
-    JSON.stringify(request('https://selected.example', 'password-token')), local.port, local.instance.loginEpoch
+    JSON.stringify(localRequest('https://selected.example')), local.port, local.instance.loginEpoch
   );
   assert.deepEqual(local.networkCalls, [{ url: 'https://selected.example', password: 'fixture-password' }]);
   assert.equal(local.instance.showWeb, true);
@@ -490,4 +515,267 @@ test('a non-loopback port browser does not start a local tunnel', async () => {
     method: 'openInBrowser', args: ['8443', '"https"', '"preview.example"', '"/"']
   });
   assert.deepEqual(opened, ['https://preview.example:8443/']);
+});
+
+test('switching from A to B keeps B selected through failed authentication and a local retry', async () => {
+  const target = 'https://second.example';
+  const firstAttempt = deferred();
+  const connections = new Map([[target, firstAttempt.promise]]);
+  const h = host({ connections });
+  await h.instance.invokeBridge(request(target, 'old-fixture-password'));
+  assert.equal(h.snapshotArgs.at(-1).activeUrl, target);
+  assert.equal(JSON.parse(h.instance.loginInitialization.configuration).state.activeUrl, target);
+  assert.equal(h.instance.activeUrl, 'https://current.example');
+  firstAttempt.reject(new h.ConnectionFailure('password', 'Wrong password'));
+  await tick();
+  assert.equal(h.instance.loginTargetUrl, target);
+  assert.equal(h.instance.pendingLoginCode, 'password');
+  connections.delete(target);
+  h.instance.login.password = async (credential, origin) => {
+    assert.equal(origin, target);
+    return credential.value;
+  };
+  await h.instance.receiveLoginBridge(JSON.stringify(localRequest(target, 'new-fixture-password')),
+    h.port, h.instance.loginEpoch);
+  assert.deepEqual(h.networkCalls, [
+    { url: target, password: 'old-fixture-password' },
+    { url: target, password: 'new-fixture-password' }
+  ]);
+  assert.equal(h.instance.activeUrl, target);
+});
+
+test('unreadable credentials open the requested server without sending an empty login', async () => {
+  const h = host();
+  h.instance.store.password = async () => { throw new NativeFailure('credential_read_failed'); };
+  await h.instance.invokeBridge(request('https://second.example'));
+  assert.equal(h.networkCalls.length, 0);
+  assert.equal(h.instance.showWeb, false);
+  assert.equal(h.instance.initialized, true);
+  assert.equal(h.instance.loginTargetUrl, 'https://second.example');
+  assert.equal(h.snapshotArgs.at(-1).activeUrl, 'https://second.example');
+  assert.equal(h.instance.pendingLoginCode, 'credential_read_failed');
+  assert.equal(h.instance.pendingLoginError, nativeMessage('credential_read_failed', 'en'));
+});
+
+test('notification credential failures retain the notification target in the recovery page', async () => {
+  const h = notificationHost();
+  h.instance.store.password = async () => { throw new NativeFailure('credential_read_failed'); };
+  await h.instance.notificationChanged();
+  assert.equal(h.networkCalls.length, 0);
+  assert.equal(h.instance.loginTargetUrl, 'https://notification.example');
+  assert.equal(h.snapshotArgs.at(-1).activeUrl, 'https://notification.example');
+  assert.equal(h.instance.pendingLoginCode, 'password');
+});
+
+test('credential recovery keeps metadata and completes authentication without saving secrets', async () => {
+  const h = host({ local: true });
+  h.instance.loginTargetUrl = 'https://second.example';
+  h.instance.store.save = async () => { throw new Error('AssetStore must not be used'); };
+  h.instance.store.password = async () => { throw new Error('AssetStore must not be used'); };
+  await h.instance.receiveLoginBridge(JSON.stringify({
+    id: 2, method: 'ignoreSavedCredentials', args: []
+  }), h.port, h.instance.loginEpoch);
+  assert.equal(h.instance.ignoreSavedCredentials, true);
+  const recovery = JSON.parse(h.replies.at(-1).result).snapshot;
+  assert.equal(recovery.credentialsIgnored, true);
+  assert.equal(recovery.activeUrl, 'https://second.example');
+  h.instance.login.password = async credential => credential.value;
+  await h.instance.receiveLoginBridge(JSON.stringify(localRequest('https://second.example')),
+    h.port, h.instance.loginEpoch);
+  assert.equal(h.instance.showWeb, true);
+  assert.equal(h.instance.activePassword, 'fixture-password');
+  assert.deepEqual(h.metadata, [{ url: 'https://second.example', name: '' }]);
+  assert.equal(h.saved.length, 0);
+});
+
+test('manual password persistence failures remain typed recovery errors', async () => {
+  const h = host({ local: true });
+  h.instance.store.save = async () => { throw new NativeFailure('credential_save_failed'); };
+  await h.instance.receiveLoginBridge(JSON.stringify(localRequest('https://second.example')),
+    h.port, h.instance.loginEpoch);
+  assert.equal(h.instance.showWeb, false);
+  assert.equal(h.replies.at(-1).code, 'credential_save_failed');
+  assert.equal(h.replies.at(-1).error, nativeMessage('credential_save_failed', 'en'));
+});
+
+test('selected login targets survive cancellation and the next login snapshot', async () => {
+  const h = host({ local: true });
+  await h.instance.receiveLoginBridge(JSON.stringify({
+    id: 2, method: 'selectServer', args: [JSON.stringify('https://second.example')]
+  }), h.port, h.instance.loginEpoch);
+  assert.equal(h.instance.loginTargetUrl, 'https://second.example');
+  h.instance.connecting = true;
+  h.instance.onBackPress();
+  await tick();
+  assert.equal(h.snapshotArgs.at(-1).activeUrl, 'https://second.example');
+  assert.equal(h.instance.connecting, false);
+});
+
+test('password rotation is immediately available to tunnels and redaction before storage completes', async () => {
+  const h = host();
+  const saved = deferred();
+  const secrets = [];
+  const writes = [];
+  h.instance.store.servers = [{ url: h.instance.activeUrl, name: 'Existing name' }];
+  h.instance.activePassword = 'old-fixture-password';
+  h.instance.logger = { addSecret: value => secrets.push(value) };
+  h.instance.store.save = async (...args) => { writes.push(args); await saved.promise; };
+  const updating = h.instance.invokeBridge({
+    method: 'setSSHPassword', args: [JSON.stringify('new-fixture-password')]
+  });
+  assert.equal(h.instance.activePassword, 'new-fixture-password');
+  assert.deepEqual(secrets, ['new-fixture-password']);
+  await tick();
+  assert.deepEqual(writes, [['https://current.example', 'new-fixture-password', 'Existing name']]);
+  saved.resolve();
+  await updating;
+});
+
+test('a failed secret save does not restore the obsolete tunnel password', async () => {
+  const h = host();
+  h.instance.store.save = async () => { throw new NativeFailure('credential_save_failed'); };
+  await assert.rejects(h.instance.invokeBridge({
+    method: 'setSSHPassword', args: [JSON.stringify('new-fixture-password')]
+  }), error => error.code === 'credential_save_failed');
+  assert.equal(h.instance.activePassword, 'new-fixture-password');
+});
+
+test('late password saves cannot overwrite a different server session', async () => {
+  for (const fail of [false, true]) {
+    const h = host();
+    const saved = deferred();
+    h.instance.store.save = async () => saved.promise;
+    const updating = h.instance.invokeBridge({
+      method: 'setSSHPassword', args: [JSON.stringify('old-origin-fixture-password')]
+    });
+    const completion = updating.catch(() => {});
+    await tick();
+    const opening = h.instance.showConnection('', '', 'https://second.example');
+    await tick();
+    assert.equal(h.snapshots(), 0);
+    if (fail) saved.reject(new NativeFailure('credential_save_failed'));
+    else saved.resolve();
+    await opening;
+    h.instance.activeUrl = 'https://second.example';
+    h.instance.activePassword = 'second-origin-fixture-password';
+    h.instance.showWeb = true;
+    await completion;
+    assert.equal(h.instance.activePassword, 'second-origin-fixture-password');
+    assert.equal(h.instance.activeUrl, 'https://second.example');
+  }
+});
+
+test('rapid rotations persist in order while tunnels use the newest password immediately', async () => {
+  const h = host();
+  const first = deferred();
+  const writes = [];
+  h.instance.store.save = async (_url, value) => {
+    writes.push(value);
+    if (writes.length === 1) await first.promise;
+  };
+  const one = h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"rotation-one-fixture"'] });
+  await tick();
+  const two = h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"rotation-two-fixture"'] });
+  assert.equal(h.instance.activePassword, 'rotation-two-fixture');
+  assert.deepEqual(writes, ['rotation-one-fixture']);
+  first.resolve();
+  await Promise.all([one, two]);
+  assert.deepEqual(writes, ['rotation-one-fixture', 'rotation-two-fixture']);
+});
+
+test('password rotation in recovery mode uses memory only and rejects an empty password', async () => {
+  const h = host();
+  h.instance.ignoreSavedCredentials = true;
+  h.instance.store.save = async () => { throw new Error('AssetStore must not be used'); };
+  await h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"session-only-fixture"'] });
+  assert.equal(h.instance.activePassword, 'session-only-fixture');
+  await assert.rejects(h.instance.invokeBridge({ method: 'setSSHPassword', args: ['""'] }),
+    error => error.code === 'password');
+  assert.equal(h.instance.activePassword, 'session-only-fixture');
+});
+
+test('reconnecting to the same server persists the new login after an unfinished rotation', async () => {
+  const h = host();
+  const first = deferred();
+  const writes = [];
+  let storedPassword = '';
+  h.instance.store.save = async (_url, password) => {
+    writes.push(password);
+    if (writes.length === 1) await first.promise;
+    storedPassword = password;
+  };
+  const updating = h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"old-rotation"'] });
+  await tick();
+  const reconnecting = h.instance.connect('https://current.example', 'new-login');
+  await tick();
+  assert.deepEqual(writes, ['old-rotation']);
+  first.resolve();
+  await Promise.all([updating, reconnecting]);
+  assert.deepEqual(writes, ['old-rotation', 'new-login']);
+  assert.equal(storedPassword, 'new-login');
+  assert.equal(h.instance.activePassword, 'new-login');
+});
+
+test('the shared login save waits for the fire-and-forget password update', async () => {
+  const h = host();
+  const first = deferred();
+  const writes = [];
+  h.instance.store.save = async (_url, password) => {
+    writes.push(password);
+    if (writes.length === 1) await first.promise;
+  };
+  const updating = h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"rotation"'] });
+  await tick();
+  const saving = h.instance.invokeBridge({
+    method: 'saveServerNamed', args: ['"https://current.example"', '"login"', '"Current"']
+  });
+  await tick();
+  assert.deepEqual(writes, ['rotation']);
+  first.resolve();
+  await Promise.all([updating, saving]);
+  assert.deepEqual(writes, ['rotation', 'login']);
+});
+
+test('Back cancels a slow saved credential read before it starts authentication', async () => {
+  const password = deferred();
+  const h = host({ local: true, passwordWait: password.promise });
+  let exits = 0;
+  h.instance.context = () => ({ terminateSelf() { exits++; } });
+  const connecting = h.instance.receiveLoginBridge(JSON.stringify(localRequest('https://selected.example')),
+    h.port, h.instance.loginEpoch);
+  assert.equal(h.instance.connecting, true);
+  assert.equal(h.instance.onBackPress(), true);
+  password.resolve('late-password');
+  await connecting;
+  await tick();
+  assert.equal(exits, 0);
+  assert.equal(h.instance.connecting, false);
+  assert.equal(h.instance.loginTargetUrl, 'https://selected.example');
+  assert.equal(h.networkCalls.length, 0);
+});
+
+test('returning to login keeps the newest accepted rotation even when it was queued', async () => {
+  const h = host();
+  const first = deferred();
+  const writes = [];
+  let storedPassword = '';
+  h.instance.store.save = async (_url, password) => {
+    writes.push(password);
+    if (writes.length === 1) await first.promise;
+    storedPassword = password;
+  };
+  let displayedPassword = '';
+  h.instance.login.snapshot = async activeUrl => {
+    displayedPassword = storedPassword;
+    return { activeUrl };
+  };
+  const one = h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"first-rotation"'] });
+  await tick();
+  const two = h.instance.invokeBridge({ method: 'setSSHPassword', args: ['"latest-rotation"'] });
+  const opening = h.instance.showConnection();
+  first.resolve();
+  await Promise.all([one, two, opening]);
+  assert.deepEqual(writes, ['first-rotation', 'latest-rotation']);
+  assert.equal(displayedPassword, 'latest-rotation');
+  assert.equal(h.instance.showWeb, false);
 });

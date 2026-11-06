@@ -6,6 +6,7 @@ import { webview } from '@kit.ArkWeb';
 import { util } from '@kit.ArkTS';
 import { parseServerAddress } from '../models/ServerAddress';
 import { nativeCookieHeader } from '../models/NativeCookies';
+import { NativeFailure, nativeMessage } from '../models/NativeMessages';
 import {
   EventState, NativeEvent, NativeNavigation, NotificationLaunch, PendingEvent,
   isAllowedNotificationLaunch, nativeEventDecision, navigationForEvent, newestEventId,
@@ -58,6 +59,8 @@ export class NativeEventService {
   private socket?: webSocket.WebSocket;
   private requests: http.HttpRequest[] = [];
   private retryTimer: number = -1;
+  private recoveryTimer: number = -1;
+  private recovery?: Promise<void>;
   private attempt: number = 0;
   private queue: Promise<void> = Promise.resolve();
   private writes: Promise<void> = Promise.resolve();
@@ -93,9 +96,13 @@ export class NativeEventService {
       }).slice(-100);
       this.records.forEach((record: SavedEvents) => {
         record.state.recentIds = record.state.recentIds.filter((id: string) => validEventId(id)).slice(-512);
+        record.state.recentMessages = Array.isArray(record.state.recentMessages) ?
+          record.state.recentMessages.filter((key: string) =>
+            typeof key === 'string' && /^[a-zA-Z0-9_-]{1,160}:[0-9]{1,16}$/.test(key)).slice(-512) : [];
         if (!validEventId(record.state.cursor)) {
           record.state.cursor = '';
         }
+        record.state.baselineInitialized = record.state.baselineInitialized === true || record.state.cursor.length > 0;
       });
       const launches = JSON.parse(String(await this.prefs.get('launches', '[]'))) as SavedLaunch[];
       this.launches = launches.filter((launch: SavedLaunch) => launch && launch.expiresAt > Date.now() &&
@@ -120,7 +127,7 @@ export class NativeEventService {
       this.active = { origin: normalized, enabled: false, state: { cursor: '', recentIds: [] } };
       this.records.push(this.active);
     }
-    this.language = language === 'en' ? 'en' : 'zh';
+    this.setLanguage(language);
     this.foreground = foreground;
     this.lastError = '';
     this.reportStatus();
@@ -167,7 +174,7 @@ export class NativeEventService {
       await this.persist();
     } catch (_) {
       if (current()) {
-        this.lastError = 'Native notification settings unavailable; retrying on reconnect or resume';
+        this.lastError = 'notification_settings_failed';
       }
     } finally {
       this.requests = this.requests.filter((item: http.HttpRequest) => item !== request);
@@ -185,10 +192,9 @@ export class NativeEventService {
       if (!record.enabled) {
         await notificationManager.cancelGroup(this.group(record.origin)).catch(() => {});
       }
-    } else if (this.foreground) {
-      this.enqueueRecovery();
     } else {
-      this.connect();
+      await this.startDelivery();
+      await this.enqueueRecovery();
     }
     this.reportStatus();
   }
@@ -232,7 +238,7 @@ export class NativeEventService {
 
   async setEnabled(enabled: boolean): Promise<void> {
     if (!this.context || !this.active) {
-      throw new Error('Notification service is not connected');
+      throw new NativeFailure('notification_not_connected', this.language);
     }
     const record = this.active;
     const generation = this.generation;
@@ -253,7 +259,7 @@ export class NativeEventService {
       // Retain the requested mode when the OS blocks it. A later grant can
       // resume delivery without changing the server's push_mode.
       record.enabled = enabled;
-      this.lastError = enabled && !allowed ? 'Notification permission was not granted' : '';
+      this.lastError = enabled && !allowed ? 'notification_permission_denied' : '';
       await this.persist();
       if (generation !== this.generation || settingEpoch !== this.settingEpoch) {
         return;
@@ -261,33 +267,31 @@ export class NativeEventService {
       if (!enabled || !allowed) {
         this.stopTransport();
         await notificationManager.cancelGroup(this.group(record.origin)).catch(() => {});
-      } else if (this.foreground) {
-        this.enqueueRecovery();
       } else {
-        this.connect();
+        await this.startDelivery();
       }
       this.reportStatus();
     } catch (_) {
       if (generation === this.generation && settingEpoch === this.settingEpoch) {
         this.permissionEpoch++;
         this.permission = 'unknown';
-        this.lastError = 'Notification status or settings are unavailable';
+        this.lastError = 'notification_status_failed';
         this.stopTransport();
         this.reportStatus();
-        throw new Error(this.lastError);
+        throw new NativeFailure(this.lastError, this.language);
       }
       return;
     }
     if (generation === this.generation && settingEpoch === this.settingEpoch &&
       enabled && this.permission === 'denied') {
-      throw new Error('Notification permission was not granted');
+      throw new NativeFailure('notification_permission_denied', this.language);
     }
   }
 
   getStatus(): string {
     const status: NativeNotificationStatus = {
       enabled: this.active?.enabled === true && this.permission === 'granted', connected: this.connected,
-      permission: this.permission, error: this.lastError,
+      permission: this.permission, error: this.lastError ? nativeMessage(this.lastError, this.language) : '',
       backgroundDelivery: 'while-process-running'
     };
     return JSON.stringify(status);
@@ -311,18 +315,14 @@ export class NativeEventService {
       this.permission = allowed ? 'granted' : 'denied';
       if (!allowed) {
         this.stopTransport();
-        this.lastError = record?.enabled ? 'Notification permission was not granted' : '';
+        this.lastError = record?.enabled ? 'notification_permission_denied' : '';
       } else {
-        if (this.lastError === 'Notification permission was not granted' ||
-          this.lastError === 'Notification status or settings are unavailable') {
+        if (this.lastError === 'notification_permission_denied' ||
+          this.lastError === 'notification_status_failed') {
           this.lastError = '';
         }
         if (record?.enabled && previous !== 'granted') {
-          if (this.foreground) {
-            this.enqueueRecovery();
-          } else {
-            this.connect();
-          }
+          await this.startDelivery();
         }
       }
       this.reportStatus();
@@ -330,7 +330,7 @@ export class NativeEventService {
       if (generation === this.generation && settingEpoch === this.settingEpoch &&
         permissionEpoch === this.permissionEpoch) {
         this.permission = 'unknown';
-        this.lastError = 'Notification status or settings are unavailable';
+        this.lastError = 'notification_status_failed';
         this.stopTransport();
         this.reportStatus();
       }
@@ -343,16 +343,20 @@ export class NativeEventService {
       return;
     }
     this.foreground = foreground;
-    this.stopTransport();
+    this.scheduleRecovery();
     this.reportStatus();
     void this.syncServerSettings();
   }
 
+  setLanguage(language: string): void {
+    this.language = language === 'en' ? 'en' : 'zh';
+    this.reportStatus();
+  }
+
   async updateLastSeenEventId(id: string): Promise<void> {
-    if (!this.active || !validEventId(id)) {
+    if (!this.active || !this.foreground || !validEventId(id)) {
       return;
     }
-    this.active.state.cursor = newestEventId(this.active.state.cursor, id);
     this.active.state.recentIds = this.active.state.recentIds.filter((value: string) => value !== id).slice(-511);
     this.active.state.recentIds.push(id);
     await this.persist();
@@ -407,6 +411,7 @@ export class NativeEventService {
     this.requests = [];
     this.active = undefined;
     this.queue = Promise.resolve();
+    this.recovery = undefined;
   }
 
   destroy(): void {
@@ -440,6 +445,8 @@ export class NativeEventService {
   private stopTransport(): void {
     clearTimeout(this.retryTimer);
     this.retryTimer = -1;
+    clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = -1;
     const socket = this.socket;
     this.socket = undefined;
     this.connected = false;
@@ -452,9 +459,46 @@ export class NativeEventService {
     }
   }
 
+  private async startDelivery(): Promise<void> {
+    const record = this.active;
+    const generation = this.generation;
+    if (!record?.enabled || this.permission !== 'granted') {
+      return;
+    }
+    if (record.state.baselineInitialized !== true && !record.state.cursor) {
+      await this.enqueueRecovery();
+    }
+    if (generation !== this.generation || record !== this.active) {
+      return;
+    }
+    this.connect();
+    this.scheduleRecovery();
+  }
+
+  private scheduleRecovery(): void {
+    clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = -1;
+    if (!this.active?.enabled || this.permission !== 'granted' || this.foreground) {
+      return;
+    }
+    const generation = this.generation;
+    this.recoveryTimer = setTimeout(() => {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = -1;
+      if (generation !== this.generation) {
+        return;
+      }
+      void this.enqueueRecovery().then(() => {
+        if (generation === this.generation) {
+          this.scheduleRecovery();
+        }
+      });
+    }, 15000);
+  }
+
   private connect(): void {
     const record = this.active;
-    if (!record?.enabled || this.permission !== 'granted' || this.foreground || this.socket) {
+    if (!record?.enabled || this.permission !== 'granted' || this.socket) {
       return;
     }
     clearTimeout(this.retryTimer);
@@ -512,7 +556,8 @@ export class NativeEventService {
     }
     this.stopTransport();
     this.reportFailure(generation);
-    if (this.active?.enabled && !this.foreground) {
+    if (this.active?.enabled && this.permission === 'granted') {
+      this.scheduleRecovery();
       const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(this.attempt++, 5)));
       this.retryTimer = setTimeout(() => {
         if (generation === this.generation) {
@@ -524,19 +569,29 @@ export class NativeEventService {
 
   private reportFailure(generation: number): void {
     if (generation === this.generation) {
-      this.lastError = 'Native event connection unavailable; retrying on reconnect or resume';
+      this.lastError = 'notification_connection_failed';
       this.reportStatus();
     }
   }
 
-  private enqueueRecovery(): void {
+  private enqueueRecovery(): Promise<void> {
     const record = this.active;
     const generation = this.generation;
     if (!record?.enabled || this.permission !== 'granted') {
-      return;
+      return Promise.resolve();
     }
-    this.queue = this.queue.catch(() => {}).then(() => this.recover(record, generation))
-      .catch(() => this.reportFailure(generation));
+    if (this.recovery) {
+      return this.recovery;
+    }
+    const recovery: Promise<void> = this.queue.catch(() => {}).then(() => this.recover(record, generation))
+      .catch(() => this.reportFailure(generation)).finally(() => {
+        if (this.recovery === recovery) {
+          this.recovery = undefined;
+        }
+      });
+    this.recovery = recovery;
+    this.queue = recovery;
+    return recovery;
   }
 
   private async fetchPending(origin: string, cursor: string, generation: number): Promise<PendingEvent[]> {
@@ -545,8 +600,11 @@ export class NativeEventService {
     try {
       const url = origin + '/api/ai/events/pending' + (cursor ? '?after=' + encodeURIComponent(cursor) : '');
       const cookie = nativeCookieHeader(origin, webview.WebCookieManager.fetchCookieSync(url));
-      if (!cookie || generation !== this.generation) {
+      if (generation !== this.generation) {
         return [];
+      }
+      if (!cookie) {
+        throw new Error('Authentication is unavailable');
       }
       const response = await request.request(url, {
         method: http.RequestMethod.GET, header: { Cookie: cookie }, maxRedirects: 0,
@@ -560,7 +618,10 @@ export class NativeEventService {
         throw new Error('Pending event request failed');
       }
       const payload = JSON.parse(String(response.result)) as PendingResponse;
-      return Array.isArray(payload.events) ? payload.events.slice(0, 1000) : [];
+      if (!payload || !Array.isArray(payload.events)) {
+        throw new Error('Invalid pending event response');
+      }
+      return payload.events.slice(0, 1000);
     } finally {
       this.requests = this.requests.filter((item: http.HttpRequest) => item !== request);
       request.destroy();
@@ -573,22 +634,23 @@ export class NativeEventService {
     }
     const cursor = record.state.cursor;
     let events = await this.fetchPending(record.origin, cursor, generation);
-    let fresh = cursor.length === 0;
+    const fresh = record.state.baselineInitialized !== true && cursor.length === 0;
     if (events.length === 0 && cursor) {
-      // The endpoint uses [] for both "caught up" and "cursor expired". Rebase
-      // without historical alerts when the old cursor no longer exists.
+      // Missing/expired cursors also return []. Preserve unread newer rows
+      // during recovery, including cursors written by older WS-only clients.
       events = await this.fetchPending(record.origin, '', generation);
       if (events.some((item: PendingEvent) => item.event_id === cursor)) {
         events = events.slice(events.findIndex((item: PendingEvent) => item.event_id === cursor) + 1);
       } else {
-        fresh = true;
+        events = events.filter((item: PendingEvent) => item && item.event_id !== cursor &&
+          newestEventId(cursor, item.event_id) === item.event_id);
       }
     }
     for (const pending of events) {
       if (generation !== this.generation || !record.enabled || this.permission !== 'granted') {
         return;
       }
-      if (!pending || typeof pending.payload !== 'string') {
+      if (!pending || !validEventId(pending.event_id) || typeof pending.payload !== 'string') {
         continue;
       }
       const event = parseNativeEvent(pending.payload);
@@ -597,20 +659,22 @@ export class NativeEventService {
       }
       event.id = pending.event_id;
       event.suppress_notification = pending.suppress_notification === true;
-      await this.process(record, event, generation, fresh, false);
+      await this.process(record, event, generation, fresh, false, true);
     }
-    if (generation === this.generation) {
+    if (generation === this.generation && record.enabled && this.permission === 'granted') {
+      record.state.baselineInitialized = true;
       await this.persist();
     }
   }
 
   private async process(record: SavedEvents, event: NativeEvent, generation: number,
-    fresh: boolean, persist: boolean = true): Promise<void> {
+    fresh: boolean, persist: boolean = true, fromPending: boolean = false): Promise<void> {
     if (generation !== this.generation || !record.enabled || this.permission !== 'granted') {
       return;
     }
-    const decision = nativeEventDecision(event, record.state, this.foreground, fresh);
-    if (!decision.advance && !decision.notify && !decision.dismiss) {
+    const observedInForeground = this.foreground;
+    const decision = nativeEventDecision(event, record.state, observedInForeground, fresh);
+    if (!fromPending && !decision.advance && !decision.notify && !decision.dismiss) {
       return;
     }
     const navigation = navigationForEvent(event);
@@ -620,10 +684,15 @@ export class NativeEventService {
     if (decision.notify && navigation) {
       await this.publish(record, event, navigation, generation);
     }
-    if (generation !== this.generation) {
+    if (generation !== this.generation || !record.enabled || this.permission !== 'granted') {
       return;
     }
-    record.state = recordNativeEvent(record.state, event);
+    // A background WS replay is not evidence that its pending reply was seen.
+    // Leave both ID and message dedup available after a failed HTTP recovery.
+    if (!fromPending && event.replayed === true && !observedInForeground && !decision.notify) {
+      return;
+    }
+    record.state = recordNativeEvent(record.state, event, fromPending);
     if (persist) {
       await this.persist();
     }
@@ -635,8 +704,22 @@ export class NativeEventService {
 
   private async publish(record: SavedEvents, event: NativeEvent, navigation: NativeNavigation,
     generation: number): Promise<void> {
-    if (!this.context || !await notificationManager.isNotificationEnabled() ||
-      generation !== this.generation || this.foreground) {
+    if (!this.context || generation !== this.generation || this.foreground) {
+      return;
+    }
+    const allowed = await notificationManager.isNotificationEnabled();
+    if (generation !== this.generation) {
+      return;
+    }
+    if (!allowed) {
+      this.permissionEpoch++;
+      this.permission = 'denied';
+      this.lastError = 'notification_permission_denied';
+      this.stopTransport();
+      this.reportStatus();
+      return;
+    }
+    if (this.foreground || !record.enabled) {
       return;
     }
     const subject = notificationSubject(navigation);

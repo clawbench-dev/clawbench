@@ -6,6 +6,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { nativeCookieHeader } from '../models/NativeCookies';
+import { NativeFailure } from '../models/NativeMessages';
 import { parseServerAddress } from '../models/ServerAddress';
 import { safeFileName, shareMime } from '../models/FileTransferPolicy';
 import {
@@ -89,7 +90,7 @@ export class ShareImportService {
       return false;
     }
     if (this.batch?.busy) {
-      throw new Error('分享导入正在进行，请稍后重试');
+      throw new NativeFailure('share_import_busy');
     }
     this.cancel();
     const generation = this.generation;
@@ -123,7 +124,7 @@ export class ShareImportService {
         this.batch = undefined;
         this.notify();
       }
-      throw new Error('无法读取分享文件，请重新分享并确认文件访问权限和大小');
+      throw new NativeFailure('share_read_failed');
     }
   }
 
@@ -136,14 +137,14 @@ export class ShareImportService {
   async uploadConfirmed(id: string, origin: string, expectedProjectPath: string): Promise<ShareImportResult> {
     const batch = this.batch;
     if (!batch || batch.id !== id || batch.busy || batch.files.length === 0) {
-      throw new Error('分享内容已改变，请重新确认');
+      throw new NativeFailure('share_changed');
     }
     const server = parseServerAddress(origin).url;
     const url = server + '/api/upload/file';
     const cookie = nativeCookieHeader(server, webview.WebCookieManager.fetchCookieSync(url));
     const projectPath = sharedProjectFromCookies(cookie);
     if (!expectedProjectPath || projectPath !== expectedProjectPath) {
-      throw new Error('目标项目已改变，请重新确认');
+      throw new NativeFailure('share_target_changed');
     }
     const generation = this.generation;
     const result: ShareImportResult = { paths: [], failed: 0, cancelled: false, projectPath };

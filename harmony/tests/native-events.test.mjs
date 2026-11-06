@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import * as model from '../entry/src/main/ets/models/NativeEvents.ts';
 import * as cookies from '../entry/src/main/ets/models/NativeCookies.ts';
+import { NativeFailure, nativeMessage } from '../entry/src/main/ets/models/NativeMessages.ts';
 import { parseServerAddress } from '../entry/src/main/ets/models/ServerAddress.ts';
 
 const event = (kind = 'session_update', status = 'completed', id = 'evt_100_1', fields = {}) => ({
@@ -57,7 +58,7 @@ test('read, resolved approvals and suppressed completed subjects retract native 
 
 test('late replay cannot regress numeric cursors and bounded dedup survives restarts', () => {
   let state = { cursor: 'evt_1000000000000000001_12', recentIds: [] };
-  state = model.recordNativeEvent(state, event('session_update', 'completed', 'evt_1000000000000000001_9'));
+  state = model.recordNativeEvent(state, event('session_update', 'completed', 'evt_1000000000000000001_9'), true);
   assert.equal(state.cursor, 'evt_1000000000000000001_12');
   assert.equal(model.newestEventId(state.cursor, 'evt_1000000000000000002_1'), 'evt_1000000000000000002_1');
   for (let i = 1; i <= 600; i++) state = model.recordNativeEvent(state, event('task_update', 'running', `evt_200_${i}`));
@@ -176,6 +177,7 @@ function harness() {
   const responses = [];
   const reports = [];
   const timers = new Map();
+  const timerDelays = new Map();
   const permissionReads = [];
   const configRequests = [];
   const configResponses = [];
@@ -184,13 +186,15 @@ function harness() {
   let permissionWait;
   let permissionRequests = 0;
   let nextUuid = 0;
+  let nextTimer = 0;
+  let pendingHandler;
   const prefs = {
     async get(key, fallback) { return storage.get(key) ?? fallback; },
     async put(key, value) { storage.set(key, value); },
     async flush() {}
   };
   const sandbox = {
-    ...model, ...cookies, parseServerAddress,
+    ...model, ...cookies, parseServerAddress, NativeFailure, nativeMessage,
     AppStorage: { get: key => app.get(key), setOrCreate: (key, value) => app.set(key, value) },
     preferences: { async getPreferences() { return prefs; } },
     notificationManager: {
@@ -232,26 +236,30 @@ function harness() {
               { responseCode: 200, result: '{"push_mode":"native"}' };
           }
           requests.push(request);
+          if (pendingHandler) return await pendingHandler(url, options);
           return responses.length ? await responses.shift()() : { responseCode: 200, result: '{"events":[]}' };
         }, destroy() { this.destroyed = true; } };
         return request;
       },
       RequestMethod: { GET: 'GET' }, HttpDataType: { STRING: 1 }
     },
-    setTimeout(fn) { const id = timers.size + 1; timers.set(id, fn); return id; },
-    clearTimeout(id) { timers.delete(id); }
+    setTimeout(fn, delay) {
+      const id = ++nextTimer; timers.set(id, fn); timerDelays.set(id, delay); return id;
+    },
+    clearTimeout(id) { timers.delete(id); timerDelays.delete(id); }
   };
   runInNewContext(serviceSource, sandbox);
   const service = new sandbox.Service((name, detail) => reports.push({ name, detail: JSON.parse(detail) }));
   const context = { abilityInfo: { bundleName: 'com.clawbench.fixture', name: 'EntryAbility' } };
   return {
     service, context, sockets, requests, published, cancelled, storage, app, reports, timers, responses, permissionReads,
-    configRequests, configResponses,
+    configRequests, configResponses, timerDelays,
     Service: sandbox.Service,
     permissionRequests: () => permissionRequests,
     setGrant(value) { grant = value; },
     setPermission(value) { permissions = value; },
     waitPermission(promise) { permissionWait = promise; },
+    setPending(handler) { pendingHandler = handler; },
     async ready(origin = 'https://fixture.example', foreground = false) {
       cookies.registerServerCookies(origin, ['clawbench_session=fixture; HttpOnly']);
       await service.init(context); await service.bind(origin, 'en', foreground); await service.setEnabled(true);
@@ -406,7 +414,7 @@ test('server disabled and IM modes never activate native delivery', async () => 
   }
 });
 
-test('background transition rereads server settings before opening a native socket', async () => {
+test('background transition retains delivery while rereading config and stops when native mode is disabled', async () => {
   const h = harness();
   await h.ready('https://fixture.example', true);
   await h.service.queue;
@@ -414,10 +422,13 @@ test('background transition rereads server settings before opening a native sock
   h.configResponses.push(() => new Promise(resolve => { finishSettings = resolve; }));
   h.service.setForeground(false);
   await new Promise(setImmediate);
-  assert.equal(h.sockets.length, 0);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.sockets[0].closed, false);
   finishSettings({ responseCode: 200, result: '{"push_mode":"disabled"}' });
   await new Promise(setImmediate);
-  assert.equal(h.sockets.length, 0);
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.sockets[0].closed, true);
+  assert.equal(h.timers.size, 0);
   assert.equal(h.service.active.enabled, false);
   assert.equal(h.configRequests.length, 2);
   h.service.destroy();
@@ -586,22 +597,30 @@ test('server switches drop late messages, keep cursors isolated, and gate pendin
   await h.message(event('session_update', 'completed', 'evt_100_3'));
   assert.equal(h.published.length, 2);
   const states = JSON.parse(h.storage.get('servers'));
-  assert.equal(states.find(value => value.origin === 'https://fixture.example').state.cursor, 'evt_100_1');
-  assert.equal(states.find(value => value.origin === 'https://second.example').state.cursor, 'evt_100_3');
+  const oldState = states.find(value => value.origin === 'https://fixture.example').state;
+  const newState = states.find(value => value.origin === 'https://second.example').state;
+  assert.equal(oldState.cursor, '');
+  assert.equal(newState.cursor, '');
+  assert.deepEqual(oldState.recentIds, ['evt_100_1']);
+  assert.deepEqual(newState.recentIds, ['evt_100_3']);
   h.service.destroy();
 });
 
-test('foreground suppresses publication and closes background socket; disable cancels group', async () => {
+test('foreground suppresses publication without dropping observation; disable closes socket and cancels group', async () => {
   const h = harness();
   await h.ready();
   const oldSocket = h.sockets.at(-1);
   h.service.setForeground(true);
   await new Promise(setImmediate);
   await h.service.queue;
-  assert.equal(oldSocket.closed, true);
+  assert.equal(oldSocket.closed, false);
+  await h.message(event('session_update', 'completed', 'evt_100_1', { message_id: 9 }));
   assert.equal(h.published.length, 0);
+  assert.equal(h.service.active.state.recentMessages.includes('session-1:9'), true);
+  assert.equal(h.timers.size, 0);
   assert.equal(h.requests[0].options.maxRedirects, 0);
   await h.service.setEnabled(false);
+  assert.equal(oldSocket.closed, true);
   assert.equal(h.cancelled.at(-1)[0], 'group');
   assert.equal(JSON.parse(h.service.getStatus()).backgroundDelivery, 'while-process-running');
   h.service.destroy();
@@ -615,10 +634,8 @@ function backlog(...events) {
 
 test('HTTP recovery silently baselines fresh history, then delivers unread gaps once and advances suppressed rows', async () => {
   const h = harness();
-  await h.ready();
   h.responses.push(backlog(event('session_update', 'completed', 'evt_100_1')));
-  h.sockets[0].handlers.get('open')();
-  await h.service.queue;
+  await h.ready();
   assert.equal(h.published.length, 0);
   assert.equal(h.service.active.state.cursor, 'evt_100_1');
   h.responses.push(backlog(
@@ -635,32 +652,39 @@ test('HTTP recovery silently baselines fresh history, then delivers unread gaps 
   h.service.destroy();
 });
 
-test('expired pending cursor is rebased without a storm of historical alerts', async () => {
+test('expired pending cursors recover newer unread rows while keeping older history silent', async () => {
   const h = harness();
+  h.storage.set('servers', JSON.stringify([{
+    origin: 'https://fixture.example', enabled: true,
+    state: { cursor: 'evt_100_5', recentIds: ['evt_100_5'] }
+  }]));
   await h.ready();
-  await h.service.updateLastSeenEventId('evt_99_10');
-  h.responses.push(backlog(), backlog(event('session_update', 'completed', 'evt_100_1')));
+  const previousRequests = h.requests.length;
+  h.responses.push(backlog(), backlog(event('session_update', 'completed', 'evt_100_1'),
+    event('session_update', 'completed', 'evt_100_6', { message_id: 8 })));
   h.sockets[0].handlers.get('open')();
   await h.service.queue;
-  assert.equal(h.requests.length, 2);
-  assert.equal(h.service.active.state.cursor, 'evt_100_1');
-  assert.equal(h.published.length, 0);
+  assert.equal(h.requests.length, previousRequests + 2);
+  assert.equal(h.service.active.state.cursor, 'evt_100_6');
+  assert.equal(h.published.length, 1);
   h.service.destroy();
 });
 
 test('switching servers aborts a pending HTTP request and ignores its late response', async () => {
   const h = harness();
+  h.responses.push(backlog(event('session_update', 'completed', 'evt_100_1')));
   await h.ready();
-  await h.service.updateLastSeenEventId('evt_100_1');
+  const previousRequests = h.requests.length;
   let resolve;
   h.responses.push(() => new Promise(done => { resolve = done; }));
   h.sockets[0].handlers.get('open')();
   const recovery = h.service.queue;
   await Promise.resolve();
   await Promise.resolve();
-  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests.length, previousRequests + 1);
+  const pendingRequest = h.requests.at(-1);
   await h.service.bind('https://new.example', 'en', false);
-  assert.equal(h.requests[0].destroyed, true);
+  assert.equal(pendingRequest.destroyed, true);
   resolve(backlog(event('session_update', 'completed', 'evt_100_2'))());
   await recovery;
   assert.equal(h.published.length, 0);
@@ -766,5 +790,263 @@ test('an in-flight read cannot undo a completed enable operation', async () => {
   await oldRead;
   assert.equal(JSON.parse(h.service.getStatus()).permission, 'granted');
   assert.equal(JSON.parse(h.service.getStatus()).enabled, true);
+  h.service.destroy();
+});
+
+test('an unadapted frontend keeps one native socket across foreground and background transitions', async () => {
+  const h = harness();
+  await h.ready('https://fixture.example', true);
+  assert.equal(h.sockets.length, 1);
+  const socket = h.sockets[0];
+  await h.message(event('session_update', 'completed', 'evt_400_2', { message_id: 101 }));
+  assert.equal(h.published.length, 0);
+  let finishSettings;
+  h.configResponses.push(() => new Promise(resolve => { finishSettings = resolve; }));
+  h.service.setForeground(false);
+  await new Promise(setImmediate);
+  assert.equal(socket.closed, false);
+  await h.message(event('session_update', 'completed', 'evt_400_4', { message_id: 102 }));
+  assert.equal(h.published.length, 1);
+  finishSettings({ responseCode: 200, result: '{"push_mode":"native"}' });
+  await new Promise(setImmediate);
+  assert.equal(h.sockets.length, 1);
+  h.service.setForeground(true);
+  await new Promise(setImmediate);
+  assert.equal(socket.closed, false);
+  h.service.destroy();
+});
+
+test('WS-only completion ids never become pending cursors and persisted/live copies notify once', async () => {
+  const h = harness();
+  const initial = event('chat_stream', '', 'evt_500_1', { event_type: 'user_message' });
+  let stored = [initial];
+  h.setPending(url => {
+    const after = new URL(url).searchParams.get('after');
+    const index = stored.findIndex(row => row.id === after);
+    return backlog(...(after ? index < 0 ? [] : stored.slice(index + 1) : stored))();
+  });
+  await h.ready();
+  await h.service.enqueueRecovery();
+  await h.service.queue;
+  const persisted = event('session_update', 'completed', 'evt_500_2', { message_id: 201 });
+  const live = event('session_update', 'completed', 'evt_500_3', { message_id: 201 });
+  await h.message(live);
+  assert.equal(h.published.length, 1);
+  const pendingOnly = event('session_update', 'completed', 'evt_500_4', { message_id: 202 });
+  stored = [initial, persisted, pendingOnly];
+  await h.service.enqueueRecovery();
+  await h.service.queue;
+  assert.equal(h.published.length, 2);
+  assert.equal(h.service.active.state.cursor, pendingOnly.id);
+  assert.equal(new URL(h.requests.at(-1).url).searchParams.get('after'), initial.id);
+  await h.message(event('session_update', 'completed', 'evt_500_5', { message_id: 202 }));
+  assert.equal(h.published.length, 2);
+  h.service.destroy();
+});
+
+test('a completed empty foreground baseline does not swallow the first later background reply', async () => {
+  const h = harness();
+  await h.ready('https://fixture.example', true);
+  await h.service.queue;
+  h.service.setForeground(false);
+  await new Promise(setImmediate);
+  h.responses.push(backlog(event('session_update', 'completed', 'evt_600_1', { message_id: 301 })));
+  await h.service.enqueueRecovery();
+  await h.service.queue;
+  assert.equal(h.published.length, 1);
+  assert.equal(h.service.active.state.cursor, 'evt_600_1');
+  h.service.destroy();
+});
+
+test('background polling delivers pending-only drain replies without a WebSocket event', async () => {
+  const h = harness();
+  await h.ready();
+  const poll = [...h.timerDelays].find(([, delay]) => delay === 15000);
+  assert.ok(poll, 'Background delivery must periodically recover pending-only replies');
+  h.responses.push(backlog(event('session_update', 'completed', 'evt_700_1', { message_id: 401 })));
+  h.timers.get(poll[0])();
+  await new Promise(setImmediate);
+  await h.service.queue;
+  assert.equal(h.published.length, 1);
+  h.service.destroy();
+  assert.equal(h.timers.size, 0);
+});
+
+test('only pending rows advance recovery cursors and completed message dedup never merges separate approvals', () => {
+  const completed = event('session_update', 'completed', 'evt_800_2', { message_id: 1 });
+  const observed = model.recordNativeEvent(initial(), completed);
+  assert.equal(observed.cursor, '');
+  const stored = { ...completed, id: 'evt_800_1' };
+  assert.equal(model.nativeEventDecision(stored, observed, false).duplicate, true);
+  const recovered = model.recordNativeEvent(observed, stored, true);
+  assert.equal(recovered.cursor, stored.id);
+  assert.equal(model.nativeEventDecision(event('session_update', 'completed', 'evt_800_3',
+    { message_id: 2 }), recovered, false).notify, true);
+  for (const status of ['permission_pending', 'cancelled']) {
+    const first = event('session_update', status, 'evt_800_4', { message_id: 2 });
+    const seen = model.recordNativeEvent(recovered, first);
+    assert.equal(model.nativeEventDecision({ ...first, id: 'evt_800_5' }, seen, false).notify, true);
+  }
+  assert.equal(model.nativeEventDecision(event('session_update', 'completed', 'evt_800_6'),
+    recovered, false).notify, true);
+});
+
+test('later live and frontend IDs cannot hide earlier pending-only replies', async () => {
+  const h = harness();
+  h.responses.push(backlog(event('chat_stream', '', 'evt_900_1', { event_type: 'user_message' })));
+  await h.ready('https://fixture.example', true);
+  await h.service.updateLastSeenEventId('evt_900_9');
+  assert.equal(h.service.active.state.recentIds.includes('evt_900_9'), true);
+  await h.message(event('session_update', 'completed', 'evt_900_8', { message_id: 10 }));
+  assert.equal(h.service.active.state.cursor, 'evt_900_1');
+  h.service.setForeground(false);
+  await new Promise(setImmediate);
+  h.responses.push(backlog(
+    event('session_update', 'completed', 'evt_900_3', { message_id: 9 }),
+    event('session_update', 'completed', 'evt_900_7', { message_id: 10 })));
+  await h.service.enqueueRecovery();
+  assert.equal(h.published.length, 1);
+  assert.equal(h.service.active.state.cursor, 'evt_900_7');
+  h.service.destroy();
+});
+
+test('an empty initialized baseline survives a restart and later pending replies are delivered', async () => {
+  const first = harness();
+  await first.ready();
+  const persisted = first.storage.get('servers');
+  assert.equal(JSON.parse(persisted)[0].state.baselineInitialized, true);
+  first.service.destroy();
+  const restarted = harness();
+  restarted.storage.set('servers', persisted);
+  restarted.setPermission(true);
+  restarted.responses.push(backlog(event('session_update', 'completed', 'evt_1000_1', { message_id: 11 })));
+  await restarted.service.init(restarted.context);
+  await restarted.service.bind('https://fixture.example', 'en', false);
+  assert.equal(restarted.published.length, 1);
+  restarted.service.destroy();
+});
+
+test('the first bind awaits a silent baseline before starting live observation', async () => {
+  const h = harness();
+  h.setPermission(true);
+  cookies.registerServerCookies('https://baseline.example', ['clawbench_session=fixture; HttpOnly']);
+  await h.service.init(h.context);
+  let finish;
+  h.responses.push(() => new Promise(resolve => { finish = resolve; }));
+  let bound = false;
+  const binding = h.service.bind('https://baseline.example', 'en', false).then(() => { bound = true; });
+  await new Promise(setImmediate);
+  assert.equal(bound, false);
+  assert.equal(h.sockets.length, 0);
+  finish(backlog(event('session_update', 'completed', 'evt_1100_1', { message_id: 12 }))());
+  await binding;
+  assert.equal(h.sockets.length, 1);
+  assert.equal(h.published.length, 0);
+  assert.equal(h.service.active.state.cursor, 'evt_1100_1');
+  h.service.destroy();
+});
+
+test('recovery is single-flight and disabling delivery discards in-flight replies and timers', async () => {
+  const h = harness();
+  await h.ready();
+  let finish;
+  h.responses.push(() => new Promise(resolve => { finish = resolve; }));
+  const before = h.requests.length;
+  const first = h.service.enqueueRecovery();
+  const second = h.service.enqueueRecovery();
+  assert.equal(first, second);
+  await new Promise(setImmediate);
+  assert.equal(h.requests.length, before + 1);
+  await h.service.setEnabled(false);
+  finish(backlog(event('session_update', 'completed', 'evt_1200_1', { message_id: 13 }))());
+  await first;
+  assert.equal(h.published.length, 0);
+  assert.equal(h.service.active.state.cursor, '');
+  assert.equal(h.timers.size, 0);
+  h.service.destroy();
+});
+
+test('a socket failure retains periodic recovery and reconnects while foregrounded', async () => {
+  const h = harness();
+  await h.ready();
+  h.sockets[0].handlers.get('close')();
+  assert.deepEqual([...h.timerDelays.values()].sort((a, b) => a - b), [1000, 15000]);
+  h.service.setForeground(true);
+  await new Promise(setImmediate);
+  assert.equal([...h.timerDelays.values()].includes(15000), false);
+  assert.equal(h.sockets.length, 2);
+  h.sockets[1].handlers.get('error')();
+  const reconnect = [...h.timerDelays].find(([, delay]) => delay === 2000);
+  assert.ok(reconnect);
+  h.timers.get(reconnect[0])();
+  assert.equal(h.sockets.length, 3);
+  h.service.destroy();
+  assert.equal(h.timers.size, 0);
+});
+
+test('notification language changes update both published titles and current permission errors', async () => {
+  const h = harness();
+  await h.ready();
+  h.service.setLanguage('zh');
+  await h.message(event('session_update', 'completed', 'evt_1300_1', { message_id: 14 }));
+  assert.equal(h.published[0].content.normal.title, '\u4f1a\u8bdd\u5df2\u5b8c\u6210');
+  h.setPermission(false);
+  await h.service.refreshStatus();
+  assert.equal(JSON.parse(h.service.getStatus()).error, nativeMessage('notification_permission_denied', 'zh'));
+  h.service.setLanguage('en');
+  assert.equal(h.reports.at(-1).detail.error, nativeMessage('notification_permission_denied', 'en'));
+  h.service.destroy();
+});
+
+test('permission revoked during publication stops delivery without consuming the pending reply', async () => {
+  const h = harness();
+  await h.ready();
+  h.setPermission(false);
+  const reply = event('session_update', 'completed', 'evt_1400_1', { message_id: 15 });
+  h.responses.push(backlog(reply));
+  await h.service.enqueueRecovery();
+  assert.equal(h.published.length, 0);
+  assert.equal(h.service.active.state.cursor, '');
+  assert.equal(JSON.parse(h.service.getStatus()).permission, 'denied');
+  assert.equal(h.timers.size, 0);
+  h.setPermission(true);
+  await h.service.refreshStatus();
+  h.responses.push(backlog(reply));
+  await h.service.enqueueRecovery();
+  assert.equal(h.published.length, 1);
+  h.service.destroy();
+});
+
+for (const sameId of [false, true]) {
+  test(`an unnotified background replay does not consume ${sameId ? 'same-ID' : 'separately persisted'} pending replies`, async () => {
+    const h = harness();
+    await h.ready();
+    h.responses.push(async () => { throw new Error('Fixture transient recovery failure'); });
+    h.sockets[0].handlers.get('open')();
+    const stored = event('session_update', 'completed', 'evt_1500_1', { message_id: 16 });
+    const replay = { ...stored, id: sameId ? stored.id : 'evt_1500_2', replayed: true };
+    await h.message(replay);
+    assert.equal(h.published.length, 0);
+    h.responses.push(backlog(stored));
+    await h.service.enqueueRecovery();
+    assert.equal(h.published.length, 1);
+    assert.equal(h.service.active.state.cursor, stored.id);
+    await h.message(replay);
+    h.responses.push(backlog(stored));
+    await h.service.enqueueRecovery();
+    assert.equal(h.published.length, 1);
+    h.service.destroy();
+  });
+}
+
+test('background frontend cursor synchronization cannot consume a pending reply', async () => {
+  const h = harness();
+  await h.ready();
+  const reply = event('session_update', 'completed', 'evt_1600_1', { message_id: 17 });
+  await h.service.updateLastSeenEventId(reply.id);
+  h.responses.push(backlog(reply));
+  await h.service.enqueueRecovery();
+  assert.equal(h.published.length, 1);
+  assert.equal(h.service.active.state.cursor, reply.id);
   h.service.destroy();
 });

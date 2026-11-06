@@ -1,7 +1,7 @@
 {
   "modelVersion": "5.1.0",
   "name": "clawbench-harmonyos",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "ClawBench HarmonyOS client",
   "license": "MIT",
   "dependencies": {}

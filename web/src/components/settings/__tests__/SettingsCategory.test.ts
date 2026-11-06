@@ -15,6 +15,12 @@ const mockGetAgentModelPref = vi.fn().mockReturnValue(null)
 const mockGetAgentThinkingPref = vi.fn().mockReturnValue(null)
 const mockLoadAgents = vi.fn()
 const mockUpdateAgentField = vi.fn()
+const mockDownloadByUrl = vi.hoisted(() => vi.fn())
+
+vi.mock('@/utils/download', async importOriginal => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  downloadByUrl: mockDownloadByUrl,
+}))
 
 const localConfig = reactive<Record<string, any>>({
   theme: 'auto',
@@ -122,6 +128,7 @@ const mockIsAppMode = vi.hoisted(() => ({ value: false }))
 // isAppMode === true, so "Android app only" rows can only be distinguished by
 // consulting isDesktopApp.
 const mockIsDesktopApp = vi.hoisted(() => ({ value: false }))
+const mockIsHarmonyApp = vi.hoisted(() => ({ value: false }))
 vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: mockIsDesktopApp }),
 }))
@@ -131,11 +138,12 @@ vi.mock('@/composables/useAppMode', () => ({
 // `platformInitialized` guard, so it would snapshot whatever the FIRST test in
 // this file set and ignore every later change — which is exactly the
 // order-dependent failure this mock prevents. Deriving the axes per call from
-// mockIsAppMode/mockIsDesktopApp keeps each test's platform setup meaningful.
+// the explicit host flags keeps each test's platform setup meaningful.
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({
     isElectron: { value: mockIsDesktopApp.value },
-    isAndroidApp: { value: mockIsAppMode.value && !mockIsDesktopApp.value },
+    isAndroidApp: { value: mockIsAppMode.value && !mockIsDesktopApp.value && !mockIsHarmonyApp.value },
+    isHarmonyApp: { value: mockIsHarmonyApp.value },
     isWebApp: { value: !mockIsAppMode.value },
     isNativeApp: { value: mockIsAppMode.value },
     isTouchPrimary: { value: false },
@@ -464,6 +472,7 @@ describe('SettingsCategory', () => {
     // Reset app mode: individual cases flip it to cover the app-only rows.
     mockIsAppMode.value = false
     mockIsDesktopApp.value = false
+    mockIsHarmonyApp.value = false
     // Reset the scale-related state: cases override the effective factor.
     localConfig.uiScale = 1
     mockEffectiveUIScale.value = 1
@@ -1022,7 +1031,7 @@ describe('SettingsCategory', () => {
       }
     })
 
-    it('hides the trusted-certificate row outside the desktop shell', () => {
+    it('hides the trusted-certificate row in the browser', () => {
       // Android never persists the certificate answer (it re-asks every
       // connection), and the browser has no native bridge at all — the row
       // would be a no-op button there.
@@ -1030,6 +1039,42 @@ describe('SettingsCategory', () => {
       const item = wrapper.findAllComponents({ name: 'SettingsItem' })
         .find(i => i.props().label === '已信任的证书')
       expect(item).toBeFalsy()
+    })
+
+    it.each(['harmonyos', 'electron'] as const)('hides the trusted-certificate row when %s has no certificate store', (platform) => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = platform === 'electron'
+      mockIsHarmonyApp.value = platform === 'harmonyos'
+      const bridgeName = platform === 'harmonyos' ? 'ClawBenchHarmony' : 'ClawBenchNative'
+      ;(window as any)[bridgeName] = {
+        isNativeApp: () => true,
+        getHostPlatform: () => platform,
+      }
+      const wrapper = mountCategory('security')
+      try {
+        expect(wrapper.find('[data-settings-key="trustedCerts"]').exists()).toBe(false)
+        expect(wrapper.find('[data-settings-key="changePassword"]').exists()).toBe(true)
+      } finally {
+        wrapper.unmount()
+        delete (window as any)[bridgeName]
+      }
+    })
+
+    it('shows the trusted-certificate row when HarmonyOS supplies a working certificate-store method', () => {
+      mockIsAppMode.value = true
+      mockIsHarmonyApp.value = true
+      ;(window as any).ClawBenchHarmony = {
+        isNativeApp: () => true,
+        getHostPlatform: () => 'harmonyos',
+        forgetTrustedCerts: vi.fn().mockResolvedValue(0),
+      }
+      const wrapper = mountCategory('security')
+      try {
+        expect(wrapper.find('[data-settings-key="trustedCerts"]').exists()).toBe(true)
+      } finally {
+        wrapper.unmount()
+        delete (window as any).ClawBenchHarmony
+      }
     })
 
     it('opens password dialog when changePassword action is clicked', async () => {
@@ -1324,23 +1369,10 @@ describe('SettingsCategory', () => {
     })
 
     it('handleClick with downloadAndroidApp navigates to APK download', async () => {
-      // Mock downloadByUrl to verify it's called with correct arguments
-      const mockDownloadByUrl = vi.fn()
-      vi.mock('@/utils/download', () => ({
-        downloadByUrl: (...args: any[]) => mockDownloadByUrl(...args),
-      }))
       const wrapper = mountCategory('about')
       const vm = wrapper.vm as any
       vm.$.setupState.handleClick({ key: 'downloadAndroidApp' })
-      // downloadByUrl is called directly in the component, so spy on document.createElement instead
-      const createElementSpy = vi.spyOn(document, 'createElement')
-      vm.$.setupState.handleClick({ key: 'downloadAndroidApp' })
-      const anchorCalls = createElementSpy.mock.calls.filter((call: any[]) => call[0] === 'a')
-      if (anchorCalls.length > 0) {
-        expect(anchorCalls.length).toBeGreaterThanOrEqual(1)
-      }
-      createElementSpy.mockRestore()
-      vi.unmock('@/utils/download')
+      expect(mockDownloadByUrl).toHaveBeenCalledExactlyOnceWith('/api/apk', 'clawbench-android.apk')
     })
 
     // The "download desktop app" row must only appear when there is actually

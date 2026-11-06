@@ -87,6 +87,8 @@ export interface EventDecision {
 export interface EventState {
   cursor: string;
   recentIds: string[];
+  recentMessages?: string[];
+  baselineInitialized?: boolean;
 }
 
 export function boundedEventText(value: string | undefined, max: number): string {
@@ -137,7 +139,9 @@ export function nativeEventDecision(event: NativeEvent, state: EventState,
   foreground: boolean, freshBacklog: boolean = false): EventDecision {
   const kind = event.event;
   const status = event.data?.status;
-  const duplicate = validEventId(event.id) && state.recentIds.includes(event.id || '');
+  const message = completedMessageKey(event);
+  const duplicate = (validEventId(event.id) && state.recentIds.includes(event.id || '')) ||
+    (message.length > 0 && (state.recentMessages || []).includes(message));
   const approval = kind === 'session_update' && status === 'permission_pending';
   const notifiable = (kind === 'session_update' &&
     (status === 'completed' || status === 'cancelled' || approval)) ||
@@ -156,14 +160,31 @@ export function nativeEventDecision(event: NativeEvent, state: EventState,
   };
 }
 
-export function recordNativeEvent(state: EventState, event: NativeEvent): EventState {
+function completedMessageKey(event: NativeEvent): string {
+  const data = event.data;
+  if (event.event !== 'session_update' || data?.status !== 'completed' ||
+    typeof data.session_id !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(data.session_id) ||
+    !Number.isSafeInteger(data.message_id) || (data.message_id || 0) <= 0) {
+    return '';
+  }
+  return data.session_id + ':' + data.message_id;
+}
+
+export function recordNativeEvent(state: EventState, event: NativeEvent, fromPending: boolean = false): EventState {
   const id = event.id || '';
   const recent = state.recentIds.filter((value: string) => value !== id).slice(-511);
   if (validEventId(id)) {
     recent.push(id);
   }
-  return { cursor: advancesNativeCursor(event) ? newestEventId(state.cursor, id) : state.cursor,
-    recentIds: recent };
+  const message = completedMessageKey(event);
+  const messages = (state.recentMessages || []).filter((value: string) => value !== message).slice(-511);
+  if (message) {
+    messages.push(message);
+  }
+  // A reply's persisted notification and WS-only completion have different IDs.
+  // Only IDs observed in the pending endpoint are valid recovery cursors.
+  return { cursor: fromPending ? newestEventId(state.cursor, id) : state.cursor,
+    recentIds: recent, recentMessages: messages, baselineInitialized: state.baselineInitialized };
 }
 
 export function parseNativeEvent(json: string): NativeEvent | undefined {
