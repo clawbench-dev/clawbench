@@ -1847,7 +1847,10 @@ paths:
       parameters:
         - name: cursor
           in: query
-          description: 游标；上一页最后一行的 `createdAt`，需与 `cursor_id` 同时提供才生效。
+          description: |
+            游标；上一页最后一行的 `updatedAt`，需与 `cursor_id` 同时提供才生效。
+            注意 `updatedAt` 是「最后活动时间」，会话收到新消息时会变——翻页期间列表本身
+            发生变化时，边界行可能被跳过或重复，客户端应按 `id` 去重。
           schema:
             type: string
         - name: cursor_id
@@ -1858,16 +1861,16 @@ paths:
           in: query
           description: |
             游标；上一页最后一行的 `sortOrder`。
-            排序为 `pinned DESC, sort_order ASC, created_at DESC, id DESC`，
+            排序为 `pinned DESC, sort_order ASC, updated_at DESC, id DESC`，
             游标必须同时携带 sort_order 与 pinned，否则同一 (pinned, sort_order) 的行会在每一页重复返回。
-            省略时退回旧的 created_at-only 行为。
+            省略时退回仅按 `updated_at` + `id` 比较的行为（不感知置顶与手动顺序）。
           schema:
             type: integer
         - name: cursor_pinned
           in: query
           description: |
             游标；上一页最后一行的 `pinned`（`1`/`0`）。置顶会话是固定在最前的区块，
-            游标必须携带它才能正确翻页。省略时退回旧的 created_at-only 行为。
+            游标必须携带它才能正确翻页。省略时退回仅按 `updated_at` + `id` 比较的行为。
           schema:
             type: integer
             enum: [0, 1]
