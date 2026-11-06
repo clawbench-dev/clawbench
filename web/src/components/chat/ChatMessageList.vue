@@ -907,6 +907,22 @@ function onDocumentMouseUp() {
   mouseDownActive = false
 }
 
+/**
+ * Release the mouse-drag marker when the release cannot reach us: the button
+ * was let go in another window (Cmd+Tab, a native menu), or the tab/window
+ * lost focus mid-drag. `mouseup` on the document covers the ordinary case, but
+ * a lost release would now do more than mis-sample the follow latch — while
+ * the flag is set every non-force pin is refused (see shouldPin), so a stuck
+ * flag stops the streaming follow entirely until the next click.
+ */
+function releaseMouseDrag() {
+  mouseDownActive = false
+}
+
+function onDocumentVisibilityChange() {
+  if (document.visibilityState === 'hidden') releaseMouseDrag()
+}
+
 function onScrollTouchEnd() {
   userTouching = false
 }
@@ -1027,8 +1043,11 @@ onMounted(() => {
   document.addEventListener('keydown', handleCtrlArrowMsgJump)
   // mouseup on the document, not the container: a scrollbar drag routinely
   // ends outside the list, and a missed release would leave mouseDownActive
-  // set — permanently suppressing force pins.
+  // set — permanently suppressing the streamed pins.
   document.addEventListener('mouseup', onDocumentMouseUp)
+  // …and the release paths mouseup cannot see (another window / hidden tab).
+  window.addEventListener('blur', releaseMouseDrag)
+  document.addEventListener('visibilitychange', onDocumentVisibilityChange)
   observeContentGrowth()
   observeScrollbarLane()
   // The navigation rail renders the conversation index permanently, so it has
@@ -1043,6 +1062,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', onDocumentClick, true)
   document.removeEventListener('keydown', handleCtrlArrowMsgJump)
   document.removeEventListener('mouseup', onDocumentMouseUp)
+  window.removeEventListener('blur', releaseMouseDrag)
+  document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
   scrollbarLaneObserver?.disconnect()
@@ -1060,16 +1081,16 @@ onBeforeUnmount(() => {
 function scrollToBottom(force = false) {
   nextTick(() => {
     if (!messagesRef.value) return
-    // One decision point (shouldPin). It blocks only on a held touch, or on the
-    // "user is away" latch for non-force pins. Wheel/mouse flags deliberately do
-    // NOT block a pin: the latch already reflects those gestures (it is sampled
-    // while they run), so gating on them again would drop the pin — and a
-    // dropped force pin is precisely the "sent a message but the reply is never
-    // followed" bug.
+    // One decision point (shouldPin). It blocks on a held touch, on a live
+    // wheel gesture / scrollbar drag (non-force only), or on the "user is away"
+    // latch. The wheel/mouse gate is what keeps a streamed pin from cancelling
+    // a scroll gesture mid-flight — see shouldPin's docblock. A force pin still
+    // bypasses all of it, because a dropped force pin is precisely the "sent a
+    // message but the reply is never followed" bug.
     if (shouldPin(buildScrollState(), force)) {
       followToBottom(force)
     } else {
-      appLog.d('ChatScroll', `scrollToBottom REJECTED force=${force} userLeftBottom=${userLeftBottom} touching=${userTouching}`)
+      appLog.d('ChatScroll', `scrollToBottom REJECTED force=${force} userLeftBottom=${userLeftBottom} touching=${userTouching} wheel=${wheelActive} mouse=${mouseDownActive}`)
     }
   })
 }

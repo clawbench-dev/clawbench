@@ -126,17 +126,22 @@ export function isUserScrolling(s: ScrollStateInput): boolean {
  * Whether a "pin to bottom" request may execute right now.
  *
  * - A finger on the screen always wins: never move the viewport out from under
- *   a held touch, not even for a force pin. (Wheel and mouse-drag are NOT
- *   gates — a force pin is an explicit user action and the alternative is
- *   deferring it to a signal that may never arrive.)
+ *   a held touch, not even for a force pin.
+ * - A live wheel gesture or scrollbar drag also wins for NON-force pins. Both
+ *   move the viewport over several frames (WebKit animates a wheel notch), and
+ *   a pin written in between cancels the gesture mid-flight — the viewport
+ *   snaps back to the bottom before the gesture has moved far enough to trip
+ *   the "left the bottom" latch, so every notch bounces. Force pins still run:
+ *   they are explicit user actions (send / answer card / session switch) and
+ *   must not be deferred to a signal that may never arrive.
  * - A non-force pin is suppressed while the user is away from the bottom; a
- *   force pin (send message / session switch / answer card) overrides that —
- *   the user took an action and expects to see the bottom.
+ *   force pin overrides that — the user took an action and expects the bottom.
  * - Everything else pins unconditionally: if the user never left, content
  *   growing at any time keeps the view glued to the bottom.
  */
 export function shouldPin(s: ScrollStateInput, force: boolean): boolean {
   if (s.userTouching) return false
+  if (!force && (s.wheelActive || s.mouseDownActive)) return false
   if (s.userLeftBottom && !force) return false
   return true
 }

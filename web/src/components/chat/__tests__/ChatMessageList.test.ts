@@ -343,6 +343,15 @@ describe('ChatMessageList — stream-follow persistence', () => {
     // wheel → decay timer.
     expect(source).toContain('function onDocumentMouseUp()')
     expect(source).toContain("document.addEventListener('mouseup', onDocumentMouseUp)")
+    // A lost release (button let go in another window, or the tab hidden
+    // mid-drag) must also clear it: while mouseDownActive is set every
+    // non-force pin is refused, so a stuck flag stops the streaming follow.
+    expect(source).toContain("window.addEventListener('blur', releaseMouseDrag)")
+    expect(source).toContain("document.addEventListener('visibilitychange', onDocumentVisibilityChange)")
+    expect(source).toMatch(/function onDocumentVisibilityChange\(\) \{\s*if \(document\.visibilityState === 'hidden'\) releaseMouseDrag\(\)/)
+    // …and the extra listeners are torn down with the component.
+    expect(source).toContain("window.removeEventListener('blur', releaseMouseDrag)")
+    expect(source).toContain("document.removeEventListener('visibilitychange', onDocumentVisibilityChange)")
     expect(source).toMatch(/function onWheelScroll\(\) \{\s*wheelActive = true[\s\S]*?wheelDecayTimer = setTimeout/)
     // …and no flag is refreshed by scroll events (handleScroll never assigns them)
     const handleScroll = source.slice(source.indexOf('function handleScroll()'), source.indexOf('// Touch tracking:'))

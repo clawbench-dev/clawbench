@@ -2278,10 +2278,16 @@ watch(
 
 // Async render flush (throttled 300ms + rAF) grows the content height AFTER
 // the initial scroll-to-bottom already ran. If the user has not scrolled away
-// (shouldStayPinned — e.g. just switched into this session), force re-pin so
-// the list stays glued to the bottom. If the user scrolled away, nothing happens.
+// (shouldStayPinned — e.g. just switched into this session), re-pin so the list
+// stays glued to the bottom. If the user scrolled away, nothing happens.
+//
+// NON-force on purpose: this is content growth, not a user action, so it must
+// obey the same rules as the other streamed pins — in particular it must not
+// cancel a wheel gesture that is still in flight (issue #632). `force` here
+// bypassed the wheel/mouse gate and put the viewport back at the bottom
+// mid-notch, so the "locked scroll" survived even after the gate was added.
 function handleRenderFlush() {
-    if (messageListRef.value?.shouldStayPinned?.()) scrollBottom(true)
+    if (messageListRef.value?.shouldStayPinned?.()) scrollBottom(false)
 }
 
 async function handleLoadMore() {
