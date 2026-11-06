@@ -507,7 +507,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 				// This is the CORRECTION path: the notification states what the
 				// agent is actually running, so it overrides the optimistic value
 				// the drawer applied on click (the agent may have refused or
-				// rewritten the pick). Dropping it — the previous behaviour, the
+				// rewritten the pick). Dropping it — the previous behavior, the
 				// switch had no default — left the drawer showing a value the agent
 				// never accepted until the next full reload.
 				//

@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"net/http"
-	"sync"
 	"testing"
 	"time"
 
@@ -19,17 +18,7 @@ import (
 // The forward is asynchronous, so positive assertions poll and the negative one
 // waits on the channel with a timeout.
 type extraConfigRecorder struct {
-	mu   sync.Mutex
-	sent [][2]string
-	ch   chan [2]string
-}
-
-func (r *extraConfigRecorder) all() [][2]string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([][2]string, len(r.sent))
-	copy(out, r.sent)
-	return out
+	ch chan [2]string
 }
 
 // installExtraConfigRecorder wires a fake ACP connection onto the session and
@@ -50,9 +39,6 @@ func installExtraConfigRecorder(t *testing.T, agent *model.Agent, sessionID stri
 
 	rec := &extraConfigRecorder{ch: make(chan [2]string, 4)}
 	conn.SetConfigOptionFnForTest(func(_ context.Context, _, configID, value string) error {
-		rec.mu.Lock()
-		rec.sent = append(rec.sent, [2]string{configID, value})
-		rec.mu.Unlock()
 		select {
 		case rec.ch <- [2]string{configID, value}:
 		default:

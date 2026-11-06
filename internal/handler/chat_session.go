@@ -677,13 +677,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	applyExtraConfigOptions(sessionID, req.ConfigOptions)
 
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
-	if req.ModelID != "" {
-		// A model switch re-states the agent's option list (synchronously, via
-		// the set_config_option response), so the fresh list is available here.
-		if extras := sessionExtraConfigOptions(sessionID); extras != nil {
-			resp["configOptions"] = extras
-		}
-	}
+	attachConfigOptionsAfterModelSwitch(resp, sessionID, req.ModelID)
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}
@@ -934,6 +928,21 @@ func sessionExtraConfigOptions(sessionID string) []ai.ExtraConfigOption {
 		return nil
 	}
 	return conn.GetExtraConfigOptions()
+}
+
+// attachConfigOptionsAfterModelSwitch adds the refreshed generic option list to
+// a PATCH response when the request switched models.
+//
+// Only after a switch: the list is re-stated by the set_config_option response,
+// so it is fresh exactly then. On other requests the key is omitted ("leave the
+// client's copy alone") — a JSON null would instead mean "clear".
+func attachConfigOptionsAfterModelSwitch(resp map[string]any, sessionID, modelID string) {
+	if modelID == "" {
+		return
+	}
+	if extras := sessionExtraConfigOptions(sessionID); extras != nil {
+		resp["configOptions"] = extras
+	}
 }
 
 // applyExtraConfigOptions forwards agent-specific select options (e.g. codex's

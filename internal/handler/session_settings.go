@@ -248,14 +248,7 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		"modelSwitchDeferred": deferred,
 		"effortAccepted":      effortAccepted,
 	}
-	if req.ModelID != "" {
-		// The switch re-stated the agent's option list (see ServeAISessionUpdate).
-		// Only present after a model switch: omitting the key means "unchanged",
-		// which a JSON null would not.
-		if extras := sessionExtraConfigOptions(req.SessionID); extras != nil {
-			resp["configOptions"] = extras
-		}
-	}
+	attachConfigOptionsAfterModelSwitch(resp, req.SessionID, req.ModelID)
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}
