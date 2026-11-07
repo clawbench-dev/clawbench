@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
-	"clawbench/internal/model"
 )
 
 // fakeTransport records the calls the policy makes and replays a canned
@@ -158,20 +157,25 @@ func TestMidTurnInjector_MalformedResponseIsError(t *testing.T) {
 	assert.Equal(t, "error", res.Reason)
 }
 
-// TestMidTurnInjector_AttachmentsDecline verifies messages carrying files fall
-// back to the queue path, which owns the file/directory prompt prefixes.
-func TestMidTurnInjector_AttachmentsDecline(t *testing.T) {
+// TestMidTurnInjector_AttachmentHeaderGoesThroughVerbatim verifies a message
+// that references a file is steered like any other: the attachment is a prompt
+// header, not bytes on the wire, so the policy must not special-case it.
+func TestMidTurnInjector_AttachmentHeaderGoesThroughVerbatim(t *testing.T) {
 	tr := &fakeTransport{
 		sessionID:      "s",
 		promptInFlight: true,
 		response:       steeringResp(t, map[string]any{"outcome": "injected"}),
 	}
+	const content = "[User uploaded 1 file(s): /tmp/a.go]\nsee file"
 	res, err := (&midTurnInjector{}).Inject(context.Background(), tr, ai.MidTurnInjectRequest{
-		Content: "see file",
-		Files:   []model.FileEntry{{Path: "/tmp/a.go"}},
+		Content: content,
 	})
 	require.NoError(t, err)
-	assert.False(t, res.Injected)
-	assert.Equal(t, "unsupported", res.Reason)
-	assert.False(t, tr.callRawUsed)
+	assert.True(t, res.Injected)
+	assert.True(t, tr.callRawUsed)
+
+	params, ok := tr.lastParams.(steerParams)
+	require.True(t, ok, "expected steerParams, got %T", tr.lastParams)
+	require.Len(t, params.Prompt, 1)
+	assert.Equal(t, content, params.Prompt[0].Text)
 }

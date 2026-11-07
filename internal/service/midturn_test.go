@@ -25,12 +25,11 @@ func stubInjector(t *testing.T, res ai.MidTurnInjectResult) *[]ai.MidTurnInjectR
 	t.Cleanup(func() { service.SetInjectMidTurnForTest(orig) })
 
 	var calls []ai.MidTurnInjectRequest
-	service.SetInjectMidTurnForTest(func(_ context.Context, backendID, sessionID, agentID, content string, files []model.FileEntry, clientUserMessageID string) ai.MidTurnInjectResult {
+	service.SetInjectMidTurnForTest(func(_ context.Context, backendID, sessionID, agentID, content, clientUserMessageID string) ai.MidTurnInjectResult {
 		calls = append(calls, ai.MidTurnInjectRequest{
 			SessionID:           sessionID,
 			AgentID:             agentID,
 			Content:             content,
-			Files:               files,
 			ClientUserMessageID: clientUserMessageID,
 		})
 		return res
@@ -111,6 +110,43 @@ func TestInjectQueuedMessage_Success(t *testing.T) {
 	require.Len(t, msgs, 1)
 	assert.Equal(t, msgID, msgs[0].ID)
 	assert.Equal(t, "queued text", msgs[0].Content)
+}
+
+// TestInjectQueuedMessage_AttachmentPrefixReachesTheAgent pins what an injected
+// message looks like to the model when the queued message carried a file.
+//
+// Nothing travels as bytes: a normal turn puts the path in the prompt
+// ("[User uploaded 1 file(s): …]") and the agent opens it with its own read
+// tool. An injected message must carry the SAME header, or the model receives
+// the user's words with no hint that a file exists — which is why this case
+// used to be refused outright.
+func TestInjectQueuedMessage_AttachmentPrefixReachesTheAgent(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "codebuddy", "Insert With Attachment")
+
+	files := []model.FileEntry{{Path: "/tmp/dropdown.png"}}
+	_, err := service.AddQueuedMessage("/project", "codebuddy", sid, "下拉菜单样式错乱了。", files, "q-attach", "")
+	require.NoError(t, err)
+
+	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-a"})
+
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-attach")
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	require.Len(t, *calls, 1)
+	assert.Contains(t, (*calls)[0].Content, "[User uploaded 1 file(s): /tmp/dropdown.png]",
+		"the agent must be told a file was attached")
+	assert.Contains(t, (*calls)[0].Content, "下拉菜单样式错乱了。")
+
+	// The stored row keeps the user's own words: the header is prompt
+	// scaffolding, and rendering it in the bubble would be noise.
+	msgs, _, err := service.GetChatHistoryPaged("/project", "codebuddy", sid, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, msgID, msgs[0].ID)
+	assert.Equal(t, "下拉菜单样式错乱了。", msgs[0].Content)
 }
 
 // TestInjectQueuedMessage_MergeOnlyMarksInjected pins the flag that drives the
@@ -246,7 +282,7 @@ func TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced(t *testing.T) {
 	// claimed message is a plain user row with no queue anchor column.
 	orig := service.SetInjectMidTurnForTest(nil)
 	t.Cleanup(func() { service.SetInjectMidTurnForTest(orig) })
-	service.SetInjectMidTurnForTest(func(_ context.Context, backendID, sessionID, agentID, content string, files []model.FileEntry, clientUserMessageID string) ai.MidTurnInjectResult {
+	service.SetInjectMidTurnForTest(func(_ context.Context, backendID, sessionID, agentID, content, clientUserMessageID string) ai.MidTurnInjectResult {
 		// Simulate the row vanishing (e.g. a concurrent rewind) after the claim.
 		_, delErr := store.WriteExec("DELETE FROM chat_history WHERE session_id = ? AND role = 'user' AND content = ?", sessionID, content)
 		require.NoError(t, delErr)

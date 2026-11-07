@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
-	"clawbench/internal/model"
 )
 
 // fakeTransport records the calls a policy makes and replays a canned response.
@@ -156,19 +155,25 @@ func TestMidTurnInjector_NoSessionMeansIdle(t *testing.T) {
 	assert.False(t, tr.callRawUsed, "must not call session/steer without an ACP session id")
 }
 
-// TestMidTurnInjector_AttachmentsDecline verifies messages carrying files fall
-// back to the queue path, which owns the file/directory prompt prefixes.
-func TestMidTurnInjector_AttachmentsDecline(t *testing.T) {
+// TestMidTurnInjector_AttachmentHeaderGoesThroughVerbatim verifies a message
+// that references a file is steered like any other. The attachment never
+// travels as bytes — it is a prompt header ("[User uploaded 1 file(s): …]") the
+// agent resolves with its own read tool — so the policy must not special-case
+// it, and the header must reach the agent exactly as core flow built it.
+func TestMidTurnInjector_AttachmentHeaderGoesThroughVerbatim(t *testing.T) {
 	tr := &fakeTransport{
 		sessionID: "s",
 		response:  mustSteerResponse(t, map[string]any{"steered": true}),
 	}
+	const content = "[User uploaded 1 file(s): /tmp/a.go]\nsee file"
 	res, err := (&midTurnInjector{}).Inject(context.Background(), tr, ai.MidTurnInjectRequest{
-		Content: "see file",
-		Files:   []model.FileEntry{{Path: "/tmp/a.go"}},
+		Content: content,
 	})
 	require.NoError(t, err)
-	assert.False(t, res.Injected)
-	assert.Equal(t, "unsupported", res.Reason)
-	assert.False(t, tr.callRawUsed, "must not steer a message with attachments")
+	assert.True(t, res.Injected)
+
+	params, ok := tr.lastParams.(steerParams)
+	require.True(t, ok, "expected steerParams, got %T", tr.lastParams)
+	require.Len(t, params.ContentBlocks, 1)
+	assert.Equal(t, content, params.ContentBlocks[0].Text)
 }

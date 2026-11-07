@@ -61,23 +61,21 @@ type midTurnInjector struct{}
 // It declines (Injected=false, no error) whenever injection is not clearly
 // safe, so the caller falls back to its normal queueing path:
 //
-//   - attachments: the queue path already builds the file/directory prompt
-//     prefixes; duplicating that here would drift. Declined.
 //   - no ACP session yet: nothing is running.
 //   - no prompt in flight: Codex would START A NEW TURN ("startedNewTurn") that
 //     ClawBench does not track. This is the critical guard — Codex has no
 //     idleBehavior option to ask for a clean decline.
 //   - outcome != "injected": startedNewTurn (a race settled the turn between the
 //     check and the call) or failed.
+//
+// Attachments need no special case: req.Content already carries the
+// "[User uploaded …]" / quote headers core flow built for it, exactly as a
+// normal turn would.
 func (m *midTurnInjector) Inject(
 	ctx context.Context,
 	transport ai.RawRPCTransport,
 	req ai.MidTurnInjectRequest,
 ) (ai.MidTurnInjectResult, error) {
-	if len(req.Files) > 0 {
-		return ai.MidTurnInjectResult{Reason: "unsupported"}, nil
-	}
-
 	sessionID := transport.AcpSessionID()
 	if sessionID == "" {
 		return ai.MidTurnInjectResult{Reason: "idle"}, nil
