@@ -218,9 +218,13 @@ function measure(): void {
   const availableWidth = Math.max(0, innerWidth - fixedWidth)
 
   // ── 1. Which buttons stay inline (icon widths) ──
-  root.classList.remove('ab-measuring')
+  // Both classes must be off: if the labels are currently showing, their widths
+  // would be measured as "icon width" and the row would fold far too early.
+  const hadLabels = root.classList.contains('ab--labels')
+  root.classList.remove('ab-measuring', 'ab--labels')
   kids.forEach(k => { k.style.display = '' })
   const widths = kids.map(k => k.getBoundingClientRect().width)
+  if (hadLabels) root.classList.add('ab--labels')
 
   let visibleCount = kids.length
   let hidden: HTMLElement[] = []
@@ -260,7 +264,12 @@ function measure(): void {
   const spare = availableForTrack - needed
   // Asymmetric on purpose: a bar dragged across the boundary would otherwise
   // flip at every pixel (on → 2px narrower → off → on).
-  showLabels.value = showLabels.value ? spare >= -2 : spare >= TURN_ON_SLACK_PX
+  const roomForLabels = showLabels.value ? spare >= -2 : spare >= TURN_ON_SLACK_PX
+  // Degradation order is labels → icons → more menu: labels are the FIRST thing
+  // sacrificed. A row that already had to fold buttons away is by definition
+  // short of room, so showing labels on the few survivors would read as "there
+  // is space to spare" while most of the toolbar is hidden in the menu.
+  showLabels.value = hidden.length > 0 ? false : roomForLabels
 
   pinned.forEach(({ el, prev }) => { el.style.flex = prev })
 

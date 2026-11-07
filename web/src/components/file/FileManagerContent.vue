@@ -32,7 +32,7 @@
             <Trash2 :size="16" />
           </button>
         </div>
-        <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu" align="end">
+        <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu">
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />

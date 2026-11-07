@@ -147,6 +147,16 @@ describe('ActionBar — folding (menu mode)', () => {
     expect(hidden.length).toBeGreaterThan(0)
   })
 
+  it('never shows labels once buttons had to be folded away', async () => {
+    // Degradation order is labels → icons → more menu. A row that already hid
+    // buttons is short of room by definition, so labelling the survivors would
+    // claim space that is actually occupied by the hidden ones.
+    const { bar, measure } = mountBar({ count: 5, sizes: { icon: 300, labelled: 400, available: 200 } })
+    measure()
+    await nextTick()
+    expect(bar.classList.contains('ab--labels')).toBe(false)
+  })
+
   it('keeps every button inline when nothing overflows', async () => {
     const { bar, wrapper, measure } = mountBar({ count: 3, sizes: { icon: 90, labelled: 200, available: 500 } })
     measure()
