@@ -231,6 +231,7 @@
             <span class="pcard-name">{{ group.displayName }}</span>
             <span class="pcard-count">{{ group.sessions.length }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
+            <ChevronDown :size="14" class="pcard-chev" />
           </button>
           <div
             v-for="session in group.sessions"
@@ -299,12 +300,10 @@
         :aria-label="`${t('session.collapseProject')} · ${browsingName}`"
         @click="closeProjectBrowse"
       >
-        <div class="browse-head-row">
-          <span class="browse-title">{{ browsingName }}</span>
-          <span class="browse-count">{{ browsingSessions.length }}</span>
-          <span class="browse-path" :title="browsingProject">{{ browsingPath }}</span>
-        </div>
-        <div class="browse-note">{{ t('session.browseNote') }}</div>
+        <span class="browse-title">{{ browsingName }}</span>
+        <span class="browse-count">{{ browsingSessions.length }}</span>
+        <span class="browse-path" :title="browsingProject">{{ browsingPath }}</span>
+        <ChevronUp :size="14" class="browse-chev" />
       </button>
       <div class="browse-body">
         <PanelSkeleton v-if="browsingLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
@@ -412,7 +411,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronUp, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -2225,6 +2224,17 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/* The card expands downward, so the hint points down; the expanded header
+   collapses back up, so it points up. The direction is the state. */
+.pcard-chev {
+  flex: 0 0 auto;
+  color: var(--text-muted, #656d76);
+}
+
+.pcard-head:hover .pcard-chev {
+  color: var(--pc, var(--accent-color, #0066cc));
+}
+
 .pcard-path {
   flex: 1;
   min-width: 0;
@@ -2324,7 +2334,11 @@ onUnmounted(() => {
 
 .browse-head {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
+  min-width: 0;
   padding: var(--space-3) var(--space-4);
   background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
   border: 0;
@@ -2339,13 +2353,6 @@ onUnmounted(() => {
   .browse-head:hover {
     background: color-mix(in srgb, var(--pc, var(--text-primary)) 22%, var(--bg-primary, #fff));
   }
-}
-
-.browse-head-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
 }
 
 .browse-title {
@@ -2373,6 +2380,15 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.browse-chev {
+  flex: 0 0 auto;
+  color: var(--text-muted, #656d76);
+}
+
+.browse-head:hover .browse-chev {
+  color: var(--pc, var(--accent-color, #0066cc));
+}
+
 .browse-path {
   flex: 1;
   min-width: 0;
@@ -2380,12 +2396,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  color: var(--text-hint, #8c959f);
-  font-size: var(--font-size-2xs);
-}
-
-.browse-note {
-  margin-top: var(--space-2);
   color: var(--text-hint, #8c959f);
   font-size: var(--font-size-2xs);
 }
