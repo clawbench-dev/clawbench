@@ -1614,22 +1614,6 @@ describe('SessionList', () => {
       expect(wrapper.find('.browse-row .pcard-row-title').text()).toBe('Old one')
     })
 
-    it('tells the host when the browse view opens and closes', async () => {
-      // The drawer host is auto-height and has to grow for the longer list.
-      routeListAndBrowse(browseSessions)
-      mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList()
-      await flushPromises()
-
-      await wrapper.find('.pcard-head').trigger('click')
-      await flushPromises()
-      expect(wrapper.emitted('browsing-change')!.at(-1)).toEqual([true])
-
-      await wrapper.find('.browse-head').trigger('click')
-      await flushPromises()
-      expect(wrapper.emitted('browsing-change')!.at(-1)).toEqual([false])
-    })
-
     it('returns to the cards when the expanded header is clicked', async () => {
       routeListAndBrowse(browseSessions)
       mockCrossState.groups.value = [crossGroup()]

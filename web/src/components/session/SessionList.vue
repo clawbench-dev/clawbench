@@ -13,7 +13,7 @@
     <!-- One scroll area. The other projects' cards are NOT a separate region:
          they sit after the project's own rows and scroll with them, so there is
          no height budget to negotiate and nothing can be squeezed. -->
-    <div class="session-list-body">
+    <div class="session-list-body" :style="browseHeightStyle">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
     <div ref="listRef" class="session-list-pane" :inert="!!browsingProject" :aria-hidden="browsingProject ? 'true' : undefined">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
@@ -446,9 +446,15 @@ const props = defineProps({
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
+  /**
+   * True when the host sizes itself to content (the mobile drawer). Only then
+   * does the browse view need to feed its height back to the host: the pinned
+   * sidebar has a fixed height and must keep filling it.
+   */
+  autoHeight: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy', 'browsing-change'])
+const emit = defineEmits(['select', 'archive', 'destroy'])
 
 /**
  * How far the pointer may travel before Sortable turns a press on the ⋮ button
@@ -787,15 +793,52 @@ function findSession(sessionId) {
 const browsePaneRef = ref(null)
 const browsingProject = ref('')
 
-// The drawer host is auto-height: a browse view with more rows than the sheet
-// currently shows would simply be clipped, so the host is told to grow. The
-// pinned sidebar has a fixed height and ignores this.
-watch(browsingProject, (value) => { emit('browsing-change', !!value) })
+/**
+ * Height the browse content needs, in CSS px.
+ *
+ * The pane overlays the list (so the growth animation can be drawn over the
+ * rows it covers), which means it contributes nothing to the host's height. An
+ * auto-height drawer would therefore clip it. Measuring the pane's own content
+ * and feeding that back as the list area's `min-height` makes the drawer grow
+ * to exactly what is shown — no more, no less. The pinned sidebar has a fixed
+ * height, where this is a no-op.
+ */
+const browseContentHeight = ref(0)
+const browseHeightStyle = computed(() =>
+  props.autoHeight && browsingProject.value && browseContentHeight.value > 0
+    // `flex: none` matters: the body is a flex item with `flex: 1`, which would
+    // ignore the height and keep the old content-driven size.
+    ? { height: `${browseContentHeight.value}px`, flex: 'none' }
+    : undefined,
+)
+
+function measureBrowseContent() {
+  const pane = browsePaneRef.value
+  if (!pane) { browseContentHeight.value = 0; return }
+  const head = pane.querySelector('.browse-head')
+  const body = pane.querySelector('.browse-body')
+  if (!head || !body) return
+  // Measured from the LAST row, not from `body.scrollHeight`: the body is
+  // stretched to the pane, so its scrollHeight would report the current
+  // (possibly already grown) height and the sheet would keep growing on every
+  // pass. A row's offsetTop is content position, independent of that.
+  const rows = body.querySelectorAll('.pcard-row')
+  const last = rows[rows.length - 1]
+  const contentHeight = last ? last.offsetTop + last.offsetHeight : 0
+  browseContentHeight.value = head.offsetHeight + contentHeight
+}
+
 const browsingName = ref('')
 const browsingPath = ref('')
 const browsingSessions = ref([])
 const browsingLoading = ref(false)
 const browsingError = ref('')
+
+// Declared after the refs it reads: watch sources are evaluated immediately.
+watch(
+  [browsingProject, () => browsingSessions.value.length],
+  () => { void nextTick(measureBrowseContent) },
+)
 // Stale-response guard: the user can close the view (or open another project)
 // while a request is still in flight.
 let browseGeneration = 0
@@ -2406,6 +2449,7 @@ onUnmounted(() => {
 }
 
 .browse-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;

@@ -17,7 +17,6 @@
       :open="open"
       auto
       panel-class="session-drawer-sheet"
-      :maximized="browsing"
       :title="t('session.title')"
       @close="$emit('close')"
     >
@@ -53,10 +52,10 @@
         :current-session-id="currentSessionId"
         :running-session-ids="runningSessionIds"
         :is-active="open"
+        auto-height
         @select="handleSelect"
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"
-        @browsing-change="browsing = $event"
       />
     </BottomSheet>
 
@@ -121,10 +120,6 @@ const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
 const listRef = ref(null)
 const sharedSessionsRef = ref(null)
-// True while the list is showing a project's read-only session list. The sheet
-// then fills the screen: an auto-height sheet sized to the project list would
-// clip that view, and the user asked for the drawer to be pushed bigger.
-const browsing = ref(false)
 const { loadAgents } = useAgents()
 const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 
