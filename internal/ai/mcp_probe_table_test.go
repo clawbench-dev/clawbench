@@ -44,7 +44,7 @@ var mcpProbeBackends = []mcpProbeBackend{
 	{ID: "deepseek", Args: []string{"codewhale", "serve", "--acp"}, CLI: "codewhale"},
 	{ID: "copilot", Args: []string{"copilot", "--acp"}, CLI: "copilot"},
 	{ID: "pi", Args: []string{"npx", "-y", "pi-acp@latest"}, CLI: "pi"},
-	{ID: "antigravity", Args: []string{"npx", "-y", "agy-acp@latest"}, CLI: "agy"},
+	{ID: "antigravity", Args: []string{"agy", "acp"}, CLI: "agy"},
 	{ID: "zcode", Args: []string{"npx", "-y", "zcode-acp-server"}},
 	// openclaw is already MEASURED as unsupported (2026-10-24): the bridge
 	// refuses per-session mcpServers outright, so session/new fails rather than

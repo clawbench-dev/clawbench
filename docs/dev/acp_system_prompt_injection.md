@@ -21,11 +21,11 @@
 | **codex**（codex-acp） | 官方适配器 | ❌（`_meta` 只读 additionalDirectories） | ❌ | 只能文本注入 |
 | **copilot** | Node CLI 自带 ACP | ❌（只读 `cwd`/`mcpServers`） | ❌（仅 `--no-custom-instructions` 关闭） | 只能文本注入 |
 | **kimi** | Python CLI 自带 ACP | ❌（`**kwargs` 吸收后从不读） | ❌ | 只能文本注入 |
-| **agy**（antigravity） | 适配器 | ❌（源码显式声明 zero prompt injection） | ❌ | 只能文本注入 |
+| **agy**（antigravity） | 官方 CLI（`agy acp`） | ⚠️ 服务端声明 `_meta.antigravity.systemPrompt.append`（initialize 能力；本仓未接入，`session/new` 行为未验证） | ❌ | 服务端支持，本仓未接入 |
 | **pi**（pi-acp） | 适配器 | ❌ | ❌ | 只能文本注入 |
 | **zcode** | npx 桥接 → Electron 引擎 | ❌（ACP 层无 `systemPrompt`） | ❌ | 只能文本注入 |
 
-**一句话**：**只有 claude 与 grok 两个后端提供了 ACP 协议层的系统提示词注入**；codebuddy 与 qodercli 可用进程级 CLI flag 达到同样效果；其余 8 个只能继续用文本前缀。
+**一句话**：claude 与 grok 提供可用的 ACP 协议层系统提示词注入；agy 服务端在 `initialize` 中声明了 `systemPrompt.append` 能力，但 **ClawBench 的 ACP 层尚未消费该字段**，属于「服务端支持、本仓未接入」；codebuddy 与 qodercli 可用进程级 CLI flag 达到同样效果；其余后端仍只能用文本前缀。
 
 ---
 
@@ -144,7 +144,7 @@ ACP 层 `newSession({cwd, mcpServers, additionalDirectories})` **不解构 `_met
 
 ---
 
-## 3. 其余 8 个后端的证据
+## 3. 其余后端的证据（agy 有服务端能力声明，但本仓未接入）
 
 | 后端 | 证据 |
 |------|------|
@@ -153,7 +153,7 @@ ACP 层 `newSession({cwd, mcpServers, additionalDirectories})` **不解构 `_met
 | **codex**（`@agentclientprotocol/codex-acp`） | `newSession(request)` 只用 `request.cwd` / `request.additionalDirectories` / `request.mcpServers`；`_meta` 仅经 `readAdditionalDirectories` 读取。`extMethod` 分支只有 auth/steer/goal/asyncTask，无提示词。 |
 | **copilot**（`@github/copilot`） | ACP `newSession(e)` 只用 `e.cwd` + `e.mcpServers`（`app.js:10673842`）。13 处 `systemPrompt` 全是内部遥测/上下文统计/MCP sampling，无会话注入。仅 `--no-custom-instructions`（关闭）。 |
 | **kimi**（`kimi acp`，Python） | `server.py:151` `async def new_session(self, cwd, mcp_servers=None, **kwargs)` —— `**kwargs` 只吸收 ACP 框架传来的 `_meta`，函数体从不读它；全文件仅 `field_meta`（auth 相关）出现。 |
-| **agy**（`agy-acp`，antigravity） | 源码注释三处显式声明 "Zero prompt injection: only client `params.prompt` content is encoded and forwarded to agy. No adapter-authored labels, instructions, or follow-ups." `instructions` 仅出现在该注释中。 |
+| **agy**（`agy acp`，antigravity） | 官方内置 `agy acp` stdio 服务。有界 `initialize` 握手（服务端自报 `Antigravity ACP Server 1.5.3`）返回 `agentCapabilities._meta.antigravity.systemPrompt = { "append": true }`。本仓尚未消费该字段，`session/new` 是否据此注入未验证；历史第三方 `agy-acp` 适配器曾显式声明 zero prompt injection。 |
 | **pi**（`pi-acp`） | `_meta` 读取点只有 `_meta?.["terminal..."]`；`instructions` 仅出现在 `/compact` 的 UI 文案。 |
 | **zcode**（`npx -y zcode-acp-server` → `/opt/ZCode/resources/glm/zcode.cjs`） | ACP 桥接层无 `session/new` 字符串；引擎 `zcode.cjs` 的 23 处 `systemPrompt` 全是内部子 agent / workflow / token 统计，无外部注入通道。 |
 
@@ -166,7 +166,7 @@ ACP 层 `newSession({cwd, mcpServers, additionalDirectories})` **不解构 `_met
 1. **能力枚举**：给 `model.BackendSpec` 增加字段（例如 `SystemPromptMode`：`meta` / `argv` / `text`），或复用现有 per-backend 注册表。
 2. **`meta` 类（claude / grok）**：在 `acp_conn_lifecycle.go:223` 的 `acp.NewSessionRequest` 里填 `Meta`（SDK 的 `NewSessionRequest` 已有 `Meta map[string]any` 字段，`types_gen.go:3242`）。claude 用 `{"systemPrompt":{"append":...}}`，grok 用 `{"rules":...}`——**两者 key 不同，需 per-backend 适配**。
 3. **`argv` 类（codebuddy / qodercli）**：在 `spawnLocked` 里按 backend 追加 flag（已有 `--mcp-config` 先例）。**注意共享的 `__list_sessions__` 连接**。
-4. **`text` 类（其余 8 个）**：保持现状（`[System Instructions:]` 前缀）。
+4. **`text` 类（其余后端，含尚未接入 `_meta` 的 agy）**：保持现状（`[System Instructions:]` 前缀）。
 
 **收益**：
 - claude / grok：系统提示词真正进入 system role，不占 user 轮次，不受用户消息覆盖
@@ -206,7 +206,6 @@ qodercli --help | grep -iE 'system-prompt'
 # opencode / mimo / codex / copilot / kimi / agy / pi / zcode
 strings -n 4 <binary> | grep -E 'newSession"\)\(function'
 grep -n '_meta' ~/.local/share/uv/tools/kimi-cli/lib/python3.13/site-packages/kimi_cli/acp/server.py
-grep -rn 'Zero prompt injection' ~/.npm/_npx/*/node_modules/agy-acp/dist/
 ```
 
 ## 附录 B：与既有文档的关系
