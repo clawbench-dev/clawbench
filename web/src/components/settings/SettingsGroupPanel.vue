@@ -49,6 +49,8 @@
       </div>
     </div>
 
+    <NativeNotificationStatus v-if="config.panelId === 'push'" />
+
     <!-- WeChat QR login. Rendered only while push_mode is wechat, directly
          below the mode selector, because the scan IS the configuration for that
          channel — there are no credentials to type. All of its state (session
@@ -57,7 +59,7 @@
          server, which must not receive any of it. -->
     <WeChatLoginPanel v-if="isWeChatPushMode" />
 
-    <!-- Tunnel transport picker, shared by both native hosts. A dedicated row
+    <!-- Tunnel transport picker, shared by supported native hosts. A dedicated row
          rather than a commonFields entry: the truth source is the host's own
          store (Electron store / Android SharedPreferences), so it must not flow
          through usePanelSnapshot's save routing (which would write localStorage
@@ -260,6 +262,7 @@ import '@/assets/modal-footer-btn.css'
 import { SORTED_THEME_IDS, buildTerminalThemePreviews, formatThemeName, loadThemesModule } from '@/utils/terminalThemes'
 import type { TerminalPreview } from './SettingsItem.vue'
 import WeChatLoginPanel from './WeChatLoginPanel.vue'
+import NativeNotificationStatus from './NativeNotificationStatus.vue'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'SettingsPanel'
@@ -636,7 +639,7 @@ function handleEditToggle(key: string, open: boolean) {
   }
 }
 
-// ── Tunnel transport preference (both native hosts) ──
+// ── Tunnel transport preference (supported native hosts) ──
 //
 // The transport choice is a DRAFT, saved by the panel's own Save button rather
 // than written the moment the control moves. Two reasons:
@@ -652,15 +655,16 @@ function handleEditToggle(key: string, open: boolean) {
 // The draft feeds `sshOnlyFieldsHidden` too, so the SSH-only rows appear and
 // disappear as the user edits — before anything is committed.
 //
-// Both native hosts render the SAME two-option picker. They differ only in the
+// Supported native hosts render the same two-option picker. They differ in the
 // bridge vocabulary — Electron stores 'ssh' | 'h2' through
-// get/setTunnelTransport, Android stores a boolean through
+// get/setTunnelTransport; Android and HarmonyOS store a boolean through
 // get/setTunnelTransportH2Enabled — which the adapters below hide.
 
-// Host axis: which shell is running (see usePlatformDetect). Both native hosts
-// get the picker, the browser neither — but the browser still gets the
-// readiness row (see tunnelStatusVisible).
-const { isElectron: isDesktopShell, isAndroidApp, isWebApp } = usePlatformDetect()
+// HarmonyOS advertises tunnel support separately from its host identity.
+// Older hosts must not expose a control that cannot persist its choice.
+const { isElectron: isDesktopShell, isAndroidApp, isHarmonyApp, isWebApp } = usePlatformDetect()
+const isMobileTunnelHost = computed(() => isAndroidApp.value ||
+  (isHarmonyApp?.value === true && getNative()?.getCapabilities?.()?.tunnel === true))
 
 /** 'ssh' | 'h2', or null while the initial value is still loading. */
 const transportPref = ref<'ssh' | 'h2' | null>(null)
@@ -677,16 +681,18 @@ const transportUnsupported = ref(false)
 
 /**
  * Read the host's persisted transport preference, or null when this host cannot
- * report one. The two shells store the same two-wire choice in different
+ * report one. The shells store the same two-wire choice in different
  * shapes; this is the only place that knows the difference.
  */
 async function readTransportPref(): Promise<'ssh' | 'h2' | null> {
   const native = getNative()
-  if (isAndroidApp.value) {
+  if (isMobileTunnelHost.value) {
     // The getter's presence is the "new enough host" signal (the 2026 bug was a
     // host that shipped the setter without it), so it gates the read too.
     if (!native?.getTunnelTransportH2Enabled) return null
-    const on = !!(await native.getTunnelTransportH2Enabled())
+    if (isHarmonyApp?.value && typeof native.setTunnelTransportH2Enabled !== 'function') return null
+    const on = await native.getTunnelTransportH2Enabled()
+    if (isHarmonyApp?.value && typeof on !== 'boolean') return null
     return on ? 'h2' : 'ssh'
   }
   if (isDesktopShell.value) {
@@ -703,7 +709,7 @@ async function readTransportPref(): Promise<'ssh' | 'h2' | null> {
 /** Persist a preference to the host. Returns false when it was not accepted. */
 async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
   const native = getNative()
-  if (isAndroidApp.value) {
+  if (isMobileTunnelHost.value) {
     const setter = native?.setTunnelTransportH2Enabled
     if (typeof setter !== 'function') return false
     await setter.call(native, value === 'h2')
@@ -713,9 +719,12 @@ async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
     // the old value, and the user could not re-trigger the save. Read back
     // through the same getter the initial value uses (SharedPreferences.apply
     // updates the in-memory value synchronously, so this reflects the write).
+    // HarmonyOS has an async setter; awaiting it before the same readback
+    // prevents reporting success before its native preference was persisted.
     const getter = native?.getTunnelTransportH2Enabled
     if (typeof getter !== 'function') return false
-    return !!(await getter.call(native)) === (value === 'h2')
+    const stored = await getter.call(native)
+    return typeof stored === 'boolean' && stored === (value === 'h2')
   }
   if (isDesktopShell.value) {
     const setter = native?.setTunnelTransport
@@ -727,7 +736,7 @@ async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
 }
 
 const transportPickerVisible = computed(() =>
-  (isAndroidApp.value || isDesktopShell.value)
+  (isMobileTunnelHost.value || isDesktopShell.value)
   && props.config.panelId === 'portForward'
   && transportLoaded.value
   && !transportUnsupported.value
@@ -738,7 +747,7 @@ const transportPickerVisible = computed(() =>
 const isWeChatPushMode = computed(() => localValues.push_mode === 'wechat')
 
 onMounted(async () => {
-  if ((!isAndroidApp.value && !isDesktopShell.value) || props.config.panelId !== 'portForward') return
+  if ((!isMobileTunnelHost.value && !isDesktopShell.value) || props.config.panelId !== 'portForward') return
   try {
     const stored = await readTransportPref()
     // Legacy host: no readable preference exists, so there is nothing truthful

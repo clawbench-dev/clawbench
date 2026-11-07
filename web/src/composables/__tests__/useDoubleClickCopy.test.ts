@@ -7,6 +7,9 @@ vi.mock('@/utils/clipboard', () => ({
   copyText: vi.fn((_text: string, onDone?: () => void) => { onDone?.() }),
 }))
 
+// Animation ownership is covered by domFlash tests; jsdom cannot finish CSS animations.
+vi.mock('@/utils/domFlash', () => ({ flashElement: vi.fn() }))
+
 // Mock doubleClickUtils
 vi.mock('@/utils/doubleClickUtils', () => ({
   isExternalLink: (href: string) => href.startsWith('http://') || href.startsWith('https://'),
@@ -24,8 +27,11 @@ vi.mock('@/composables/useLocale', () => ({
 // works (it is a touch-only gesture). The hooks flip it for desktop cases.
 const mockIsTouchPrimary = { value: true }
 const mockIsAndroidApp = { value: false }
+const mockIsHarmonyApp = { value: false }
 vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({ isTouchPrimary: mockIsTouchPrimary, isAndroidApp: mockIsAndroidApp }),
+  usePlatformDetect: () => ({
+    isTouchPrimary: mockIsTouchPrimary, isAndroidApp: mockIsAndroidApp, isHarmonyApp: mockIsHarmonyApp,
+  }),
   _setPlatformForTest: (v: { isTouchPrimary?: boolean; isAndroidApp?: boolean }) => {
     if (v.isTouchPrimary !== undefined) mockIsTouchPrimary.value = v.isTouchPrimary
     if (v.isAndroidApp !== undefined) mockIsAndroidApp.value = v.isAndroidApp
@@ -423,6 +429,27 @@ describe('useDoubleClickCopy', () => {
       handleDblClick(e1)
       handleDblClick(e2)
     }
+
+    it('uses the HarmonyOS bridge without setting the Android host flag', () => {
+      vi.useRealTimers()
+      mockIsHarmonyApp.value = true
+      const showSelectionMenu = vi.fn()
+      ;(window as any).ClawBenchHarmony = { showSelectionMenu }
+      const p = document.createElement('p')
+      p.textContent = 'Harmony selection'
+      document.body.appendChild(p)
+      try {
+        vi.mocked(copyText).mockClear()
+        doubleTap(p)
+        expect(showSelectionMenu).toHaveBeenCalledOnce()
+        expect(showSelectionMenu.mock.calls[0][0]).toBe('Harmony selection')
+        expect(copyText).not.toHaveBeenCalled()
+      } finally {
+        p.remove()
+        delete (window as any).ClawBenchHarmony
+        mockIsHarmonyApp.value = false
+      }
+    })
 
     it('asks the native side to show the menu instead of copying', () => {
       vi.useRealTimers()

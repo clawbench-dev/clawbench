@@ -78,8 +78,9 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
 export function portForwardUnavailable(
   sshEnabled: boolean | null | undefined,
   transportAllowsH2: boolean,
+  hostTunnelSupported: boolean = true,
 ): boolean {
-  return sshEnabled === false && !transportAllowsH2
+  return !hostTunnelSupported || (sshEnabled === false && !transportAllowsH2)
 }
 
 /**

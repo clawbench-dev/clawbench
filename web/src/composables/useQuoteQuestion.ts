@@ -7,6 +7,7 @@ import type { QuoteData } from '@/composables/useChatContext.ts'
 import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
 import type { PendingQuote } from '@/composables/useConversationTarget.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { getNative } from '@/utils/clawbenchNative'
 import { openInertPathPicker } from '@/composables/useInertPathPicker.ts'
 import { unionRectOfRects } from '@/utils/selectionAnchor.ts'
 import { appLog } from '@/utils/appLog'
@@ -115,7 +116,7 @@ const lastSelectionQuote = ref<QuoteData | null>(null)
 const expandRequest = ref(0)
 
 /**
- * Whether this is the Android app shell.
+ * Whether this host supplies its own selection menu.
  *
  * Read LAZILY, not at module scope: usePlatformDetect() latches its axes on
  * first call and derives them from useAppMode(), which App.vue initializes
@@ -127,8 +128,10 @@ const expandRequest = ref(0)
  * for DOM selections (see evaluateSelection) and the native menu drives the
  * actions instead.
  */
-function androidShell(): boolean {
-  return usePlatformDetect().isAndroidApp.value
+function nativeSelectionHost(): boolean {
+  const platform = usePlatformDetect()
+  return platform.isAndroidApp.value ||
+    (platform.isHarmonyApp.value && getNative()?.getCapabilities?.().selectionMenu === true)
 }
 
 /**
@@ -319,7 +322,7 @@ function evaluateSelection() {
   // Only THIS path is suppressed. Terminal / CodeMirror / OpenAPI-iframe
   // selections reach the bar through showBar() and have no native menu, so they
   // must keep it.
-  if (androidShell()) {
+  if (nativeSelectionHost()) {
     barVisible.value = false
     return
   }
@@ -646,7 +649,7 @@ export function resetQuotePin() {
 
 /** True when the host draws its own selection menu (Android shell). */
 export function isNativeSelectionShell(): boolean {
-  return androidShell()
+  return nativeSelectionHost()
 }
 
 /** The `showBar` shape the iframe bridge helper needs (structural — no import cycle). */

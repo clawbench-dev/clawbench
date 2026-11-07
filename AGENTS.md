@@ -21,6 +21,7 @@ go build -o clawbench ./cmd/server                    # 仅 Go 二进制
 # 测试与检查
 go test ./...                                         # 单包：go test ./internal/ai/...
 npm test                                              # Vitest 前端测试
+npm --prefix harmony test                             # 鸿蒙宿主契约测试（node:test，独立于根 vitest）
 ./scripts/pre-push-checks.sh [--skip-coverage|--skip-android]   # 推送前全量检查
 
 # E2E（Playwright，见下方「E2E 测试」规则）
@@ -166,9 +167,21 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 
 **桌面壳不是"手机 App 模式"**：两者都经原生桥被识别为原生环境，但省电策略相反——Android 退到后台会被系统挂起，故隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在跑，断开 WS 等于自断通知来源（通知全部由 WS 事件产生）。前端用 `isDesktopApp`（preload 注入 → `useAppMode` → 消费点三层打通）区分，门控写成 `isAppMode && !isDesktopApp`。任何一层漏掉都会让最小化后的推送静默失效。端口映射同理要按"期望状态"而非快照管理：重连后必须重建全部 listener，`ensureTunnel` 需单飞守卫（并发调用会互相拆台）。
 
-**平台判定拆为三条正交轴，不再有 `isPC`**（`web/src/composables/usePlatformDetect.ts` + `useWideScreenLayout.ts`）：旧的 `isPC` 把三个无关问题 OR 在一起（宿主 OR 输入 OR 视口），每个边界都判错。现在消费方各取所需——**HOST**（`isElectron` / `isAndroidApp` / `isWebApp` / `isNativeApp`，来自原生桥）、**INPUT**（`isTouchPrimary`，`(pointer: coarse)` 加 UA 兜底）、**VIEWPORT**（`isWideScreen`，独立模块）。Electron 是有物理键盘鼠标的桌面窗口，宿主轴直接判为 `isElectron`，不再靠"参与 `isPC`"来避免被误判成移动端。`web/src/__tests__/platformAxes.test.ts` 钉住 `isPC` 不得回归、共享谓词不得重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开。
+**平台判定拆为三条正交轴，不再有 `isPC`**（`web/src/composables/usePlatformDetect.ts` + `useWideScreenLayout.ts`）：旧的 `isPC` 把三个无关问题 OR 在一起（宿主 OR 输入 OR 视口），每个边界都判错。现在消费方各取所需——**HOST**（`isElectron` / `isAndroidApp` / `isHarmonyApp` / `isWebApp` / `isNativeApp`，来自原生桥）、**INPUT**（`isTouchPrimary`，`(pointer: coarse)` 加 UA 兜底）、**VIEWPORT**（`isWideScreen`，独立模块）。Electron 是有物理键盘鼠标的桌面窗口，宿主轴直接判为 `isElectron`，不再靠"参与 `isPC`"来避免被误判成移动端。**鸿蒙是第四个宿主身份**（`getHostPlatform()==='harmonyos'`），`isAndroidApp` 显式排除它——安卓专属的字体/合成补偿、APK 更新、后台断连策略在鸿蒙上都不成立。`web/src/__tests__/platformAxes.test.ts` 钉住 `isPC` 不得回归、共享谓词不得重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开。
 
 构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job（linux / linux-arm64 / windows / macos）打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）；`publish-npm` 只发服务端 CLI `@xulongzhe/clawbench`。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。`win.signAndEditExecutable` **不要**在 electron-builder.yml 里禁用——CI 的 windows job 原生可用 rcedit，禁用会跳过向 exe 写入图标与版本元数据；本地无 wine 交叉编译时才用命令行临时覆盖。
+
+### 鸿蒙端（HarmonyOS，实验性）
+
+`harmony/` 是 ArkTS / ArkUI Stage + ArkWeb 的原生壳，**不在 `release.yml` 里**（不进正式发布流水线），CI 由独立的 `harmonyos.yml` 跑两类测试：`npm --prefix harmony test`（node:test 宿主契约，根 vitest 已把 `harmony/tests/**` 排除）与 `harmony/tests/native` 的 CMake/ctest 原生回归。构建走 `./scripts/build-harmonyos.ps1 -DevEcoRoot $env:DEVECO_ROOT`（PowerShell + DevEco，产物在 `release/`）。设计概览见 [`docs/spec/client/harmonyos-client.md`](docs/spec/client/harmonyos-client.md)，移植过程与逐项验收台账在 `docs/harmonyos/`（`FEATURE_PARITY.md` 状态、`NATIVE_CAPABILITIES.md` 平台边界、`MAINTENANCE.md` 构建记录）。
+
+**壳里只有系统能力，界面仍是同一份 Vue 前端**：服务端下发什么界面就显示什么，鸿蒙端不维护第二套 UI。原生侧负责本地登录页（复用安卓 `login.html` 资源，独立 ArkWeb 控制器、CSP 禁网）、按服务器保存密码（只把 Cookie 交给页面）、文件保存/分享/导入、通知、剪贴板与选区菜单、系统栏与键盘避让。
+
+**原生桥不注入全局代理**：`rawfile/harmony-bootstrap.js` 经 `javaScriptOnDocumentStart` 在页面里装 `window.ClawBenchHarmony`（形状与 Android/Electron 的 `ClawBenchNative` 相同，故 `getNative()` 优先读它、业务代码零分支），真正的调用走面向精确 Origin 的随机 `MessagePort` + 连接代次，离页即关闭端口并拒绝在飞请求。新增方法要同时改 `ClawBenchNative` 类型、bootstrap 的方法映射与 ArkTS 分派；新增原生事件必须加进 bootstrap 的 `nativeEvents` 白名单，否则事件被静默丢弃。
+
+**宿主身份独立于 Android**：`getNativeHostPlatform()` 返回 `'harmonyos'`，前端 `isHarmonyApp` 与 `isAndroidApp` 互斥。误并进 Android 会连带启用安卓字体/合成补偿、APK 更新入口与后台断连策略——这些在鸿蒙上都是错的；终端音量键这类能力按能力位（`getCapabilities().volumeKeys`）开，不按宿主身份开。协议门禁与桌面/Android 同源：`app==='clawbench' && protocol===1`。
+
+**原生隧道只能由原生层做**：ArkWeb 建不了 SSH，故用 C++ NAPI（SSH 走 libssh2 + mbedTLS、HTTP2 走 nghttp2）实现正反向映射，异步执行不阻塞 UI，按服务器保存配置并在重连后恢复；主机密钥首次或变化需确认，**不接受跳过 TLS / 主机校验来换取连通**。当前能力表里报 `false` 的项（跨应用悬浮窗、实况窗）是签名级权限受限，不要用应用内弹层或空实现冒充；模拟器子场景通过也不等于该项功能验收通过，口径以 `docs/harmonyos/FEATURE_PARITY.md` 为准。
 
 ## 开发规则
 

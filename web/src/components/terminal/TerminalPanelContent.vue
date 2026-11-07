@@ -216,7 +216,7 @@
     <TerminalHelpDrawer
       :open="helpDrawer.effectiveOpen.value"
       :gestures="isTouchPrimary"
-      :app-mode="isAppMode"
+      :app-mode="volumeKeysSupported"
       :mac="isMacDesktopUA"
       :copy-on-select="copyOnSelect"
       @close="helpDrawer.close()"
@@ -322,7 +322,7 @@ import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
 import { usePlatformDetect, isMacDesktopUA } from '@/composables/usePlatformDetect'
 import { useAppMode } from '@/composables/useAppMode'
-import { getNative } from '@/utils/clawbenchNative'
+import { getNative, supportsNativeVolumeKeys } from '@/utils/clawbenchNative'
 import { useKeyConfig } from '@/composables/useKeyConfig'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
@@ -1048,16 +1048,17 @@ const { isAndroidApp, isTouchPrimary } = usePlatformDetect()
   else terminalKeys.sendArrowDown()
 }
 
-// Volume keys (Android)
+// Volume keys are available only on hosts that forward them.
 const { isAppMode } = useAppMode()
+const volumeKeysSupported = supportsNativeVolumeKeys()
 
 function enableVolumeKeys() {
-  if (!isAppMode.value) return
+  if (!volumeKeysSupported) return
   getNative()?.setVolumeKeyMode?.(true)
 }
 
 function disableVolumeKeys() {
-  if (!isAppMode.value) return
+  if (!volumeKeysSupported) return
   getNative()?.setVolumeKeyMode?.(false)
 }
 

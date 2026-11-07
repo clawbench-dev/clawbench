@@ -158,6 +158,7 @@ describe('readClipboardText', () => {
 
   afterEach(() => {
     ;(globalThis as any).ClawBenchNative = originalNative
+    delete (window as any).ClawBenchHarmony
   })
 
   it('resolves with the text from navigator.clipboard.readText', async () => {
@@ -221,5 +222,26 @@ describe('readClipboardText', () => {
 
     await expect(readClipboardText()).resolves.toBe('fallback')
     expect(mockReadText).toHaveBeenCalled()
+  })
+
+  it('awaits the HarmonyOS clipboard bridge', async () => {
+    const nativeRead = vi.fn().mockResolvedValue('Harmony clipboard')
+    ;(window as any).ClawBenchHarmony = { readClipboardText: nativeRead }
+    await expect(readClipboardText()).resolves.toBe('Harmony clipboard')
+    expect(nativeRead).toHaveBeenCalledOnce()
+  })
+
+  it('copies through the native bridge and reports a denied operation', async () => {
+    const write = vi.fn().mockResolvedValue(undefined)
+    const success = vi.fn()
+    const failure = vi.fn()
+    ;(window as any).ClawBenchHarmony = { writeClipboardText: write }
+    copyText('fixture', success, failure)
+    await vi.waitFor(() => expect(success).toHaveBeenCalledOnce())
+    expect(write).toHaveBeenCalledWith('fixture')
+    write.mockRejectedValue(new Error('denied'))
+    copyText('second', success, failure)
+    await vi.waitFor(() => expect(failure).toHaveBeenCalledOnce())
+    expect(success).toHaveBeenCalledOnce()
   })
 })

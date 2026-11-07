@@ -1,0 +1,9 @@
+{
+  "string": [
+    { "name": "app_name", "value": "ClawBench" },
+    { "name": "module_desc", "value": "ClawBench HarmonyOS client" },
+    { "name": "camera_reason", "value": "用于会议视频和拍照上传" },
+    { "name": "microphone_reason", "value": "用于会议通话和语音输入" },
+    { "name": "pasteboard_reason", "value": "用于将复制的内容粘贴到输入框或终端" }
+  ]
+}

@@ -20,7 +20,7 @@
   <img src="assets/architecture.zh.svg" alt="ClawBench 部署架构" width="640">
 </p>
 
-- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/user-guide/TERMUX.md) 在安卓手机上完全运行
+- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA、HarmonyOS（实验性）；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/user-guide/TERMUX.md) 在安卓手机上完全运行
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI（国际版 / 国内版）、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw
 
 📖 **使用手册**：[ClawBench 使用手册](docs/user-guide/README.md) · [在线版（带侧栏目录）](https://clawbench.pages.dev/docs/)
@@ -28,6 +28,8 @@
 ---
 
 ## 快速开始
+
+HarmonyOS 原生客户端正在实验性移植中，开发构建、已支持能力及尚未完成的范围见 [HarmonyOS 客户端说明](harmony/README.md)。当前尚未作为正式发行平台。
 
 ### 前置准备
 

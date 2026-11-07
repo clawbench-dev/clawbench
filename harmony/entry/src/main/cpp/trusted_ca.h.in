@@ -1,0 +1,3 @@
+#pragma once
+// Mozilla CA bundle exported by curl.se, pinned and verified by the build.
+inline constexpr char CLAWBENCH_CA_BUNDLE[] = R"CA_BUNDLE(@TUNNEL_CA_TEXT@)CA_BUNDLE";

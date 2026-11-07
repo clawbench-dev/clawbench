@@ -20,6 +20,26 @@ export interface ShareTargetResult {
   failed: number
 }
 
+/** Native imports must stay in the project explicitly confirmed in the system dialog. */
+export function nativeShareTargetResult(detail: unknown, currentProject: string): ShareTargetResult | null {
+  if (!detail || typeof detail !== 'object') return null
+  const value = detail as Record<string, unknown>
+  if (value.cancelled === true || value.projectPath !== currentProject ||
+      !Array.isArray(value.paths) || value.paths.length > 20 ||
+      !Number.isInteger(value.failed) || (value.failed as number) < 0 || (value.failed as number) > 20) return null
+  const paths: string[] = []
+  for (const path of value.paths) {
+    if (typeof path !== 'string' || !path.startsWith('.clawbench/share-in/') ||
+        path.length > 4096 || path.includes('\\') || Array.from(path).some(c => c.charCodeAt(0) < 32) ||
+        path.split('/').some(p => p === '..' || p === '.')) return null
+    paths.push(path)
+  }
+  return {
+    paths, failed: value.failed as number,
+    ...(paths.length === 0 ? { failure: 'save' as const } : {}),
+  }
+}
+
 /**
  * Read and consume the result of a Web Share Target POST.
  *

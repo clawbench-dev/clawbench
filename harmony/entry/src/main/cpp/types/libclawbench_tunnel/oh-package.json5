@@ -1,0 +1,6 @@
+{
+  "name": "libclawbench_tunnel.so",
+  "version": "1.0.0",
+  "description": "ClawBench native tunnel transport",
+  "types": "./Index.d.ts"
+}

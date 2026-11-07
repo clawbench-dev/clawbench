@@ -809,6 +809,7 @@ export function usePortForward() {
 
   async function syncToNative() {
     if (!isAppMode.value) return
+    if (getNative()?.getCapabilities?.().tunnel === false) return
     await loadPorts()
     const native = getNative()
     if (!native) return

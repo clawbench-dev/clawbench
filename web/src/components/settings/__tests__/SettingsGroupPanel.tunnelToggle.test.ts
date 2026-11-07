@@ -7,15 +7,15 @@ import type { GroupPanelConfig } from '@/components/settings/settingsFieldMap'
 import { readAndroidBridge, androidBridgeExposes } from '@/testUtils/androidBridgeContract'
 
 /**
- * The Android-only h2 tunnel toggle in the port-forward panel.
+ * The native transport picker in the port-forward panel.
  *
  * It is a dedicated row (not a commonFields entry), because its truth source is
  * Android SharedPreferences: routing it through usePanelSnapshot would either
  * write localStorage ('local') or 400 the entire save ('server', since
  * validatePatchFields rejects unknown keys). These tests pin the three things
- * that make the dedicated row correct: the Android-only platform gate, the
- * async initial value with legacy-host degradation, and the write-on-toggle +
- * reconnect flow.
+ * that make the dedicated row correct: the platform/capability gate, the
+ * async initial value with legacy-host degradation, and the draft/save/readback
+ * flow before reconnecting.
  */
 
 // ── Mocks ──
@@ -93,7 +93,9 @@ vi.mock('@/utils/appLog', () => ({
 
 // Platform mode holders. Plain objects (not refs) — the factory is hoisted
 // above the vue import, and the component reads `.value` off them directly.
-const mockAppMode = vi.hoisted(() => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }))
+const mockAppMode = vi.hoisted(() => ({
+  isAppMode: { value: false }, isDesktopApp: { value: false }, isHarmonyApp: { value: false },
+}))
 vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockAppMode.isAppMode, isDesktopApp: mockAppMode.isDesktopApp }),
 }))
@@ -109,7 +111,8 @@ vi.mock('@/composables/useAppMode', () => ({
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({
     isElectron: { value: mockAppMode.isDesktopApp.value },
-    isAndroidApp: { value: mockAppMode.isAppMode.value && !mockAppMode.isDesktopApp.value },
+    isAndroidApp: { value: mockAppMode.isAppMode.value && !mockAppMode.isDesktopApp.value && !mockAppMode.isHarmonyApp.value },
+    isHarmonyApp: mockAppMode.isHarmonyApp,
     isWebApp: { value: !mockAppMode.isAppMode.value },
     isNativeApp: { value: mockAppMode.isAppMode.value },
     isTouchPrimary: { value: false },
@@ -227,8 +230,10 @@ function makePortForwardConfig(): GroupPanelConfig {
   }
 }
 
+let mountedPanels: ReturnType<typeof mount>[] = []
+
 function mountPanel(config: GroupPanelConfig = makePortForwardConfig()) {
-  return mount(SettingsGroupPanel, {
+  const wrapper = mount(SettingsGroupPanel, {
     props: { config, showTitle: false },
     global: {
       plugins: [i18n],
@@ -245,6 +250,8 @@ function mountPanel(config: GroupPanelConfig = makePortForwardConfig()) {
       },
     },
   })
+  mountedPanels.push(wrapper)
+  return wrapper
 }
 
 /** The transport picker's SettingsItem (the only select in this panel). */
@@ -259,6 +266,7 @@ beforeEach(() => {
   localValues['port_forward.port'] = 0
   mockAppMode.isAppMode.value = false
   mockAppMode.isDesktopApp.value = false
+  mockAppMode.isHarmonyApp.value = false
   mockNative.current = undefined
   mockReconnectTunnel.fn.mockReset()
   mockReconnectTunnel.fn.mockResolvedValue(true)
@@ -278,6 +286,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  mountedPanels.forEach(wrapper => wrapper.unmount())
+  mountedPanels = []
   vi.restoreAllMocks()
 })
 
@@ -594,6 +604,156 @@ describe('transport picker: Android draft + save', () => {
 
     expect(wrapper.find('.group-panel__h2-hint').exists()).toBe(false)
     expect(wrapper.find('.group-panel__h2-reconnect').exists()).toBe(false)
+  })
+})
+
+describe('HarmonyOS transport picker', () => {
+  beforeEach(() => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isHarmonyApp.value = true
+  })
+
+  function harmonyHost(initial: boolean) {
+    let stored = initial
+    return {
+      getCapabilities: () => ({ tunnel: true }),
+      getTunnelTransportH2Enabled: vi.fn(async () => stored),
+      setTunnelTransportH2Enabled: vi.fn(async (value: boolean) => { stored = value }),
+      getTunnelTransport: vi.fn(async () => stored ? 'h2' : 'ssh'),
+    }
+  }
+
+  it.each([true, false])('reads the persisted boolean %s through the Harmony bridge', async (stored) => {
+    const host = harmonyHost(stored)
+    mockNative.current = host
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(host.getTunnelTransportH2Enabled).toHaveBeenCalledOnce()
+    expect(findTransportSelect(wrapper)?.props('modelValue')).toBe(stored ? 'h2' : 'ssh')
+    expect(wrapper.find('[data-key="SSH 隧道端口"]').exists()).toBe(!stored)
+    expect(host.getTunnelTransport).not.toHaveBeenCalled()
+  })
+
+  it('keeps the selector hidden until its asynchronous preference resolves', async () => {
+    let finish!: (stored: boolean) => void
+    mockNative.current = {
+      ...harmonyHost(false),
+      getTunnelTransportH2Enabled: () => new Promise<boolean>(resolve => { finish = resolve }),
+    }
+    const wrapper = mountPanel()
+    await nextTick()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+    finish(true)
+    await flushPromises()
+    expect(findTransportSelect(wrapper)?.props('modelValue')).toBe('h2')
+  })
+
+  it.each(['capability-off', 'capability-missing', 'getter-missing', 'setter-missing'])(
+    'hides unsupported Harmony hosts: %s', async (unsupported) => {
+      const host: Record<string, unknown> = { ...harmonyHost(false) }
+      if (unsupported === 'capability-off') host.getCapabilities = () => ({ tunnel: false })
+      if (unsupported === 'capability-missing') delete host.getCapabilities
+      if (unsupported === 'getter-missing') delete host.getTunnelTransportH2Enabled
+      if (unsupported === 'setter-missing') delete host.setTunnelTransportH2Enabled
+      mockNative.current = host
+      const wrapper = mountPanel()
+      await flushPromises()
+
+      expect(findTransportSelect(wrapper)).toBeFalsy()
+      expect(wrapper.find('.group-panel__tunnel-status').exists()).toBe(false)
+      expect(host.getTunnelTransport).not.toHaveBeenCalled()
+      if (unsupported.startsWith('capability')) {
+        expect(host.getTunnelTransportH2Enabled).not.toHaveBeenCalled()
+      }
+    },
+  )
+
+  it.each(['rejected', 'not-a-boolean'])('hides an unreadable initial preference: %s', async (failure) => {
+    mockNative.current = {
+      ...harmonyHost(false),
+      getTunnelTransportH2Enabled: failure === 'rejected'
+        ? vi.fn().mockRejectedValue(new Error('Native preference unavailable'))
+        : vi.fn().mockResolvedValue('true'),
+    }
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+  })
+
+  it('waits for persistence and readback before reconnecting, and never writes the draft on selection', async () => {
+    let stored = false
+    let finishWrite!: () => void
+    const getter = vi.fn(async () => stored)
+    const setter = vi.fn((value: boolean) => new Promise<void>(resolve => {
+      finishWrite = () => { stored = value; resolve() }
+    }))
+    mockNative.current = {
+      ...harmonyHost(false),
+      getTunnelTransportH2Enabled: getter,
+      setTunnelTransportH2Enabled: setter,
+    }
+    const wrapper = mountPanel()
+    await flushPromises()
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await flushPromises()
+    expect(setter).not.toHaveBeenCalled()
+
+    await wrapper.find('.group-panel__save-btn').trigger('click')
+    await flushPromises()
+    expect(setter).toHaveBeenCalledWith(true)
+    expect(getter).toHaveBeenCalledTimes(1)
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+    finishWrite()
+    await flushPromises()
+    expect(getter).toHaveBeenCalledTimes(2)
+    expect(mockReconnectTunnel.fn).toHaveBeenCalledOnce()
+    expect(mockTunnel.checkTunnelHealth).toHaveBeenCalledWith(true)
+    expect(wrapper.find('.group-panel__save-btn').attributes('disabled')).toBeDefined()
+    expect(mockToastShow).toHaveBeenCalledWith('配置已保存', expect.objectContaining({ type: 'success' }))
+  })
+
+  it.each(['unchanged', 'rejected', 'invalid'])('retains the draft and reports readback failure: %s', async (failure) => {
+    const getter = vi.fn().mockResolvedValueOnce(false)
+    if (failure === 'rejected') getter.mockRejectedValueOnce(new Error('Readback failed'))
+    else getter.mockResolvedValueOnce(failure === 'invalid' ? 'true' : false)
+    const setter = vi.fn().mockResolvedValue(undefined)
+    mockNative.current = {
+      ...harmonyHost(false),
+      getTunnelTransportH2Enabled: getter,
+      setTunnelTransportH2Enabled: setter,
+    }
+    const wrapper = mountPanel()
+    await flushPromises()
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await wrapper.find('.group-panel__save-btn').trigger('click')
+    await flushPromises()
+
+    expect(setter).toHaveBeenCalledWith(true)
+    expect(getter).toHaveBeenCalledTimes(2)
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+    expect(findTransportSelect(wrapper)?.props('modelValue')).toBe('h2')
+    expect(wrapper.find('.group-panel__save-btn').attributes('disabled')).toBeUndefined()
+    expect(mockToastShow).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: 'error' }))
+    expect(mockToastShow).not.toHaveBeenCalledWith('配置已保存', expect.anything())
+  })
+
+  it('keeps SSH as an unsaved draft when the native setter rejects it', async () => {
+    const host = harmonyHost(true)
+    host.setTunnelTransportH2Enabled.mockRejectedValueOnce(new Error('Native write rejected'))
+    mockNative.current = host
+    const wrapper = mountPanel()
+    await flushPromises()
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'ssh')
+    await wrapper.find('.group-panel__save-btn').trigger('click')
+    await flushPromises()
+
+    expect(host.setTunnelTransportH2Enabled).toHaveBeenCalledWith(false)
+    expect(findTransportSelect(wrapper)?.props('modelValue')).toBe('ssh')
+    expect(wrapper.find('.group-panel__save-btn').attributes('disabled')).toBeUndefined()
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+    expect(mockToastShow).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ type: 'error' }))
   })
 })
 
