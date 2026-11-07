@@ -1527,6 +1527,11 @@ describe('SessionList', () => {
 
       expect(wrapper.find('[data-session-id="p1"] .pcard-row-pending').exists()).toBe(true)
       expect(wrapper.find('[data-session-id="u1"] .pcard-row-dot').exists()).toBe(true)
+      // Every state sits in the SAME slot, otherwise the titles of a pending /
+      // running / unread row would start at three different x positions.
+      for (const id of ['p1', 'u1', 'r1']) {
+        expect(wrapper.find(`[data-session-id="${id}"] .pcard-row-status`).exists(), `${id} has the slot`).toBe(true)
+      }
       // A running row says it with a small ring — the cards are compact, so the
       // project rows' travelling comet is deliberately not reused here.
       const running = wrapper.find('[data-session-id="r1"]')

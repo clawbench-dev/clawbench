@@ -223,7 +223,6 @@
           :data-project="group.name"
         >
           <div class="pcard-head">
-            <span class="pcard-dot" />
             <span class="pcard-name">{{ group.displayName }}</span>
             <span class="pcard-count">{{ group.sessions.length }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
@@ -243,32 +242,38 @@
             :data-session-id="session.id"
             @click="selectCrossSession(session, group.name)"
           >
-            <!-- Status marker, one slot per row. Pending still outranks
-                 everything: the user is the blocker there. Running is a small
-                 ring (not the project rows' bottom-edge comet) — these cards
+            <!-- One fixed slot for every state, so the titles of a running,
+                 blocked and unread row all start on the same x. Pending still
+                 outranks everything: the user is the blocker there. Running is
+                 a ring (not the project rows' bottom-edge comet) — these cards
                  are compact and a travelling light along a 36dp row reads as
-                 noise. Unread keeps its dot. -->
+                 noise. Unread keeps its dot, centred in the same slot. -->
             <span
-              v-if="rowStatus(session) === 'pending'"
-              class="pcard-row-pending"
-              :title="statusLabel('pending')"
-              :aria-label="statusLabel('pending')"
-              role="img"
-            ><ShieldAlert :size="12" /></span>
-            <LoadingIndicator
-              v-else-if="session.running"
-              class="pcard-row-ring"
-              size="sm"
-              inline
-              aria-hidden="true"
-            />
-            <span
-              v-else-if="rowStatus(session) === 'unread'"
-              class="pcard-row-dot"
-              :title="statusLabel('unread')"
-              :aria-label="statusLabel('unread')"
-              role="img"
-            />
+              v-if="rowStatus(session) || session.running"
+              class="pcard-row-status"
+            >
+              <span
+                v-if="rowStatus(session) === 'pending'"
+                class="pcard-row-pending"
+                :title="statusLabel('pending')"
+                :aria-label="statusLabel('pending')"
+                role="img"
+              ><ShieldAlert :size="14" /></span>
+              <LoadingIndicator
+                v-else-if="session.running"
+                class="pcard-row-ring"
+                size="sm"
+                inline
+                aria-hidden="true"
+              />
+              <span
+                v-else
+                class="pcard-row-dot"
+                :title="statusLabel('unread')"
+                :aria-label="statusLabel('unread')"
+                role="img"
+              />
+            </span>
             <span class="pcard-row-title">{{ session.title }}</span>
           </div>
         </div>
@@ -2095,14 +2100,6 @@ onUnmounted(() => {
   border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
 }
 
-.pcard-dot {
-  flex: 0 0 auto;
-  width: calc(8 * var(--dp));
-  height: calc(8 * var(--dp));
-  border-radius: 50%;
-  background: var(--pc, var(--text-secondary));
-}
-
 .pcard-name {
   flex: 0 0 auto;
   max-width: 55%;
@@ -2173,6 +2170,17 @@ onUnmounted(() => {
      the project colour keeps the card monochrome. */
   --li-color: var(--pc, var(--accent-color, #0066cc));
   --li-track-color: color-mix(in srgb, var(--pc, var(--border-color)) 22%, transparent);
+}
+
+.pcard-row-status {
+  flex: 0 0 auto;
+  /* One slot width for the ring, the shield and the dot: without it the title
+     would start 8dp further left on unread rows than on running ones. */
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pcard-row-dot {
