@@ -10,7 +10,17 @@
        is one attribute away — SessionSidebar hit exactly this when a sibling
        drawer was added beside its root div. -->
   <div class="session-drawer-roots">
-    <BottomSheet ref="bottomSheetRef" :open="open" auto :title="t('session.title')" @close="$emit('close')">
+    <!-- panel-class is a stable hook: the e2e helpers locate this drawer by
+         `.bs-panel.session-drawer-sheet`. It no longer carries any styles. -->
+    <BottomSheet
+      ref="bottomSheetRef"
+      :open="open"
+      auto
+      panel-class="session-drawer-sheet"
+      :maximized="browsing"
+      :title="t('session.title')"
+      @close="$emit('close')"
+    >
       <template #header>
         <SessionListHeader
           :session-count="sessionCount"
@@ -46,6 +56,7 @@
         @select="handleSelect"
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"
+        @browsing-change="browsing = $event"
       />
     </BottomSheet>
 
@@ -110,6 +121,10 @@ const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
 const listRef = ref(null)
 const sharedSessionsRef = ref(null)
+// True while the list is showing a project's read-only session list. The sheet
+// then fills the screen: an auto-height sheet sized to the project list would
+// clip that view, and the user asked for the drawer to be pushed bigger.
+const browsing = ref(false)
 const { loadAgents } = useAgents()
 const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 

@@ -448,7 +448,7 @@ const props = defineProps({
   isActive: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy'])
+const emit = defineEmits(['select', 'archive', 'destroy', 'browsing-change'])
 
 /**
  * How far the pointer may travel before Sortable turns a press on the ⋮ button
@@ -786,6 +786,11 @@ function findSession(sessionId) {
 // switching chat, files and terminal just to read a list.
 const browsePaneRef = ref(null)
 const browsingProject = ref('')
+
+// The drawer host is auto-height: a browse view with more rows than the sheet
+// currently shows would simply be clipped, so the host is told to grow. The
+// pinned sidebar has a fixed height and ignores this.
+watch(browsingProject, (value) => { emit('browsing-change', !!value) })
 const browsingName = ref('')
 const browsingPath = ref('')
 const browsingSessions = ref([])

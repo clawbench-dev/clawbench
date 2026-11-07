@@ -45,6 +45,7 @@ const {
   wideScreen: { isWideScreen: null as any, leftTab: null as any },
   BottomSheetStub: {
     name: 'BottomSheet',
+    props: ['maximized'],
     template: '<div class="bottom-sheet-stub"><slot name="header" /><slot /></div>',
     methods: { close: vi.fn() },
   },
@@ -58,6 +59,7 @@ const {
   SessionListStub: {
     name: 'SessionList',
     template: '<div class="session-list-stub" />',
+    emits: ['browsing-change'],
     methods: { loadSessions: vi.fn(), addSessionLocally: vi.fn() },
   },
   SessionListHeaderStub: {
@@ -128,6 +130,23 @@ describe('SessionDrawer', () => {
 
       const wrapper = mountDrawer()
       expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
+    })
+
+    it('grows to full height while a project browse view is open', async () => {
+      const wrapper = mountDrawer()
+      const sheet = () => wrapper.findComponent({ name: 'BottomSheet' })
+      // Auto height by default: the sheet hugs the session list.
+      expect(sheet().props('maximized')).toBe(false)
+
+      wrapper.findComponent({ name: 'SessionList' }).vm.$emit('browsing-change', true)
+      await nextTick()
+      // The browse view has more rows than the project list, so the sheet must
+      // stop hugging its content and take the available height instead.
+      expect(sheet().props('maximized')).toBe(true)
+
+      wrapper.findComponent({ name: 'SessionList' }).vm.$emit('browsing-change', false)
+      await nextTick()
+      expect(sheet().props('maximized')).toBe(false)
     })
 
     it('stays present after one conversation is shared', async () => {
