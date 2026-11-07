@@ -70,6 +70,8 @@ struct Index {
   private mainWindow?: window.Window;
   private updateWindowInsets = (): void => this.updateSafeInsets();
   private files?: FileTransferService;
+  private webDownloads?: FileTransferService;
+  private downloadDelegate?: webview.WebDownloadDelegate;
   private notifications: NativeEventService = new NativeEventService(
     (name: string, detail: string) => this.emitNativeEvent(name, detail));
   private logger?: NativeLogService;
@@ -102,6 +104,9 @@ struct Index {
     clearTimeout(this.pageTimeout);
     this.keepScreenOn(false);
     this.disposePageServices();
+    this.webDownloads?.dispose();
+    this.webDownloads = undefined;
+    this.downloadDelegate = undefined;
     this.notifications.destroy();
     this.tunnels?.shutdown();
     this.activePassword = '';
@@ -600,6 +605,31 @@ struct Index {
         this.reportDownloadFailure();
       }
     }, this.store.language);
+    if (!this.webDownloads) {
+      this.webDownloads = new FileTransferService(this.context(), this.activeUrl, () => {});
+    }
+    if (!this.downloadDelegate) {
+      const downloads = this.webDownloads;
+      const delegate = new webview.WebDownloadDelegate();
+      delegate.onBeforeDownload((item: webview.WebDownloadItem) => {
+        downloads.startWebDownload(item).catch(() => this.reportWebDownloadFailure());
+      });
+      delegate.onDownloadFinish((item: webview.WebDownloadItem) => {
+        if (downloads.finishWebDownload(item.getGuid()) && this.foreground && this.showWeb) {
+          this.getUIContext().getPromptAction().showToast({
+            message: this.store.language === 'en' ? 'Saved to the system Downloads folder' : '文件已保存到系统下载目录'
+          });
+        }
+      });
+      delegate.onDownloadFailed((item: webview.WebDownloadItem) => {
+        if (downloads.finishWebDownload(item.getGuid()) &&
+            item.getState() !== webview.WebDownloadState.CANCELED) {
+          this.reportWebDownloadFailure();
+        }
+      });
+      this.downloadDelegate = delegate;
+      this.controller.setDownloadDelegate(delegate);
+    }
     this.logger = new NativeLogService(this.activeUrl, [this.activePassword]);
     ports[0].onMessageEvent((message: webview.WebMessage) => {
       if (typeof message !== 'string' || message.length > 12 * 1024 * 1024 ||
@@ -655,6 +685,12 @@ struct Index {
     this.getUIContext().getPromptAction().showToast({
       message: this.store.language === 'en' ? 'Unable to save file' : '文件保存失败'
     });
+  }
+
+  private reportWebDownloadFailure(): void {
+    if (this.foreground && this.showWeb) {
+      this.reportDownloadFailure();
+    }
   }
 
   private async invokeBridge(request: BridgeRequest): Promise<string> {

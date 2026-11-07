@@ -212,6 +212,30 @@
 - 用户本轮确认真机断网后重连、切服均已完成，按用户提供的验收结果记录。后台保活 / 原生通知仍不可用，鸿蒙 Frozen 冻结问题没有解决；未报告已通过 15 分钟以上通知保活测试。本轮 HDC 无连接设备，没有新包签名、安装、菜单或通知投递验收。
 - 上游贡献分支基线仍为 `3e09f8ba`，协议 `1`；未更新整个参考源码目录或部署服务器。新增网页改动已纳入最小补丁，可对锁定原始基线正向应用并对参考目录反向核查。
 
+## 2026-11-07：0.2.6 系统下载目录与 ArkWeb 下载接管
+
+- 版本更新为 `0.2.6 / 206`，bundleName 沿用 `com.clawbench.harmony`，设备声明保留 `phone`、`tablet`、`2in1`。
+- 修复用户报告的应用内下载不可见：为 ArkWeb 注册 `WebDownloadDelegate`，在网页下载开始时执行 `WebDownloadItem.start()` 并指定目标路径，避免文件落入默认的 Web 私有缓存目录。原生认证流式下载和 Blob 下载也改用系统 DOWNLOAD 模式目录。
+- 下载位置为系统 `Download/com.clawbench.harmony/`。DOWNLOAD 模式不显示保存文件选择页；官方说明该 URI 下可由应用创建文件。相同文件名自动增加序号而不覆盖已有文件；新目标使用 CREATE 标志，修复目录模式下无法新建的问题。Web 下载委托与页面级桥服务分离，网页导航不取消已开始的下载，只有应用页面销毁时取消未完成 Web 任务；跨文档期间不调用已销毁的 UIContext 显示提示。路径占用在成功或失败后释放；已存在于 Web 私有缓存的旧下载不会自动迁移。
+- 构建前核对 DevEco 配套 SDK 26 的 `DocumentPickerMode.DOWNLOAD`、`DocumentViewPicker.save()` 和 ArkWeb `WebDownloadDelegate` / `WebDownloadItem.start(path)` 声明；依据[官方用户文件保存指南](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/save-user-file/)和[官方 ArkWeb 下载指南](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/web-download/)实现。设备上的系统授权提示、Files 浏览可见性、下载真实落盘仍待验证。
+- 根目录 `npm --prefix harmony test`：**287/287** 通过，包含 WebView 下载启动与失败路径、下载目录模式、同名文件保护、中文文件名、系统文件创建标志，以及页面销毁时取消未完成 Web 下载。
+- 工具链：DevEco Studio 26.0.0.851 / SDK 26.0.0.105，使用配套 ohpm 与 Hvigor 6.26.8。`ohpm install` 成功。设置 `DEVECO_SDK_HOME`、`JAVA_HOME`、`NODE_HOME` 后，在 `cmd.exe /d /c` 内执行 Hvigor 构建并将日志重定向到忽略目录；Hvigor 进程退出码为 0，显示 `BUILD SUCCESSFUL`。PowerShell 5.1 直接接收 Hvigor stderr 警告时会将其转换为错误记录，因此没有据其 PowerShell 错误流判断构建失败。保留既有 ArkTS 异常处理、2in1 API 可用性和未签名警告。
+- 未签名 HAP：`release/ClawBench-0.2.6-unsigned.hap`，**8,549,895 字节**，SHA-256 `57b34dd689aefb83c69440eb45f3b71932036efdb4eb26a46116ed7a245751c0`。已核对 HAP 内 `module.json` 的包名、版本 `0.2.6 / 206` 和三种设备声明，并确认包含 ARM64 与 x86_64 原生库。
+- HDC 未提供可用设备目标；本轮未签名、未安装、未在模拟器或真机执行实际下载。更新 README、开发指南、功能对齐清单和原生能力文档。未部署测试服务器、未同步上游源码、未发布正式安装包。
+
+## 2026-11-07：0.2.6 真机验证确认与 PR #636 更新
+
+类型：验收记录与已构建源码同步；沿用 `0.2.6 / 206`，未改动运行时实现或重新构建。
+
+- 用户明确确认真机验证已完成，包括新的选择界面和原生下载桥，并授权更新 PR。此项作为用户提供的真机结果记录，不以自动化或历史模拟器结果替代。
+- 本次反馈没有逐项提供设备型号、系统 / API、签名包哈希或异常组合细节；仅将上述已确认子场景记为通过，不扩展为全部功能或设备矩阵验收。
+- 核对本地 `8c38894` 的 0.2.6 下载修复与 `bulid-hap/ClawBench-0.2.6-unsigned.hap`，大小为 **8,549,895 字节**，SHA-256 `57b34dd689aefb83c69440eb45f3b71932036efdb4eb26a46116ed7a245751c0`，与既有构建记录一致。原始 Hvigor 日志保留 `BUILD SUCCESSFUL`；本次没有重新签名、安装或取得已安装模块哈希。
+- 更新 README、开发指南、功能对齐清单和原生能力文档，消除当前状态中选择界面及下载桥仍待真机验证的旧说明。此前各版本的历史执行记录保持原样。
+- 继续向开放的 PR #636 同步 0.2.6 下载实现、测试及维护文档；保留 0.2.5 选区菜单与评审修复。独立维护仓库与贡献分支分别提交。
+- 本轮重新执行独立维护目录 `npm --prefix harmony test` 与同步后贡献目录 `npm --prefix harmony test`，各 **287/287** 通过，没有跳过或失败。共享前端、Go 与 Android 实现未发生新增修改，复用上一轮前端构建与全仓预检记录，不重复执行相同全量；全仓预检的既有失败仍按 0.2.5 记录保留。
+- 提交前检查独立维护仓库 5 个暂存文件、PR 相对基线的 47 个改动路径及 HAP 内 29 个文件条目，未检出本地测试凭据、测试地址、个人目录或完整私钥；未将本地指令、原始参考源码、签名材料或安装包加入贡献改动。上游同步后的版本及本次运行时改动文件与已构建的本地源码一致。
+- 后台原生通知与 Frozen 限制保持未解决，不接入 Push Kit；完整业务、大文件与权限异常组合、分享接收方、完整设备矩阵及长时后台继续按原范围验收。
+
 ## 后续维护模板
 
 每次修复或功能更新完成构建后，在本文件追加记录，并与代码一起本地 commit：

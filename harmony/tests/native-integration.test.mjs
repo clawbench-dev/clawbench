@@ -171,14 +171,16 @@ test('changing documents disposes a real file service and late transfer events c
     util: { generateRandomUUID: () => 'fixture' },
     fs: {
       OpenMode: { CREATE: 1, WRITE_ONLY: 2, TRUNC: 4 },
-      accessSync: () => true, listFileSync: () => [],
+      accessSync: () => false, mkdirSync() {}, listFileSync: () => [],
       async open(path) { temporary.add(path); openDescriptors.add(7); return { fd: 7 }; },
       async close(file) { openDescriptors.delete(file.fd); },
       unlinkSync(path) { temporary.delete(path); }
     },
+    fileUri: { FileUri: class { constructor(uri) { this.path = decodeURIComponent(uri); } } },
     picker: {
+      DocumentPickerMode: { DOWNLOAD: 1 },
       DocumentSaveOptions: class {},
-      DocumentViewPicker: class { async save() { return ['file://docs/Downloads/result.txt']; } }
+      DocumentViewPicker: class { async save() { return ['file://docs/Download/com.clawbench.harmony']; } }
     },
     http: { RequestMethod: { GET: 'GET' }, createHttp: () => request }
   };
