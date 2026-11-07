@@ -5,6 +5,7 @@ import { usePortForward } from '@/composables/usePortForward.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { portForwardUnavailable } from '@/utils/portForwardUtils.ts'
+import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 import { createExternalLinkNode, EXTERNAL_LINK_CLASS, LOCALHOST_LINK_ATTR } from '@/utils/externalLinkNode.ts'
 import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
@@ -136,7 +137,8 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     // annotation step on an h2-only install, which forwards localhost ports
     // over the stream tunnel — its URLs would render as dead plain text.
     const { sshInfo, transportAllowsH2 } = usePortForward()
-    if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) return false
+    if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value,
+        getNative()?.getCapabilities?.().tunnel !== false)) return false
 
     // ── Step 1: localhost URLs already rendered as an <a> OR as one of our
     //    external-link spans → append the icon button ──
@@ -313,9 +315,11 @@ export function useLocalhostUrlClickHandler() {
         if (urlOpening.value) return true
         // Refuse only when neither wire can carry the forward. An h2-only
         // install has no SSH listener but still forwards, so it must open.
-        if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) {
+        const hostTunnelSupported = getNative()?.getCapabilities?.().tunnel !== false
+        if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value, hostTunnelSupported)) {
             toast.show(gt('chat.localhost.sshDisabled'), { icon: 'info', type: 'info' })
-            return false
+            // Consume a disabled host's click instead of opening the device's localhost.
+            return !hostTunnelSupported
         }
         urlOpening.value = true
         element.classList.add('loading')

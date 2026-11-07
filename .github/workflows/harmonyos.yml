@@ -4,14 +4,21 @@ on:
   pull_request:
     paths:
       - 'harmony/**'
+      - 'web/src/utils/clawbenchNative.ts'
       - 'scripts/build-harmonyos.ps1'
       - '.github/workflows/harmonyos.yml'
   push:
     paths:
       - 'harmony/**'
+      - 'web/src/utils/clawbenchNative.ts'
       - 'scripts/build-harmonyos.ps1'
       - '.github/workflows/harmonyos.yml'
   workflow_dispatch:
+    inputs:
+      build_hap:
+        description: Build a reviewed ref on the preconfigured HarmonyOS runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,3 +52,32 @@ jobs:
         run: cmake --build build/native-tunnel-tests --parallel 2
       - name: Run native regression
         run: ctest --test-dir build/native-tunnel-tests --output-on-failure
+
+  hap-build:
+    name: HarmonyOS unsigned HAP
+    if: github.event_name == 'workflow_dispatch' && inputs.build_hap
+    runs-on: [self-hosted, Windows, X64, harmonyos-sdk-26]
+    timeout-minutes: 30
+    env:
+      DEVECO_ROOT: ${{ vars.DEVECO_ROOT }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Dispatch only reviewed refs on a disposable runner without signing keys.
+      # PR events never schedule code on this preconfigured runner.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile ArkTS and native libraries
+        run: |
+          if (-not $env:DEVECO_ROOT) {
+            throw 'Set the DEVECO_ROOT repository variable to the SDK 26 DevEco installation.'
+          }
+          ./scripts/build-harmonyos.ps1 -DevEcoRoot $env:DEVECO_ROOT -Mode debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harmonyos-unsigned-hap
+          path: release/*-unsigned.hap
+          if-no-files-found: error
+          retention-days: 7

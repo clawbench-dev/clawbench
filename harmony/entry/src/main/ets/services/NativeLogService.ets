@@ -26,6 +26,16 @@ export class NativeLogService {
     this.secrets = secrets;
   }
 
+  addSecret(secret: string): void {
+    if (secret && !this.secrets.includes(secret)) {
+      this.secrets.push(secret);
+      this.queue.forEach((entry: NativeLogEntry) => {
+        entry.tag = redactLog(entry.tag, this.secrets);
+        entry.msg = redactLog(entry.msg, this.secrets);
+      });
+    }
+  }
+
   start(): void {
     if (this.enabled) {
       return;

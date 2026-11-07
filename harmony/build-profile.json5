@@ -5,7 +5,7 @@
       "name": "default",
       "compatibleSdkVersion": "6.1.0(23)",
       "targetSdkVersion": "6.1.0(23)",
-      "compileSdkVersion": "26.0.0(26.0.0)",
+      "compileSdkVersion": "26.0.0",
       "runtimeOS": "HarmonyOS"
     }],
     "buildModeSet": [{ "name": "debug" }, { "name": "release" }]

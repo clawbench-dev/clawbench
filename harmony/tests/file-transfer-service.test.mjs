@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import * as policy from '../entry/src/main/ets/models/FileTransferPolicy.ts';
 import { parseServerAddress } from '../entry/src/main/ets/models/ServerAddress.ts';
+import { NativeFailure, nativeMessage } from '../entry/src/main/ets/models/NativeMessages.ts';
 
 const source = readFileSync(new URL(
   '../entry/src/main/ets/services/FileTransferService.ets', import.meta.url
@@ -19,24 +20,27 @@ function deferred() {
 }
 
 function createHost({ select, status = 200, payload = 'fixture file', waitForData, cachedBytes = 0,
-  failCreateRequest = false } = {}) {
-  const files = new Map([['file://selected/report.txt', Buffer.from('existing file')]]);
+  failCreateRequest = false, language = 'zh', existingFiles = [] } = {}) {
+  const files = new Map(existingFiles.map(path => [path, Buffer.from('existing file')]));
   const descriptors = new Map();
   const requests = [];
   const events = [];
   const shares = [];
+  const pickerOptions = [];
+  const openCalls = [];
   const completed = deferred();
   let nextFd = 0;
   let nextUuid = 0;
   let legacyFailures = 0;
   const fs = {
     OpenMode: { READ_ONLY: 0, WRITE_ONLY: 1, CREATE: 64, TRUNC: 512 },
-    accessSync: () => true,
+    accessSync: path => files.has(path),
     mkdirSync() {},
     listFileSync: () => cachedBytes ? ['123_cached.txt'] : [],
     statSync: () => ({ isFile: () => true, size: cachedBytes, mtime: Date.now() / 1000 }),
     unlinkSync: path => files.delete(path),
     async open(path, mode) {
+      openCalls.push({ path, mode });
       if (mode & 512 || !files.has(path)) files.set(path, Buffer.alloc(0));
       const fd = ++nextFd;
       descriptors.set(fd, { path, position: 0 });
@@ -103,11 +107,14 @@ function createHost({ select, status = 200, payload = 'fixture file', waitForDat
     }
   };
   const context = {
-    ...policy, parseServerAddress, fs, http, systemShare,
+    ...policy, parseServerAddress, NativeFailure, nativeMessage, fs, http, systemShare,
     // The cookie-scope policy is independently covered by native event tests.
     nativeCookieHeader: (_origin, header) => header,
     webview: { WebCookieManager: { fetchCookieSync: () => 'clawbench_session=fixture; clawbench_project=fixture-project' } },
-    fileUri: { getUriFromPath: path => 'file://' + path },
+    fileUri: {
+      getUriFromPath: path => 'file://' + path,
+      FileUri: class { constructor(uri) { this.path = decodeURIComponent(uri); } }
+    },
     uniformTypeDescriptor: {
       UniformDataType: { FILE: 'general.file', PLAIN_TEXT: 'general.plain-text' },
       getUniformDataTypeByMIMEType: mime => mime
@@ -117,9 +124,13 @@ function createHost({ select, status = 200, payload = 'fixture file', waitForDat
       Base64Helper: class { decodeSync(value) { return new Uint8Array(Buffer.from(value, 'base64')); } }
     },
     picker: {
+      DocumentPickerMode: { DOWNLOAD: 1 },
       DocumentSaveOptions: class {},
       DocumentViewPicker: class {
-        async save(options) { return select ? select(options) : ['file://selected/report.txt']; }
+        async save(options) {
+          pickerOptions.push(options);
+          return select ? select(options) : ['file://selected'];
+        }
       }
     }
   };
@@ -127,8 +138,9 @@ function createHost({ select, status = 200, payload = 'fixture file', waitForDat
   const service = new context.Service({ cacheDir: '/cache' }, 'https://example.com', event => {
     events.push(JSON.parse(JSON.stringify(event)));
     if (event.done) completed.resolve(event);
-  }, () => legacyFailures++);
-  return { service, files, requests, events, shares, completed, descriptors,
+  }, () => legacyFailures++, language);
+  return { service, files, requests, events, shares, completed, descriptors, pickerOptions, openCalls,
+    openMode: fs.OpenMode,
     legacyFailures: () => legacyFailures };
 }
 
@@ -138,7 +150,10 @@ test('native download streams partial writes, keeps project cookies and reports 
   const end = await host.completed.promise;
   assert.equal(end.error, '');
   assert.equal(end.cancelled, false);
-  assert.equal(host.files.get('file://selected/report.txt').toString(), '中文 fixture document');
+  assert.equal(host.files.get('file://selected/报告.txt').toString(), '中文 fixture document');
+  assert.equal(host.pickerOptions[0].pickerMode, 1);
+  assert.ok(host.openCalls.some(({ path, mode }) =>
+    path === 'file://selected/报告.txt' && (mode & host.openMode.CREATE) !== 0));
   assert.equal(host.requests[0].options.maxRedirects, 0);
   assert.equal(host.requests[0].options.header.Cookie, 'clawbench_session=fixture; clawbench_project=fixture-project');
   assert.equal(host.events.filter(event => event.done).length, 1);
@@ -147,9 +162,9 @@ test('native download streams partial writes, keeps project cookies and reports 
   assert.equal(host.descriptors.size, 0);
 });
 
-test('cancel while the system picker is open never starts the network or overwrites the selected file', async () => {
+test('cancel while system download access is pending never starts the network or overwrites the selected file', async () => {
   const selection = deferred();
-  const host = createHost({ select: () => selection.promise });
+  const host = createHost({ select: () => selection.promise, existingFiles: ['file://selected/report.txt'] });
   host.service.startDownload('report.txt', '', 10);
   host.service.cancelDownload(10);
   selection.resolve(['file://selected/report.txt']);
@@ -162,13 +177,60 @@ test('cancel while the system picker is open never starts the network or overwri
 });
 
 test('redirect responses are rejected before exporting the temporary file', async () => {
-  const host = createHost({ status: 302, payload: 'redirect body' });
+  const host = createHost({
+    status: 302, payload: 'redirect body', existingFiles: ['file://selected/report.txt']
+  });
   host.service.startDownload('report.txt', '', 11);
   const end = await host.completed.promise;
   await new Promise(resolve => setImmediate(resolve));
   assert.notEqual(end.error, '');
   assert.equal(host.files.get('file://selected/report.txt').toString(), 'existing file');
   assert.equal([...host.files.keys()].filter(path => path.startsWith('/cache/')).length, 0);
+});
+
+test('repeated downloads use a visible Downloads path without replacing an existing file', async () => {
+  const host = createHost({
+    payload: 'new file', existingFiles: ['file://selected/report.txt']
+  });
+  host.service.startDownload('report.txt', '', 14);
+  await host.completed.promise;
+  assert.equal(host.files.get('file://selected/report.txt').toString(), 'existing file');
+  assert.equal(host.files.get('file://selected/report (1).txt').toString(), 'new file');
+  assert.equal(host.pickerOptions[0].pickerMode, 1);
+});
+
+test('ArkWeb downloads start directly in the shared Downloads directory and release their filename', async () => {
+  const host = createHost({ existingFiles: ['file://selected/报告.txt'] });
+  const item = {
+    guid: 'web-download-1',
+    startedAt: '',
+    cancelled: false,
+    getGuid() { return this.guid; },
+    getSuggestedFileName() { return '报告.txt'; },
+    start(path) { this.startedAt = path; },
+    cancel() { this.cancelled = true; }
+  };
+  await host.service.startWebDownload(item);
+  assert.equal(item.startedAt, 'file://selected/报告 (1).txt');
+  assert.equal(host.pickerOptions[0].pickerMode, 1);
+  assert.equal(host.service.finishWebDownload(item.guid), true);
+  assert.equal(host.service.finishWebDownload(item.guid), false);
+});
+
+test('disposing the page owner cancels active ArkWeb downloads and releases their paths', async () => {
+  const host = createHost();
+  const item = {
+    guid: 'web-download-pending',
+    cancelled: false,
+    getGuid() { return this.guid; },
+    getSuggestedFileName() { return 'pending.txt'; },
+    start(path) { this.startedAt = path; },
+    cancel() { this.cancelled = true; }
+  };
+  await host.service.startWebDownload(item);
+  host.service.dispose();
+  assert.equal(item.cancelled, true);
+  assert.equal(host.service.finishWebDownload(item.guid), false);
 });
 
 test('external downloads receive no authenticated cookies', async () => {
@@ -221,7 +283,9 @@ test('cancelled, disposed and successful legacy downloads never report a failure
 });
 
 test('network initialization failure closes the staged file and removes temporary data', async () => {
-  const host = createHost({ failCreateRequest: true });
+  const host = createHost({
+    failCreateRequest: true, existingFiles: ['file://selected/report.txt']
+  });
   host.service.downloadFile('report.txt');
   const end = await host.completed.promise;
   await new Promise(resolve => setImmediate(resolve));
@@ -234,7 +298,9 @@ test('network initialization failure closes the staged file and removes temporar
 
 test('headers-only request completion waits for body end, and disposal suppresses stale UI callbacks', async () => {
   const data = deferred();
-  const host = createHost({ waitForData: data.promise });
+  const host = createHost({
+    waitForData: data.promise, existingFiles: ['file://selected/report.txt']
+  });
   host.service.startDownload('report.txt', '', 12);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(host.requests.length, 1);
@@ -264,7 +330,7 @@ test('share text and a small blob use native system services with exact payloads
   await host.service.shareText('fixture shared text');
   assert.equal(host.shares[0].records[0].content, 'fixture shared text');
   await host.service.downloadBlob(Buffer.from('blob fixture').toString('base64'), 'file.txt');
-  assert.equal(host.files.get('file://selected/report.txt').toString(), 'blob fixture');
+  assert.equal(host.files.get('file://selected/file.txt').toString(), 'blob fixture');
   assert.equal(host.requests.length, 0);
 });
 
@@ -281,4 +347,63 @@ test('remaining share-cache quota bounds incoming bytes and failed reservations 
   assert.equal(host.shares.length, 0);
   await assert.rejects(host.service.shareFile('two.txt', 'text/plain'), /无法分享文件/);
   assert.equal(host.requests.length, 2);
+});
+
+for (const language of ['zh', 'en']) {
+  test(`download progress errors use the active language (${language})`, async () => {
+    const rejected = createHost({
+      status: 403, language, existingFiles: ['file://selected/report.txt']
+    });
+    rejected.service.startDownload('report.txt', '', 51);
+    const serverError = await rejected.completed.promise;
+    assert.equal(serverError.error, nativeMessage('download_rejected', language));
+    assert.equal(serverError.cancelled, false);
+    assert.equal(rejected.files.get('file://selected/report.txt').toString(), 'existing file');
+
+    const unavailable = createHost({ failCreateRequest: true, language });
+    unavailable.service.startDownload('report.txt', '', 52);
+    const localError = await unavailable.completed.promise;
+    assert.equal(localError.error, nativeMessage('file_operation_failed', language));
+    assert.equal(localError.cancelled, false);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(unavailable.descriptors.size, 0);
+    assert.equal([...unavailable.files.keys()].filter(path => path.startsWith('/cache/')).length, 0);
+  });
+
+  test(`share and save failures expose stable codes and localized messages (${language})`, async () => {
+    const expectFailure = code => error => {
+      assert.ok(error instanceof NativeFailure);
+      assert.equal(error.code, code);
+      assert.equal(error.message, nativeMessage(code, language));
+      return true;
+    };
+    const empty = createHost({ language });
+    await assert.rejects(empty.service.shareText(''), expectFailure('share_text_invalid'));
+    assert.equal(empty.shares.length, 0);
+
+    const full = createHost({ cachedBytes: policy.MAX_SHARED_CACHE_BYTES, language });
+    await assert.rejects(full.service.shareFile('report.txt', 'text/plain'), expectFailure('share_cache_full'));
+    assert.equal(full.requests.length, 0);
+
+    const rejected = createHost({ status: 403, language });
+    await assert.rejects(rejected.service.shareFile('report.txt', 'text/plain'), expectFailure('file_share_failed'));
+    assert.equal(rejected.shares.length, 0);
+
+    const storage = createHost({
+      select: () => { throw new Error('Storage unavailable'); },
+      language, existingFiles: ['file://selected/report.txt']
+    });
+    await assert.rejects(storage.service.downloadBlob('YQ==', 'report.txt'), expectFailure('file_save_failed'));
+    assert.equal(storage.files.get('file://selected/report.txt').toString(), 'existing file');
+  });
+}
+
+test('changing the interface language updates native errors without reconnecting', async () => {
+  const host = createHost({ language: 'zh' });
+  host.service.setLanguage('en');
+  await assert.rejects(host.service.shareText(''), error =>
+    error.code === 'share_text_invalid' && error.message === nativeMessage('share_text_invalid', 'en'));
+  host.service.setLanguage('zh');
+  await assert.rejects(host.service.shareText(''), error =>
+    error.code === 'share_text_invalid' && error.message === nativeMessage('share_text_invalid', 'zh'));
 });
