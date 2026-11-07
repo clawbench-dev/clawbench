@@ -227,14 +227,19 @@
             <span class="pcard-name">{{ group.displayName }}</span>
             <span class="pcard-count">{{ cardCount(group) }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
-            <ChevronUp v-if="expandedProject === group.name" :size="14" class="pcard-chev" />
+            <!-- Same slot in all three states, so nothing shifts while loading. -->
+            <LoadingIndicator
+              v-if="loadingProject === group.name"
+              class="pcard-chev pcard-chev--busy"
+              size="sm"
+              inline
+              aria-hidden="true"
+            />
+            <ChevronUp v-else-if="expandedProject === group.name" :size="14" class="pcard-chev" />
             <ChevronDown v-else :size="14" class="pcard-chev" />
           </button>
 
-          <div v-if="expandedProject === group.name && expandedLoading" class="pcard-state">
-            <LoadingIndicator size="sm" :label="t('common.loading')" />
-          </div>
-          <div v-else-if="expandedProject === group.name && expandedError" class="pcard-state">{{ expandedError }}</div>
+          <div v-if="expandedProject === group.name && expandedError" class="pcard-state">{{ expandedError }}</div>
           <div v-else-if="expandedProject === group.name && expandedSessions.length === 0" class="pcard-state">
             {{ t('session.noSessions') }}
           </div>
@@ -728,8 +733,12 @@ function findSession(sessionId) {
 // chat, files and terminal just to read a list.
 const expandedProject = ref('')
 const expandedSessions = ref([])
-const expandedLoading = ref(false)
 const expandedError = ref('')
+// Project whose list is being fetched. The card must NOT change size while
+// this is set: showing a placeholder would push the rows around, then the real
+// content would push them again (the flash). The header swaps its chevron for a
+// ring in the same slot, and the card grows only once the data is here.
+const loadingProject = ref('')
 // Stale-response guard: the user can collapse (or expand another project) while
 // a request is still in flight.
 let expandGeneration = 0
@@ -742,11 +751,39 @@ function cardRows(group) {
 /** Header count: the full list once it is loaded, otherwise the active count. */
 function cardCount(group) {
   const isOpen = expandedProject.value === group.name
-  if (!isOpen || expandedLoading.value || expandedError.value) return group.sessions.length
+  if (!isOpen || expandedError.value) return group.sessions.length
   return expandedSessions.value.length
 }
 
+function cardElementFor(projectPath) {
+  const cards = listRef.value?.querySelectorAll('.pcard') || []
+  for (const el of cards) {
+    if (el.dataset && el.dataset.project === projectPath) return el
+  }
+  return null
+}
+
+/**
+ * Animate a card between its previous and current height.
+ *
+ * The card clips its content (`overflow: hidden`), so animating `height` from
+ * the old value reads as the card unfolding rather than the page jumping. The
+ * animation has no fill, so the element returns to its natural (auto) height
+ * when it ends. Skipped where there is nothing to animate — no element, no
+ * measurable heights (jsdom), or a host without the Web Animations API.
+ */
+function animateCardHeight(el, fromHeight) {
+  if (!el || typeof el.animate !== 'function' || fromHeight <= 0) return
+  const toHeight = el.getBoundingClientRect().height
+  if (toHeight <= 0 || Math.abs(toHeight - fromHeight) < 1) return
+  el.animate(
+    [{ height: `${fromHeight}px` }, { height: `${toHeight}px` }],
+    { duration: 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+  )
+}
+
 function toggleProject(group) {
+  if (loadingProject.value === group.name) return
   if (expandedProject.value === group.name) {
     collapseProject()
     return
@@ -755,10 +792,11 @@ function toggleProject(group) {
 }
 
 async function expandProject(group) {
-  expandedProject.value = group.name
-  expandedSessions.value = []
-  expandedError.value = ''
-  expandedLoading.value = true
+  const el = cardElementFor(group.name)
+  // Measured BEFORE anything changes: the card keeps exactly this height while
+  // the request is in flight, so nothing moves under the pointer.
+  const fromHeight = el ? el.getBoundingClientRect().height : 0
+  loadingProject.value = group.name
   const generation = ++expandGeneration
   try {
     const resp = await fetch(`/api/ai/sessions/by-project?path=${encodeURIComponent(group.name)}`)
@@ -766,21 +804,33 @@ async function expandProject(group) {
     if (!resp.ok) throw new Error(`by-project HTTP ${resp.status}`)
     const data = await resp.json()
     expandedSessions.value = Array.isArray(data.sessions) ? data.sessions : []
+    expandedError.value = ''
   } catch (err) {
-    if (generation === expandGeneration) expandedError.value = t('session.browseFailed')
+    if (generation === expandGeneration) {
+      expandedSessions.value = []
+      expandedError.value = t('session.browseFailed')
+    }
     appLog.e('SessionList', 'failed to load project sessions', err)
   } finally {
-    if (generation === expandGeneration) expandedLoading.value = false
+    if (generation === expandGeneration) loadingProject.value = ''
   }
+  if (generation !== expandGeneration) return
+  // Swap in the loaded rows and unfold to the new height in one frame.
+  expandedProject.value = group.name
+  await nextTick()
+  animateCardHeight(el, fromHeight)
 }
 
 function collapseProject() {
+  const el = cardElementFor(expandedProject.value)
+  const fromHeight = el ? el.getBoundingClientRect().height : 0
   // Bump the generation so a late response cannot repopulate the closed card.
   expandGeneration++
+  loadingProject.value = ''
   expandedProject.value = ''
   expandedSessions.value = []
   expandedError.value = ''
-  expandedLoading.value = false
+  void nextTick(() => animateCardHeight(el, fromHeight))
 }
 
 async function loadSessions() {
@@ -2129,6 +2179,13 @@ onUnmounted(() => {
 
 .pcard-head:hover .pcard-chev {
   color: var(--pc, var(--accent-color, #0066cc));
+}
+
+/* The busy ring occupies the chevron's slot, so the header does not move while
+   the project's list is being fetched. */
+.pcard-chev--busy {
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
 }
 
 .pcard-path {

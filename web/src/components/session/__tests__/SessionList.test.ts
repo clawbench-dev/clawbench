@@ -1617,6 +1617,44 @@ describe('SessionList', () => {
       expect(card.find('.pcard-head').attributes('aria-expanded')).toBe('true')
     })
 
+    it('keeps the card unchanged until the list has loaded, then unfolds', async () => {
+      // The flash this guards against: expanding first and showing a loading
+      // placeholder makes the rows jump twice (placeholder, then content).
+      const threeSessions = [
+        ...browseSessions,
+        { id: 'b3', title: 'Third', backend: 'cli', agentId: 'agent-1', running: false, pendingApproval: false, unreadCount: 0, updatedAt: '2024-10-01' },
+      ]
+      let release!: () => void
+      const pending = new Promise<void>((resolve) => { release = resolve })
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/sessions/by-project')) {
+          return pending.then(() => ({ ok: true, json: () => Promise.resolve({ sessions: threeSessions }) }))
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      await wrapper.find('.pcard-head').trigger('click')
+      await flushPromises()
+
+      // Still collapsed, same two rows, no placeholder row.
+      expect(wrapper.find('.pcard').classes()).not.toContain('is-expanded')
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
+      expect(wrapper.find('.pcard .pcard-state').exists()).toBe(false)
+      // The header shows the busy ring in the chevron's slot.
+      expect(wrapper.find('.pcard-head .loading-stub').exists()).toBe(true)
+
+      release()
+      await flushPromises()
+
+      // Only now does the card unfold, straight to the loaded rows.
+      expect(wrapper.find('.pcard').classes()).toContain('is-expanded')
+      expect(wrapper.findAll('.pcard-row').length).toBe(3)
+      expect(wrapper.find('.pcard-head .loading-stub').exists()).toBe(false)
+    })
+
     it('collapses back to the active sessions when the header is clicked again', async () => {
       routeListAndBrowse(browseSessions)
       mockCrossState.groups.value = [crossGroup()]
