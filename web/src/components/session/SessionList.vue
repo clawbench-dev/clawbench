@@ -4,6 +4,7 @@
          stays visible while the list scrolls, and is shared by both hosts
          (pinned sidebar and mobile drawer) since they both render SessionList. -->
     <SessionTagFilterBar
+      v-if="!browsingProject"
       :tags="filterTags"
       :active-tag="activeTag"
       @toggle="toggleTagFilter"
@@ -15,6 +16,7 @@
          project's own sessions stay fully visible whenever they can, and the
          strip only takes what is left over (see computeOtherZoneBodyHeight). -->
     <div ref="bodyRef" class="session-list-body">
+    <div v-show="!browsingProject" class="session-list-main">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
     <div ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
@@ -206,19 +208,23 @@
       </template>
     </div>
 
-    <!-- ── Other projects: active sessions elsewhere, pinned under the list ──
+    <!-- ── Other projects: active sessions elsewhere, as per-project cards ──
          Always on screen beside the project's own sessions — no tab switch, so
          "did anything happen elsewhere" is answered by looking, not by
-         remembering to look. Rows stay compact (one line, project chip) so the
-         strip can hold several of them without stealing the list's height.
+         remembering to look.
 
-         Its height is computed in JS from real content heights (see
+         One card per project: the card boundary is the primary "this is not
+         your project" signal, the tinted header names which project it is, and
+         the footer opens a read-only list of that project's full session list
+         (opening a session there is what switches the workspace).
+
+         The column's height is computed in JS from real content heights (see
          computeOtherZoneBodyHeight): the project pane keeps every row it can,
-         the strip takes the remainder, bounded by a two-row floor and a share
-         of the pane. A fixed ratio could not do this — the same split is
-         wasteful with three project sessions and suffocating with thirty. -->
+         the cards take the remainder, bounded by a two-row floor and a share of
+         the pane. A fixed ratio could not do this — the same split is wasteful
+         with three project sessions and suffocating with thirty. -->
     <div
-      v-if="crossRows.length > 0"
+      v-if="crossGroups.length > 0"
       class="other-zone"
       :class="{ 'is-collapsed': otherZoneCollapsed }"
       data-other-zone
@@ -240,40 +246,115 @@
         :style="otherZoneBodyStyle"
       >
         <div
-          v-for="row in crossRows"
-          :key="row.key"
-          class="other-row"
-          :data-session-id="row.session.id"
-          :style="{ '--other-tint': projectTintVar(row.project) }"
-          @click="selectCrossSession(row.session, row.project)"
+          v-for="group in crossGroups"
+          :key="group.name"
+          class="pcard"
+          :style="{ '--pc': projectTintVar(group.name) }"
+          :data-project="group.name"
         >
-          <span
-            v-if="row.session.running"
-            class="session-running-line"
-            :class="{ 'is-blocked': row.status === 'pending' }"
+          <div class="pcard-head">
+            <span class="pcard-dot" />
+            <span class="pcard-name">{{ group.displayName }}</span>
+            <span class="pcard-count">{{ group.sessions.length }}</span>
+            <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
+          </div>
+          <div
+            v-for="session in group.sessions"
+            :key="group.name + '/' + session.id"
+            class="pcard-row"
+            :data-session-id="session.id"
+            @click="selectCrossSession(session, group.name)"
           >
-            <i v-if="row.status === 'pending'" class="session-running-band"></i>
-            <i v-else v-running-sweep class="session-running-band"></i>
-          </span>
-          <!-- Same status language as the project rows: pending outranks
-               unread, running shows nothing here (the comet already says it). -->
-          <span
-            v-if="row.status === 'pending'"
-            class="other-row-pending"
-            :title="statusLabel('pending')"
-            :aria-label="statusLabel('pending')"
-            role="img"
-          ><ShieldAlert :size="12" /></span>
-          <span
-            v-else-if="row.status === 'unread'"
-            class="other-row-dot"
-            :title="statusLabel('unread')"
-            :aria-label="statusLabel('unread')"
-            role="img"
-          />
-          <span class="other-row-title">{{ row.session.title }}</span>
-          <span class="other-row-project" :title="row.project">{{ row.projectName }}</span>
+            <!-- Status marker, one slot per row. Pending still outranks
+                 everything: the user is the blocker there. Running is a small
+                 ring (not the project rows' bottom-edge comet) — these cards
+                 are compact and a travelling light along a 36dp row reads as
+                 noise. Unread keeps its dot. -->
+            <span
+              v-if="rowStatus(session) === 'pending'"
+              class="pcard-row-pending"
+              :title="statusLabel('pending')"
+              :aria-label="statusLabel('pending')"
+              role="img"
+            ><ShieldAlert :size="12" /></span>
+            <LoadingIndicator
+              v-else-if="session.running"
+              class="pcard-row-ring"
+              size="sm"
+              inline
+              aria-hidden="true"
+            />
+            <span
+              v-else-if="rowStatus(session) === 'unread'"
+              class="pcard-row-dot"
+              :title="statusLabel('unread')"
+              :aria-label="statusLabel('unread')"
+              role="img"
+            />
+            <span class="pcard-row-title">{{ session.title }}</span>
+          </div>
+          <button class="pcard-more" @click.stop="openProjectBrowse(group)">
+            <span>{{ t('session.viewAllSessions') }}</span>
+            <ChevronRight :size="12" />
+          </button>
         </div>
+      </div>
+    </div>
+    </div><!-- /session-list-main -->
+
+    <!-- ── Read-only browse of one other project ──
+         Takes over the list area instead of squeezing into the strip: this is a
+         full session list and it must scroll like one. Nothing here mutates the
+         other project — the only way out is the back arrow, or opening a
+         session (which switches the workspace, and is what the user asked for
+         by clicking a row). -->
+    <div v-if="browsingProject" class="browse-pane" data-project-browse>
+      <div class="browse-head">
+        <button class="browse-back" :title="t('common.back')" :aria-label="t('common.back')" @click="closeProjectBrowse">
+          <ChevronLeft :size="14" />
+        </button>
+        <span class="browse-title">{{ browsingName }}</span>
+        <span class="browse-count">{{ t('session.browseCount', { n: browsingSessions.length }) }}</span>
+        <span class="browse-dot" :style="{ background: projectTintVar(browsingProject) }" />
+      </div>
+      <div class="browse-note">{{ t('session.browseNote') }}</div>
+      <div class="browse-body">
+        <PanelSkeleton v-if="browsingLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
+        <div v-else-if="browsingError" class="session-empty">{{ browsingError }}</div>
+        <div v-else-if="browsingSessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
+        <template v-else>
+        <div
+          v-for="session in browsingSessions"
+          :key="session.id"
+          class="browse-row"
+          :data-session-id="session.id"
+          @click="selectCrossSession(session, browsingProject)"
+        >
+          <div class="session-item-info">
+            <div class="session-item-header">
+              <span class="session-item-title">{{ session.title }}</span>
+            </div>
+            <div class="session-item-meta">
+              <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+              <span v-if="session.sessionType === 'group'" class="session-item-group">
+                <Users :size="12" />
+                <GroupMemberStack :members="session.groupMembers || []" />
+              </span>
+              <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(session)" :name="sessionAgentName(session)" :avatar="sessionAgentAvatar(session)" size="sm" /> {{ sessionAgentName(session) }}</span>
+            </div>
+          </div>
+          <span
+            v-if="rowStatus(session)"
+            class="session-status"
+            :class="`is-${rowStatus(session)}`"
+            :title="statusLabel(rowStatus(session))"
+            :aria-label="statusLabel(rowStatus(session))"
+            role="img"
+          >
+            <ShieldAlert v-if="rowStatus(session) === 'pending'" :size="14" />
+          </span>
+        </div>
+        </template>
       </div>
     </div>
     </div><!-- /session-list-body -->
@@ -342,8 +423,9 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
@@ -763,13 +845,13 @@ let otherZoneObserver = null
 function measureOtherZone() {
   const body = bodyRef.value
   if (!body) return
-  if (otherZoneCollapsed.value || crossRows.value.length === 0) {
+  if (browsingProject.value || otherZoneCollapsed.value || crossRows.value.length === 0) {
     otherZoneBodyHeight.value = 0
     return
   }
   const rowsEl = listRef.value?.querySelector('.session-rows')
   const zoneBody = otherZoneBodyRef.value
-  const firstRow = zoneBody?.querySelector('.other-row')
+  const firstRow = zoneBody?.querySelector('.pcard-row')
   otherZoneBodyHeight.value = computeOtherZoneBodyHeight({
     availH: body.clientHeight,
     currentContentH: rowsEl ? rowsEl.getBoundingClientRect().height : 0,
@@ -795,6 +877,52 @@ watch(
   [() => crossRows.value.length, () => visibleRows.value.length, otherZoneCollapsed],
   () => { void nextTick(scheduleOtherZoneMeasure) },
 )
+
+// ── Read-only browse of another project ────────────────────────────────────
+//
+// Opening a project's card footer shows its FULL session list without touching
+// the workspace. The project is passed explicitly to the API because the normal
+// list endpoint resolves it from the cookie — using that one would mean
+// switching chat, files and terminal just to read a list.
+const browsingProject = ref('')
+const browsingName = ref('')
+const browsingSessions = ref([])
+const browsingLoading = ref(false)
+const browsingError = ref('')
+// Stale-response guard: the user can close the view (or open another project)
+// while a request is still in flight.
+let browseGeneration = 0
+
+async function openProjectBrowse(group) {
+  browsingProject.value = group.name
+  browsingName.value = group.displayName
+  browsingSessions.value = []
+  browsingError.value = ''
+  browsingLoading.value = true
+  const generation = ++browseGeneration
+  try {
+    const resp = await fetch(`/api/ai/sessions/by-project?path=${encodeURIComponent(group.name)}`)
+    if (generation !== browseGeneration) return
+    if (!resp.ok) throw new Error(`by-project HTTP ${resp.status}`)
+    const data = await resp.json()
+    browsingSessions.value = Array.isArray(data.sessions) ? data.sessions : []
+  } catch (err) {
+    if (generation === browseGeneration) browsingError.value = t('session.browseFailed')
+    appLog.e('SessionList', 'failed to load project sessions', err)
+  } finally {
+    if (generation === browseGeneration) browsingLoading.value = false
+  }
+}
+
+function closeProjectBrowse() {
+  // Bump the generation so a late response cannot repopulate the closed view.
+  browseGeneration++
+  browsingProject.value = ''
+  browsingName.value = ''
+  browsingSessions.value = []
+  browsingError.value = ''
+  void nextTick(scheduleOtherZoneMeasure)
+}
 
 async function loadSessions() {
   // Keep the existing list on screen during background refreshes — only show
@@ -883,7 +1011,7 @@ function selectSession(sessionId, backend) {
 /**
  * Other-project row click. Emits the owning project path as a third argument so
  * App.vue can hot-switch projects before opening the session. The row's class is
- * deliberately `.other-row` (NOT `.session-item`): scrollActiveIntoView maps
+ * deliberately `.pcard-row` (NOT `.session-item`): scrollActiveIntoView maps
  * useListNav's index onto `querySelectorAll('.session-item')`, and the nav count
  * only covers project rows — sharing the class would silently corrupt keyboard
  * navigation.
@@ -1176,7 +1304,7 @@ const listNav = useListNav({
 // deliberately outside useListNav (click/tap only) — its rows are not part of
 // the project's order, and mixing them in would make arrow keys jump between
 // projects mid-list.
-useListKeys({ isOpen: () => props.isActive, nav: listNav })
+useListKeys({ isOpen: () => props.isActive && !browsingProject.value, nav: listNav })
 
 function scrollActiveIntoView(index) {
   const items = listRef.value?.querySelectorAll('.session-item') || []
@@ -1190,6 +1318,9 @@ watch(visibleRows, () => listNav.reset())
 // session we just opened belongs to the (new) current project, and a tag filter
 // or a share badge carried across the switch would describe the old one.
 watch(() => store.state.projectRoot, () => {
+  // A browse view describes the project we just left; it must not survive the
+  // switch (the list underneath now belongs to the new project).
+  closeProjectBrowse()
   // Tags are per-project: a filter carried across a project switch would hide
   // the new project's sessions behind a tag it may not even have.
   activeTag.value = ''
@@ -1314,6 +1445,15 @@ onUnmounted(() => {
    pane is what lets it shrink below its content so the strip gets real space
    instead of pushing the pane's overflow out of the column. */
 .session-list-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The project list + the other-project cards. Kept mounted (v-show) while a
+   browse view is open so returning to it restores the scroll position. */
+.session-list-main {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -2129,41 +2269,88 @@ onUnmounted(() => {
   overscroll-behavior: contain;
 }
 
-.other-row {
+/* One card per project. Square corners and a crisp outline on purpose: the
+   card edge is what separates "another project" from the user's own list, so it
+   has to read as a hard boundary, not a soft rounded blob. */
+.pcard {
+  margin: var(--space-4) var(--space-4) 0;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 34%, var(--border-color));
+  background: var(--bg-primary, #fff);
+  overflow: hidden;
+}
+
+.pcard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  /* Same light tint the soft design used — the project colour names the card
+     without turning the header into a solid colour band. */
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 8%, var(--bg-secondary));
+  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 32%, var(--border-color));
+}
+
+.pcard-dot {
+  flex: 0 0 auto;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
+  border-radius: 50%;
+  background: var(--pc, var(--text-secondary));
+}
+
+.pcard-name {
+  flex: 0 0 auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1a1a1a);
+}
+
+.pcard-count {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  background: var(--bg-tertiary, #eef1f4);
+  color: var(--text-muted, #656d76);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.pcard-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-hint, #8c959f);
+  font-size: var(--font-size-2xs);
+}
+
+.pcard-row {
   position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   min-height: calc(36 * var(--dp));
-  padding: var(--space-3) var(--space-6) var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5);
   border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   cursor: pointer;
 }
 
-.other-row:first-child {
+.pcard-row:first-of-type {
   border-top: 0;
 }
 
-/* Project rail: the same tint as the row's chip, so a glance down the strip
-   groups rows by project even though they are one flat list. */
-.other-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: calc(2 * var(--dp));
-  background: var(--other-tint, var(--border-color));
-  opacity: 0.55;
-}
-
 @media (hover: hover) {
-  .other-row:hover {
-    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  .pcard-row:hover {
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 8%, transparent);
   }
 }
 
-.other-row-title {
+.pcard-row-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -2173,21 +2360,11 @@ onUnmounted(() => {
   color: var(--text-secondary, #495057);
 }
 
-.other-row-project {
+.pcard-row-ring {
   flex: 0 0 auto;
-  max-width: 42%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--other-tint, var(--text-primary)) 14%, transparent);
-  color: var(--other-tint, var(--text-secondary));
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-medium);
 }
 
-.other-row-dot {
+.pcard-row-dot {
   flex: 0 0 auto;
   width: calc(6 * var(--dp));
   height: calc(6 * var(--dp));
@@ -2195,9 +2372,131 @@ onUnmounted(() => {
   background: var(--accent-color, #0066cc);
 }
 
-.other-row-pending {
+.pcard-row-pending {
   flex: 0 0 auto;
   display: inline-flex;
   color: var(--color-yellow, #a16207);
+}
+
+/* Footer entry into the read-only list. It is a real button so it can be
+   tabbed to; the whole row is not clickable, because clicking a row above
+   opens a session and the two actions must not be confusable. */
+.pcard-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  background: transparent;
+  color: var(--text-muted, #656d76);
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .pcard-more:hover {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 6%, transparent);
+  }
+}
+
+/* ── Read-only browse view ── */
+.browse-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.browse-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-color, #dee2e6);
+  background: var(--bg-secondary, #f6f8fa);
+}
+
+.browse-back {
+  flex: 0 0 auto;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted, #656d76);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .browse-back:hover {
+    color: var(--text-primary, #1a1a1a);
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
+}
+
+.browse-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1a1a1a);
+}
+
+.browse-count {
+  flex: 0 0 auto;
+  color: var(--text-hint, #8c959f);
+  font-size: var(--font-size-2xs);
+}
+
+.browse-dot {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: calc(8 * var(--dp));
+  height: calc(8 * var(--dp));
+  border-radius: 50%;
+}
+
+.browse-note {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  color: var(--text-hint, #8c959f);
+  font-size: var(--font-size-2xs);
+}
+
+.browse-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.browse-row {
+  display: flex;
+  align-items: center;
+  min-height: calc(44 * var(--dp));
+  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
+  border-top: 1px solid var(--border-color, #dee2e6);
+  cursor: pointer;
+}
+
+.browse-row:first-child {
+  border-top: 0;
+}
+
+@media (hover: hover) {
+  .browse-row:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  }
 }
 </style>

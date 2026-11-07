@@ -2022,6 +2022,39 @@ paths:
             各项目会话概览（`{projects: [{name, sessions}], total}`）。每行携带
             `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
 
+  /api/ai/sessions/by-project:
+    get:
+      tags: [Sessions]
+      summary: 只读浏览指定项目的会话列表
+      description: |
+        返回**指定项目**的完整会话列表，供会话列表底部的「其他项目」卡片
+        点「查看该项目全部会话」时使用。与 `GET /api/ai/sessions` 的区别只有
+        一处：项目来自 `path` 参数而不是项目 cookie，因此可以在**不切换整个
+        工作区**（聊天、文件、终端）的前提下先看一眼别的项目有什么。
+
+        与 `/api/ai/sessions/overview` 的区别：那个只返回**活跃**会话
+        （running / 待审批 / 有未读），本端点返回**全部**未归档会话，因为用户
+        是主动来浏览的。行上的派生字段（`running` / `pendingApproval` /
+        `agentName` / `agentAvatar` / `tags` / `groupMembers`）与
+        `GET /api/ai/sessions` 完全同源，由同一个装饰函数填充。
+
+        只读：本端点不接受写操作，也不产生副作用（不会注册未知项目）。
+      operationId: sessionsByProject
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+          description: 目标项目的绝对路径（取 `GET /api/ai/sessions/overview` 的项目名）。必须是已注册的项目。
+      responses:
+        "200":
+          description: |
+            `{sessions: [...], totalCount: n}`，会话行与 `GET /api/ai/sessions` 同形。
+        "400":
+          description: 缺少 `path`
+        "404":
+          description: 项目未注册（从未打开过）
+
   /api/ai/session/settings:
     get:
       tags: [Sessions]

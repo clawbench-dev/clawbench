@@ -1457,7 +1457,7 @@ describe('SessionList', () => {
     expect(mockRemoveEventHandler).toHaveBeenCalled()
   })
 
-  describe('other-project strip', () => {
+  describe('other-project cards', () => {
     function crossGroup() {
       return {
         name: '/proj/other',
@@ -1470,39 +1470,43 @@ describe('SessionList', () => {
       }
     }
 
-    it('renders other projects under the project list, both visible at once', async () => {
+    /** Route the two endpoints this suite touches. */
+    function routeListAndBrowse(browseSessions: any[]) {
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/sessions/by-project')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: browseSessions, totalCount: browseSessions.length }) })
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      })
+    }
+
+    it('renders one card per project under the list, both visible at once', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
 
-      // No tab switch: the project's own rows and the strip coexist.
+      // No tab switch: the project's own rows and the cards coexist.
       expect(wrapper.find('.session-list-pane').attributes('style') || '').not.toContain('display: none')
       expect(wrapper.find('.session-item').exists()).toBe(true)
-      expect(wrapper.findAll('.other-row').length).toBe(2)
+      expect(wrapper.findAll('.pcard').length).toBe(1)
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
       expect(wrapper.find('[data-other-zone]').exists()).toBe(true)
     })
 
-    it('names the owning project on every row', async () => {
+    it('names the owning project and its active count on the card header', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
 
-      const chips = wrapper.findAll('.other-row-project')
-      expect(chips.length).toBe(2)
-      for (const chip of chips) expect(chip.text()).toBe('other')
-    })
-
-    it('shows the count in the strip header', async () => {
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-      mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList()
-      await flushPromises()
+      expect(wrapper.find('.pcard-name').text()).toBe('other')
+      expect(wrapper.find('.pcard-count').text()).toBe('2')
+      expect(wrapper.find('.pcard-path').text()).toBe('~/proj/other')
       expect(wrapper.find('.other-zone-count').text()).toBe('2')
     })
 
-    it('keeps the pending/unread language and the running comet', async () => {
+    it('keeps the pending/unread language and shows running as a ring', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [{
         name: '/proj/other',
@@ -1517,16 +1521,18 @@ describe('SessionList', () => {
       const wrapper = await mountList()
       await flushPromises()
 
-      expect(wrapper.find('[data-session-id="p1"] .other-row-pending').exists()).toBe(true)
-      expect(wrapper.find('[data-session-id="u1"] .other-row-dot').exists()).toBe(true)
-      // A running row says it with the comet, not with a second marker.
+      expect(wrapper.find('[data-session-id="p1"] .pcard-row-pending').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="u1"] .pcard-row-dot').exists()).toBe(true)
+      // A running row says it with a small ring — the cards are compact, so the
+      // project rows' travelling comet is deliberately not reused here.
       const running = wrapper.find('[data-session-id="r1"]')
-      expect(running.find('.session-running-band').exists()).toBe(true)
-      expect(running.find('.other-row-pending').exists()).toBe(false)
-      expect(running.find('.other-row-dot').exists()).toBe(false)
+      expect(running.find('.loading-stub').exists(), 'running row shows the ring').toBe(true)
+      expect(running.find('.session-running-band').exists(), 'no comet in the cards').toBe(false)
+      expect(running.find('.pcard-row-pending').exists()).toBe(false)
+      expect(running.find('.pcard-row-dot').exists()).toBe(false)
     })
 
-    it('hides the strip entirely when no other project has activity', async () => {
+    it('hides the section entirely when no other project has activity', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = []
       const wrapper = await mountList()
@@ -1535,40 +1541,40 @@ describe('SessionList', () => {
       expect(wrapper.find('[data-other-zone]').exists()).toBe(false)
     })
 
-    it('does not use .session-item for strip rows (keyboard nav index isolation)', async () => {
+    it('does not use .session-item for card rows (keyboard nav index isolation)', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
-      // Project rows keep .session-item; strip rows must not add to that set,
+      // Project rows keep .session-item; card rows must not add to that set,
       // otherwise querySelectorAll('.session-item') indices no longer match
       // useListNav's count.
       expect(wrapper.findAll('.session-item').length).toBe(1)
-      expect(wrapper.findAll('.other-row').length).toBe(2)
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
     })
 
-    it('emits select with the owning project path for strip rows', async () => {
+    it('emits select with the owning project path for card rows', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
-      await wrapper.findAll('.other-row')[0].trigger('click')
+      await wrapper.findAll('.pcard-row')[0].trigger('click')
       expect(wrapper.emitted('select')![0]).toEqual(['o1', 'cli', '/proj/other'])
     })
 
-    it('does not render the row action button on strip rows', async () => {
+    it('does not render the row action button on card rows', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
-      const rows = wrapper.findAll('.other-row')
+      const rows = wrapper.findAll('.pcard-row')
       expect(rows.length).toBe(2)
       for (const row of rows) {
         expect(row.find('.session-more-btn').exists()).toBe(false)
       }
     })
 
-    it('collapses and expands the whole strip from its header', async () => {
+    it('collapses and expands the whole section from its header', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
@@ -1580,7 +1586,7 @@ describe('SessionList', () => {
       await head.trigger('click')
       expect(wrapper.find('.other-zone-head').attributes('aria-expanded')).toBe('false')
       // Rows stay mounted (v-show) so collapsing never destroys the snapshot.
-      expect(wrapper.findAll('.other-row').length).toBe(2)
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
       expect(wrapper.find('.other-zone-body').attributes('style')).toContain('display: none')
       expect(wrapper.find('.other-zone').classes()).toContain('is-collapsed')
 
@@ -1589,7 +1595,7 @@ describe('SessionList', () => {
       expect(wrapper.find('.other-zone-body').attributes('style') || '').not.toContain('display: none')
     })
 
-    it('sizes the strip from the real content heights, not a fixed ratio', async () => {
+    it('sizes the section from the real content heights, not a fixed ratio', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
@@ -1603,7 +1609,7 @@ describe('SessionList', () => {
       rows.getBoundingClientRect = () => ({ height: 300, top: 0, left: 0, right: 0, bottom: 300, width: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
       const zoneBody = wrapper.find('.other-zone-body').element as HTMLElement
       Object.defineProperty(zoneBody, 'scrollHeight', { value: 200, configurable: true })
-      const firstRow = wrapper.find('.other-row').element as HTMLElement
+      const firstRow = wrapper.find('.pcard-row').element as HTMLElement
       firstRow.getBoundingClientRect = () => ({ height: 36, top: 0, left: 0, right: 0, bottom: 36, width: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
 
       window.dispatchEvent(new Event('resize'))
@@ -1611,8 +1617,85 @@ describe('SessionList', () => {
       await flushPromises()
 
       // 600 available, project list needs 300, other projects have 200 of
-      // content -> the strip shows all 200 and the project list stays whole.
+      // content -> the section shows all 200 and the project list stays whole.
       expect(wrapper.find('.other-zone-body').attributes('style')).toContain('height: 200px')
+    })
+
+    // ── Read-only browse view ────────────────────────────────────────────
+    const browseSessions = [
+      { id: 'b1', title: 'Old one', backend: 'cli', agentId: 'agent-1', model: 'gpt-4', running: false, pendingApproval: false, unreadCount: 0, updatedAt: '2024-12-01' },
+      { id: 'b2', title: 'Another', backend: 'acp', agentId: 'agent-2', running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2024-11-01' },
+    ]
+
+    it('opens a read-only list of that project from the card footer', async () => {
+      routeListAndBrowse(browseSessions)
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      await wrapper.find('.pcard-more').trigger('click')
+      await flushPromises()
+
+      // The request names the project explicitly — the ordinary list endpoint
+      // resolves it from the cookie and would require switching the workspace.
+      const urls = mockFetch.mock.calls.map(c => String(c[0]))
+      expect(urls.some(u => u.includes('/api/ai/sessions/by-project') && u.includes(encodeURIComponent('/proj/other')))).toBe(true)
+
+      expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
+      expect(wrapper.find('.browse-title').text()).toBe('other')
+      // i18n is stubbed to echo the key, so this asserts the count slot is wired.
+      expect(wrapper.find('.browse-count').text()).toBe('session.browseCount')
+      // Both rows, including the one with no activity (the strip only lists
+      // active sessions — browsing shows the whole list).
+      expect(wrapper.findAll('.browse-row').length).toBe(2)
+      expect(wrapper.find('.browse-row .session-item-title').text()).toBe('Old one')
+    })
+
+    it('returns to the cards when the back arrow is clicked', async () => {
+      routeListAndBrowse(browseSessions)
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      await wrapper.find('.pcard-more').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
+
+      await wrapper.find('.browse-back').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-project-browse]').exists()).toBe(false)
+      // The cards are back, not a re-fetch of the list.
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
+    })
+
+    it('opens the clicked session from the read-only list', async () => {
+      routeListAndBrowse(browseSessions)
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      await wrapper.find('.pcard-more').trigger('click')
+      await flushPromises()
+      await wrapper.findAll('.browse-row')[0].trigger('click')
+      expect(wrapper.emitted('select')![0]).toEqual(['b1', 'cli', '/proj/other'])
+    })
+
+    it('shows an error instead of an empty list when the request fails', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/sessions/by-project')) {
+          return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) })
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      await wrapper.find('.pcard-more').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-project-browse] .session-empty').text()).toBe('session.browseFailed')
+      expect(wrapper.findAll('.browse-row').length).toBe(0)
     })
   })
 
@@ -2568,7 +2651,7 @@ describe('SessionList', () => {
     })
 
     it('keeps the filter bar visible when the other-project strip has rows', async () => {
-      // The strip shares the column with the project list, but the filter only
+      // The cards share the column with the project list, but the filter only
       // describes project sessions — it must not disappear or start filtering
       // other projects' rows.
       routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
@@ -2580,7 +2663,7 @@ describe('SessionList', () => {
       await wrapper.vm.loadSessions()
       await flushPromises()
       expect(wrapper.find('.session-tag-filter').exists()).toBe(true)
-      expect(wrapper.findAll('.other-row').length).toBe(1)
+      expect(wrapper.findAll('.pcard-row').length).toBe(1)
       wrapper.unmount()
     })
   })

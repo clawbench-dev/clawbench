@@ -145,8 +145,8 @@ test.describe.serial('Cross-project session jump', () => {
     // The "other projects" strip only exists while some other project has an
     // active session — wait for it rather than assuming it is there. The strip
     // is always on screen (no tab to click), so the row itself is the hook.
-    const targetRow = page.locator(`.other-row[data-session-id="${targetId}"]`)
-    await expect(targetRow, 'seeded session never surfaced in the other-projects strip').toBeVisible({ timeout: 30000 })
+    const targetRow = page.locator(`.pcard-row[data-session-id="${targetId}"]`)
+    await expect(targetRow, 'seeded session never surfaced in the other-projects cards').toBeVisible({ timeout: 30000 })
 
     chatGets.length = 0 // ignore anything the initial load did
     await targetRow.click()

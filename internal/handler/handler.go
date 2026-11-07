@@ -601,6 +601,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)
 	register("/api/ai/sessions/overview", ServeSessionsOverview)
+	register("/api/ai/sessions/by-project", ServeProjectSessions)
 	register("/api/ai/sessions/reorder", ServeSessionsReorder)
 	register("/api/ai/session/archive", ArchiveSession)
 	register("/api/ai/session/destroy", DestroySession)

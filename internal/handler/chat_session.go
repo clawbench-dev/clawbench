@@ -16,6 +16,7 @@ import (
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // ServeSessionsOverview handles GET /api/ai/sessions/overview.
@@ -122,6 +123,67 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
 }
 
+// decorateSessionRows fills the derived fields every session-list response
+// carries: live run state, pending-approval state, tags, group member previews
+// and the agent display identity. Shared by the current project's list and the
+// read-only cross-project list so the two can never drift apart.
+func decorateSessionRows(sessions []model.ChatSession, projectPath string) {
+	// Batch-check running state: single mutex acquisition instead of N
+	runningIDs := service.GetRunningSessionIDs()
+	runningSet := make(map[string]bool, len(runningIDs))
+	for _, id := range runningIDs {
+		runningSet[id] = true
+	}
+	// Batch-check pending approval state from ACP connection pool
+	pendingApprovalSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
+	for i := range sessions {
+		sessions[i].Running = runningSet[sessions[i].ID]
+		sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
+	}
+	attachSessionTags(sessions)
+	attachGroupMembers(sessions)
+	attachAgentIdentity(sessions, projectPath)
+}
+
+// ServeProjectSessions handles GET /api/ai/sessions/by-project?path=<abs path>.
+//
+// Read-only browse of ANOTHER project's sessions, reached from the session
+// list's "other projects" cards. The ordinary list endpoint resolves the
+// project from the cookie, so using it here would mean switching the whole
+// workspace (chat, files, terminal) just to read a list.
+//
+// The project must already be registered: an arbitrary path must not be usable
+// to probe the session table.
+func ServeProjectSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if projectPath == "" {
+		model.WriteError(w, model.NewAppError(http.StatusBadRequest, "path is required", nil))
+		return
+	}
+	if _, ok, err := store.ProjectIDByPath(projectPath); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project")))
+		return
+	} else if !ok {
+		model.WriteError(w, model.NotFound(fmt.Errorf("unknown project"), "project not found"))
+		return
+	}
+
+	sessions, err := service.GetSessions(projectPath, "")
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load sessions")))
+		return
+	}
+	decorateSessionRows(sessions, projectPath)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessions":   sessions,
+		"totalCount": len(sessions),
+	})
+}
+
 // ServeSessions handles GET (list) and POST (create) for chat sessions.
 func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-method session handler
 	projectPath, ok := requireProject(w, r)
@@ -186,21 +248,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to load sessions")))
 			return
 		}
-		// Batch-check running state: single mutex acquisition instead of N
-		runningIDs := service.GetRunningSessionIDs()
-		runningSet := make(map[string]bool, len(runningIDs))
-		for _, id := range runningIDs {
-			runningSet[id] = true
-		}
-		// Batch-check pending approval state from ACP connection pool
-		pendingApprovalSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
-		for i := range sessions {
-			sessions[i].Running = runningSet[sessions[i].ID]
-			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
-		}
-		attachSessionTags(sessions)
-		attachGroupMembers(sessions)
-		attachAgentIdentity(sessions, projectPath)
+		decorateSessionRows(sessions, projectPath)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
