@@ -76,7 +76,13 @@ export const FALLBACK_TOOL_ICON = { icon: WrenchFallback, category: 'fallback' }
 const AGENT_SUBTYPE_NAMES = new Set([
   'explore', 'plan', 'general-purpose', 'general', 'claude',
   'code-reviewer', 'statusline-setup', 'fork',
+  // OpenCode 2.x's delegation tool; older stored blocks still carry this name
+  // verbatim, so the icon must resolve even without the backend remap.
+  'subagent', 'sub agent', 'sub-agent',
 ])
+
+/** Tool names that are the Agent delegation card (all backends' spellings). */
+const AGENT_FAMILY_NAMES = new Set(['agent', 'task', 'subagent', 'sub agent', 'sub-agent'])
 
 /**
  * Lowercased tool name → entry, built once at module load.
@@ -115,10 +121,16 @@ export function toolDisplayName(name: string, input?: Record<string, unknown>, d
   if (displayName) return displayName
   const safeName = name || ''
   const lower = safeName.toLowerCase()
-  if ((lower === 'agent' || lower === 'task') && input?.subagent_type) {
-    // PascalCase the subagent_type: "explore" → "Explore", "general-purpose" → "General-purpose"
-    const raw = String(input.subagent_type)
-    return raw.charAt(0).toUpperCase() + raw.slice(1)
+  // Agent-family tools: show the sub-agent type instead of the generic label.
+  // OpenCode 2.x uses `subagent` + an `agent` input field (v1/Claude use `task`/
+  // `agent` + `subagent_type`), so both shapes resolve here.
+  if (AGENT_FAMILY_NAMES.has(lower)) {
+    const raw = input?.subagent_type || input?.agent || input?.mode
+    if (raw) {
+      const s = String(raw)
+      return s.charAt(0).toUpperCase() + s.slice(1)
+    }
+    if (lower !== 'agent' && lower !== 'task') return 'Agent'
   }
   return safeName
 }

@@ -888,7 +888,8 @@ function renderAgentCall(input: ToolInput): string {
 
   const description = str(input.description)
   const prompt = str(input.prompt)
-  const subagentType = str(input.subagent_type) || str(input.mode)
+  // OpenCode 2.x names the sub-agent in `agent` (v1/Claude use `subagent_type`).
+  const subagentType = str(input.subagent_type) || str(input.mode) || str(input.agent)
 
   let html = '<div class="agent-call-view">'
 

@@ -31,7 +31,9 @@ var OpenCodeToolNameMap = map[string]string{
 	"glob":       "Glob",
 	"web_fetch":  "WebFetch",
 	"agent":      "Agent",
-	"skill":      "Skill",
+	// OpenCode 2.x calls its delegation tool `subagent` (v1 used `task`).
+	"subagent": "Agent",
+	"skill":    "Skill",
 }
 
 func init() {

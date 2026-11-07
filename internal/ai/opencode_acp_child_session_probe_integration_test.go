@@ -154,6 +154,9 @@ type opencodeChildProbeStats struct {
 	variants            map[string]int
 	// sampleChildFrame is the first leaked frame, kept for the guard assertion.
 	sampleChildFrame *acp.SessionNotification
+	// sampleSubagentCall is the real subagent tool_call frame, kept so the probe
+	// can assert it canonicalizes to the Agent card.
+	sampleSubagentCall *acp.SessionUpdateToolCall
 }
 
 // analyzeOpenCodeChildProbe decodes every agent→client JSON-RPC line.
@@ -187,6 +190,10 @@ func analyzeOpenCodeChildProbe(buf *bytes.Buffer) opencodeChildProbeStats {
 		if variant == "tool_call" && n.Update.ToolCall != nil &&
 			strings.Contains(strings.ToLower(n.Update.ToolCall.Title), "subagent") {
 			stats.subagentToolCalls++
+			if stats.sampleSubagentCall == nil {
+				call := *n.Update.ToolCall
+				stats.sampleSubagentCall = &call
+			}
 		}
 	}
 	return stats
@@ -211,6 +218,11 @@ func TestOpenCodeACP_ChildSessionLeakProbe(t *testing.T) {
 	if stats.subagentToolCalls == 0 {
 		t.Skip("model did not call the subagent tool this run — rerun the probe")
 	}
+	require.NotNil(t, stats.sampleSubagentCall, "no subagent tool_call captured")
+	assert.Equal(t,
+		"Agent",
+		extractToolName(stats.sampleSubagentCall.Title, stats.sampleSubagentCall.Kind, "opencode", string(stats.sampleSubagentCall.ToolCallId)),
+		"the subagent tool must canonicalize to Agent so the frontend renders the Agent card")
 	require.Positive(t, stats.childSessionUpdates,
 		"OpenCode sent no child-tagged frames — it may have changed the projection; update the probe")
 	require.NotNil(t, stats.sampleChildFrame, "no child frame captured")

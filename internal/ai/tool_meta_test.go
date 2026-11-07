@@ -348,6 +348,12 @@ func TestExtractDisplayName(t *testing.T) {
 			want:     "Explore",
 		},
 		{
+			name:     "Agent with OpenCode agent field",
+			toolName: "Agent",
+			input:    map[string]any{"agent": "general", "description": "child probe"},
+			want:     "General",
+		},
+		{
 			name:     "Agent without subagent_type",
 			toolName: "Agent",
 			input:    map[string]any{"prompt": "research"},

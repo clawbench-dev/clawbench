@@ -125,6 +125,9 @@ var acpLowerAlias = map[string]string{
 	"ls":       "LS",
 	"list":     "LS",
 	"agent":    "Agent",
+	// OpenCode 2.x names the delegation tool `subagent` (v1 called it `task`).
+	// Without this it renders as an unknown tool: wrench icon, no Agent card.
+	"subagent": "Agent",
 	"skill":    "Skill",
 }
 
@@ -180,6 +183,9 @@ var acpToolNamePatterns = []struct{ prefix, canonical string }{
 	{"TaskList", "TaskList"},
 	{"TaskGet", "TaskGet"},
 	{"Task", "Agent"}, // ACP generic "Task" tool → Agent (sub-agent delegation)
+	{"Subagent", "Agent"},
+	{"Sub Agent", "Agent"},
+	{"Sub-agent", "Agent"},
 	{"ComputerUse", "ComputerUse"},
 	{"TeamCreate", "TeamCreate"},
 	{"TeamDelete", "TeamDelete"},

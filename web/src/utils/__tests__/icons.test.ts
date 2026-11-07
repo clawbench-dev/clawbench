@@ -63,6 +63,8 @@ describe('getToolIcon', () => {
     expect(getToolIcon('code-reviewer').category).toBe('agent')
     expect(getToolIcon('statusline-setup').category).toBe('agent')
     expect(getToolIcon('fork').category).toBe('agent')
+    // OpenCode 2.x delegation tool; old stored blocks still carry this name.
+    expect(getToolIcon('subagent').category).toBe('agent')
   })
 
   it('agent sub-type lookup is case-insensitive', () => {
@@ -119,6 +121,13 @@ describe('toolDisplayName', () => {
 
   it('PascalCases the subagent_type for Task calls', () => {
     expect(toolDisplayName('Task', { subagent_type: 'plan' })).toBe('Plan')
+  })
+
+  it('resolves OpenCode subagent calls from the agent input', () => {
+    expect(toolDisplayName('subagent', { agent: 'general' })).toBe('General')
+    expect(toolDisplayName('Sub Agent', { agent: 'explore' })).toBe('Explore')
+    // No type reported → the generic Agent label, never the raw "subagent".
+    expect(toolDisplayName('subagent', {})).toBe('Agent')
   })
 
   it('ignores subagent_type for non-Agent/Task tools', () => {

@@ -276,7 +276,7 @@ export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
  * "mark unfinished tools as done" cleanup must exempt them — otherwise the
  * sub-agent pill shows its finished check while it is still working.
  */
-export const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent'])
+export const SUBAGENT_TOOL_NAMES = new Set(['task', 'agent', 'subagent', 'sub agent', 'sub-agent'])
 
 /** Whether a tool name denotes a sub-agent call (case-insensitive). */
 export function isSubagentToolName(name?: string): boolean {
