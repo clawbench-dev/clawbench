@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,7 +41,15 @@ func installCatalog(t *testing.T) {
 	t.Helper()
 	path := model.CatalogPath()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte(catalogSnapshotFixture), 0o600))
+	// The fixture's own timestamp is a placeholder: writing it verbatim made the
+	// snapshot age past CatalogTTL on a fixed calendar day, after which the
+	// "is it stale?" assertions flipped without a single code change. Stamp it
+	// with the current time so the fixture means "a snapshot fetched just now".
+	snapshot := strings.Replace(
+		catalogSnapshotFixture, "2026-10-31T00:00:00Z",
+		time.Now().UTC().Format(time.RFC3339), 1,
+	)
+	require.NoError(t, os.WriteFile(path, []byte(snapshot), 0o600))
 	require.NoError(t, model.LoadCatalogFromDisk())
 }
 

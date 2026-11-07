@@ -12,6 +12,11 @@ export interface GitCommit {
   msg: string
   date: string
   author: string
+  /**
+   * Parent SHAs (2+ means a merge commit). Absent/null for a root commit and in
+   * hosts that do not ask git for `%P` — always guard with `?.length`.
+   */
+  parents?: string[]
   /** Frontend-only synthetic row for the working tree. */
   isWT?: boolean
   refs?: string[]

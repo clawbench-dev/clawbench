@@ -46,8 +46,6 @@ const componentsCss = readWebFile('css/components.css')
 const SHARED_CHROME = [
   'drilldown-page',
   'drilldown-header',
-  'drilldown-title',
-  'drilldown-title-icon',
   'drilldown-count',
   'drilldown-refresh-btn',
   'drilldown-body',
@@ -117,7 +115,7 @@ describe('git history chrome is declared globally', () => {
     for (const rel of COMPONENTS) {
       expect(() => readWebFile(rel), `${rel} must exist`).not.toThrow()
     }
-    expect(readWebFile(COMPONENTS[0])).toContain('class="drilldown-header"')
+    expect(readWebFile(COMPONENTS[0])).toMatch(/class="drilldown-header\b/)
   })
 })
 
@@ -162,10 +160,20 @@ describe('git history header matches the forge panel header', () => {
   it('keeps the hover treatment in step with the forge header button', () => {
     // The forge header's own rules are scoped to ForgePanelContent, so the
     // reference values are read from there rather than from the global sheet.
-    const forgePanel = readWebFile('src/components/forge/ForgePanelContent.vue')
-    const forgeBase = forgePanel.match(/\.forge-header-btn\s*\{([^}]*)\}/)
+    //
+    // Anchor the selector: an unanchored /\.forge-header-btn\s*\{/ matches the
+    // `.forge-header.show-labels .forge-header-btn` variant first and compares
+    // the wrong declaration block. The base FILL is deliberately not compared —
+    // forge sits on a transparent header and the git bar on bg-secondary (see
+    // the "transparent bar" case above), so only the hover pair is common.
+    // Comments are stripped first: the anchor needs `}` (or start of file)
+    // immediately before the selector, and a comment sitting between the
+    // previous rule and this one would otherwise break the match.
+    const forgePanel = stripComments(readWebFile('src/components/forge/ForgePanelContent.vue'))
+    const forgeBase = forgePanel.match(
+      /(?:^|[},])\s*\.forge-header-btn\s*\{([^}]*)\}/,
+    )
     expect(forgeBase, '.forge-header-btn must exist in ForgePanelContent').not.toBeNull()
-    expect(forgeBase![1]).toMatch(/background:\s*var\(--bg-secondary\)/)
     expect(forgeBase![1]).toMatch(/color:\s*var\(--text-secondary\)/)
 
     const gitCss = stripComments(componentsCss)
@@ -205,19 +213,40 @@ describe('stale-data pulse follows the theme', () => {
   })
 })
 
-describe('the header title carries its glyph', () => {
-  it('renders a GitBranch icon in the title, like the forge header does', () => {
-    // The title area used to be a bare count badge. The glyph is what makes it
-    // read as the same "icon + title" header as the forge panel.
-    const src = readWebFile('src/components/git/GitCommitList.vue')
-    const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
-    expect(title, 'the title block must exist').not.toBeNull()
-    expect(title![1]).toContain('<GitBranch')
-    expect(title![1]).toContain('class="drilldown-title-icon"')
+describe('the toolbar has exactly one branch glyph', () => {
+  // The header used to be "⑂ + count" with a second row below carrying another
+  // ⑂ on the branch picker: the same glyph twice, meaning two different things
+  // ("this is commit history" / "this is the branch you are reading"). The
+  // toolbar now leads with the picker, so the glyph lives there and nowhere
+  // else, and the title block is gone.
+  const src = readWebFile('src/components/git/GitCommitList.vue')
+
+  it('puts the glyph on the branch picker', () => {
+    const picker = src.match(/<div v-if="showBranchBar" class="branch-picker">([\s\S]*?)<\/button>/)
+    expect(picker, 'the branch picker must exist').not.toBeNull()
+    expect(picker![1]).toContain('<GitBranch')
+    expect(picker![1]).toContain('class="branch-chip-name"')
   })
 
-  it('keeps the glyph from being squeezed by a long count', () => {
-    expect(baseRule(componentsCss, 'drilldown-title-icon')).toMatch(/flex-shrink:\s*0/)
+  it('leaves no second title block behind', () => {
+    expect(src).not.toContain('class="drilldown-title"')
+    expect(src).not.toContain('drilldown-title-icon')
+  })
+})
+
+describe('every toolbar button can become a menu item', () => {
+  it('gives each button an .action-label', () => {
+    // ActionBar builds the overflow menu from the buttons' `.action-label` (or
+    // their title). A button without one folds into the menu as an empty row,
+    // which is invisible until the bar actually gets narrow.
+    const src = readWebFile('src/components/git/GitCommitList.vue')
+    const bar = src.match(/<ActionBar[\s\S]*?<\/ActionBar>/)
+    expect(bar, 'the toolbar must use ActionBar').not.toBeNull()
+    const buttons = bar![0].match(/<(?:button|RefreshButton)\b[\s\S]*?<\/(?:button|RefreshButton)>/g) || []
+    expect(buttons.length, 'the bar is expected to hold search/refresh/merge/manage').toBeGreaterThanOrEqual(4)
+    for (const b of buttons) {
+      expect(b, 'a toolbar button is missing its .action-label').toContain('class="action-label"')
+    }
   })
 })
 
@@ -260,10 +289,6 @@ describe('the header search field is borderless and fills the free space', () =>
     expect(wrapper, 'the .commit-search rule must exist').not.toBeNull()
     expect(wrapper![1]).toMatch(/flex:\s*1/)
     expect(wrapper![1], 'a max-width would cap the fill').not.toMatch(/max-width/)
-
-    const title = src.match(/:deep\(\.drilldown-title\)\s*\{([^}]*)\}/)
-    expect(title, 'the title override must exist').not.toBeNull()
-    expect(title![1]).toMatch(/flex:\s*0 1 auto/)
   })
 
   it('tints the fill from --text-primary, not by jumping a background step', () => {
@@ -278,34 +303,38 @@ describe('the header search field is borderless and fills the free space', () =>
   })
 })
 
-describe('the manage button does not repeat the title glyph', () => {
-  it('uses a different icon from the title', () => {
-    // The title carries GitBranch. The manage button opens the branch/worktree/
-    // tag panel, so it originally reused GitBranch too — which, once the title
-    // gained the same glyph, put two identical icons in one bar. It moved to
-    // GitFork for that reason, and then to MoreVertical: the panel is a
-    // container for three lists rather than a branch itself, so a "more
-    // actions" glyph describes it better. This pins that the two stay
-    // distinct — a future "tidy up the icons" pass could otherwise silently
-    // collapse them again.
+describe('the manage button does not repeat the branch glyph', () => {
+  it('uses a different icon from the picker', () => {
+    // The picker carries GitBranch. The manage button opens the branch/worktree/
+    // tag panel, so it originally reused GitBranch too — two identical icons in
+    // one bar. It then moved to MoreVertical, which stopped working once the
+    // bar gained ActionBar's own ⋮ overflow button. ListTree is the one glyph
+    // that says "a panel of three lists" and collides with neither.
     const src = readWebFile('src/components/git/GitCommitList.vue')
-    const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
-    expect(title, 'the title block must exist').not.toBeNull()
-    const titleIcon = title![1].match(/<([A-Z][A-Za-z0-9]*)\s[^>]*drilldown-title-icon/)
-    expect(titleIcon, 'the title must render an icon').not.toBeNull()
+    const picker = src.match(/<div v-if="showBranchBar" class="branch-picker">([\s\S]*?)<\/button>/)
+    expect(picker, 'the branch picker must exist').not.toBeNull()
+    const pickerIcon = picker![1].match(/<([A-Z][A-Za-z0-9]*)\s+:size/)
+    expect(pickerIcon, 'the picker must render an icon').not.toBeNull()
+    expect(pickerIcon![1]).toBe('GitBranch')
 
+    // Anchor on the button's own attribute: an unanchored `<button[\s\S]*?`
+    // starts at the FIRST button in the header, so any new toolbar button placed
+    // before this one makes the block start elsewhere and the icon check reads
+    // the wrong glyph.
     const manageBtn = src.match(
-      /<button[\s\S]*?@click\.stop="\$emit\('manage'\)"[\s\S]*?<\/button>/,
+      /<button\b[^>]*data-action="manage"[\s\S]*?<\/button>/,
     )
     expect(manageBtn, 'the manage button must exist').not.toBeNull()
-    const manageIcon = manageBtn![0].match(/<([A-Z][A-Za-z0-9]*)\s+:/)
+    const manageIcon = manageBtn![0].match(/<([A-Z][A-Za-z0-9]*)\s+:size/)
     expect(manageIcon, 'the manage button must render an icon').not.toBeNull()
 
     expect(
       manageIcon![1],
-      'the manage button must not reuse the title icon',
-    ).not.toBe(titleIcon![1])
-    expect(manageIcon![1]).toBe('MoreVertical')
+      'the manage button must not reuse the branch glyph',
+    ).not.toBe(pickerIcon![1])
+    // NOT MoreVertical: the bar owns an overflow button that already wears ⋮,
+    // and two of them a few pixels apart for different actions is unreadable.
+    expect(manageIcon![1]).toBe('ListTree')
   })
 
   it('imports the manage icon so the button is not empty', () => {
@@ -314,6 +343,7 @@ describe('the manage button does not repeat the title glyph', () => {
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
     expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('MoreVertical')
+    expect(imports![1]).toContain('ListTree')
+    expect(imports![1], 'the ⋮ glyph now belongs to the overflow button').not.toContain('MoreVertical')
   })
 })

@@ -101,24 +101,6 @@
     gap: var(--space-3);
 }
 
-.drilldown-title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-    overflow: hidden;
-    flex: 1;
-    min-width: 0;
-}
-
-/* The leading glyph. `flex-shrink: 0` keeps it at 14px when the count badge
-   beside it is long, and it inherits the title's colour (as forge's does). */
-.drilldown-title-icon {
-    flex-shrink: 0;
-}
-
 /* Colour only — shape and geometry belong to the shared .count-badge. */
 .drilldown-count {
     font-weight: var(--font-weight-bold);
@@ -160,6 +142,13 @@
 .drilldown-refresh-btn:disabled {
     opacity: var(--opacity-muted);
     cursor: not-allowed;
+}
+
+/* Sticky "this toggle is on" state. Same colour pair as :hover so an enabled
+   filter reads as the accent without inventing a second highlight. */
+.drilldown-refresh-btn.is-on {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
 }
 
 /* Stale-data hint: the refresh button pulses in the THEME accent. The glow was
@@ -1553,8 +1542,8 @@
    GLOBAL on purpose: the menu's items are provided by the host component
    through a slot, so they carry the HOST's scope id — a scoped rule inside
    ActionBar.vue would never match them, and every host would have to restyle
-   its own entries. The container itself is PopupMenu, a column flex, so these
-   rules only describe one item.
+   its own entries. The container itself is PopupMenu, which is a column flex;
+   these rules give every item the same row layout.
    ========================================================================== */
 .ab-menu-item {
     display: flex;

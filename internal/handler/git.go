@@ -478,6 +478,28 @@ func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 		return combined, nil
 	}
 
+	// Merge commits get a combined diff from `git show`, which only renders the
+	// lines the merge itself decided (conflict resolutions). Every file the merge
+	// took verbatim from one side produces no output at all — and the commit file
+	// list still lists those files, so each one would open to an empty diff.
+	// Compare against each parent instead and keep the first non-empty result:
+	// for a clean merge exactly one parent differs, and for a real conflict
+	// resolution the first parent wins (same convention as `git show -m`).
+	if parents := getCommitParents(projectPath, commit); len(parents) >= 2 {
+		for _, parent := range parents {
+			parentCmd := exec.Command("git", "diff", parent, commit, "--", relPath)
+			parentCmd.Dir = projectPath
+			out, err := parentCmd.CombinedOutput()
+			if err != nil {
+				continue
+			}
+			if strings.TrimSpace(string(out)) != "" {
+				return out, nil
+			}
+		}
+		return []byte{}, nil
+	}
+
 	// Use git show --format="" to get unified diff output. The bare "git show <commit>"
 	// without --format="" can return raw blob content for added files without diff markers.
 	// With --format="" (empty commit message format), git show produces proper unified diff

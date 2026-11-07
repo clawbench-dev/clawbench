@@ -207,9 +207,15 @@ describe('GitCommitList', () => {
       expect(wrapper.find('.git-history-error').text()).toBe('boom')
     })
 
-    it('shows loadingAll text when searchLoading is true', () => {
+    it('swaps the count badge for a spinner while a search reload is in flight', () => {
+      // The badge is one or two glyphs wide now, so the old "加载全部…" sentence
+      // cannot fit in it. The number would also be the stale one, so it is
+      // replaced rather than left sitting next to a spinner.
       const wrapper = mountList({ searchLoading: true })
-      expect(wrapper.text()).toContain('git.commitList.loadingAll')
+      const badge = wrapper.find('.git-count')
+      expect(badge.exists()).toBe(true)
+      expect(badge.find('.li-spinner').exists()).toBe(true)
+      expect(badge.text()).not.toContain('5')
     })
 
     it('shows loading text when commits empty, isGit and not untracked', () => {
@@ -221,28 +227,32 @@ describe('GitCommitList', () => {
   describe('header actions', () => {
     it('emits refresh when refresh button is clicked', async () => {
       const wrapper = mountList()
-      const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
-      await btn.trigger('click')
+      await wrapper.find('[data-action="refresh"]').trigger('click')
       expect(wrapper.emitted('refresh')).toBeTruthy()
     })
 
     it('emits manage when manage button is clicked (non-file mode)', async () => {
       const wrapper = mountList()
-      const btn = wrapper.findAll('.drilldown-refresh-btn')[1]
+      // Stable hook rather than a positional index: the toolbar gained a filter
+      // toggle, and index-based selection silently clicked the wrong button.
+      const btn = wrapper.find('[data-action="manage"]')
       await btn.trigger('click')
       expect(wrapper.emitted('manage')).toBeTruthy()
     })
 
     it('hides manage button in file mode', () => {
       const wrapper = mountList({ mode: 'file' })
-      expect(wrapper.findAll('.drilldown-refresh-btn')).toHaveLength(1)
+      expect(wrapper.find('[data-action="manage"]').exists()).toBe(false)
+      // Refresh and search stay: a single file's history is still searchable.
+      expect(wrapper.find('[data-action="refresh"]').exists()).toBe(true)
+      expect(wrapper.find('[data-action="search"]').exists()).toBe(true)
     })
 
     it('keeps the refresh button enabled during a background load', () => {
       // `loading` only drives the list overlay; the button's disabled state is
       // owned by the local `refreshing` spin state.
       const wrapper = mountList({ loading: true })
-      const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+      const btn = wrapper.find('[data-action="refresh"]')
       expect(btn.attributes('disabled')).toBeUndefined()
     })
 
@@ -250,7 +260,7 @@ describe('GitCommitList', () => {
       vi.useFakeTimers()
       try {
         const wrapper = mountList()
-        const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+        const btn = wrapper.find('[data-action="refresh"]')
         expect(btn.attributes('disabled')).toBeUndefined()
 
         await btn.trigger('click')
@@ -268,7 +278,7 @@ describe('GitCommitList', () => {
       vi.useFakeTimers()
       try {
         const wrapper = mountList()
-        const btn = wrapper.findAll('.drilldown-refresh-btn')[0]
+        const btn = wrapper.find('[data-action="refresh"]')
         expect(btn.classes()).not.toContain('refresh-spin--active')
 
         await btn.trigger('click')
@@ -494,6 +504,71 @@ describe('GitCommitList', () => {
     })
   })
 
+  describe('merge-commit filter', () => {
+    // A merge row lists everything both sides touched, so it drowns the actual
+    // commits in a branch-merge history. The toggle hides those rows only.
+    const MERGE = 'm'.repeat(40)
+    const MERGE_COMMITS = [
+      { sha: MERGE, msg: 'Merge branch X', date: '2025-01-01', author: 'A', refs: [], parents: ['a'.repeat(40), 'b'.repeat(40)] },
+      { sha: 'a'.repeat(40), msg: 'real work', date: '2025-01-01', author: 'A', refs: [], parents: ['c'.repeat(40)] },
+    ]
+
+    it('keeps merge commits visible by default', () => {
+      const wrapper = mountList({ commits: MERGE_COMMITS })
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(2)
+      expect(wrapper.find('[data-action="toggle-merge-commits"]').attributes('aria-pressed')).toBe('false')
+    })
+
+    it('hides merge rows when the toggle is on', async () => {
+      const wrapper = mountList({ commits: MERGE_COMMITS })
+      await wrapper.find('[data-action="toggle-merge-commits"]').trigger('click')
+
+      const rows = wrapper.findAll('.drilldown-item')
+      expect(rows).toHaveLength(1)
+      expect(rows[0].text()).toContain('real work')
+      expect(wrapper.find('[data-action="toggle-merge-commits"]').attributes('aria-pressed')).toBe('true')
+    })
+
+    it('brings the merge rows back when toggled off again', async () => {
+      const wrapper = mountList({ commits: MERGE_COMMITS })
+      const btn = wrapper.find('[data-action="toggle-merge-commits"]')
+      await btn.trigger('click')
+      await btn.trigger('click')
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(2)
+    })
+
+    it('hides the graph while merges are filtered out', async () => {
+      // The lanes are derived from parent links; keeping the graph would show
+      // branch joins for rows that are no longer in the list.
+      const wrapper = mountList({ commits: MERGE_COMMITS })
+      expect(wrapper.find('.graph-stub').exists()).toBe(true)
+
+      await wrapper.find('[data-action="toggle-merge-commits"]').trigger('click')
+      expect(wrapper.find('.graph-stub').exists()).toBe(false)
+    })
+
+    it('stacks with the text search', async () => {
+      const wrapper = mountList({ commits: MERGE_COMMITS })
+      await wrapper.find('[data-action="toggle-merge-commits"]').trigger('click')
+      wrapper.vm.commitSearch = 'Merge'
+      await nextTick()
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(0)
+    })
+
+    it('treats a root commit (no parents field) as a normal row', async () => {
+      const wrapper = mountList({
+        commits: [{ sha: 'r'.repeat(40), msg: 'initial', date: '2025-01-01', author: 'A', refs: [] }],
+      })
+      await wrapper.find('[data-action="toggle-merge-commits"]').trigger('click')
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+    })
+
+    it('is absent in file mode (single-file history has no branch graph)', () => {
+      const wrapper = mountList({ mode: 'file' })
+      expect(wrapper.find('[data-action="toggle-merge-commits"]').exists()).toBe(false)
+    })
+  })
+
   describe('lifecycle', () => {
     it('clears the search timer on unmount', async () => {
       vi.useFakeTimers()
@@ -550,21 +625,30 @@ describe('GitCommitList', () => {
   })
 })
 
-// ── Branch bar ───────────────────────────────────────────────
-// Reading another branch's history never checks anything out, so the UI has to
-// keep saying that the workspace is somewhere else. These cover the bar's two
-// states and the events the host acts on.
-describe('branch bar', () => {
+// ── Toolbar ──────────────────────────────────────────────────
+// The branch picker, the count and the buttons share ONE row. These cover the
+// picker's two states, the count badge, and the search field's collapse.
+describe('toolbar', () => {
   const branches = [{ name: 'main' }, { name: 'feat/payments' }]
 
-  it('is absent when the host offers no branches (file mode, drawer)', () => {
-    const wrapper = mountList()
-    expect(wrapper.find('.branch-bar').exists()).toBe(false)
+  it('keeps the picker in the toolbar instead of a row of its own', () => {
+    const wrapper = mountList({ branches, currentBranch: 'main' })
+    // Exactly one bar: a second row for the branch picker was the thing this
+    // layout removed, and re-adding one would double the header height.
+    expect(wrapper.findAll('.drilldown-header')).toHaveLength(1)
+    expect(wrapper.find('.git-toolbar .branch-picker .branch-chip').exists()).toBe(true)
   })
 
-  it('is absent in file mode even when branches are passed', () => {
+  it('offers no picker when the host passes no branches (file mode, drawer)', () => {
+    const wrapper = mountList()
+    expect(wrapper.find('.branch-chip').exists()).toBe(false)
+    // The row still exists — it just leads with the count.
+    expect(wrapper.find('.git-toolbar .git-count').exists()).toBe(true)
+  })
+
+  it('offers no picker in file mode even when branches are passed', () => {
     const wrapper = mountList({ branches, currentBranch: 'main', mode: 'file' })
-    expect(wrapper.find('.branch-bar').exists()).toBe(false)
+    expect(wrapper.find('.branch-chip').exists()).toBe(false)
   })
 
   it('shows the checked-out branch and lists the others', async () => {
@@ -572,6 +656,9 @@ describe('branch bar', () => {
 
     expect(wrapper.find('.branch-chip-name').text()).toBe('main')
     await wrapper.find('.branch-chip').trigger('click')
+
+    // The old bar's "本地 N 个分支" sentence moved into the menu's header.
+    expect(wrapper.find('.branch-menu-label').text()).toContain('git.branchView.localCount')
 
     const names = wrapper.findAll('.branch-menu-item .branch-menu-name').map(n => n.text())
     expect(names).toEqual(['main', 'feat/payments', 'git.branchView.manage'])
@@ -594,12 +681,14 @@ describe('branch bar', () => {
     expect(wrapper.emitted('change-branch')?.[0]).toEqual([''])
   })
 
-  it('states the workspace is elsewhere and offers a way back', async () => {
+  it('marks the picker and states where the workspace is, reading another branch', async () => {
     const wrapper = mountList({ branches, currentBranch: 'main', viewBranch: 'feat/payments' })
 
-    expect(wrapper.find('.branch-bar').classes()).toContain('is-other')
+    expect(wrapper.find('.branch-chip').classes()).toContain('is-other')
     expect(wrapper.find('.branch-chip-name').text()).toBe('feat/payments')
-    expect(wrapper.find('.branch-note--warn').text()).toContain('git.branchView.readOnly')
+    // The warning is its own thin strip, not a toolbar row: it is an alert
+    // about the workspace, and it only exists in this one state.
+    expect(wrapper.find('.branch-alert .branch-note--warn').text()).toContain('git.branchView.readOnly')
 
     await wrapper.find('.branch-back-btn').trigger('click')
     expect(wrapper.emitted('change-branch')?.[0]).toEqual([''])
@@ -608,7 +697,64 @@ describe('branch bar', () => {
   it('stays quiet while the viewed branch is the checked-out one', () => {
     const wrapper = mountList({ branches, currentBranch: 'main', viewBranch: 'main' })
 
-    expect(wrapper.find('.branch-bar').classes()).not.toContain('is-other')
-    expect(wrapper.find('.branch-back-btn').exists()).toBe(false)
+    expect(wrapper.find('.branch-chip').classes()).not.toContain('is-other')
+    expect(wrapper.find('.branch-alert').exists()).toBe(false)
+  })
+
+  it('shows a compact count instead of a sentence', () => {
+    const wrapper = mountList()
+    const badge = wrapper.find('.git-count')
+    // 5 commits, hasMore → "5+". The sentence it replaced was ~110px wide.
+    expect(badge.text()).toBe('5+')
+    // The full wording is still one hover away.
+    expect(badge.attributes('title')).toContain('git.commitList.countUnit')
+  })
+
+  it('drops the "+" once every page is loaded', () => {
+    const wrapper = mountList({ hasMore: false })
+    expect(wrapper.find('.git-count').text()).toBe('5')
+  })
+})
+
+// ── Search field ─────────────────────────────────────────────
+// The field used to be a permanent half-row resident. It now costs one tap and
+// no width; these pin that the tap is what opens it and that closing it cannot
+// leave an invisible filter behind.
+describe('search field', () => {
+  it('stays collapsed until the search button is pressed', () => {
+    const wrapper = mountList()
+    expect(wrapper.find('.commit-search').exists()).toBe(false)
+    expect(wrapper.find('[data-action="search"]').exists()).toBe(true)
+  })
+
+  it('replaces the toolbar row with the field instead of adding a second row', async () => {
+    const wrapper = mountList()
+    await wrapper.find('[data-action="search"]').trigger('click')
+
+    expect(wrapper.find('.commit-search').exists()).toBe(true)
+    expect(wrapper.find('.git-toolbar').exists()).toBe(false)
+    expect(wrapper.findAll('.drilldown-header')).toHaveLength(1)
+  })
+
+  it('filters the list from the expanded field', async () => {
+    const wrapper = mountList()
+    await wrapper.find('[data-action="search"]').trigger('click')
+    await wrapper.find('.search-stub').setValue('Commit 2')
+
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+  })
+
+  it('clears the query when the field is closed', async () => {
+    // A hidden filter is a lie: the list would stay filtered with nothing on
+    // screen explaining why. Closing therefore resets the query.
+    const wrapper = mountList()
+    await wrapper.find('[data-action="search"]').trigger('click')
+    await wrapper.find('.search-stub').setValue('Commit 2')
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+
+    await wrapper.find('.search-cancel').trigger('click')
+
+    expect(wrapper.find('.commit-search').exists()).toBe(false)
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(5)
   })
 })

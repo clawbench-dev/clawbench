@@ -2187,6 +2187,87 @@ func TestGitDiff_StagedAndUnstaged(t *testing.T) {
 	assert.Contains(t, string(output), "# Staged")
 }
 
+// --- gitDiff on merge commits ---
+
+// A merge commit's file list is expanded per parent, so every file that came
+// verbatim from one side is listed. `git show <merge>` renders a *combined*
+// diff and returns nothing for those files — the diff must be taken against the
+// parent that differs instead, or each listed file opens to an empty view.
+func TestGitDiff_MergeCommitFileHasChanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// A file both sides have: the branch modifies it, main leaves it alone.
+	createTestFile(t, env.ProjectDir, "shared.txt", "base\n")
+	gitCommitAll(t, env.ProjectDir, "main: add shared.txt")
+
+	run("git", "checkout", "-b", "feature")
+	createTestFile(t, env.ProjectDir, "shared.txt", "base\nfeature line\n")
+	gitCommitAll(t, env.ProjectDir, "feature: edit shared.txt")
+
+	run("git", "checkout", "main")
+	createTestFile(t, env.ProjectDir, "main.txt", "main work")
+	gitCommitAll(t, env.ProjectDir, "main: add main.txt")
+
+	run("git", "merge", "feature", "-m", "Merge branch 'feature' into main")
+	mergeSHA := getHeadSHA(t, env.ProjectDir)
+
+	// Sanity check the premise: the command the old code used yields nothing.
+	showCmd := exec.Command("git", "show", "--format=", mergeSHA, "--", "shared.txt")
+	showCmd.Dir = env.ProjectDir
+	showOut, _ := showCmd.CombinedOutput()
+	assert.Empty(t, strings.TrimSpace(string(showOut)),
+		"premise: a combined diff for a cleanly-merged file is empty")
+
+	output, err := gitDiff(env.ProjectDir, "shared.txt", mergeSHA)
+	assert.NoError(t, err)
+	assert.Contains(t, string(output), "+feature line",
+		"merge diff must show what the merge brought in from the other side")
+	assert.Contains(t, string(output), "@@")
+}
+
+// A file introduced only on the merged branch is listed too, and must also open
+// with content rather than an empty diff.
+func TestGitDiff_MergeCommitAddedFileHasChanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	run("git", "checkout", "-b", "feature")
+	createTestFile(t, env.ProjectDir, "added.txt", "brand new\n")
+	gitCommitAll(t, env.ProjectDir, "feature: add added.txt")
+
+	run("git", "checkout", "main")
+	createTestFile(t, env.ProjectDir, "main.txt", "main work")
+	gitCommitAll(t, env.ProjectDir, "main: add main.txt")
+
+	run("git", "merge", "feature", "-m", "Merge branch 'feature' into main")
+	mergeSHA := getHeadSHA(t, env.ProjectDir)
+
+	output, err := gitDiff(env.ProjectDir, "added.txt", mergeSHA)
+	assert.NoError(t, err)
+	assert.Contains(t, string(output), "+brand new")
+}
+
 func TestGitDiff_SpecificCommit(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
