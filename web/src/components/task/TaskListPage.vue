@@ -325,10 +325,6 @@ onMounted(refresh)
 }
 
 /* Clear-unread button accent when unread messages exist */
-.clear-unread-btn.active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, var(--bg-secondary, #f1f3f5));
-}
 
 .create-btn:active {
   transform: scale(0.9);

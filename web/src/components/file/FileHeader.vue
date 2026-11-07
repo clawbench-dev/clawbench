@@ -617,10 +617,6 @@ function handleFileNameDragEnd() {
         color: var(--text-secondary);
     }
 }
-.file-header-btn.active {
-    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-    color: var(--accent-color);
-}
 .file-header-btn.danger {
     color: #ef4444;
 }

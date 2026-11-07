@@ -34,7 +34,7 @@
         </div>
         <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu" size="bar">
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
-            <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
+            <button class="toolbar-btn" :class="{ active: sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
               <ArrowUpZa v-else :size="16" />
               <span class="action-label">{{ t('file.sortDefault') }}</span>
@@ -3160,15 +3160,12 @@ function scrollSelectedIntoView(path) {
     transition: background-color var(--duration-base), color var(--duration-base);
     flex-shrink: 0;
 }
-/* "This is on" = accent text on an accent tint — the same recipe as the
-   component's other toggles (.fs-toggle-btn.active, .toolbar-dropdown-item.active).
-   It used to be a solid accent block with white text, which failed contrast in
-   28 of 36 themes (worst 1.69) and read as a different kind of control sitting
-   among flat icon buttons. */
-.toolbar-btn.active,
-.toolbar-btn.sort-active {
-    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-    color: var(--accent-color);
+/* The "on" look (sort field, preview toggle, multi-select) comes from the shared
+   `.ab button.active` rule. The radius has to be restated: the sort button sits
+   inside `.toolbar-dropdown-wrap`, so it is not a direct child of the bar and
+   the shared `> button` sizing rule never reaches it (it came out square). */
+.toolbar-btn {
+    border-radius: var(--radius-sm);
 }
 
 .toolbar-btn:disabled {

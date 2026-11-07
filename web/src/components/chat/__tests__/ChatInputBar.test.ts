@@ -634,19 +634,19 @@ describe('ChatInputBar', () => {
       const wrapper = mountBar({ currentSessionId: 's1' })
       setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 600, clientWidth: 400 })
       await wrapper.find('.chat-top-actions').trigger('scroll')
-      const cls = wrapper.find('.chat-top-actions').classes()
-      expect(cls).toContain('more-right')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeRight).toBe('1')
       // Nothing is hidden to the left at scrollLeft 0.
-      expect(cls).not.toContain('more-left')
+      expect(el.dataset.fadeLeft).toBe('0')
     })
 
     it('fades the left edge once the strip has been scrolled', async () => {
       const wrapper = mountBar({ currentSessionId: 's1' })
       setMetrics(bar(wrapper), { scrollLeft: 100, scrollWidth: 600, clientWidth: 400 })
       await wrapper.find('.chat-top-actions').trigger('scroll')
-      const cls = wrapper.find('.chat-top-actions').classes()
-      expect(cls).toContain('more-left')
-      expect(cls).toContain('more-right')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeLeft).toBe('1')
+      expect(el.dataset.fadeRight).toBe('1')
     })
 
     it('stops fading at the end of the strip', async () => {
@@ -655,18 +655,18 @@ describe('ChatInputBar', () => {
       const wrapper = mountBar({ currentSessionId: 's1' })
       setMetrics(bar(wrapper), { scrollLeft: 200, scrollWidth: 600, clientWidth: 400 })
       await wrapper.find('.chat-top-actions').trigger('scroll')
-      const cls = wrapper.find('.chat-top-actions').classes()
-      expect(cls).toContain('more-left')
-      expect(cls).not.toContain('more-right')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeLeft).toBe('1')
+      expect(el.dataset.fadeRight).toBe('0')
     })
 
     it('shows no fade at all when every button fits', async () => {
       const wrapper = mountBar({ currentSessionId: 's1' })
       setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 400, clientWidth: 400 })
       await wrapper.find('.chat-top-actions').trigger('scroll')
-      const cls = wrapper.find('.chat-top-actions').classes()
-      expect(cls).not.toContain('more-left')
-      expect(cls).not.toContain('more-right')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeLeft).toBe('0')
+      expect(el.dataset.fadeRight).toBe('0')
     })
   })
 
@@ -682,13 +682,18 @@ describe('ChatInputBar', () => {
     const scoped = source.slice(0, source.lastIndexOf('<style>'))
     const css = scoped.replace(/\/\*[\s\S]*?\*\//g, '')
 
-    const rule = css.match(/\.chat-top-actions\.more-right\s*\{([^}]*)\}/)
-    expect(rule, 'the right-edge fade rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/mask-image:\s*linear-gradient/)
-    // No background-based fake fade on the strip.
-    const base = css.match(/\n\.chat-top-actions\s*\{([^}]*)\}/)
-    expect(base, 'the base .chat-top-actions rule must exist').not.toBeNull()
-    expect(base![1]).not.toMatch(/mask-image/)
+    // The fade is ActionBar's now (it owns the scroller). The composer must not
+    // re-declare it, or the two copies drift the way they already had.
+    expect(css, 'the composer must not paint its own edge fade').not.toMatch(
+      /\.chat-top-actions\.more-(left|right)/,
+    )
+    const bar = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'common', 'ActionBar.vue'),
+      'utf8',
+    )
+    expect(bar, 'ActionBar must mask the trailing edge').toMatch(
+      /\[data-fade-right='1'\][^{]*\{[^}]*mask-image:\s*linear-gradient/,
+    )
   })
 
   it('renders the free-dialog button and emits its toggle', async () => {

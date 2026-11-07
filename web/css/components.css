@@ -647,7 +647,10 @@
 }
 
 /* The "mark all read" button mirrors the task list's clear-unread affordance:
-   accent-tinted while there is something to clear, and inert when there is not. */
+   accent-coloured while there is something to clear, and inert when there is
+   not. The tint behind it comes from the shared `.ab button.active` rule; this
+   class is also used outside a bar (the forge chip), so only the colour is set
+   here. */
 .clear-unread-btn.active {
     color: var(--accent-color);
 }
@@ -1703,6 +1706,23 @@
 .ab--bar > button.is-primary:not(:disabled) {
     color: var(--accent-color);
 }
+
+/* Toggled-on button inside a bar (a sort field, a preview toggle, a multi-select
+   switch, "mark all read" when it has something to clear). One recipe for the
+   whole row: accent text on a 14% accent tint, the button's own shape kept.
+   A solid accent block was the other common spelling and it fails contrast with
+   white text in 28 of 36 themes (worst 1.69).
+
+   Descendant (not `>`) on purpose: some buttons sit inside a wrapper (the file
+   manager's sort button lives in `.toolbar-dropdown-wrap`) and would otherwise
+   be the only one in the row that never lights up. The menu rows are excluded —
+   they are a popup list, not row buttons, and have their own selected state. */
+.ab button.active:not([data-ab-more]):not(.ab-menu-item),
+.ab button.active:not([data-ab-more]):not(.ab-menu-item):hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    color: var(--accent-color);
+}
+
 
 
 /* No transitions while measuring.

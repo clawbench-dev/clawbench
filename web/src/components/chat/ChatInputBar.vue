@@ -2578,10 +2578,6 @@ defineExpose({
   transform: scale(0.92);
 }
 
-.chat-action-btn.active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
-}
 
 .chat-action-btn.active:active {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
