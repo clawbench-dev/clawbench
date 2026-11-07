@@ -1,6 +1,6 @@
 <template>
   <div class="mail-bar">
-    <div class="mail-bar__top">
+    <div ref="barRef" class="mail-bar__top" :class="{ 'show-labels': showLabels }">
       <!-- The pickers are wrapped: MenuSelect renders a fragment (trigger +
            teleported popup), so a class on the component itself is dropped and
            the width would never reach the trigger. -->
@@ -20,12 +20,16 @@
         />
       </div>
       <span class="mail-bar__spacer" />
-      <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')" />
+      <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')">
+        <span class="action-label">{{ t('mail.bar.refresh') }}</span>
+      </RefreshButton>
       <button class="mail-icon-btn" :title="t('mail.bar.compose')" @click="emit('compose')">
         <PenLine />
+        <span class="action-label">{{ t('mail.bar.compose') }}</span>
       </button>
       <button class="mail-icon-btn" :title="t('mail.bar.manage')" @click="emit('setup')">
         <Settings />
+        <span class="action-label">{{ t('mail.bar.manage') }}</span>
       </button>
     </div>
 
@@ -63,8 +67,9 @@
  * hierarchy are flattened — the folder's own name is what the user recognizes,
  * not its path.
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 import { PenLine, Search, Settings } from 'lucide-vue-next'
 import MenuSelect from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -92,6 +97,10 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/** Labels ride next to the icons only when the row can hold them (shared rule). */
+const barRef = ref<HTMLElement | null>(null)
+const { showLabels } = useActionBarLabels(() => barRef.value)
 
 const accountId = computed({
   get: () => props.accountId,
@@ -175,6 +184,19 @@ function onSearchInput(e: Event): void {
 }
 .mail-bar__spacer {
   flex: 1;
+}
+/* While measuring, the two pickers keep their natural width: otherwise they
+   would shrink to absorb the labels and the row would never report an
+   overflow. */
+.mail-bar__top.measure-labels .mail-bar__account,
+.mail-bar__top.measure-labels .mail-bar__folder {
+  flex: 0 0 auto;
+}
+/* Labelled buttons grow with their text instead of staying 26px squares. */
+.mail-bar__top.show-labels .mail-icon-btn {
+  width: auto;
+  padding: 0 calc(8 * var(--dp));
+  gap: calc(4 * var(--dp));
 }
 .mail-bar__search-row {
   display: flex;

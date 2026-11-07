@@ -6249,3 +6249,16 @@ describe('FileManagerContent — dragging search hits', () => {
     searchState.results = []
   })
 })
+
+describe('FileManagerContent — toolbar labels', () => {
+  it('labels the browse toolbar when the row can hold them', async () => {
+    // jsdom has no layout: the toolbar measures 0 wide and assumes room. The
+    // overflow maths lives in useActionBarLabels.test.ts; this pins the wiring.
+    const wrapper = mountContent()
+    await nextTick()
+    const bar = wrapper.find('.dir-toolbar-btns:not(.ms-toolbar-btns)')
+    expect(bar.classes()).toContain('show-labels')
+    expect(bar.findAll('.action-label').length).toBeGreaterThanOrEqual(5)
+    wrapper.unmount()
+  })
+})

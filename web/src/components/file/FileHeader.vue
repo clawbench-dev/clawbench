@@ -36,9 +36,11 @@
     </div>
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
-    <div ref="headerActionsRef" class="header-actions">
+    <div ref="headerActionsRef" class="header-actions" :class="{ 'show-labels': showLabels }">
       <!-- Refresh button — first in the toolbar, and the last to collapse. -->
-      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
+      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh">
+        <span class="action-label">{{ t('nav.refresh') }}</span>
+      </RefreshButton>
 
       <!-- Collapse / restore the chat pane (wide screen only).
            The pre-existing affordance is the collapse handle that appears on
@@ -67,21 +69,25 @@
       >
         <PanelRightOpen v-if="chatCollapsed" :size="14" />
         <PanelRightClose v-else :size="14" />
+        <span class="action-label">{{ chatCollapsed ? t('nav.showChat') : t('nav.hideChat') }}</span>
       </button>
 
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
+        <span class="action-label">{{ t('file.header.toc') }}</span>
       </button>
 
       <!-- Search button (only for file types that support search) -->
       <button v-if="hasSearch && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
         <Search :size="14" />
+        <span class="action-label">{{ t('file.header.search') }}</span>
       </button>
 
       <!-- Fit-width / reset zoom button (for PDF) -->
       <button v-if="toolbarInlineIds.includes('fitWidth')" class="file-header-btn" @click.stop="handleFitWidth" :title="t('file.header.fitWidth')">
         <MoveHorizontal :size="14" />
+        <span class="action-label">{{ t('file.header.fitWidth') }}</span>
       </button>
 
       <!-- Quote in chat: opens the shared quote composer with this file attached,
@@ -90,6 +96,7 @@
            the chat input. -->
       <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" @click.stop="handleQuoteInChat" :title="t('file.header.quoteInChat')" :aria-label="t('file.header.quoteInChat')">
         <MessageSquare :size="14" />
+        <span class="action-label">{{ t('file.header.quoteInChat') }}</span>
       </button>
 
       <!-- Lightbox view button (image / svg files only): opens the image full-size
@@ -97,6 +104,7 @@
            same header — no need for a per-image header. -->
       <button v-if="isImageFile && toolbarInlineIds.includes('viewImage')" class="file-header-btn" @click.stop="handleViewImage" :title="t('imageBlock.view')">
         <Maximize2 :size="14" />
+        <span class="action-label">{{ t('imageBlock.view') }}</span>
       </button>
 
       <!-- Toggle view button (source/rendered). Always an eye icon: highlighted
@@ -104,11 +112,13 @@
            disabled while editing so the edit button stays the sole relevant control. -->
       <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
         <Eye :size="14" />
+        <span class="action-label">{{ effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}</span>
       </button>
 
       <!-- Edit toggle button — always directly beside the preview toggle -->
       <button v-if="toolbarInlineIds.includes('edit')" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
         <Pencil :size="14" />
+        <span class="action-label">{{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}</span>
       </button>
 
       <!-- Word wrap / line numbers / sticky scroll moved to the More menu
@@ -118,6 +128,7 @@
       <!-- Download button -->
       <button v-if="toolbarInlineIds.includes('download')" class="file-header-btn" @click.stop="handleDownload" :title="t('common.download')">
         <Download :size="14" />
+        <span class="action-label">{{ t('common.download') }}</span>
       </button>
 
       <!-- Open as text, share link, export HTML, set as wallpaper, open
@@ -130,6 +141,7 @@
       <div class="dropdown-wrapper" ref="dropdownRef">
         <button class="file-header-btn" :class="{ active: menuOpen }" @click.stop="toggleMenu" :title="t('file.header.more')">
           <MoreVertical :size="14" />
+          <span class="action-label">{{ t('file.header.more') }}</span>
         </button>
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
@@ -263,6 +275,7 @@ import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
+import { useActionBarLabels } from '@/composables/useActionBarLabels'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { getNative } from '@/utils/clawbenchNative'
@@ -370,6 +383,16 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     return ids
   },
   { inlineCount: 1, gap: 8 },
+)
+
+/**
+ * Toolbar labels: shown only when the buttons that are currently inline can
+ * also carry their text. The collapse decision above stays icon-based, so the
+ * degradation order is labels → icons → More: labels are sacrificed first,
+ * buttons only move into the menu when even icons no longer fit.
+ */
+const { showLabels, measure: measureActionLabels } = useActionBarLabels(
+  () => headerActionsRef.value,
 )
 
 function toggleMenu() {
@@ -628,6 +651,11 @@ function handleClickOutside(e) {
     }
 }
 
+// Re-measure the labels after the inline set changes: demoting a button does
+// not resize the container, so the ResizeObserver inside the composable never
+// fires for it.
+watch(toolbarInlineIds, () => nextTick(measureActionLabels), { deep: true })
+
 onMounted(() => {
     document.addEventListener('click', handleClickOutside)
     startToolbarResize()
@@ -719,6 +747,18 @@ onBeforeUnmount(() => {
     min-width: 0;
     overflow: hidden;
     justify-content: flex-end;
+}
+/* The toolbar is right-aligned, and overflow from a right-aligned flex row
+   escapes to the LEFT — where `scrollWidth` cannot see it. Measure from the
+   start edge instead, so an overflowing label row is actually detected. */
+.header-actions.measure-labels {
+    justify-content: flex-start;
+}
+/* Labelled buttons grow with their text; the icon+text gap is what keeps the
+   two from touching. */
+.header-actions.show-labels .file-header-btn {
+    gap: calc(4 * var(--dp));
+    padding: 0 calc(8 * var(--dp));
 }
 
 .file-header-btn {

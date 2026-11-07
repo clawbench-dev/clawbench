@@ -1878,3 +1878,18 @@ describe('ForgePanelContent forge deep-link', () => {
     expect(wrapper.vm.repoMenuOpen).toBe(true)
   })
 })
+
+describe('ForgePanelContent — header labels', () => {
+  it('shows its header labels when the row can hold them', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    const wrapper = await mountOnIssues()
+    await nextTick()
+
+    const header = wrapper.find('.forge-header')
+    expect(header.classes()).toContain('show-labels')
+    // RefreshButton is stubbed (`true`) in this suite, so only the mark-all-read
+    // label is in the DOM; assert that one explicitly.
+    expect(header.find('.clear-unread-btn .action-label').exists()).toBe(true)
+  })
+})

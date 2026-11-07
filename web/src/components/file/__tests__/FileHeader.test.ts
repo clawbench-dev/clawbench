@@ -1161,3 +1161,29 @@ describe('FileHeader — overlay close button', () => {
     expect(rule![1]).toMatch(/top:\s*0\.5px/)
   })
 })
+
+describe('FileHeader — toolbar labels', () => {
+  it('labels the inline tools and the More button when the row can hold them', async () => {
+    // jsdom has no layout: the toolbar measures 0 wide and assumes room. The
+    // overflow maths lives in useActionBarLabels.test.ts; this pins the wiring,
+    // including the More button (always inline, never demoted).
+    const wrapper = mount(FileHeader, {
+      props: {
+        file: { name: 'main.ts', path: '/tmp/main.ts', content: 'const x = 1' },
+        viewMode: 'source',
+        tocOpen: false,
+        searchOpen: false,
+        wordWrap: true,
+        showLineNumbers: true,
+        stickyScroll: true,
+        overlayOpen: false,
+      },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+    const bar = wrapper.find('.header-actions')
+    expect(bar.classes()).toContain('show-labels')
+    expect(bar.findAll('.action-label').length).toBeGreaterThanOrEqual(5)
+    expect(wrapper.find('.dropdown-wrapper .action-label').exists()).toBe(true)
+  })
+})

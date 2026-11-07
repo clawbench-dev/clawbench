@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { h, ref } from 'vue'
+import { h, nextTick, ref } from 'vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
 
@@ -586,5 +586,20 @@ describe('NotificationsPanelContent', () => {
     await flushPromises()
 
     expect(mockConfirm).not.toHaveBeenCalled()
+  })
+})
+
+describe('NotificationsPanelContent — header labels', () => {
+  it('shows the header labels when the row can hold them', async () => {
+    // jsdom has no layout: the header measures 0 wide and assumes room, which is
+    // the wide-pane case. The overflow maths lives in useActionBarLabels.test.ts.
+    const wrapper = mountPanel()
+    await nextTick()
+    const header = wrapper.find('.list-header')
+    expect(header.classes()).toContain('show-labels')
+    // RefreshButton is stubbed above without a slot, so only the clear button's
+    // label is in this DOM; assert that one explicitly.
+    expect(header.find('[data-action="clear"] .action-label').exists()).toBe(true)
+    wrapper.unmount()
   })
 })

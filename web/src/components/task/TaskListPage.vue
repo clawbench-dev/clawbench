@@ -293,8 +293,8 @@ onMounted(refresh)
   height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
-  background: var(--accent-color, #0066cc);
-  color: #fff;
+  background: transparent;
+  color: var(--accent-color, #0066cc);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -322,7 +322,7 @@ onMounted(refresh)
   height: calc(28 * var(--dp));
   border: none;
   border-radius: var(--radius-lg);
-  background: var(--bg-secondary, #f1f3f5);
+  background: transparent;
   color: var(--text-secondary, #666);
   cursor: pointer;
   display: flex;
@@ -356,8 +356,7 @@ onMounted(refresh)
 
 @media (hover: hover) {
   .create-btn:hover {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   }
 }
 
