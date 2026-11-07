@@ -104,6 +104,24 @@ describe('MenuSelect', () => {
     expect(wrapper.find('button.menu-select').exists()).toBe(true)
   })
 
+  // A caller may replace the trigger's face (the mail bar shows an avatar and a
+  // folder + unread badge instead of a label). The button itself must survive:
+  // it is what the popup anchors to and what carries disabled/focus state.
+  it('lets a caller replace the trigger face through the trigger slot', async () => {
+    const wrapper = mount(MenuSelect, {
+      props: { modelValue: '', options },
+      global,
+      slots: { trigger: '<span class="custom-face">avatar</span>' },
+    })
+    const trigger = wrapper.find('button.menu-select')
+    expect(trigger.find('.custom-face').text()).toBe('avatar')
+    expect(trigger.find('.menu-select-label').exists()).toBe(false)
+
+    // Still a working dropdown.
+    await trigger.trigger('click')
+    expect(wrapper.find('.menu-select-list').exists()).toBe(true)
+  })
+
   // The menu is measured against the trigger so it cannot open narrower than
   // the control it drops out of. The width goes on the popup ROOT (the scroll
   // container), not on the list inside it — a child wider than the root's

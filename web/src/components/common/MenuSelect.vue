@@ -12,8 +12,14 @@
     :title="triggerTitle"
     @click.stop="toggle"
   >
-    <span class="menu-select-label">{{ triggerLabel }}</span>
-    <ChevronDown class="menu-select-caret" :size="14" />
+    <!-- Default trigger: label + caret. A caller that needs a richer face
+         (the mail bar's account avatar / folder + unread badge) supplies the
+         slot; the button, popup anchoring and exclusive-open behaviour stay
+         exactly the same either way. -->
+    <slot name="trigger" :open="show" :label="triggerLabel">
+      <span class="menu-select-label">{{ triggerLabel }}</span>
+      <ChevronDown class="menu-select-caret" :size="14" />
+    </slot>
   </button>
 
   <PopupMenu
