@@ -227,6 +227,14 @@
             <span class="pcard-name">{{ group.displayName }}</span>
             <span class="pcard-count">{{ group.sessions.length }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
+            <button
+              class="pcard-open"
+              :title="t('session.viewAllSessions')"
+              :aria-label="t('session.viewAllSessions')"
+              @click.stop="openProjectBrowse(group)"
+            >
+              <List :size="14" />
+            </button>
           </div>
           <div
             v-for="session in group.sessions"
@@ -263,10 +271,6 @@
             />
             <span class="pcard-row-title">{{ session.title }}</span>
           </div>
-          <button class="pcard-more" @click.stop="openProjectBrowse(group)">
-            <span>{{ t('session.viewAllSessions') }}</span>
-            <ChevronRight :size="12" />
-          </button>
         </div>
       </div>
     </div>
@@ -392,7 +396,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, ChevronLeft, ChevronRight, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronLeft, List, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -2172,29 +2176,26 @@ onUnmounted(() => {
   color: var(--color-yellow, #a16207);
 }
 
-/* Footer entry into the read-only list. It is a real button so it can be
-   tabbed to; the whole row is not clickable, because clicking a row above
-   opens a session and the two actions must not be confusable. */
-.pcard-more {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-3) var(--space-4);
+/* Entry into the read-only list, in the card header. Icon-only keeps the card
+   compact and puts the action where the project it belongs to is named; the
+   tooltip carries the full label. */
+.pcard-open {
+  flex: 0 0 auto;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: 0;
-  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   background: transparent;
   color: var(--text-muted, #656d76);
-  font: inherit;
-  font-size: var(--font-size-2xs);
   cursor: pointer;
 }
 
 @media (hover: hover) {
-  .pcard-more:hover {
+  .pcard-open:hover {
     color: var(--accent-color, #0066cc);
-    background: color-mix(in srgb, var(--pc, var(--text-primary)) 6%, transparent);
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 12%, transparent);
   }
 }
 
