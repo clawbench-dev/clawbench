@@ -91,58 +91,46 @@
         </div>
         <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.scopeTitle') }}</span>
-          <div class="stats-chip-scroll">
-            <button
-              v-for="s in scopeOptions"
-              :key="s.id"
-              class="stats-chip"
-              :class="{ active: filter.scope === s.id }"
-              @click="selectScope(s.id)"
-            >
-              {{ t(s.labelKey) }}
-            </button>
+          <div class="stats-filter-select">
+            <MenuSelect
+              :model-value="filter.scope"
+              :options="scopeOptions"
+              @change="onScopeChange"
+            />
           </div>
         </div>
         <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
-          <div class="stats-chip-scroll">
-            <button
-              v-for="d in dimOptions"
-              :key="d.id"
-              class="stats-chip"
-              :class="{ active: filter.dims.includes(d.id) }"
-              @click="toggleDim(d.id)"
-            >
-              {{ t(d.labelKey) }}
-            </button>
+          <div class="stats-filter-select">
+            <MenuSelect
+              multiple
+              :min-selected="1"
+              :model-value="filter.dims"
+              :options="dimOptions"
+              @change="onDimsChange"
+            />
           </div>
         </div>
         <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.metricTitle') }}</span>
-          <div class="stats-chip-scroll">
-            <button
-              v-for="m in metricOptions"
-              :key="m.id"
-              class="stats-chip"
-              :class="{ active: filter.metrics.includes(m.id) }"
-              @click="toggleMetric(m.id)"
-            >
-              {{ t(m.labelKey) }}
-            </button>
+          <div class="stats-filter-select">
+            <MenuSelect
+              multiple
+              :min-selected="1"
+              :model-value="filter.metrics"
+              :options="metricOptions"
+              @change="onMetricsChange"
+            />
           </div>
         </div>
         <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.chartTitle') }}</span>
-          <div class="stats-chip-scroll">
-            <button
-              v-for="c in chartTypeOptions"
-              :key="c.id"
-              class="stats-chip"
-              :class="{ active: filter.chartType === c.id }"
-              @click="selectChartType(c.id)"
-            >
-              {{ t(c.labelKey) }}
-            </button>
+          <div class="stats-filter-select">
+            <MenuSelect
+              :model-value="filter.chartType"
+              :options="chartTypeOptions"
+              @change="onChartTypeChange"
+            />
           </div>
         </div>
       </section>
@@ -234,6 +222,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from
 import { useI18n } from 'vue-i18n'
 import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie, Sigma, ArrowDownToLine, ArrowUpFromLine, Database, Coins, CircleDollarSign, Percent, Timer } from 'lucide-vue-next'
 import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import {
@@ -281,22 +270,26 @@ const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
   { key: '30d', labelKey: 'stats.range30d' },
 ]
 
-const scopeOptions: { id: UsageScope; labelKey: string }[] = [
-  { id: 'project', labelKey: 'stats.scopeProject' },
-  { id: 'all', labelKey: 'stats.scopeAll' },
-]
+// Filter dropdowns. Option labels go through `t()` inside a computed so a
+// language switch re-renders them (a plain array would freeze the labels).
+const scopeOptions = computed<MenuSelectOption[]>(() => [
+  { value: 'project', label: t('stats.scopeProject') },
+  { value: 'all', label: t('stats.scopeAll') },
+])
 
 // Dims depend on the scope: `project` only makes sense when aggregating every
 // project (in a single-project query it is a constant column).
-const dimOptions = computed<{ id: UsageDimId; labelKey: string }[]>(() =>
-  dimsForScope(filter.value.scope).map(id => ({ id, labelKey: dimLabelKey(id) })),
+const dimOptions = computed<MenuSelectOption[]>(() =>
+  dimsForScope(filter.value.scope).map(id => ({ value: id, label: t(dimLabelKey(id)) })),
 )
-const metricOptions: { id: UsageMetricId; labelKey: string }[] = USAGE_METRIC_IDS.map(id => ({ id, labelKey: metricLabelKey(id) }))
-const chartTypeOptions: { id: UsageChartType; labelKey: string }[] = [
-  { id: 'bar', labelKey: 'stats.chartBar' },
-  { id: 'pie', labelKey: 'stats.chartPie' },
-  { id: 'trend', labelKey: 'stats.chartTrend' },
-]
+const metricOptions = computed<MenuSelectOption[]>(() =>
+  USAGE_METRIC_IDS.map(id => ({ value: id, label: t(metricLabelKey(id)) })),
+)
+const chartTypeOptions = computed<MenuSelectOption[]>(() => [
+  { value: 'bar', label: t('stats.chartBar') },
+  { value: 'pie', label: t('stats.chartPie') },
+  { value: 'trend', label: t('stats.chartTrend') },
+])
 
 const customStart = ref<string>('')
 const customEnd = ref<string>('')
@@ -440,31 +433,28 @@ function toDateInput(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-// --- Filter toggles ---
-function toggleDim(d: UsageDimId) {
-  const next = filter.value.dims.includes(d)
-    ? filter.value.dims.filter(x => x !== d)
-    : [...filter.value.dims, d]
-  stats.setDims(next)
+// --- Filter dropdowns ---
+// The handlers accept the dropdown's generic value and narrow it: every option
+// in the corresponding list carries the matching literal id, so the cast cannot
+// produce an out-of-domain value.
+function onScopeChange(value: MenuSelectValue) {
+  stats.setScope(value as UsageScope)
 }
 
-function toggleMetric(m: UsageMetricId) {
-  const next = filter.value.metrics.includes(m)
-    ? filter.value.metrics.filter(x => x !== m)
-    : [...filter.value.metrics, m]
-  stats.setMetrics(next)
+function onDimsChange(value: MenuSelectValue) {
+  stats.setDims(value as UsageDimId[])
+}
+
+function onMetricsChange(value: MenuSelectValue) {
+  stats.setMetrics(value as UsageMetricId[])
+}
+
+function onChartTypeChange(value: MenuSelectValue) {
+  stats.setChartType(value as UsageChartType)
 }
 
 function sortByMetric(m: UsageMetricId) {
   stats.setSort(m)
-}
-
-function selectChartType(c: UsageChartType) {
-  stats.setChartType(c)
-}
-
-function selectScope(s: UsageScope) {
-  stats.setScope(s)
 }
 
 // --- Cells / cards ---
@@ -680,11 +670,11 @@ onMounted(() => {
 }
 
 /* ── Chips / toggles ──
-   Each labelled group keeps a fixed label; the chips wrap onto further lines
-   when the row does not fit (no horizontal scrolling). */
+   The range card still uses chips; the filter card uses dropdowns (one per
+   row) so seven numeric columns no longer stretch the row. */
 .stats-filter-group {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-4);
   min-width: 0;
 }
@@ -693,7 +683,17 @@ onMounted(() => {
   color: var(--text-secondary);
   flex-shrink: 0;
   min-width: 4em;
-  line-height: calc(26 * var(--dp));
+}
+/* Fixed trigger width: the control must not resize as the selection changes
+   (a moving dropdown under the cursor is the classic form-control jitter).
+   The label ellipsises; the full selection is on the trigger's title. */
+.stats-filter-select {
+  width: calc(210 * var(--dp));
+  max-width: 100%;
+  min-width: 0;
+}
+.stats-filter-select :deep(.menu-select) {
+  width: 100%;
 }
 .stats-chip-scroll {
   display: flex;

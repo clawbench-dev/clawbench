@@ -130,4 +130,87 @@ describe('MenuSelect', () => {
     expect(popup.props('minWidth')).toBe(600)
     expect(popup.props('maxWidth')).toBe(400)
   })
+
+  // --- multiple ---
+
+  const multiOptions = [
+    { value: 'a', label: 'Alpha' },
+    { value: 'b', label: 'Beta' },
+    { value: 'c', label: 'Gamma' },
+  ]
+
+  function mountMulti(props: Record<string, unknown> = {}) {
+    return mount(MenuSelect, {
+      props: { modelValue: ['a'], options: multiOptions, multiple: true, ...props },
+      global,
+    })
+  }
+
+  it('collapses a multi selection to the first label plus a count', () => {
+    const one = mountMulti()
+    expect(one.find('.menu-select-label').text()).toBe('Alpha')
+
+    const three = mountMulti({ modelValue: ['a', 'b', 'c'] })
+    expect(three.find('.menu-select-label').text()).toBe('Alpha +2')
+    // The full list stays reachable even when the trigger ellipsises.
+    expect(three.find('.menu-select').attributes('title')).toBe('Alpha / Beta / Gamma')
+  })
+
+  it('toggles a row into the selection and keeps the menu open', async () => {
+    const wrapper = mountMulti()
+    await wrapper.find('.menu-select').trigger('click')
+    const rows = wrapper.findAll('.menu-select-item')
+    await rows[1].trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([['a', 'b']])
+    expect(wrapper.emitted('change')?.[0]).toEqual([['a', 'b']])
+    // Several columns in one visit — closing after each pick would make the
+    // dropdown useless for multi-select.
+    expect(wrapper.find('.menu-select-list').exists()).toBe(true)
+  })
+
+  it('toggles a selected row out of the selection', async () => {
+    const wrapper = mountMulti({ modelValue: ['a', 'b'] })
+    await wrapper.find('.menu-select').trigger('click')
+    await wrapper.findAll('.menu-select-item')[0].trigger('click')
+
+    expect(wrapper.emitted('change')?.[0]).toEqual([['b']])
+    expect(wrapper.find('.menu-select-list').exists()).toBe(true)
+  })
+
+  it('marks every selected row active and exposes checkbox semantics', async () => {
+    const wrapper = mountMulti({ modelValue: ['a', 'c'] })
+    await wrapper.find('.menu-select').trigger('click')
+    const rows = wrapper.findAll('.menu-select-item')
+
+    expect(rows.map(r => r.classes().includes('active'))).toEqual([true, false, true])
+    expect(rows[0].attributes('aria-checked')).toBe('true')
+    expect(rows[1].attributes('aria-checked')).toBe('false')
+    expect(rows[0].attributes('role')).toBe('menuitemcheckbox')
+  })
+
+  // The consumer requires at least one selection; the last remaining row must
+  // not be removable, and it must say so (disabled) instead of silently
+  // ignoring the click.
+  it('disables the last selected row when minSelected is 1', async () => {
+    const wrapper = mountMulti({ modelValue: ['b'], minSelected: 1 })
+    await wrapper.find('.menu-select').trigger('click')
+    const rows = wrapper.findAll('.menu-select-item')
+
+    expect(rows[1].attributes('disabled')).toBeDefined()
+    await rows[1].trigger('click')
+    expect(wrapper.emitted('change')).toBeFalsy()
+
+    // A different row can still be added; the floor only blocks removal.
+    await rows[0].trigger('click')
+    expect(wrapper.emitted('change')?.[0]).toEqual([['b', 'a']])
+  })
+
+  // Single mode must be untouched by the multi-mode plumbing.
+  it('still closes after a single-mode pick', async () => {
+    const wrapper = mountSelect()
+    await wrapper.find('.menu-select').trigger('click')
+    await wrapper.findAll('.menu-select-item')[1].trigger('click')
+    expect(wrapper.find('.menu-select-list').exists()).toBe(false)
+  })
 })

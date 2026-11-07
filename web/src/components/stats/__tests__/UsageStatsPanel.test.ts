@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
-import { shallowMount, mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 
@@ -101,11 +101,15 @@ let currentChartProps: Record<string, unknown> | null = null
 async function mountPanel() {
   chartOptions.length = 0
   currentChartProps = null
-  const wrapper = shallowMount(UsageStatsPanel, {
+  // Full mount (not shallow): the filter rows are real MenuSelect dropdowns and
+  // the tests drive them the way a user does — open the menu, click a row.
+  // Teleport is stubbed so the popup renders in place and stays queryable.
+  const wrapper = mount(UsageStatsPanel, {
     props: { active: true },
     global: {
       plugins: [makeI18n()],
       stubs: {
+        Teleport: { template: '<div><slot /></div>' },
         RefreshButton: { template: '<button class="refresh-btn" @click="$emit(\'click\')" />' },
         StatsSkeleton: {
           name: 'StatsSkeleton',
@@ -386,13 +390,25 @@ describe('UsageStatsPanel', () => {
   it('renders a scope selector and hides the project dim in project scope', async () => {
     mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
     const wrapper = await mountPanel()
-    const scopeLabels = wrapper.findAll('.stats-chip').map(c => c.text())
-    // Both scope chips are present; current-project is active by default.
+    const groups = wrapper.findAll('.stats-filter-group')
+    // Four filter rows, each a dropdown (no chip list any more).
+    expect(groups).toHaveLength(4)
+    expect(wrapper.findAll('.stats-chip').map(c => c.text())).not.toContain('当前项目')
+
+    // The scope trigger shows the current selection and opens both scopes.
+    const scopeTrigger = groups[0].find('.menu-select')
+    expect(scopeTrigger.text()).toContain('当前项目')
+    await scopeTrigger.trigger('click')
+    const scopeLabels = wrapper.findAll('.menu-select-item').map(i => i.text())
     expect(scopeLabels).toContain('当前项目')
     expect(scopeLabels).toContain('所有项目')
+
     // In project scope the `项目` dim must not be offered. Assert the exact
-    // chip label, not a substring — "所有项目" contains "项目".
-    expect(scopeLabels).not.toContain('项目')
+    // option label, not a substring — "所有项目" contains "项目".
+    await groups[1].find('.menu-select').trigger('click')
+    const dimLabels = wrapper.findAll('.menu-select-item').map(i => i.text())
+    expect(dimLabels).toContain('模型')
+    expect(dimLabels).not.toContain('项目')
   })
 
   it('switching to all projects reveals the project dim and requests scope=all', async () => {
@@ -402,17 +418,60 @@ describe('UsageStatsPanel', () => {
     const wrapper = await mountPanel()
     mockApiGet.mockClear()
 
-    const allBtn = wrapper.findAll('.stats-chip').find(b => b.text() === '所有项目')
-    expect(allBtn).toBeTruthy()
-    await allBtn!.trigger('click')
+    const groups = wrapper.findAll('.stats-filter-group')
+    await groups[0].find('.menu-select').trigger('click')
+    const allItem = wrapper.findAll('.menu-select-item').find(i => i.text() === '所有项目')
+    expect(allItem).toBeTruthy()
+    await allItem!.trigger('click')
     await flushPromises()
 
     expect(mockApiGet).toHaveBeenCalled()
     const parsed = new URLSearchParams(mockApiGet.mock.calls[mockApiGet.mock.calls.length - 1][0].split('?')[1])
     expect(parsed.get('scope')).toBe('all')
-    // The project dim becomes selectable (exact chip label).
+    // The project dim becomes selectable (exact option label).
     await nextTick()
-    expect(wrapper.findAll('.stats-chip').map(c => c.text())).toContain('项目')
+    await wrapper.findAll('.stats-filter-group')[1].find('.menu-select').trigger('click')
+    expect(wrapper.findAll('.menu-select-item').map(i => i.text())).toContain('项目')
+  })
+
+  it('collects several metric columns from one dropdown visit', async () => {
+    // The chip list used to show all seven columns at once; the dropdown must
+    // still allow multi-selection without reopening it per column.
+    mockApiGet.mockResolvedValue(mockResponse({
+      rows: [{ key: { model: 'glm' }, input: 10, output: 5, total: 15, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    mockApiGet.mockClear()
+
+    const metricTrigger = wrapper.findAll('.stats-filter-group')[2].find('.menu-select')
+    expect(metricTrigger.text()).toContain('总 Tokens')
+    await metricTrigger.trigger('click')
+
+    for (const label of ['输入 Tokens', '输出 Tokens']) {
+      const row = wrapper.findAll('.menu-select-item').find(i => i.text() === label)
+      expect(row, `${label} must be offered`).toBeTruthy()
+      await row!.trigger('click')
+      // Still open: the next column is one more click, not a reopen.
+      expect(wrapper.find('.menu-select-list').exists()).toBe(true)
+    }
+
+    expect(metricTrigger.text()).toContain('总 Tokens +2')
+
+    await new Promise(r => setTimeout(r, 350)) // debounced reload
+    const url = mockApiGet.mock.calls[mockApiGet.mock.calls.length - 1][0] as string
+    const parsed = new URLSearchParams(url.split('?')[1])
+    expect(parsed.getAll('metrics')).toEqual(['total', 'input', 'output'])
+  })
+
+  it('keeps at least one column selected in the metric dropdown', async () => {
+    // Deselecting the only column would leave the table and every chart empty;
+    // the composable refuses it, and the dropdown must not offer it either.
+    mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
+    const wrapper = await mountPanel()
+
+    await wrapper.findAll('.stats-filter-group')[2].find('.menu-select').trigger('click')
+    const total = wrapper.findAll('.menu-select-item').find(i => i.text() === '总 Tokens')
+    expect(total!.attributes('disabled')).toBeDefined()
   })
 
   it('drops zero-value rows from the table (no wasted rows)', async () => {

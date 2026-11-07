@@ -95,6 +95,18 @@ describe('PopupMenu', () => {
     expect(wrapper.emitted('update:show')).toBeTruthy()
   })
 
+  // Multi-select menus toggle several rows in one visit, so content clicks must
+  // not dismiss them (outside click / Escape / the trigger still do).
+  it('keeps the menu open on click when closeOnClick is false', async () => {
+    const wrapper = mount(PopupMenu, {
+      props: { show: true, closeOnClick: false },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await wrapper.find('.popup-menu').trigger('click')
+    expect(wrapper.emitted('update:show')).toBeFalsy()
+  })
+
   it('adds popup-menu--app class when appSurface is set', () => {
     const wrapper = mount(PopupMenu, {
       props: { show: true, appSurface: true },

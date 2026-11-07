@@ -190,7 +190,7 @@ import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
   Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Video, Hand,
 } from 'lucide-vue-next'
-import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
+import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -294,13 +294,13 @@ const rangeOptions = computed<MenuSelectOption[]>(() => [
   { value: '30d', label: t('notifications.range.30d') },
 ])
 
-function onKindChange(v: string | number) {
+function onKindChange(v: MenuSelectValue) {
   void setKind(v === '__all__' ? '' : (v as NotificationKind))
 }
-function onRangeChange(v: string | number) {
+function onRangeChange(v: MenuSelectValue) {
   void setRange(v === '__all__' ? '' : (v as NotificationRange))
 }
-function onProjectChange(v: string | number) {
+function onProjectChange(v: MenuSelectValue) {
   void setProject(v === '__all__' ? ALL_PROJECTS : String(v))
 }
 

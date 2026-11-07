@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="menu-fade" @after-leave="emit('after-leave')">
-      <div v-if="show" ref="menuEl" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
+      <div v-if="show" ref="menuEl" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="onContentClick" @keydown.escape="emit('update:show', false)">
         <slot />
       </div>
     </Transition>
@@ -44,9 +44,19 @@ const props = defineProps({
    * middle list scrolls. The root then does NOT scroll itself.
    */
   appSurface: { type: Boolean, default: false },
+  /**
+   * Close the menu when anything inside it is clicked. A multi-select menu
+   * turns this off so several rows can be toggled in one visit; it then closes
+   * on outside click / the trigger / Escape only.
+   */
+  closeOnClick: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['update:show', 'after-leave'])
+
+function onContentClick() {
+  if (props.closeOnClick) emit('update:show', false)
+}
 
 // Reactive style — updated manually so we can react to DOM geometry changes
 // (scroll, resize) that Vue's computed cannot track.
