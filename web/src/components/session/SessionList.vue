@@ -15,7 +15,7 @@
          no height budget to negotiate and nothing can be squeezed. -->
     <div class="session-list-body">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
-    <div v-show="!browsingProject" ref="listRef" class="session-list-pane">
+    <div ref="listRef" class="session-list-pane" :inert="!!browsingProject" :aria-hidden="browsingProject ? 'true' : undefined">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
            swapped seamlessly to the new data (see loadSessions). -->
@@ -286,6 +286,7 @@
          what the user asked for by clicking a row). -->
     <div
       v-if="browsingProject"
+      ref="browsePaneRef"
       class="browse-pane"
       :style="{ '--pc': projectTintVar(browsingProject) }"
       data-project-browse
@@ -780,6 +781,7 @@ function findSession(sessionId) {
 // the workspace. The project is passed explicitly to the API because the normal
 // list endpoint resolves it from the cookie — using that one would mean
 // switching chat, files and terminal just to read a list.
+const browsePaneRef = ref(null)
 const browsingProject = ref('')
 const browsingName = ref('')
 const browsingPath = ref('')
@@ -790,13 +792,43 @@ const browsingError = ref('')
 // while a request is still in flight.
 let browseGeneration = 0
 
+/**
+ * The card and the browse view are the same surface at two sizes, so the open
+ * is animated as a growth from the card's rectangle to the full list area:
+ * the clicked card visually expands over the list instead of the panel being
+ * swapped out from under the pointer.
+ *
+ * Implemented with the Web Animations API rather than a View Transition:
+ * nothing is cross-fading two DOM trees, it is one element being scaled from
+ * a measured rect, which every target browser (and Electron) supports.
+ */
+function cardElementFor(projectPath) {
+  const cards = listRef.value?.querySelectorAll('.pcard') || []
+  for (const el of cards) {
+    if (el.dataset && el.dataset.project === projectPath) return el
+  }
+  return null
+}
+
+/** Transform that would place `target` exactly over `from`. */
+function rectToRect(from, to) {
+  const sx = to.width > 0 ? from.width / to.width : 1
+  const sy = to.height > 0 ? from.height / to.height : 1
+  return `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${sx}, ${sy})`
+}
+
+const BROWSE_GROW_MS = 220
+
 async function openProjectBrowse(group) {
+  const origin = cardElementFor(group.name)?.getBoundingClientRect() || null
   browsingProject.value = group.name
   browsingName.value = group.displayName
   browsingPath.value = group.displayPath
   browsingSessions.value = []
   browsingError.value = ''
   browsingLoading.value = true
+  await nextTick()
+  animateBrowsePane(origin, 'grow')
   const generation = ++browseGeneration
   try {
     const resp = await fetch(`/api/ai/sessions/by-project?path=${encodeURIComponent(group.name)}`)
@@ -812,14 +844,43 @@ async function openProjectBrowse(group) {
   }
 }
 
-function closeProjectBrowse() {
+async function closeProjectBrowse() {
   // Bump the generation so a late response cannot repopulate the closed view.
   browseGeneration++
+  await animateBrowsePane(cardElementFor(browsingProject.value)?.getBoundingClientRect() || null, 'shrink')
   browsingProject.value = ''
   browsingName.value = ''
   browsingPath.value = ''
   browsingSessions.value = []
   browsingError.value = ''
+}
+
+/**
+ * Grow the pane out of `originRect`, or shrink it back into it.
+ *
+ * Returns immediately (resolved promise) when there is nothing to animate —
+ * a zero-sized rect (first paint, or jsdom in tests) or a host without the
+ * Web Animations API — so callers never wait on an animation that cannot run.
+ */
+async function animateBrowsePane(originRect, direction) {
+  const pane = browsePaneRef.value
+  if (!pane || !originRect || typeof pane.animate !== 'function') return
+  const target = pane.getBoundingClientRect()
+  if (target.width <= 0 || target.height <= 0 || originRect.width <= 0 || originRect.height <= 0) return
+  const collapsed = rectToRect(originRect, target)
+  const frames = direction === 'grow'
+    ? [{ transform: collapsed, opacity: 0.85 }, { transform: 'none', opacity: 1 }]
+    : [{ transform: 'none', opacity: 1 }, { transform: collapsed, opacity: 0.7 }]
+  const animation = pane.animate(frames, {
+    duration: BROWSE_GROW_MS,
+    easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+    fill: 'none',
+  })
+  // transform-origin has to be the top-left for the rect math above; set it
+  // while the animation runs and let it fall back to the CSS value after.
+  pane.style.transformOrigin = '0 0'
+  try { await animation.finished } catch { /* interrupted */ }
+  pane.style.transformOrigin = ''
 }
 
 async function loadSessions() {
@@ -1326,6 +1387,7 @@ onUnmounted(() => {
 /* The list area: the scrollable project pane (its rows and the other-project
    cards share that one scroll) plus, when open, the read-only browse view. */
 .session-list-body {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -2245,13 +2307,19 @@ onUnmounted(() => {
    band with name / count / path, and the same compact rows (they reuse
    `.pcard-row`). Only the back arrow is added, and the hint moves into the
    header band as a second line. */
+/* Overlays the list instead of replacing it, so the growth animation can be
+   drawn on top of the rows it is covering (and the list keeps its scroll
+   position underneath). */
 .browse-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
   border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
   background: var(--bg-primary, #fff);
+  transform-origin: 0 0;
 }
 
 .browse-head {
