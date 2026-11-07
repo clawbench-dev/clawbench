@@ -133,7 +133,11 @@ func ProbeACPState(ctx context.Context, agent *model.Agent, cwd string) (*ACPSta
 		reg.UpdateModes(agent.ID, ext.modes)
 	}
 	if len(ext.efforts) > 0 {
+		// Keep the agent-level list as the change-detection baseline, and record
+		// the per-model list (issue #637) so a manual refresh teaches the picker
+		// for the probed model — the probe runs on the agent's default model.
 		reg.UpdateThinkingEfforts(agent.ID, ext.efforts)
+		reg.UpdateThinkingEffortsForModel(agent.ID, ext.modelCurrentID, ext.efforts)
 	}
 	if len(ext.models) > 0 {
 		reg.UpdateModels(agent.ID, ext.models)

@@ -991,3 +991,44 @@ func TestWriteModelSwitchError(t *testing.T) {
 		assert.Equal(t, "provider not connected", detail["Detail"])
 	})
 }
+
+// Issue #637 — switching model with no live ACP connection (the common "switch
+// before sending the first message" path) must still return the NEW model's
+// thinking levels. There is no connection to ask, so they are resolved from the
+// persisted model + the per-model registry.
+func TestServeAISessionUpdate_ReturnsNewModelsThinkingLevelsWithoutConn(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Effort", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel("claude", "claude-sonnet-4-6",
+		[]ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}, {ID: "max"}})
+	t.Cleanup(func() {
+		ai.GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel("claude", "claude-sonnet-4-6", nil)
+	})
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sid,
+		"modelId":   "claude-sonnet-4-6",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		ThinkingEffortState *struct {
+			AvailableLevels []struct {
+				ID string `json:"id"`
+			} `json:"availableLevels"`
+		} `json:"thinkingEffortState"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.ThinkingEffortState, "the new model's levels must be returned")
+	ids := make([]string, 0, len(resp.ThinkingEffortState.AvailableLevels))
+	for _, l := range resp.ThinkingEffortState.AvailableLevels {
+		ids = append(ids, l.ID)
+	}
+	assert.Equal(t, []string{"low", "high", "max"}, ids)
+}

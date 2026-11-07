@@ -940,7 +940,10 @@ func TestEmitSessionStateEvents_WithModeAndThinking(t *testing.T) {
 		{ID: "code", Name: "Code"},
 		{ID: "ask", Name: "Ask"},
 	})
-	reg.UpdateThinkingEfforts(agent.ID, []ThinkingEffortDef{
+	// Levels are per MODEL (issue #637): record them for the model this
+	// session runs.
+	conn.SetCurrentModelID("emit-model")
+	reg.UpdateThinkingEffortsForModel(agent.ID, "emit-model", []ThinkingEffortDef{
 		{ID: "high", Name: "High"},
 		{ID: "low", Name: "Low"},
 	})

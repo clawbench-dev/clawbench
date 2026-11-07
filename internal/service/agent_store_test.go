@@ -294,8 +294,11 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"models": true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
-		"acp_available_models": true,
-		"acp_config_options":   true, "acp_mcp_http": true, "acp_mcp_sse": true,
+		// Per-model thinking levels (issue #637): some agents advertise a
+		// different level set per model, so the list is keyed by model id.
+		"acp_thinking_efforts_by_model": true,
+		"acp_available_models":          true,
+		"acp_config_options":            true, "acp_mcp_http": true, "acp_mcp_sse": true,
 		"auto_approve": true, "disabled": true,
 		"project_id": true,
 		// Model-provider binding (NULL = use the CLI's own configuration).

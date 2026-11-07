@@ -157,4 +157,20 @@ describe('click-time model switch wiring', () => {
       /syncModelFromAgent\(/,
     )
   })
+
+  // Issue #637: thinking levels are per MODEL. The server returns the new
+  // model's list on the switch response, and it must be applied BEFORE the
+  // level's display name is resolved — otherwise the drawer keeps offering the
+  // previous model's options and a level only the new model has shows its raw id.
+  it('applies the new model\'s thinking levels before resolving the level name', () => {
+    const body = fnBody('async function handleSwitchModel')
+    const levelsIdx = body.indexOf('updateAvailableThinkingEfforts')
+    const nameIdx = body.indexOf('applyEffortAfterModelSwitch')
+    expect(levelsIdx, 'the returned level list must be applied').toBeGreaterThanOrEqual(0)
+    expect(nameIdx, 'the effort name resolution must still run').toBeGreaterThanOrEqual(0)
+    expect(levelsIdx, 'the list must land before the name lookup').toBeLessThan(nameIdx)
+    expect(body, 'the list must come from the switch response').toMatch(
+      /res\?\.thinkingEffortState\?\.availableLevels/,
+    )
+  })
 })

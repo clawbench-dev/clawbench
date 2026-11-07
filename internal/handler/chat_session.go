@@ -726,6 +726,17 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
 	attachConfigOptionsAfterModelSwitch(resp, sessionID, req.ModelID)
+	// The level list is per MODEL, so a switch changes the picker's options.
+	// The agent reports the new list only inside the set_config_option
+	// RESPONSE (no config_option_update follows), so returning it here is what
+	// keeps the open drawer in step — without it the drawer keeps showing the
+	// previous model's levels until the next turn, and two sessions on the same
+	// agent disagree about the same model.
+	if req.ModelID != "" && !modelSwitchDeferred {
+		if state := thinkingEffortStateAfterModelSwitch(sessionID); state != nil {
+			resp["thinkingEffortState"] = state
+		}
+	}
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}
@@ -743,6 +754,21 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		resp["thinkingEffortNotRemembered"] = true
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// thinkingEffortStateAfterModelSwitch returns the thinking levels of the model
+// the session now runs, for the click-time switch response.
+//
+// The live connection is authoritative. A switch made before the first message
+// has no connection at all, so the list is resolved from the persisted model
+// and the registry — without that fallback the drawer keeps the previous
+// model's levels, which is issue #637's most common path.
+func thinkingEffortStateAfterModelSwitch(sessionID string) *ai.ThinkingEffortState {
+	if state := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID).Effort; state != nil {
+		return state
+	}
+	return ai.GetAgentCapabilityRegistry().GetThinkingEffortStateForModel(
+		service.GetSessionAgentID(sessionID), service.GetSessionModel(sessionID), "")
 }
 
 // applyNonModelFields persists every session-scoped field EXCEPT the model.
@@ -846,15 +872,13 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	// (the ACP layer reports a refusal instead of recording it, so a bad pick
 	// cannot get stuck).
 	//
-	// The registry's list is agent-level and, before this fix, was only updated
-	// when a model advertised an ID it had not seen — a narrower model's list
-	// (deepseek: high/max/default) is a SUBSET of the previous one (glm:
-	// low/high/max/default), so it was never refreshed and this check would
-	// happily accept a level the current model rejects. The registry now also
-	// tracks removals, and an UNKNOWN list (nothing advertised yet) must not
-	// discard the user's choice — the agent stays authoritative in that case.
+	// The list is looked up for the model being switched TO (issue #637). The
+	// agent-level list would describe whichever model reported last — accepting
+	// levels this model rejects and dropping ones it offers. An UNKNOWN list
+	// (nothing advertised yet) must not discard the user's choice — the agent
+	// stays authoritative in that case.
 	if !deferred {
-		if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
+		if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortStateForModel(agent.ID, modelID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
 			valid := false
 			for _, l := range levels.AvailableLevels {
 				if l.ID == effort {

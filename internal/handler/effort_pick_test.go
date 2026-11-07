@@ -398,8 +398,10 @@ func TestSwitchSessionEffortToModel_RegistryRejectsRememberedPick(t *testing.T) 
 	model.Agents[agentID].Transport = "acp-stdio"
 	model.Agents[agentID].AcpCommand = "opencode acp"
 
+	// Levels are per MODEL (issue #637): the list of the model being switched
+	// TO is what the pick is validated against.
 	reg := ai.GetAgentCapabilityRegistry()
-	reg.UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{{ID: "high"}, {ID: "max"}})
+	reg.UpdateThinkingEffortsForModel(agentID, "deepseek-v4-pro", []ai.ThinkingEffortDef{{ID: "high"}, {ID: "max"}})
 
 	sid, err := service.CreateSession(env.ProjectDir, agentID, "Registry", agentID, "glm-5.3", "user", "chat")
 	require.NoError(t, err)
@@ -515,7 +517,8 @@ func TestSwitchSessionEffortToModel_DeferredSkipsRegistryCheck(t *testing.T) {
 	// observable here. The reverse is: a level only the NEW model offers must not
 	// be cleared just because the old list lacks it.
 	model.Agents[agentID].ThinkingEffortByModel = map[string]string{"deepseek-v4-pro": "max"}
-	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{
+	// The NEW model's list (low/medium) does not contain "max".
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel(agentID, "deepseek-v4-pro", []ai.ThinkingEffortDef{
 		{ID: "low"}, {ID: "medium"},
 	})
 	// Simulate "the new model offers max, the old one does not" by making the

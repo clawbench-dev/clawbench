@@ -510,6 +510,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 							forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: enrichModelList(conn, modelList)})
 						}
 						conn.SetCachedModelListState(modelList)
+						// The notification states what the agent is actually
+						// running, so the session cache must follow — the
+						// per-model level list is looked up by it. Skipped while
+						// the session is being established: the agent is then
+						// announcing its own persisted default, and the user's
+						// pre-applied pick must win.
+						if !conn.IsEstablishingSession() && modelList.CurrentModelID != "" {
+							conn.UpdateCachedCurrent("model", modelList.CurrentModelID)
+						}
 					} else {
 						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
 					}
@@ -796,6 +805,12 @@ func applyConfigSelectToSessionCache(sel SelectState, conn *ACPConn, reg *AgentC
 		}
 		conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
 	case "thought_level":
+		// The level LIST is per model too: an agent that reports a new list
+		// through this notification (rather than inside the set_config_option
+		// response) must be recorded against the model it belongs to.
+		if newOpts {
+			reg.UpdateThinkingEffortsForModel(conn.AgentID(), conn.GetCurrentModelID(), levelsFromSelect(sel))
+		}
 		// Only update session cache when the value actually changed,
 		// to avoid overwriting the user's selection with the agent's default
 		if currentChanged {

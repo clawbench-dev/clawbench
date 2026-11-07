@@ -1477,6 +1477,12 @@ async function handleSwitchModel(model) {
     } else {
       dismissSwitchingToast()
     }
+    // Thinking levels are per MODEL: apply the new list BEFORE resolving the
+    // level's display name, or the drawer keeps offering the previous model's
+    // options (and may not find a name for a level only the new model has).
+    if (res?.thinkingEffortState?.availableLevels?.length > 0) {
+      identity.updateAvailableThinkingEfforts(res.thinkingEffortState.availableLevels)
+    }
     applyEffortAfterModelSwitch(res, effortBefore)
     // The new model may not support every agent-declared option (codex only
     // advertises Fast mode for models with a fast tier). The server returns the

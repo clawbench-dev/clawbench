@@ -754,8 +754,10 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 
 	reg := GetAgentCapabilityRegistry()
 	return ACPCachedState{
-		Mode:          reg.GetModeState(agentID, currentModeID),
-		Effort:        reg.GetThinkingEffortState(agentID, currentThinkingEffortID),
+		Mode: reg.GetModeState(agentID, currentModeID),
+		// Thinking levels are per MODEL (issue #637): resolve against the model
+		// this session is actually running, not the agent's last-written list.
+		Effort:        reg.GetThinkingEffortStateForModel(agentID, currentModelID, currentThinkingEffortID),
 		ConfigOptions: conn.GetExtraConfigOptions(),
 		ModelList:     reg.GetModelListState(agentID, currentModelID),
 		Commands:      reg.GetCommands(agentID),

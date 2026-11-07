@@ -356,7 +356,12 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.Mode = reg.GetModeState(a.ID, "")
-		s.Effort = reg.GetThinkingEffortState(a.ID, "")
+		// Levels are per MODEL (issue #637). Resolve them against the agent's
+		// DEFAULT model: it is what the settings picker configures, and it is
+		// deterministic — the live "current model" is whichever connection
+		// happened to be picked from a map, so the list would flip between
+		// requests when two sessions run different models.
+		s.Effort = reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), "")
 		s.Commands = reg.GetCommands(a.ID)
 		s.ModelList = reg.GetModelListState(a.ID, connManager.GetCurrentModelIDByAgentID(a.ID))
 		states[a.ID] = s
@@ -720,7 +725,8 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 // isValidThinkingEffort checks if a thinking effort level is valid for an agent
 // in a given session. It checks levels based on the transport that session's
 // turns will actually use:
-//   - ACP mode: only ACP-reported levels from AgentCapabilityRegistry
+//   - ACP mode: the live session's own model list when it has one, otherwise
+//     the agent-level levels from AgentCapabilityRegistry
 //   - CLI mode: only static ThinkingEffortLevels from BackendSpec
 //   - Neither has levels: allow any value (backward compatible)
 //
@@ -748,7 +754,15 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 	reg := ai.GetAgentCapabilityRegistry()
 
 	if transport == "acp-stdio" {
-		// ACP mode: only check ACP-reported levels
+		// ACP mode: prefer the list THIS session's model advertised. The
+		// agent-level registry only remembers whichever session refreshed it
+		// last, and levels are per model — validating a deepseek pick against
+		// glm's list both rejects valid levels and accepts ones the model will
+		// refuse.
+		if offered, known := sessionOffersThinkingEffort(sessionID, agent.ID, level); known {
+			return offered
+		}
+		// ACP-reported agent-level levels
 		if es := reg.GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
 			for _, l := range es.AvailableLevels {
 				if l.ID == level {
@@ -773,6 +787,36 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 
 	// No static levels and not ACP — allow any value
 	return true
+}
+
+// sessionOffersThinkingEffort reports whether the model this session runs
+// advertises the level. known=false means that model's list has not been
+// learned yet (callers fall back to the agent-level registry).
+func sessionOffersThinkingEffort(sessionID, agentID, level string) (offered, known bool) {
+	if sessionID == "" {
+		return false, false
+	}
+	// The session row's model is authoritative; a session created without one
+	// will run the agent's default on its first turn.
+	modelID := service.GetSessionModel(sessionID)
+	if modelID == "" {
+		if a := model.GetAgent(agentID); a != nil {
+			modelID = a.DefaultModelID()
+		}
+	}
+	if modelID == "" {
+		return false, false
+	}
+	levels, ok := ai.GetAgentCapabilityRegistry().ThinkingEffortsForModel(agentID, modelID)
+	if !ok {
+		return false, false
+	}
+	for _, l := range levels {
+		if l.ID == level {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // maxAgentAvatarBytes caps the stored agent avatar (a raw DiceBear SVG string).

@@ -2063,6 +2063,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: per-model thinking-effort levels (issue #637). Some agents
+	// (OpenCode) advertise a different level set for each model, so the single
+	// agent-level list above cannot answer for a session — it only remembers
+	// whichever model reported last. Keyed by model id, the same model looks
+	// identical in every session and entry point.
+	//
+	// No data migration is possible: the existing column does not record which
+	// model its list came from. It stays as the fallback for agents whose levels
+	// are model-independent, and this column fills up as sessions report.
+	var hasEffortByModelLevels int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_thinking_efforts_by_model'").Scan(&hasEffortByModelLevels)
+	if hasEffortByModelLevels == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_thinking_efforts_by_model TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add acp_thinking_efforts_by_model column to agents: %w", err)
+		}
+	}
+
 	// Migrate: add the ACP-reported model list column. Without it the ACP model
 	// list lives only in memory, so an agent's selectable models change across a
 	// restart (CLI list before the first ACP session, ACP list after) until a new

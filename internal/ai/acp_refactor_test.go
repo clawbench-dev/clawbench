@@ -2650,7 +2650,7 @@ func TestRefactor_EmitSessionStateEvents(t *testing.T) {
 	t.Run("with_registry_data", func(t *testing.T) {
 		reg := GetAgentCapabilityRegistry()
 		reg.UpdateModes("test-emit-state", []ModeDef{{ID: "ask", Name: "Ask"}, {ID: "code", Name: "Code"}})
-		reg.UpdateThinkingEfforts("test-emit-state", []ThinkingEffortDef{{ID: "low", Name: "Low"}, {ID: "high", Name: "High"}})
+		reg.UpdateThinkingEffortsForModel("test-emit-state", "gpt-4", []ThinkingEffortDef{{ID: "low", Name: "Low"}, {ID: "high", Name: "High"}})
 		reg.UpdateModels("test-emit-state", []model.AgentModel{{ID: "gpt-4", Name: "GPT-4"}})
 
 		conn := newACPConn(agent, "test-emit-state")
