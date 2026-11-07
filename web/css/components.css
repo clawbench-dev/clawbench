@@ -1509,8 +1509,8 @@
 
 /* ==========================================================================
    Action-bar labels
-   Used by: every row of icon buttons that shows its labels when there is room
-            (chat action bar, mail reader, code preview toolbar, list headers)
+   Used by: every icon row that shows its labels when there is room (all of them
+            go through components/common/ActionBar.vue)
 
    GLOBAL, not per component: the display toggle and the label typography must
    be identical everywhere, and a scoped rule would have to be re-declared by
@@ -1519,10 +1519,11 @@
    depends on the button shape it already has.
 
    Contract:
-     - the bar carries `.show-labels` when the labels fit;
-     - the bar briefly carries `.measure-labels` while being measured;
+     - the bar carries `.ab--labels` when the labels fit;
+     - the bar briefly carries `.ab-measuring` while being measured (same
+       visual rule, so the measurement sees the final layout);
      - every label is `<span class="action-label">`.
-   See docs/spec/client/design-guide.md 「图标按钮：空间够就带上文字标签」.
+   See docs/spec/client/design-guide.md 「图标按钮：统一用 ActionBar」.
    ========================================================================== */
 .action-label {
     display: none;
@@ -1531,16 +1532,78 @@
     white-space: nowrap;
     flex-shrink: 0;
 }
-.show-labels .action-label,
-.measure-labels .action-label,
-.ab--labels .action-label {
+.ab--labels .action-label,
+.ab-measuring .action-label {
     display: inline;
 }
 
-/* ActionBar: a labelled button must be allowed to grow. Bars style their
-   buttons with a fixed square size; leaving that in place would clip the label
-   instead of widening the button (the bug this control exists to prevent). */
-.ab--labels > button:not([data-ab-more]) {
+/* CopyButton renders its own label span (it owns the glyph swap). Inside an
+   ActionBar it follows the same rule as `.action-label`. */
+.ab .copy-btn-label {
+    display: none;
+}
+.ab--labels .copy-btn-label,
+.ab-measuring .copy-btn-label {
+    display: inline;
+}
+
+/* ==========================================================================
+   ActionBar menu (the "more" popup)
+
+   GLOBAL on purpose: the menu's items are provided by the host component
+   through a slot, so they carry the HOST's scope id — a scoped rule inside
+   ActionBar.vue would never match them, and every host would have to restyle
+   its own entries. The container itself is PopupMenu, a column flex, so these
+   rules only describe one item.
+   ========================================================================== */
+.ab-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    width: 100%;
+    padding: var(--space-3) var(--space-5);
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+@media (hover: hover) {
+    .ab-menu-item:hover:not(:disabled) {
+        background: var(--bg-hover);
+    }
+}
+.ab-menu-item:disabled {
+    opacity: var(--opacity-disabled);
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.ab-menu-item.active {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    color: var(--accent-color);
+}
+.ab-menu-item.is-danger {
+    color: var(--color-red);
+}
+.ab-menu-item svg {
+    flex-shrink: 0;
+}
+.ab-menu-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+.ab-menu-icon svg {
+    width: calc(14 * var(--dp));
+    height: calc(14 * var(--dp));
+}
+
+/* A labelled button must be allowed to grow. Bars style their buttons with a
+   fixed square size; leaving that in place would clip the label instead of
+   widening the button (the bug this control exists to prevent). */
+.ab--labels > button:not([data-ab-more]),
+.ab-measuring > button:not([data-ab-more]) {
     width: auto;
 }
 
@@ -1550,7 +1613,7 @@
    the labels then turn on, the buttons finish growing, and the next measurement
    turns them off again — the two states flicker. The class is only present for
    one synchronous measurement, so nothing is seen. */
-.measure-labels,
-.measure-labels * {
+.ab-measuring,
+.ab-measuring * {
     transition: none !important;
 }

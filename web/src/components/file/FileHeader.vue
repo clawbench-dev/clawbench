@@ -136,55 +136,55 @@
            the same "more" menu ActionBar builds for the buttons that do not
            fit, so there is exactly one overflow affordance. -->
       <template #menu-extra>
-        <button v-if="permanentMenuIds.includes('details')" class="dropdown-item" @click="$emit('showDetails')">
+        <button v-if="permanentMenuIds.includes('details')" class="ab-menu-item" @click="$emit('showDetails')">
           <Info :size="14" />
           {{ t('file.header.details') }}
         </button>
-        <button v-if="permanentMenuIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
+        <button v-if="permanentMenuIds.includes('openDirectory')" class="ab-menu-item" @click="handleOpenDirectory">
           <FolderOpen :size="14" />
           {{ t('file.header.openDirectory') }}
         </button>
-        <button v-if="permanentMenuIds.includes('gitHistory')" class="dropdown-item" @click="handleGitHistory">
+        <button v-if="permanentMenuIds.includes('gitHistory')" class="ab-menu-item" @click="handleGitHistory">
           <GitBranch :size="14" />
           {{ t('file.header.fileHistory') }}
         </button>
-        <button v-if="permanentMenuIds.includes('shareLink')" class="dropdown-item" :class="{ active: isShared }" @click="$emit('shareLink')">
+        <button v-if="permanentMenuIds.includes('shareLink')" class="ab-menu-item" :class="{ active: isShared }" @click="$emit('shareLink')">
           <ScreenShare :size="14" />
           {{ t('file.header.shareLink') }}
           <span v-if="isShared" class="wrap-check">✓</span>
         </button>
-        <button v-if="permanentMenuIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText">
+        <button v-if="permanentMenuIds.includes('openAsText')" class="ab-menu-item" @click="handleOpenAsText">
           <Code2 :size="14" />
           {{ t('file.header.openAsText') }}
         </button>
-        <button v-if="permanentMenuIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml">
+        <button v-if="permanentMenuIds.includes('exportHtml')" class="ab-menu-item" @click="handleExportHtml">
           <FileOutput :size="14" />
           {{ t('file.header.exportHtml') }}
         </button>
-        <button v-if="permanentMenuIds.includes('setAsBackground')" class="dropdown-item" @click="handleSetAsBackground">
+        <button v-if="permanentMenuIds.includes('setAsBackground')" class="ab-menu-item" @click="handleSetAsBackground">
           <Image :size="14" />
           {{ t('file.header.setAsBackground') }}
         </button>
-        <button v-if="permanentMenuIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
+        <button v-if="permanentMenuIds.includes('wordWrap')" class="ab-menu-item" @click="handleToggleWordWrap">
           <TextWrap :size="14" />
           {{ t('file.header.wordWrap') }}
           <span v-if="wordWrap" class="wrap-check">✓</span>
         </button>
-        <button v-if="permanentMenuIds.includes('lineNumbers')" class="dropdown-item" @click="handleToggleLineNumbers">
+        <button v-if="permanentMenuIds.includes('lineNumbers')" class="ab-menu-item" @click="handleToggleLineNumbers">
           <Hash :size="14" />
           {{ t('file.header.lineNumbers') }}
           <span v-if="showLineNumbers" class="wrap-check">✓</span>
         </button>
-        <button v-if="permanentMenuIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
+        <button v-if="permanentMenuIds.includes('stickyScroll')" class="ab-menu-item" @click="handleToggleStickyScroll">
           <Pin :size="14" />
           {{ t('file.header.stickyScroll') }}
           <span v-if="stickyScroll" class="wrap-check">✓</span>
         </button>
-        <button v-if="isAppMode && !isUntitled" class="dropdown-item" @click="handleShareExternal">
+        <button v-if="isAppMode && !isUntitled" class="ab-menu-item" @click="handleShareExternal">
           <Share2 :size="14" />
           {{ t('file.header.shareExternal') }}
         </button>
-        <button v-if="permanentMenuIds.includes('delete')" class="dropdown-item danger" @click="handleDelete()">
+        <button v-if="permanentMenuIds.includes('delete')" class="ab-menu-item is-danger" @click="handleDelete()">
           <Trash2 :size="14" />
           {{ t('common.delete') }}
         </button>
@@ -684,65 +684,4 @@ function handleFileNameDragEnd() {
 }
 </style>
 
-<!-- Unscoped styles for Teleported dropdown menu (rendered in body, outside scoped context) -->
-<style>
-.file-header-dropdown-menu {
-    position: fixed;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    box-shadow: 0 calc(4 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.15);
-    z-index: var(--z-popover);
-    min-width: calc(140 * var(--dp));
-    padding: var(--space-2) 0;
-    overflow: hidden;
-}
 
-.file-header-dropdown-menu .dropdown-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-4) var(--space-6);
-    width: 100%;
-    border: none;
-    background: none;
-    color: var(--text-primary);
-    font-size: var(--font-size-md);
-    cursor: pointer;
-    text-decoration: none;
-    white-space: nowrap;
-}
-@media (hover: hover) {
-    .file-header-dropdown-menu .dropdown-item:hover {
-        background: var(--accent-color);
-        color: #fff;
-    }
-}
-.file-header-dropdown-menu .dropdown-item.active {
-    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-    color: var(--accent-color);
-}
-.file-header-dropdown-menu .dropdown-item svg {
-    flex-shrink: 0;
-}
-.file-header-dropdown-menu .dropdown-item:disabled {
-    opacity: var(--opacity-disabled);
-    cursor: not-allowed;
-    pointer-events: none;
-}
-.file-header-dropdown-menu .dropdown-divider {
-    height: 1px; background: var(--border-color); margin: var(--space-2) 0;
-}
-.file-header-dropdown-menu .dropdown-item.danger {
-    color: #ef4444;
-}
-@media (hover: hover) {
-    .file-header-dropdown-menu .dropdown-item.danger:hover {
-        background: #fef2f2;
-        color: #dc2626;
-    }
-    [data-theme-base="dark"] .file-header-dropdown-menu .dropdown-item.danger:hover {
-        background: #2d1b1b;
-    }
-}
-</style>

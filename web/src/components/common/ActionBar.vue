@@ -466,33 +466,4 @@ watch(
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
-.ab-menu-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  width: 100%;
-  padding: var(--space-3) var(--space-5);
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ab-menu-item:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-.ab-menu-item:disabled {
-  opacity: var(--opacity-muted);
-  cursor: not-allowed;
-}
-.ab-menu-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-}
-.ab-menu-icon :deep(svg) {
-  width: calc(14 * var(--dp));
-  height: calc(14 * var(--dp));
-}
 </style>

@@ -199,7 +199,7 @@ describe('FileHeader', () => {
     // dynamic import a tick to resolve before reading its items.
     await flushPromises()
     await nextTick()
-    return wrapper.findAll('.ab-menu-item, .dropdown-item')
+    return wrapper.findAll('.ab-menu-item')
   }
 
   /** Open the More menu and find an item by its label text. */
