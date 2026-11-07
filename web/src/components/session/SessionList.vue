@@ -2064,8 +2064,11 @@ onUnmounted(() => {
 .other-cards {
   display: flex;
   flex-direction: column;
+  /* Full-bleed: no side inset, so the cards use the whole width like the
+     session rows do. The vertical gap is kept — without it two cards (and the
+     last session row) would touch and read as one block. */
   gap: var(--space-4);
-  padding: var(--space-5) var(--space-4) var(--space-7);
+  padding: var(--space-5) 0 var(--space-7);
 }
 
 /* One card per project. Square corners and a crisp outline on purpose: the
