@@ -2182,10 +2182,13 @@ onUnmounted(() => {
 }
 
 /* The busy ring occupies the chevron's slot, so the header does not move while
-   the project's list is being fetched. */
+   the project's list is being fetched. Same colour rules as the row ring: the
+   shared spinner reads these two variables, and the card is monochrome. */
 .pcard-chev--busy {
   width: calc(14 * var(--dp));
   height: calc(14 * var(--dp));
+  --li-color: var(--pc, var(--accent-color, #0066cc));
+  --li-track-color: color-mix(in srgb, var(--pc, var(--border-color)) 22%, transparent);
 }
 
 .pcard-path {
