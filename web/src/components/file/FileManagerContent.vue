@@ -32,7 +32,7 @@
             <Trash2 :size="16" />
           </button>
         </div>
-        <div v-else ref="browseToolbarRef" class="dir-toolbar-btns" :class="{ 'show-labels': showLabels }">
+        <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu" align="end">
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -68,142 +68,56 @@
             </div>
             </Teleport>
           </div>
-          <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" :size="16" class="toolbar-btn" :loading="dirRefreshing" :disabled="dirRefreshing" :title="t('nav.refresh')" @click="triggerRefresh()">
+          <RefreshButton icon="RotateCw" :size="16" class="toolbar-btn" :loading="dirRefreshing" :disabled="dirRefreshing" :title="t('nav.refresh')" @click="triggerRefresh()">
             <span class="action-label">{{ t('nav.refresh') }}</span>
           </RefreshButton>
-          <button v-if="toolbarInlineIds.includes('newFile')" class="toolbar-btn" @click="doNewFile()" :title="t('file.context.newFile')">
+          <button class="toolbar-btn" @click="doNewFile()" :title="t('file.context.newFile')">
             <FilePlus :size="16" />
             <span class="action-label">{{ t('file.context.newFile') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('newFolder')" class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
+          <button class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
             <FolderPlus :size="16" />
             <span class="action-label">{{ t('actionLabels.newFolder') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
+          <button class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
             <span class="action-label">{{ t('file.uploadHere') }}</span>
           </button>
-          <button v-if="!isAndroidApp && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
+          <button v-if="!isAndroidApp" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
             <FolderUp :size="16" />
             <span class="action-label">{{ t('actionLabels.uploadFolder') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
+          <button class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
             <span class="action-label">{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('previewMode')" class="toolbar-btn" :class="{ active: filePreviewMode }" @click="togglePreviewMode()" :title="filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn')">
+          <button class="toolbar-btn" :class="{ active: filePreviewMode }" @click="togglePreviewMode()" :title="filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn')">
             <ScanEye :size="16" />
             <span class="action-label">{{ filePreviewMode ? t('actionLabels.previewOff') : t('actionLabels.previewOn') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
+          <button class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
             <CheckSquare :size="16" />
             <span class="action-label">{{ multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
+          <button class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
             <EyeOff v-if="!showHidden" :size="16" />
             <Eye v-else :size="16" />
             <span class="action-label">{{ showHidden ? t('actionLabels.hideHidden') : t('actionLabels.showHidden') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('jump')" class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
+          <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
             <FolderSearch :size="16" />
             <span class="action-label">{{ t('jump.button') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('sharedFiles')" class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
+          <button class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
             <ScreenShare :size="16" />
             <span class="action-label">{{ t('actionLabels.sharedFiles') }}</span>
           </button>
-          <button v-if="toolbarInlineIds.includes('contentSearch')" class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
+          <button class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
             <SearchCode :size="16" />
             <span class="action-label">{{ t('actionLabels.contentSearch') }}</span>
           </button>
-          <template v-if="showMoreDropdown">
-          <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
-            <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
-              <MoreHorizontal :size="16" />
-              <span class="action-label">{{ t('nav.more') }}</span>
-            </button>
-            <Teleport to="body">
-              <div v-if="moreMenuOpen" class="toolbar-dropdown" :style="moreMenuStyle" @click.stop>
-              <template v-if="toolbarCollapsedIds.includes('refresh')">
-                <button class="toolbar-dropdown-item refresh-spin" :class="{ 'refresh-spin--active': dirRefreshing }" :disabled="dirRefreshing" @click="triggerRefresh(); moreMenuOpen = false">
-                  <RotateCw :size="14" />
-                  <span>{{ t('nav.refresh') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('newFile')">
-                <button class="toolbar-dropdown-item" @click="doNewFile(); moreMenuOpen = false">
-                  <FilePlus :size="14" />
-                  <span>{{ t('file.context.newFile') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('newFolder')">
-                <button class="toolbar-dropdown-item" @click="doNewFolder(); moreMenuOpen = false">
-                  <FolderPlus :size="14" />
-                  <span>{{ t('file.context.newFolder') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('upload')">
-                <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
-                  <Upload :size="14" />
-                  <span>{{ t('file.uploadHere') }}</span>
-                </button>
-              </template>
-              <template v-if="!isAndroidApp && toolbarCollapsedIds.includes('uploadFolder')">
-                <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerFolderUpload(); moreMenuOpen = false">
-                  <FolderUp :size="14" />
-                  <span>{{ t('file.uploadFolder') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('viewToggle')">
-                <button class="toolbar-dropdown-item" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'; moreMenuOpen = false">
-                  <LayoutGrid v-if="viewMode === 'list'" :size="14" />
-                  <LayoutList v-else :size="14" />
-                  <span>{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('previewMode')">
-                <button class="toolbar-dropdown-item" :class="{ active: filePreviewMode }" @click="togglePreviewMode(); moreMenuOpen = false">
-                  <ScanEye :size="14" />
-                  <span>{{ filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('multiselect')">
-                <button class="toolbar-dropdown-item" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect(); moreMenuOpen = false">
-                  <CheckSquare :size="14" />
-                  <span>{{ multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('hidden')">
-                <button class="toolbar-dropdown-item" @click="$emit('toggleHidden'); moreMenuOpen = false">
-                  <EyeOff v-if="!showHidden" :size="14" />
-                  <Eye v-else :size="14" />
-                  <span>{{ showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('jump')">
-                <button class="toolbar-dropdown-item" @click="jumpOpen = true; moreMenuOpen = false">
-                  <FolderSearch :size="14" />
-                  <span>{{ t('jump.button') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('sharedFiles')">
-                <button class="toolbar-dropdown-item" @click="sharedDrawerRef?.open(); moreMenuOpen = false">
-                  <ScreenShare :size="14" />
-                  <span>{{ t('sharedFiles.button') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('contentSearch')">
-                <button class="toolbar-dropdown-item" @click="openContentSearch(); moreMenuOpen = false">
-                  <SearchCode :size="14" />
-                  <span>{{ t('file.contentSearch.button') }}</span>
-                </button>
-              </template>
-            </div>
-            </Teleport>
-          </div>
-          </template>
-        </div>
+        </ActionBar>
       </div>
 
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
@@ -603,7 +517,7 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -620,8 +534,7 @@ import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { startAttachDrag, hasAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath, postForBlobWithProgress } from '@/utils/download.ts'
-import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
 import DropOverlay from '@/components/common/DropOverlay.vue'
@@ -908,13 +821,10 @@ const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile'
 
 
 const sortMenuOpen = ref(false)
-const moreMenuOpen = ref(false)
 
 // Dropdown positioning (same pattern as FileHeader.vue)
 const sortDropdownWrapRef = ref(null)
-const moreDropdownWrapRef = ref(null)
 const sortMenuStyle = ref({})
-const moreMenuStyle = ref({})
 
 function updateSortMenuStyle() {
   if (!sortDropdownWrapRef.value) return
@@ -927,23 +837,8 @@ function updateSortMenuStyle() {
   }
 }
 
-function updateMoreMenuStyle() {
-  if (!moreDropdownWrapRef.value) return
-  const rect = moreDropdownWrapRef.value.getBoundingClientRect()
-  const vp = getZoomedViewport()
-  moreMenuStyle.value = {
-    position: 'fixed',
-    top: `${toFixedCSS(rect.bottom + 4)}px`,
-    right: `${toFixedCSS(vp.width - rect.right)}px`,
-    left: 'auto',
-  }
-}
-
 watch(sortMenuOpen, (open) => {
   if (open) nextTick(() => updateSortMenuStyle())
-})
-watch(moreMenuOpen, (open) => {
-  if (open) nextTick(() => updateMoreMenuStyle())
 })
 
 // Responsive toolbar overflow. The demotable list is the same on every
@@ -956,33 +851,7 @@ watch(moreMenuOpen, (open) => {
 // users look for in the toolbar — leaving it last made it the very first button
 // to disappear into the More menu, which reads as "the feature is missing".
 const dirToolbarRef = ref(null)
-const demotableToolbarIds = computed(() => [
-  'refresh', 'newFile', 'newFolder', 'contentSearch', 'upload', 'uploadFolder',
-  'viewToggle', 'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
-])
-const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
-  () => dirToolbarRef.value,
-  () => demotableToolbarIds.value,
-  // Fixed slots reserved outside the demotable list: the sort dropdown and the
-  // "more" dropdown. (The toolbar search button was removed when the search bar
-  // became resident, so this dropped from 3 to 2.)
-  { inlineCount: 2, gap: 6 },
-)
-
-/**
- * Toolbar labels: shown only when the buttons that are currently inline can also
- * carry their text. The collapse decision stays icon-based, so the degradation
- * order is labels → icons → More — labels are sacrificed first, buttons only
- * move into the menu when even icons no longer fit.
- */
 const browseToolbarRef = ref(null)
-const { showLabels, measure: measureActionLabels } = useActionBarLabels(
-  () => browseToolbarRef.value,
-)
-watch(toolbarInlineIds, () => nextTick(measureActionLabels), { deep: true })
-
-const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length)
-const showMoreDropdown = computed(() => moreDropdownItemCount.value > 0)
 
 // ── View mode (list / grid) from settings config ──
 const viewMode = ref(localConfig.fileView || 'list')
@@ -1344,7 +1213,6 @@ function onSortSelect(field) {
 function closeDropdowns(e) {
   if (!e.target.closest('.toolbar-dropdown-wrap') && !e.target.closest('.toolbar-dropdown')) {
     sortMenuOpen.value = false
-    moreMenuOpen.value = false
   }
 }
 
@@ -1628,13 +1496,11 @@ function handleHighlightFileItem(e) {
 onMounted(() => {
   document.addEventListener('click', closeDropdowns)
   document.addEventListener('keydown', handleKeydown)
-  startToolbarResize()
   window.addEventListener('highlight-file-item', handleHighlightFileItem)
 })
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdowns)
   document.removeEventListener('keydown', handleKeydown)
-  stopToolbarResize()
   window.removeEventListener('highlight-file-item', handleHighlightFileItem)
   if (highlightRetryTimer) { clearTimeout(highlightRetryTimer); highlightRetryTimer = null }
   if (pasteOverlayTimer) { clearTimeout(pasteOverlayTimer); pasteOverlayTimer = null }
@@ -2160,14 +2026,12 @@ async function transferEntries(entries, destDir, isMove) {
 function doNewFile() {
     const entry = ctxMenu.entry
     closeCtxMenu()
-    moreMenuOpen.value = false
     emit('newFile', getDestDir(entry))
 }
 
 async function doNewFolder() {
     const entry = ctxMenu.entry
     closeCtxMenu()
-    moreMenuOpen.value = false
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(entry)
@@ -3284,8 +3148,7 @@ function scrollSelectedIntoView(path) {
 /* Unified toolbar button */
 /* Labelled buttons grow with their text; the circular shape has to become a
    pill, otherwise `border-radius: 50%` turns a wide button into an ellipse. */
-.dir-toolbar-btns.show-labels .toolbar-btn,
-.dir-toolbar-btns.measure-labels .toolbar-btn {
+.dir-toolbar-btns.ab--labels .toolbar-btn {
     width: auto;
     padding: 0 calc(8 * var(--dp));
     border-radius: var(--radius-full);

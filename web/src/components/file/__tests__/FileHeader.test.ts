@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, computed, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
@@ -31,6 +31,7 @@ const i18n = createI18n({
         refresh: 'Refresh',
         hideChat: 'Hide chat area',
         showChat: 'Show chat area',
+        more: 'More',
       },
       common: { download: 'Download', delete: 'Delete', close: 'Close' },
       chat: {
@@ -172,15 +173,33 @@ describe('FileHeader', () => {
     })
   }
 
-  function getMenuOpen(wrapper: ReturnType<typeof mount>): boolean {
-    return (wrapper.vm as any).$.setupState.menuOpen
+  /** The toolbar button ids actually rendered (content-appropriate set). */
+  function renderedToolbarIds(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper
+      .findAll('.header-actions > [data-toolbar-id]')
+      .map(b => b.attributes('data-toolbar-id') as string)
   }
 
-  /** Open the More menu and return its items (permanent group first). */
+  function getMenuOpen(wrapper: ReturnType<typeof mount>): boolean {
+    // The popup is ActionBar's; ask it through the ref the header forwards to.
+    const bar = wrapper.findComponent({ name: 'ActionBar' })
+    return (bar.vm as any).menuOpen === true
+  }
+
+  /**
+   * Open the More menu and return its items (permanent group first).
+   *
+   * The menu belongs to ActionBar: it renders the folded buttons plus the
+   * header's own permanent entries (the `#menu-extra` slot).
+   */
   async function openMenuItems(wrapper: ReturnType<typeof mount>) {
     ;(wrapper.vm as any).$.setupState.toggleMenu()
     await nextTick()
-    return wrapper.findAll('.file-header-dropdown-menu .dropdown-item')
+    // The popup is lazily loaded (it pulls the settings chain), so give the
+    // dynamic import a tick to resolve before reading its items.
+    await flushPromises()
+    await nextTick()
+    return wrapper.findAll('.ab-menu-item, .dropdown-item')
   }
 
   /** Open the More menu and find an item by its label text. */
@@ -252,12 +271,11 @@ describe('FileHeader', () => {
       expect(inline[0].attributes('title')).toBe('Refresh')
     })
 
-    it('is the highest-priority demotable item, so it collapses last', () => {
-      // useToolbarOverflow keeps a prefix of the demotable list inline, so
-      // position 0 in the overflow array = leftmost = last to collapse. This
-      // guards the template order staying in sync with the overflow array.
+    it('is the first toolbar button, so it is the last to be folded away', () => {
+      // ActionBar keeps a PREFIX inline and folds the tail, so position 0 in the
+      // template = last to collapse. This guards the template order.
       const wrapper = mountHeader()
-      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      const ids = wrapper.findAll('.header-actions > [data-toolbar-id]').map(b => b.attributes('data-toolbar-id'))
       expect(ids[0]).toBe('refresh')
     })
 
@@ -274,9 +292,8 @@ describe('FileHeader', () => {
       // Guards the counterpart: the reorder must not have made refresh
       // unconditional. An image has nothing to re-fetch into a text view.
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
-      const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
-      expect(titles).not.toContain('Refresh')
-      expect((wrapper.vm as any).$.setupState.toolbarInlineIds).not.toContain('refresh')
+      const ids = wrapper.findAll('.header-actions > [data-toolbar-id]').map(b => b.attributes('data-toolbar-id'))
+      expect(ids).not.toContain('refresh')
     })
   })
 
@@ -351,25 +368,17 @@ describe('FileHeader', () => {
       mockIsWideScreen.value = false
       const wrapper = mountHeader()
       expect(maximizeBtn(wrapper).exists()).toBe(false)
-      expect((wrapper.vm as any).$.setupState.toolbarInlineIds).not.toContain('maximize')
     })
 
-    it('falls back to the More menu when the toolbar overflows', async () => {
-      // useToolbarOverflow keeps a PREFIX inline and demotes the tail. Without a
-      // menu entry a demoted button simply disappears — the pane would then only
-      // be maximizable from the divider handle again, which is the very thing
-      // this button exists to replace. jsdom has no layout, so force the
-      // collapsed state and assert the menu carries the action.
+    it('is never lost when the row runs out of room', async () => {
+      // ActionBar folds the tail of the row into its menu, so a narrow pane can
+      // never make this action disappear. jsdom has no layout, so the folding
+      // itself is covered by ActionBar's own test; here we only pin that the
+      // button exists and carries a label for the menu entry to use.
       const wrapper = mountHeader()
-      const state = (wrapper.vm as any).$.setupState
-      state.toolbarCollapsedIds.push('maximize')
-      await nextTick()
-      // Open the More dropdown; its items are only rendered while it is open.
-      await wrapper.find('.dropdown-wrapper > .file-header-btn').trigger('click')
-      await nextTick()
-      const items = wrapper.findAll('.file-header-dropdown-menu .dropdown-item')
-      const texts = items.map(i => i.text())
-      expect(texts.some(t => t.includes('Hide chat area'))).toBe(true)
+      const btn = maximizeBtn(wrapper)
+      expect(btn.exists()).toBe(true)
+      expect(btn.find('.action-label').exists()).toBe(true)
     })
 
     it('is offered even when the file has no text content', () => {
@@ -425,10 +434,9 @@ describe('FileHeader', () => {
 
     it('renders the More button even when nothing overflows', () => {
       // The menu is the only entry point for these actions, so the button must
-      // exist unconditionally — not gated on toolbarCollapsedIds.
+      // exist unconditionally — not only when something was folded away.
       const wrapper = mountHeader()
-      expect((wrapper.vm as any).$.setupState.toolbarCollapsedIds).toEqual([])
-      const moreBtn = wrapper.find('.dropdown-wrapper > .file-header-btn')
+      const moreBtn = wrapper.find('[data-ab-more]')
       expect(moreBtn.exists()).toBe(true)
       expect(moreBtn.attributes('title')).toBe('More')
     })
@@ -714,15 +722,11 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
-      // wordWrap, lineNumbers, stickyScroll should not be in toolbar IDs
-      const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).not.toContain('wordWrap')
-      expect(ids).not.toContain('lineNumbers')
-      expect(ids).not.toContain('stickyScroll')
+      // Only content-appropriate buttons are rendered; ActionBar folds what does
+      // not fit. wordWrap / lineNumbers / stickyScroll live in the More menu.
+      const ids = renderedToolbarIds(wrapper)
       expect(ids).not.toContain('toggleView')
-      // attach should still be available
       expect(ids).toContain('attach')
-      // refresh is not included for media files without text content
       expect(ids).not.toContain('refresh')
     })
 
@@ -730,27 +734,21 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ file: { name: 'song.mp3', path: '/tmp/song.mp3', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
-      const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).not.toContain('wordWrap')
-      expect(ids).not.toContain('lineNumbers')
+      expect(renderedToolbarIds(wrapper)).not.toContain('toggleView')
     })
 
     it('hides code-only toolbar items for video files', async () => {
       const wrapper = mountHeader({ file: { name: 'clip.mp4', path: '/tmp/clip.mp4', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
-      const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).not.toContain('wordWrap')
-      expect(ids).not.toContain('lineNumbers')
+      expect(renderedToolbarIds(wrapper)).not.toContain('toggleView')
     })
 
     it('hides code-only toolbar items for PDF files', async () => {
       const wrapper = mountHeader({ file: { name: 'doc.pdf', path: '/tmp/doc.pdf', content: null } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(true)
-      const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).not.toContain('wordWrap')
-      expect(ids).not.toContain('lineNumbers')
+      const ids = renderedToolbarIds(wrapper)
       expect(ids).not.toContain('toggleView')
       // PDF keeps TOC but has no search (no text content)
       expect(ids).toContain('toc')
@@ -761,10 +759,9 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'code' } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isMediaFile).toBe(false)
-      const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).not.toContain('wordWrap')
-      expect(ids).not.toContain('lineNumbers')
-      // ...they live in the More menu instead
+      // Editor preferences are never inline; they live in the More menu.
+      expect(renderedToolbarIds(wrapper)).not.toContain('wordWrap')
+      expect(renderedToolbarIds(wrapper)).not.toContain('lineNumbers')
       expect(vm.$.setupState.permanentMenuIds).toContain('wordWrap')
       expect(vm.$.setupState.permanentMenuIds).toContain('lineNumbers')
       expect(vm.$.setupState.permanentMenuIds).toContain('stickyScroll')
@@ -774,13 +771,13 @@ describe('FileHeader', () => {
       const imgWrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
       const imgVm = imgWrapper.vm as any
       expect(imgVm.$.setupState.isImageFile).toBe(true)
-      expect(imgVm.$.setupState.toolbarInlineIds).toContain('viewImage')
+      expect(renderedToolbarIds(imgWrapper)).toContain('viewImage')
       expect(imgWrapper.find('.file-header-btn[title="View image"]').exists()).toBe(true)
 
       const tsWrapper = mountHeader()
       const tsVm = tsWrapper.vm as any
       expect(tsVm.$.setupState.isImageFile).toBe(false)
-      expect(tsVm.$.setupState.toolbarInlineIds).not.toContain('viewImage')
+      expect(renderedToolbarIds(tsWrapper)).not.toContain('viewImage')
       expect(tsWrapper.find('.file-header-btn[title="View image"]').exists()).toBe(false)
     })
 
@@ -812,14 +809,14 @@ describe('FileHeader', () => {
       const wrapper = mountHeader()
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isEditable).toBe(true)
-      expect(vm.$.setupState.toolbarInlineIds).toContain('edit')
+      expect(renderedToolbarIds(wrapper)).toContain('edit')
     })
 
     it('shows edit button for markdown files', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' } })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.isEditable).toBe(true)
-      expect(vm.$.setupState.toolbarInlineIds).toContain('edit')
+      expect(renderedToolbarIds(wrapper)).toContain('edit')
     })
 
     it('shows edit button and code features for a newly-created empty text file', () => {
@@ -827,7 +824,7 @@ describe('FileHeader', () => {
       const vm = wrapper.vm as any
       expect(vm.$.setupState.hasTextContent).toBe(true)
       expect(vm.$.setupState.isEditable).toBe(true)
-      const ids = vm.$.setupState.toolbarInlineIds
+      const ids = renderedToolbarIds(wrapper)
       expect(ids).toContain('edit')
       expect(ids).toContain('refresh')
       // Code-display preferences are menu-only now.
@@ -873,16 +870,15 @@ describe('FileHeader', () => {
     it('hides export HTML button when editing from rendered markdown', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: true })
       const vm = wrapper.vm as any
-      // When editing from rendered, effectiveViewMode is 'raw', so exportHtml should not be in toolbar
-      const ids = vm.$.setupState.toolbarInlineIds
-      expect(ids).not.toContain('exportHtml')
+      // Export HTML is a permanent menu action, never an inline button.
+      expect(vm.$.setupState.permanentMenuIds).not.toContain('exportHtml')
     })
 
     it('shows the search button for any file with text content', async () => {
       // Rendered markdown preview keeps the SearchDrawer button
       const rendered = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
       expect((rendered.vm as any).$.setupState.hasSearch).toBe(true)
-      expect((rendered.vm as any).$.setupState.toolbarInlineIds).toContain('search')
+      expect(renderedToolbarIds(rendered)).toContain('search')
 
       // Editing from rendered markdown → CodeMirror source → button still shown
       // (clicking opens CodeMirror's own search panel)
@@ -931,7 +927,7 @@ describe('FileHeader', () => {
 
     it('hides path-backed inline toolbar buttons', () => {
       const wrapper = mountHeader({ file: untitled })
-      const ids = (wrapper.vm as any).$.setupState.toolbarInlineIds
+      const ids = renderedToolbarIds(wrapper)
       for (const id of ['refresh', 'attach', 'download']) {
         expect(ids).not.toContain(id)
       }
@@ -948,7 +944,7 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
       const vm = wrapper.vm as any
       expect(vm.$.setupState.permanentMenuIds).toContain('shareLink')
-      expect(vm.$.setupState.toolbarInlineIds).not.toContain('shareLink')
+      expect(renderedToolbarIds(wrapper)).not.toContain('shareLink')
     })
 
     it('is removed from the menu while editing', () => {
@@ -1165,7 +1161,7 @@ describe('FileHeader — overlay close button', () => {
 describe('FileHeader — toolbar labels', () => {
   it('labels the inline tools and the More button when the row can hold them', async () => {
     // jsdom has no layout: the toolbar measures 0 wide and assumes room. The
-    // overflow maths lives in useActionBarLabels.test.ts; this pins the wiring,
+    // overflow maths lives in ActionBar.test.ts; this pins the wiring,
     // including the More button (always inline, never demoted).
     const wrapper = mount(FileHeader, {
       props: {
@@ -1182,8 +1178,8 @@ describe('FileHeader — toolbar labels', () => {
     })
     await nextTick()
     const bar = wrapper.find('.header-actions')
-    expect(bar.classes()).toContain('show-labels')
+    expect(bar.classes()).toContain('ab--labels')
     expect(bar.findAll('.action-label').length).toBeGreaterThanOrEqual(5)
-    expect(wrapper.find('.dropdown-wrapper .action-label').exists()).toBe(true)
+    expect(wrapper.find('[data-ab-more]').exists()).toBe(true)
   })
 })

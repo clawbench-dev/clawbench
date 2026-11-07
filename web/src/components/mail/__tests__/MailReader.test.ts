@@ -132,35 +132,16 @@ describe('MailReader', () => {
     }
   })
 
-  it('drops the labels when the row cannot fit them', async () => {
-    // Same contract as the chat action bar: force labels on, measure, and fall
-    // back to icons-only rather than overflowing a strip whose scrollbar is
-    // hidden.
+  it('labels the actions when the row can hold them', async () => {
+    // The width decisions live in ActionBar (its own test covers them). This
+    // pins the wiring: every action carries a label and the bar owns the row.
     apiGet.mockResolvedValue({ message: detail })
     const wrapper = mountReader()
     await flushPromises()
 
     const row = wrapper.find('.mail-reader__actions')
-    const el = row.element as HTMLElement
-    // jsdom has no layout: supply the available width and the width the buttons
-    // need. The latter comes from the children's rects — `scrollWidth` is
-    // clamped to `clientWidth` and cannot express "this needs more room".
-    const measureWith = (needed: number, clientWidth: number) => {
-      Object.defineProperty(el, 'clientWidth', { value: clientWidth, configurable: true })
-      for (const kid of Array.from(el.children) as HTMLElement[]) {
-        kid.getBoundingClientRect = () =>
-          ({ left: 0, right: needed, width: needed, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
-      }
-      ;(wrapper.vm as unknown as { measureActionLabels: () => void }).measureActionLabels()
-    }
-
-    measureWith(600, 300)
-    await nextTick()
-    expect(row.classes(), 'no room → icons only').not.toContain('show-labels')
-
-    measureWith(200, 300)
-    await nextTick()
-    expect(row.classes(), 'room to spare → labels shown').toContain('show-labels')
+    expect(row.classes()).toContain('ab--scroll')
+    expect(row.findAll('.action-label').length).toBeGreaterThanOrEqual(6)
   })
 
   it('toggles the star through the flags endpoint', async () => {

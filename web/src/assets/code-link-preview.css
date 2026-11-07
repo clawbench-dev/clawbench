@@ -244,13 +244,8 @@ body.code-preview-resizing * {
 }
 
 /* Labels next to the tool icons, shown only when the row can hold them
-   (shared `.action-label` contract — see design-guide). While measuring, the
-   meta text keeps its natural width, so an overflow means the LABELS do not
-   fit rather than the text simply shrinking. */
-.code-preview-meta.measure-labels .code-preview-meta-info {
-  flex: 0 0 auto;
-}
-.code-preview-meta.show-labels .code-preview-btn {
+   (ActionBar decides; see design-guide). */
+.code-preview-meta.ab--labels .code-preview-btn {
   gap: var(--space-2);
   padding: 0 var(--space-4);
 }

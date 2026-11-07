@@ -1,5 +1,5 @@
 <template>
-  <div ref="headerRef" class="session-list-header-content" :class="{ 'show-labels': showLabels }">
+  <div class="session-list-header-content">
     <div class="session-header-leading">
       <List :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('session.title') }}</span>
@@ -18,7 +18,7 @@
         <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
       </div>
     </div>
-    <div class="session-header-actions">
+    <ActionBar class="session-header-actions" mode="menu" align="end">
       <slot name="actions" />
       <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
         <Search :size="16" />
@@ -37,16 +37,16 @@
            right-most control in the header, after search/create/refresh. The
            leading #actions slot is rendered before the built-in buttons. -->
       <slot name="actions-end" />
-    </div>
+    </ActionBar>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { List, Search, Plus } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 
 const props = defineProps({
   sessionCount: { type: Number, default: 0 },
@@ -66,13 +66,6 @@ function triggerRefresh() {
 }
 
 const { t } = useI18n()
-
-/**
- * Header labels: shown only when the header can hold them without squeezing the
- * title (shared measure-then-toggle rule — see useActionBarLabels).
- */
-const headerRef = ref(null)
-const { showLabels } = useActionBarLabels(() => headerRef.value)
 
 const sessionPct = computed(() => props.sessionMaxCount > 0 ? Math.min((props.sessionCount / props.sessionMaxCount) * 100, 100) : 0)
 const sessionBarColor = computed(() => {
@@ -164,11 +157,7 @@ const sessionBarColor = computed(() => {
   align-items: center;
   justify-content: flex-end;
 }
-/* While measuring, the leading group keeps its natural width so an overflow
-   means the LABELS do not fit, instead of the title simply being squeezed. */
-.session-list-header-content.measure-labels .session-header-leading {
-  flex: 0 0 auto;
-}
+
 </style>
 
 <style>
@@ -196,10 +185,8 @@ const sessionBarColor = computed(() => {
     background: rgba(0, 102, 204, 0.1);
   }
 }
-/* Labelled header buttons grow with their text instead of staying 24px squares
-   (labels appear only when the header can hold them — see useActionBarLabels). */
-.session-list-header-content.show-labels .header-action-btn,
-.session-list-header-content.measure-labels .header-action-btn {
+/* Labelled buttons grow with their text; ActionBar decides when. */
+.session-header-actions.ab--labels .header-action-btn {
   width: auto;
   padding: 0 calc(8 * var(--dp));
 }

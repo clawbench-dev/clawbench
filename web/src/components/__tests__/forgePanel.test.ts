@@ -1887,7 +1887,7 @@ describe('ForgePanelContent — header labels', () => {
     await nextTick()
 
     const header = wrapper.find('.forge-header')
-    expect(header.classes()).toContain('show-labels')
+    expect(header.classes()).toContain('ab--labels')
     // RefreshButton is stubbed (`true`) in this suite, so only the mark-all-read
     // label is in the DOM; assert that one explicitly.
     expect(header.find('.clear-unread-btn .action-label').exists()).toBe(true)

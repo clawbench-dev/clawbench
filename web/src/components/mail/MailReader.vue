@@ -11,14 +11,13 @@
       </button>
     </div>
 
-    <!-- One icon row, matching every other quote entry point. Labels ride next
-         to the icons only when the pane can hold them (same measure-then-toggle
-         pattern as the chat action bar): always in the DOM, shown by
-         `.show-labels`, so the row can be measured with them forced on. -->
-    <div
+    <!-- One icon row, matching every other quote entry point. ActionBar shows the
+         labels when the pane can hold them and lets the row scroll (drag + edge
+         fades) when it cannot, so no action is ever unreachable. -->
+    <ActionBar
       ref="actionsRef"
       class="mail-reader__actions"
-      :class="{ 'show-labels': showActionLabels }"
+      mode="scroll"
     >
       <button class="mail-icon-btn" :title="t('mail.reader.reply')" :aria-label="t('mail.reader.reply')"
         :disabled="busy" @click="emit('reply', 'reply')">
@@ -56,7 +55,7 @@
         <Trash2 />
         <span class="action-label">{{ t('mail.reader.delete') }}</span>
       </button>
-    </div>
+    </ActionBar>
 
     <div class="mail-reader__meta">
       <div class="mail-reader__from">
@@ -146,7 +145,7 @@ import {
   type MailMessageDetail,
 } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useToast } from '@/composables/useToast'
@@ -173,12 +172,9 @@ const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: 
 // Same rule as the chat action bar (shared composable): labels are always in the
 // DOM and shown only when the row proves it can hold them. Falling back to
 // icons-only is better than overflowing a strip whose scrollbar is hidden.
-const actionsRef = ref<HTMLElement | null>(null)
-const { showLabels: showActionLabels, measure: measureActionLabels } = useActionBarLabels(
-  () => actionsRef.value,
-)
+const actionsRef = ref<{ measure: () => void } | null>(null)
 
-defineExpose({ measureActionLabels })
+defineExpose({ measureActionLabels: () => actionsRef.value?.measure() })
 
 // ── Handing this email to the chat ─────────────────────────────
 const quoteQuestion = useQuoteQuestion()
@@ -338,17 +334,10 @@ async function remove(): Promise<void> {
   color: var(--text-primary);
 }
 .mail-reader__actions {
-  display: flex;
-  align-items: center;
   gap: var(--space-1, 2px);
   padding: var(--space-1, 2px) var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.mail-reader__actions::-webkit-scrollbar {
-  display: none;
 }
 .mail-reader__spacer {
   flex: 1;
@@ -557,16 +546,12 @@ async function remove(): Promise<void> {
   color: var(--color-red);
 }
 
-/* A labelled button grows with its text instead of staying a 26px square. */
-.mail-reader__actions.show-labels .mail-icon-btn,
-.mail-reader__actions.measure-labels .mail-icon-btn {
+/* A labelled button grows with its text instead of staying a 26px square.
+   ActionBar decides when the labels are shown. */
+.mail-reader__actions.ab--labels .mail-icon-btn {
   width: auto;
   min-width: calc(26 * var(--dp));
   padding: 0 calc(6 * var(--dp));
-}
-.mail-reader__actions.show-labels,
-.mail-reader__actions.measure-labels {
-  gap: var(--space-2, 4px);
 }
 .mail-icon-btn :deep(svg) {
   width: calc(15 * var(--dp));

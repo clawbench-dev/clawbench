@@ -680,18 +680,18 @@ describe('FileManagerContent — rendering', () => {
     expect(toolbarBtns.length).toBeGreaterThanOrEqual(4) // sort, hidden, refresh, multi-select, more
   })
 
-  it('ranks content-search high enough that it does not collapse first', () => {
+  it('renders content-search before the secondary toggles', () => {
     const wrapper = mountContent()
-    const ids = (wrapper.vm as any).$.setupState.demotableToolbarIds as string[]
-
-    // useToolbarOverflow keeps a PREFIX of this list inline and collapses the
-    // tail, so a late entry disappears first. contentSearch used to sit last,
-    // which made the button invisible on a normal-width toolbar — the reported
-    // bug. It must rank above the secondary toggles.
-    expect(ids).toContain('contentSearch')
-    const pos = ids.indexOf('contentSearch')
-    for (const lower of ['jump', 'sharedFiles', 'hidden', 'multiselect']) {
-      expect(pos, `contentSearch should outrank ${lower}`).toBeLessThan(ids.indexOf(lower))
+    // ActionBar folds the TAIL of the row, so a late button disappears first.
+    // contentSearch used to sit last, which made it invisible on a normal-width
+    // toolbar — the reported bug. Its DOM position is now the priority.
+    const titles = wrapper.findAll('.dir-toolbar-btns > .toolbar-btn, .dir-toolbar-btns .toolbar-dropdown-wrap > .toolbar-btn')
+      .map(b => b.attributes('title') ?? '')
+    const pos = titles.findIndex(t => t.includes('搜索'))
+    for (const lower of ['跳转', '已分享', '显示隐藏文件', '多选']) {
+      const other = titles.findIndex(t => t.includes(lower))
+      if (other === -1) continue
+      expect(pos, `contentSearch should precede ${lower}`).toBeLessThan(other)
     }
   })
 })
@@ -1164,44 +1164,19 @@ describe('FileManagerContent — preview mode', () => {
     expect(wrapper.find('.toolbar-btn[title="开启预览模式"]').classes()).not.toContain('active')
   })
 
-  it('renders the toggle in the More dropdown when the toolbar is collapsed', async () => {
+  it('keeps preview mode reachable when the toolbar runs out of room', async () => {
+    // The folding itself is ActionBar's job (covered by its own test). Here we
+    // pin that the toggle is a labelled toolbar button, which is what the menu
+    // entry is built from.
     mockIsTouchPrimary.value = false
-    mockToolbarCollapsedIds.push('previewMode')
     const wrapper = mountContent()
 
-    // Open the "More" dropdown (always the last toolbar button).
-    const moreBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
-    expect(moreBtn).toBeTruthy()
-    await moreBtn!.trigger('click')
-    await nextTick()
+    const toggle = wrapper.findAll('.toolbar-btn').find(b => (b.attributes('title') ?? '').includes('预览'))
+    expect(toggle).toBeTruthy()
+    expect(toggle!.find('.action-label').exists()).toBe(true)
 
-    const previewItem = wrapper
-      .findAll('.toolbar-dropdown-item')
-      .find(b => b.text().includes('开启预览模式'))
-    expect(previewItem).toBeTruthy()
-
-    await previewItem!.trigger('click')
+    await toggle!.trigger('click')
     expect(mockLocalConfig.filePreviewMode).toBe(true)
-  })
-
-  it('shows the More button on mobile when previewMode is collapsed', () => {
-    mockIsTouchPrimary.value = true
-    mockToolbarCollapsedIds.push('previewMode')
-    const wrapper = mountContent()
-
-    // previewMode renders on mobile too, so a collapsed one is a real item in
-    // the More dropdown (the dropdown is not empty).
-    const moreBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
-    expect(moreBtn).toBeTruthy()
-  })
-
-  it('shows the More button on desktop when previewMode is collapsed', () => {
-    mockIsTouchPrimary.value = false
-    mockToolbarCollapsedIds.push('previewMode')
-    const wrapper = mountContent()
-
-    const moreBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
-    expect(moreBtn).toBeTruthy()
   })
 
   it('desktop single-click previews a file in the docked pane when enabled', async () => {
@@ -4949,24 +4924,13 @@ describe('FileManagerContent — dropdowns', () => {
     expect(wrapper.vm.sortMenuStyle).toHaveProperty('position', 'fixed')
   })
 
-  it('opening the more dropdown updates its position style', async () => {
-    mockToolbarCollapsedIds.push('refresh', 'uploadFolder')
-    const wrapper = mountContent()
-    await nextTick()
-    // The more dropdown button is only rendered when collapsed items exist
-    await wrapper.vm.updateMoreMenuStyle()
-    expect(wrapper.vm.moreMenuStyle).toHaveProperty('position', 'fixed')
-  })
-
-  it('document click outside dropdown closes open menus', async () => {
+  it('document click outside the sort dropdown closes it', async () => {
     const wrapper = mountContent()
     wrapper.vm.sortMenuOpen = true
-    wrapper.vm.moreMenuOpen = true
     await nextTick()
     document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
     expect(wrapper.vm.sortMenuOpen).toBe(false)
-    expect(wrapper.vm.moreMenuOpen).toBe(false)
   })
 
   it('onSortSelect emits toggleSort and closes the menu', async () => {
@@ -5270,24 +5234,11 @@ describe('FileManagerContent — jump to dir', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders jump item in more dropdown when collapsed', async () => {
-    mockToolbarCollapsedIds.push('jump')
+  it('opens the jump dialog from its toolbar button', async () => {
     const wrapper = mountContent()
-    wrapper.vm.moreMenuOpen = true
-    await nextTick()
-    const items = wrapper.findAll('.toolbar-dropdown-item')
-    const jumpItem = items.find(i => i.text().includes('跳转'))
-    expect(jumpItem).toBeTruthy()
-  })
-
-  it('opens jump dialog from more dropdown item', async () => {
-    mockToolbarCollapsedIds.push('jump')
-    const wrapper = mountContent()
-    wrapper.vm.moreMenuOpen = true
-    await nextTick()
-    const items = wrapper.findAll('.toolbar-dropdown-item')
-    const jumpItem = items.find(i => i.text().includes('跳转'))
-    await jumpItem!.trigger('click')
+    const jump = wrapper.findAll('.toolbar-btn').find(b => (b.attributes('title') ?? '').includes('跳转'))
+    expect(jump).toBeTruthy()
+    await jump!.trigger('click')
     await nextTick()
     expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
   })
@@ -6131,7 +6082,6 @@ describe('thumbnail lazy mounting', () => {
 
 describe('FileManagerContent — content search dialog', () => {
   it('opens the dialog from the toolbar button', async () => {
-    mockToolbarCollapsedIds.length = 0
     const wrapper = mountContent()
     // The dialog ref must be wired; openContentSearch is the exposed entry point
     // that App's Ctrl+Shift+F also calls.
@@ -6253,11 +6203,11 @@ describe('FileManagerContent — dragging search hits', () => {
 describe('FileManagerContent — toolbar labels', () => {
   it('labels the browse toolbar when the row can hold them', async () => {
     // jsdom has no layout: the toolbar measures 0 wide and assumes room. The
-    // overflow maths lives in useActionBarLabels.test.ts; this pins the wiring.
+    // overflow maths lives in ActionBar.test.ts; this pins the wiring.
     const wrapper = mountContent()
     await nextTick()
     const bar = wrapper.find('.dir-toolbar-btns:not(.ms-toolbar-btns)')
-    expect(bar.classes()).toContain('show-labels')
+    expect(bar.classes()).toContain('ab--labels')
     expect(bar.findAll('.action-label').length).toBeGreaterThanOrEqual(5)
     wrapper.unmount()
   })

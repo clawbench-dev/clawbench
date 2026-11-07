@@ -1,14 +1,7 @@
 <template>
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
-    <div class="chat-top-actions" ref="actionBarRef"
-      :class="{
-        'show-labels': showActionLabels,
-        'is-overflowing': actionBarOverflow,
-        'more-left': actionBarMoreLeft,
-        'more-right': actionBarMoreRight,
-      }"
-      @scroll.passive="onActionBarScroll">
+    <ActionBar class="chat-top-actions" ref="actionBarRef" mode="scroll">
       <button class="chat-action-btn" data-action="session"
         :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
         @click="$emit('open-session-tab', 'sessions')"
@@ -90,7 +83,7 @@
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
         <span class="action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
-    </div>
+    </ActionBar>
     <!-- Free-dialog status strip: what the microphone is hearing right now.
          Without it the mode is a black box — the transcript was collected but
          never shown, so "did it hear me?" could only be answered by waiting to
@@ -382,7 +375,6 @@ import QuoteCard from '@/components/chat/QuoteCard.vue'
 import MentionCard from '@/components/chat/MentionCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
-import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 const QuickSendDrawer = defineAsyncComponent(
@@ -410,7 +402,7 @@ import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
@@ -1015,86 +1007,6 @@ function onVoiceBlurStop() {
 const rootRef = ref(null)
 const textareaRef = ref(null)
 const actionBarRef = ref(null)
-/**
- * Action-bar labels visibility: shown only when the chat pane is wide enough to
- * hold them (the shared measure-then-toggle rule — see useActionBarLabels).
- * This keeps labels off on narrow chat panes regardless of wide-screen mode.
- */
-/**
- * Whether the action bar actually overflows its pane — i.e. some buttons are
- * off-screen. The strip's scrollbar is hidden, so in that state a plain mouse
- * wheel cannot reach them; the grab cursor and the drag-to-scroll gesture are
- * both gated on this flag so a strip that fits behaves like a normal row.
- */
-const actionBarOverflow = ref(false)
-/**
- * Whether buttons are hidden past each edge, which drives the edge fade.
- *
- * Two flags rather than one: the fade has to disappear on the side the user has
- * already scrolled to, otherwise "there is more this way" keeps pointing at
- * nothing and the strip looks permanently cut off. Same rule (and same class
- * naming) as the message rail's `msg-rail--more-above/below`.
- */
-const actionBarMoreLeft = ref(false)
-const actionBarMoreRight = ref(false)
-/** Disposer for the action bar's drag-to-scroll, or null when not attached. */
-let stopDragScroll = null
-
-/**
- * Attach or detach drag-to-scroll to match `actionBarOverflow`.
- *
- * Attached only while the strip overflows: a strip that fits must not intercept
- * a press-and-drag (there is nothing to scroll), and must not show a grab
- * cursor. Idempotent, so it can be called after every re-measure.
- */
-function syncActionBarDragScroll() {
-  const el = actionBarRef.value
-  if (!el) return
-  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
-  if (shouldAttach && !stopDragScroll) {
-    stopDragScroll = attachDragScroll(el)
-  } else if (!shouldAttach && stopDragScroll) {
-    stopDragScroll()
-    stopDragScroll = null
-  }
-}
-
-/**
- * Recomputes the edge fades from the strip's current scroll position.
- *
- * Called after every measure AND on every scroll frame: the two flags are a
- * function of `scrollLeft`, so a stale value after the user dragged the strip
- * would leave the wrong side faded.
- */
-function updateActionBarFade() {
-  const el = actionBarRef.value
-  if (!el) return
-  const { scrollLeft, scrollWidth, clientWidth } = el
-  // 1px tolerance for sub-pixel rounding, mirroring the overflow test.
-  actionBarMoreLeft.value = scrollLeft > 1
-  actionBarMoreRight.value = scrollLeft + clientWidth < scrollWidth - 1
-}
-
-function onActionBarScroll() {
-  updateActionBarFade()
-}
-
-/**
- * Labels + the strip's own overflow/fade/drag state all come from the same
- * measurement, so the shared composable calls back into them after each one.
- */
-const { showLabels: showActionLabels, measure: measureActionLabels } = useActionBarLabels(
-  () => actionBarRef.value,
-  {
-    onMeasured: () => {
-      const el = actionBarRef.value
-      if (!el) return
-      actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
-      updateActionBarFade()
-      syncActionBarDragScroll()
-    },
-  },
-)
 const isPasteOver = ref(false)
 let pasteOverlayTimer = 0
 const attachDrawer = useTabDrawer('chat')
@@ -2372,8 +2284,6 @@ onBeforeUnmount(() => {
   voiceInput.cancel()
   endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
-  stopDragScroll?.()
-  stopDragScroll = null
   stopPlaceholderRotation()
 })
 
@@ -2401,7 +2311,7 @@ defineExpose({
   handleQuickSendClick,
   handleQuickSendInject,
   handleArchive,
-  measureActionLabels,
+  measureActionLabels: () => actionBarRef.value?.measure(),
 })
 </script>
 
@@ -2608,65 +2518,11 @@ defineExpose({
 }
 
 /* Top action bar (above input box, compact) */
+/* The strip is ActionBar (scroll mode): it owns the scroller, the hidden
+   scrollbar, the grab cursor, the edge masks and the label decision. Only the
+   composer-specific chrome stays here. */
 .chat-top-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   padding: var(--space-1) var(--space-2) var(--space-3);
-  /* When labels are briefly rendered during measurement (or when the chat pane
-     is too narrow), allow horizontal scroll with a hidden scrollbar instead of
-     clipping the trailing buttons. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.chat-top-actions::-webkit-scrollbar {
-  display: none;
-}
-/* Drag-to-scroll affordance, only while buttons are actually off-screen.
-   Deliberately NO touch-action here: it applies to touch/pen pointers, and the
-   drag module skips touch precisely so a finger keeps panning the strip
-   natively. Setting `pan-y` would disable that pan and leave touch users unable
-   to reach the off-screen buttons at all. Mouse dragging needs no touch-action. */
-.chat-top-actions.is-overflowing {
-  cursor: grab;
-}
-/* Edge fade: buttons are hidden past this side.
-   A MASK rather than an overlay of background-coloured gradient — the composer
-   sits on a translucent island when a wallpaper is active, so an opaque gradient
-   would paint two visibly different panels. Masking fades the buttons themselves,
-   which works against any background and any of the 36 themes.
-   The fade only exists on a side that actually has hidden content (see
-   `actionBarMoreLeft/Right`); a strip scrolled to the end stays fully opaque,
-   otherwise the last button reads as clipped rather than reachable. */
-.chat-top-actions.more-left {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 calc(20 * var(--dp)));
-  mask-image: linear-gradient(to right, transparent 0, #000 calc(20 * var(--dp)));
-}
-.chat-top-actions.more-right {
-  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
-  mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
-}
-.chat-top-actions.more-left.more-right {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent 0,
-    #000 calc(20 * var(--dp)),
-    #000 calc(100% - 20 * var(--dp)),
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to right,
-    transparent 0,
-    #000 calc(20 * var(--dp)),
-    #000 calc(100% - 20 * var(--dp)),
-    transparent 100%
-  );
-}
-.chat-top-actions.is-dragging {
-  cursor: grabbing;
-  /* The pointer is captured, so the drag must not start a text selection. */
-  user-select: none;
 }
 
 /* Auto-speech toggle button */

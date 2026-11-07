@@ -2,15 +2,23 @@
   <div
     ref="rootRef"
     class="ab"
-    :class="{ 'ab--labels': showLabels, 'ab--scroll': mode === 'scroll', 'ab--overflowing': overflowing, 'ab-dragging': dragging }"
-    :style="{ gap: `calc(${gap} * var(--dp))` }"
+    :class="[
+      {
+        'ab--labels': showLabels,
+        'ab--scroll': mode === 'scroll',
+        'ab--overflowing': overflowing,
+        'ab-dragging': dragging,
+        'ab--end': align === 'end',
+      },
+    ]"
+    :style="gap ? { gap: `calc(${gap} * var(--dp))` } : undefined"
     @scroll.passive="onScroll"
   >
     <slot />
 
     <!-- Menu mode: buttons that do not fit are hidden and offered here. -->
     <button
-      v-if="mode === 'menu' && hiddenItems.length > 0"
+      v-if="mode === 'menu' && (hiddenItems.length > 0 || alwaysMore)"
       ref="moreBtnRef"
       class="ab-more"
       data-ab-more
@@ -21,10 +29,14 @@
       <MoreHorizontal :size="16" />
     </button>
 
+    <!-- Mounted only when there is something to show: PopupMenu teleports to
+         <body>, and an always-present teleport breaks tests (and any host) that
+         reset the body between mounts. -->
     <PopupMenu
+      v-if="mode === 'menu' && (alwaysMore || hiddenItems.length > 0)"
       v-model:show="menuOpen"
       :target-element="moreBtnRef"
-      :menu-items-count="hiddenItems.length"
+      :menu-items-count="hiddenItems.length + 4"
       anchor="right"
     >
       <button
@@ -37,6 +49,9 @@
         <span class="ab-menu-icon" v-html="item.iconHtml" />
         <span class="ab-menu-text">{{ item.label }}</span>
       </button>
+      <!-- Permanent menu entries the caller owns (e.g. a file's "delete"),
+           rendered in the same popup so there is one "more" affordance. -->
+      <slot name="menu-extra" />
     </PopupMenu>
   </div>
 </template>
@@ -60,30 +75,37 @@
  * Design notes: docs/spec/client/design-guide.md
  * 「图标按钮：空间够就带上文字标签」.
  */
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MoreHorizontal } from 'lucide-vue-next'
-// Loaded only when the menu opens: PopupMenu pulls the settings/i18n chain,
-// and every test that mounts a bar would otherwise have to mock all of it.
-const PopupMenu = defineAsyncComponent(() => import('@/components/common/PopupMenu.vue'))
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 
 const props = withDefaults(
   defineProps<{
     /** How the row degrades when it runs out of room. */
     mode?: 'menu' | 'scroll'
-    /** Gap between buttons, in design px (`--dp` units). */
+    /** Gap between buttons, in design px. Omit to keep the caller's CSS gap. */
     gap?: number
     /** Width reserved for the "more" button, in design px. */
     moreWidth?: number
     /** Accessible name of the "more" button. Defaults to the shared "more". */
     moreLabel?: string
+    /** Which edge the buttons hug when the row has spare room. */
+    align?: 'start' | 'end'
+    /**
+     * Render the "more" button even when nothing is folded — for bars that own
+     * permanent menu entries (a file's delete, details, …).
+     */
+    alwaysMore?: boolean
   }>(),
   {
     mode: 'menu',
-    gap: 6,
+    gap: undefined,
     moreWidth: 28,
     moreLabel: '',
+    align: 'start',
+    alwaysMore: false,
   },
 )
 
@@ -120,6 +142,12 @@ function gapPx(el: HTMLElement): number {
   const gap = getComputedStyle(el).columnGap
   return parseFloat(gap) || 0
 }
+
+function toggleMenu(): void {
+  menuOpen.value = !menuOpen.value
+}
+
+defineExpose({ measure, schedule, toggleMenu, menuOpen })
 
 function designPx(value: number): number {
   // `--dp` is `1rem / 15`; read it so the reserve follows the UI scale.
@@ -160,11 +188,20 @@ function measure(): void {
   }
 
   const gap = gapPx(root)
-  if (root.clientWidth <= 0) {
+  // Content box, not border box: the bar's own horizontal padding is not room
+  // the buttons can use, and counting it lets a labelled row overflow by exactly
+  // that much.
+  const cs = getComputedStyle(root)
+  const innerWidth =
+    root.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+  if (innerWidth <= 0) {
     // Not laid out yet (hidden pane, jsdom): keep every button and assume room.
+    // Clear the scroll flags too — a hidden bar must not keep advertising
+    // "there is more this way" from the last time it was visible.
     kids.forEach(k => { k.style.display = '' })
     hiddenItems.value = []
     showLabels.value = true
+    overflowing.value = false
     return
   }
 
@@ -178,10 +215,10 @@ function measure(): void {
   })
   const fixedWidth =
     fixed.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) + gap * fixed.length
-  const availableWidth = Math.max(0, root.clientWidth - fixedWidth)
+  const availableWidth = Math.max(0, innerWidth - fixedWidth)
 
   // ── 1. Which buttons stay inline (icon widths) ──
-  root.classList.remove('ab--labels')
+  root.classList.remove('ab-measuring')
   kids.forEach(k => { k.style.display = '' })
   const widths = kids.map(k => k.getBoundingClientRect().width)
 
@@ -213,12 +250,12 @@ function measure(): void {
   const moreWidth = hidden.length > 0 ? designPx(props.moreWidth) + gap : 0
   const availableForTrack = availableWidth - moreWidth
 
-  root.classList.add('ab--labels')
+  root.classList.add('ab-measuring')
   const visible = kids.slice(0, visibleCount)
   const needed =
     visible.reduce((sum, k) => sum + k.getBoundingClientRect().width, 0) +
     gap * Math.max(0, visible.length - 1)
-  root.classList.remove('ab--labels')
+  root.classList.remove('ab-measuring')
 
   const spare = availableForTrack - needed
   // Asymmetric on purpose: a bar dragged across the boundary would otherwise
@@ -237,7 +274,7 @@ function measure(): void {
     disabled: (el as HTMLButtonElement).disabled === true,
     run: () => el.click(),
   }))
-  if (hiddenItems.value.length === 0) menuOpen.value = false
+  if (hiddenItems.value.length === 0 && !props.alwaysMore) menuOpen.value = false
 
   updateScrollState()
 }
@@ -249,6 +286,7 @@ function updateScrollState(): void {
     return
   }
   overflowing.value = root.scrollWidth > root.clientWidth + 1
+  updateFades()
   syncDrag()
 }
 
@@ -349,6 +387,11 @@ watch(
   align-items: center;
   min-width: 0;
   overflow: hidden;
+}
+/* Right-aligned bars (detail headers) hug the trailing edge; the "more" button
+   then sits last, which is where the eye already looks for it. */
+.ab--end {
+  justify-content: flex-end;
 }
 
 /* Scroll mode: the row itself scrolls; buttons are never hidden. */

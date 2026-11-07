@@ -386,33 +386,11 @@ export function getUIScale(): number {
 }
 
 /**
- * Identity. Kept only so the coordinate-conversion call sites can be deleted
- * incrementally; new code must NOT call this.
- *
- * Under `html { zoom }` a `position: fixed` offset had to be divided by the
- * zoom factor because `getBoundingClientRect()` reported visual pixels while
- * fixed offsets were in layout pixels. Rem scaling has a single coordinate
- * space, so the conversion is a no-op.
- *
- * @deprecated scaling no longer changes the coordinate space — use the value
- * directly.
+ * Coordinate helpers moved to the leaf module `@/utils/viewportCoords` so
+ * geometry-only call sites do not pull this module's i18n/API chain.
+ * Re-exported here for the existing callers.
  */
-export function toFixedCSS(viewportCoord: number): number {
-  return viewportCoord
-}
-
-/**
- * Viewport dimensions in the same coordinate space as `getBoundingClientRect()`.
- *
- * Under CSS zoom these needed a `toFixedCSS()` pass before being used as fixed
- * offsets; with rem scaling `innerWidth`/`innerHeight` ARE the layout space.
- */
-export function getZoomedViewport(): { width: number; height: number } {
-  return {
-    width: window.innerWidth,
-    height: window.innerHeight,
-  }
-}
+export { toFixedCSS, getZoomedViewport } from '@/utils/viewportCoords'
 
 const localDefaults: Record<string, string | boolean | number | null> = {
   theme: 'auto',

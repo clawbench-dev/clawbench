@@ -154,12 +154,12 @@ describe('SessionListHeader — action labels', () => {
   it('shows the action labels when the header can hold them', async () => {
     // jsdom has no layout, so the header measures 0 wide and assumes there is
     // room — the wide-header case. The measure/overflow maths lives in
-    // useActionBarLabels.test.ts; this pins the wiring.
+    // ActionBar.test.ts; this pins the wiring.
     const wrapper = mountHeader()
     // The measurement runs on mount and flips the flag on the next render.
     await nextTick()
-    const content = wrapper.find('.session-list-header-content')
-    expect(content.classes()).toContain('show-labels')
+    const content = wrapper.find('.session-header-actions')
+    expect(content.classes()).toContain('ab--labels')
     expect(wrapper.findAll('.header-action-btn .action-label').length).toBeGreaterThanOrEqual(2)
   })
 
@@ -185,9 +185,9 @@ describe('SessionListHeader — slot buttons', () => {
     })
     // The measurement runs on mount and flips the flag on the next render.
     await nextTick()
-    const bar = wrapper.find('.session-list-header-content')
-    // Labels on slot buttons are shown/hidden by the same `.show-labels` class.
-    expect(bar.classes()).toContain('show-labels')
+    const bar = wrapper.find('.session-header-actions')
+    // Labels on slot buttons are shown/hidden by the same `.ab--labels` class.
+    expect(bar.classes()).toContain('ab--labels')
     expect(wrapper.findAll('.header-action-btn .action-label').length).toBe(4)
   })
 })

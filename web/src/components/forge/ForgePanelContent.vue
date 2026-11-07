@@ -66,7 +66,7 @@
              badge is clickable — same "context badge + dropdown" affordance as
              the app header's project/branch switchers — and is the only place
              to change or clear the binding once one exists. -->
-        <div ref="headerRef" class="forge-header" :class="{ 'show-labels': showLabels }">
+        <ActionBar class="forge-header" mode="menu" align="end">
           <span class="forge-header-title">
             <Github :size="14" />
             <button
@@ -100,7 +100,7 @@
           >
             <span class="action-label">{{ t('nav.refresh') }}</span>
           </RefreshButton>
-        </div>
+        </ActionBar>
 
         <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="3">
           <button class="forge-repo-menu-item" @click="openRebindDialog">
@@ -438,7 +438,7 @@ import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, 
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 import { startQuoteDrag, forgeItemDragPayload, pipelineDragPayload } from '@/utils/quoteDrag'
@@ -455,10 +455,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-
-/** Labels ride next to the icons only when the header can hold them (shared rule). */
-const headerRef = ref<HTMLElement | null>(null)
-const { showLabels } = useActionBarLabels(() => headerRef.value)
 
 const { isWideScreen } = useWideScreenLayout()
 const items = useForgeItems(() => props.projectPath)
@@ -999,14 +995,9 @@ function formatTime(iso: string): string {
   border-bottom: 1px solid var(--border-color);
   gap: var(--space-3);
 }
-/* While measuring, the title keeps its natural width so an overflow means the
-   LABELS do not fit (otherwise it would just shrink and absorb them). */
-.forge-header.measure-labels .forge-header-title {
-  flex: 0 0 auto;
-}
-/* Labelled header buttons grow with their text instead of staying squares. */
-.forge-header.show-labels .forge-header-btn,
-.forge-header.measure-labels .forge-header-btn {
+/* Labelled header buttons grow with their text instead of staying squares.
+   ActionBar decides when the labels are shown. */
+.forge-header.ab--labels .forge-header-btn {
   width: auto;
   padding: 0 calc(10 * var(--dp));
   gap: calc(5 * var(--dp));

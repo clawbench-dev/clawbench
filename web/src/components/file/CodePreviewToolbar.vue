@@ -7,12 +7,14 @@
        `.code-preview-sheet-row2` + a bottom pill-button footer while the other
        two rendered this row, so the same preview had two different toolbars.
        Keep the surfaces on this markup: any divergence here is the bug. -->
-  <div
-    ref="rowRef"
+  <ActionBar
     class="code-preview-meta"
-    :class="{ 'show-labels': showLabels }"
+    mode="menu"
+    align="end"
     @pointerdown="onRowPointerDown"
   >
+    <!-- The line/size summary is a fixed item: ActionBar pins it to its natural
+         width while measuring, so "does it fit" is answered about the tools. -->
     <div class="code-preview-meta-info">
       <span>{{ metaText || t('file.codePreview.title') }}</span>
     </div>
@@ -116,7 +118,7 @@
         v-if="showTextTools && !isRenderedView"
         :copied="copied"
         :size="12"
-        :label="showLabels ? (copied ? t('file.codePreview.copied') : t('file.codePreview.copy')) : ''"
+        :label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
         title-key="file.codePreview.copy"
         copied-key="file.codePreview.copied"
         class="code-preview-btn"
@@ -130,7 +132,7 @@
       <CopyButton
         :copied="isPathCopied"
         :size="12"
-        :label="showLabels ? (isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')) : ''"
+        :label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
         title-key="file.codePreview.copyPath"
         copied-key="file.codePreview.pathCopied"
         class="code-preview-btn copy-path-btn"
@@ -190,7 +192,7 @@
         <span class="action-label">{{ t('file.codePreview.openLightbox') }}</span>
       </button>
     </div>
-  </div>
+  </ActionBar>
 </template>
 
 <script setup lang="ts">
@@ -198,17 +200,10 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquare, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
 
-/**
- * Labels ride next to the icons only when the row can hold them. The row is
- * measured, not the action group: the group is `flex-shrink: 0`, so it always
- * matches its own content and could never report an overflow.
- */
-const rowRef = ref<HTMLElement | null>(null)
-const { showLabels } = useActionBarLabels(() => rowRef.value)
 
 withDefaults(defineProps<{
   /** Line/size (or entry-count) summary shown on the left. Empty falls back to

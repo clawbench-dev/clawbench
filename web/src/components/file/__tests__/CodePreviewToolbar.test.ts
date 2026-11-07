@@ -34,10 +34,14 @@ describe('CodePreviewToolbar labels', () => {
   it('shows its labels when the row can hold them', async () => {
     // jsdom has no layout: the row measures 0 wide and assumes room, which is
     // the wide-sheet case. The overflow maths lives in
-    // useActionBarLabels.test.ts; this pins the wiring.
+    // ActionBar.test.ts; this pins the wiring.
     const wrapper = mountToolbar()
     await nextTick()
-    expect(wrapper.find('.code-preview-meta').classes()).toContain('show-labels')
+    // jsdom has no layout, so the row measures 0 wide and assumes room — the
+    // wide-sheet case. The width decisions live in ActionBar's own test.
+    const row = wrapper.find('.code-preview-meta')
+    expect(row.classes()).toContain('ab')
+    expect(row.findAll('.action-label, .copy-btn-label').length).toBeGreaterThan(5)
   })
 
   it('labels every tool, including the copy buttons', async () => {

@@ -105,11 +105,11 @@ describe('MailFolderBar', () => {
 describe('MailFolderBar — action labels', () => {
   it('shows its action labels when the row can hold them', async () => {
     // jsdom has no layout: the row measures 0 wide and assumes room. The
-    // overflow maths lives in useActionBarLabels.test.ts.
+    // overflow maths lives in ActionBar.test.ts.
     const wrapper = mountBar()
     await nextTick()
     const row = wrapper.find('.mail-bar__top')
-    expect(row.classes()).toContain('show-labels')
+    expect(row.classes()).toContain('ab--labels')
     expect(row.findAll('.action-label').length).toBe(3)
     wrapper.unmount()
   })

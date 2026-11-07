@@ -592,7 +592,7 @@ describe('NotificationsPanelContent', () => {
 describe('NotificationsPanelContent — header labels', () => {
   it('shows the header labels when the row can hold them', async () => {
     // jsdom has no layout: the header measures 0 wide and assumes room, which is
-    // the wide-pane case. The overflow maths lives in useActionBarLabels.test.ts.
+    // the wide-pane case. The overflow maths lives in ActionBar.test.ts.
     const wrapper = mountPanel()
     await nextTick()
     const header = wrapper.find('.list-header')

@@ -1,6 +1,6 @@
 <template>
   <div class="mail-bar">
-    <div ref="barRef" class="mail-bar__top" :class="{ 'show-labels': showLabels }">
+    <ActionBar class="mail-bar__top" mode="menu" align="end">
       <!-- The pickers are wrapped: MenuSelect renders a fragment (trigger +
            teleported popup), so a class on the component itself is dropped and
            the width would never reach the trigger. -->
@@ -31,7 +31,7 @@
         <Settings />
         <span class="action-label">{{ t('mail.bar.manage') }}</span>
       </button>
-    </div>
+    </ActionBar>
 
     <div class="mail-bar__search-row">
       <div class="mail-bar__search">
@@ -67,9 +67,9 @@
  * hierarchy are flattened — the folder's own name is what the user recognizes,
  * not its path.
  */
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { PenLine, Search, Settings } from 'lucide-vue-next'
 import MenuSelect from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -97,10 +97,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-
-/** Labels ride next to the icons only when the row can hold them (shared rule). */
-const barRef = ref<HTMLElement | null>(null)
-const { showLabels } = useActionBarLabels(() => barRef.value)
 
 const accountId = computed({
   get: () => props.accountId,
@@ -185,16 +181,9 @@ function onSearchInput(e: Event): void {
 .mail-bar__spacer {
   flex: 1;
 }
-/* While measuring, the two pickers keep their natural width: otherwise they
-   would shrink to absorb the labels and the row would never report an
-   overflow. */
-.mail-bar__top.measure-labels .mail-bar__account,
-.mail-bar__top.measure-labels .mail-bar__folder {
-  flex: 0 0 auto;
-}
-/* Labelled buttons grow with their text instead of staying 26px squares. */
-.mail-bar__top.show-labels .mail-icon-btn,
-.mail-bar__top.measure-labels .mail-icon-btn {
+/* Labelled buttons grow with their text instead of staying 26px squares.
+   ActionBar decides when the labels are shown. */
+.mail-bar__top.ab--labels .mail-icon-btn {
   width: auto;
   padding: 0 calc(8 * var(--dp));
   gap: calc(4 * var(--dp));

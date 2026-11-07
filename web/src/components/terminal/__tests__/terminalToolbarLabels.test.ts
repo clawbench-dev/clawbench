@@ -12,9 +12,8 @@ import { describe, expect, it } from 'vitest'
 describe('terminal toolbar labels', () => {
   const vue = readFileSync(resolve(__dirname, '../TerminalPanelContent.vue'), 'utf8')
 
-  it('measures the scrolling strip and toggles show-labels on it', () => {
-    expect(vue).toContain('useActionBarLabels(() => toolbarScrollRef.value)')
-    expect(vue).toContain('class="toolbar-scroll" :class="{ \'show-labels\': showLabels }"')
+  it('runs the strip in scroll mode, so it owns its own labels and fades', () => {
+    expect(vue).toContain('class="toolbar-scroll" mode="scroll"')
   })
 
   it('labels every button in the tool group', () => {

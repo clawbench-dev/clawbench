@@ -36,9 +36,9 @@
     </div>
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
-    <div ref="headerActionsRef" class="header-actions" :class="{ 'show-labels': showLabels }">
+    <ActionBar ref="actionsRef" class="header-actions" mode="menu" align="end" always-more>
       <!-- Refresh button — first in the toolbar, and the last to collapse. -->
-      <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh">
+      <RefreshButton v-if="hasTextContent && !isUntitled" data-toolbar-id="refresh" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh">
         <span class="action-label">{{ t('nav.refresh') }}</span>
       </RefreshButton>
 
@@ -59,8 +59,9 @@
            glyphs say what actually happens: the RIGHT pane (chat) closes or
            opens. -->
       <button
-        v-if="isWideScreen && toolbarInlineIds.includes('maximize')"
+        v-if="isWideScreen"
         class="file-header-btn"
+        data-toolbar-id="maximize"
         data-action="toggle-maximize-pane"
         :class="{ active: chatCollapsed }"
         @click.stop="emit('toggleMaximizePane')"
@@ -73,19 +74,19 @@
       </button>
 
       <!-- TOC button (only for file types that support TOC) -->
-      <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
+      <button v-if="hasToc" data-toolbar-id="toc" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
         <span class="action-label">{{ t('file.header.toc') }}</span>
       </button>
 
       <!-- Search button (only for file types that support search) -->
-      <button v-if="hasSearch && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
+      <button v-if="hasSearch" data-toolbar-id="search" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
         <Search :size="14" />
         <span class="action-label">{{ t('file.header.search') }}</span>
       </button>
 
       <!-- Fit-width / reset zoom button (for PDF) -->
-      <button v-if="toolbarInlineIds.includes('fitWidth')" class="file-header-btn" @click.stop="handleFitWidth" :title="t('file.header.fitWidth')">
+      <button v-if="hasFitWidth" data-toolbar-id="fitWidth" class="file-header-btn" @click.stop="handleFitWidth" :title="t('file.header.fitWidth')">
         <MoveHorizontal :size="14" />
         <span class="action-label">{{ t('file.header.fitWidth') }}</span>
       </button>
@@ -94,7 +95,7 @@
            matching the issue/PR detail header. Not a toggle — the composer is the
            single entry point, and an attached file is removed from its chip in
            the chat input. -->
-      <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" @click.stop="handleQuoteInChat" :title="t('file.header.quoteInChat')" :aria-label="t('file.header.quoteInChat')">
+      <button v-if="!isUntitled" ref="attachBtnRef" data-toolbar-id="attach" class="file-header-btn" @click.stop="handleQuoteInChat" :title="t('file.header.quoteInChat')" :aria-label="t('file.header.quoteInChat')">
         <MessageSquare :size="14" />
         <span class="action-label">{{ t('file.header.quoteInChat') }}</span>
       </button>
@@ -102,7 +103,7 @@
       <!-- Lightbox view button (image / svg files only): opens the image full-size
            in the shared Lightbox (zoom + sibling navigation). Attach lives on the
            same header — no need for a per-image header. -->
-      <button v-if="isImageFile && toolbarInlineIds.includes('viewImage')" class="file-header-btn" @click.stop="handleViewImage" :title="t('imageBlock.view')">
+      <button v-if="isImageFile" data-toolbar-id="viewImage" class="file-header-btn" @click.stop="handleViewImage" :title="t('imageBlock.view')">
         <Maximize2 :size="14" />
         <span class="action-label">{{ t('imageBlock.view') }}</span>
       </button>
@@ -110,13 +111,13 @@
       <!-- Toggle view button (source/rendered). Always an eye icon: highlighted
            when the rendered preview is shown, dimmed for the source view. It is
            disabled while editing so the edit button stays the sole relevant control. -->
-      <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
+      <button v-if="canToggleView" data-toolbar-id="toggleView" class="file-header-btn" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click.stop="handleToggleView" :title="effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
         <Eye :size="14" />
         <span class="action-label">{{ effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}</span>
       </button>
 
       <!-- Edit toggle button — always directly beside the preview toggle -->
-      <button v-if="toolbarInlineIds.includes('edit')" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
+      <button v-if="isEditable" data-toolbar-id="edit" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
         <Pencil :size="14" />
         <span class="action-label">{{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}</span>
       </button>
@@ -126,132 +127,69 @@
            touched, and all three are also available in Settings → File display. -->
 
       <!-- Download button -->
-      <button v-if="toolbarInlineIds.includes('download')" class="file-header-btn" @click.stop="handleDownload" :title="t('common.download')">
+      <button v-if="!isUntitled" data-toolbar-id="download" class="file-header-btn" @click.stop="handleDownload" :title="t('common.download')">
         <Download :size="14" />
         <span class="action-label">{{ t('common.download') }}</span>
       </button>
 
-      <!-- Open as text, share link, export HTML, set as wallpaper, open
-           directory, file history, delete and details are all permanent More-menu
-           actions (see permanentMenuIds) — no inline buttons for them. -->
-
-      <!-- More actions dropdown. Always rendered: permanentMenuIds is never
-           empty (delete is unconditional), and overflow-collapsed toolbar items
-           are appended after the permanent group. -->
-      <div class="dropdown-wrapper" ref="dropdownRef">
-        <button class="file-header-btn" :class="{ active: menuOpen }" @click.stop="toggleMenu" :title="t('file.header.more')">
-          <MoreVertical :size="14" />
-          <span class="action-label">{{ t('file.header.more') }}</span>
+      <!-- Low-frequency actions (details, delete, editor preferences) live in
+           the same "more" menu ActionBar builds for the buttons that do not
+           fit, so there is exactly one overflow affordance. -->
+      <template #menu-extra>
+        <button v-if="permanentMenuIds.includes('details')" class="dropdown-item" @click="$emit('showDetails')">
+          <Info :size="14" />
+          {{ t('file.header.details') }}
         </button>
-        <Teleport to="body">
-          <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
-            <!-- Permanent group: low-frequency and destructive actions that never
-                 occupy toolbar space. Order here is the display order. -->
-            <button v-if="permanentMenuIds.includes('details')" class="dropdown-item" @click="$emit('showDetails'); menuOpen = false">
-              <Info :size="14" />
-              {{ t('file.header.details') }}
-            </button>
-            <button v-if="permanentMenuIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
-              <FolderOpen :size="14" />
-              {{ t('file.header.openDirectory') }}
-            </button>
-            <button v-if="permanentMenuIds.includes('gitHistory')" class="dropdown-item" @click="handleGitHistory">
-              <GitBranch :size="14" />
-              {{ t('file.header.fileHistory') }}
-            </button>
-            <button v-if="permanentMenuIds.includes('shareLink')" class="dropdown-item" :class="{ active: isShared }" @click="$emit('shareLink'); menuOpen = false">
-              <ScreenShare :size="14" />
-              {{ t('file.header.shareLink') }}
-              <span v-if="isShared" class="wrap-check">✓</span>
-            </button>
-            <button v-if="permanentMenuIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText">
-              <Code2 :size="14" />
-              {{ t('file.header.openAsText') }}
-            </button>
-            <button v-if="permanentMenuIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml">
-              <FileOutput :size="14" />
-              {{ t('file.header.exportHtml') }}
-            </button>
-            <button v-if="permanentMenuIds.includes('setAsBackground')" class="dropdown-item" @click="handleSetAsBackground">
-              <Image :size="14" />
-              {{ t('file.header.setAsBackground') }}
-            </button>
-            <button v-if="permanentMenuIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
-              <TextWrap :size="14" />
-              {{ t('file.header.wordWrap') }}
-              <span v-if="wordWrap" class="wrap-check">✓</span>
-            </button>
-            <button v-if="permanentMenuIds.includes('lineNumbers')" class="dropdown-item" @click="handleToggleLineNumbers">
-              <Hash :size="14" />
-              {{ t('file.header.lineNumbers') }}
-              <span v-if="showLineNumbers" class="wrap-check">✓</span>
-            </button>
-            <button v-if="permanentMenuIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
-              <Pin :size="14" />
-              {{ t('file.header.stickyScroll') }}
-              <span v-if="stickyScroll" class="wrap-check">✓</span>
-            </button>
-            <button v-if="permanentMenuIds.includes('delete')" class="dropdown-item danger" @click="handleDelete(); menuOpen = false">
-              <Trash2 :size="14" />
-              {{ t('common.delete') }}
-            </button>
-
-            <!-- Overflow group: toolbar items demoted for lack of width. -->
-            <div v-if="toolbarCollapsedIds.length > 0" class="dropdown-divider"></div>
-            <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="handleToggleToc(); menuOpen = false">
-              <List :size="14" />
-              {{ t('file.header.toc') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('search')" class="dropdown-item" :class="{ active: searchOpen }" @click="handleToggleSearch(); menuOpen = false">
-              <Search :size="14" />
-              {{ t('file.header.search') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('fitWidth')" class="dropdown-item" @click="handleFitWidth(); menuOpen = false">
-              <MoveHorizontal :size="14" />
-              {{ t('file.header.fitWidth') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" @click="handleQuoteInChat(); menuOpen = false">
-              <MessageSquare :size="14" />
-              {{ t('file.header.quoteInChat') }}
-            </button>
-            <button v-if="isImageFile && toolbarCollapsedIds.includes('viewImage')" class="dropdown-item" @click="handleViewImage(); menuOpen = false">
-              <Maximize2 :size="14" />
-              {{ t('imageBlock.view') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('refresh')" class="dropdown-item refresh-spin" :class="{ 'refresh-spin--active': refreshing }" :disabled="refreshing" @click="handleRefresh">
-              <RotateCw :size="14" />
-              {{ t('nav.refresh') }}
-            </button>
-            <!-- Maximize must be reachable from here too. useToolbarOverflow keeps
-                 a PREFIX inline, so on a narrow pane this button is among the
-                 first to be demoted — and a demoted id with no menu item simply
-                 vanishes, which would leave the pane maximizable only from the
-                 divider handle again (the thing this button exists to fix). -->
-            <button v-if="toolbarCollapsedIds.includes('maximize')" class="dropdown-item" :class="{ active: chatCollapsed }" @click="emit('toggleMaximizePane'); menuOpen = false">
-              <PanelRightOpen v-if="chatCollapsed" :size="14" />
-              <PanelRightClose v-else :size="14" />
-              {{ chatCollapsed ? t('nav.showChat') : t('nav.hideChat') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" :class="{ active: effectiveViewMode === 'rendered' }" :disabled="editing" @click="handleToggleView">
-              <Eye :size="14" />
-              {{ effectiveViewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('edit')" class="dropdown-item" :class="{ active: editing }" @click="handleToggleEdit">
-              <Pencil :size="14" />
-              {{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}
-            </button>
-            <button v-if="isAppMode && toolbarCollapsedIds.includes('shareExternal')" class="dropdown-item" @click="handleShareExternal">
-              <Share2 :size="14" />
-              {{ t('file.header.shareExternal') }}
-            </button>
-            <button v-if="toolbarCollapsedIds.includes('download')" class="dropdown-item" @click="handleDownload">
-              <Download :size="14" />
-              {{ t('common.download') }}
-            </button>
-          </div>
-        </Teleport>
-      </div>
-    </div>
+        <button v-if="permanentMenuIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
+          <FolderOpen :size="14" />
+          {{ t('file.header.openDirectory') }}
+        </button>
+        <button v-if="permanentMenuIds.includes('gitHistory')" class="dropdown-item" @click="handleGitHistory">
+          <GitBranch :size="14" />
+          {{ t('file.header.fileHistory') }}
+        </button>
+        <button v-if="permanentMenuIds.includes('shareLink')" class="dropdown-item" :class="{ active: isShared }" @click="$emit('shareLink')">
+          <ScreenShare :size="14" />
+          {{ t('file.header.shareLink') }}
+          <span v-if="isShared" class="wrap-check">✓</span>
+        </button>
+        <button v-if="permanentMenuIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText">
+          <Code2 :size="14" />
+          {{ t('file.header.openAsText') }}
+        </button>
+        <button v-if="permanentMenuIds.includes('exportHtml')" class="dropdown-item" @click="handleExportHtml">
+          <FileOutput :size="14" />
+          {{ t('file.header.exportHtml') }}
+        </button>
+        <button v-if="permanentMenuIds.includes('setAsBackground')" class="dropdown-item" @click="handleSetAsBackground">
+          <Image :size="14" />
+          {{ t('file.header.setAsBackground') }}
+        </button>
+        <button v-if="permanentMenuIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
+          <TextWrap :size="14" />
+          {{ t('file.header.wordWrap') }}
+          <span v-if="wordWrap" class="wrap-check">✓</span>
+        </button>
+        <button v-if="permanentMenuIds.includes('lineNumbers')" class="dropdown-item" @click="handleToggleLineNumbers">
+          <Hash :size="14" />
+          {{ t('file.header.lineNumbers') }}
+          <span v-if="showLineNumbers" class="wrap-check">✓</span>
+        </button>
+        <button v-if="permanentMenuIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
+          <Pin :size="14" />
+          {{ t('file.header.stickyScroll') }}
+          <span v-if="stickyScroll" class="wrap-check">✓</span>
+        </button>
+        <button v-if="isAppMode && !isUntitled" class="dropdown-item" @click="handleShareExternal">
+          <Share2 :size="14" />
+          {{ t('file.header.shareExternal') }}
+        </button>
+        <button v-if="permanentMenuIds.includes('delete')" class="dropdown-item danger" @click="handleDelete()">
+          <Trash2 :size="14" />
+          {{ t('common.delete') }}
+        </button>
+      </template>
+    </ActionBar>
 
     <!-- Region 3: Overlay nav (close only, always present, fixed size) -->
     <div class="overlay-nav">
@@ -263,21 +201,19 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
+import { computed, ref, watch, inject } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen } from 'lucide-vue-next'
+import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
-import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
-import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { getNative } from '@/utils/clawbenchNative'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
@@ -336,12 +272,16 @@ watch(() => props.file?.path, (path) => {
     if (path) void refreshFileShare(path)
 }, { immediate: true })
 
-const menuOpen = ref(false)
-const dropdownRef = ref(null)
-const menuRef = ref(null)
-const menuStyle = ref({})
 const attachBtnRef = ref(null)
-const headerActionsRef = ref(null)
+const actionsRef = ref(null)
+
+/** The More menu belongs to ActionBar; outside-click, Escape and positioning are
+ *  the popup's own job. Kept as a named function (not an inline expose) so the
+ *  header's tests can drive it through `setupState`. */
+function toggleMenu() {
+  actionsRef.value?.toggleMenu()
+}
+defineExpose({ toggleMenu })
 
 // Refresh-button spin feedback. The refresh is delegated to the parent
 // (App.vue handleRefresh → refreshCurrentFile). Drive the spin from the shared
@@ -352,67 +292,14 @@ function triggerRefresh() {
   emit('refresh')
 }
 
-// Responsive toolbar overflow — only the "More" dropdown is always-inline (1).
-// Permanent menu actions are excluded from the demotable list entirely, so they
-// never render inline and never appear in collapsedIds.
-// The array order must mirror the template order: index 0 renders leftmost and
-// is the last to collapse.
-const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
-  () => headerActionsRef.value,
-  () => {
-    const ids = []
-    // Refresh / attach / download all read from the file's path on disk, which
-    // an unsaved Untitled buffer does not have yet.
-    if (hasTextContent.value && !isUntitled.value) ids.push('refresh')
-    // Maximize sits immediately after refresh: both are layout-level actions on
-    // the pane, and the user asked for it next to the button they already use.
-    // Not gated on content — an empty pane can still be maximized.
-    if (isWideScreen.value) ids.push('maximize')
-    if (hasToc.value) ids.push('toc')
-    if (hasSearch.value) ids.push('search')
-    if (hasFitWidth.value) ids.push('fitWidth')
-    if (!isUntitled.value) ids.push('attach')
-    if (isImageFile.value) ids.push('viewImage')
-    if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value || isTableFile.value)) ids.push('toggleView')
-    // Edit always sits right next to the preview toggle: the two form a single
-    // view-mode control pair with no other buttons in between.
-    if (isEditable.value) ids.push('edit')
-    // Extra actions demote to the More dropdown when space runs out.
-    if (isAppMode.value && !isUntitled.value) ids.push('shareExternal')
-    if (!isUntitled.value) ids.push('download')
-    return ids
-  },
-  { inlineCount: 1, gap: 8 },
+// Whether the view-mode toggle applies (source ↔ rendered). How many buttons fit
+// and whether they carry labels is ActionBar's decision.
+const canToggleView = computed(
+  () =>
+    hasTextContent.value &&
+    !isMediaFile.value &&
+    (isMarkdown.value || isHtml.value || isOpenapi.value || isTableFile.value),
 )
-
-/**
- * Toolbar labels: shown only when the buttons that are currently inline can
- * also carry their text. The collapse decision above stays icon-based, so the
- * degradation order is labels → icons → More: labels are sacrificed first,
- * buttons only move into the menu when even icons no longer fit.
- */
-const { showLabels, measure: measureActionLabels } = useActionBarLabels(
-  () => headerActionsRef.value,
-)
-
-function toggleMenu() {
-    menuOpen.value = !menuOpen.value
-    if (menuOpen.value) {
-        nextTick(() => updateMenuPosition())
-    }
-}
-
-function updateMenuPosition() {
-    if (!dropdownRef.value) return
-    const rect = dropdownRef.value.getBoundingClientRect()
-    const vp = getZoomedViewport()
-    menuStyle.value = {
-        position: 'fixed',
-        top: `${toFixedCSS(rect.bottom + 4)}px`,
-        right: `${toFixedCSS(vp.width - rect.right)}px`,
-        left: 'auto',
-    }
-}
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
@@ -507,27 +394,22 @@ const permanentMenuIds = computed(() => {
 })
 
 function handleToggleView() {
-    menuOpen.value = false
     emit('toggleView')
 }
 
 function handleToggleEdit() {
-    menuOpen.value = false
     emit('toggleEdit')
 }
 
 function handleToggleWordWrap() {
-    menuOpen.value = false
     emit('toggleWordWrap')
 }
 
 function handleToggleLineNumbers() {
-    menuOpen.value = false
     emit('toggleLineNumbers')
 }
 
 function handleToggleStickyScroll() {
-    menuOpen.value = false
     emit('toggleStickyScroll')
 }
 
@@ -544,22 +426,18 @@ function handleToggleSearch() {
 }
 
 function handleOpenAsText() {
-    menuOpen.value = false
     emit('openAsText')
 }
 
 function handleDownload() {
-    menuOpen.value = false
     downloadFileByPath(props.file?.path || '', props.file?.name)
 }
 
 function handleExportHtml() {
-    menuOpen.value = false
     emit('exportHtml')
 }
 
 function handleShareExternal() {
-    menuOpen.value = false
     const native = getNative()
     if (!native || !native.shareFile) return
     const path = props.file?.path
@@ -578,31 +456,26 @@ function handleShareExternal() {
 }
 
 function handleDelete() {
-    menuOpen.value = false
     emit('delete', props.file?.path)
 }
 
 function handleGitHistory() {
-    menuOpen.value = false
     emit('openGitHistory')
 }
 
 async function handleOpenDirectory() {
-    menuOpen.value = false
     const path = props.file?.path
     if (!path) return
     await navToFileInManager(path)
 }
 
 function handleSetAsBackground() {
-    menuOpen.value = false
     const path = props.file?.path
     if (!path) return
     emit('setAsBackground', path)
 }
 
 function handleRefresh() {
-    menuOpen.value = false
     triggerRefresh()
 }
 
@@ -642,29 +515,6 @@ function handleFileNameDragEnd() {
     cleanupDragGhost()
 }
 
-// Close dropdown on outside click
-function handleClickOutside(e) {
-    if (menuOpen.value &&
-        dropdownRef.value && !dropdownRef.value.contains(e.target) &&
-        (!menuRef.value || !menuRef.value.contains(e.target))) {
-        menuOpen.value = false
-    }
-}
-
-// Re-measure the labels after the inline set changes: demoting a button does
-// not resize the container, so the ResizeObserver inside the composable never
-// fires for it.
-watch(toolbarInlineIds, () => nextTick(measureActionLabels), { deep: true })
-
-onMounted(() => {
-    document.addEventListener('click', handleClickOutside)
-    startToolbarResize()
-})
-
-onBeforeUnmount(() => {
-    document.removeEventListener('click', handleClickOutside)
-    stopToolbarResize()
-})
 </script>
 
 <style scoped>
@@ -740,24 +590,12 @@ onBeforeUnmount(() => {
 
 /* Region 2: Toolbar — takes remaining space, shrinks to trigger overflow */
 .header-actions {
-    display: flex;
-    align-items: center;
     gap: var(--space-4);
     flex: 1 1 0;
-    min-width: 0;
-    overflow: hidden;
-    justify-content: flex-end;
 }
-/* The toolbar is right-aligned, and overflow from a right-aligned flex row
-   escapes to the LEFT — where `scrollWidth` cannot see it. Measure from the
-   start edge instead, so an overflowing label row is actually detected. */
-.header-actions.measure-labels {
-    justify-content: flex-start;
-}
-/* Labelled buttons grow with their text; the icon+text gap is what keeps the
-   two from touching. */
-.header-actions.show-labels .file-header-btn,
-.header-actions.measure-labels .file-header-btn {
+/* Labelled buttons get room for the text; the icon+text gap is what keeps the
+   two from touching. ActionBar decides when the labels are shown. */
+.header-actions.ab--labels .file-header-btn {
     gap: calc(4 * var(--dp));
     padding: 0 calc(8 * var(--dp));
 }
