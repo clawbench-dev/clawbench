@@ -3580,14 +3580,15 @@ func TestEffectiveThinkingEffortForModel_PerModelPickBeatsGlobal(t *testing.T) {
 }
 
 // TestEffectiveThinkingEffortForModel_ACPUsesRegistry pins that ACP turns are
-// validated against the levels the AGENT advertised, not the static CLI list
-// (which describes a different level vocabulary).
+// validated against the levels the AGENT advertised FOR THAT MODEL, not the
+// static CLI list (a different level vocabulary) and not another model's list
+// (issue #637).
 func TestEffectiveThinkingEffortForModel_ACPUsesRegistry(t *testing.T) {
 	reg := ai.GetAgentCapabilityRegistry()
-	reg.UpdateThinkingEfforts("acp-effort-agent", []ai.ThinkingEffortDef{
+	reg.UpdateThinkingEffortsForModel("acp-effort-agent", "glm-5.3", []ai.ThinkingEffortDef{
 		{ID: "low"}, {ID: "high"}, {ID: "max"},
 	})
-	t.Cleanup(func() { reg.UpdateThinkingEfforts("acp-effort-agent", nil) })
+	t.Cleanup(func() { reg.UpdateThinkingEffortsForModel("acp-effort-agent", "glm-5.3", nil) })
 
 	agent := &model.Agent{
 		ID:                      "acp-effort-agent",

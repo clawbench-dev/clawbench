@@ -74,12 +74,11 @@ func TestThinkingEffortsByModel_ScopedByModel(t *testing.T) {
 	require.NotNil(t, deepseek)
 	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(deepseek.AvailableLevels))
 
-	// A model that never reported anything falls back to the agent-level list
-	// (backends whose levels are model-independent rely on this).
+	// A model that never reported anything yields NOTHING — deliberately no
+	// fallback to the agent-level list, which would show another model's levels.
 	reg.UpdateThinkingEfforts("effort-scope-a", []ThinkingEffortDef{{ID: "none"}, {ID: "high"}})
-	fallback := reg.GetThinkingEffortStateForModel("effort-scope-a", "unseen-model", "")
-	require.NotNil(t, fallback)
-	assert.Equal(t, []string{"none", "high"}, effortIDs(fallback.AvailableLevels))
+	assert.Nil(t, reg.GetThinkingEffortStateForModel("effort-scope-a", "unseen-model", ""),
+		"an unknown model must not borrow another model's list")
 }
 
 func TestUpdateThinkingEffortsForModel_IgnoresEmpty(t *testing.T) {

@@ -26,7 +26,14 @@ func boolPtrVal(p *bool) string {
 // agent binary (e.g., Claude's available modes: [ask, architect, code])
 // and do not vary between sessions.
 type AgentCapability struct {
-	AvailableModes           []ModeDef
+	AvailableModes []ModeDef
+	// AvailableThinkingEfforts is the last level list any model reported. It is
+	// NO LONGER the display source and is not persisted (issue #637): levels
+	// are per model (see ThinkingEffortsByModel), and showing this list is what
+	// made two sessions on different models disagree. What remains is the
+	// baseline for "did the list change?" (HasNewAvailableThinkingEfforts) and
+	// the fallback used when validating an agent-level setting that has no
+	// model yet.
 	AvailableThinkingEfforts []ThinkingEffortDef
 	// ThinkingEffortsByModel is the level list each MODEL advertised, keyed by
 	// model id (issue #637). Some agents (OpenCode) report a different set per
@@ -236,21 +243,24 @@ func (r *AgentCapabilityRegistry) ThinkingEffortsForModel(agentID, modelID strin
 	return out, true
 }
 
-// GetThinkingEffortStateForModel is GetThinkingEffortState scoped to a model.
+// GetThinkingEffortStateForModel returns the thinking-level state for ONE
+// model, or nil when that model's list has never been reported.
 //
-// The per-model list wins when known. Otherwise the agent-level list is used:
-// for agents whose levels do not vary by model that IS the right answer, and
-// for per-model agents it is the only thing left until a session on that model
-// reports one.
+// There is deliberately NO fallback to the agent-level list (issue #637): that
+// list only remembers whichever model reported last, so falling back would show
+// a different model's levels — exactly the bug this scoping exists to remove.
+// Callers that must show something anyway (the settings picker) use the
+// backend's static level list instead.
 func (r *AgentCapabilityRegistry) GetThinkingEffortStateForModel(agentID, modelID, currentID string) *ThinkingEffortState {
-	if levels, ok := r.ThinkingEffortsForModel(agentID, modelID); ok {
-		state := &ThinkingEffortState{CurrentID: currentID, AvailableLevels: levels}
-		if base := r.GetThinkingEffortState(agentID, currentID); base != nil {
-			state.ConfigID = base.ConfigID
-		}
-		return state
+	levels, ok := r.ThinkingEffortsForModel(agentID, modelID)
+	if !ok {
+		return nil
 	}
-	return r.GetThinkingEffortState(agentID, currentID)
+	state := &ThinkingEffortState{CurrentID: currentID, AvailableLevels: levels}
+	if base := r.GetThinkingEffortState(agentID, currentID); base != nil {
+		state.ConfigID = base.ConfigID
+	}
+	return state
 }
 
 // UpdateModels updates only the available models.
@@ -938,10 +948,6 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if string(modesJSON) == "null" {
 		modesJSON = []byte("[]")
 	}
-	effortsJSON, _ := json.Marshal(agentCap.AvailableThinkingEfforts)
-	if string(effortsJSON) == "null" {
-		effortsJSON = []byte("[]")
-	}
 	// Per-model level lists (issue #637). Persisted separately from the
 	// agent-level list above so a restart keeps each model's own levels instead
 	// of collapsing back to whichever model was seen last.
@@ -984,7 +990,6 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	_, err := db.Exec(`
 		UPDATE agents SET
 			acp_available_modes = ?,
-			acp_available_thinking_efforts = ?,
 			acp_thinking_efforts_by_model = ?,
 			acp_available_commands = ?,
 			acp_available_models = ?,
@@ -995,7 +1000,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_mcp_sse = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		string(modesJSON), string(effortsJSON), string(effortsByModelJSON), string(cmdsJSON), string(modelsJSON), configJSON,
+		string(modesJSON), string(effortsByModelJSON), string(cmdsJSON), string(modelsJSON), configJSON,
 		loadSessionVal, listSessionsVal, mcpHTTPVal, mcpSSEVal, agentID)
 	return err
 }
@@ -1003,7 +1008,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 // LoadFromDB loads persisted capabilities from the agents table on startup.
 func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
-		SELECT id, acp_available_modes, acp_available_thinking_efforts,
+		SELECT id, acp_available_modes,
 		       acp_thinking_efforts_by_model,
 		       acp_available_commands, acp_available_models, acp_config_options,
 		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse
@@ -1021,7 +1026,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 
 	for rows.Next() {
 		var row capabilityRow
-		if err := rows.Scan(&row.agentID, &row.modes, &row.efforts, &row.effortsByModel, &row.commands,
+		if err := rows.Scan(&row.agentID, &row.modes, &row.effortsByModel, &row.commands,
 			&row.models, &row.config, &row.loadSession, &row.listSessions,
 			&row.mcpHTTP, &row.mcpSSE); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
@@ -1048,7 +1053,6 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 type capabilityRow struct {
 	agentID        string
 	modes          string
-	efforts        string
 	effortsByModel string
 	commands       string
 	models         string
@@ -1063,15 +1067,14 @@ type capabilityRow struct {
 // than failing the row: the other capability fields are still worth loading.
 func (row *capabilityRow) toCapability() *AgentCapability {
 	capability := &AgentCapability{
-		AvailableModes:           decodeJSONSlice[ModeDef](row.modes),
-		AvailableThinkingEfforts: decodeJSONSlice[ThinkingEffortDef](row.efforts),
-		ThinkingEffortsByModel:   decodeEffortsByModel(row.effortsByModel),
-		AvailableCommands:        decodeJSONSlice[AvailableCommandInfo](row.commands),
-		AvailableModels:          decodeJSONSlice[model.AgentModel](row.models),
-		LoadSession:              &row.loadSession,
-		ListSessions:             &row.listSessions,
-		McpHTTP:                  &row.mcpHTTP,
-		McpSSE:                   &row.mcpSSE,
+		AvailableModes:         decodeJSONSlice[ModeDef](row.modes),
+		ThinkingEffortsByModel: decodeEffortsByModel(row.effortsByModel),
+		AvailableCommands:      decodeJSONSlice[AvailableCommandInfo](row.commands),
+		AvailableModels:        decodeJSONSlice[model.AgentModel](row.models),
+		LoadSession:            &row.loadSession,
+		ListSessions:           &row.listSessions,
+		McpHTTP:                &row.mcpHTTP,
+		McpSSE:                 &row.mcpSSE,
 	}
 	if row.config != "" {
 		var config ConfigOptionState

@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	transport TEXT NOT NULL DEFAULT 'cli',
 	acp_command TEXT NOT NULL DEFAULT '',
 	acp_available_modes TEXT NOT NULL DEFAULT '[]',
-	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
+	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',  -- legacy: no longer read or written (issue #637); per-model lists live in acp_thinking_efforts_by_model
 	acp_thinking_efforts_by_model TEXT NOT NULL DEFAULT '{}',
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
 	acp_available_models TEXT NOT NULL DEFAULT '[]',
