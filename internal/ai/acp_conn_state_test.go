@@ -543,6 +543,88 @@ func TestExtractSessionState_NewResp_AllSubExtractorsPopulated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// extractSessionState — mode reported only via configOptions (ACP v2)
+// ---------------------------------------------------------------------------
+
+func TestExtractSessionState_NewResp_ModeOnlyInConfigOptions(t *testing.T) {
+	// OpenCode 2.x dropped the legacy `modes` field and reports the mode picker
+	// only as a config option with category "mode". Without the fallback both
+	// the current mode and the available list stay empty, so the frontend mode
+	// chip shows nothing.
+	agent := &model.Agent{ID: "test-extract-mode-config", Backend: "opencode", AcpCommand: "opencode acp"}
+	conn := newACPConn(agent, "test-extract-mode-config")
+
+	modeCat := acp.SessionConfigOptionCategoryMode
+	newResp := &acp.NewSessionResponse{
+		ConfigOptions: []acp.SessionConfigOption{
+			{
+				Select: &acp.SessionConfigOptionSelect{
+					Category:     &modeCat,
+					Id:           "mode",
+					Name:         "Session Mode",
+					CurrentValue: "build",
+					Options: acp.SessionConfigSelectOptions{
+						Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+							{Value: "build", Name: "Build"},
+							{Value: "plan", Name: "Plan"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+	assert.Equal(t, "build", ext.modeCurrentID)
+	require.Len(t, ext.modes, 2)
+
+	// The legacy `modes` field still wins when the agent sends both.
+	newResp.Modes = &acp.SessionModeState{
+		CurrentModeId:  "legacy",
+		AvailableModes: []acp.SessionMode{{Id: "legacy", Name: "Legacy"}},
+	}
+	ext = conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+	assert.Equal(t, "legacy", ext.modeCurrentID)
+	require.Len(t, ext.modes, 1)
+}
+
+func TestApplyExtractedState_ModeFromConfigOptions(t *testing.T) {
+	// End-to-end: extraction + apply must leave a usable current mode on the
+	// connection (what the frontend mode chip reads).
+	agent := &model.Agent{ID: "test-apply-mode-config", Backend: "opencode", AcpCommand: "opencode acp"}
+	conn := newACPConn(agent, "test-apply-mode-config")
+
+	modeCat := acp.SessionConfigOptionCategoryMode
+	newResp := &acp.NewSessionResponse{
+		ConfigOptions: []acp.SessionConfigOption{
+			{
+				Select: &acp.SessionConfigOptionSelect{
+					Category:     &modeCat,
+					Id:           "mode",
+					Name:         "Session Mode",
+					CurrentValue: "build",
+					Options: acp.SessionConfigSelectOptions{
+						Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+							{Value: "build", Name: "Build"},
+							{Value: "plan", Name: "Plan"},
+						},
+					},
+				},
+			},
+		},
+	}
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+	conn.applyExtractedState(ext)
+	assert.Equal(t, "build", conn.GetCurrentModeID())
+}
+
+// ---------------------------------------------------------------------------
 // extractSessionState — resumeResp with thinking effort and model list
 // ---------------------------------------------------------------------------
 

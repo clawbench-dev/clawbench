@@ -155,6 +155,7 @@ func (c *ACPConn) extractLoadedSessionState(loadResp *acp.LoadSessionResponse) s
 		ext.extrasKnown = true
 	}
 
+	ext.fillModeFromConfigOptions()
 	return ext
 }
 
@@ -238,7 +239,32 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 		}
 	}
 
+	ext.fillModeFromConfigOptions()
 	return ext
+}
+
+// fillModeFromConfigOptions derives mode state from the agent's `configOptions`
+// when the legacy `modes` field is absent.
+//
+// ACP v2 agents (OpenCode 2.x) dropped `modes` and report the mode picker only
+// as a config option with category "mode". Without this fallback the current
+// mode and the available list both stay empty, so the frontend mode chip shows
+// nothing (found by TestIntegration_ACP/opencode after the opencode CLI moved to
+// 2.2.6). The legacy field still wins when present.
+func (ext *sessionStateExtracted) fillModeFromConfigOptions() {
+	if ext.modeCurrentID != "" && len(ext.modes) > 0 {
+		return
+	}
+	derived := modeStateFromConfigState(ext.configState)
+	if derived == nil {
+		return
+	}
+	if len(ext.modes) == 0 {
+		ext.modes = derived.AvailableModes
+	}
+	if ext.modeCurrentID == "" {
+		ext.modeCurrentID = derived.CurrentModeID
+	}
 }
 
 // applyExtractedState sets session-level current values and updates the agent-level registry.
