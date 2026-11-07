@@ -28,8 +28,13 @@
  *     existing installs stuck in a download loop.
  *
  * It also enforces the protocol-bump discipline: if a file on the shell<->server
- * contract changed but the number did not, the release FAILS. That is deliberate
- * — the alternative is shipping an incompatible pair and finding out from users.
+ * contract changed in a way a stale shell cannot survive, and the number did
+ * not move, the release FAILS. That is deliberate — the alternative is shipping
+ * an incompatible pair and finding out from users.
+ *
+ * The one exception is the TypeScript bridge interface, which may GROW: an old
+ * shell simply does not implement the new optional members. Removing a member or
+ * making one mandatory still fails (see `bridgeBreakingChanges`).
  *
  * Outputs (written to $GITHUB_OUTPUT when present, always printed):
  *   prev_tag, protocol,
@@ -118,15 +123,87 @@ export function decideClientBuild(input) {
 }
 
 /**
- * Whether a contract file changed without the protocol number being bumped.
+ * The one contract file that can grow without breaking an existing shell: the
+ * TypeScript bridge interface. Every member an old shell does not implement is
+ * simply absent at runtime, so ADDING an optional method is compatible — the
+ * page degrades. Everything else on `CONTRACT_PATHS` stays all-or-nothing.
+ */
+export const BRIDGE_CONTRACT_PATH = 'web/src/utils/clawbenchNative.ts'
+
+/**
+ * Read the member list of `interface ClawBenchNative`.
+ *
+ * Line-based on purpose: the interface is declared at column 0, closes with a
+ * `}` at column 0, and every member starts at exactly two spaces. Multi-line
+ * signatures continue at four spaces or start with `)`, and comments start with
+ * `/`, so neither can be mistaken for a member. A nested object type is always
+ * indented, so its closing brace never ends the block.
+ *
+ * @returns Map<memberName, {optional: boolean}> — empty when the interface
+ * cannot be found (callers must treat that as "unknown", not "compatible").
+ */
+export function bridgeMembers(source) {
+  const members = new Map()
+  if (typeof source !== 'string') return members
+  const open = source.indexOf('interface ClawBenchNative {')
+  if (open === -1) return members
+  const end = source.indexOf('\n}', open)
+  if (end === -1) return members
+  const body = source.slice(open, end)
+  const member = /^ {2}(?:readonly )?([A-Za-z_$][\w$]*)(\??)\s*[(:]/gm
+  for (const m of body.matchAll(member)) {
+    members.set(m[1], { optional: m[2] === '?' })
+  }
+  return members
+}
+
+/**
+ * Why an edit to the bridge interface would break a shell built before it.
+ *
+ * Only the shape that a stale shell actually notices is checked: a member that
+ * disappeared, or one that became mandatory (the page would call it on a host
+ * that never had it). Return-type widening — `Promise<void>` →
+ * `void | Promise<void>` — is compatible and deliberately not flagged; callers
+ * `await` either way.
+ *
+ * @returns string[] human-readable reasons; empty means purely additive.
+ */
+export function bridgeBreakingChanges(prevSource, nextSource) {
+  const before = bridgeMembers(prevSource)
+  const after = bridgeMembers(nextSource)
+  // An unreadable interface is not evidence of compatibility. Fail closed.
+  if (before.size === 0 || after.size === 0) {
+    return ['the bridge interface could not be read at one of the two releases']
+  }
+
+  const reasons = []
+  for (const [name, info] of before) {
+    const now = after.get(name)
+    if (!now) reasons.push(`${name} was removed`)
+    else if (info.optional && !now.optional) reasons.push(`${name} became mandatory`)
+  }
+  for (const [name, info] of after) {
+    if (!before.has(name) && !info.optional) {
+      reasons.push(`${name} is new but mandatory (mark it optional)`)
+    }
+  }
+  return reasons
+}
+
+/**
+ * Whether a contract change forces a protocol bump.
+ *
+ * `breakingContractPaths` is the subset of changed contract files that a shell
+ * built for the previous protocol cannot survive. The caller decides membership:
+ * the bridge interface is only breaking when `bridgeBreakingChanges` says so.
  *
  * @param {object} input
- * @param {string[]} input.changedContractPaths
+ * @param {string[]} input.breakingContractPaths
  * @param {number|null} input.prevProtocol
  * @param {number|null} input.protocol
  */
 export function contractViolation(input) {
-  if (input.changedContractPaths.length === 0) return false
+  if (input.breakingContractPaths.length === 0) return false
   // No previous number means the guard is being introduced by this very
   // release; the rebuild is forced instead (see decideClientBuild).
   if (input.prevProtocol === null) return false
@@ -201,6 +278,19 @@ function main() {
   const desktopChanged = prevTag ? changedPaths(prevTag, tag, DESKTOP_PATHS) : []
   const contractChanged = prevTag ? changedPaths(prevTag, tag, CONTRACT_PATHS) : []
 
+  // Split the changed contract files into "a stale shell can still live with
+  // this" and "it cannot". Only the bridge interface gets the additive check;
+  // the rest stay all-or-nothing.
+  const bridgeReasons = contractChanged.includes(BRIDGE_CONTRACT_PATH)
+    ? bridgeBreakingChanges(
+        fileAt(prevTag, BRIDGE_CONTRACT_PATH),
+        fileAt(tag, BRIDGE_CONTRACT_PATH),
+      )
+    : []
+  const breakingContractPaths = contractChanged.filter(
+    (p) => p !== BRIDGE_CONTRACT_PATH || bridgeReasons.length > 0,
+  )
+
   const protocolBumped = prevProtocol !== null && prevProtocol !== currentProtocol
 
   const decision = decideClientBuild({
@@ -212,13 +302,14 @@ function main() {
     tag,
   })
 
-  if (contractViolation({ changedContractPaths: contractChanged, prevProtocol, protocol: currentProtocol })) {
+  if (contractViolation({ breakingContractPaths, prevProtocol, protocol: currentProtocol })) {
     console.error(
       [
         '::error::The shell<->server contract changed without a protocol bump.',
         '',
-        'Changed contract files:',
-        ...contractChanged.map((p) => `  - ${p}`),
+        'Breaking contract files:',
+        ...breakingContractPaths.map((p) => `  - ${p}`),
+        ...(bridgeReasons.length > 0 ? bridgeReasons.map((r) => `    · ${r}`) : []),
         '',
         `The previous release was protocol ${prevProtocol}, this one is ${currentProtocol}.`,
         `Bump ${PROTOCOL_FILE} (to ${currentProtocol + 1}) if the change breaks an existing`,
@@ -249,6 +340,10 @@ function main() {
   console.log(`  reason:          ${decision.reason}`)
   console.log(`  protocol:        ${currentProtocol}${protocolBumped ? ` (bumped from ${prevProtocol})` : ''}`)
   console.log(`  android:         ${decision.androidChanged ? 'build' : `reuse ${decision.androidSource}`}`)
+  if (contractChanged.length > 0) {
+    const verdict = breakingContractPaths.length > 0 ? 'breaking' : 'additive only'
+    console.log(`  contract:        ${verdict} (${contractChanged.join(', ')})`)
+  }
   console.log(`  desktop:         ${decision.desktopChanged ? 'build' : `reuse ${decision.desktopSource}`}`)
 }
 

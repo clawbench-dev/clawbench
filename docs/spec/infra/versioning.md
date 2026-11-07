@@ -165,7 +165,8 @@ APK 与桌面端都是薄壳（Web UI 由服务端下发），一次普通发布
 - **协议号 +1 → 两端都重编**（号码编进壳里，旧壳按定义不兼容）。
 - **上一个 release 还不认识协议号 → 两端都重编**。否则老壳仍按版本比较，会「下载 → 仍不匹配 → 再下载」死循环。
 - **复用失败**（资产缺失 / 下载损坏）→ 回退成真编译，不让 release 静默缺件。
-- **契约文件改了但协议号没变 → release 直接失败**。契约文件清单在 `client-guard.mjs` 的 `CONTRACT_PATHS`（共享桥接接口、`/api/health` handler、桌面 preload、Android 桥）。宁可卡一次发布，也不发出一对互不兼容的客户端与服务端。
+- **契约文件改坏了但协议号没变 → release 直接失败**。契约文件清单在 `client-guard.mjs` 的 `CONTRACT_PATHS`（共享桥接接口、`/api/health` handler、桌面 preload、Android 桥）。宁可卡一次发布，也不发出一对互不兼容的客户端与服务端。
+  - **唯一例外是共享桥接接口可以「只增不改」**（`web/src/utils/clawbenchNative.ts`）：老壳没有新方法，页面用 `?.` 降级即可。`bridgeBreakingChanges` 只在**删掉成员**、**把可选成员改成必选**、**新增必选成员**时判为破坏；返回类型放宽（`Promise<void>` → `void | Promise<void>`）不算——调用方本来就在 `await`。接口解析不出来时按破坏处理（失败要吵，不能静默放行）。其余契约文件仍是「碰了就要求 +1」。
 - 桌面端 `/api/desktop/latest` 因此新增 `clientVersion`：复用发布时它是被复用那个构建的版本，安装目录按它命名。用服务端版本命名会让 `app.getVersion()` 与指针版本不一致，启动交接随即删掉指针并静默回退升级。
 
 
