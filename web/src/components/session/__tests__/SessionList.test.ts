@@ -1589,13 +1589,13 @@ describe('SessionList', () => {
       { id: 'b2', title: 'Another', backend: 'acp', agentId: 'agent-2', running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2024-11-01' },
     ]
 
-    it('opens a read-only list of that project from the card header button', async () => {
+    it('opens a read-only list of that project when the card header is clicked', async () => {
       routeListAndBrowse(browseSessions)
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
       await flushPromises()
 
-      await wrapper.find('.pcard-open').trigger('click')
+      await wrapper.find('.pcard-head').trigger('click')
       await flushPromises()
 
       // The request names the project explicitly — the ordinary list endpoint
@@ -1619,7 +1619,7 @@ describe('SessionList', () => {
       const wrapper = await mountList()
       await flushPromises()
 
-      await wrapper.find('.pcard-open').trigger('click')
+      await wrapper.find('.pcard-head').trigger('click')
       await flushPromises()
       expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
 
@@ -1636,7 +1636,7 @@ describe('SessionList', () => {
       const wrapper = await mountList()
       await flushPromises()
 
-      await wrapper.find('.pcard-open').trigger('click')
+      await wrapper.find('.pcard-head').trigger('click')
       await flushPromises()
       await wrapper.findAll('.browse-row')[0].trigger('click')
       expect(wrapper.emitted('select')![0]).toEqual(['b1', 'cli', '/proj/other'])
@@ -1653,7 +1653,7 @@ describe('SessionList', () => {
       const wrapper = await mountList()
       await flushPromises()
 
-      await wrapper.find('.pcard-open').trigger('click')
+      await wrapper.find('.pcard-head').trigger('click')
       await flushPromises()
 
       expect(wrapper.find('[data-project-browse] .session-empty').text()).toBe('session.browseFailed')

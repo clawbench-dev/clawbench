@@ -222,19 +222,17 @@
           :style="{ '--pc': projectTintVar(group.name) }"
           :data-project="group.name"
         >
-          <div class="pcard-head">
+          <button
+            class="pcard-head"
+            :title="t('session.viewAllSessions')"
+            :aria-label="`${t('session.viewAllSessions')} · ${group.displayName}`"
+            @click.stop="openProjectBrowse(group)"
+          >
             <span class="pcard-name">{{ group.displayName }}</span>
             <span class="pcard-count">{{ group.sessions.length }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
-            <button
-              class="pcard-open"
-              :title="t('session.viewAllSessions')"
-              :aria-label="t('session.viewAllSessions')"
-              @click.stop="openProjectBrowse(group)"
-            >
-              <List :size="14" />
-            </button>
-          </div>
+            <ChevronRight :size="14" class="pcard-chev" />
+          </button>
           <div
             v-for="session in group.sessions"
             :key="group.name + '/' + session.id"
@@ -401,7 +399,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, ChevronLeft, List, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -2095,15 +2093,30 @@ onUnmounted(() => {
   margin-top: calc(-1 * var(--dp));
 }
 
+/* The whole header is the entry point, so it is a button — no nested control.
+   `border: 0` plus an explicit bottom border keeps it from inheriting the
+   browser's default button frame. */
 .pcard-head {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  width: 100%;
   padding: var(--space-3) var(--space-4);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
   /* Opaque: mixed into the SURFACE, not into `transparent`, so the band keeps
      its colour while content scrolls underneath. */
   background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
+  border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
+}
+
+@media (hover: hover) {
+  .pcard-head:hover {
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 22%, var(--bg-primary, #fff));
+  }
 }
 
 .pcard-name {
@@ -2205,27 +2218,15 @@ onUnmounted(() => {
   color: var(--color-yellow, #a16207);
 }
 
-/* Entry into the read-only list, in the card header. Icon-only keeps the card
-   compact and puts the action where the project it belongs to is named; the
-   tooltip carries the full label. */
-.pcard-open {
+/* Chevron: the header itself is the button, this is just the affordance that
+   says "there is another view behind it". */
+.pcard-chev {
   flex: 0 0 auto;
-  width: calc(22 * var(--dp));
-  height: calc(22 * var(--dp));
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--text-muted, #656d76);
-  cursor: pointer;
 }
 
-@media (hover: hover) {
-  .pcard-open:hover {
-    color: var(--pc, var(--accent-color, #0066cc));
-    background: color-mix(in srgb, var(--pc, var(--text-primary)) 14%, transparent);
-  }
+.pcard-head:hover .pcard-chev {
+  color: var(--pc, var(--accent-color, #0066cc));
 }
 
 /* ── Read-only browse view ── */
