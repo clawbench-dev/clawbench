@@ -2083,26 +2083,16 @@ onUnmounted(() => {
    separators and hovers are the same colour at low alpha. Status keeps its own
    meaning: pending stays amber. */
 .pcard {
-  position: relative;
-  border: 0;
-  border-top: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 32%, var(--border-color));
+  border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
   background: var(--bg-primary, #fff);
   overflow: hidden;
 }
 
-/* Project rail down the left edge. The header band names the project only
-   while it is on screen — on a long card the rail keeps that identity visible
-   after the header scrolls away, and it separates two cards whose tints
-   happen to be close. */
-.pcard::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: calc(2 * var(--dp));
-  background: var(--pc, var(--border-color));
-  pointer-events: none;
+/* Cards are flush, so their facing borders would show as a 2px double line.
+   Pulling the next card up by one pixel makes the two edges share a single
+   line instead. */
+.pcard + .pcard {
+  margin-top: calc(-1 * var(--dp));
 }
 
 .pcard-head {
