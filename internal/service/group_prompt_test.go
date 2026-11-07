@@ -134,6 +134,15 @@ func TestBuildHostSystemPrompt_DelegatesWork(t *testing.T) {
 	if !strings.Contains(p, "拆解任务") {
 		t.Fatalf("host prompt must state what the host DOES own: %q", p)
 	}
+	// A single "don't do it first" sentence still let hosts spawn their own
+	// sub-agents and impersonate members; the ban must be explicit, with the
+	// user-request escape hatch preserved.
+	if !strings.Contains(p, "严禁使用") || !strings.Contains(p, "subagent") {
+		t.Fatalf("host prompt must explicitly ban spawning its own sub-agents: %q", p)
+	}
+	if !strings.Contains(p, "用户本轮明确要求") {
+		t.Fatalf("host prompt must keep the explicit-user-request escape hatch: %q", p)
+	}
 	if !strings.Contains(p, "例外") || !strings.Contains(p, "/cb-*") {
 		t.Fatalf("host prompt must carve out the exceptions (host-only group, /cb-*): %q", p)
 	}

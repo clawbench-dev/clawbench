@@ -29,6 +29,54 @@ func TestParseMultipleTargets(t *testing.T) {
 	}
 }
 
+func TestParseMultipleTargetsCJKDelimiters(t *testing.T) {
+	r1 := Parse(`<clawbench-mention targets="A、B、C">各自表态</clawbench-mention>`)
+	if !reflect.DeepEqual(r1.Speakers, []string{"A", "B", "C"}) {
+		t.Fatalf("dunhao speakers=%v", r1.Speakers)
+	}
+
+	r2 := Parse(`<clawbench-mention targets="A，B，C">各自表态</clawbench-mention>`)
+	if !reflect.DeepEqual(r2.Speakers, []string{"A", "B", "C"}) {
+		t.Fatalf("cjk comma speakers=%v", r2.Speakers)
+	}
+
+	r3 := Parse(`<clawbench-mention targets="A, B，C、D">各自表态</clawbench-mention>`)
+	if !reflect.DeepEqual(r3.Speakers, []string{"A", "B", "C", "D"}) {
+		t.Fatalf("mixed delimiters speakers=%v", r3.Speakers)
+	}
+}
+
+// Mirror of the same-named case in web/src/utils/__tests__/groupRouting.test.ts:
+// both sides must split (and keep) exactly the same targets.
+func TestParseTargetsCJKSeparatorsInsideParens(t *testing.T) {
+	cases := []struct {
+		label string
+		raw   string
+		want  []string
+	}{
+		{
+			label: "balanced parens keep CJK separators",
+			raw:   `<clawbench-mention targets="ZCode（写码、调试）、Q">x</clawbench-mention>`,
+			want:  []string{"ZCode（写码、调试）", "Q"},
+		},
+		{
+			label: "unbalanced parens fall back to ASCII comma",
+			raw:   `<clawbench-mention targets="ZCode（写码、调试">x</clawbench-mention>`,
+			want:  []string{"ZCode（写码、调试"},
+		},
+		{
+			label: "ASCII comma still splits when unbalanced",
+			raw:   `<clawbench-mention targets="A,B（C">x</clawbench-mention>`,
+			want:  []string{"A", "B（C"},
+		},
+	}
+	for _, c := range cases {
+		if got := Parse(c.raw).Speakers; !reflect.DeepEqual(got, c.want) {
+			t.Fatalf("%s: speakers=%v want=%v", c.label, got, c.want)
+		}
+	}
+}
+
 func TestParseEndSignal(t *testing.T) {
 	r := Parse(`讨论已充分。<clawbench-group-end/>`)
 	if !r.End {
