@@ -142,9 +142,15 @@ describe('MailReader', () => {
 
     const row = wrapper.find('.mail-reader__actions')
     const el = row.element as HTMLElement
-    const measureWith = (scrollWidth: number, clientWidth: number) => {
-      Object.defineProperty(el, 'scrollWidth', { value: scrollWidth, configurable: true })
+    // jsdom has no layout: supply the available width and the width the buttons
+    // need. The latter comes from the children's rects — `scrollWidth` is
+    // clamped to `clientWidth` and cannot express "this needs more room".
+    const measureWith = (needed: number, clientWidth: number) => {
       Object.defineProperty(el, 'clientWidth', { value: clientWidth, configurable: true })
+      for (const kid of Array.from(el.children) as HTMLElement[]) {
+        kid.getBoundingClientRect = () =>
+          ({ left: 0, right: needed, width: needed, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+      }
       ;(wrapper.vm as unknown as { measureActionLabels: () => void }).measureActionLabels()
     }
 

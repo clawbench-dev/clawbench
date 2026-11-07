@@ -624,10 +624,24 @@ describe('ChatInputBar — action labels by container width', () => {
   function labelTexts(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll('.action-label').map(el => el.text())
   }
-  function mockBarWidth(wrapper: ReturnType<typeof mount>, scrollWidth: number, clientWidth: number) {
+  /**
+   * jsdom has no layout: supply the available width and the width the buttons
+   * need. The latter is read from the children's rects — `scrollWidth` is
+   * clamped to `clientWidth` and cannot express "this needs more room".
+   */
+  function mockBarWidth(wrapper: ReturnType<typeof mount>, needed: number, clientWidth: number) {
     const bar = actionBar(wrapper).element as HTMLElement
-    Object.defineProperty(bar, 'scrollWidth', { configurable: true, value: scrollWidth })
     Object.defineProperty(bar, 'clientWidth', { configurable: true, value: clientWidth })
+    // The bar's own overflow/fade state still reads scrollWidth.
+    Object.defineProperty(bar, 'scrollWidth', { configurable: true, value: needed })
+    const kids = Array.from(bar.children) as HTMLElement[]
+    const rect = (left: number, right: number) =>
+      ({ left, right, width: right - left, top: 0, bottom: 0, height: 0, x: left, y: 0, toJSON: () => ({}) }) as DOMRect
+    kids.forEach((k, i) => {
+      const left = i === 0 ? 0 : 0
+      const right = i === kids.length - 1 ? needed : needed
+      k.getBoundingClientRect = () => rect(left, right)
+    })
   }
 
   it('hides labels when the container is too narrow (icons only)', async () => {

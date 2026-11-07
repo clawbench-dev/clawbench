@@ -372,7 +372,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 **临界宽度不能来回闪**，两处必须一起做：
 
 - **测量期禁用过渡**：按钮若带 `transition: all`（或任何 width 过渡），强制显示标签后立刻量到的是**动画前**的宽度，会误判「放得下」；标签打开后按钮继续变宽，下一次测量又判定放不下 —— 两种状态反复切换。全局有一条 `.measure-labels * { transition: none !important }`，同时按钮自己的过渡只写 `background-color` / `color`，不要用 `all`。
-- **开关带死区**：`useActionBarLabels` 里「关」是溢出就关（容差 2px），「开」要求至少 12px 余量。没有死区时，正好卡在边界的一行会因为 1px 舍入反复翻转。
+- **开关带死区**：`useActionBarLabels` 里「关」是溢出就关（容差 2px），「开」要求至少 16px 余量。没有死区时，正好卡在边界的一行会因为 1px 舍入反复翻转。余量不能用 `scrollWidth` 算——内容放得下时它被钳到 `clientWidth`，永远等于「刚好占满」；实际用的是「第一个子元素到最后一个子元素的跨度」。
 
 已接入：聊天输入区、邮件阅读器、代码预览工具条、任务列表头部、会话列表头部、通知中心头部、代码集成头部、邮件文件夹栏、终端工具条、文件查看器头部、文件管理器工具条。守卫：`useActionBarLabels.test.ts`（判定与去抖）+ 各条自己的「labels 出现在 DOM / `show-labels` 已绑定」测试。
 

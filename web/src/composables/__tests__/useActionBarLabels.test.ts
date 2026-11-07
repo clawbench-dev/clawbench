@@ -29,9 +29,17 @@ function mountBar(opts: Parameters<typeof useActionBarLabels>[1] = {}) {
     wrapper,
     el,
     api: api as unknown as ReturnType<typeof useActionBarLabels>,
-    setWidths(scrollWidth: number, clientWidth: number) {
-      Object.defineProperty(el, 'scrollWidth', { value: scrollWidth, configurable: true })
-      Object.defineProperty(el, 'clientWidth', { value: clientWidth, configurable: true })
+    /**
+     * jsdom has no layout, so both the available width and the width the row
+     * needs are supplied here. `needed` is reported through the child's rect —
+     * that is what the composable reads (scrollWidth is clamped to clientWidth
+     * and cannot express spare room).
+     */
+    setSizes(needed: number, available: number) {
+      Object.defineProperty(el, 'clientWidth', { value: available, configurable: true })
+      const child = el.firstElementChild as HTMLElement
+      child.getBoundingClientRect = () =>
+        ({ left: 0, right: needed, width: needed, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
     },
   }
 }
@@ -43,60 +51,63 @@ afterEach(() => {
 
 describe('useActionBarLabels', () => {
   it('shows the labels when the row can hold them', async () => {
-    const { api, setWidths } = mountBar()
-    setWidths(200, 300)
+    const { api, setSizes } = mountBar()
+    setSizes(200, 300)
     api.measure()
     await nextTick()
     expect(api.showLabels.value).toBe(true)
   })
 
   it('drops the labels when the row overflows', async () => {
-    const { api, setWidths } = mountBar()
-    setWidths(320, 300)
+    const { api, setSizes } = mountBar()
+    setSizes(320, 300)
     api.measure()
     await nextTick()
     expect(api.showLabels.value).toBe(false)
   })
 
   it('tolerates sub-pixel rounding (2px) instead of hiding the labels', async () => {
-    const { api, setWidths } = mountBar()
+    const { api, setSizes } = mountBar()
     // Labels are already on; a row that fits EXACTLY can report one pixel of
     // overflow, and that alone must not hide them.
-    setWidths(200, 300)
+    setSizes(200, 300)
     api.measure()
-    setWidths(301, 300)
+    setSizes(301, 300)
     api.measure()
     await nextTick()
     expect(api.showLabels.value).toBe(true)
   })
 
   it('needs real spare room before turning the labels back on', async () => {
-    // The dead zone: without it a bar sitting on the boundary flips on every
-    // measurement (labels on → too wide → off → room again → on).
-    const { api, setWidths } = mountBar()
-    // Start from the off state: mount assumes room, so force an overflowing
-    // measurement first.
-    setWidths(400, 300)
+    // The dead zone: without it a bar dragged across the boundary flips at
+    // almost every pixel (on → 2px narrower → off → 2px wider → on).
+    const { api, setSizes } = mountBar()
+    setSizes(320, 300)
     api.measure()
     await nextTick()
     expect(api.showLabels.value).toBe(false)
 
-    setWidths(299, 300)
+    setSizes(290, 300) // 10px spare: still not enough
     api.measure()
     await nextTick()
-    expect(api.showLabels.value, '1px spare is not enough to turn them on').toBe(false)
+    expect(api.showLabels.value).toBe(false)
 
-    setWidths(288, 300)
+    setSizes(280, 300) // 20px spare: on
     api.measure()
     await nextTick()
-    expect(api.showLabels.value, '12px spare turns them on').toBe(true)
+    expect(api.showLabels.value).toBe(true)
+
+    setSizes(299, 300) // 1px spare: stays on (only overflow turns them off)
+    api.measure()
+    await nextTick()
+    expect(api.showLabels.value).toBe(true)
   })
 
   it('assumes there is room before the row is laid out', async () => {
     // A hidden pane (or jsdom) measures 0 wide; guessing "no room" would show a
     // flash of icon-only buttons the moment the pane appears.
-    const { api, setWidths } = mountBar()
-    setWidths(0, 0)
+    const { api, setSizes } = mountBar()
+    setSizes(0, 0)
     api.measure()
     await nextTick()
     expect(api.showLabels.value).toBe(true)
@@ -105,16 +116,14 @@ describe('useActionBarLabels', () => {
   it('forces the labels on for the measurement itself', () => {
     // The whole trick: measure with `.measure-labels` applied, otherwise the
     // label-less layout always looks like it fits.
-    const { api, el } = mountBar()
+    const { api, el, setSizes } = mountBar()
+    setSizes(100, 300)
     let hadMeasureClass = false
-    Object.defineProperty(el, 'scrollWidth', {
-      get: () => {
-        hadMeasureClass = el.classList.contains('measure-labels')
-        return 100
-      },
-      configurable: true,
-    })
-    Object.defineProperty(el, 'clientWidth', { value: 300, configurable: true })
+    const child = el.firstElementChild as HTMLElement
+    child.getBoundingClientRect = () => {
+      hadMeasureClass = el.classList.contains('measure-labels')
+      return { left: 0, right: 100, width: 100, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+    }
     api.measure()
     expect(hadMeasureClass).toBe(true)
     // ...and it is removed again, so the temporary state never paints.

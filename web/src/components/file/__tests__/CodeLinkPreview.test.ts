@@ -88,6 +88,7 @@ const i18n = createI18n({
   locale: 'en',
   messages: {
     en: {
+      actionLabels: { viewDetails: 'Details' },
       file: {
         codePreview: {
           title: 'Code Preview',
@@ -701,7 +702,7 @@ describe('CodeLinkPreview.vue', () => {
     // `.action-label` (shown when the row is wide enough), never a bespoke wide
     // text button of its own.
     expect(detailsBtn?.querySelector('svg')).not.toBeNull()
-    expect(detailsBtn?.querySelector('.action-label')?.textContent?.trim()).toBe('View details / Download')
+    expect(detailsBtn?.querySelector('.action-label')?.textContent?.trim()).toBe('Details')
     // No second, plain "Open file" button appears alongside it.
     expect(floating?.querySelector('button[title="Open file"]')).toBeNull()
   })

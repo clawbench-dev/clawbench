@@ -14,15 +14,14 @@ const OVERFLOW_TOLERANCE_PX = 2
 const DEFAULT_DEBOUNCE_MS = 50
 
 /**
- * Spare room required before labels are turned back ON, in CSS px.
+ * Spare room (CSS px) required before labels are turned ON.
  *
- * A bar that is exactly at the boundary would otherwise flip on every
- * measurement (one pixel of rounding, a scrollbar appearing, a width
- * transition): labels on → too wide → labels off → room again → labels on.
- * Turning them on only with real slack, and off as soon as they overflow,
- * gives the state a dead zone it cannot oscillate inside.
+ * Without it, a bar dragged across the boundary toggles at almost every pixel:
+ * labels on → 2px narrower → off → 2px wider → on. Turning them on only when
+ * there is real room, and off as soon as they overflow, gives the state a dead
+ * zone it cannot chatter inside.
  */
-const TURN_ON_SLACK_PX = 12
+const TURN_ON_SLACK_PX = 16
 
 export interface ActionBarLabelsOptions {
   /**
@@ -62,24 +61,47 @@ export function useActionBarLabels(
   let observer: ResizeObserver | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
 
+  /**
+   * Width the row's children need, with the labels currently forced on.
+   *
+   * `scrollWidth` cannot answer "how much room is to spare": it is clamped to
+   * `clientWidth` when the content fits, so it always looks exactly full. The
+   * span from the first to the last child does report the real content width,
+   * which is what the dead zone needs.
+   */
+  function neededWidth(el: HTMLElement): number {
+    const kids = Array.from(el.children) as HTMLElement[]
+    const visible = kids.filter(k => k.getBoundingClientRect().width > 0)
+    if (visible.length === 0) return 0
+    const first = visible[0].getBoundingClientRect()
+    const last = visible[visible.length - 1].getBoundingClientRect()
+    return last.right - first.left
+  }
+
   function measure(): void {
     const el = getEl()
     if (!el) return
     el.classList.add('measure-labels')
-    const scrollWidth = el.scrollWidth
     const clientWidth = el.clientWidth
+    const needed = neededWidth(el)
     el.classList.remove('measure-labels')
 
     if (clientWidth <= 0) {
       // Not laid out yet (hidden pane, jsdom): assume there is room and let the
       // resize observer correct it once the pane is shown.
       showLabels.value = true
-    } else {
-      // Asymmetric on purpose — see TURN_ON_SLACK_PX.
-      showLabels.value = showLabels.value
-        ? scrollWidth <= clientWidth + OVERFLOW_TOLERANCE_PX
-        : scrollWidth <= clientWidth - TURN_ON_SLACK_PX
+      opts.onMeasured?.()
+      return
     }
+
+    const style = getComputedStyle(el)
+    const inner =
+      clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0)
+    const spare = inner - needed
+    // Asymmetric on purpose — see TURN_ON_SLACK_PX.
+    showLabels.value = showLabels.value
+      ? spare >= -OVERFLOW_TOLERANCE_PX
+      : spare >= TURN_ON_SLACK_PX
     opts.onMeasured?.()
   }
 
