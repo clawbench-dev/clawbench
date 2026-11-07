@@ -16,6 +16,8 @@ import {
   extractSlashCommand,
   extractSkillCommand,
 } from '@/utils/contentBlocks.ts'
+import zhMessages from '@/i18n/locales/zh'
+import enMessages from '@/i18n/locales/en'
 
 // ── isSevereWarning ──
 describe('isSevereWarning', () => {
@@ -645,5 +647,47 @@ describe('extractSkillCommand', () => {
 
   it('returns null for empty string', () => {
     expect(extractSkillCommand('')).toBeNull()
+  })
+})
+
+// ── quota_exhausted ──
+//
+// Issue #640: a native OpenCode agent whose credit ran out used to leave the UI
+// spinning with no explanation, because the failure was reported as a generic
+// "AI backend exited abnormally". The backend now sends its own reason code, so
+// what matters here is that the code has a translation in BOTH locales — an
+// unmapped reason silently falls back to the raw provider text, which is how
+// "Insufficient Balance" reached the user with no context.
+describe('quota_exhausted warning', () => {
+  const zh = zhMessages as Record<string, any>
+  const en = enMessages as Record<string, any>
+  const zhText: string = zh.chat.contentBlocks.warningReasons.quota_exhausted
+  const enText: string = en.chat.contentBlocks.warningReasons.quota_exhausted
+
+  it('is translated in both locales', () => {
+    expect(zhText).toBeTruthy()
+    expect(enText).toBeTruthy()
+    // A missing key would render the key itself; guard against a copy-paste.
+    expect(zhText).not.toContain('quota_exhausted')
+    expect(enText).not.toContain('quota_exhausted')
+  })
+
+  it('tells the user what to do, not just that something failed', () => {
+    expect(zhText).toContain('额度')
+    expect(enText.toLowerCase()).toContain('credit')
+  })
+
+  it('renders the localized label with the provider message and HTTP status', () => {
+    const tFound = (key: string) =>
+      key === 'chat.contentBlocks.warningReasons.quota_exhausted' ? enText : key
+    expect(
+      getWarningText({ reason: 'quota_exhausted', text: 'Insufficient Balance', http_status: 402 }, tFound)
+    ).toBe(`${enText}: Insufficient Balance [HTTP 402]`)
+  })
+
+  it('renders the label alone when the provider sent no message', () => {
+    const tFound = (key: string) =>
+      key === 'chat.contentBlocks.warningReasons.quota_exhausted' ? enText : key
+    expect(getWarningText({ reason: 'quota_exhausted' }, tFound)).toBe(enText)
   })
 })

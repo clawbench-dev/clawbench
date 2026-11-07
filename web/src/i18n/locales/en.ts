@@ -1258,6 +1258,7 @@ export default {
         backend_exit: 'AI backend exited abnormally',
         request_failed: 'AI request failed',
         refused: 'AI request refused',
+        quota_exhausted: 'Out of credit or rate limited — check your balance or try again later',
         restart: 'Server restarted, AI response interrupted',
         panic: 'AI internal error, please retry',
       },

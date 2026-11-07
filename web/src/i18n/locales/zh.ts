@@ -1262,6 +1262,7 @@ export default {
         backend_exit: 'AI 后端异常退出',
         request_failed: 'AI 请求失败',
         refused: 'AI 请求被拒绝',
+        quota_exhausted: '额度已用尽或调用受限，请检查额度或稍后重试',
         restart: '服务重启，AI 响应中断',
         panic: 'AI 内部错误，请重试',
       },

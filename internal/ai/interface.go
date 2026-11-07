@@ -169,6 +169,21 @@ const (
 	// writing a spurious user+assistant row pair each time for a failure that can
 	// only be fixed in a terminal.
 	ReasonAuthRequired = "auth_required"
+	// ReasonQuotaExhausted means the upstream provider refused the call because
+	// the account is out of credit or over its plan limit (HTTP 402, or a
+	// provider-specific "quota"/"insufficient balance" error).
+	//
+	// It needs its own reason for two reasons. The user-facing remedy is
+	// specific ("top up or switch model"), which a generic "AI request failed"
+	// hides; and it must NOT be auto-continued — retrying an empty balance
+	// spends the retry budget and writes a user+assistant row pair per attempt
+	// for a failure only the user can fix.
+	//
+	// Both transports report it, in different shapes: the CLI prints a
+	// `type:"error"` frame with `error.type == "provider.quota"`, while ACP
+	// returns a JSON-RPC error whose data carries `errorName: "provider.quota"`
+	// (see opencode_stream.go and isACPQuotaError).
+	ReasonQuotaExhausted = "quota_exhausted"
 )
 
 // SelectOptionDef describes a single selectable option (e.g., mode, thinking effort level).

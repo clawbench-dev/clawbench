@@ -67,13 +67,24 @@ func TestClassifyTurnAbnormality(t *testing.T) {
 		{"user cancel with no terminal event", cancelReasonUser, false, false, nil, ""},
 		{"restart with warning block", cancelReasonRestart, true, false, warn(ai.ReasonBackendExit), ""},
 
-		// ── Non-retryable failures ──
-		{"panic", "", true, false, warn(ai.ReasonPanic), ""},
-		{"timeout", "", true, false, warn(ai.ReasonTimeout), ""},
-		{"agent init timeout", "", true, false, warn(ai.ReasonAgentInitTimeout), ""},
+		// ── Permanent failures: not retryable, AND not a clean finish ──
+		//
+		// They report abnormalTerminalFailure rather than "". Reporting "" made
+		// every consumer treat them as success: auto-cruise started confirmation
+		// rounds (up to the 100-speech cap), the drain loop pushed a "turn
+		// answered" notification, and a scheduled task recorded `completed`.
+		{"panic", "", true, false, warn(ai.ReasonPanic), abnormalTerminalFailure},
+		{"timeout", "", true, false, warn(ai.ReasonTimeout), abnormalTerminalFailure},
+		{"agent init timeout", "", true, false, warn(ai.ReasonAgentInitTimeout), abnormalTerminalFailure},
 		// A signed-out agent fails identically forever; retrying writes a
 		// spurious user+assistant row pair per attempt. Must stay non-retryable.
-		{"auth required", "", true, false, warn(ai.ReasonAuthRequired), ""},
+		{"auth required", "", true, false, warn(ai.ReasonAuthRequired), abnormalTerminalFailure},
+		// An exhausted quota only the user can fix. Retrying also costs ~85s
+		// per attempt against a rate-limited upstream (opencode 2.2.6 makes 11
+		// attempts before giving up), so the user would wait through several
+		// full retry cycles to learn what one message could have said.
+		{"quota exhausted", "", true, false, warn(ai.ReasonQuotaExhausted), abnormalTerminalFailure},
+		{"quota exhausted after text", "", true, false, warnPlusText(ai.ReasonQuotaExhausted), abnormalTerminalFailure},
 		{"context cancel warning", "", true, false, warn(ai.ReasonContextCancel), ""},
 		{"user cancel warning reason", "", true, false, warn(ai.ReasonUserCancel), ""},
 		{"disconnect warning reason", "", true, false, warn(ai.ReasonDisconnect), ""},

@@ -258,6 +258,15 @@ func TestShouldCruiseContinue_Gates(t *testing.T) {
 	assert.False(t, shouldCruiseContinue(cfg, DrainResult{Empty: true}))
 	// An abnormal turn → no cruise (auto-continue's job).
 	assert.False(t, shouldCruiseContinue(cfg, DrainResult{AbnormalReason: abnormalNoTerminal}))
+	// A PERMANENT failure → no cruise. Regression: classifyTurnAbnormality used
+	// to return "" for these, so an exhausted quota (or a signed-out agent) was
+	// indistinguishable from a clean finish and cruise started confirmation
+	// rounds against an account that cannot answer — up to the 100-speech cap,
+	// at ~85s per round on a rate-limited upstream.
+	for _, reason := range []string{abnormalTerminalFailure, abnormalEmpty} {
+		assert.False(t, shouldCruiseContinue(cfg, DrainResult{AbnormalReason: reason}),
+			"a turn that ended with %q must not cruise", reason)
+	}
 
 	// A stopped session → no cruise.
 	FinishSessionRun(sid)
@@ -393,4 +402,33 @@ func TestGoalSatisfied_ParsedFromFinalAnswer(t *testing.T) {
 	}
 	assert.False(t, grouprouting.Parse(summarize.ExtractLastAnswerFromBlocks(buried)).GoalSatisfied,
 		"a tag before the last tool call must not count")
+}
+
+// TestTerminalFailureIsNotACleanFinish is the direct regression test for the
+// invariant that broke auto-cruise: a permanent failure (exhausted quota,
+// signed-out agent) must be distinguishable from a clean finish, or every
+// consumer that tests `AbnormalReason == ""` mistakes it for success.
+//
+// It pins the classification AND both downstream decisions, because fixing only
+// the classifier would leave the consumers free to reintroduce the bug by
+// testing the empty string again.
+func TestTerminalFailureIsNotACleanFinish(t *testing.T) {
+	blocks := []model.ContentBlock{{Type: blockTypeWarning, Text: "Insufficient Balance", Reason: ai.ReasonQuotaExhausted}}
+	got := classifyTurnAbnormality("", true, false, blocks)
+
+	assert.Equal(t, abnormalTerminalFailure, got)
+	assert.NotEmpty(t, got, "a permanent failure must never look like a clean finish")
+	assert.False(t, shouldRetryTurn(got), "auto-continue must not re-send a request that cannot succeed")
+
+	// A genuinely clean turn stays "" and remains retryable-looking only because
+	// there is nothing to retry.
+	clean := classifyTurnAbnormality("", true, false, []model.ContentBlock{{Type: "text", Text: "done"}})
+	assert.Empty(t, clean)
+	assert.False(t, shouldRetryTurn(clean))
+
+	// A resumable failure still reports its own reason and is retried.
+	resumable := classifyTurnAbnormality("", true, false,
+		[]model.ContentBlock{{Type: blockTypeWarning, Text: "crashed", Reason: ai.ReasonBackendExit}})
+	assert.Equal(t, ai.ReasonBackendExit, resumable)
+	assert.True(t, shouldRetryTurn(resumable))
 }
