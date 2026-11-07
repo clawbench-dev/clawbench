@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"clawbench/internal/middleware"
+	"clawbench/internal/service"
 	"clawbench/internal/speech"
 
 	"github.com/coder/websocket"
@@ -23,10 +24,11 @@ import (
 // The client may send either a messageId (the server extracts the answer and
 // summarizes it — the same pipeline the web UI uses) or plain text.
 type ttsSpeechStart struct {
-	Type      string `json:"type"` // must be "start"
+	Type      string `json:"type"` // "start" (朗读已有消息) 或 "say" (发消息并朗读)
 	MessageID int64  `json:"messageId"`
 	Text      string `json:"text"`
 	Language  string `json:"language"`
+	SessionID string `json:"sessionId"` // type=say 时必填
 }
 
 // TTSSpeechWS is a single-call speech endpoint for embedded clients:
@@ -67,6 +69,37 @@ func TTSSpeechWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// type=say:发消息、跑完整轮、拿到回复,再继续摘要和朗读。设备因此只需要
+	// 一条连接,不用自己发消息、轮询回复、再单独取摘要。
+	if start.Type == "say" {
+		if start.SessionID == "" || start.Text == "" {
+			writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "sessionId and text required"})
+			return
+		}
+		writeSpeechFrame(ctx, conn, map[string]any{"type": "phase", "phase": "thinking"})
+		info := service.GetSessionFullInfo(start.SessionID)
+		if info == nil || info.ProjectPath != projectPath {
+			writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "session not found"})
+			return
+		}
+		res := service.RunTurn(service.TurnSpec{
+			Ctx:             ctx,
+			Mode:            service.ModeInteractive,
+			ProjectPath:     projectPath,
+			BackendName:     info.Backend,
+			SessionID:       start.SessionID,
+			AgentID:         info.AgentID,
+			ChatReq:         service.BuildChatRequest(start.Text, start.SessionID, projectPath, info.Backend, info.AgentID, "", "", "", "", "", false),
+			DrainOnFinalize: true,
+		})
+		if res.Err != "" || res.MsgID == 0 {
+			slog.Warn("tts speech ws: turn failed", slog.String("error", res.Err))
+			writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "turn failed"})
+			return
+		}
+		start.MessageID = res.MsgID
+	}
+
 	// Prefer the message id: the server extracts the answer and summarizes it
 	// exactly like the web UI does. Plain text is the fallback.
 	text := start.Text
@@ -94,7 +127,9 @@ func TTSSpeechWS(w http.ResponseWriter, r *http.Request) {
 		writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "summarize failed"})
 		return
 	}
-	if err := writeSpeechFrame(ctx, conn, map[string]any{"type": "summary", "text": summary}); err != nil {
+	if err := writeSpeechFrame(ctx, conn, map[string]any{
+		"type": "summary", "text": summary, "messageId": start.MessageID,
+	}); err != nil {
 		return
 	}
 	slog.Info("tts speech ws: summary sent",
