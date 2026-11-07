@@ -17,9 +17,13 @@ vi.mock('@/utils/renderToolDetail.ts', async (importOriginal) => {
   }
 })
 
-vi.mock('@/utils/icons', () => ({
-  getToolIcon: () => ({ icon: { template: '<span />' }, category: 'ask' }),
-}))
+vi.mock('@/utils/icons', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/icons')>()
+  return {
+    ...actual,
+    getToolIcon: () => ({ icon: { template: '<span />' }, category: 'ask' }),
+  }
+})
 const { mockSetProject } = vi.hoisted(() => ({ mockSetProject: vi.fn(() => Promise.resolve()) }))
 vi.mock('@/stores/app.ts', () => ({ store: { state: {}, setProject: mockSetProject } }))
 
@@ -67,6 +71,20 @@ afterEach(() => {
   for (const w of wrappers.splice(0)) {
     if (w.exists()) w.unmount()
   }
+})
+
+describe('ToolDetailDrawer — subagent label', () => {
+  it('shows Agent for OpenCode subagent when no sub-agent type is known', async () => {
+    const wrapper = mountDrawer({ toolName: 'subagent' })
+    await nextTick()
+    expect(wrapper.find('.tool-detail-header-name').text()).toBe('Agent')
+  })
+
+  it('shows the sub-agent type when known', async () => {
+    const wrapper = mountDrawer({ toolName: 'subagent', toolSubagentType: 'general' })
+    await nextTick()
+    expect(wrapper.find('.tool-detail-header-name').text()).toBe('General')
+  })
 })
 
 describe('ToolDetailDrawer — ask-card answer state', () => {

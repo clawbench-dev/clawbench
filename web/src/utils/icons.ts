@@ -84,6 +84,11 @@ const AGENT_SUBTYPE_NAMES = new Set([
 /** Tool names that are the Agent delegation card (all backends' spellings). */
 const AGENT_FAMILY_NAMES = new Set(['agent', 'task', 'subagent', 'sub agent', 'sub-agent'])
 
+/** Whether a tool name belongs to the Agent delegation family. */
+export function isAgentFamilyToolName(name?: string): boolean {
+  return !!name && AGENT_FAMILY_NAMES.has(name.toLowerCase())
+}
+
 /**
  * Lowercased tool name → entry, built once at module load.
  *

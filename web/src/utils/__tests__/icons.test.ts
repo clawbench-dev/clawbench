@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TOOL_ICONS, FALLBACK_TOOL_ICON, getToolIcon, toolDisplayName } from '@/utils/icons'
+import { TOOL_ICONS, FALLBACK_TOOL_ICON, getToolIcon, toolDisplayName, isAgentFamilyToolName } from '@/utils/icons'
 
 describe('TOOL_ICONS', () => {
   it('has an entry for every known tool name', () => {
@@ -155,5 +155,21 @@ describe('toolDisplayName', () => {
   it('handles null/undefined input gracefully', () => {
     expect(toolDisplayName('Agent')).toBe('Agent')
     expect(toolDisplayName('Agent', undefined)).toBe('Agent')
+  })
+})
+
+describe('isAgentFamilyToolName', () => {
+  it('recognizes every delegation-tool spelling', () => {
+    expect(isAgentFamilyToolName('Agent')).toBe(true)
+    expect(isAgentFamilyToolName('task')).toBe(true)
+    expect(isAgentFamilyToolName('subagent')).toBe(true)
+    expect(isAgentFamilyToolName('Sub Agent')).toBe(true)
+    expect(isAgentFamilyToolName('sub-agent')).toBe(true)
+  })
+
+  it('rejects ordinary tools and empty names', () => {
+    expect(isAgentFamilyToolName('Read')).toBe(false)
+    expect(isAgentFamilyToolName('')).toBe(false)
+    expect(isAgentFamilyToolName(undefined)).toBe(false)
   })
 })
