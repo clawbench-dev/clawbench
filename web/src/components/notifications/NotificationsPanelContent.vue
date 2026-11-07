@@ -1,7 +1,7 @@
 <template>
   <div class="notif-panel">
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
-    <div ref="headerRef" class="list-header" :class="{ 'show-labels': showLabels }">
+    <ActionBar class="list-header" mode="menu">
       <div class="notif-breadcrumb">
         <Inbox class="crumb-icon" :size="14" />
         <span>{{ t('notifications.title') }}</span>
@@ -26,7 +26,7 @@
         <Trash2 :size="14" />
         <span class="action-label">{{ t('notifications.clear') }}</span>
       </button>
-    </div>
+    </ActionBar>
 
     <!-- Filters: three dropdowns on one row (project / type / time). -->
     <div class="notif-filters">
@@ -184,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
@@ -192,7 +192,7 @@ import {
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import { useActionBarLabels } from '@/composables/useActionBarLabels'
+import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
@@ -205,10 +205,6 @@ import type { NotificationItem, NotificationKind, NotificationRange } from '@/ut
 const props = defineProps<{ active: boolean }>()
 
 const { t } = useI18n()
-
-/** Labels ride next to the icons only when the header can hold them (shared rule). */
-const headerRef = ref<HTMLElement | null>(null)
-const { showLabels } = useActionBarLabels(() => headerRef.value)
 const toast = useToast()
 const dialog = useDialog()
 
@@ -639,19 +635,6 @@ function forgeTargetFromItemKey(key: string) {
   overflow: hidden;
 }
 .crumb-icon { color: var(--accent-color); flex-shrink: 0; }
-/* While measuring, the breadcrumb keeps its natural width so an overflow means
-   the LABELS do not fit (otherwise it would just shrink and absorb them). */
-.list-header.measure-labels .notif-breadcrumb {
-  flex: 0 0 auto;
-}
-/* Labelled header buttons grow with their text instead of staying squares. */
-.list-header.show-labels .header-btn,
-.list-header.measure-labels .header-btn {
-  width: auto;
-  padding: 0 calc(10 * var(--dp));
-  gap: calc(5 * var(--dp));
-}
-
 .header-btn {
   width: calc(28 * var(--dp));
   height: calc(28 * var(--dp));

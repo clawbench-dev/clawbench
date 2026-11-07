@@ -596,7 +596,7 @@ describe('NotificationsPanelContent — header labels', () => {
     const wrapper = mountPanel()
     await nextTick()
     const header = wrapper.find('.list-header')
-    expect(header.classes()).toContain('show-labels')
+    expect(header.classes()).toContain('ab--labels')
     // RefreshButton is stubbed above without a slot, so only the clear button's
     // label is in this DOM; assert that one explicitly.
     expect(header.find('[data-action="clear"] .action-label').exists()).toBe(true)

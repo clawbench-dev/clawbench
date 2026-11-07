@@ -271,12 +271,11 @@ describe('TaskListPage — header labels', () => {
 
   it('shows the action labels when the header can hold them', async () => {
     // jsdom has no layout, so the header measures 0 wide and assumes there is
-    // room — the wide-pane case. The mechanism itself is covered by
-    // useActionBarLabels.test.ts; this pins the wiring (class binding + label
-    // spans) so a refactor cannot silently drop it.
+    // room — the wide-pane case. The width decisions live in ActionBar; this
+    // pins the wiring (label spans + the class that reveals them).
     const wrapper = await mountWith([])
     const header = wrapper.find('.list-header')
-    expect(header.classes()).toContain('show-labels')
+    expect(header.classes()).toContain('ab--labels')
     expect(header.findAll('.action-label').length).toBeGreaterThanOrEqual(2)
   })
 })

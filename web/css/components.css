@@ -1532,8 +1532,16 @@
     flex-shrink: 0;
 }
 .show-labels .action-label,
-.measure-labels .action-label {
+.measure-labels .action-label,
+.ab--labels .action-label {
     display: inline;
+}
+
+/* ActionBar: a labelled button must be allowed to grow. Bars style their
+   buttons with a fixed square size; leaving that in place would clip the label
+   instead of widening the button (the bug this control exists to prevent). */
+.ab--labels > button:not([data-ab-more]) {
+    width: auto;
 }
 
 /* No transitions while measuring.
