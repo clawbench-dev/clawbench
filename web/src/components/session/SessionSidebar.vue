@@ -147,8 +147,11 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
   flex-shrink: 0;
   cursor: default;
 }
+/* Pinned is a toggled-on state, not a primary action: same tint as the shared
+   ActionBar "active" treatment instead of a hard-coded blue that ignores the
+   theme. */
 .header-action-btn.sidebar-pin-btn.is-active {
-  background: rgba(0, 102, 204, 0.15);
-  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  color: var(--accent-color);
 }
 </style>

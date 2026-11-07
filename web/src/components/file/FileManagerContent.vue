@@ -3160,14 +3160,15 @@ function scrollSelectedIntoView(path) {
     transition: background-color var(--duration-base), color var(--duration-base);
     flex-shrink: 0;
 }
-.toolbar-btn.active {
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-}
-
+/* "This is on" = accent text on an accent tint — the same recipe as the
+   component's other toggles (.fs-toggle-btn.active, .toolbar-dropdown-item.active).
+   It used to be a solid accent block with white text, which failed contrast in
+   28 of 36 themes (worst 1.69) and read as a different kind of control sitting
+   among flat icon buttons. */
+.toolbar-btn.active,
 .toolbar-btn.sort-active {
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    color: var(--accent-color);
 }
 
 .toolbar-btn:disabled {

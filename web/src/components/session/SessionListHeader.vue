@@ -24,7 +24,7 @@
         <Search :size="16" />
         <span class="action-label">{{ t('sessionSearch.title') }}</span>
       </button>
-      <button class="header-action-btn is-primary" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
+      <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
         <span class="action-label">{{ t('session.newSession') }}</span>
       </button>
@@ -166,9 +166,11 @@ const sessionBarColor = computed(() => {
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
 /* Size, radius, colour and hover come from the shared ActionBar row rules
-   (size="bar"). The accent is no longer painted on every button: the accent
-   colour fails 4.5:1 in 15 of 36 themes (worst 1.92), so it marks the primary
-   action only (`.is-primary`, set by the template) instead of the whole row. */
+   (size="bar"). Every button in this row uses the same resting colour: it is a
+   utility row (search / shared / create / refresh / pin), and the accent used
+   to make one or two of them read as a different kind of control. The accent
+   still marks a TOGGLED-ON state (the sidebar pin), which is a state rather
+   than emphasis. */
 .header-action-btn {
   margin-left: var(--space-3);
   border: none;

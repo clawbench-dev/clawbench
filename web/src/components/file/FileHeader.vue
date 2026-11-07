@@ -645,7 +645,15 @@ function handleFileNameDragEnd() {
     align-items: center;
     flex-shrink: 0;
 }
+/* Deliberately NOT an ActionBar button: it closes the overlay view rather than
+   acting on the file, so it keeps its own filled-red shape and full 26px box
+   (the shared row rules would make it a flat 14px glyph — the row's own
+   `> button` sizing does not reach here because it is outside the bar, but the
+   `.file-header-btn` base is shared, so the size is stated explicitly). */
 .overlay-close-btn {
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
+    padding: 0;
     background: #b91c1c;
     /* Just a hint of rounding — a larger radius on a filled block reads as a
        floating chip rather than a corner affordance. */
