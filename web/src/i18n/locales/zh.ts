@@ -1422,6 +1422,7 @@ export default {
     browseCount: '{n} 个会话',
     browseNote: '只读列表 · 点任意会话会切到该项目并打开它',
     browseFailed: '加载该项目会话失败',
+    collapseProject: '收起',
     reorderFailed: '保存会话顺序失败',
     forkGroupTitle: '分叉自本会话，点击折叠',
     forkCount: '{n} 个分叉',

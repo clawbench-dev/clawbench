@@ -1614,7 +1614,7 @@ describe('SessionList', () => {
       expect(wrapper.find('.browse-row .pcard-row-title').text()).toBe('Old one')
     })
 
-    it('returns to the cards when the back arrow is clicked', async () => {
+    it('returns to the cards when the expanded header is clicked', async () => {
       routeListAndBrowse(browseSessions)
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
@@ -1624,7 +1624,8 @@ describe('SessionList', () => {
       await flushPromises()
       expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
 
-      await wrapper.find('.browse-back').trigger('click')
+      // The expanded header is the collapse control now.
+      await wrapper.find('.browse-head').trigger('click')
       await flushPromises()
       expect(wrapper.find('[data-project-browse]').exists()).toBe(false)
       // The cards are back, not a re-fetch of the list.

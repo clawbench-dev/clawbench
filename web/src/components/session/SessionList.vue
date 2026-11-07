@@ -291,17 +291,23 @@
       :style="{ '--pc': projectTintVar(browsingProject) }"
       data-project-browse
     >
-      <div class="browse-head">
+      <!-- The whole header collapses the view: the chevron that expanded the
+           card is now the same spot pointing back, so the control does not
+           move between the two states. -->
+      <button
+        class="browse-head"
+        :title="t('session.collapseProject')"
+        :aria-label="`${t('session.collapseProject')} · ${browsingName}`"
+        @click="closeProjectBrowse"
+      >
         <div class="browse-head-row">
-          <button class="browse-back" :title="t('common.back')" :aria-label="t('common.back')" @click="closeProjectBrowse">
-            <ChevronLeft :size="14" />
-          </button>
           <span class="browse-title">{{ browsingName }}</span>
           <span class="browse-count">{{ browsingSessions.length }}</span>
           <span class="browse-path" :title="browsingProject">{{ browsingPath }}</span>
+          <ChevronLeft :size="14" class="browse-chev" />
         </div>
         <div class="browse-note">{{ t('session.browseNote') }}</div>
-      </div>
+      </button>
       <div class="browse-body">
         <PanelSkeleton v-if="browsingLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
         <div v-else-if="browsingError" class="session-empty">{{ browsingError }}</div>
@@ -2205,8 +2211,15 @@ onUnmounted(() => {
 
 .pcard-count {
   flex: 0 0 auto;
-  padding: 0 var(--space-2);
-  /* Semi-transparent version of the same project colour — the chip sits on the
+  /* Round badge, fixed size: the count is a single number (the session cap is
+     two digits), so a circle keeps the header rhythm even and reads as a
+     marker rather than a label. */
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  /* Semi-transparent version of the same project colour — it sits on the
      opaque header, so alpha reads as a tint rather than a separate colour. */
   background: color-mix(in srgb, var(--pc, var(--text-primary)) 16%, transparent);
   color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
@@ -2324,9 +2337,21 @@ onUnmounted(() => {
 
 .browse-head {
   flex: 0 0 auto;
+  width: 100%;
   padding: var(--space-3) var(--space-4);
   background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
+  border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .browse-head:hover {
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 22%, var(--bg-primary, #fff));
+  }
 }
 
 .browse-head-row {
@@ -2336,25 +2361,14 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.browse-back {
+/* Chevron: the whole header is the collapse button, this only marks it. */
+.browse-chev {
   flex: 0 0 auto;
-  width: calc(22 * var(--dp));
-  height: calc(22 * var(--dp));
-  display: grid;
-  place-items: center;
-  margin-left: calc(-1 * var(--space-2));
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--text-muted, #656d76);
-  cursor: pointer;
 }
 
-@media (hover: hover) {
-  .browse-back:hover {
-    color: var(--pc, var(--accent-color, #0066cc));
-    background: color-mix(in srgb, var(--pc, var(--text-primary)) 14%, transparent);
-  }
+.browse-head:hover .browse-chev {
+  color: var(--pc, var(--accent-color, #0066cc));
 }
 
 .browse-title {
@@ -2370,7 +2384,12 @@ onUnmounted(() => {
 
 .browse-count {
   flex: 0 0 auto;
-  padding: 0 var(--space-2);
+  /* Same round badge as the collapsed card's header. */
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
   background: color-mix(in srgb, var(--pc, var(--text-primary)) 16%, transparent);
   color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
   font-size: var(--font-size-2xs);

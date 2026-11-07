@@ -1419,6 +1419,7 @@ export default {
     browseCount: '{n} sessions',
     browseNote: 'Read-only list · opening a session switches to that project',
     browseFailed: 'Failed to load this project’s sessions',
+    collapseProject: 'Collapse',
     reorderFailed: 'Failed to save session order',
     forkGroupTitle: 'Forked from this session — click to collapse',
     forkCount: '{n} fork(s)',
