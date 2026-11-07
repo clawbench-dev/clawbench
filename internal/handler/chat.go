@@ -856,7 +856,18 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			// will run, not whichever model last refreshed the agent-level
 			// list. The session row survives a restart, so this is also what
 			// makes the drawer correct before the first message after a restart.
-			if es := reg.GetThinkingEffortStateForModel(sessionAgentID, service.GetSessionModel(sessionID), ""); es != nil {
+			//
+			// A session created without a model (and every group-member row)
+			// stores "", which would find nothing — resolve the agent's default,
+			// the model its first turn will actually run. Same rule as
+			// sessionOffersThinkingEffort.
+			effortModel := service.GetSessionModel(sessionID)
+			if effortModel == "" {
+				if a := model.GetAgent(sessionAgentID); a != nil {
+					effortModel = a.DefaultModelID()
+				}
+			}
+			if es := reg.GetThinkingEffortStateForModel(sessionAgentID, effortModel, ""); es != nil {
 				st.Effort = es
 			}
 			if cmds := reg.GetCommands(sessionAgentID); len(cmds) > 0 {

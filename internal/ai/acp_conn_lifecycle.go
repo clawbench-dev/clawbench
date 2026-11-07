@@ -1565,7 +1565,11 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 	// deepseek only high/max/default), so a list learned from a previous model
 	// must not survive a switch. Without this, a stale wider list keeps
 	// advertising levels the current model rejects.
-	c.applyConfigOptionsFromSetResponse(resp.ConfigOptions)
+	requestedModel := ""
+	if configID == "model" {
+		requestedModel = value
+	}
+	c.applyConfigOptionsFromSetResponse(resp.ConfigOptions, requestedModel)
 	return nil
 }
 
@@ -1575,7 +1579,7 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 // Only the option LISTS are taken (the current value is applied by the caller
 // through its own dedup bookkeeping). Every category present is updated, so a
 // model switch that narrows the effort levels is reflected immediately.
-func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOption) {
+func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOption, requestedModel string) {
 	if len(opts) == 0 {
 		return
 	}
@@ -1595,7 +1599,17 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		return
 	}
 	reg := GetAgentCapabilityRegistry()
+	// Which model the levels belong to: the response's own model option is
+	// authoritative; otherwise the model this call was SETTING (the cached
+	// current value is only updated after the RPC returns, so it is still the
+	// model we just left); otherwise whatever the session is known to run.
 	modelID := c.modelIDFromConfigOptions(opts)
+	if modelID == "" {
+		modelID = requestedModel
+	}
+	if modelID == "" {
+		modelID = c.GetCurrentModelID()
+	}
 	for _, opt := range opts {
 		if opt.Select == nil || opt.Select.Category == nil {
 			continue
@@ -1627,12 +1641,12 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 	}
 }
 
-// modelIDFromConfigOptions returns the model named by a config-option set.
+// modelIDFromConfigOptions returns the model named by a config-option set, or
+// "" when the agent answered with only the changed option.
 //
 // The set_config_option response carries the agent's state AFTER the change, so
-// its model option names the model the thinking levels belong to. Agents that
-// answer with only the changed option omit it — fall back to the session's
-// current model.
+// its model option names the model the thinking levels belong to. Callers fall
+// back to the model they requested when it is absent.
 func (c *ACPConn) modelIDFromConfigOptions(opts []acp.SessionConfigOption) string {
 	for _, opt := range opts {
 		if opt.Select != nil && opt.Select.Category != nil &&
@@ -1640,7 +1654,7 @@ func (c *ACPConn) modelIDFromConfigOptions(opts []acp.SessionConfigOption) strin
 			return string(opt.Select.CurrentValue)
 		}
 	}
-	return c.GetCurrentModelID()
+	return ""
 }
 
 // levelsFromSelect converts a SelectState's options into thinking-effort defs.

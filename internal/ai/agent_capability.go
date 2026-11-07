@@ -43,9 +43,11 @@ type AgentCapability struct {
 	// session would show that model's levels. Keyed by model, the same model
 	// looks identical in every session and every entry point.
 	//
-	// nil/absent entry = this model's list has never been learned; readers then
-	// fall back to AvailableThinkingEfforts (agents whose levels are genuinely
-	// agent-wide, e.g. claude/codex).
+	// An absent entry means this model's list has never been learned. There is
+	// deliberately no fallback to AvailableThinkingEfforts (which would show
+	// another model's levels); callers that must show something use the
+	// backend's static list. The "" key holds the list of agents that advertise
+	// levels without any model option (OpenClaw).
 	ThinkingEffortsByModel map[string][]ThinkingEffortDef `json:"-"`
 	AvailableModels        []model.AgentModel
 	AvailableCommands      []AvailableCommandInfo
@@ -77,6 +79,38 @@ type AgentCapability struct {
 	refreshedInProcess bool
 }
 
+// clone returns a deep copy that can be read WITHOUT holding the registry
+// lock. persistAsync marshals the snapshot on a goroutine while other
+// goroutines keep updating the live entry — sharing the pointer made the
+// per-model map a fatal "concurrent map read and map write" (issue #637).
+func (c *AgentCapability) clone() *AgentCapability {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.AvailableModes = append([]ModeDef(nil), c.AvailableModes...)
+	out.AvailableThinkingEfforts = append([]ThinkingEffortDef(nil), c.AvailableThinkingEfforts...)
+	if c.ThinkingEffortsByModel != nil {
+		out.ThinkingEffortsByModel = make(map[string][]ThinkingEffortDef, len(c.ThinkingEffortsByModel))
+		for modelID, levels := range c.ThinkingEffortsByModel {
+			out.ThinkingEffortsByModel[modelID] = append([]ThinkingEffortDef(nil), levels...)
+		}
+	}
+	out.AvailableModels = append([]model.AgentModel(nil), c.AvailableModels...)
+	out.AvailableCommands = append([]AvailableCommandInfo(nil), c.AvailableCommands...)
+	if c.ConfigOptionState != nil {
+		cfg := *c.ConfigOptionState
+		out.ConfigOptionState = &cfg
+	}
+	if c.AvailableOptions != nil {
+		out.AvailableOptions = make(map[string][]SelectOptionDef, len(c.AvailableOptions))
+		for k, v := range c.AvailableOptions {
+			out.AvailableOptions[k] = append([]SelectOptionDef(nil), v...)
+		}
+	}
+	return &out
+}
+
 // HasData returns true if the capability has any non-empty data.
 func (c *AgentCapability) HasData() bool {
 	return len(c.AvailableModes) > 0 ||
@@ -99,6 +133,12 @@ func (c *AgentCapability) HasData() bool {
 type AgentCapabilityRegistry struct {
 	mu   sync.RWMutex
 	caps map[string]*AgentCapability // agentID -> capability
+
+	// persistMu serializes the background DB writes. Each update spawns a
+	// goroutine, and without this an older snapshot could land last and drop a
+	// newer entry — the per-model level map accumulates knowledge, so a lost
+	// write is a lost model.
+	persistMu sync.Mutex
 }
 
 // Global singleton
@@ -211,10 +251,14 @@ func (r *AgentCapabilityRegistry) UpdateThinkingEfforts(agentID string, levels [
 }
 
 // UpdateThinkingEffortsForModel records the level list ONE model advertised
-// (issue #637). Empty lists and an empty model id are ignored: neither carries
-// information, and the reader falls back to the agent-level list.
+// (issue #637). Empty lists are ignored (they carry no information).
+//
+// An EMPTY model id is a legitimate key: some ACP agents advertise
+// `thought_level` but no model option at all (OpenClaw), so their levels are
+// agent-wide and are stored under "". Readers that have no model for the
+// session use the same empty key.
 func (r *AgentCapabilityRegistry) UpdateThinkingEffortsForModel(agentID, modelID string, levels []ThinkingEffortDef) {
-	if modelID == "" || len(levels) == 0 {
+	if len(levels) == 0 {
 		return
 	}
 	copied := make([]ThinkingEffortDef, len(levels))
@@ -225,9 +269,6 @@ func (r *AgentCapabilityRegistry) UpdateThinkingEffortsForModel(agentID, modelID
 // ThinkingEffortsForModel returns the level list recorded for this model, if
 // one was ever reported.
 func (r *AgentCapabilityRegistry) ThinkingEffortsForModel(agentID, modelID string) ([]ThinkingEffortDef, bool) {
-	if modelID == "" {
-		return nil, false
-	}
 	r.mu.RLock()
 	agentCap, ok := r.caps[agentID]
 	var levels []ThinkingEffortDef
@@ -928,15 +969,27 @@ func (r *AgentCapabilityRegistry) persistAsync(agentID string) {
 		return
 	}
 
-	r.mu.RLock()
-	agentCap, ok := r.caps[agentID]
-	r.mu.RUnlock()
-	if !ok || agentCap == nil {
-		return
-	}
-
 	go func() {
-		if err := r.saveToDB(db, agentID, agentCap); err != nil {
+		// Serialize writes and take the snapshot AT WRITE TIME: two rapid
+		// updates spawn two goroutines, and an older snapshot landing last
+		// would silently drop the newer entry. Cloning under r.mu also keeps
+		// the marshal away from the live entry (a shared map here was a fatal
+		// "concurrent map read and map write", issue #637).
+		r.persistMu.Lock()
+		defer r.persistMu.Unlock()
+
+		r.mu.RLock()
+		agentCap := r.caps[agentID]
+		var snapshot *AgentCapability
+		if agentCap != nil {
+			snapshot = agentCap.clone()
+		}
+		r.mu.RUnlock()
+		if snapshot == nil {
+			return
+		}
+
+		if err := r.saveToDB(db, agentID, snapshot); err != nil {
 			slog.Warn("failed to persist agent capability to DB", "agent", agentID, "error", err)
 		}
 	}()

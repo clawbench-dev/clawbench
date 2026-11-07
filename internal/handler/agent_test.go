@@ -1365,7 +1365,7 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 
 	// Populate agent-level capabilities in the registry
 	ai.GetAgentCapabilityRegistry().UpdateModes("acp-agent", []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}})
-	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts("acp-agent", []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel("acp-agent", "m1", []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
 	ai.GetAgentCapabilityRegistry().UpdateModels("acp-agent", []model.AgentModel{{ID: "acp-m1", Name: "ACP Model 1", Default: true}})
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)

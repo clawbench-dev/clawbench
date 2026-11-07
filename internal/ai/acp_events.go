@@ -496,6 +496,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 							forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: enrichModelList(conn, modelList)})
 						}
 						conn.SetCachedModelListState(modelList)
+						// The notification states what the agent is actually
+						// running, so the session cache must follow — the
+						// per-model level list is looked up by it. Skipped while
+						// the session is being established: the agent is then
+						// announcing its own persisted default, and the user's
+						// pre-applied pick must win.
+						if !conn.IsEstablishingSession() && modelList.CurrentModelID != "" {
+							conn.UpdateCachedCurrent("model", modelList.CurrentModelID)
+						}
 					} else {
 						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
 					}

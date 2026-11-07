@@ -356,13 +356,14 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.Mode = reg.GetModeState(a.ID, "")
-		// Levels are per MODEL (issue #637): resolve them against the same model
-		// the model list below reports as current, so the settings picker and
-		// the chat drawer never describe different models.
-		agentCurrentModel := connManager.GetCurrentModelIDByAgentID(a.ID)
-		s.Effort = reg.GetThinkingEffortStateForModel(a.ID, agentCurrentModel, "")
+		// Levels are per MODEL (issue #637). Resolve them against the agent's
+		// DEFAULT model: it is what the settings picker configures, and it is
+		// deterministic — the live "current model" is whichever connection
+		// happened to be picked from a map, so the list would flip between
+		// requests when two sessions run different models.
+		s.Effort = reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), "")
 		s.Commands = reg.GetCommands(a.ID)
-		s.ModelList = reg.GetModelListState(a.ID, agentCurrentModel)
+		s.ModelList = reg.GetModelListState(a.ID, connManager.GetCurrentModelIDByAgentID(a.ID))
 		states[a.ID] = s
 
 		var acpModels []model.AgentModel

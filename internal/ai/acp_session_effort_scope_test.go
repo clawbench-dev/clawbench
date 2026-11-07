@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,16 +86,19 @@ func TestUpdateThinkingEffortsForModel_IgnoresEmpty(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
 	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "glm-5.3", []ThinkingEffortDef{{ID: "low"}})
 
-	// Neither an empty list nor an empty model id may create an entry: both
-	// carry no information, and the reader must keep falling back.
+	// An empty list carries no information and must not overwrite a known one.
 	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "glm-5.3", nil)
-	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "", []ThinkingEffortDef{{ID: "max"}})
-
 	levels, ok := reg.ThinkingEffortsForModel("effort-scope-empty", "glm-5.3")
 	require.True(t, ok)
 	assert.Equal(t, []string{"low"}, effortIDs(levels))
-	_, ok = reg.ThinkingEffortsForModel("effort-scope-empty", "")
-	assert.False(t, ok)
+
+	// An EMPTY model id is a legitimate key: agents that advertise levels
+	// without any model option (OpenClaw) store theirs there, and a session
+	// with no model reads the same key.
+	reg.UpdateThinkingEffortsForModel("effort-scope-empty", "", []ThinkingEffortDef{{ID: "high"}})
+	levels, ok = reg.ThinkingEffortsForModel("effort-scope-empty", "")
+	require.True(t, ok, "the no-model key must be usable")
+	assert.Equal(t, []string{"high"}, effortIDs(levels))
 }
 
 func TestEmitSessionStateEvents_UsesTheSessionsModel(t *testing.T) {
@@ -135,7 +139,7 @@ func TestApplyConfigOptionsFromSetResponse_RecordsPerModel(t *testing.T) {
 	conn.applyConfigOptionsFromSetResponse([]acp.SessionConfigOption{
 		modelSelectOption("deepseek-v4-pro"),
 		thinkingSelectOption("high", "max", "default"),
-	})
+	}, "")
 
 	levels, ok := reg.ThinkingEffortsForModel("effort-scope-switch", "deepseek-v4-pro")
 	require.True(t, ok)
@@ -205,13 +209,14 @@ func TestRegistry_ThinkingEffortsByModelSurviveSaveAndLoad(t *testing.T) {
 	reg.UpdateThinkingEffortsForModel("effort-scope-persist", "deepseek-v4-pro",
 		[]ThinkingEffortDef{{ID: "high"}, {ID: "max"}})
 
-	// persistAsync runs in a goroutine; wait for the write to land.
+	// persistAsync runs in a goroutine; wait for BOTH entries to land (the two
+	// updates are written one after the other).
 	require.Eventually(t, func() bool {
 		var raw string
 		if err := db.QueryRow("SELECT acp_thinking_efforts_by_model FROM agents WHERE id = 'effort-scope-persist'").Scan(&raw); err != nil {
 			return false
 		}
-		return raw != "" && raw != "{}"
+		return strings.Contains(raw, "glm-5.3") && strings.Contains(raw, "deepseek-v4-pro")
 	}, 2*time.Second, 20*time.Millisecond, "per-model levels must be persisted")
 
 	reloaded := resetGlobalRegistryForTest(t)
@@ -238,4 +243,48 @@ func TestSetConfigOption_UpdatesCachedModel(t *testing.T) {
 	require.NoError(t, conn.setConfigOptionWithCrashCheck(context.Background(), "sid",
 		configOptionSpec{configID: "model", value: "deepseek-v4-pro", label: "model"}))
 	assert.Equal(t, "deepseek-v4-pro", conn.GetCurrentModelID())
+}
+
+func TestEmitSessionStateEvents_NoModelAgentUsesEmptyKey(t *testing.T) {
+	agent := &model.Agent{ID: "effort-scope-nomodel", Backend: "openclaw", AcpCommand: "openclaw acp"}
+	reg := resetGlobalRegistryForTest(t)
+	// OpenClaw advertises thought_level but no model option, so its list is
+	// stored under the empty key and must still reach the drawer.
+	reg.UpdateThinkingEffortsForModel("effort-scope-nomodel", "", []ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
+
+	conn := newACPConn(agent, "effort-scope-nomodel")
+	conn.SetCurrentThinkingEffortID("high")
+
+	ch := make(chan StreamEvent, 16)
+	conn.EmitSessionStateEvents(ch)
+
+	var got *ThinkingEffortState
+	for _, e := range drainStreamEvents(ch) {
+		if e.Type == "thinking_effort_update" {
+			got = e.ThinkingEffort
+		}
+	}
+	require.NotNil(t, got, "an agent without a model option must still get its levels")
+	assert.Equal(t, []string{"low", "high"}, effortIDs(got.AvailableLevels))
+}
+
+func TestApplyConfigOptionsFromSetResponse_AttributedToRequestedModel(t *testing.T) {
+	agent := &model.Agent{ID: "effort-scope-requested", Backend: "acp-stdio", AcpCommand: "echo"}
+	reg := resetGlobalRegistryForTest(t)
+	conn := newACPConn(agent, "effort-scope-requested")
+	conn.SetCurrentModelID("glm-5.3")
+
+	// The agent answers with ONLY the changed option (no model option), while
+	// the cached current model is still the one being left. The list belongs to
+	// the model the call was setting.
+	conn.applyConfigOptionsFromSetResponse([]acp.SessionConfigOption{
+		thinkingSelectOption("high", "max", "default"),
+	}, "deepseek-v4-pro")
+
+	levels, ok := reg.ThinkingEffortsForModel("effort-scope-requested", "deepseek-v4-pro")
+	require.True(t, ok)
+	assert.Equal(t, []string{"high", "max", "default"}, effortIDs(levels))
+
+	_, ok = reg.ThinkingEffortsForModel("effort-scope-requested", "glm-5.3")
+	assert.False(t, ok, "must not be attributed to the model being left")
 }
