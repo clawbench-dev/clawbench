@@ -36,7 +36,7 @@
     </div>
 
     <!-- Region 2: Toolbar (ResizeObserver target) -->
-    <ActionBar ref="actionsRef" class="header-actions" mode="menu" align="end" always-more>
+    <ActionBar ref="actionsRef" class="header-actions" mode="menu" align="end" size="header" always-more>
       <!-- Refresh button — first in the toolbar, and the last to collapse. -->
       <RefreshButton v-if="hasTextContent && !isUntitled" data-toolbar-id="refresh" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh">
         <span class="action-label">{{ t('nav.refresh') }}</span>
@@ -593,34 +593,18 @@ function handleFileNameDragEnd() {
     gap: var(--space-4);
     flex: 1 1 0;
 }
-/* Labelled buttons get room for the text; the icon+text gap is what keeps the
-   two from touching. ActionBar decides when the labels are shown. */
-.header-actions.ab--labels .file-header-btn {
-    gap: calc(4 * var(--dp));
-    padding: 0 calc(8 * var(--dp));
-}
 
+
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="header"). This block keeps only the parts specific to this header. */
 .file-header-btn {
-    padding: var(--space-3);
     border: none;
-    border-radius: var(--radius-xs);
     background: transparent;
     font-size: var(--font-size-xs);
     cursor: pointer;
-    color: var(--text-secondary);
-    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-}
-@media (hover: hover) {
-    .file-header-btn:hover {
-        background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-    }
-}
-.file-header-btn svg {
-    width: calc(14 * var(--dp));
-    height: calc(14 * var(--dp));
 }
 .file-header-btn:disabled {
     opacity: var(--opacity-disabled);

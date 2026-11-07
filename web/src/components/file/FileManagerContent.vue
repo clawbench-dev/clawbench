@@ -32,7 +32,7 @@
             <Trash2 :size="16" />
           </button>
         </div>
-        <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu">
+        <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu" size="bar">
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -3145,40 +3145,20 @@ function scrollSelectedIntoView(path) {
     padding: var(--space-2) var(--space-3);
 }
 
-/* Unified toolbar button */
-/* Labelled buttons grow with their text; the circular shape has to become a
-   pill, otherwise `border-radius: 50%` turns a wide button into an ellipse. */
-.dir-toolbar-btns.ab--labels .toolbar-btn {
-    width: auto;
-    padding: 0 calc(8 * var(--dp));
-    border-radius: var(--radius-full);
-}
-
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"); this block keeps only what is specific to this toolbar.
+   Never transition `all`: the width must snap when the labels appear or
+   disappear, otherwise the bar animates between two widths and looks like it is
+   flickering. */
 .toolbar-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: calc(3 * var(--dp));
-    width: calc(26 * var(--dp));
-    height: calc(26 * var(--dp));
-    padding: 0;
     border: none;
-    border-radius: 50%;
     background: transparent;
-    color: var(--text-secondary, #666);
     cursor: pointer;
-    /* Never transition `all`: the width must snap when the labels appear or
-       disappear, otherwise the bar animates between two widths and looks like
-       it is flickering. */
     transition: background-color var(--duration-base), color var(--duration-base);
     flex-shrink: 0;
-}
-
-@media (hover: hover) {
-    .toolbar-btn:hover {
-        background: var(--bg-secondary, #e0e0e0);
-        color: var(--accent-color, #4a90d9);
-    }
 }
 .toolbar-btn.active {
     background: var(--accent-color, #4a90d9);

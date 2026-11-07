@@ -206,25 +206,18 @@ body.code-preview-resizing * {
   flex-shrink: 0;
 }
 
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"); this block keeps only what is specific to the preview card. */
 .code-preview-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: calc(3 * var(--dp)) var(--space-3);
-  height: calc(24 * var(--dp));
   font-size: var(--font-size-xs);
-  color: var(--text-secondary, #5f6368);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-xs);
   cursor: pointer;
   user-select: none;
   transition: background-color var(--duration-base), color var(--duration-base);
-}
-
-.code-preview-btn:hover {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
-  color: var(--text-primary, #202124);
 }
 
 .code-preview-btn:focus-visible {
@@ -243,12 +236,7 @@ body.code-preview-resizing * {
   background: rgba(52, 168, 83, 0.12);
 }
 
-/* Labels next to the tool icons, shown only when the row can hold them
-   (ActionBar decides; see design-guide). */
-.code-preview-meta.ab--labels .code-preview-btn {
-  gap: var(--space-2);
-  padding: 0 var(--space-4);
-}
+
 
 .code-preview-btn.is-pinned svg {
   transform: rotate(-30deg);

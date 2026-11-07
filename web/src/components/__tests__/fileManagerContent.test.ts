@@ -6,10 +6,16 @@ import FileManagerContent from '@/components/file/FileManagerContent.vue'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
 
 // ── Mocks ────────────────────────────────────────────────────
-const mockAddAttachedFile = vi.fn()
-const mockHasAttachedFile = vi.fn(() => false)
-const mockRemoveAttachedFileByPath = vi.fn()
-const mockToggleAttachedFile = vi.fn()
+// `vi.mock` factories are hoisted above these declarations, so referencing a
+// plain `const` from inside one throws "Cannot access … before initialization"
+// at module load (the whole file then reports "no tests"). `vi.hoisted` puts the
+// spies in the same hoisted scope as the factories.
+const { mockAddAttachedFile, mockHasAttachedFile, mockRemoveAttachedFileByPath, mockToggleAttachedFile } = vi.hoisted(() => ({
+  mockAddAttachedFile: vi.fn(),
+  mockHasAttachedFile: vi.fn(() => false),
+  mockRemoveAttachedFileByPath: vi.fn(),
+  mockToggleAttachedFile: vi.fn(),
+}))
 
 vi.mock('@/composables/useChatContext', () => ({
   useChatContext: () => ({
@@ -25,7 +31,7 @@ vi.mock('@/composables/useChatContext', () => ({
   }),
 }))
 
-const mockToastShow = vi.fn()
+const { mockToastShow } = vi.hoisted(() => ({ mockToastShow: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))

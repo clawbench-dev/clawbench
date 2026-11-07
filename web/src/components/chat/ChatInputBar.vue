@@ -2386,7 +2386,7 @@ defineExpose({
   padding: var(--space-2) var(--space-4) 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   overflow: hidden;
   white-space: nowrap;
   min-width: 0;
@@ -2552,7 +2552,7 @@ defineExpose({
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   padding: calc(5 * var(--dp)) var(--space-4);
   border-radius: var(--radius-xs);
   font-size: var(--font-size-xs);
@@ -2563,9 +2563,12 @@ defineExpose({
 }
 
 @media (hover: hover) {
+  /* Hover uses the same recipe as every other ActionBar: primary text on a
+     neutral 12% tint. The accent is not usable as text (fails 4.5:1 in 15 of 36
+     themes, worst 1.92) and `--bg-tertiary` is nearly the panel colour in many. */
   .chat-action-btn:hover {
-    color: var(--accent-color, #0066cc);
-    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
   }
 }
 
@@ -2588,11 +2591,11 @@ defineExpose({
 .chat-action-btn:disabled {
   cursor: not-allowed;
   opacity: var(--opacity-disabled);
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
 }
 
 .chat-action-btn-archive:not(.disabled) {
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
 }
 
 @media (hover: hover) {
@@ -2766,7 +2769,7 @@ defineExpose({
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
   padding: 0;
@@ -2893,7 +2896,7 @@ defineExpose({
 /* Nothing recognised yet: this is a hint, not content — muted so it is not
    mistaken for what the microphone heard. */
 .free-dialog-text.is-hint {
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3104,7 +3107,7 @@ defineExpose({
 
 .attachment-filesize {
   font-size: var(--font-size-2xs);
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3225,7 +3228,7 @@ defineExpose({
 }
 
 .chat-textarea::placeholder {
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
 }
 
 .chat-textarea:disabled {
@@ -3412,7 +3415,7 @@ defineExpose({
 .qs-cmd {
   flex: 1;
   min-width: 0;
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   overflow: hidden;
@@ -3429,7 +3432,7 @@ defineExpose({
   width: calc(24 * var(--dp));
   height: calc(24 * var(--dp));
   border-radius: var(--radius-xs);
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--duration-base), color var(--duration-base);
 }

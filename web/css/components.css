@@ -111,6 +111,10 @@
 /* Icon button in the header toolbar. `border: none` is required: the class is
    used by both <button> and RefreshButton (which renders a <button>), and a
    bare button keeps the UA's default border. */
+/* Standalone usage (a drill-down header with no ActionBar). Inside a bar the
+   shared row rules win on specificity (`.ab--header > button:not(...)`), so the
+   button reads as part of the row instead of keeping a filled `--bg-secondary`
+   box while its neighbours are flat. */
 .drilldown-refresh-btn {
     display: flex;
     align-items: center;
@@ -1588,13 +1592,118 @@
     height: calc(14 * var(--dp));
 }
 
+/* ==========================================================================
+   ActionBar button language — TWO sizes, declared once
+
+   Every bar used to carry its own copy of "how a button looks and how it grows
+   when labelled": 5 heights (22/24/26/28/32), 5 radii, 3 icon sizes and 3
+   icon-to-text gaps. The same control read as a different control depending on
+   which panel it was in, and a new bar could silently pick a fourth size.
+
+   `size` on the component picks a row; these rules own the shape:
+
+     header — panel/app headers (tasks, notifications, forge, git history,
+              file viewer): 28 tall, pill, 10 padding, 5 gap, 14 icon
+     bar    — tool strips inside content (file manager, code preview, session
+              header, mail): 26 tall, 6 radius, 8 padding, 4 gap, 15 icon
+
+   Deliberately excluded: the chat composer row (22, follows the input's
+   rhythm) and the terminal key strip (32, square — it is a virtual keyboard,
+   not a toolbar). Both keep their own numbers.
+   ========================================================================== */
+.ab--header {
+    --ab-btn-size: calc(28 * var(--dp));
+    --ab-btn-radius: var(--radius-full);
+    --ab-btn-pad: calc(10 * var(--dp));
+    --ab-btn-gap: calc(5 * var(--dp));
+    --ab-icon-size: calc(14 * var(--dp));
+}
+.ab--bar {
+    --ab-btn-size: calc(26 * var(--dp));
+    --ab-btn-radius: var(--radius-sm);
+    --ab-btn-pad: calc(8 * var(--dp));
+    --ab-btn-gap: calc(4 * var(--dp));
+    --ab-icon-size: calc(15 * var(--dp));
+}
+
+/* Square when icon-only, a pill when labelled: a fixed `border-radius: 50%`
+   would turn a wide button into an ellipse. */
+.ab--header > button:not([data-ab-more]),
+.ab--bar > button:not([data-ab-more]) {
+    width: var(--ab-btn-size);
+    height: var(--ab-btn-size);
+    border-radius: var(--ab-btn-radius);
+    flex-shrink: 0;
+}
+/* Icon size travels with the row: a 15px glyph in a 26px square and a 14px one
+   in a 28px pill are the same optical weight. */
+.ab--header > button:not([data-ab-more]) svg,
+.ab--bar > button:not([data-ab-more]) svg {
+    width: var(--ab-icon-size);
+    height: var(--ab-icon-size);
+}
+
 /* A labelled button must be allowed to grow. Bars style their buttons with a
    fixed square size; leaving that in place would clip the label instead of
-   widening the button (the bug this control exists to prevent). */
-.ab--labels > button:not([data-ab-more]),
-.ab-measuring > button:not([data-ab-more]) {
+   widening the button (the bug this control exists to prevent). The padding and
+   gap come with it: keeping the square button's `0` would push the text against
+   the icon (the notifications header shipped like that). */
+.ab--header.ab--labels > button:not([data-ab-more]),
+.ab--header.ab-measuring > button:not([data-ab-more]),
+.ab--bar.ab--labels > button:not([data-ab-more]),
+.ab--bar.ab-measuring > button:not([data-ab-more]) {
     width: auto;
+    padding: 0 var(--ab-btn-pad);
+    gap: var(--ab-btn-gap);
 }
+
+/* The bar's own overflow button follows the same language, otherwise it reads
+   as a different kind of control sitting at the end of the row. */
+.ab--header .ab-more,
+.ab--bar .ab-more {
+    height: var(--ab-btn-size);
+    border-radius: var(--ab-btn-radius);
+}
+
+/* ==========================================================================
+   ActionBar button colour — THREE states, declared once
+
+   Measured over all 36 themes (WCAG contrast of the text against the surface it
+   sits on). The accent colour is NOT usable as text: 15 themes fall below 4.5
+   and the worst is 1.92, so it is reserved for icons and for "this is the one
+   primary action" — never for a whole row.
+
+     default  secondary text on the plain surface   worst 3.60
+     hover    primary text + a neutral 12% tint     worst 3.20
+     active   accent tint behind, text stays primary
+
+   `--bg-hover`/`--bg-secondary` cannot be the hover tint: 13 themes have a
+   hover/panel contrast of 1.09 (invisible), and 31 have a secondary/panel
+   contrast under 1.12. The tint is mixed from `--text-primary` instead, so its
+   DIRECTION is always right (dark text darkens a light surface and vice versa).
+   ========================================================================== */
+.ab--header > button:not([data-ab-more]),
+.ab--bar > button:not([data-ab-more]) {
+    color: var(--text-secondary);
+    background: transparent;
+}
+@media (hover: hover) {
+    .ab--header > button:not([data-ab-more]):hover:not(:disabled),
+    .ab--bar > button:not([data-ab-more]):hover:not(:disabled) {
+        color: var(--text-primary);
+        background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+    }
+}
+.ab--header > button:not([data-ab-more]):active:not(:disabled),
+.ab--bar > button:not([data-ab-more]):active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+}
+/* The one action a bar wants to stand out (create/new). */
+.ab--header > button.is-primary:not(:disabled),
+.ab--bar > button.is-primary:not(:disabled) {
+    color: var(--accent-color);
+}
+
 
 /* No transitions while measuring.
    A width transition on the buttons makes the forced-on layout report the

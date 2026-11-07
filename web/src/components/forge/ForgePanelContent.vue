@@ -66,7 +66,7 @@
              badge is clickable — same "context badge + dropdown" affordance as
              the app header's project/branch switchers — and is the only place
              to change or clear the binding once one exists. -->
-        <ActionBar class="forge-header" mode="menu" align="end">
+        <ActionBar class="forge-header" mode="menu" align="end" size="header">
           <span class="forge-header-title">
             <Github :size="14" />
             <button
@@ -995,13 +995,7 @@ function formatTime(iso: string): string {
   border-bottom: 1px solid var(--border-color);
   gap: var(--space-3);
 }
-/* Labelled header buttons grow with their text instead of staying squares.
-   ActionBar decides when the labels are shown. */
-.forge-header.ab--labels .forge-header-btn {
-  width: auto;
-  padding: 0 calc(10 * var(--dp));
-  gap: calc(5 * var(--dp));
-}
+
 
 .forge-header-title {
   display: flex;
@@ -1072,26 +1066,15 @@ function formatTime(iso: string): string {
 .forge-repo-menu-item.danger {
   color: var(--color-red);
 }
-/* Header icon button — same 28px round treatment as .header-btn elsewhere */
+/* Header buttons take their size, radius, colour and hover from the shared
+   ActionBar rules (size="header"); only what is genuinely theirs lives here. */
 .forge-header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
-}
-@media (hover: hover) {
-  .forge-header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
 
 /* ── Empty / unbound state cards ── */

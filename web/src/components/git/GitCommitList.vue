@@ -73,7 +73,7 @@
       <span v-else-if="!isGit" class="drilldown-count count-badge">{{ t('git.commitList.notInitialized') }}</span>
       <span v-else-if="!untracked" class="drilldown-count count-badge">{{ t('git.commitList.loading') }}</span>
 
-      <ActionBar class="git-actions" mode="menu" align="end">
+      <ActionBar class="git-actions" mode="menu" align="end" size="header">
         <button
           v-if="commits.length > 0"
           class="drilldown-refresh-btn"
@@ -663,15 +663,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
   gap: var(--space-2);
 }
 
-/* Labelled buttons get room for the text. Both classes are needed: ActionBar
-   strips `.ab--labels` before measuring and re-adds it afterwards, so a rule
-   that only names `.ab--labels` under-measures the padding and lets the row
-   overflow by that much. */
-.git-actions.ab--labels .drilldown-refresh-btn,
-.git-actions.ab-measuring .drilldown-refresh-btn {
-  padding: 0 calc(8 * var(--dp));
-  gap: calc(4 * var(--dp));
-}
+
 
 /* ActionBar's own overflow button, matched to the bar's buttons — a bare
    transparent glyph next to three filled squares reads as a different kind of

@@ -116,9 +116,11 @@ vi.mock('@/composables/useChatContext.ts', () => ({
   }),
 }))
 
-// Mock useToast
+// Mock useToast. A hoisted spy (not an inline `vi.fn()`) so the "must not toast"
+// assertion below can actually observe a call.
+const mockToastShow = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast.ts', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: mockToastShow }),
 }))
 
 // Mock useToolbarOverflow — simulate wide toolbar: all demotable items inline
@@ -703,6 +705,19 @@ describe('FileHeader', () => {
     await nextTick()
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
     expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
+    // …and it must not toast either: that was the other half of the old toggle
+    // (a "added/removed" confirmation the composer now owns).
+    expect(mockToastShow).not.toHaveBeenCalled()
+  })
+
+  it('refreshes without touching the menu state', async () => {
+    // The menu belongs to ActionBar now, so the header has no menu state to
+    // close. What matters is that the action still reaches the parent.
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleRefresh()
+    await nextTick()
+    expect(wrapper.emitted('refresh')).toBeTruthy()
   })
 
   it('shows the message icon, not the old paperclip', () => {

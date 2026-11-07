@@ -11,6 +11,7 @@
     class="code-preview-meta"
     mode="menu"
     align="end"
+    size="bar"
     @pointerdown="onRowPointerDown"
   >
     <!-- The line/size summary is a fixed item: ActionBar pins it to its natural

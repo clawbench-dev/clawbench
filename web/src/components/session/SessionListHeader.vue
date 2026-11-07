@@ -18,13 +18,13 @@
         <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
       </div>
     </div>
-    <ActionBar class="session-header-actions" mode="menu" align="end">
+    <ActionBar class="session-header-actions" mode="menu" align="end" size="bar">
       <slot name="actions" />
       <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
         <Search :size="16" />
         <span class="action-label">{{ t('sessionSearch.title') }}</span>
       </button>
-      <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
+      <button class="header-action-btn is-primary" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
         <span class="action-label">{{ t('session.newSession') }}</span>
       </button>
@@ -165,29 +165,18 @@ const sessionBarColor = computed(() => {
    applies to buttons injected into the #actions slot by parents (e.g. the
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"). The accent is no longer painted on every button: the accent
+   colour fails 4.5:1 in 15 of 36 themes (worst 1.92), so it marks the primary
+   action only (`.is-primary`, set by the template) instead of the whole row. */
 .header-action-btn {
   margin-left: var(--space-3);
-  width: calc(24 * var(--dp));
-  height: calc(24 * var(--dp));
-  gap: calc(4 * var(--dp));
   border: none;
   background: none;
-  color: var(--accent-color, #0066cc);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-xs);
-  transition: background var(--duration-base);
 }
-@media (hover: hover) {
-  .header-action-btn:hover {
-    background: rgba(0, 102, 204, 0.1);
-  }
-}
-/* Labelled buttons grow with their text; ActionBar decides when. */
-.session-header-actions.ab--labels .header-action-btn {
-  width: auto;
-  padding: 0 calc(8 * var(--dp));
-}
+
 </style>

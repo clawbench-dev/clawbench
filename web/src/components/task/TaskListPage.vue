@@ -1,7 +1,7 @@
 <template>
   <div class="task-list-page">
     <!-- Compact header: breadcrumb + refresh + create button -->
-    <ActionBar class="list-header" mode="menu">
+    <ActionBar class="list-header" mode="menu" size="header">
       <TaskBreadcrumb />
       <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh">
         <span class="action-label">{{ t('common.refresh') }}</span>
@@ -10,7 +10,7 @@
         <CheckCheck :size="14" />
         <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
       </button>
-      <button class="create-btn" @click="$emit('create')" :title="t('task.form.createTitle')">
+      <button class="create-btn is-primary" @click="$emit('create')" :title="t('task.form.createTitle')">
         <Plus :size="16" />
         <span class="action-label">{{ t('task.form.createTitle') }}</span>
       </button>
@@ -280,27 +280,17 @@ onMounted(refresh)
   gap: var(--space-3);
 }
 
-/* Create button in header toolbar */
+/* Create button — the one primary action in this bar, hence `.is-primary`. */
 .create-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--accent-color, #0066cc);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
 
-/* Labelled buttons get room for the text; icon-only keeps the square box. */
-.list-header.ab--labels > button {
-  padding: 0 calc(10 * var(--dp));
-  gap: calc(5 * var(--dp));
-}
+
 
 /* Header icon button (refresh, etc.) */
 .header-btn {
@@ -338,12 +328,6 @@ onMounted(refresh)
 .clear-unread-btn.active {
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, var(--bg-secondary, #f1f3f5));
-}
-
-@media (hover: hover) {
-  .create-btn:hover {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
-  }
 }
 
 .create-btn:active {

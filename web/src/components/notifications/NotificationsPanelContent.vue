@@ -1,7 +1,7 @@
 <template>
   <div class="notif-panel">
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
-    <ActionBar class="list-header" mode="menu">
+    <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
         <Inbox class="crumb-icon" :size="14" />
         <span>{{ t('notifications.title') }}</span>
@@ -635,25 +635,15 @@ function forgeTargetFromItemKey(key: string) {
   overflow: hidden;
 }
 .crumb-icon { color: var(--accent-color); flex-shrink: 0; }
+/* Header buttons take their size, radius, colour and hover from the shared
+   ActionBar rules (size="header"); only what is genuinely theirs lives here. */
 .header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
-}
-@media (hover: hover) {
-  .header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
 .header-btn:active:not(:disabled) { transform: scale(0.9); }
 .header-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }

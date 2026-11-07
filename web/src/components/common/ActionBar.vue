@@ -9,6 +9,8 @@
         'ab--overflowing': overflowing,
         'ab-dragging': dragging,
         'ab--end': align === 'end',
+        'ab--header': size === 'header',
+        'ab--bar': size === 'bar',
       },
     ]"
     :style="gap ? { gap: `calc(${gap} * var(--dp))` } : undefined"
@@ -94,6 +96,14 @@ const props = withDefaults(
     /** Which edge the buttons hug when the row has spare room. */
     align?: 'start' | 'end'
     /**
+     * Visual weight of the row. `header` = panel/app header bars, `bar` = a tool
+     * strip inside content, `custom` = the bar keeps its own button geometry
+     * (chat composer, terminal keys — they follow a different rhythm on purpose).
+     * Both shared sizes are declared once in web/css/components.css so a new bar
+     * cannot invent a third one.
+     */
+    size?: 'header' | 'bar' | 'custom'
+    /**
      * Render the "more" button even when nothing is folded — for bars that own
      * permanent menu entries (a file's delete, details, …).
      */
@@ -105,6 +115,7 @@ const props = withDefaults(
     moreWidth: 28,
     moreLabel: '',
     align: 'start',
+    size: 'custom',
     alwaysMore: false,
   },
 )
@@ -458,22 +469,24 @@ let childObserver: MutationObserver | null = null
   );
 }
 
+/* Shape (height, radius) and colour come from the shared ActionBar rules in
+   web/css/components.css — they must match the row's buttons, and a scoped rule
+   here would be a second copy of the same numbers. */
 .ab-more {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: calc(3 * var(--dp));
   flex-shrink: 0;
   padding: 0 calc(6 * var(--dp));
-  height: calc(26 * var(--dp));
   border: none;
-  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
 }
-.ab-more:hover {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+@media (hover: hover) {
+  .ab-more:hover {
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  }
 }
 
 </style>

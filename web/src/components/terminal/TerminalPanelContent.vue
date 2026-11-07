@@ -1960,10 +1960,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 /* Labels for the tool group: shown only when the whole strip fits without
    scrolling, so they can never push a key off-screen. The two fixed mode
    toggles outside the strip stay icon-only. */
-.toolbar-scroll.ab--labels .btn-func {
-  gap: calc(4 * var(--dp));
-  padding: 0 calc(8 * var(--dp));
-}
+
 
 .key-group { display: flex; align-items: center; gap: 3px; }
 .key-group + .key-group { position: relative; margin-left: var(--space-3); }

@@ -157,7 +157,7 @@ describe('git history header matches the forge panel header', () => {
     expect(decls).toMatch(/border:\s*none/)
   })
 
-  it('keeps the hover treatment in step with the forge header button', () => {
+  it('leaves the hover treatment to the shared ActionBar rules', () => {
     // The forge header's own rules are scoped to ForgePanelContent, so the
     // reference values are read from there rather than from the global sheet.
     //
@@ -174,15 +174,25 @@ describe('git history header matches the forge panel header', () => {
       /(?:^|[},])\s*\.forge-header-btn\s*\{([^}]*)\}/,
     )
     expect(forgeBase, '.forge-header-btn must exist in ForgePanelContent').not.toBeNull()
-    expect(forgeBase![1]).toMatch(/color:\s*var\(--text-secondary\)/)
 
-    const gitCss = stripComments(componentsCss)
-    const hover = gitCss.match(
-      /\.drilldown-refresh-btn:hover:not\(:disabled\)\s*\{([^}]*)\}/,
+    // The contract is now "both defer to the shared row rules", so neither may
+    // paint its own resting colour — that is what made the refresh button read
+    // as a different control from the buttons beside it. The hover pair lives
+    // once, in the ActionBar block, and is checked here rather than per class.
+    expect(forgeBase![1], 'forge must not declare its own resting colour').not.toMatch(
+      /(^|;)\s*color:/,
     )
-    expect(hover, 'a hover rule must exist').not.toBeNull()
-    expect(hover![1]).toMatch(/background:\s*var\(--bg-tertiary\)/)
-    expect(hover![1]).toMatch(/color:\s*var\(--accent-color\)/)
+    // The git bar's own rule keeps the standalone fallback (a drill-down header
+    // with no ActionBar still needs a colour); inside a bar the shared rule wins
+    // on specificity, which is what the assertion above pins for forge.
+    expect(baseRule(componentsCss, 'drilldown-refresh-btn')).not.toBeNull()
+
+    const shared = stripComments(componentsCss).match(
+      /\.ab--header > button:not\(\[data-ab-more\]\):hover:not\(:disabled\)[^{]*\{([^}]*)\}/,
+    )
+    expect(shared, 'the shared ActionBar hover rule must exist').not.toBeNull()
+    expect(shared![1]).toMatch(/color:\s*var\(--text-primary\)/)
+    expect(shared![1]).toMatch(/color-mix\(in srgb, var\(--text-primary\) 12%/)
   })
 })
 

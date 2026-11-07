@@ -1,6 +1,6 @@
 <template>
   <div class="mail-bar">
-    <ActionBar class="mail-bar__top" mode="menu" align="end">
+    <ActionBar class="mail-bar__top" mode="menu" align="end" size="bar">
       <!-- Two pickers, deliberately not drawn as two equal boxes. The account
            is switched rarely, so it collapses to a small avatar; the folder is
            where the user is, so it gets the name, its unread count and the
@@ -498,13 +498,7 @@ function onSearchInput(e: Event): void {
 .mail-bar__spacer {
   flex: 1;
 }
-/* Labelled buttons grow with their text instead of staying 26px squares.
-   ActionBar decides when the labels are shown. */
-.mail-bar__top.ab--labels .mail-icon-btn {
-  width: auto;
-  padding: 0 calc(8 * var(--dp));
-  gap: calc(4 * var(--dp));
-}
+
 .mail-bar__search-row {
   display: flex;
   align-items: center;
@@ -559,29 +553,19 @@ function onSearchInput(e: Event): void {
 .mail-bar__search-input:focus {
   border-color: var(--accent-color);
 }
+/* Size, radius, colour, hover and icon size come from the shared ActionBar row
+   rules (size="bar"); this block keeps only what is specific to the bar. */
 .mail-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(26 * var(--dp));
-  height: calc(26 * var(--dp));
-  padding: 0;
   border: none;
-  border-radius: var(--radius-sm, 4px);
   background: none;
-  color: var(--text-secondary);
   cursor: pointer;
   flex: none;
-}
-.mail-icon-btn:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
 }
 .mail-icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
-}
-.mail-icon-btn :deep(svg) {
-  width: calc(15 * var(--dp));
-  height: calc(15 * var(--dp));
 }
 </style>

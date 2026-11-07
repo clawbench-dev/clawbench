@@ -18,6 +18,7 @@
       ref="actionsRef"
       class="mail-reader__actions"
       mode="scroll"
+      size="bar"
     >
       <button class="mail-icon-btn" :title="t('mail.reader.reply')" :aria-label="t('mail.reader.reply')"
         :disabled="busy" @click="emit('reply', 'reply')">
@@ -518,23 +519,16 @@ async function remove(): Promise<void> {
   cursor: default;
   opacity: var(--opacity-muted, 0.6);
 }
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"); this block keeps only what is specific to the mail reader. */
 .mail-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: calc(4 * var(--dp));
-  width: calc(26 * var(--dp));
-  height: calc(26 * var(--dp));
-  padding: 0;
   border: none;
-  border-radius: var(--radius-sm, 4px);
   background: none;
-  color: var(--text-secondary);
   cursor: pointer;
   flex: none;
-}
-.mail-icon-btn:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
 }
 .mail-icon-btn:disabled {
   opacity: 0.5;
@@ -546,13 +540,7 @@ async function remove(): Promise<void> {
   color: var(--color-red);
 }
 
-/* A labelled button grows with its text instead of staying a 26px square.
-   ActionBar decides when the labels are shown. */
-.mail-reader__actions.ab--labels .mail-icon-btn {
-  width: auto;
-  min-width: calc(26 * var(--dp));
-  padding: 0 calc(6 * var(--dp));
-}
+
 .mail-icon-btn :deep(svg) {
   width: calc(15 * var(--dp));
   height: calc(15 * var(--dp));
