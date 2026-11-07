@@ -188,11 +188,13 @@ function onRefresh() {
   padding: 0 var(--space-3);
   flex-shrink: 0;
 }
+/* Colour and hover come from the shared ActionBar language; the size stays 28
+   because this bar is 34 tall and a 26 button would float inside it. */
 .stats-tab-refresh {
   width: calc(28 * var(--dp));
   height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -203,8 +205,8 @@ function onRefresh() {
 }
 @media (hover: hover) {
   .stats-tab-refresh:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+    color: var(--text-primary);
   }
 }
 

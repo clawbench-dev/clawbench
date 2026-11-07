@@ -16,14 +16,18 @@
       <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
       <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />
-      <RefreshButton
-        class="meeting-icon-btn meeting-refresh-btn"
-        :loading="loading"
-        :disabled="loading"
-        :title="t('meeting.list.refresh')"
-        data-action="meeting-refresh"
-        @click="reload"
-      />
+      <ActionBar class="meeting-actions" mode="menu" size="bar">
+        <RefreshButton
+          class="meeting-icon-btn meeting-refresh-btn"
+          :loading="loading"
+          :disabled="loading"
+          :title="t('meeting.list.refresh')"
+          data-action="meeting-refresh"
+          @click="reload"
+        >
+          <span class="action-label">{{ t('common.refresh') }}</span>
+        </RefreshButton>
+      </ActionBar>
     </div>
 
     <HttpsNotice v-if="showHttpsNotice" variant="banner" />
@@ -251,6 +255,7 @@ import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/util
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { getNative } from '@/utils/clawbenchNative'
@@ -974,20 +979,17 @@ onMounted(() => {
   color: var(--color-red);
   font-size: var(--font-size-sm);
 }
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"). Only the disabled treatment is this panel's own. */
 .meeting-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(26 * var(--dp));
-  height: calc(26 * var(--dp));
   border: none;
-  border-radius: 0;
   background: transparent;
-  color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
-.meeting-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .meeting-icon-btn:disabled { opacity: 0.5; cursor: default; }
 
 .meeting-footer {

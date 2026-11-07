@@ -56,6 +56,10 @@ export default {
     sharedFiles: 'Shared',
     sharedSessions: 'Shared',
     pin: 'Pin',
+    quote: 'Quote',
+    scanPorts: 'Scan',
+    portSettings: 'Settings',
+    addPort: 'Add port',
   },
   codeBlock: {
     wrapOn: 'Word wrap on',

@@ -1,11 +1,16 @@
 <template>
   <div class="proxy-panel-content">
-    <!-- Compact header: icon + title + scan + create buttons (matches chat/app header: flush border, bg-secondary) -->
-    <div class="proxy-header">
-      <span class="proxy-header-icon">
-        <NetworkIcon :size="14" />
-      </span>
-      <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
+    <!-- Compact header. The action row is an ActionBar so the port panel folds
+         its buttons exactly like every other panel header (the same rule as
+         tasks / notifications / forge): labels when they fit, then icons, then
+         a More menu. -->
+    <ActionBar class="proxy-header" mode="menu" size="header">
+      <div class="proxy-header-leading">
+        <span class="proxy-header-icon">
+          <NetworkIcon :size="14" />
+        </span>
+        <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
+      </div>
       <RefreshButton
         class="header-btn"
         data-action="proxy-refresh"
@@ -14,9 +19,12 @@
         :disabled="refreshing"
         :title="t('common.refresh')"
         @click="refreshPortForward"
-      />
-      <button class="header-btn" @click="handleOpenScan" :title="t('proxy.scanTitle')">
+      >
+        <span class="action-label">{{ t('common.refresh') }}</span>
+      </RefreshButton>
+      <button class="header-btn" data-action="proxy-scan" @click="handleOpenScan" :title="t('proxy.scanTitle')">
         <Search :size="14" />
+        <span class="action-label">{{ t('actionLabels.scanPorts') }}</span>
       </button>
       <!-- Jump to the port-mapping settings panel. Dispatches an event rather
            than switching tabs directly so App.vue can record the proxy panel as
@@ -24,11 +32,13 @@
            here instead of on whatever tab preceded the jump. -->
       <button class="header-btn" data-action="proxy-open-settings" :title="t('proxy.openSettings')" @click="handleOpenSettings">
         <SettingsIcon :size="14" />
+        <span class="action-label">{{ t('actionLabels.portSettings') }}</span>
       </button>
-      <button class="create-btn" @click="openAddForm" :title="t('proxy.addPort')">
+      <button class="create-btn is-primary" data-action="proxy-add" @click="openAddForm" :title="t('proxy.addPort')">
         <Plus :size="16" />
+        <span class="action-label">{{ t('actionLabels.addPort') }}</span>
       </button>
-    </div>
+    </ActionBar>
 
     <div class="proxy-panel">
       <!-- App mode: tunnel status banners -->
@@ -320,6 +330,7 @@ import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDo
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -611,15 +622,24 @@ async function handleRetryTunnel() {
 }
 
 /* Compact header — flush to panel edges, matches settings/stats header style */
+/* The bar itself is an ActionBar (size="header"), which brings the height,
+   padding, gap and folding behaviour shared with every other panel header.
+   Only the leading title group is this panel's own. */
 .proxy-header {
-  display: flex;
-  align-items: center;
   height: var(--header-height);
   padding: 0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   gap: var(--space-3);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.proxy-header-leading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
 }
 
 .proxy-header-title {
@@ -639,36 +659,18 @@ async function handleRetryTunnel() {
   flex-shrink: 0;
 }
 
-/* Create button in header toolbar */
-.create-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
-  border: none;
-  border-radius: var(--radius-lg);
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
-}
-
-/* Header icon button (scan, etc.) */
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="header"); only what is genuinely theirs lives here. */
+.create-btn,
 .header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-secondary, #666);
+  background: transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
   position: relative;
 }
 
@@ -677,25 +679,8 @@ async function handleRetryTunnel() {
   cursor: not-allowed;
 }
 
-@media (hover: hover) {
-  .header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary, #eef1f4);
-    color: var(--accent-color, #0066cc);
-  }
-}
-
-.header-btn:active:not(:disabled) {
-  transform: scale(0.9);
-}
-
-@media (hover: hover) {
-  .create-btn:hover {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    transform: translateY(-1px);
-  }
-}
-
-.create-btn:active {
+.header-btn:active:not(:disabled),
+.create-btn:active:not(:disabled) {
   transform: scale(0.9);
 }
 

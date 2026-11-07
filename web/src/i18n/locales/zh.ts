@@ -55,6 +55,10 @@ export default {
     sharedFiles: '已分享',
     sharedSessions: '已分享',
     pin: '固定',
+    quote: '引用',
+    scanPorts: '端口扫描',
+    portSettings: '端口设置',
+    addPort: '添加端口',
   },
   codeBlock: {
     wrapOn: '自动换行已开启',

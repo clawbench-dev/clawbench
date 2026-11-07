@@ -1790,7 +1790,9 @@ watch(
   flex-shrink: 0;
   transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
 }
-.live-panel__back:hover { background: var(--bg-hover); color: var(--text-primary); }
+@media (hover: hover) {
+  .live-panel__back:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+}
 .live-panel__back:active { transform: scale(0.92); }
 
 /* Quote-into-chat, pinned to the header's right edge. Same 26px square as the
@@ -1812,7 +1814,9 @@ watch(
   flex-shrink: 0;
   transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
 }
-.live-panel__quote:hover { background: var(--bg-hover); color: var(--text-primary); }
+@media (hover: hover) {
+  .live-panel__quote:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+}
 .live-panel__quote:active { transform: scale(0.92); }
 
 .live-panel__title {
