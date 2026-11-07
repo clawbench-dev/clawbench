@@ -43,6 +43,26 @@ interface PendingCapture {
 let pending: PendingCapture | null = null
 
 /**
+ * The listing the picker last drew, and when it was taken.
+ *
+ * The handler used to re-enumerate in order to answer `getDisplayMedia`, and on
+ * Wayland enumerating screens IS the system's "what do you want to share"
+ * dialog — so choosing a screen and pressing start asked the user twice, and the
+ * second answer replaced the first. Remembering the listing the picker showed
+ * lets the handler answer from the source the user actually picked.
+ */
+let lastListing: { sources: DesktopCapturerSource[]; at: number } | null = null
+
+/**
+ * How long a remembered listing may answer a capture request.
+ *
+ * Long enough for a form the user left open while typing, short enough that a
+ * window closed in the meantime is far more likely to be re-listed than
+ * silently captured. Past this the handler falls back to a fresh enumeration.
+ */
+const LISTING_TTL_MS = 5 * 60 * 1000
+
+/**
  * Display the current capture is showing, as reported by desktopCapturer.
  *
  * The annotation overlay has to cover THAT screen, not the primary one — a
@@ -113,6 +133,9 @@ export async function listCaptureSources(): Promise<CaptureSourceInfo[]> {
     record('W', TAG, 'combined source query was empty; retrying with screens only')
     sources = await desktopCapturer.getSources({ ...query, types: ['screen'] })
   }
+  // Remember what the picker drew: the capture request that follows must answer
+  // with one of these, and re-enumerating would raise the system picker again.
+  lastListing = { sources, at: Date.now() }
   return sources.map((s: DesktopCapturerSource) => ({
     id: s.id,
     name: s.name,
@@ -227,6 +250,7 @@ export function _resetCaptureForTest(): void {
   pending = null
   capturedDisplayId = ''
   publishing = false
+  lastListing = null
 }
 
 /**
@@ -276,6 +300,36 @@ export function installDisplayMediaHandler(): void {
         return
       }
 
+      const streamsFor = (match: DesktopCapturerSource, withAudio: boolean): Streams => {
+        // `audio` is only present when loopback was actually asked for. An
+        // explicit `audio: undefined` still creates the key, and this object is
+        // converted on Electron's side — a key with nothing in it is not the
+        // same thing as an absent key.
+        const streams: Streams = { video: match }
+        if (withAudio) streams.audio = 'loopback'
+        return streams
+      }
+
+      // Answer from the listing the picker just drew. Enumerating here instead
+      // asks the system a second time — on Wayland that is a second "what do you
+      // want to share" dialog, which is why choosing a screen and pressing start
+      // used to require choosing twice.
+      const remembered =
+        lastListing && Date.now() - lastListing.at <= LISTING_TTL_MS ? lastListing.sources : null
+      const picked = remembered?.find((s) => s.id === choice.sourceId)
+      if (picked) {
+        const decision = decideCapture(
+          choice,
+          request.audioRequested,
+          audioCaptureSupport().systemAudio,
+          [picked],
+          false,
+        )
+        capturedDisplayId = picked.display_id ?? ''
+        answer(streamsFor(picked, decision?.withAudio ?? false))
+        return
+      }
+
       void desktopCapturer
         .getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } })
         .then((sources) => {
@@ -298,13 +352,7 @@ export function installDisplayMediaHandler(): void {
             return
           }
           capturedDisplayId = match.display_id ?? ''
-          // `audio` is only present when loopback was actually asked for. An
-          // explicit `audio: undefined` still creates the key, and this object
-          // is converted on Electron's side — a key with nothing in it is not
-          // the same thing as an absent key.
-          const streams: Streams = { video: match }
-          if (decision.withAudio) streams.audio = 'loopback'
-          answer(streams)
+          answer(streamsFor(match, decision.withAudio))
         })
         .catch((e) => {
           record('E', TAG, `getSources failed: ${describe(e)}`)

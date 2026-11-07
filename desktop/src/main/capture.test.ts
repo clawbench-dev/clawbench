@@ -25,6 +25,7 @@ const displayHandler = vi.hoisted(() => ({
 }))
 const recorded = vi.hoisted(() => ({ value: [] as string[] }))
 const failCombined = vi.hoisted(() => ({ value: false }))
+const getSourcesCalls = vi.hoisted(() => ({ value: 0 }))
 const ipcHandlers = vi.hoisted(() => ({ value: {} as Record<string, (...a: unknown[]) => unknown> }))
 
 vi.mock('electron', () => ({
@@ -42,6 +43,7 @@ vi.mock('electron', () => ({
   },
   desktopCapturer: {
     getSources: async (opts: { types: string[] }) => {
+      getSourcesCalls.value += 1
       // An X11 session without a window manager answers the combined query with
       // nothing, even though the screens are fine.
       if (failCombined.value && opts.types.includes('window')) return []
@@ -90,6 +92,7 @@ beforeEach(() => {
   displayHandler.value = null
   recorded.value = []
   ipcHandlers.value = {}
+  getSourcesCalls.value = 0
   _resetCaptureForTest()
   installDisplayMediaHandler()
 })
@@ -260,6 +263,38 @@ describe('display media handler', () => {
 
     expect(await requestCapture()).toEqual({})
     expect(recorded.value.join()).toContain('unavailable')
+  })
+
+  it('answers from the listing the picker drew instead of enumerating again', async () => {
+    // On Wayland enumerating screens IS the system picker, so re-listing here
+    // made the user choose twice: once for the grid, once to start.
+    const listed = await listCaptureSources()
+    expect(getSourcesCalls.value).toBe(1)
+    _setPendingCaptureForTest({ sourceId: listed[0].id, systemAudio: false })
+
+    const answer = await requestCapture()
+
+    expect(answer.video).toMatchObject({ id: listed[0].id })
+    // No second enumeration — that is the dialog the user used to see again.
+    expect(getSourcesCalls.value).toBe(1)
+  })
+
+  it('re-lists when the remembered listing is too old', async () => {
+    vi.useFakeTimers()
+    try {
+      const listed = await listCaptureSources()
+      // A window may have closed since; past the window the handler asks again
+      // rather than capturing something that is no longer there.
+      vi.advanceTimersByTime(6 * 60 * 1000)
+      _setPendingCaptureForTest({ sourceId: listed[0].id, systemAudio: false })
+
+      const answer = await requestCapture()
+
+      expect(answer.video).toMatchObject({ id: listed[0].id })
+      expect(getSourcesCalls.value).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('answers a Wayland placeholder listing even though its id changed', async () => {
