@@ -150,6 +150,7 @@ func (p *opencodeChildProbe) prompt(ctx context.Context, timeout time.Duration) 
 // opencodeChildProbeStats is what the raw wire shows.
 type opencodeChildProbeStats struct {
 	childSessionUpdates int // parent-stream frames tagged opencode/child-session (the leak)
+	childToolCalls      int // child-tagged tool_call frames (folded under the Agent card)
 	subagentToolCalls   int // tool_call frames for the subagent tool (proof of delegation)
 	variants            map[string]int
 	// sampleChildFrame is the first leaked frame, kept for the guard assertion.
@@ -182,6 +183,9 @@ func analyzeOpenCodeChildProbe(buf *bytes.Buffer) opencodeChildProbeStats {
 		stats.variants[variant]++
 		if probeIsChildSessionUpdate(n.Update) {
 			stats.childSessionUpdates++
+			if variant == "tool_call" {
+				stats.childToolCalls++
+			}
 			if stats.sampleChildFrame == nil {
 				frame := n
 				stats.sampleChildFrame = &frame
@@ -208,12 +212,18 @@ func TestOpenCodeACP_ChildSessionLeakProbe(t *testing.T) {
 	defer cancel()
 
 	probe := startOpencodeChildProbe(t, ctx)
+	// Register the session so the probe exercises the same client path the
+	// server uses (attribution + mapping), not just the raw wire.
+	events := make(chan StreamEvent, 4096)
+	probe.client.RegisterSession(probe.id, events)
+	t.Cleanup(func() { probe.client.UnregisterSession(probe.id) })
+
 	require.NoError(t, probe.prompt(ctx, 360*time.Second), "prompt")
 	time.Sleep(2 * time.Second) // let trailing notifications land
 
 	stats := analyzeOpenCodeChildProbe(probe.outBuf)
-	t.Logf("variants=%v childSessionUpdates=%d subagentToolCalls=%d",
-		stats.variants, stats.childSessionUpdates, stats.subagentToolCalls)
+	t.Logf("variants=%v childSessionUpdates=%d childToolCalls=%d subagentToolCalls=%d",
+		stats.variants, stats.childSessionUpdates, stats.childToolCalls, stats.subagentToolCalls)
 
 	if stats.subagentToolCalls == 0 {
 		t.Skip("model did not call the subagent tool this run — rerun the probe")
@@ -227,10 +237,44 @@ func TestOpenCodeACP_ChildSessionLeakProbe(t *testing.T) {
 		"OpenCode sent no child-tagged frames — it may have changed the projection; update the probe")
 	require.NotNil(t, stats.sampleChildFrame, "no child frame captured")
 
-	// The reproduction: a real child frame fed through ClawBench's own mapping
-	// must produce NOTHING. On the unfixed tree this is where the probe fails.
+	// The live path: attributed child events must reach the frontend stamped
+	// with the parent Agent tool call id (that is what folds them under the
+	// card). The raw wire above only proves OpenCode sends them.
+	var parentAgentID string
+	childParents := map[string]int{}
+	childTools := 0
+drain:
+	for {
+		select {
+		case e := <-events:
+			if e.Type == "tool_use" && e.Tool != nil && e.Tool.Name == "Agent" && e.Tool.ParentToolCallID == "" {
+				parentAgentID = e.Tool.ID
+			}
+			switch e.Type {
+			case "tool_use", "tool_result":
+				if e.Tool != nil && e.Tool.ParentToolCallID != "" {
+					childParents[e.Tool.ParentToolCallID]++
+					childTools++
+				}
+			case "content", "thinking":
+				if e.ParentToolCallID != "" {
+					childParents[e.ParentToolCallID]++
+				}
+			}
+		default:
+			break drain
+		}
+	}
+	require.NotEmpty(t, parentAgentID, "parent Agent tool event was not emitted")
+	assert.Positive(t, childParents[parentAgentID],
+		"child events must carry the parent Agent tool call id (got %v)", childParents)
+	assert.Positive(t, childTools, "child tool calls must be forwarded for the folded view")
+
+	// The reproduction guard: an UNATTRIBUTED child frame fed through the
+	// mapper must produce NOTHING. On the unfixed tree this is where the probe
+	// fails (child frames leak into the main timeline).
 	conn := newACPConn(&model.Agent{ID: "opencode-child-probe", Backend: "opencode"}, "opencode-child-probe-session")
 	ch := make(chan StreamEvent, 64)
 	mapACPSessionUpdate(stats.sampleChildFrame.Update, ch, context.Background(), conn, nil)
-	assert.Zero(t, len(ch), "issue #639: child-session frame leaked into the main timeline: %v", drainStreamEvents(ch))
+	assert.Zero(t, len(ch), "issue #639: unattributed child-session frame leaked into the main timeline: %v", drainStreamEvents(ch))
 }

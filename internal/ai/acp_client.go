@@ -71,6 +71,14 @@ type ClawBenchACPClient struct {
 	// the approval card can still show WHAT the agent wants to run. Guarded by mu.
 	toolInputs map[string]string
 
+	// OpenCode v2 sub-agent attribution (see acp_opencode_children.go). Child
+	// frames carry only the child session id + title, so the spawning `subagent`
+	// tool call is matched by (session where the call ran, description) while the
+	// child runs, and by the exact child session id once the tool result arrives.
+	// Both maps are guarded by mu.
+	subagentByTitle map[string]string // "<sessionID>\x00<description>" → toolCallID
+	subagentByChild map[string]string // child session id → toolCallID
+
 	// LoadSession replay buffer: during LoadSession, SessionUpdate messages
 	// are collected here instead of being routed to WS stream channels.
 	loadSessionBuf   []acp.SessionNotification
@@ -110,6 +118,8 @@ func NewClawBenchACPClient() *ClawBenchACPClient {
 		debouncers:          make(map[string]*toolCallDebouncer),
 		terminals:           make(map[string]*terminalSession),
 		toolInputs:          make(map[string]string),
+		subagentByTitle:     make(map[string]string),
+		subagentByChild:     make(map[string]string),
 	}
 }
 
@@ -363,6 +373,20 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		// The connection activity was already recorded above, so async
 		// workflows that continue sending events stay alive.
 		return nil
+	}
+
+	// OpenCode v2 sub-agent attribution (see acp_opencode_children.go): record
+	// the spawning `subagent` tool call, then stamp child frames with its id so
+	// they fold under the Agent card. A child frame whose parent cannot be
+	// resolved yet is dropped — it must never leak into the main timeline
+	// (issue #639).
+	c.noteOpenCodeSubagentCall(string(n.SessionId), n.Update)
+	if isOpenCodeChildSessionUpdate(n.Update) {
+		parentID := c.resolveOpenCodeChildParent(n.Update)
+		if parentID == "" {
+			return nil
+		}
+		stampParentToolCallID(&n.Update, parentID)
 	}
 
 	// Cache tool input from tool_call / tool_call_update frames. Some agents

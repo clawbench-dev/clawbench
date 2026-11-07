@@ -34,17 +34,14 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		backendID = conn.BackendID()
 	}
 
-	// OpenCode v2 runs sub-agents in child sessions and — unless the client
-	// opts into its `opencode/child-session-updates` extension channel —
-	// projects the child's updates into the PARENT session's stream, tagged
-	// only with `_meta["opencode/child-session"]` and carrying no parent
-	// tool-call link. They would render as ordinary top-level content in the
-	// main timeline, so the sub-agent's trajectory appears after its spawning
-	// tool already reported completion (issue #639). Drop them: child content
-	// belongs to the child session, and the parent tool's result already
-	// summarises it. ClawBench deliberately does not opt into the extension
-	// channel either, so this single check covers both wire shapes.
-	if isOpenCodeChildSessionUpdate(update) {
+	// OpenCode v2 runs sub-agents in child sessions and projects the child's
+	// updates into the PARENT session's stream, tagged only with
+	// `_meta["opencode/child-session"]` and carrying no parent tool-call link.
+	// The client resolves that link before this point (acp_opencode_children.go)
+	// and stamps it into the meta; frames it could not attribute are dropped
+	// here so they never render as top-level main-timeline content (issue #639).
+	if isOpenCodeChildSessionUpdate(update) &&
+		metaString(acpUpdateMeta(update)[metaKeyClawBenchParentToolCallID]) == "" {
 		return
 	}
 
