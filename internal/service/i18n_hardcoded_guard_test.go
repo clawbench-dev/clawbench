@@ -65,6 +65,8 @@ var allowedCJKFiles = map[string]string{
 	"internal/summarize/title.go":            "AI title-output prefix stripping (标题：)",
 	// Parsers that must recognize CJK punctuation/numerals in model or CLI
 	// output; the literals are matched, not displayed.
+	"internal/grouprouting/grouprouting.go":      "group routing mention target delimiters (CJK comma and dunhao)",
+	"internal/service/group_orchestrator.go":     "group routing mention target alias matching (CJK fullwidth parens and disabled suffix)",
 	"internal/askquestion/markdown.go":           "ordered-list marker regex (CJK numerals)",
 	"internal/ai/backends/deepseek/discovery.go": "model-list output parser (（默认：/ 的模型)",
 	"internal/rag/chunker.go":                    "sentence-boundary detector (。！？) for chunking",

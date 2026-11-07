@@ -75,9 +75,9 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	// Verify install command on opencode BackendSpec
 	assert.Equal(t, "npm install -g opencode-ai", specs["opencode"].InstallCmd, "opencode should have InstallCmd set")
 
-	// ACP-only backends: agy is detected via DefaultCmd, ACP via agy-acp bridge
+	// ACP-only backends: agy is detected via DefaultCmd, ACP via native agy acp
 	assert.Equal(t, "agy", specs["antigravity"].DefaultCmd)
-	assert.Equal(t, "npx -y agy-acp@latest", specs["antigravity"].AcpCommand)
+	assert.Equal(t, "agy acp", specs["antigravity"].AcpCommand)
 	assert.Equal(t, "grok agent stdio", specs["grok"].AcpCommand)
 
 	// DeepSeek Harness is ACP-only and detected via the `dsh` binary. Its

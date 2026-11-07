@@ -133,14 +133,50 @@ const RE_GOAL_SATISFIED_TEST = /<clawbench-goal-satisfied[\s\p{Z}]*\/>/u
 // Global mirror for replacing/stripping the goal-satisfied signal.
 const RE_GOAL_SATISFIED = /<clawbench-goal-satisfied[\s\p{Z}]*\/>/gu
 
-/** splitNames splits a comma-separated list, trimming and dropping empties. */
+/** splitNames splits a target list separated by commas (ASCII ',', CJK '，', or
+ *  CJK enumeration '、'), trimming and dropping empties.
+ *  CJK separators inside BALANCED parentheses are kept, so a copied specialty
+ *  like `ZCode（写码、调试）` stays one target. Unbalanced input falls back to
+ *  ASCII ',' only, mirroring the Go implementation (internal/grouprouting). */
 function splitNames(s: string): string[] {
   const out: string[] = []
-  for (const p of s.split(',')) {
+  const add = (p: string) => {
     const name = p.trim()
     if (name !== '') out.push(name)
   }
+  if (!bracketsBalanced(s)) {
+    for (const p of s.split(',')) add(p)
+    return out
+  }
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (ch === '（' || ch === '(') depth++
+    else if (ch === '）' || ch === ')') {
+      if (depth > 0) depth--
+    } else if (depth === 0 && (ch === ',' || ch === '，' || ch === '、')) {
+      add(s.slice(start, i))
+      start = i + 1
+    }
+  }
+  add(s.slice(start))
   return out
+}
+
+/** bracketsBalanced reports whether the parentheses are balanced BY DEPTH
+ *  (an opening bracket is cancelled by the next closing one regardless of
+ *  type: '（' may be closed by ')'). Depth is all the CJK-separator split needs. */
+function bracketsBalanced(s: string): boolean {
+  let depth = 0
+  for (const ch of s) {
+    if (ch === '（' || ch === '(') depth++
+    else if (ch === '）' || ch === ')') {
+      depth--
+      if (depth < 0) return false
+    }
+  }
+  return depth === 0
 }
 
 /**
@@ -374,15 +410,56 @@ export function resolveMentionDisplayName(
   userTarget: string = GROUP_USER_TARGET_NAME,
 ): string {
   if (target === userTarget) return userDisplay
-  const byId = resolveId?.(target)
+  const clean = target.replace(/^[@＠]/, '').trim()
+  if (clean === userTarget) return userDisplay
+  const byId = resolveId?.(clean) || resolveId?.(target)
   if (byId?.name) return byId.name
-  const byName = resolveName?.(target)
+  const byName = resolveName?.(clean) || resolveName?.(target)
   if (byName?.name) return byName.name
-  return target
+  return clean || target
 }
 
 /** The inline chip class the message renderer styles (and DOMPurify must keep). */
 export const MENTION_CHIP_CLASS = 'msg-mention-chip'
+
+/** stripTrailingSpecParentheses strips at the LAST opening bracket of the same
+ *  width when the string ends with its closing bracket (e.g.
+ *  "ZCode（智谱 GLM 编码代理）" -> "ZCode"). It deliberately mirrors Go's
+ *  trimTrailingBracketGroup, including its behavior on nested/unbalanced input
+ *  ("A（x（y））" -> "A（x"), so the two sides must stay identical. */
+export function stripTrailingSpecParentheses(name: string): string {
+  const s = name.trim()
+  if (s.endsWith('）')) {
+    const i = s.lastIndexOf('（')
+    return i > 0 ? s.slice(0, i).trim() : s
+  }
+  if (s.endsWith(')')) {
+    const i = s.lastIndexOf('(')
+    return i > 0 ? s.slice(0, i).trim() : s
+  }
+  return s
+}
+
+/** normalizeSpeakerTarget trims a target and strips one leading @/＠. Shared by
+ *  matchSpeakerName and the exact-first resolvers so both compare the same token. */
+export function normalizeSpeakerTarget(target: string): string {
+  return (target || '').trim().replace(/^[@＠]/, '')
+}
+
+/** matchSpeakerName checks if a target matches a speaker's name, or its name
+ *  with ONE trailing parenthesized description removed. Tolerates leading @/＠.
+ *  Removing the group is the only fallback: the caller has no specialty to
+ *  compare against, and a name may legitimately contain parentheses of its own
+ *  (`agy(zhu)`), so the trailing-group rule is what keeps distinct names apart. */
+export function matchSpeakerName(target: string, name: string | undefined): boolean {
+  const t = normalizeSpeakerTarget(target)
+  const nm = (name || '').trim()
+  if (!t || !nm) return false
+  if (t === nm) return true
+  const stripped = stripTrailingSpecParentheses(t)
+  if (stripped && stripped !== t && stripped === nm) return true
+  return false
+}
 
 /**
  * The reserved group-chat participant name of the HUMAN user (mirrors the Go

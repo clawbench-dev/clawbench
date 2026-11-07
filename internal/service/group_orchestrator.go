@@ -1905,16 +1905,18 @@ type notePolicy struct {
 // that member's next turn after it is enabled: it was validly addressed at write
 // time, and discarding it would silently lose what someone said to it.
 //
-// The target is resolved by ROW ID first, then by display name (lookupMember).
-// A USER's note carries a member ROW ID (the frontend writes ids), while an
-// agent writes a display name; resolving by name alone silently discarded every
-// user note as "unknown target". The note is keyed by the RESOLVED member name,
-// which is exactly what the delivery lookup (pendingBccForTarget(names[t.ID]))
-// uses.
+// The target is resolved by ROW ID first, then by display name or a registered
+// full alias (lookupMemberExact). A USER's note carries a member ROW ID (the
+// frontend writes ids), while an agent writes a display name; resolving by name
+// alone silently discarded every user note as "unknown target". Private notes
+// deliberately skip lookupMember's parenthesized fallback: a sloppy target must
+// fail closed (dropped as unknown), never be retargeted to whoever prefixes it.
+// The note is keyed by the RESOLVED member name, which is exactly what the
+// delivery lookup (pendingBccForTarget(names[t.ID])) uses.
 func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string, byID, byName map[string]GroupMember, pol notePolicy) {
 	for _, e := range route.Bcc {
 		for _, target := range e.Targets {
-			m, ok := lookupMember(target, byID, byName)
+			m, ok := lookupMemberExact(target, byID, byName)
 			if !ok || m.ID == speakerID {
 				continue
 			}
@@ -2309,10 +2311,27 @@ func memberNameMap(members []GroupMember) map[string]string {
 // as "unknown target" instead of being rejected as disabled.
 func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) {
 	byID = make(map[string]GroupMember, len(members))
-	byName = make(map[string]GroupMember, len(members)+1)
+	byName = make(map[string]GroupMember, len(members)*3+1)
 	for _, m := range members {
+		name := strings.TrimSpace(m.Name)
 		byID[m.ID] = m
-		byName[strings.TrimSpace(m.Name)] = m
+		byName[name] = m
+		if spec := strings.TrimSpace(GetAgentSpecialty(m.AgentID)); spec != "" {
+			// Register the rendered display aliases so that if a host model copies
+			// the entire string from the prompt into targets (e.g.
+			// `targets="ZCode（智谱 GLM 编码代理）"`), it resolves exactly to this
+			// member without ambiguity, preserving distinct names like `agy(zhu)`
+			// and `agy(hw)`. The keys come from hostMemberAliases so the prompt
+			// renderer stays the single source of the display format.
+			for _, alias := range hostMemberAliases(HostMemberInfo{Name: name, Specialty: spec}) {
+				byName[alias] = m
+			}
+		}
+		if m.Disabled {
+			for _, alias := range hostMemberAliases(HostMemberInfo{Name: name, Disabled: true}) {
+				byName[alias] = m
+			}
+		}
 	}
 	byName[groupUserTarget()] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget()}
 	return byID, byName
@@ -2322,13 +2341,60 @@ func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) 
 // first (a user's @-mention carries the row id) then the display name (an agent
 // writes the name). Both the host's routing resolution and the free-mode relay
 // use this, so the "how is a target matched" rule lives in one place.
+//
+// Parenthesized suffixes are a heuristic: a target like `ZCode（智谱 GLM 编码代理）`
+// or `agy(zhu)（架构）` falls back to the bare name, but ONLY when the group is
+// trailing. That rule must stay identical to web/src/utils/groupRouting.ts
+// (stripTrailingSpecParentheses); stripping at an inner parenthesis would let
+// Go route a target the frontend cannot render.
 func lookupMember(tgt string, byID, byName map[string]GroupMember) (GroupMember, bool) {
-	t := strings.TrimSpace(tgt)
+	if m, ok := lookupMemberExact(tgt, byID, byName); ok {
+		return m, true
+	}
+	t := normalizeMemberTarget(tgt)
+	if bare, ok := trimTrailingBracketGroup(t); ok {
+		if m, ok := byName[bare]; ok {
+			return m, true
+		}
+	}
+	return GroupMember{}, false
+}
+
+// lookupMemberExact resolves a target by row id or by an EXACT registered name
+// (display name, full specialty alias, or disabled marker). No parenthesized
+// fallback: private notes use this so a sloppy target like `Alice（Bob）` is
+// dropped as unknown instead of being delivered to Alice.
+func lookupMemberExact(tgt string, byID, byName map[string]GroupMember) (GroupMember, bool) {
+	t := normalizeMemberTarget(tgt)
 	if m, ok := byID[t]; ok {
 		return m, true
 	}
 	m, ok := byName[t]
 	return m, ok
+}
+
+func normalizeMemberTarget(tgt string) string {
+	t := strings.TrimSpace(tgt)
+	t = strings.TrimPrefix(t, "@")
+	return strings.TrimPrefix(t, "＠")
+}
+
+// trimTrailingBracketGroup removes ONE trailing parenthesized group, mirroring
+// the frontend's stripTrailingSpecParentheses. A group that does not end the
+// target is left alone (returns false) so both sides agree.
+func trimTrailingBracketGroup(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	for _, pair := range [][2]string{{"（", "）"}, {"(", ")"}} {
+		if !strings.HasSuffix(s, pair[1]) {
+			continue
+		}
+		idx := strings.LastIndex(s, pair[0])
+		if idx <= 0 {
+			return "", false
+		}
+		return strings.TrimSpace(s[:idx]), true
+	}
+	return "", false
 }
 
 // memberInfos converts the group's members into the HostMemberInfo shape the

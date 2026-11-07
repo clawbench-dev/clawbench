@@ -323,7 +323,7 @@ func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *te
 			ID:         "antigravity",
 			Backend:    "antigravity",
 			Transport:  "acp-stdio",
-			AcpCommand: "npx -y agy-acp@latest",
+			AcpCommand: "agy acp",
 		},
 	}
 
@@ -359,7 +359,7 @@ func TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly
 			ID:         "default-acp",
 			Backend:    "antigravity",
 			Transport:  "acp-stdio",
-			AcpCommand: "npx -y agy-acp@latest",
+			AcpCommand: "agy acp",
 		},
 	}
 	model.DefaultAgentID = "default-acp"
@@ -386,7 +386,7 @@ func TestNewBackendForAgentWithTransport_EmptyAgentID_MatchesAgentByBackendType(
 			ID:         "antigravity",
 			Backend:    "antigravity",
 			Transport:  "acp-stdio",
-			AcpCommand: "npx -y agy-acp@latest",
+			AcpCommand: "agy acp",
 		},
 	}
 
