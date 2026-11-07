@@ -231,7 +231,6 @@
             <span class="pcard-name">{{ group.displayName }}</span>
             <span class="pcard-count">{{ group.sessions.length }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
-            <ChevronRight :size="14" class="pcard-chev" />
           </button>
           <div
             v-for="session in group.sessions"
@@ -304,7 +303,6 @@
           <span class="browse-title">{{ browsingName }}</span>
           <span class="browse-count">{{ browsingSessions.length }}</span>
           <span class="browse-path" :title="browsingProject">{{ browsingPath }}</span>
-          <ChevronLeft :size="14" class="browse-chev" />
         </div>
         <div class="browse-note">{{ t('session.browseNote') }}</div>
       </button>
@@ -414,7 +412,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, ChevronLeft, ChevronRight, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -2304,17 +2302,6 @@ onUnmounted(() => {
   color: var(--color-yellow, #a16207);
 }
 
-/* Chevron: the header itself is the button, this is just the affordance that
-   says "there is another view behind it". */
-.pcard-chev {
-  flex: 0 0 auto;
-  color: var(--text-muted, #656d76);
-}
-
-.pcard-head:hover .pcard-chev {
-  color: var(--pc, var(--accent-color, #0066cc));
-}
-
 /* ── Read-only browse view ──
    The card, maximised: the same project-coloured frame, the same tinted header
    band with name / count / path, and the same compact rows (they reuse
@@ -2359,16 +2346,6 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-}
-
-/* Chevron: the whole header is the collapse button, this only marks it. */
-.browse-chev {
-  flex: 0 0 auto;
-  color: var(--text-muted, #656d76);
-}
-
-.browse-head:hover .browse-chev {
-  color: var(--pc, var(--accent-color, #0066cc));
 }
 
 .browse-title {

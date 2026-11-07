@@ -1417,7 +1417,7 @@ export default {
     refresh: 'Refresh session list',
     viewAllSessions: 'View all sessions',
     browseCount: '{n} sessions',
-    browseNote: 'Read-only list · opening a session switches to that project',
+    browseNote: 'Read-only · tap the header to go back, tap a session to open it there',
     browseFailed: 'Failed to load this project’s sessions',
     collapseProject: 'Collapse',
     reorderFailed: 'Failed to save session order',

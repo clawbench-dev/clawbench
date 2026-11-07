@@ -1420,7 +1420,7 @@ export default {
     refresh: '刷新会话列表',
     viewAllSessions: '查看该项目全部会话',
     browseCount: '{n} 个会话',
-    browseNote: '只读列表 · 点任意会话会切到该项目并打开它',
+    browseNote: '只读列表 · 点标题栏返回，点任意会话切到该项目并打开它',
     browseFailed: '加载该项目会话失败',
     collapseProject: '收起',
     reorderFailed: '保存会话顺序失败',
