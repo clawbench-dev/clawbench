@@ -64,7 +64,8 @@ func TTSSpeechWS(w http.ResponseWriter, r *http.Request) {
 		return // client left before sending start
 	}
 	var start ttsSpeechStart
-	if err := json.Unmarshal(raw, &start); err != nil || start.Type != "start" {
+	if err := json.Unmarshal(raw, &start); err != nil ||
+		(start.Type != "start" && start.Type != "say") {
 		writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "invalid start message"})
 		return
 	}
