@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  BRIDGE_CONTRACT_PATH,
   CONTRACT_PATHS,
   PROTOCOL_FILE,
+  bridgeBreakingChanges,
+  bridgeMembers,
   contractViolation,
   decideClientBuild,
   parseProtocol,
@@ -28,6 +31,15 @@ const decide = (over: Record<string, unknown> = {}) =>
     tag: 'v0.130.0',
     ...over,
   })
+
+/** Read a repo file from either the repo root or a worktree one level down. */
+function repoFile(rel: string): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), '..')]) {
+    const p = resolve(base, rel)
+    if (existsSync(p)) return readFileSync(p, 'utf8')
+  }
+  throw new Error(`${rel} not found from cwd: ${process.cwd()}`)
+}
 
 describe('decideClientBuild', () => {
   it('reuses both clients when nothing under android/ or desktop/ changed', () => {
@@ -79,10 +91,10 @@ describe('decideClientBuild', () => {
 })
 
 describe('contractViolation', () => {
-  it('fails when a contract file changed and the protocol stayed put', () => {
+  it('fails when a contract file broke and the protocol stayed put', () => {
     expect(
       contractViolation({
-        changedContractPaths: ['web/src/utils/clawbenchNative.ts'],
+        breakingContractPaths: ['web/src/utils/clawbenchNative.ts'],
         prevProtocol: 3,
         protocol: 3,
       }),
@@ -92,7 +104,7 @@ describe('contractViolation', () => {
   it('passes when the protocol was bumped alongside the change', () => {
     expect(
       contractViolation({
-        changedContractPaths: ['web/src/utils/clawbenchNative.ts'],
+        breakingContractPaths: ['web/src/utils/clawbenchNative.ts'],
         prevProtocol: 3,
         protocol: 4,
       }),
@@ -103,7 +115,7 @@ describe('contractViolation', () => {
     // The rebuild is forced instead; there is nothing to compare against.
     expect(
       contractViolation({
-        changedContractPaths: ['internal/handler/health.go'],
+        breakingContractPaths: ['internal/handler/health.go'],
         prevProtocol: null,
         protocol: 1,
       }),
@@ -111,7 +123,123 @@ describe('contractViolation', () => {
   })
 
   it('passes when no contract file changed', () => {
-    expect(contractViolation({ changedContractPaths: [], prevProtocol: 3, protocol: 3 })).toBe(false)
+    expect(contractViolation({ breakingContractPaths: [], prevProtocol: 3, protocol: 3 })).toBe(false)
+  })
+})
+
+/** A miniature bridge interface, formatted exactly like the real one. */
+const bridge = (members: string) => `export interface ClawBenchNative {\n${members}\n}\n\nexport function getNative() {\n  return null\n}\n`
+
+describe('bridgeMembers', () => {
+  it('records every member and whether it is optional', () => {
+    const members = bridgeMembers(
+      bridge(['  isNativeApp(): boolean', '  getCapabilities?(): NativeCapabilities', '  log(level: string): void'].join('\n')),
+    )
+    expect(members.size).toBe(3)
+    expect(members.get('isNativeApp')).toEqual({ optional: false })
+    expect(members.get('getCapabilities')).toEqual({ optional: true })
+    expect(members.get('log')).toEqual({ optional: false })
+  })
+
+  it('does not mistake multi-line signatures, comments or nested fields for members', () => {
+    const members = bridgeMembers(
+      bridge(
+        [
+          '  /** Whether the host can do it. */',
+          '  can?(): boolean',
+          '  showSelectionMenu?(',
+          '    text: string,',
+          '    left: number,',
+          '  ): void',
+          '  remoteControl?(ev: {',
+          "    kind: 'move' | 'down'",
+          '  }): Promise<void> | void',
+          '  // Async reads',
+          '  getAppVersion(): Promise<string>',
+        ].join('\n'),
+      ),
+    )
+    expect([...members.keys()]).toEqual(['can', 'showSelectionMenu', 'remoteControl', 'getAppVersion'])
+  })
+
+  it('reads the real interface, so a reformat cannot silently blind the guard', () => {
+    // An unreadable interface fails closed (see below), which would block every
+    // release — this test is what turns that into a PR-time failure instead.
+    const members = bridgeMembers(repoFile(BRIDGE_CONTRACT_PATH))
+    expect(members.size).toBeGreaterThan(20)
+    expect(members.get('isNativeApp')).toEqual({ optional: false })
+    expect(members.get('getCapabilities')).toEqual({ optional: true })
+  })
+})
+
+describe('bridgeBreakingChanges', () => {
+  const before = bridge(
+    [
+      '  isNativeApp(): boolean',
+      '  getLanguage(): string',
+      '  downloadFileWithProgress?(path: string): Promise<void>',
+    ].join('\n'),
+  )
+
+  it('accepts a purely additive change', () => {
+    const after = bridge(
+      [
+        '  isNativeApp(): boolean',
+        '  getLanguage(): string',
+        '  downloadFileWithProgress?(path: string): Promise<void>',
+        '  getCapabilities?(): NativeCapabilities',
+        '  readClipboardText?(): Promise<string>',
+      ].join('\n'),
+    )
+    expect(bridgeBreakingChanges(before, after)).toEqual([])
+  })
+
+  it('accepts a widened return type', () => {
+    // `void | Promise<void>` is what a shell returning nothing satisfies; every
+    // caller awaits, so this cannot break an older host.
+    const after = bridge(
+      [
+        '  isNativeApp(): boolean',
+        '  getLanguage(): string',
+        '  downloadFileWithProgress?(path: string): void | Promise<void>',
+      ].join('\n'),
+    )
+    expect(bridgeBreakingChanges(before, after)).toEqual([])
+  })
+
+  it('rejects a removed member', () => {
+    const after = bridge(['  isNativeApp(): boolean', '  getLanguage(): string'].join('\n'))
+    expect(bridgeBreakingChanges(before, after)).toEqual(['downloadFileWithProgress was removed'])
+  })
+
+  it('rejects a member that became mandatory', () => {
+    // The page would call it unconditionally on a host that never had it.
+    const after = bridge(
+      [
+        '  isNativeApp(): boolean',
+        '  getLanguage(): string',
+        '  downloadFileWithProgress(path: string): Promise<void>',
+      ].join('\n'),
+    )
+    expect(bridgeBreakingChanges(before, after)).toEqual(['downloadFileWithProgress became mandatory'])
+  })
+
+  it('rejects a new mandatory member', () => {
+    const after = bridge(
+      [
+        '  isNativeApp(): boolean',
+        '  getLanguage(): string',
+        '  downloadFileWithProgress?(path: string): Promise<void>',
+        '  getCapabilities(): NativeCapabilities',
+      ].join('\n'),
+    )
+    expect(bridgeBreakingChanges(before, after)).toEqual(['getCapabilities is new but mandatory (mark it optional)'])
+  })
+
+  it('fails closed when either side cannot be read', () => {
+    // Silence here would mean "compatible" for a file we never parsed.
+    expect(bridgeBreakingChanges(before, null)).toHaveLength(1)
+    expect(bridgeBreakingChanges('not an interface', before)).toHaveLength(1)
   })
 })
 
@@ -150,14 +278,6 @@ describe('release workflow wiring', () => {
    * mode is invisible — the release stays green and simply rebuilds everything
    * (or, worse, reuses an artifact while the rebuild branch is what runs).
    */
-  function repoFile(rel: string): string {
-    for (const base of [process.cwd(), resolve(process.cwd(), '..')]) {
-      const p = resolve(base, rel)
-      if (existsSync(p)) return readFileSync(p, 'utf8')
-    }
-    throw new Error(`${rel} not found from cwd: ${process.cwd()}`)
-  }
-
   const yml = repoFile('.github/workflows/release.yml')
   const reuseScript = repoFile('scripts/lib/reuse-client-artifact.sh')
 
