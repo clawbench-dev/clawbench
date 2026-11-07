@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,8 +20,12 @@ import (
 	"clawbench/internal/store"
 )
 
-const catalogSnapshotFixture = `{
-  "fetched_at": "2026-10-31T00:00:00Z",
+// catalogSnapshotTemplate is a snapshot with `fetched_at` substituted at write
+// time. A hard-coded date would silently become older than model.CatalogTTL
+// (7 days) and flip `stale` to true — the test would start failing on a
+// calendar date with no code change.
+const catalogSnapshotTemplate = `{
+  "fetched_at": "__FETCHED_AT__",
   "source": "https://models.dev/api.json",
   "providers": {
     "anthropic": {
@@ -34,13 +39,23 @@ const catalogSnapshotFixture = `{
   }
 }`
 
+// catalogSnapshotFixture renders the template as if it had just been fetched.
+func catalogSnapshotFixture() string {
+	return strings.Replace(
+		catalogSnapshotTemplate,
+		"__FETCHED_AT__",
+		time.Now().UTC().Format(time.RFC3339),
+		1,
+	)
+}
+
 // installCatalog writes a snapshot and loads it, so handler tests exercise the
 // same file → memory path the server uses at boot.
 func installCatalog(t *testing.T) {
 	t.Helper()
 	path := model.CatalogPath()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte(catalogSnapshotFixture), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte(catalogSnapshotFixture()), 0o600))
 	require.NoError(t, model.LoadCatalogFromDisk())
 }
 
