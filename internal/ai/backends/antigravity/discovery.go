@@ -23,7 +23,8 @@ func init() {
 }
 
 // agyLogPrefixRE matches Go log-prefix lines, e.g. "I0428 10:00:00.000000 1234 msg".
-// Mirrors the agy-acp bridge's status-line filter so parsing stays in sync.
+// Matches agy's own log-prefix lines so they are dropped rather than parsed as
+// model IDs.
 var agyLogPrefixRE = regexp.MustCompile(`^[IWEF]\d{4}\s`)
 
 // parseAgyModels parses `agy models`: each non-status line is a model ID or a

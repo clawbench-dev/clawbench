@@ -158,11 +158,11 @@ func TestACPInitRegistration(t *testing.T) {
 		if p.Spec.DefaultCmd != "agy" {
 			t.Errorf("expected DefaultCmd agy, got %q", p.Spec.DefaultCmd)
 		}
-		if p.Spec.AcpCommand != "npx -y agy-acp@latest" {
-			t.Errorf("expected AcpCommand npx -y agy-acp@latest, got %q", p.Spec.AcpCommand)
+		if p.Spec.AcpCommand != "agy acp" {
+			t.Errorf("expected AcpCommand agy acp (native subcommand), got %q", p.Spec.AcpCommand)
 		}
 		if !p.Spec.ACPLoadSession {
-			t.Error("expected ACPLoadSession=true for antigravity (bridge supports session/load)")
+			t.Error("expected ACPLoadSession=true for antigravity (agy acp advertises loadSession:true)")
 		}
 	})
 

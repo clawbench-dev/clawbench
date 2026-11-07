@@ -75,9 +75,13 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	// Verify install command on opencode BackendSpec
 	assert.Equal(t, "npm install -g opencode-ai", specs["opencode"].InstallCmd, "opencode should have InstallCmd set")
 
-	// ACP-only backends: agy is detected via DefaultCmd, ACP via agy-acp bridge
+	// ACP-only backends: agy is detected via DefaultCmd and speaks ACP through
+	// its own `acp` subcommand. It must NOT go through the third-party
+	// `agy-acp` npm adapter: that adapter never launches agy for the prompt turn
+	// (the conversation hangs) and leaks until its JS heap OOMs (~15 min), which
+	// the user sees as "AI backend exited abnormally" (issue #641).
 	assert.Equal(t, "agy", specs["antigravity"].DefaultCmd)
-	assert.Equal(t, "npx -y agy-acp@latest", specs["antigravity"].AcpCommand)
+	assert.Equal(t, "agy acp", specs["antigravity"].AcpCommand)
 	assert.Equal(t, "grok agent stdio", specs["grok"].AcpCommand)
 
 	// DeepSeek Harness is ACP-only and detected via the `dsh` binary. Its
