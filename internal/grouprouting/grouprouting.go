@@ -32,6 +32,7 @@ package grouprouting
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // MentionEntry is one parsed <clawbench-mention> tag.
@@ -434,15 +435,64 @@ func ReplaceMentions(text string, fn func(*MentionEntry) string) string {
 	return replaceMentionSpans(text, fn)
 }
 
-// splitNames splits a comma-separated target list, trimming each name and
-// dropping empties. Order is preserved.
+// splitNames splits a target list separated by commas (ASCII ',', CJK '，', or
+// CJK enumeration '、'), trimming each name and dropping empties. Order is
+// preserved.
+//
+// CJK separators inside BALANCED parentheses are kept: a model that copies a
+// rendered member with a specialty like `ZCode（写码、调试）` must stay one
+// target. Unbalanced input falls back to ASCII ',' only, so a stray '，'/'、'
+// in a malformed group cannot manufacture extra targets. Mirrored by
+// web/src/utils/groupRouting.ts (splitNames).
 func splitNames(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if name := strings.TrimSpace(p); name != "" {
+	out := make([]string, 0, 4)
+	add := func(part string) {
+		if name := strings.TrimSpace(part); name != "" {
 			out = append(out, name)
 		}
 	}
+	if !bracketsBalanced(s) {
+		for _, p := range strings.Split(s, ",") {
+			add(p)
+		}
+		return out
+	}
+	depth, start := 0, 0
+	for i, r := range s {
+		switch r {
+		case '（', '(':
+			depth++
+		case '）', ')':
+			if depth > 0 {
+				depth--
+			}
+		case ',', '，', '、':
+			if depth == 0 {
+				add(s[start:i])
+				start = i + utf8.RuneLen(r)
+			}
+		}
+	}
+	add(s[start:])
 	return out
+}
+
+// bracketsBalanced reports whether the parentheses are balanced BY DEPTH (an
+// opening bracket is cancelled by the next closing one regardless of type:
+// '（' may be closed by ')'). It deliberately does not validate bracket TYPE
+// pairing; depth is all the broader CJK separator split needs.
+func bracketsBalanced(s string) bool {
+	depth := 0
+	for _, r := range s {
+		switch r {
+		case '（', '(':
+			depth++
+		case '）', ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }

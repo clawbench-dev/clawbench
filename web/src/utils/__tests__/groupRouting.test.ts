@@ -9,6 +9,8 @@ import {
   serializeMentionCards,
   resolveMentionDisplayName,
   stripGoalSatisfiedTag,
+  stripTrailingSpecParentheses,
+  matchSpeakerName,
   MENTION_CHIP_CLASS,
 } from '@/utils/groupRouting.ts'
 
@@ -79,6 +81,20 @@ describe('parseGroupRouting private notes', () => {
   it('splits and trims multiple targets', () => {
     const r = parseGroupRouting('<clawbench-mention targets="A, B ,C" private>都注意</clawbench-mention>')
     expect(r.bcc[0].targets).toEqual(['A', 'B', 'C'])
+  })
+
+  // Mirror of TestParseTargetsCJKSeparatorsInsideParens in
+  // internal/grouprouting/grouprouting_test.go: same inputs, same targets.
+  it('keeps CJK separators inside balanced parentheses', () => {
+    const balanced = parseGroupRouting('<clawbench-mention targets="ZCode（写码、调试）、Q" private>x</clawbench-mention>')
+    expect(balanced.bcc[0].targets).toEqual(['ZCode（写码、调试）', 'Q'])
+
+    // Unbalanced input falls back to ASCII ',' only.
+    const unbalanced = parseGroupRouting('<clawbench-mention targets="ZCode（写码、调试" private>x</clawbench-mention>')
+    expect(unbalanced.bcc[0].targets).toEqual(['ZCode（写码、调试'])
+
+    const ascii = parseGroupRouting('<clawbench-mention targets="A,B（C" private>x</clawbench-mention>')
+    expect(ascii.bcc[0].targets).toEqual(['A', 'B（C'])
   })
 
   it('does not leak a note placed before the public mention into before', () => {
@@ -433,5 +449,75 @@ describe('stripGoalSatisfiedTag (single chat)', () => {
   it('returns the input unchanged when no signal is present', () => {
     const text = '普通回复，没有标签'
     expect(stripGoalSatisfiedTag(text)).toBe(text)
+  })
+})
+
+describe('stripTrailingSpecParentheses', () => {
+  it('strips full-width parentheses descriptions', () => {
+    expect(stripTrailingSpecParentheses('ZCode（智谱 GLM 编码代理）')).toBe('ZCode')
+  })
+
+  it('strips ASCII parentheses descriptions', () => {
+    expect(stripTrailingSpecParentheses('Codebuddy(全栈开发助手)')).toBe('Codebuddy')
+  })
+
+  it('leaves names without trailing parentheses intact', () => {
+    expect(stripTrailingSpecParentheses('ZCode')).toBe('ZCode')
+  })
+
+  it('strips a trailing group even when the bare name itself has parentheses', () => {
+    expect(stripTrailingSpecParentheses('agy(zhu)')).toBe('agy')
+  })
+
+  it('only strips a group that ends the target', () => {
+    // Mirrors Go's trimTrailingBracketGroup: an inner group must stay intact so
+    // both sides resolve the same targets.
+    expect(stripTrailingSpecParentheses('ZCode（任意描述）补充')).toBe('ZCode（任意描述）补充')
+  })
+
+  it('mirrors Go on nested and unbalanced trailing brackets', () => {
+    // Go strips at the LAST same-width opening bracket when the target ends
+    // with its closing bracket; these cases pin that rule on both sides.
+    const cases: Array<[string, string]> = [
+      ['agy(zhu)（架构）', 'agy(zhu)'],
+      ['A（x）y）', 'A'],
+      ['A（x（y））', 'A（x'],
+      ['A(x)y)', 'A'],
+      ['A(x(y))', 'A(x'],
+      ['A（x）y)', 'A（x）y)'],
+      ['A(x)y）', 'A(x)y）'],
+      ['A（x)y）', 'A'],
+      ['A(x）y)', 'A'],
+      ['A（x（y）', 'A（x'],
+      ['A(x(y)', 'A(x'],
+    ]
+    for (const [input, want] of cases) {
+      expect(stripTrailingSpecParentheses(input), input).toBe(want)
+    }
+  })
+})
+
+describe('matchSpeakerName', () => {
+  it('matches exact name', () => {
+    expect(matchSpeakerName('ZCode', 'ZCode')).toBe(true)
+    expect(matchSpeakerName('agy(zhu)', 'agy(zhu)')).toBe(true)
+    expect(matchSpeakerName('@agy(zhu)', 'agy(zhu)')).toBe(true)
+    expect(matchSpeakerName('＠ZCode', 'ZCode')).toBe(true)
+  })
+
+  it('matches a name with a trailing parenthesized description (fullwidth or ASCII)', () => {
+    expect(matchSpeakerName('ZCode（智谱 GLM 编码代理）', 'ZCode')).toBe(true)
+    expect(matchSpeakerName('ZCode(智谱 GLM 编码代理)', 'ZCode')).toBe(true)
+    expect(matchSpeakerName('ZCode（任意描述）', 'ZCode')).toBe(true)
+    expect(matchSpeakerName('Codebuddy(other)', 'Codebuddy')).toBe(true)
+  })
+
+  it('does not confuse distinct parenthesized names like agy(zhu) and agy(hw)', () => {
+    expect(matchSpeakerName('agy(zhu)', 'agy(hw)')).toBe(false)
+    expect(matchSpeakerName('agy(hw)', 'agy(zhu)')).toBe(false)
+  })
+
+  it('does not strip a group that is not at the end (mirrors Go lookupMember)', () => {
+    expect(matchSpeakerName('ZCode（自定义描述）补充', 'ZCode')).toBe(false)
   })
 })

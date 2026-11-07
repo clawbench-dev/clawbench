@@ -20,15 +20,37 @@ type HostMemberInfo struct {
 	Disabled  bool
 }
 
-// renderHostMember renders one entry of the host's routable-member list.
-func renderHostMember(m HostMemberInfo) string {
+// renderHostMemberWith renders one roster entry using the given WRAPPER
+// parenthesis pair. Only the wrapper is parameterized: the member name (which
+// may itself contain brackets, e.g. `agy（zhu）`) and the specialty are copied
+// verbatim, so the ASCII variant cannot accidentally rewrite the name.
+func renderHostMemberWith(m HostMemberInfo, openBracket, closeBracket string) string {
 	if m.Disabled {
-		return m.Name + "（已禁用）"
+		return m.Name + openBracket + "已禁用" + closeBracket
 	}
 	if m.Specialty != "" {
-		return m.Name + "（" + m.Specialty + "）"
+		return m.Name + openBracket + m.Specialty + closeBracket
 	}
 	return m.Name
+}
+
+// renderHostMember renders one entry of the host's routable-member list.
+func renderHostMember(m HostMemberInfo) string {
+	return renderHostMemberWith(m, "（", "）")
+}
+
+// hostMemberAliases returns the exact strings a model may copy back from the
+// rendered roster: renderHostMember's own output plus the ASCII-WRAPPER form
+// models often retype. Routing registers these verbatim aliases, so the
+// display format has a single source (renderHostMemberWith) — changing how a
+// member is rendered cannot silently stop a copied display string from resolving.
+func hostMemberAliases(m HostMemberInfo) []string {
+	full := renderHostMember(m)
+	ascii := renderHostMemberWith(m, "(", ")")
+	if ascii == full {
+		return []string{full}
+	}
+	return []string{full, ascii}
 }
 
 // renderMemberList renders a member list as "A（desc）、B、C" (no trailing
@@ -107,8 +129,8 @@ func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	b.WriteString("\n\n[群聊主持人] 你是本次多智能体讨论的主持人。你的职责是控场，而不是代替成员回答问题。\n")
 	b.WriteString("具体来说：\n")
 	b.WriteString("  - 你负责拆解任务、决定下一个该谁发言、给出清晰可执行的指令、最后汇总结论。\n")
-	b.WriteString("  - 具体工作（写代码、改文件、跑命令、查资料等）交给合适的成员去做——点名时把要求写清楚，不要自己先做完再通知他们。\n")
-	b.WriteString("  - 例外：群内没有其他成员，或用户本轮直接要求你本人执行（如 /cb-* 命令）时，由你自己完成。\n")
+	b.WriteString("  - 具体工作（写代码、改文件、跑命令、查资料等）交给合适的成员去做——点名时把要求写清楚，不要自己先做完再通知他们；严禁使用你自带的 Agent/subagent/wait 工具私自模拟或替代群成员执行。\n")
+	b.WriteString("  - 例外：群内没有其他成员，或用户本轮明确要求你本人直接执行/由你启动子任务（如 /cb-* 命令等）时，由你自己完成。\n")
 	b.WriteString(selfIdentityLine(selfName))
 	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言，并把你对他们说的话写在标签里：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\">给该成员的指令</clawbench-mention>\n")
@@ -120,7 +142,7 @@ func BuildHostSystemPrompt(selfName string, members []HostMemberInfo) string {
 	b.WriteString("当讨论已充分、可以收敛时，输出结束标签：\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n")
-	b.WriteString("注意：你本人不在可点名名单里，**不要点名你自己**——只能点名下列其他成员。\n")
+	b.WriteString("注意：你本人不在可点名名单里，**不要点名你自己**——只能点名下列其他成员（点名 targets 中只填成员名，不要包含括号及特长说明）。\n")
 	// The routable list contains only members that can actually speak right now:
 	// a disabled member is dropped here (and named separately below), so the host
 	// never reads a name it is not allowed to address.

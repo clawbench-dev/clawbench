@@ -1,6 +1,7 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import { listGroupMembers, type GroupMemberInfo } from '@/composables/useGroupChat'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
+import { matchSpeakerName, normalizeSpeakerTarget } from '@/utils/groupRouting'
 
 /** GroupSpeakerIdentity is the resolved shape a message speaker renders with. */
 export interface GroupSpeakerIdentity {
@@ -58,11 +59,16 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
   /** resolveByName maps a display name to a speaker identity or null.
    *  Used to render @-mention chips for the host's routing targets, which are
    *  named (not id'd) in the routing tag. Searches ALL rows so a chip in an old
-   *  message still resolves after the member was removed. */
+   *  message still resolves after the member was removed. Tolerates leading
+   *  @/＠ and specialty descriptions in parentheses.
+   *  Exact names win over the fuzzy fallback regardless of roster order: a
+   *  member literally named `agy(zhu)` must not be shadowed by a bare `agy`
+   *  listed before it. */
   function resolveByName(name: string): GroupSpeakerIdentity | null {
-    const target = name.trim()
+    const target = normalizeSpeakerTarget(name)
     if (!target) return null
-    const m = allMembers.value.find(x => x.name.trim() === target)
+    const exact = allMembers.value.find(x => (x.name || '').trim() === target)
+    const m = exact ?? allMembers.value.find(x => matchSpeakerName(target, x.name))
     if (!m) return null
     return toIdentity(m)
   }
