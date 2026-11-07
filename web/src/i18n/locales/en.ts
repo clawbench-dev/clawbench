@@ -1413,8 +1413,6 @@ export default {
     unpinToSidebar: 'Unpin',
     closeSidebar: 'Close sidebar',
     refresh: 'Refresh session list',
-    otherProjects: 'Other projects',
-    otherProjectsHint: 'Only sessions that are running, awaiting approval, or unread',
     viewAllSessions: 'View all sessions',
     browseCount: '{n} sessions',
     browseNote: 'Read-only list · opening a session switches to that project',

@@ -1492,6 +1492,11 @@ describe('SessionList', () => {
       expect(wrapper.findAll('.pcard').length).toBe(1)
       expect(wrapper.findAll('.pcard-row').length).toBe(2)
       expect(wrapper.find('[data-other-zone]').exists()).toBe(true)
+      // Same scroll container as the project's rows — the cards are not a
+      // separate region with its own height.
+      expect(wrapper.find('.session-list-pane [data-other-zone]').exists()).toBe(true)
+      // And no section heading of their own: the cards start directly.
+      expect(wrapper.find('.other-zone-head').exists()).toBe(false)
     })
 
     it('names the owning project and its active count on the card header', async () => {
@@ -1503,7 +1508,6 @@ describe('SessionList', () => {
       expect(wrapper.find('.pcard-name').text()).toBe('other')
       expect(wrapper.find('.pcard-count').text()).toBe('2')
       expect(wrapper.find('.pcard-path').text()).toBe('~/proj/other')
-      expect(wrapper.find('.other-zone-count').text()).toBe('2')
     })
 
     it('keeps the pending/unread language and shows running as a ring', async () => {
@@ -1572,53 +1576,6 @@ describe('SessionList', () => {
       for (const row of rows) {
         expect(row.find('.session-more-btn').exists()).toBe(false)
       }
-    })
-
-    it('collapses and expands the whole section from its header', async () => {
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
-      mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList()
-      await flushPromises()
-
-      const head = wrapper.find('.other-zone-head')
-      expect(head.attributes('aria-expanded')).toBe('true')
-
-      await head.trigger('click')
-      expect(wrapper.find('.other-zone-head').attributes('aria-expanded')).toBe('false')
-      // Rows stay mounted (v-show) so collapsing never destroys the snapshot.
-      expect(wrapper.findAll('.pcard-row').length).toBe(2)
-      expect(wrapper.find('.other-zone-body').attributes('style')).toContain('display: none')
-      expect(wrapper.find('.other-zone').classes()).toContain('is-collapsed')
-
-      await head.trigger('click')
-      expect(wrapper.find('.other-zone').classes()).not.toContain('is-collapsed')
-      expect(wrapper.find('.other-zone-body').attributes('style') || '').not.toContain('display: none')
-    })
-
-    it('sizes the section from the real content heights, not a fixed ratio', async () => {
-      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
-      mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList()
-      await flushPromises()
-
-      // jsdom reports 0 for every box, so hand the component the numbers a
-      // real layout would produce and let it run its measure pass.
-      const body = wrapper.find('.session-list-body').element as HTMLElement
-      Object.defineProperty(body, 'clientHeight', { value: 600, configurable: true })
-      const rows = wrapper.find('.session-rows').element as HTMLElement
-      rows.getBoundingClientRect = () => ({ height: 300, top: 0, left: 0, right: 0, bottom: 300, width: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
-      const zoneBody = wrapper.find('.other-zone-body').element as HTMLElement
-      Object.defineProperty(zoneBody, 'scrollHeight', { value: 200, configurable: true })
-      const firstRow = wrapper.find('.pcard-row').element as HTMLElement
-      firstRow.getBoundingClientRect = () => ({ height: 36, top: 0, left: 0, right: 0, bottom: 36, width: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
-
-      window.dispatchEvent(new Event('resize'))
-      await new Promise(resolve => setTimeout(resolve, 30))
-      await flushPromises()
-
-      // 600 available, project list needs 300, other projects have 200 of
-      // content -> the section shows all 200 and the project list stays whole.
-      expect(wrapper.find('.other-zone-body').attributes('style')).toContain('height: 200px')
     })
 
     // ── Read-only browse view ────────────────────────────────────────────

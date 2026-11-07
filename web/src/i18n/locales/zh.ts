@@ -1416,8 +1416,6 @@ export default {
     unpinToSidebar: '取消固定',
     closeSidebar: '关闭侧栏',
     refresh: '刷新会话列表',
-    otherProjects: '其他项目',
-    otherProjectsHint: '仅显示运行中、待审批或有未读的会话',
     viewAllSessions: '查看该项目全部会话',
     browseCount: '{n} 个会话',
     browseNote: '只读列表 · 点任意会话会切到该项目并打开它',

@@ -10,15 +10,12 @@
       @toggle="toggleTagFilter"
     />
 
-    <!-- The list area is one column split between two live regions: the project
-         pane on top and the other-project strip at the bottom. The split is not
-         a fixed ratio — it is recomputed from the real row counts so the
-         project's own sessions stay fully visible whenever they can, and the
-         strip only takes what is left over (see computeOtherZoneBodyHeight). -->
-    <div ref="bodyRef" class="session-list-body">
-    <div v-show="!browsingProject" class="session-list-main">
+    <!-- One scroll area. The other projects' cards are NOT a separate region:
+         they sit after the project's own rows and scroll with them, so there is
+         no height budget to negotiate and nothing can be squeezed. -->
+    <div class="session-list-body">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
-    <div ref="listRef" class="session-list-pane">
+    <div v-show="!browsingProject" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
            swapped seamlessly to the new data (see loadSessions). -->
@@ -206,45 +203,18 @@
           </template>
         </VueDraggable>
       </template>
-    </div>
 
-    <!-- ── Other projects: active sessions elsewhere, as per-project cards ──
-         Always on screen beside the project's own sessions — no tab switch, so
-         "did anything happen elsewhere" is answered by looking, not by
-         remembering to look.
+      <!-- ── Other projects: active sessions elsewhere, as cards ──
+           One card per project, sitting directly under the project's own rows
+           and scrolling with them — no heading of its own, no fixed height, no
+           split. The card boundary is the "this is not your project" signal;
+           the tinted header names which project it is; the footer opens a
+           read-only list of that project's full session list (opening a session
+           there is what switches the workspace).
 
-         One card per project: the card boundary is the primary "this is not
-         your project" signal, the tinted header names which project it is, and
-         the footer opens a read-only list of that project's full session list
-         (opening a session there is what switches the workspace).
-
-         The column's height is computed in JS from real content heights (see
-         computeOtherZoneBodyHeight): the project pane keeps every row it can,
-         the cards take the remainder, bounded by a two-row floor and a share of
-         the pane. A fixed ratio could not do this — the same split is wasteful
-         with three project sessions and suffocating with thirty. -->
-    <div
-      v-if="crossGroups.length > 0"
-      class="other-zone"
-      :class="{ 'is-collapsed': otherZoneCollapsed }"
-      data-other-zone
-    >
-      <button
-        class="other-zone-head"
-        :aria-expanded="!otherZoneCollapsed"
-        :title="t('session.otherProjectsHint')"
-        @click="toggleOtherZone"
-      >
-        <ChevronDown :size="12" class="other-zone-chev" />
-        <span class="other-zone-title">{{ t('session.otherProjects') }}</span>
-        <span class="other-zone-count">{{ crossRows.length }}</span>
-      </button>
-      <div
-        v-show="!otherZoneCollapsed"
-        ref="otherZoneBodyRef"
-        class="other-zone-body"
-        :style="otherZoneBodyStyle"
-      >
+           Rendered outside the rows' v-if/v-else chain on purpose: a project
+           with no sessions of its own still needs to show them. -->
+      <div v-if="crossGroups.length > 0" class="other-cards" data-other-zone>
         <div
           v-for="group in crossGroups"
           :key="group.name"
@@ -300,7 +270,6 @@
         </div>
       </div>
     </div>
-    </div><!-- /session-list-main -->
 
     <!-- ── Read-only browse of one other project ──
          Takes over the list area instead of squeezing into the strip: this is a
@@ -448,8 +417,7 @@ import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
-import { computeOtherZoneBodyHeight, projectTintVar } from '@/utils/sessionOtherZone'
-import { UI_SCALE_EVENT } from '@/utils/uiScale'
+import { projectTintVar } from '@/utils/projectTint'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -491,24 +459,6 @@ const dialog = useDialog()
 const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups } = useCrossProjectSessions()
-
-/**
- * Flat, ordered list for the bottom strip: groups keep the composable's order
- * (project path ascending), rows keep "most recent first" inside a group.
- * Flattened rather than grouped because the strip is one line per session —
- * a per-project header would cost a row of height for every project.
- */
-const crossRows = computed(() =>
-  crossGroups.value.flatMap(group =>
-    group.sessions.map(session => ({
-      key: group.name + '/' + session.id,
-      session,
-      project: group.name,
-      projectName: group.displayName,
-      status: rowStatus(session),
-    })),
-  ),
-)
 
 // ── Dropping a quote onto a row ─────────────────────────────────────────────
 // A quote dragged from a commit / task / issue / meeting can be dropped on the
@@ -809,75 +759,6 @@ function findSession(sessionId) {
   return sessionsById.value.get(sessionId)
 }
 
-// ── Other-project strip: collapse state + adaptive height ──────────────────
-//
-// Collapse is in-memory only (the strip is never unmounted while the app runs,
-// so it survives list reloads and resets on page reload). Expanded by default:
-// the whole point of the strip is that other projects' activity is visible
-// without asking for it.
-const otherZoneCollapsed = ref(false)
-function toggleOtherZone() {
-  otherZoneCollapsed.value = !otherZoneCollapsed.value
-  scheduleOtherZoneMeasure()
-}
-
-/** Rendered body height of the strip, in CSS px (header excluded). */
-const otherZoneBodyHeight = ref(0)
-const otherZoneBodyStyle = computed(() => ({ height: `${otherZoneBodyHeight.value}px` }))
-
-const bodyRef = ref(null)
-const otherZoneBodyRef = ref(null)
-let otherZoneRaf = 0
-let otherZoneObserver = null
-
-/**
- * Measure and re-split the two regions.
- *
- * `availH` is the whole list column, `currentContentH` the project list's real
- * content height (the `.session-rows` element — NOT the pane's scrollHeight,
- * which is clamped to the pane and would make the split circular), and
- * `otherContentH` the strip's content height (its scrollHeight, which stays the
- * true content height even while the element is height-constrained).
- *
- * All three come from the same coordinate space (CSS px), so no uiScale
- * multiplication is needed — see the repo rule about mixing JS and CSS numbers.
- */
-function measureOtherZone() {
-  const body = bodyRef.value
-  if (!body) return
-  if (browsingProject.value || otherZoneCollapsed.value || crossRows.value.length === 0) {
-    otherZoneBodyHeight.value = 0
-    return
-  }
-  const rowsEl = listRef.value?.querySelector('.session-rows')
-  const zoneBody = otherZoneBodyRef.value
-  const firstRow = zoneBody?.querySelector('.pcard-row')
-  otherZoneBodyHeight.value = computeOtherZoneBodyHeight({
-    availH: body.clientHeight,
-    currentContentH: rowsEl ? rowsEl.getBoundingClientRect().height : 0,
-    otherContentH: zoneBody ? zoneBody.scrollHeight : 0,
-    rowH: firstRow ? firstRow.getBoundingClientRect().height : 0,
-  })
-}
-
-/** Coalesce the many triggers (data, resize, scale, collapse) into one pass. */
-function scheduleOtherZoneMeasure() {
-  if (typeof requestAnimationFrame !== 'function') {
-    measureOtherZone()
-    return
-  }
-  if (otherZoneRaf) return
-  otherZoneRaf = requestAnimationFrame(() => {
-    otherZoneRaf = 0
-    measureOtherZone()
-  })
-}
-
-watch(
-  [() => crossRows.value.length, () => visibleRows.value.length, otherZoneCollapsed],
-  () => { void nextTick(scheduleOtherZoneMeasure) },
-)
-
 // ── Read-only browse of another project ────────────────────────────────────
 //
 // Opening a project's card footer shows its FULL session list without touching
@@ -921,7 +802,6 @@ function closeProjectBrowse() {
   browsingName.value = ''
   browsingSessions.value = []
   browsingError.value = ''
-  void nextTick(scheduleOtherZoneMeasure)
 }
 
 async function loadSessions() {
@@ -1398,16 +1278,6 @@ onMounted(() => {
   // no currentSessionId *change* to observe, so expand once here too.
   expandGroupOf(props.currentSessionId)
 
-  // Re-split the list after any layout change that can move the boundary:
-  // window/sidebar resize, and UI scale changes (which do NOT fire `resize`).
-  if (typeof ResizeObserver !== 'undefined' && bodyRef.value) {
-    otherZoneObserver = new ResizeObserver(() => scheduleOtherZoneMeasure())
-    otherZoneObserver.observe(bodyRef.value)
-  }
-  window.addEventListener('resize', scheduleOtherZoneMeasure)
-  window.addEventListener(UI_SCALE_EVENT, scheduleOtherZoneMeasure)
-  scheduleOtherZoneMeasure()
-
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -1420,11 +1290,6 @@ onUnmounted(() => {
   removeEventHandler?.()
   removeEventHandler = null
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
-  if (otherZoneRaf) { cancelAnimationFrame(otherZoneRaf); otherZoneRaf = 0 }
-  otherZoneObserver?.disconnect()
-  otherZoneObserver = null
-  window.removeEventListener('resize', scheduleOtherZoneMeasure)
-  window.removeEventListener(UI_SCALE_EVENT, scheduleOtherZoneMeasure)
   contextMenu.visible = false
 })
 </script>
@@ -1440,20 +1305,9 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* The list area is split between the project pane (top, scrolls) and the
-   other-project strip (bottom, height computed in JS). `min-height: 0` on the
-   pane is what lets it shrink below its content so the strip gets real space
-   instead of pushing the pane's overflow out of the column. */
+/* The list area: the scrollable project pane (its rows and the other-project
+   cards share that one scroll) plus, when open, the read-only browse view. */
 .session-list-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-/* The project list + the other-project cards. Kept mounted (v-show) while a
-   browse view is open so returning to it restores the scroll position. */
-.session-list-main {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -2198,82 +2052,22 @@ onUnmounted(() => {
 /* The context menu itself uses the shared .context-menu / .context-menu-item
    styles from css/components.css (same as the file manager). */
 
-/* ── Other-project strip ──
-   Sits under the project list and is always on screen, so "did something
-   happen elsewhere" is answered by looking rather than by remembering to
-   switch a tab. Two signals separate it from the project's own rows, and they
-   are deliberately different in kind: a structural one (2px edge + its own
-   surface) and a per-row one (the project chip). Colour alone would fail in
-   themes where the tint is close to the accent. */
-.other-zone {
-  flex: 0 0 auto;
+/* ── Other-project cards ──
+   They live INSIDE the project's scroll container and simply follow its rows:
+   no fixed height, no split, no heading of their own. The card edge is what
+   separates "another project" from the user's own list; the tinted header says
+   which project it is. */
+.other-cards {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  border-top: 2px solid var(--border-color, #dee2e6);
-  background: var(--bg-primary, #fff);
-}
-
-.other-zone-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-width: 0;
-  padding: var(--space-4) var(--space-6);
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary, #495057);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  text-align: left;
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .other-zone-head:hover {
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  }
-}
-
-.other-zone-chev {
-  flex: 0 0 auto;
-  color: var(--text-hint, #adb5bd);
-  transition: transform var(--duration-base);
-}
-
-.other-zone.is-collapsed .other-zone-chev {
-  transform: rotate(-90deg);
-}
-
-.other-zone-title {
-  flex: 0 0 auto;
-  font-weight: var(--font-weight-semibold);
-}
-
-.other-zone-count {
-  flex: 0 0 auto;
-  min-width: calc(16 * var(--dp));
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-  color: var(--text-secondary, #495057);
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-medium);
-  text-align: center;
-}
-
-.other-zone-body {
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-7);
 }
 
 /* One card per project. Square corners and a crisp outline on purpose: the
    card edge is what separates "another project" from the user's own list, so it
    has to read as a hard boundary, not a soft rounded blob. */
 .pcard {
-  margin: var(--space-4) var(--space-4) 0;
   border: 1px solid color-mix(in srgb, var(--text-primary) 34%, var(--border-color));
   background: var(--bg-primary, #fff);
   overflow: hidden;
