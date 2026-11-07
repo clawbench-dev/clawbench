@@ -1,5 +1,7 @@
 package ai
 
+import acp "github.com/coder/acp-go-sdk"
+
 // ---------------------------------------------------------------------------
 // Sub-agent parent linkage
 // ---------------------------------------------------------------------------
@@ -29,7 +31,32 @@ const (
 	// metaKeyClaudeParentToolUseID is the nested claudeCode key stamped on
 	// sub-agent content.
 	metaKeyClaudeParentToolUseID = "parentToolUseId"
+	// metaKeyOpenCodeChildSession marks content projected from an OpenCode v2
+	// sub-agent (child) session into the PARENT session's update stream. Unlike
+	// the keys above it carries no parent tool-call id, so it cannot be used for
+	// grouping — it only identifies the frame as child content.
+	metaKeyOpenCodeChildSession = "opencode/child-session"
 )
+
+// isOpenCodeChildSessionUpdate reports whether an ACP session update was
+// projected from an OpenCode v2 sub-agent (child) session into the parent
+// session's stream.
+//
+// OpenCode v2 emits child-session content as ordinary session/update frames on
+// the parent session unless the client opts into its
+// `opencode/child-session-updates` extension channel. Every projected frame is
+// tagged with `_meta["opencode/child-session"]` and carries no parent tool-call
+// link, so without this check the sub-agent's text/thinking/tool calls render
+// as top-level content in the main timeline, after the spawning tool already
+// reported its result (issue #639).
+func isOpenCodeChildSessionUpdate(update acp.SessionUpdate) bool {
+	meta := acpUpdateMeta(update)
+	if len(meta) == 0 {
+		return false
+	}
+	_, ok := meta[metaKeyOpenCodeChildSession]
+	return ok
+}
 
 // extractParentToolCallID returns the id of the parent tool call that spawned
 // the sub-agent which produced this event, or "" for top-level (non-sub-agent)

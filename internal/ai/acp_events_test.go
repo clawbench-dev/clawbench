@@ -1682,6 +1682,111 @@ func TestMapACPSessionUpdate_TopLevelContentHasNoParent(t *testing.T) {
 	}
 }
 
+// --- OpenCode v2 child-session projection (issue #639) ---
+
+// openCodeChildSessionMeta is the _meta OpenCode v2 stamps on every session
+// update it projects from a sub-agent (child) session into the parent session's
+// stream (packages/cli/src/acp/child.ts).
+func openCodeChildSessionMeta() map[string]any {
+	return map[string]any{
+		"opencode/child-session": map[string]any{
+			"id":       "ses_child",
+			"parentID": "ses_parent",
+			"depth":    float64(1),
+			"title":    "explore",
+		},
+	}
+}
+
+func TestMapACPSessionUpdate_DropsOpenCodeChildSessionFrames(t *testing.T) {
+	// OpenCode v2 projects a sub-agent's own conversation into the PARENT
+	// session's update stream unless the client advertises
+	// `opencode/child-session-updates`. Those frames must never reach the main
+	// timeline: they carry no parent tool-call link, so they would render as
+	// ordinary content after the sub-agent tool already reported completion.
+	cases := []struct {
+		name   string
+		update acp.SessionUpdate
+	}{
+		{
+			name: "content",
+			update: acp.SessionUpdate{
+				AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+					Meta:          openCodeChildSessionMeta(),
+					Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child text", Type: "text"}},
+					SessionUpdate: "agent_message_chunk",
+				},
+			},
+		},
+		{
+			name: "thinking",
+			update: acp.SessionUpdate{
+				AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
+					Meta:          openCodeChildSessionMeta(),
+					Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child reasoning", Type: "text"}},
+					SessionUpdate: "agent_thought_chunk",
+				},
+			},
+		},
+		{
+			name: "tool_call",
+			update: acp.SessionUpdate{
+				ToolCall: &acp.SessionUpdateToolCall{
+					Meta:          openCodeChildSessionMeta(),
+					ToolCallId:    acp.ToolCallId("ses_child:call_1"),
+					Title:         "Read",
+					SessionUpdate: "tool_call",
+				},
+			},
+		},
+		{
+			name: "tool_call_update",
+			update: acp.SessionUpdate{
+				ToolCallUpdate: &acp.SessionToolCallUpdate{
+					Meta:          openCodeChildSessionMeta(),
+					ToolCallId:    acp.ToolCallId("ses_child:call_1"),
+					SessionUpdate: "tool_call_update",
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := make(chan StreamEvent, 10)
+			mapACPSessionUpdate(tc.update, ch, context.Background(), nil, nil)
+			select {
+			case evt := <-ch:
+				t.Fatalf("child-session frame must be dropped, got %+v", evt)
+			default:
+			}
+		})
+	}
+}
+
+func TestMapACPSessionUpdate_KeepsOpenCodeTopLevelContent(t *testing.T) {
+	// The guard keys off the child-session _meta only; a normal OpenCode frame
+	// (no such key) must still reach the timeline.
+	ch := make(chan StreamEvent, 10)
+	update := acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			Meta:          map[string]any{"opencode/retry": nil},
+			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "parent text", Type: "text"}},
+			SessionUpdate: "agent_message_chunk",
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+	var got *StreamEvent
+	for len(ch) > 0 {
+		e := <-ch
+		if e.Type == "content" {
+			got = &e
+		}
+	}
+	require.NotNil(t, got, "top-level OpenCode content must still be forwarded")
+	assert.Equal(t, "parent text", got.Content)
+}
+
 func TestMapACPToolCallUpdate_CarriesParentLink(t *testing.T) {
 	id := "call_child_tool"
 	tcu := acp.SessionToolCallUpdate{
