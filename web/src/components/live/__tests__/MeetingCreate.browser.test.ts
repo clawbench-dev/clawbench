@@ -772,7 +772,7 @@ describe('MeetingCreate in a browser', () => {
   // A desktop host that has not handed over a list yet (macOS screen recording
   // not granted, a Wayland portal that has not been asked) gets one empty frame
   // that asks for it, rather than a form that silently has no picture.
-  it('asks a native host for its source list instead of showing nothing', async () => {
+  it('asks a native host for its source list only when the host asks to share', async () => {
     stubCaptureApi(true)
     const listSources = vi.fn(async () => '[]')
     nativeApi.value = { listCaptureSources: listSources }
@@ -785,16 +785,21 @@ describe('MeetingCreate in a browser', () => {
     // No browser fallback tile: the host said it has a list, it just did not
     // produce one yet.
     expect(wrapper.find('[data-source="browser:screen"]').exists()).toBe(false)
+
+    // Opening the form must not enumerate screens: on Wayland that request IS
+    // the OS "what do you want to share" dialog, raised before the host has
+    // decided to share anything. Nothing was asked, so the form cannot claim
+    // there is nothing to share either.
+    expect(listCaptureSources).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-role="meeting-sources"]').exists()).toBe(false)
+
+    await pick.trigger('click')
+    await flushPromises()
+    expect(listCaptureSources).toHaveBeenCalledTimes(1)
+    // Now the answer is known, and it is empty.
     expect(wrapper.find('[data-role="meeting-sources"]').text()).toContain(
       enMessages.liveShare.noSources,
     )
-
-    const before = (listCaptureSources as unknown as ReturnType<typeof vi.fn>).mock.calls.length
-    await pick.trigger('click')
-    await flushPromises()
-    expect(
-      (listCaptureSources as unknown as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBeGreaterThan(before)
   })
 
   it('cannot start without a nickname, and says why', async () => {

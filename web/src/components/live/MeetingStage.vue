@@ -672,6 +672,15 @@ const screenBusy = ref(false)
 
 const captureSources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
+/**
+ * Whether the OS has actually been asked for a source list.
+ *
+ * The stage is mounted for the whole life of the meeting panel, so enumerating
+ * screens here would raise the OS screen-share dialog the moment the panel is
+ * opened — Wayland goes through the desktop portal, which asks its own question.
+ * Nothing is enumerated until the host clicks "选择共享画面".
+ */
+const sourcesProbed = ref(false)
 
 /** A native host that can enumerate screens and windows. */
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
@@ -719,7 +728,12 @@ const pickLabel = computed(() => {
  * minimum size, so the body could squash it to a single clipped row.
  */
 const sourceHint = computed(() => {
-  if (captureSources.value.length === 0 && canCapture.value && !loadingSources.value) {
+  if (
+    sourcesProbed.value &&
+    captureSources.value.length === 0 &&
+    canCapture.value &&
+    !loadingSources.value
+  ) {
     return t('liveShare.noSources')
   }
   return ''
@@ -1022,25 +1036,38 @@ async function onKickViewer(viewerId: string): Promise<void> {
 }
 
 /**
- * Load the tiles the picture grid offers.
+ * Draw the picture tiles for a source list.
+ *
+ * `[]` is a legitimate input and means "nobody has been asked yet": Android and
+ * a plain browser still get their synthetic tile from it, while a native host
+ * gets the "选择共享画面" tile that asks for a real list when clicked.
+ */
+function applyChoices(list: CaptureSource[]): void {
+  captureSources.value = buildCaptureChoices({
+    list,
+    android: isAndroidCapture.value,
+    browser: browserCapture && !hasNativeCapture.value,
+    entireScreen: t('liveShare.entireScreen'),
+    browserSource: t('meeting.create.browserSource'),
+  })
+}
+
+/**
+ * Load the tiles the picture grid offers — the click on "选择共享画面".
  *
  * Same builder as the create form, so the two screens cannot disagree about
- * what a host with no source list should see. The camera probe rides along:
- * it answers the same "what can this machine send" question.
+ * what a host with no source list should see. This is the ONLY place that
+ * enumerates screens: the panel stays mounted while the host reads records, so
+ * asking here at mount time made the OS raise its dialog on every visit.
  */
 async function loadSources(): Promise<void> {
   if (loadingSources.value) return
   loadingSources.value = true
   try {
     const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
+    sourcesProbed.value = true
     cameraAvailable.value = hasCamera
-    captureSources.value = buildCaptureChoices({
-      list,
-      android: isAndroidCapture.value,
-      browser: browserCapture && !hasNativeCapture.value,
-      entireScreen: t('liveShare.entireScreen'),
-      browserSource: t('meeting.create.browserSource'),
-    })
+    applyChoices(list)
   } catch (e) {
     appLog.e('MeetingStage', 'loadSources failed', e)
   } finally {
@@ -1246,10 +1273,15 @@ onMounted(() => {
   // The stage stays mounted across the meeting list, so this only matters for
   // the lines archived before it existed (a reload, or another host device).
   void loadChatHistory()
-  // The source list is what the picture grid draws; the camera probe rides
-  // along in the same call, so a machine without a camera does not offer a
-  // group that can only fail.
-  void loadSources()
+  // The source list is what the picture grid draws. Only the tiles that need no
+  // OS call are drawn up front (Android's sentinel, a browser's own picker): a
+  // native list is asked for when the host clicks "选择共享画面", not here — this
+  // component is mounted for as long as the meeting panel is open, and on
+  // Wayland enumerating screens makes the desktop portal raise its dialog.
+  applyChoices([])
+  void hasCameraDevice().then((has) => {
+    cameraAvailable.value = has
+  })
 })
 
 onBeforeUnmount(() => {

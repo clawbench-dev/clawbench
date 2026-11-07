@@ -310,6 +310,16 @@ const screenChoice = ref('')
 const title = ref('')
 const sources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
+/**
+ * Whether the OS has actually been asked for a source list.
+ *
+ * Enumerating screens is not free: on Wayland the request goes through the
+ * desktop portal, which raises its own "what do you want to share" dialog. That
+ * dialog must appear when the host asks to share something, not because this
+ * form was opened — and "there is nothing to share" may only be claimed after a
+ * real answer.
+ */
+const sourcesProbed = ref(false)
 const starting = ref(false)
 /** Whether this machine has a camera at all. */
 const cameraAvailable = ref(true)
@@ -381,7 +391,12 @@ const pickLabel = computed(() => {
  * tile is laid out inline and the form body is the only scroll container.
  */
 const sourceHint = computed(() => {
-  if (sources.value.length === 0 && canCapture.value && !loadingSources.value) {
+  if (
+    sourcesProbed.value &&
+    sources.value.length === 0 &&
+    canCapture.value &&
+    !loadingSources.value
+  ) {
     return t('liveShare.noSources')
   }
   return ''
@@ -450,33 +465,50 @@ const canStart = computed(() => {
 /** Which id to publish: a browser pick has no id, the dialog decides. */
 const selectedSourceId = computed(() => captureSourceIdOf(screenChoice.value))
 
+/**
+ * Draw the picture tiles for a source list.
+ *
+ * `[]` is a legitimate input and means "nobody has been asked yet": Android and
+ * a plain browser still get their synthetic tile from it, while a native host
+ * gets the "选择共享画面" tile that asks for a real list when clicked.
+ *
+ * Keeping the current choice when it still exists; otherwise default to the
+ * first screen. Screen sharing stays the default (it is what this feature has
+ * always been) and the camera stays opt-IN — turning somebody's camera on
+ * because they opened a form is exactly the surprise this must not give —
+ * unless there is no screen capture at all, where it is the only picture left.
+ */
+function applyChoices(list: CaptureSource[]): void {
+  sources.value = buildCaptureChoices({
+    list,
+    android: isAndroidCapture.value,
+    browser: browserCapture && !hasNativeCapture.value,
+    entireScreen: t('liveShare.entireScreen'),
+    browserSource: t('meeting.create.browserSource'),
+  })
+
+  const stillThere = sources.value.some((s) => s.id === screenChoice.value)
+  if (!stillThere) {
+    const screen = sources.value.find((s) => s.kind === 'screen')
+    screenChoice.value = screen?.id ?? sources.value[0]?.id ?? ''
+  }
+}
+
+/**
+ * Ask the host for the source list — the click on "选择共享画面".
+ *
+ * This is the ONLY place that enumerates screens, because it is the only moment
+ * the host has said they want to share one.
+ */
 async function loadSources(): Promise<void> {
   if (loadingSources.value) return
   loadingSources.value = true
   try {
     const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
+    sourcesProbed.value = true
     cameraAvailable.value = hasCamera
-    // Android has no source list: the consent dialog decides what gets
-    // mirrored. One sentinel tile keeps "share my screen" selectable.
-    sources.value = buildCaptureChoices({
-      list,
-      android: isAndroidCapture.value,
-      browser: browserCapture && !hasNativeCapture.value,
-      entireScreen: t('liveShare.entireScreen'),
-      browserSource: t('meeting.create.browserSource'),
-    })
+    applyChoices(list)
 
-    // Keep the current choice when it still exists; otherwise default to the
-    // first screen. Screen sharing stays the default (it is what this feature
-    // has always been) and the camera stays opt-IN — turning somebody's camera
-    // on because they opened a form is exactly the surprise this must not give
-    // — unless there is no screen capture at all, where it is the only picture
-    // left.
-    const stillThere = sources.value.some((s) => s.id === screenChoice.value)
-    if (!stillThere) {
-      const screen = sources.value.find((s) => s.kind === 'screen')
-      screenChoice.value = screen?.id ?? sources.value[0]?.id ?? ''
-    }
     // No screen to share: the camera is the only picture left, so it starts on.
     if (sources.value.length === 0 && hasCamera && cameraChoice.value === '') {
       cameraChoice.value = DEFAULT_DEVICE
@@ -584,9 +616,14 @@ onMounted(() => {
   // chosen DEVICE is kept; only "muted" is reset. It stays a default, not a
   // lock: the mute card is right there.
   if (micChoice.value === '') micChoice.value = DEFAULT_DEVICE
-  if (supported.value) {
-    void loadSources()
-  }
+  // Draw the tiles that need no OS call (Android's sentinel, a browser's own
+  // picker) and leave the native list unasked: enumerating screens here would
+  // raise the OS screen-share dialog merely because this form was opened. The
+  // camera probe only reads device kinds, so it may run.
+  applyChoices([])
+  void hasCameraDevice().then((has) => {
+    cameraAvailable.value = has
+  })
 })
 
 /**
