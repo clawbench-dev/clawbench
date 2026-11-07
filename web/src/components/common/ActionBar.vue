@@ -75,7 +75,7 @@
  * Design notes: docs/spec/client/design-guide.md
  * 「图标按钮：空间够就带上文字标签」.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MoreHorizontal } from 'lucide-vue-next'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -249,22 +249,27 @@ function measure(): void {
   kids.forEach((k, i) => { k.style.display = i < visibleCount ? '' : 'none' })
 
   // ── 2. Do the labels of the inline buttons fit? ──
-  // The track loses the "more" button's width when one appears, so compare
-  // against the room the track will really have.
-  const moreWidth = hidden.length > 0 ? designPx(props.moreWidth) + gap : 0
-  const availableForTrack = availableWidth - moreWidth
+  // Measure EVERY child, not just the buttons: the gaps between them, the fixed
+  // children (a breadcrumb, a sort dropdown) and the bar's own padding all take
+  // room. Adding up button widths alone missed those terms and let a row turn its
+  // labels on while it was still a couple of pixels too wide.
+  //
+  // BOTH classes are required: `ab-measuring` only turns transitions off, while
+  // the bars' own "grow when labelled" rules key on `.ab--labels`. Forcing only
+  // the former measured icon widths, concluded "the labels fit", and turned them
+  // on over a row that then stuck out of the bar.
+  root.classList.add('ab--labels', 'ab-measuring')
+  const all = items()
+  const neededWithLabels =
+    all.reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) +
+    gap * Math.max(0, all.length - 1)
+  root.classList.remove('ab--labels', 'ab-measuring')
+  if (hadLabels) root.classList.add('ab--labels')
 
-  root.classList.add('ab-measuring')
-  const visible = kids.slice(0, visibleCount)
-  const needed =
-    visible.reduce((sum, k) => sum + k.getBoundingClientRect().width, 0) +
-    gap * Math.max(0, visible.length - 1)
-  root.classList.remove('ab-measuring')
-
-  const spare = availableForTrack - needed
+  const overflow = neededWithLabels - innerWidth
   // Asymmetric on purpose: a bar dragged across the boundary would otherwise
   // flip at every pixel (on → 2px narrower → off → on).
-  const roomForLabels = showLabels.value ? spare >= -2 : spare >= TURN_ON_SLACK_PX
+  const roomForLabels = showLabels.value ? overflow <= 0 : overflow <= -TURN_ON_SLACK_PX
   // Degradation order is labels → icons → more menu: labels are the FIRST thing
   // sacrificed. A row that already had to fold buttons away is by definition
   // short of room, so showing labels on the few survivors would read as "there
@@ -368,11 +373,17 @@ onMounted(() => {
     observer = new ResizeObserver(onResize)
     observer.observe(rootRef.value)
   }
+  if (typeof MutationObserver !== 'undefined' && rootRef.value) {
+    childObserver = new MutationObserver(() => schedule())
+    childObserver.observe(rootRef.value, { childList: true })
+  }
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
   observer = null
+  childObserver?.disconnect()
+  childObserver = null
   if (frame) cancelAnimationFrame(frame)
   stopDrag?.()
   stopDrag = null
@@ -382,12 +393,11 @@ onBeforeUnmount(() => {
   root?.removeEventListener('pointercancel', onPointerUp)
 })
 
-// The slotted buttons can appear/disappear (conditional buttons), which does not
-// resize the bar. Re-measure after every render.
-watch(
-  () => buttons().length,
-  () => nextTick(schedule),
-)
+// Conditional buttons appear/disappear WITHOUT resizing the bar, so the
+// ResizeObserver never fires for them. A `watch` on a computed child count does
+// not work either: reading the DOM inside the getter tracks nothing reactive.
+// A MutationObserver is what actually sees the slot content change.
+let childObserver: MutationObserver | null = null
 </script>
 
 <style scoped>

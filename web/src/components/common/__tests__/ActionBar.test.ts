@@ -50,6 +50,13 @@ function mountBar(opts: { mode?: 'menu' | 'scroll'; sizes?: Sizes; count?: numbe
   const bar = wrapper.element as HTMLElement
 
   Object.defineProperty(bar, 'clientWidth', { configurable: true, value: sizes.available })
+  // jsdom reports 0 for scrollWidth. The component asks the browser how wide the
+  // row becomes WITH labels, so the fake has to answer the same question: the
+  // labelled total while `.ab--labels` is on, the icon total otherwise.
+  Object.defineProperty(bar, 'scrollWidth', {
+    configurable: true,
+    get: () => (bar.classList.contains('ab--labels') ? sizes.labelled : sizes.icon),
+  })
   const buttons = Array.from(bar.children).filter(
     (el): el is HTMLElement => el instanceof HTMLElement && el.tagName === 'BUTTON' && !el.hasAttribute('data-ab-more'),
   )
@@ -59,7 +66,11 @@ function mountBar(opts: { mode?: 'menu' | 'scroll'; sizes?: Sizes; count?: numbe
     // Evaluated per call: the width depends on the label state, which the bar
     // flips while measuring.
     b.getBoundingClientRect = () => {
-      const withLabels = bar.classList.contains('ab--labels') || bar.classList.contains('ab-measuring')
+      // Only `.ab--labels` widens a button, exactly like the real stylesheets:
+      // `.ab-measuring` merely disables transitions. A fake that also reacted to
+      // `.ab-measuring` hid a real defect — the measurement saw label widths that
+      // the real page would never apply, so it always concluded "fits".
+      const withLabels = bar.classList.contains('ab--labels')
       const width = withLabels ? perLabel : perIcon
       return { left: i * width, right: (i + 1) * width, width, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
     }
@@ -78,6 +89,28 @@ describe('ActionBar — labels', () => {
     measure()
     await nextTick()
     expect(bar.classList.contains('ab--labels')).toBe(true)
+  })
+
+  it('never leaves the labels on in a row that overflows', async () => {
+    // Regression: the measurement used to force only `.ab-measuring`, which
+    // does NOT widen the buttons. It therefore measured icon widths, concluded
+    // "the labels fit", turned them on — and the row then stuck out of the bar.
+    const cases: Sizes[] = [
+      { icon: 90, labelled: 700, available: 500 },
+      { icon: 90, labelled: 505, available: 500 },
+      { icon: 90, labelled: 1200, available: 500 },
+    ]
+    for (const sizes of cases) {
+      const { bar, measure } = mountBar({ sizes })
+      measure()
+      await nextTick()
+      if (!bar.classList.contains('ab--labels')) continue
+      const kids = Array.from(bar.children).filter(
+        (el): el is HTMLElement => el instanceof HTMLElement && el.tagName === 'BUTTON' && !el.hasAttribute('data-ab-more'),
+      )
+      const total = kids.reduce((sum, k) => sum + k.getBoundingClientRect().width, 0)
+      expect(total, 'labels are on but the row is wider than the bar').toBeLessThanOrEqual(bar.clientWidth)
+    }
   })
 
   it('drops the labels when they do not fit, keeping the icons', async () => {
