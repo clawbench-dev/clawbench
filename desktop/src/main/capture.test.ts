@@ -275,6 +275,38 @@ describe('display media handler', () => {
     expect(recorded.value.join()).not.toContain('unavailable')
   })
 
+  it('leaves the audio key out when loopback is not in play', async () => {
+    // Linux and macOS never ask for loopback. `audio: undefined` still creates
+    // the key, and this object is converted on Electron's side — an absent key
+    // is not the same thing as a key with nothing in it.
+    _setPendingCaptureForTest({ sourceId: 'screen:1:0', systemAudio: false })
+
+    const answer = await requestCapture()
+
+    expect(answer.video).toMatchObject({ id: 'screen:1:0' })
+    expect(Object.prototype.hasOwnProperty.call(answer, 'audio')).toBe(false)
+  })
+
+  it('answers exactly once even when Electron rejects the answer', async () => {
+    // `callback` throws when called twice. That throw used to land in the
+    // promise chain below, whose catch answered AGAIN — so the only thing
+    // recorded was "one-time callback was called more than once", which
+    // describes the retry and hides whatever failed first.
+    _setPendingCaptureForTest({ sourceId: 'screen:1:0', systemAudio: false })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const answers: unknown[] = []
+
+    displayHandler.value!({ audioRequested: false }, (streams: unknown) => {
+      answers.push(streams)
+      if (answers.length === 1) throw new Error('conversion failure')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(answers).toHaveLength(1)
+    expect(recorded.value.join()).toContain('answering getDisplayMedia failed')
+    errorSpy.mockRestore()
+  })
+
   it('does not leak the pending declaration across installs', () => {
     installDisplayMediaHandler()
     expect(_pendingCaptureForTest()).toBeNull()

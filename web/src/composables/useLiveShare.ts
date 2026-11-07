@@ -963,9 +963,12 @@ async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
     fail('screen capture is unavailable on this host')
     return null
   }
+  // A native host answers getDisplayMedia itself, so a rejection there is never
+  // "a stray click closed the browser picker": the host refused or failed, and
+  // staying quiet leaves the button looking dead.
+  const declare = bridge?.setPendingCaptureSource
+  const declaresSource = Boolean(declare && bridge)
   try {
-    const declare = bridge?.setPendingCaptureSource
-    const declaresSource = Boolean(declare && bridge)
     if (declare && bridge) {
       await declare.call(bridge, sourceId, true)
     }
@@ -991,10 +994,17 @@ async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
     // pick has no id (its dialog chose), which the panel maps to its own tile.
     return { stream, kind, sourceId, android: null }
   } catch (e) {
-    appLog.w(TAG, 'screen capture unavailable', e)
+    // A DOMException has no enumerable properties, so logging the object alone
+    // printed "{}" and told nobody anything.
+    const err = e as { name?: string; message?: string } | null
+    appLog.w(
+      TAG,
+      `screen capture unavailable: name=${err?.name ?? 'unknown'} message=${err?.message ?? String(e)}`,
+    )
     // The declaration is one-shot; leaving it armed would let the NEXT
     // getDisplayMedia capture that source without a picker.
     void bridge?.setPendingCaptureSource?.('', false)
+    if (declaresSource) fail(i18n.global.t('liveShare.screenCaptureFailed'))
     return null
   }
 }

@@ -710,6 +710,26 @@ describe('start', () => {
     spy.mockRestore()
   })
 
+  it('says why a native capture failed instead of doing nothing', async () => {
+    // The desktop shell answers getDisplayMedia itself, so a rejection here is
+    // the host refusing or failing — never a stray click on a browser picker.
+    // Staying quiet left the user in front of a button that did nothing at all.
+    const gdm = (navigator as unknown as { mediaDevices: { getDisplayMedia: ReturnType<typeof vi.fn> } })
+      .mediaDevices.getDisplayMedia
+    gdm.mockRejectedValueOnce(new Error('NotAllowedError'))
+
+    const { share, ok } = await startSharing()
+
+    expect(ok).toBe(false)
+    expect(share.state.value).toBe('idle')
+    expect(share.error.value).toContain('screen was not captured')
+    // The message must be text, not a raw i18n key.
+    expect(share.error.value).not.toContain('liveShare.')
+    // The one-shot declaration is cleared, or the next attempt would capture
+    // that source without a picker.
+    expect(bridge.setPendingCaptureSource).toHaveBeenLastCalledWith('', false)
+  })
+
   it('continues without the microphone when it is denied', async () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
@@ -1999,7 +2019,8 @@ describe('picture changes mid-meeting', () => {
       Object.assign(new Error('denied'), { name: 'NotAllowedError' }),
     )
     expect(await share.setCameraDevice('default')).toBe(false)
-    expect(share.error.value).toBeTruthy()
+    const cameraError = share.error.value
+    expect(cameraError).toBeTruthy()
 
     ;(navigator.mediaDevices.getDisplayMedia as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('cancelled'),
@@ -2008,8 +2029,10 @@ describe('picture changes mid-meeting', () => {
 
     // The toast is the only place a failure is shown now, and it reads this
     // value: the camera's message must not be offered as the reason the screen
-    // did not start.
-    expect(share.error.value).toBe('')
+    // did not start. A cancelled capture gets its own message instead of
+    // nothing at all — silence here is what made "点开始会议没反应" possible.
+    expect(share.error.value).toBeTruthy()
+    expect(share.error.value).not.toBe(cameraError)
   })
 })
 

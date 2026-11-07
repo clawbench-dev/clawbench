@@ -4683,6 +4683,7 @@ export default {
     pickSource: '选择要共享的内容',
     entireScreen: '整个屏幕（由系统选择）',
     noSources: '没有可共享的屏幕或窗口。请确认系统已授权屏幕录制：macOS 需在「系统设置 → 隐私与安全性 → 屏幕录制」里勾选本应用，Linux/Wayland 需要 xdg-desktop-portal。',
+    screenCaptureFailed: '没有拿到共享画面：可能是系统弹框被取消，或系统拒绝了这次共享。可以再试一次。',
     captureNeedsClient: '当前客户端不支持屏幕共享。请更新桌面客户端，或在客户端中打开本页面。',
     insecureContext:
       '当前地址不是安全上下文，浏览器不会提供屏幕采集能力。请改用 HTTPS 或 localhost 打开，或使用桌面客户端。',

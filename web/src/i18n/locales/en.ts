@@ -4696,6 +4696,8 @@ export default {
     entireScreen: 'Entire screen (chosen by the system)',
     noSources:
       'No screen or window available. Make sure screen recording is allowed: on macOS tick this app under System Settings → Privacy & Security → Screen Recording, and Linux/Wayland needs xdg-desktop-portal.',
+    screenCaptureFailed:
+      'The screen was not captured — the system dialog may have been cancelled, or the system refused the share. Try again.',
     captureNeedsClient:
       'This client cannot capture the screen — update the desktop app, or open this page in it.',
     insecureContext:
