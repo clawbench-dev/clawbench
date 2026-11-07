@@ -18,6 +18,7 @@
                  nothing shared, so hiding the entry point only stranded it. -->
             <button class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
               <MessageSquareShare :size="16" />
+              <span class="action-label">{{ t('actionLabels.sharedSessions') }}</span>
             </button>
           </template>
           <!-- Unpin sits in the trailing slot so it is the right-most control in
@@ -25,6 +26,7 @@
           <template #actions-end>
             <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
               <PanelRight :size="16" />
+              <span class="action-label">{{ t('session.unpinToSidebar') }}</span>
             </button>
           </template>
         </SessionListHeader>

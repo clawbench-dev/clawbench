@@ -24,6 +24,7 @@
                  nothing shared, so hiding the entry point only stranded it. -->
             <button class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
               <MessageSquareShare :size="16" />
+              <span class="action-label">{{ t('actionLabels.sharedSessions') }}</span>
             </button>
           </template>
           <!-- Pin sits in the trailing slot so it is the right-most control in
@@ -31,6 +32,7 @@
           <template #actions-end>
             <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
               <PanelRight :size="16" />
+              <span class="action-label">{{ t('actionLabels.pin') }}</span>
             </button>
           </template>
         </SessionListHeader>

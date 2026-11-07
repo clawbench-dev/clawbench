@@ -170,3 +170,24 @@ describe('SessionListHeader — action labels', () => {
     expect(refresh.find('.action-label').exists()).toBe(true)
   })
 })
+
+describe('SessionListHeader — slot buttons', () => {
+  it('host-injected buttons carry labels too', async () => {
+    // The shared-sessions / pin / unpin buttons are injected by the parent
+    // through the header's slots; they must follow the same labelling contract
+    // as the built-in buttons.
+    const wrapper = mount(SessionListHeader, {
+      props: { sessionCount: 0, sessionMaxCount: 10 },
+      slots: {
+        actions: '<button class="header-action-btn"><span class="action-label">已分享</span></button>',
+        'actions-end': '<button class="header-action-btn"><span class="action-label">固定</span></button>',
+      },
+    })
+    // The measurement runs on mount and flips the flag on the next render.
+    await nextTick()
+    const bar = wrapper.find('.session-list-header-content')
+    // Labels on slot buttons are shown/hidden by the same `.show-labels` class.
+    expect(bar.classes()).toContain('show-labels')
+    expect(wrapper.findAll('.header-action-btn .action-label').length).toBe(4)
+  })
+})
