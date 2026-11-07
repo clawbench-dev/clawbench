@@ -60,11 +60,36 @@ describe('useActionBarLabels', () => {
 
   it('tolerates sub-pixel rounding (2px) instead of hiding the labels', async () => {
     const { api, setWidths } = mountBar()
-    // A row that fits EXACTLY can report one pixel of overflow.
+    // Labels are already on; a row that fits EXACTLY can report one pixel of
+    // overflow, and that alone must not hide them.
+    setWidths(200, 300)
+    api.measure()
     setWidths(301, 300)
     api.measure()
     await nextTick()
     expect(api.showLabels.value).toBe(true)
+  })
+
+  it('needs real spare room before turning the labels back on', async () => {
+    // The dead zone: without it a bar sitting on the boundary flips on every
+    // measurement (labels on → too wide → off → room again → on).
+    const { api, setWidths } = mountBar()
+    // Start from the off state: mount assumes room, so force an overflowing
+    // measurement first.
+    setWidths(400, 300)
+    api.measure()
+    await nextTick()
+    expect(api.showLabels.value).toBe(false)
+
+    setWidths(299, 300)
+    api.measure()
+    await nextTick()
+    expect(api.showLabels.value, '1px spare is not enough to turn them on').toBe(false)
+
+    setWidths(288, 300)
+    api.measure()
+    await nextTick()
+    expect(api.showLabels.value, '12px spare turns them on').toBe(true)
   })
 
   it('assumes there is room before the row is laid out', async () => {

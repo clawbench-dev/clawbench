@@ -1535,3 +1535,14 @@
 .measure-labels .action-label {
     display: inline;
 }
+
+/* No transitions while measuring.
+   A width transition on the buttons makes the forced-on layout report the
+   PRE-animation width, so a bar that is actually too narrow looks like it fits;
+   the labels then turn on, the buttons finish growing, and the next measurement
+   turns them off again — the two states flicker. The class is only present for
+   one synchronous measurement, so nothing is seen. */
+.measure-labels,
+.measure-labels * {
+    transition: none !important;
+}

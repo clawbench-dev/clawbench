@@ -77,7 +77,7 @@
           </button>
           <button v-if="toolbarInlineIds.includes('newFolder')" class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
             <FolderPlus :size="16" />
-            <span class="action-label">{{ t('file.context.newFolder') }}</span>
+            <span class="action-label">{{ t('actionLabels.newFolder') }}</span>
           </button>
           <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
@@ -85,7 +85,7 @@
           </button>
           <button v-if="!isAndroidApp && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
             <FolderUp :size="16" />
-            <span class="action-label">{{ t('file.uploadFolder') }}</span>
+            <span class="action-label">{{ t('actionLabels.uploadFolder') }}</span>
           </button>
           <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
@@ -94,7 +94,7 @@
           </button>
           <button v-if="toolbarInlineIds.includes('previewMode')" class="toolbar-btn" :class="{ active: filePreviewMode }" @click="togglePreviewMode()" :title="filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn')">
             <ScanEye :size="16" />
-            <span class="action-label">{{ filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn') }}</span>
+            <span class="action-label">{{ filePreviewMode ? t('actionLabels.previewOff') : t('actionLabels.previewOn') }}</span>
           </button>
           <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
             <CheckSquare :size="16" />
@@ -103,7 +103,7 @@
           <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
             <EyeOff v-if="!showHidden" :size="16" />
             <Eye v-else :size="16" />
-            <span class="action-label">{{ showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles') }}</span>
+            <span class="action-label">{{ showHidden ? t('actionLabels.hideHidden') : t('actionLabels.showHidden') }}</span>
           </button>
           <button v-if="toolbarInlineIds.includes('jump')" class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
             <FolderSearch :size="16" />
@@ -111,11 +111,11 @@
           </button>
           <button v-if="toolbarInlineIds.includes('sharedFiles')" class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
             <ScreenShare :size="16" />
-            <span class="action-label">{{ t('sharedFiles.button') }}</span>
+            <span class="action-label">{{ t('actionLabels.sharedFiles') }}</span>
           </button>
           <button v-if="toolbarInlineIds.includes('contentSearch')" class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
             <SearchCode :size="16" />
-            <span class="action-label">{{ t('file.contentSearch.button') }}</span>
+            <span class="action-label">{{ t('actionLabels.contentSearch') }}</span>
           </button>
           <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
@@ -3099,7 +3099,7 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     min-width: 0;
-    background: var(--bg-tertiary, #f5f5f5);
+    background: transparent;
     padding: calc(3 * var(--dp)) var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
@@ -3303,7 +3303,10 @@ function scrollSelectedIntoView(path) {
     background: transparent;
     color: var(--text-secondary, #666);
     cursor: pointer;
-    transition: all var(--duration-base);
+    /* Never transition `all`: the width must snap when the labels appear or
+       disappear, otherwise the bar animates between two widths and looks like
+       it is flickering. */
+    transition: background-color var(--duration-base), color var(--duration-base);
     flex-shrink: 0;
 }
 

@@ -171,7 +171,7 @@
         @click="$emit('open-full')"
       >
         <ExternalLink :size="12" />
-        <span class="action-label">{{ tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull') }}</span>
+        <span class="action-label">{{ tooLarge ? t('actionLabels.viewDetails') : t('file.codePreview.openFull') }}</span>
       </button>
       <!-- Zoom image (image targets only): opens the shared Lightbox.
            Sits directly beside Open File — both are file-level actions, so

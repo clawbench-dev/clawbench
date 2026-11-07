@@ -8,7 +8,7 @@
       </RefreshButton>
       <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
         <CheckCheck :size="14" />
-        <span class="action-label">{{ t('task.clearUnread') }}</span>
+        <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
       </button>
       <button class="create-btn" @click="$emit('create')" :title="t('task.form.createTitle')">
         <Plus :size="16" />

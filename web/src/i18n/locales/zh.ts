@@ -35,6 +35,25 @@ export default {
     // 尽管文件管理器是它最常见的宿主。
     dragToResize: '拖动调整面板宽度',
   },
+  // 图标工具栏上的短标签（见设计手册「图标按钮：空间够就带上文字标签」）。
+  // 这些标签最宽只有四个字，完整说明留在各自的 title / aria-label 里。
+  actionLabels: {
+    newFolder: '新建目录',
+    uploadFolder: '上传目录',
+    previewOn: '开启预览',
+    previewOff: '关闭预览',
+    hideHidden: '隐藏文件',
+    showHidden: '显示文件',
+    contentSearch: '内容搜索',
+    viewDetails: '查看详情',
+    markAllRead: '全部已读',
+    showChat: '显示聊天',
+    hideChat: '隐藏聊天',
+    help: '帮助',
+    keyConfig: '按键配置',
+    openDir: '打开目录',
+    sharedFiles: '已分享',
+  },
   codeBlock: {
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',

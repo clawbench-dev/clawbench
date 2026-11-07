@@ -30,7 +30,7 @@
       </button>
       <template v-if="pinned">
         <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh">
-          <span class="action-label">{{ t('session.refresh') }}</span>
+          <span class="action-label">{{ t('common.refresh') }}</span>
         </RefreshButton>
       </template>
       <!-- Trailing slot: hosts put the sidebar pin/unpin toggle here so it is the

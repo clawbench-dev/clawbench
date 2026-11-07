@@ -13,6 +13,17 @@ const OVERFLOW_TOLERANCE_PX = 2
 /** How long to wait after a size change before measuring. */
 const DEFAULT_DEBOUNCE_MS = 50
 
+/**
+ * Spare room required before labels are turned back ON, in CSS px.
+ *
+ * A bar that is exactly at the boundary would otherwise flip on every
+ * measurement (one pixel of rounding, a scrollbar appearing, a width
+ * transition): labels on → too wide → labels off → room again → labels on.
+ * Turning them on only with real slack, and off as soon as they overflow,
+ * gives the state a dead zone it cannot oscillate inside.
+ */
+const TURN_ON_SLACK_PX = 12
+
 export interface ActionBarLabelsOptions {
   /**
    * Runs after every measurement, synchronously.
@@ -55,11 +66,20 @@ export function useActionBarLabels(
     const el = getEl()
     if (!el) return
     el.classList.add('measure-labels')
-    const overflow = el.scrollWidth > el.clientWidth + OVERFLOW_TOLERANCE_PX
+    const scrollWidth = el.scrollWidth
+    const clientWidth = el.clientWidth
     el.classList.remove('measure-labels')
-    // A zero width means "not laid out yet" (hidden pane, jsdom): assume there
-    // is room and let the resize observer correct it once the pane is shown.
-    showLabels.value = el.clientWidth <= 0 ? true : !overflow
+
+    if (clientWidth <= 0) {
+      // Not laid out yet (hidden pane, jsdom): assume there is room and let the
+      // resize observer correct it once the pane is shown.
+      showLabels.value = true
+    } else {
+      // Asymmetric on purpose — see TURN_ON_SLACK_PX.
+      showLabels.value = showLabels.value
+        ? scrollWidth <= clientWidth + OVERFLOW_TOLERANCE_PX
+        : scrollWidth <= clientWidth - TURN_ON_SLACK_PX
+    }
     opts.onMeasured?.()
   }
 

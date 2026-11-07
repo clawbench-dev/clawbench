@@ -69,7 +69,7 @@
       >
         <PanelRightOpen v-if="chatCollapsed" :size="14" />
         <PanelRightClose v-else :size="14" />
-        <span class="action-label">{{ chatCollapsed ? t('nav.showChat') : t('nav.hideChat') }}</span>
+        <span class="action-label">{{ chatCollapsed ? t('actionLabels.showChat') : t('actionLabels.hideChat') }}</span>
       </button>
 
       <!-- TOC button (only for file types that support TOC) -->

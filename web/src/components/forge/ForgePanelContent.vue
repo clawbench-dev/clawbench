@@ -90,7 +90,7 @@
             @click="markAllRead"
           >
             <CheckCheck :size="14" />
-            <span class="action-label">{{ t('forge.markAllRead') }}</span>
+            <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
           </button>
           <RefreshButton
             class="forge-header-btn"

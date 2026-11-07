@@ -179,7 +179,7 @@
             </button>
             <button v-if="cwdProbeSupported === true" class="toolbar-btn btn-action btn-func" @click="openCurrentDirInFileManager" :title="t('terminal.openCurrentDir')">
               <FolderOpenIcon :size="14" />
-              <span class="action-label">{{ t('terminal.openCurrentDir') }}</span>
+              <span class="action-label">{{ t('actionLabels.openDir') }}</span>
             </button>
             <button class="toolbar-btn btn-action btn-func" @click="openThemeMenu" :title="t('terminal.theme')">
               <PaletteIcon :size="14" />
@@ -188,12 +188,12 @@
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action btn-func" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
               <KeyboardIcon :size="14" />
-              <span class="action-label">{{ t('terminal.keyConfigTitle') }}</span>
+              <span class="action-label">{{ t('actionLabels.keyConfig') }}</span>
             </button>
             <!-- Help button -->
             <button class="toolbar-btn btn-action btn-func" @click="helpDrawer.open()" :title="t('terminal.helpTitle')">
               <CircleHelpIcon :size="14" />
-              <span class="action-label">{{ t('terminal.helpTitle') }}</span>
+              <span class="action-label">{{ t('actionLabels.help') }}</span>
             </button>
           </div>
         </div>

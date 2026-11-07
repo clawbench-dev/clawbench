@@ -35,6 +35,26 @@ export default {
     // `file.` even though the file manager is its most common host.
     dragToResize: 'Drag to resize',
   },
+  // Short labels for icon toolbars (see the design guide's
+  // "icon buttons grow a label when there is room" section). Max four
+  // characters; the full wording stays in each button's title / aria-label.
+  actionLabels: {
+    newFolder: 'New folder',
+    uploadFolder: 'Upload folder',
+    previewOn: 'Preview on',
+    previewOff: 'Preview off',
+    hideHidden: 'Hide files',
+    showHidden: 'Show files',
+    contentSearch: 'Search contents',
+    viewDetails: 'Details',
+    markAllRead: 'Mark all read',
+    showChat: 'Show chat',
+    hideChat: 'Hide chat',
+    help: 'Help',
+    keyConfig: 'Key config',
+    openDir: 'Open folder',
+    sharedFiles: 'Shared',
+  },
   codeBlock: {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
