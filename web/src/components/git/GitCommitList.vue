@@ -43,6 +43,50 @@
         <MoreVertical :size="14" />
       </button>
     </div>
+    <!-- Branch bar: which branch's history is being read. A non-current branch
+         is a read-only view — nothing is checked out — so the bar turns amber
+         and states where the workspace actually is. -->
+    <div v-if="showBranchBar" class="branch-bar" :class="{ 'is-other': isOtherBranch }">
+      <button
+        class="branch-chip"
+        :class="{ 'is-other': isOtherBranch }"
+        :title="t('git.branchView.switchHint')"
+        @click.stop="toggleBranchMenu"
+      >
+        <GitBranch :size="12" />
+        <span class="branch-chip-name">{{ shownBranch }}</span>
+        <ChevronDown :size="10" />
+      </button>
+      <span v-if="isOtherBranch" class="branch-note branch-note--warn">
+        <Eye :size="11" />
+        {{ t('git.branchView.readOnly', { branch: currentBranch }) }}
+      </span>
+      <span v-else class="branch-note">{{ t('git.branchView.localCount', { count: branches.length }) }}</span>
+      <button v-if="isOtherBranch" class="branch-back-btn" @click.stop="emit('change-branch', '')">
+        {{ t('git.branchView.backTo', { branch: currentBranch }) }}
+      </button>
+
+      <div v-if="branchMenuOpen" class="branch-menu" @click.stop>
+        <div class="branch-menu-label">{{ t('git.branchView.branches') }}</div>
+        <button
+          v-for="b in branches"
+          :key="b.name"
+          class="branch-menu-item"
+          :class="{ active: b.name === shownBranch }"
+          @click="pickBranch(b.name)"
+        >
+          <GitBranch :size="12" />
+          <span class="branch-menu-name">{{ b.name }}</span>
+          <span v-if="b.name === currentBranch" class="branch-menu-tag">{{ t('git.branchView.current') }}</span>
+          <Check v-if="b.name === shownBranch" :size="12" class="branch-menu-check" />
+        </button>
+        <div class="branch-menu-sep"></div>
+        <button class="branch-menu-item" @click="openManage">
+          <Settings :size="12" />
+          <span class="branch-menu-name">{{ t('git.branchView.manage') }}</span>
+        </button>
+      </div>
+    </div>
     <div class="drilldown-body" ref="bodyRef">
       <div v-if="loading" class="git-history-loading git-history-loading--skeleton">
         <PanelSkeleton variant="list" :rows="10" :meta="true" :label="t('common.loading')" />
@@ -143,7 +187,7 @@
 </template>
 
 <script setup>
-import { FileText, GitBranch, GitCommitHorizontal, Info, MessageSquare, MoreVertical } from 'lucide-vue-next'
+import { FileText, GitBranch, GitCommitHorizontal, Info, MessageSquare, MoreVertical, ChevronDown, Check, Eye, Settings } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
@@ -195,9 +239,59 @@ const props = defineProps({
   mode: { type: String, default: 'project' }, // 'project' | 'file'
   /** Changed-file count badge on the working-tree row (0 hides it). */
   wtFileCount: { type: Number, default: 0 },
+  /**
+   * Local branches offered by the picker. Empty hides the branch bar — hosts
+   * that cannot browse other branches (the mobile file-history sheet, file
+   * mode) simply pass nothing.
+   */
+  branches: { type: Array, default: () => [] },
+  /** The checked-out branch, as reported by the server. */
+  currentBranch: { type: String, default: '' },
+  /** Branch whose history is on screen ('' = the checked-out branch). */
+  viewBranch: { type: String, default: '' },
 })
 
-const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage'])
+const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage', 'change-branch'])
+
+const isOtherBranch = computed(() => !!props.viewBranch && props.viewBranch !== props.currentBranch)
+const shownBranch = computed(() => props.viewBranch || props.currentBranch)
+const showBranchBar = computed(() => props.mode !== 'file' && props.branches.length > 0)
+
+// ── Branch picker ──
+const branchMenuOpen = ref(false)
+
+function toggleBranchMenu() {
+  branchMenuOpen.value = !branchMenuOpen.value
+}
+
+function closeBranchMenu() {
+  branchMenuOpen.value = false
+}
+
+function pickBranch(name) {
+  branchMenuOpen.value = false
+  // Selecting the checked-out branch means "stop browsing elsewhere"; the host
+  // normalises that back to '' so the bar loses its read-only state.
+  emit('change-branch', name === props.currentBranch ? '' : name)
+}
+
+function openManage() {
+  branchMenuOpen.value = false
+  emit('manage')
+}
+
+function onDocumentClick() {
+  closeBranchMenu()
+}
+
+watch(branchMenuOpen, (open) => {
+  if (open) document.addEventListener('click', onDocumentClick)
+  else document.removeEventListener('click', onDocumentClick)
+})
+
+// A project switch replaces the branch list; a menu left open would show the
+// previous project's branches.
+watch(() => props.branches, closeBranchMenu)
 
 /**
  * Whether a commit row can be dragged into the chat as a quote.
@@ -388,6 +482,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   unobserveList()
+  document.removeEventListener('click', onDocumentClick)
   clearTimeout(searchTimer)
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
 })
@@ -406,6 +501,164 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .commit-search {
   flex: 1;
   min-width: 0;
+}
+
+/* ─── Branch bar ─────────────────────────────────────────────────────────
+   Sits between the header and the list. Quiet while reading the checked-out
+   branch; amber once the view no longer matches the workspace, because that
+   mismatch is the one thing a user must not lose track of. */
+.branch-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: calc(34 * var(--dp));
+  padding: 0 var(--space-5) 0 var(--space-6);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  transition: background var(--duration-base);
+}
+
+.branch-bar.is-other {
+  /* Mixed from the warning hue rather than a fixed background so it works in
+     all 36 themes (design-guide red line 4). */
+  background: color-mix(in srgb, var(--color-yellow, #f59e0b) 10%, var(--bg-primary));
+  box-shadow: inset calc(2 * var(--dp)) 0 0 var(--color-yellow, #f59e0b);
+}
+
+.branch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: calc(22 * var(--dp));
+  padding: 0 var(--space-3) 0 var(--space-3);
+  max-width: calc(190 * var(--dp));
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  flex: none;
+}
+
+.branch-chip:hover {
+  background: var(--bg-tertiary);
+}
+
+.branch-chip.is-other {
+  background: color-mix(in srgb, var(--color-yellow, #f59e0b) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-yellow, #f59e0b) 30%, transparent);
+}
+
+.branch-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-note {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.branch-note--warn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-yellow, #a16207);
+}
+
+.branch-back-btn {
+  flex: none;
+  height: calc(22 * var(--dp));
+  padding: 0 var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-yellow, #f59e0b) 40%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--bg-primary);
+  color: var(--color-yellow, #a16207);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.branch-back-btn:hover {
+  background: var(--bg-secondary);
+}
+
+.branch-menu {
+  position: absolute;
+  top: calc(32 * var(--dp));
+  left: var(--space-5);
+  z-index: 20;
+  width: calc(258 * var(--dp));
+  padding: var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  box-shadow: 0 calc(12 * var(--dp)) calc(28 * var(--dp)) rgba(0, 0, 0, 0.16);
+}
+
+.branch-menu-label {
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.branch-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.branch-menu-item:hover {
+  background: var(--bg-secondary);
+}
+
+.branch-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-menu-tag {
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+}
+
+.branch-menu-check {
+  flex: none;
+  color: var(--accent-color);
+}
+
+.branch-menu-sep {
+  height: 1px;
+  margin: var(--space-2) var(--space-3);
+  background: var(--border-color);
 }
 
 /* The title sizes to its content instead of growing, so the field — not the

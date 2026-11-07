@@ -812,6 +812,110 @@ func TestServeGitProjectHistory_IncludesParents(t *testing.T) {
 	assert.GreaterOrEqual(t, len(parents), 1)
 }
 
+// runGitIn runs a git command in dir and fails the test on error.
+func runGitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+// projectHistoryRequest loads /api/git/project-history for the given ref ("" =
+// current branch) and returns the decoded commit messages.
+func projectHistoryRequest(t *testing.T, projectDir, ref string) ([]string, *httptest.ResponseRecorder) {
+	t.Helper()
+	url := "/api/git/project-history"
+	if ref != "" {
+		url += "?ref=" + ref
+	}
+	req := newRequest(t, http.MethodGet, url, nil)
+	withProjectCookie(req, projectDir)
+	w := callHandler(ServeGitProjectHistory, req)
+
+	var resp struct {
+		Commits []struct {
+			Msg string `json:"msg"`
+		} `json:"commits"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	msgs := make([]string, 0, len(resp.Commits))
+	for _, c := range resp.Commits {
+		msgs = append(msgs, c.Msg)
+	}
+	return msgs, w
+}
+
+func TestServeGitProjectHistory_ReadsOtherBranchWithoutCheckout(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	headBefore := getHeadSHA(t, env.ProjectDir)
+
+	// A branch that is NOT checked out at request time.
+	runGitIn(t, env.ProjectDir, "checkout", "-b", "feature")
+	createTestFile(t, env.ProjectDir, "feature.txt", "feature")
+	gitCommitAll(t, env.ProjectDir, "feature only commit")
+	runGitIn(t, env.ProjectDir, "checkout", "main")
+
+	// Current branch history must not contain the feature commit.
+	mainMsgs, w := projectHistoryRequest(t, env.ProjectDir, "")
+	assertOK(t, w)
+	assert.NotContains(t, mainMsgs, "feature only commit")
+
+	// Reading the other branch returns its commits...
+	featureMsgs, w := projectHistoryRequest(t, env.ProjectDir, "feature")
+	assertOK(t, w)
+	assert.Contains(t, featureMsgs, "feature only commit")
+
+	// ...and the read did not touch the working tree: same HEAD, same branch,
+	// and no stray checkout.
+	assert.Equal(t, headBefore, getHeadSHA(t, env.ProjectDir))
+	out, err := exec.Command("git", "-C", env.ProjectDir, "symbolic-ref", "--short", "HEAD").Output()
+	assert.NoError(t, err)
+	assert.Equal(t, "main", strings.TrimSpace(string(out)))
+	_, statErr := os.Stat(filepath.Join(env.ProjectDir, "feature.txt"))
+	assert.True(t, os.IsNotExist(statErr), "feature.txt must not appear in the working tree")
+
+	// The cache is keyed by the resolved commit, so alternating between the two
+	// branches must not leak one branch's page into the other.
+	againMsgs, _ := projectHistoryRequest(t, env.ProjectDir, "")
+	assert.NotContains(t, againMsgs, "feature only commit")
+}
+
+func TestServeGitProjectHistory_UnknownRef(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	_, w := projectHistoryRequest(t, env.ProjectDir, "no-such-branch")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, "UnknownBranch", resp["msgKey"])
+}
+
+func TestServeGitProjectHistory_RefRejectsNonBranchRefs(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	runGitIn(t, env.ProjectDir, "tag", "v1.0")
+
+	// Tags are deliberately not accepted: the picker only offers local branches,
+	// and accepting arbitrary revisions here would widen the read surface.
+	if _, err := resolveRefCommit(env.ProjectDir, "v1.0"); err == nil {
+		t.Fatal("resolveRefCommit must reject a tag name")
+	}
+
+	// A name that starts with "-" can never reach git as an option.
+	_, w := projectHistoryRequest(t, env.ProjectDir, "--upload-pack=evil")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -821,12 +925,12 @@ func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	gitCommitAll(t, env.ProjectDir, "first commit")
 
 	// Prime the cache.
-	commits1, hasMore1 := getProjectHistory(env.ProjectDir, 0)
+	commits1, hasMore1 := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.GreaterOrEqual(t, len(commits1), 1)
 	assert.False(t, hasMore1)
 
 	// Repeated call must return the same data without re-running git.
-	commits2, _ := getProjectHistory(env.ProjectDir, 0)
+	commits2, _ := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.Equal(t, len(commits1), len(commits2))
 	if len(commits2) > 0 {
 		assert.Equal(t, commits1[0].SHA, commits2[0].SHA)
@@ -837,7 +941,7 @@ func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	gitCommitAll(t, env.ProjectDir, "second commit")
 
 	// initGitRepo already created an initial commit, so total is 3.
-	commits3, _ := getProjectHistory(env.ProjectDir, 0)
+	commits3, _ := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.Equal(t, 3, len(commits3))
 }
 
@@ -876,7 +980,7 @@ func TestGetProjectHistory_CacheEviction(t *testing.T) {
 
 	// This call computes a fresh key (real HEAD sha, skip=0) and, before
 	// inserting it, triggers the eviction block because the cache is full.
-	commits, _ := getProjectHistory(env.ProjectDir, 0)
+	commits, _ := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.GreaterOrEqual(t, len(commits), 1)
 
 	projectHistoryCache.Lock()

@@ -549,3 +549,66 @@ describe('GitCommitList', () => {
     })
   })
 })
+
+// ── Branch bar ───────────────────────────────────────────────
+// Reading another branch's history never checks anything out, so the UI has to
+// keep saying that the workspace is somewhere else. These cover the bar's two
+// states and the events the host acts on.
+describe('branch bar', () => {
+  const branches = [{ name: 'main' }, { name: 'feat/payments' }]
+
+  it('is absent when the host offers no branches (file mode, drawer)', () => {
+    const wrapper = mountList()
+    expect(wrapper.find('.branch-bar').exists()).toBe(false)
+  })
+
+  it('is absent in file mode even when branches are passed', () => {
+    const wrapper = mountList({ branches, currentBranch: 'main', mode: 'file' })
+    expect(wrapper.find('.branch-bar').exists()).toBe(false)
+  })
+
+  it('shows the checked-out branch and lists the others', async () => {
+    const wrapper = mountList({ branches, currentBranch: 'main' })
+
+    expect(wrapper.find('.branch-chip-name').text()).toBe('main')
+    await wrapper.find('.branch-chip').trigger('click')
+
+    const names = wrapper.findAll('.branch-menu-item .branch-menu-name').map(n => n.text())
+    expect(names).toEqual(['main', 'feat/payments', 'git.branchView.manage'])
+  })
+
+  it('emits change-branch when picking another branch', async () => {
+    const wrapper = mountList({ branches, currentBranch: 'main' })
+    await wrapper.find('.branch-chip').trigger('click')
+    await wrapper.findAll('.branch-menu-item')[1].trigger('click')
+
+    expect(wrapper.emitted('change-branch')?.[0]).toEqual(['feat/payments'])
+    expect(wrapper.find('.branch-menu').exists()).toBe(false)
+  })
+
+  it('picking the current branch normalises to an empty ref', async () => {
+    const wrapper = mountList({ branches, currentBranch: 'main', viewBranch: 'feat/payments' })
+    await wrapper.find('.branch-chip').trigger('click')
+    await wrapper.findAll('.branch-menu-item')[0].trigger('click')
+
+    expect(wrapper.emitted('change-branch')?.[0]).toEqual([''])
+  })
+
+  it('states the workspace is elsewhere and offers a way back', async () => {
+    const wrapper = mountList({ branches, currentBranch: 'main', viewBranch: 'feat/payments' })
+
+    expect(wrapper.find('.branch-bar').classes()).toContain('is-other')
+    expect(wrapper.find('.branch-chip-name').text()).toBe('feat/payments')
+    expect(wrapper.find('.branch-note--warn').text()).toContain('git.branchView.readOnly')
+
+    await wrapper.find('.branch-back-btn').trigger('click')
+    expect(wrapper.emitted('change-branch')?.[0]).toEqual([''])
+  })
+
+  it('stays quiet while the viewed branch is the checked-out one', () => {
+    const wrapper = mountList({ branches, currentBranch: 'main', viewBranch: 'main' })
+
+    expect(wrapper.find('.branch-bar').classes()).not.toContain('is-other')
+    expect(wrapper.find('.branch-back-btn').exists()).toBe(false)
+  })
+})

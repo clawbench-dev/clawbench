@@ -177,6 +177,7 @@ ProviderConfigConflict: 智能体 {{.Agents}} 已绑定其他提供商；该后�
 ProviderConfigConsentRequired: 该智能体需要修改配置文件才能生效：{{.Files}}。请确认后重试
 InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
+UnknownBranch: 该分支不存在或已被删除
 ModelDiscoveryNotSupported: 该智能体不支持模型自动发现
 ModelDiscoveryFailed: 模型发现未返回结果
 ModelSwitchFailed: 切换模型失败

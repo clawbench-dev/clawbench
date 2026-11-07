@@ -177,6 +177,7 @@ ProviderConfigConflict: Agent(s) {{.Agents}} are bound to another provider; this
 ProviderConfigConsentRequired: "This agent needs a config file change to apply the provider: {{.Files}}. Confirm and retry"
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
+UnknownBranch: This branch no longer exists
 ModelDiscoveryNotSupported: This agent does not support model discovery
 ModelDiscoveryFailed: Model discovery returned no results
 ModelSwitchFailed: Could not switch model

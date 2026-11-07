@@ -2553,6 +2553,16 @@ export default {
       noCommits: '暂无提交记录',
       refresh: '刷新',
     },
+    branchView: {
+      branches: '本地分支',
+      localCount: '本地 {count} 个分支',
+      readOnly: '只读查看 · 工作区仍在 {branch}',
+      backTo: '回到 {branch}',
+      switchHint: '查看其他分支的历史（不会切换工作区）',
+      current: '当前',
+      manage: '管理分支 / 工作树…',
+      fileActionsDisabled: '这是其他分支的版本，工作区里没有这份文件',
+    },
     diffView: {
       noChanges: '无变更',
       modified: '已修改',

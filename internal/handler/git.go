@@ -214,12 +214,42 @@ func projectHistoryHeadSHA(projectPath string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// resolveRefCommit resolves a local branch name to the commit it points at.
+// An empty ref resolves HEAD. The caller passes the returned SHA to git log, so
+// the history of a branch can be read without checking it out.
+//
+// The name is prefixed with refs/heads/ before being handed to git: that
+// restricts the parameter to local branches (tags and SHAs are rejected, which
+// is what the branch picker offers) and makes a name that starts with "-"
+// impossible to be parsed as an option.
+func resolveRefCommit(projectPath, ref string) (string, error) {
+	if ref == "" {
+		sha := projectHistoryHeadSHA(projectPath)
+		if sha == "" {
+			return "", fmt.Errorf("cannot resolve HEAD")
+		}
+		return sha, nil
+	}
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/heads/"+ref+"^{commit}")
+	cmd.Dir = projectPath
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(string(output))
+	if sha == "" {
+		return "", fmt.Errorf("git rev-parse returned no commit for %q", ref)
+	}
+	return sha, nil
+}
+
 // getProjectHistory returns the project commit history (optionally skipping N
-// commits), using a TTL cache keyed by (projectPath, skip, HEAD). A new HEAD
-// (new commit or branch switch) naturally misses the cache and recomputes.
-func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
-	headSHA := projectHistoryHeadSHA(projectPath)
-	key := fmt.Sprintf("%s|%d|%s", projectPath, skip, headSHA)
+// commits), using a TTL cache keyed by (projectPath, skip, resolved commit).
+// The key holds the resolved commit rather than a branch name, so two branches
+// pointing at the same commit share one entry and a branch that moved misses
+// the cache automatically.
+func getProjectHistory(projectPath string, skip int, refSHA string) ([]commitInfo, bool) {
+	key := fmt.Sprintf("%s|%d|%s", projectPath, skip, refSHA)
 
 	projectHistoryCache.Lock()
 	if e, ok := projectHistoryCache.entries[key]; ok && time.Since(e.loadedAt) < projectHistoryCacheTTL {
@@ -235,6 +265,13 @@ func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
 	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
 	if skip > 0 {
 		logArgs = append(logArgs, "--skip", fmt.Sprintf("%d", skip))
+	}
+	// Walk from the resolved commit instead of the implicit HEAD so a branch
+	// other than the checked-out one can be browsed. An empty repo resolves to
+	// no commit at all, in which case the implicit HEAD (which also fails) keeps
+	// the previous empty-result behaviour.
+	if refSHA != "" {
+		logArgs = append(logArgs, refSHA)
 	}
 	cmd := exec.Command("git", logArgs...)
 	cmd.Dir = projectPath
@@ -273,6 +310,10 @@ func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
 
 // ServeGitProjectHistory returns commit history for the entire project.
 // Supports pagination via ?skip=N (skips N commits).
+//
+// ?ref=<branch> reads the history of that local branch instead of the checked
+// out one. It is a read-only view: nothing is checked out, the working tree is
+// untouched, and the branch does not even have to be the current one.
 func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -296,7 +337,21 @@ func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Sscanf(s, "%d", &skip)
 	}
 
-	commits, hasMore := getProjectHistory(projectPath, skip)
+	ref := r.URL.Query().Get("ref")
+	if ref != "" && !isValidGitRefName(ref) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return
+	}
+	refSHA, err := resolveRefCommit(projectPath, ref)
+	if err != nil && ref != "" {
+		// A branch that disappeared between listing and loading is a stale
+		// client view, not a server failure — say so instead of returning an
+		// empty history that looks like "this branch has no commits".
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return
+	}
+
+	commits, hasMore := getProjectHistory(projectPath, skip, refSHA)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"isGit":   true,
@@ -1330,6 +1385,11 @@ func ServeGitBranches(w http.ResponseWriter, r *http.Request) {
 		"defaultBranch": defaultBranch,
 		"currentBranch": currentBranch,
 		"stashCount":    stashCount,
+		// Advertises that /api/git/project-history understands ?ref=. The web
+		// bundle can be newer than the running binary (disk mode serves whatever
+		// was last built), and a picker talking to an older server would show one
+		// branch's name over another branch's commits — worse than no picker.
+		"refView": true,
 	})
 }
 

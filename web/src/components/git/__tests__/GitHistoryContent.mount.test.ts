@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, defineComponent } from 'vue'
 import GitHistoryContent from '@/components/git/GitHistoryContent.vue'
 
 // ── Mocks ────────────────────────────────────────────────────
@@ -63,7 +63,12 @@ vi.mock('@/stores/app', () => ({
 
 // Child components
 vi.mock('@/components/git/GitCommitList.vue', () => ({
-  default: { template: '<div class="commit-list-stub"><slot /></div>' },
+  default: defineComponent({
+    name: 'GitCommitList',
+    props: ['branches', 'currentBranch', 'viewBranch', 'mode'],
+    emits: ['change-branch', 'select', 'search', 'load-more', 'refresh', 'manage'],
+    template: '<div class="commit-list-stub"><slot /></div>',
+  }),
 }))
 vi.mock('@/components/git/GitManageContent.vue', () => ({
   default: { template: '<div class="manage-stub"><slot /></div>' },
@@ -453,6 +458,116 @@ describe('GitHistoryContent — commit meta file annotation', () => {
     // it Back would walk up the directory tree instead of returning here.
     expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
     expect(mockRevealInFileManager).toHaveBeenCalledWith('a.ts', 'history')
+    wrapper.unmount()
+  })
+})
+
+describe('GitHistoryContent — read-only branch view', () => {
+  function mountContent() {
+    return mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: {
+        stubs: { Teleport: { template: '<div><slot /></div>' } },
+      },
+    })
+  }
+
+  /** Serve the branch list plus a one-commit history for any branch. */
+  function routeBranchFetch() {
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/branches')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, refView: true, branches: [{ name: 'main' }, { name: 'feat/x' }] }),
+        })
+      }
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, commits: [{ sha: 'p1', msg: 'P', date: '', author: '' }], hasMore: false }),
+        })
+      }
+      if (url.startsWith('/api/git/working-tree')) {
+        return Promise.resolve({ ok: true, json: async () => ({ files: [] }) })
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) })
+    })
+  }
+
+  it('loads the branch list and passes it to the list chrome', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    expect(list.props('branches')).toEqual([{ name: 'main' }, { name: 'feat/x' }])
+    expect(list.props('currentBranch')).toBe('main')
+    expect(list.props('viewBranch')).toBe('')
+    wrapper.unmount()
+  })
+
+  it('hides the picker when the server cannot read other branches', async () => {
+    // An older binary ignores ?ref= and would answer with the current branch's
+    // commits, so a picker there would mislabel history. The flag is the guard.
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/branches')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, branches: [{ name: 'main' }, { name: 'feat/x' }] }),
+        })
+      }
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, commits: [{ sha: 'c1', msg: 'C', date: '', author: '' }], hasMore: false }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ files: [] }) })
+    })
+
+    const wrapper = mountContent()
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'GitCommitList' }).props('branches')).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('reloads the history of the picked branch and stops describing the workspace', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    mockGitFetch.mockClear()
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    list.vm.$emit('change-branch', 'feat/x')
+    await flushPromises()
+
+    expect(list.props('viewBranch')).toBe('feat/x')
+    expect(mockGitFetch).toHaveBeenCalledWith(
+      '/api/git/project-history?ref=feat%2Fx',
+      expect.objectContaining({ signal: expect.anything() }),
+    )
+    // The uncommitted-changes row belongs to the checked-out branch only.
+    expect(mockGitFetch.mock.calls.some(([url]) => String(url).startsWith('/api/git/working-tree'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('going back clears the branch view and reloads the current branch', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    list.vm.$emit('change-branch', 'feat/x')
+    await flushPromises()
+
+    mockGitFetch.mockClear()
+    list.vm.$emit('change-branch', '')
+    await flushPromises()
+
+    expect(list.props('viewBranch')).toBe('')
+    expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history', expect.anything())
+    expect(mockGitFetch.mock.calls.some(([url]) => String(url).startsWith('/api/git/working-tree'))).toBe(true)
     wrapper.unmount()
   })
 })

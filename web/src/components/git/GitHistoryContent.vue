@@ -27,11 +27,15 @@
       :refresh-hint="refreshHint"
       :mode="mode"
       :wt-file-count="workingTreeFileCount"
+      :branches="branches"
+      :current-branch="store.state.gitBranch"
+      :view-branch="viewBranch"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
       @refresh="onRefresh"
       @manage="navigateToManage"
+      @change-branch="onChangeBranch"
     />
 
     <!-- View: file list for selected commit (project mode only) -->
@@ -52,7 +56,7 @@
           @click.stop="onFilesRefresh"
         />
       </div>
-      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" @open-file="onOpenFile" @reveal-file="onRevealFile" />
+      <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :disable-file-actions="isOtherBranch" @open-file="onOpenFile" @reveal-file="onRevealFile" />
       <div class="drilldown-body">
         <div v-if="filesLoading" class="git-history-loading git-history-loading--skeleton">
           <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
@@ -159,7 +163,7 @@
         </div>
       </div>
       <div class="drilldown-body">
-        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" @open-file="onOpenFile" @reveal-file="onRevealFile" />
+        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" :disable-file-actions="isOtherBranch" @open-file="onOpenFile" @reveal-file="onRevealFile" />
         <GitDiffView
           :loading="diffState.loading"
           :empty="diffState.empty"
@@ -185,7 +189,7 @@
 import { Plus, Minus, ChevronUp, ChevronDown } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'
 import GitCommitMeta from './GitCommitMeta.vue'
@@ -199,6 +203,7 @@ import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { shouldShowFullLoading } from '@/utils/gitFileHistory'
 import { useGitHistoryView } from '@/composables/useGitHistoryView'
+import { gitFetch } from '@/utils/gitApi'
 import { revealInFileManager } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
@@ -242,6 +247,47 @@ const lastGitState = ref({ branch: '', head: '', dirty: false, changeCount: 0 })
 const lastProjectRoot = ref(null)
 const lastFilePath = ref(null)
 
+// ─── Branch view (read-only browsing of other branches) ─────────────────────
+// '' means "the checked-out branch". Any other value is a read-only view of
+// that branch: the history request carries ?ref=, the working-tree row is
+// suppressed (it describes the workspace, not the branch), and the file
+// actions are disabled because the workspace does not hold those files.
+const viewBranch = ref('')
+const branches = ref([])
+const isOtherBranch = computed(() => !!viewBranch.value && viewBranch.value !== store.state.gitBranch)
+
+async function loadBranches() {
+  try {
+    const resp = await gitFetch('/api/git/branches')
+    if (!resp || !resp.ok) return
+    const data = await resp.json()
+    // Only offer the picker when the server understands ?ref=. A newer web
+    // bundle can be served by an older binary, and a picker that silently
+    // returns the current branch's commits would mislabel them.
+    branches.value = data.refView ? (data.branches || []) : []
+  } catch {
+    // The picker simply stays hidden; history still works for the current
+    // branch, so a failed branch listing must not surface as a page error.
+  }
+}
+
+async function onChangeBranch(name) {
+  if (name === viewBranch.value) return
+  viewBranch.value = name
+  currentView.value = 'commits'
+  await loadProjectHistory()
+}
+
+/**
+ * Jump to a commit that arrived from a chat link. The commit may belong to any
+ * branch, so the read-only branch view is left first — otherwise a link to a
+ * commit outside the branch on screen would land on "not found".
+ */
+async function goToCommit(sha) {
+  viewBranch.value = ''
+  await navigateToCommit(sha)
+}
+
 const {
   loading, error, commits, hasMore, searchLoading, loadingMore, isGit, untracked,
   currentView, selectedSHA, filesLoading, filesRefreshing, files, mergeGroups,
@@ -258,6 +304,7 @@ const {
   t,
   mode: () => props.mode,
   filePath: () => props.file?.path,
+  branchRef: () => viewBranch.value,
   useAbortSignal: true,
   onProjectHistoryLoaded: () => {
     // Record git state after a successful load so the active watcher can tell
@@ -274,6 +321,7 @@ const {
 
 function resetState() {
   resetListState()
+  viewBranch.value = ''
   lastProjectRoot.value = null
   lastFilePath.value = null
 }
@@ -321,7 +369,7 @@ watch(pendingCommitSha, async (sha) => {
   if (!sha || !props.active) return
   const consumed = consumePendingCommitNavigation()
   if (consumed) {
-    await navigateToCommit(consumed)
+    await goToCommit(consumed)
   }
 })
 
@@ -350,11 +398,12 @@ watch(() => props.active, async (nowActive) => {
   // Check for pending commit navigation (from chat hash links)
   const pendingSha = consumePendingCommitNavigation()
   if (pendingSha) {
-    await navigateToCommit(pendingSha)
+    await goToCommit(pendingSha)
     return
   }
 
   await store.loadGitBranch()
+  await loadBranches()
   const cur = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty, changeCount: store.state.gitWorkingTreeChangeCount }
   const changed = lastGitState.value.branch &&
     (cur.branch !== lastGitState.value.branch ||
@@ -389,6 +438,7 @@ onMounted(async () => {
   // the tab).
   if (props.active) {
     store.loadGitBranch().catch(() => {})
+    loadBranches()
   }
 
   const currentProject = store.state.projectRoot
@@ -415,7 +465,7 @@ onMounted(async () => {
   // If navigating from a commit hash link, go directly to that commit
   const pendingSha = consumePendingCommitNavigation()
   if (pendingSha) {
-    await navigateToCommit(pendingSha)
+    await goToCommit(pendingSha)
     return
   }
 

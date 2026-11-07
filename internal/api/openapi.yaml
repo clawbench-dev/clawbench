@@ -3088,9 +3088,16 @@ paths:
           in: query
           schema:
             type: integer
+        - name: ref
+          in: query
+          description: 本地分支名；只读取该分支的历史，不切换工作区。缺省为当前分支。
+          schema:
+            type: string
       responses:
         "200":
           description: 提交列表
+        "400":
+          description: 分支不存在或名称非法
 
   /api/git/history:
     get:

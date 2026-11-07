@@ -2556,6 +2556,16 @@ export default {
       noCommits: 'No commits yet',
       refresh: 'Refresh',
     },
+    branchView: {
+      branches: 'Local branches',
+      localCount: '{count} local branches',
+      readOnly: 'Read-only view · workspace still on {branch}',
+      backTo: 'Back to {branch}',
+      switchHint: 'View another branch’s history (does not switch the workspace)',
+      current: 'Current',
+      manage: 'Manage branches / worktrees…',
+      fileActionsDisabled: 'This version belongs to another branch and is not in the workspace',
+    },
     diffView: {
       noChanges: 'No changes',
       modified: 'Modified',
