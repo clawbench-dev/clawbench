@@ -7,10 +7,9 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 
 /**
- * Opening a project's read-only list inside the mobile drawer must size the
- * sheet to that list, not to the screen. The drawer is auto-height, and the
- * browse view overlays the list, so without feeding its height back the sheet
- * either clips it (too short) or fills the screen (too tall).
+ * Expanding a project card inside the mobile drawer happens in place: the card
+ * grows to the project's full list and the auto-height sheet follows it. It
+ * must neither clip the list nor take over the screen.
  */
 test.describe.serial('Session drawer: project browse sizing', () => {
   test.describe.configure({ timeout: 300_000 })
@@ -71,7 +70,7 @@ test.describe.serial('Session drawer: project browse sizing', () => {
     try { rmSync(projectB, { recursive: true, force: true }) } catch { /* best effort */ }
   })
 
-  test('sizes the sheet to the browsed list instead of the screen', async ({ page }) => {
+  test('expands the card in place and sizes the sheet to it', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
     // The remembered left tab for this project may be the file manager.
@@ -85,20 +84,25 @@ test.describe.serial('Session drawer: project browse sizing', () => {
 
     // The pinned sidebar stays mounted (hidden) at this width, so scope to the
     // drawer or the locator resolves to the invisible copy.
-    await sheet.locator('.pcard-head').first().click()
-    const browse = page.locator('[data-project-browse]')
-    await expect(browse).toBeVisible({ timeout: 15000 })
-    await expect(browse.locator('.browse-row')).toHaveCount(2)
+    const card = sheet.locator('.pcard').first()
+    await card.locator('.pcard-head').click()
 
-    // Let the grow animation finish before measuring.
-    await page.waitForTimeout(500)
+    // Expanded in place: the same card now lists the project's full list, and
+    // no separate view was opened.
+    await expect(card).toHaveClass(/is-expanded/)
+    await expect(card.locator('.pcard-row')).toHaveCount(2)
+    await expect(page.locator('[data-project-browse]')).toHaveCount(0)
+
+    // Let the sheet settle, then check it is content-sized, not full screen.
+    await page.waitForTimeout(400)
     const box = await sheet.boundingBox()
     expect(box, 'the drawer should have a box').not.toBeNull()
-    // Content-sized: two rows + headers, nowhere near the 844px viewport.
     expect(box!.height).toBeLessThan(400)
-    // …but still tall enough for the two rows to be visible.
     expect(box!.height).toBeGreaterThan(120)
-    // And it must sit above the dock rather than run off the screen.
     expect(box!.y + box!.height).toBeLessThanOrEqual(844)
+
+    // Collapsing returns to the active-only rows.
+    await card.locator('.pcard-head').click()
+    await expect(card).not.toHaveClass(/is-expanded/)
   })
 })

@@ -1583,13 +1583,13 @@ describe('SessionList', () => {
       }
     })
 
-    // ── Read-only browse view ────────────────────────────────────────────
+    // ── Expanding a card in place ────────────────────────────────────────
     const browseSessions = [
       { id: 'b1', title: 'Old one', backend: 'cli', agentId: 'agent-1', model: 'gpt-4', running: false, pendingApproval: false, unreadCount: 0, updatedAt: '2024-12-01' },
       { id: 'b2', title: 'Another', backend: 'acp', agentId: 'agent-2', running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2024-11-01' },
     ]
 
-    it('opens a read-only list of that project when the card header is clicked', async () => {
+    it('expands the card in place and shows the project\'s full list', async () => {
       routeListAndBrowse(browseSessions)
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
@@ -1603,36 +1603,21 @@ describe('SessionList', () => {
       const urls = mockFetch.mock.calls.map(c => String(c[0]))
       expect(urls.some(u => u.includes('/api/ai/sessions/by-project') && u.includes(encodeURIComponent('/proj/other')))).toBe(true)
 
-      expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
-      expect(wrapper.find('.browse-title').text()).toBe('other')
-      // The header mirrors the card's: name, count, path.
-      expect(wrapper.find('.browse-count').text()).toBe('2')
-      expect(wrapper.find('.browse-path').text()).toBe('~/proj/other')
-      // Both rows, including the one with no activity (the cards only list
-      // active sessions — browsing shows the whole list).
-      expect(wrapper.findAll('.browse-row').length).toBe(2)
-      expect(wrapper.find('.browse-row .pcard-row-title').text()).toBe('Old one')
-    })
-
-    it('returns to the cards when the expanded header is clicked', async () => {
-      routeListAndBrowse(browseSessions)
-      mockCrossState.groups.value = [crossGroup()]
-      const wrapper = await mountList()
-      await flushPromises()
-
-      await wrapper.find('.pcard-head').trigger('click')
-      await flushPromises()
-      expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
-
-      // The expanded header is the collapse control now.
-      await wrapper.find('.browse-head').trigger('click')
-      await flushPromises()
+      // The same card, now taller: no separate view, no overlay.
       expect(wrapper.find('[data-project-browse]').exists()).toBe(false)
-      // The cards are back, not a re-fetch of the list.
-      expect(wrapper.findAll('.pcard-row').length).toBe(2)
+      expect(wrapper.findAll('.pcard').length).toBe(1)
+      const card = wrapper.find('.pcard')
+      expect(card.classes()).toContain('is-expanded')
+      // Both rows, including the one with no activity (the collapsed card only
+      // lists active sessions).
+      expect(card.findAll('.pcard-row').length).toBe(2)
+      expect(card.find('.pcard-row .pcard-row-title').text()).toBe('Old one')
+      // The header count switches to the full total once loaded.
+      expect(card.find('.pcard-count').text()).toBe('2')
+      expect(card.find('.pcard-head').attributes('aria-expanded')).toBe('true')
     })
 
-    it('opens the clicked session from the read-only list', async () => {
+    it('collapses back to the active sessions when the header is clicked again', async () => {
       routeListAndBrowse(browseSessions)
       mockCrossState.groups.value = [crossGroup()]
       const wrapper = await mountList()
@@ -1640,11 +1625,52 @@ describe('SessionList', () => {
 
       await wrapper.find('.pcard-head').trigger('click')
       await flushPromises()
-      await wrapper.findAll('.browse-row')[0].trigger('click')
+      expect(wrapper.find('.pcard').classes()).toContain('is-expanded')
+
+      await wrapper.find('.pcard-head').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.pcard').classes()).not.toContain('is-expanded')
+      // Back to the two ACTIVE rows from the fixture, not the fetched list.
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
+      expect(wrapper.find('.pcard-head').attributes('aria-expanded')).toBe('false')
+    })
+
+    it('keeps only one card expanded at a time', async () => {
+      routeListAndBrowse(browseSessions)
+      const second = {
+        name: '/proj/second',
+        displayName: 'second',
+        displayPath: '~/proj/second',
+        sessions: [{ id: 's1x', title: 'Second active', backend: 'cli', agentId: 'a', running: true, pendingApproval: false, unreadCount: 0, updatedAt: '2025-01-01' }],
+      }
+      mockCrossState.groups.value = [crossGroup(), second]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      const heads = wrapper.findAll('.pcard-head')
+      await heads[0].trigger('click')
+      await flushPromises()
+      await heads[1].trigger('click')
+      await flushPromises()
+
+      const cards = wrapper.findAll('.pcard')
+      expect(cards[0].classes()).not.toContain('is-expanded')
+      expect(cards[1].classes()).toContain('is-expanded')
+    })
+
+    it('opens the clicked session from the expanded card', async () => {
+      routeListAndBrowse(browseSessions)
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      await wrapper.find('.pcard-head').trigger('click')
+      await flushPromises()
+      await wrapper.findAll('.pcard-row')[0].trigger('click')
       expect(wrapper.emitted('select')![0]).toEqual(['b1', 'cli', '/proj/other'])
     })
 
-    it('shows an error instead of an empty list when the request fails', async () => {
+    it('shows an error inside the card when the request fails', async () => {
       mockFetch.mockImplementation((url: string) => {
         if (String(url).includes('/api/ai/sessions/by-project')) {
           return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) })
@@ -1658,8 +1684,8 @@ describe('SessionList', () => {
       await wrapper.find('.pcard-head').trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('[data-project-browse] .session-empty').text()).toBe('session.browseFailed')
-      expect(wrapper.findAll('.browse-row').length).toBe(0)
+      expect(wrapper.find('.pcard .pcard-state').text()).toBe('session.browseFailed')
+      expect(wrapper.findAll('.pcard-row').length).toBe(0)
     })
   })
 

@@ -52,7 +52,6 @@
         :current-session-id="currentSessionId"
         :running-session-ids="runningSessionIds"
         :is-active="open"
-        auto-height
         @select="handleSelect"
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"

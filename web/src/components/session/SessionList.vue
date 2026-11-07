@@ -4,7 +4,6 @@
          stays visible while the list scrolls, and is shared by both hosts
          (pinned sidebar and mobile drawer) since they both render SessionList. -->
     <SessionTagFilterBar
-      v-if="!browsingProject"
       :tags="filterTags"
       :active-tag="activeTag"
       @toggle="toggleTagFilter"
@@ -13,9 +12,9 @@
     <!-- One scroll area. The other projects' cards are NOT a separate region:
          they sit after the project's own rows and scroll with them, so there is
          no height budget to negotiate and nothing can be squeezed. -->
-    <div class="session-list-body" :style="browseHeightStyle">
+    <div class="session-list-body">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
-    <div ref="listRef" class="session-list-pane" :inert="!!browsingProject" :aria-hidden="browsingProject ? 'true' : undefined">
+    <div ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
            swapped seamlessly to the new data (see loadSessions). -->
@@ -206,35 +205,42 @@
 
       <!-- ── Other projects: active sessions elsewhere, as cards ──
            One card per project, sitting directly under the project's own rows
-           and scrolling with them — no heading of its own, no fixed height, no
-           split. The card boundary is the "this is not your project" signal;
-           the tinted header names which project it is; the footer opens a
-           read-only list of that project's full session list (opening a session
-           there is what switches the workspace).
-
-           Rendered outside the rows' v-if/v-else chain on purpose: a project
-           with no sessions of its own still needs to show them. -->
+           and scrolling with them. Clicking a header expands THAT card in
+           place: it grows to show the project's full session list and pushes
+           everything below it down — nothing is covered or taken over. -->
       <div v-if="crossGroups.length > 0" class="other-cards" data-other-zone>
         <div
           v-for="group in crossGroups"
           :key="group.name"
           class="pcard"
+          :class="{ 'is-expanded': expandedProject === group.name }"
           :style="{ '--pc': projectTintVar(group.name) }"
           :data-project="group.name"
         >
           <button
             class="pcard-head"
-            :title="t('session.viewAllSessions')"
-            :aria-label="`${t('session.viewAllSessions')} · ${group.displayName}`"
-            @click.stop="openProjectBrowse(group)"
+            :title="expandedProject === group.name ? t('session.collapseProject') : t('session.expandProject')"
+            :aria-label="`${expandedProject === group.name ? t('session.collapseProject') : t('session.expandProject')} · ${group.displayName}`"
+            :aria-expanded="expandedProject === group.name"
+            @click.stop="toggleProject(group)"
           >
             <span class="pcard-name">{{ group.displayName }}</span>
-            <span class="pcard-count">{{ group.sessions.length }}</span>
+            <span class="pcard-count">{{ cardCount(group) }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
-            <ChevronDown :size="14" class="pcard-chev" />
+            <ChevronUp v-if="expandedProject === group.name" :size="14" class="pcard-chev" />
+            <ChevronDown v-else :size="14" class="pcard-chev" />
           </button>
+
+          <div v-if="expandedProject === group.name && expandedLoading" class="pcard-state">
+            <LoadingIndicator size="sm" :label="t('common.loading')" />
+          </div>
+          <div v-else-if="expandedProject === group.name && expandedError" class="pcard-state">{{ expandedError }}</div>
+          <div v-else-if="expandedProject === group.name && expandedSessions.length === 0" class="pcard-state">
+            {{ t('session.noSessions') }}
+          </div>
+
           <div
-            v-for="session in group.sessions"
+            v-for="session in cardRows(group)"
             :key="group.name + '/' + session.id"
             class="pcard-row"
             :data-session-id="session.id"
@@ -276,75 +282,7 @@
           </div>
         </div>
       </div>
-    </div>
-
-    <!-- ── Read-only browse of one other project ──
-         The card, maximised: same project-coloured frame, same header band
-         (name, count, path) and the same row layout, just given the whole list
-         area. Nothing here mutates the other project — the only way out is the
-         back arrow, or opening a session (which switches the workspace, and is
-         what the user asked for by clicking a row). -->
-    <div
-      v-if="browsingProject"
-      ref="browsePaneRef"
-      class="browse-pane"
-      :style="{ '--pc': projectTintVar(browsingProject) }"
-      data-project-browse
-    >
-      <!-- The whole header collapses the view: the chevron that expanded the
-           card is now the same spot pointing back, so the control does not
-           move between the two states. -->
-      <button
-        class="browse-head"
-        :title="t('session.collapseProject')"
-        :aria-label="`${t('session.collapseProject')} · ${browsingName}`"
-        @click="closeProjectBrowse"
-      >
-        <span class="browse-title">{{ browsingName }}</span>
-        <span class="browse-count">{{ browsingSessions.length }}</span>
-        <span class="browse-path" :title="browsingProject">{{ browsingPath }}</span>
-        <ChevronUp :size="14" class="browse-chev" />
-      </button>
-      <div class="browse-body">
-        <PanelSkeleton v-if="browsingLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
-        <div v-else-if="browsingError" class="session-empty">{{ browsingError }}</div>
-        <div v-else-if="browsingSessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
-        <template v-else>
-        <div
-          v-for="session in browsingSessions"
-          :key="session.id"
-          class="pcard-row browse-row"
-          :data-session-id="session.id"
-          @click="selectCrossSession(session, browsingProject)"
-        >
-          <span v-if="rowStatus(session) || session.running" class="pcard-row-status">
-            <span
-              v-if="rowStatus(session) === 'pending'"
-              class="pcard-row-pending"
-              :title="statusLabel('pending')"
-              :aria-label="statusLabel('pending')"
-              role="img"
-            ><ShieldAlert :size="14" /></span>
-            <LoadingIndicator
-              v-else-if="session.running"
-              class="pcard-row-ring"
-              size="sm"
-              inline
-              aria-hidden="true"
-            />
-            <span
-              v-else
-              class="pcard-row-dot"
-              :title="statusLabel('unread')"
-              :aria-label="statusLabel('unread')"
-              role="img"
-            />
-          </span>
-          <span class="pcard-row-title">{{ session.title }}</span>
-        </div>
-        </template>
-      </div>
-    </div>
+    </div><!-- /session-list-pane -->
     </div><!-- /session-list-body -->
 
     <!-- Session menu (pin/rename/tags/archive/remove), opened from the row's ⋮
@@ -446,12 +384,6 @@ const props = defineProps({
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
-  /**
-   * True when the host sizes itself to content (the mobile drawer). Only then
-   * does the browse view need to feed its height back to the host: the pinned
-   * sidebar has a fixed height and must keep filling it.
-   */
-  autoHeight: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['select', 'archive', 'destroy'])
@@ -784,154 +716,71 @@ function findSession(sessionId) {
   return sessionsById.value.get(sessionId)
 }
 
-// ── Read-only browse of another project ────────────────────────────────────
+// ── Expanding a project card in place ──────────────────────────────────────
 //
-// Opening a project's card footer shows its FULL session list without touching
-// the workspace. The project is passed explicitly to the API because the normal
-// list endpoint resolves it from the cookie — using that one would mean
-// switching chat, files and terminal just to read a list.
-const browsePaneRef = ref(null)
-const browsingProject = ref('')
+// Clicking a card's header grows THAT card to show the project's full session
+// list, in place, pushing the rows below it down. Nothing is covered and no
+// separate view is opened, so the list keeps its scroll position and the other
+// cards stay where they were.
+//
+// The project is passed explicitly to the API because the ordinary list
+// endpoint resolves it from the cookie — using that one would mean switching
+// chat, files and terminal just to read a list.
+const expandedProject = ref('')
+const expandedSessions = ref([])
+const expandedLoading = ref(false)
+const expandedError = ref('')
+// Stale-response guard: the user can collapse (or expand another project) while
+// a request is still in flight.
+let expandGeneration = 0
 
-/**
- * Height the browse content needs, in CSS px.
- *
- * The pane overlays the list (so the growth animation can be drawn over the
- * rows it covers), which means it contributes nothing to the host's height. An
- * auto-height drawer would therefore clip it. Measuring the pane's own content
- * and feeding that back as the list area's `min-height` makes the drawer grow
- * to exactly what is shown — no more, no less. The pinned sidebar has a fixed
- * height, where this is a no-op.
- */
-const browseContentHeight = ref(0)
-const browseHeightStyle = computed(() =>
-  props.autoHeight && browsingProject.value && browseContentHeight.value > 0
-    // `flex: none` matters: the body is a flex item with `flex: 1`, which would
-    // ignore the height and keep the old content-driven size.
-    ? { height: `${browseContentHeight.value}px`, flex: 'none' }
-    : undefined,
-)
-
-function measureBrowseContent() {
-  const pane = browsePaneRef.value
-  if (!pane) { browseContentHeight.value = 0; return }
-  const head = pane.querySelector('.browse-head')
-  const body = pane.querySelector('.browse-body')
-  if (!head || !body) return
-  // Measured from the LAST row, not from `body.scrollHeight`: the body is
-  // stretched to the pane, so its scrollHeight would report the current
-  // (possibly already grown) height and the sheet would keep growing on every
-  // pass. A row's offsetTop is content position, independent of that.
-  const rows = body.querySelectorAll('.pcard-row')
-  const last = rows[rows.length - 1]
-  const contentHeight = last ? last.offsetTop + last.offsetHeight : 0
-  browseContentHeight.value = head.offsetHeight + contentHeight
+/** Rows to render for a card: the full list when expanded, active ones otherwise. */
+function cardRows(group) {
+  return expandedProject.value === group.name ? expandedSessions.value : group.sessions
 }
 
-const browsingName = ref('')
-const browsingPath = ref('')
-const browsingSessions = ref([])
-const browsingLoading = ref(false)
-const browsingError = ref('')
+/** Header count: the full list once it is loaded, otherwise the active count. */
+function cardCount(group) {
+  const isOpen = expandedProject.value === group.name
+  if (!isOpen || expandedLoading.value || expandedError.value) return group.sessions.length
+  return expandedSessions.value.length
+}
 
-// Declared after the refs it reads: watch sources are evaluated immediately.
-watch(
-  [browsingProject, () => browsingSessions.value.length],
-  () => { void nextTick(measureBrowseContent) },
-)
-// Stale-response guard: the user can close the view (or open another project)
-// while a request is still in flight.
-let browseGeneration = 0
-
-/**
- * The card and the browse view are the same surface at two sizes, so the open
- * is animated as a growth from the card's rectangle to the full list area:
- * the clicked card visually expands over the list instead of the panel being
- * swapped out from under the pointer.
- *
- * Implemented with the Web Animations API rather than a View Transition:
- * nothing is cross-fading two DOM trees, it is one element being scaled from
- * a measured rect, which every target browser (and Electron) supports.
- */
-function cardElementFor(projectPath) {
-  const cards = listRef.value?.querySelectorAll('.pcard') || []
-  for (const el of cards) {
-    if (el.dataset && el.dataset.project === projectPath) return el
+function toggleProject(group) {
+  if (expandedProject.value === group.name) {
+    collapseProject()
+    return
   }
-  return null
+  void expandProject(group)
 }
 
-/** Transform that would place `target` exactly over `from`. */
-function rectToRect(from, to) {
-  const sx = to.width > 0 ? from.width / to.width : 1
-  const sy = to.height > 0 ? from.height / to.height : 1
-  return `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${sx}, ${sy})`
-}
-
-const BROWSE_GROW_MS = 220
-
-async function openProjectBrowse(group) {
-  const origin = cardElementFor(group.name)?.getBoundingClientRect() || null
-  browsingProject.value = group.name
-  browsingName.value = group.displayName
-  browsingPath.value = group.displayPath
-  browsingSessions.value = []
-  browsingError.value = ''
-  browsingLoading.value = true
-  await nextTick()
-  animateBrowsePane(origin, 'grow')
-  const generation = ++browseGeneration
+async function expandProject(group) {
+  expandedProject.value = group.name
+  expandedSessions.value = []
+  expandedError.value = ''
+  expandedLoading.value = true
+  const generation = ++expandGeneration
   try {
     const resp = await fetch(`/api/ai/sessions/by-project?path=${encodeURIComponent(group.name)}`)
-    if (generation !== browseGeneration) return
+    if (generation !== expandGeneration) return
     if (!resp.ok) throw new Error(`by-project HTTP ${resp.status}`)
     const data = await resp.json()
-    browsingSessions.value = Array.isArray(data.sessions) ? data.sessions : []
+    expandedSessions.value = Array.isArray(data.sessions) ? data.sessions : []
   } catch (err) {
-    if (generation === browseGeneration) browsingError.value = t('session.browseFailed')
+    if (generation === expandGeneration) expandedError.value = t('session.browseFailed')
     appLog.e('SessionList', 'failed to load project sessions', err)
   } finally {
-    if (generation === browseGeneration) browsingLoading.value = false
+    if (generation === expandGeneration) expandedLoading.value = false
   }
 }
 
-async function closeProjectBrowse() {
-  // Bump the generation so a late response cannot repopulate the closed view.
-  browseGeneration++
-  await animateBrowsePane(cardElementFor(browsingProject.value)?.getBoundingClientRect() || null, 'shrink')
-  browsingProject.value = ''
-  browsingName.value = ''
-  browsingPath.value = ''
-  browsingSessions.value = []
-  browsingError.value = ''
-}
-
-/**
- * Grow the pane out of `originRect`, or shrink it back into it.
- *
- * Returns immediately (resolved promise) when there is nothing to animate —
- * a zero-sized rect (first paint, or jsdom in tests) or a host without the
- * Web Animations API — so callers never wait on an animation that cannot run.
- */
-async function animateBrowsePane(originRect, direction) {
-  const pane = browsePaneRef.value
-  if (!pane || !originRect || typeof pane.animate !== 'function') return
-  const target = pane.getBoundingClientRect()
-  if (target.width <= 0 || target.height <= 0 || originRect.width <= 0 || originRect.height <= 0) return
-  const collapsed = rectToRect(originRect, target)
-  const frames = direction === 'grow'
-    ? [{ transform: collapsed, opacity: 0.85 }, { transform: 'none', opacity: 1 }]
-    : [{ transform: 'none', opacity: 1 }, { transform: collapsed, opacity: 0.7 }]
-  const animation = pane.animate(frames, {
-    duration: BROWSE_GROW_MS,
-    easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-    fill: 'none',
-  })
-  // transform-origin has to be the top-left for the rect math above; set it
-  // while the animation runs and let it fall back to the CSS value after.
-  pane.style.transformOrigin = '0 0'
-  try { await animation.finished } catch { /* interrupted */ }
-  pane.style.transformOrigin = ''
+function collapseProject() {
+  // Bump the generation so a late response cannot repopulate the closed card.
+  expandGeneration++
+  expandedProject.value = ''
+  expandedSessions.value = []
+  expandedError.value = ''
+  expandedLoading.value = false
 }
 
 async function loadSessions() {
@@ -1314,7 +1163,7 @@ const listNav = useListNav({
 // deliberately outside useListNav (click/tap only) — its rows are not part of
 // the project's order, and mixing them in would make arrow keys jump between
 // projects mid-list.
-useListKeys({ isOpen: () => props.isActive && !browsingProject.value, nav: listNav })
+useListKeys({ isOpen: () => props.isActive, nav: listNav })
 
 function scrollActiveIntoView(index) {
   const items = listRef.value?.querySelectorAll('.session-item') || []
@@ -1328,9 +1177,9 @@ watch(visibleRows, () => listNav.reset())
 // session we just opened belongs to the (new) current project, and a tag filter
 // or a share badge carried across the switch would describe the old one.
 watch(() => store.state.projectRoot, () => {
-  // A browse view describes the project we just left; it must not survive the
-  // switch (the list underneath now belongs to the new project).
-  closeProjectBrowse()
+  // An expanded card describes the project we just left; it must not survive
+  // the switch (the list now belongs to the new project).
+  collapseProject()
   // Tags are per-project: a filter carried across a project switch would hide
   // the new project's sessions behind a tag it may not even have.
   activeTag.value = ''
@@ -1438,7 +1287,6 @@ onUnmounted(() => {
 /* The list area: the scrollable project pane (its rows and the other-project
    cards share that one scroll) plus, when open, the read-only browse view. */
 .session-list-body {
-  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -2360,104 +2208,18 @@ onUnmounted(() => {
   color: var(--color-yellow, #a16207);
 }
 
-/* ── Read-only browse view ──
-   The card, maximised: the same project-coloured frame, the same tinted header
-   band with name / count / path, and the same compact rows (they reuse
-   `.pcard-row`). Only the back arrow is added, and the hint moves into the
-   header band as a second line. */
-/* Overlays the list instead of replacing it, so the growth animation can be
-   drawn on top of the rows it is covering (and the list keeps its scroll
-   position underneath). */
-.browse-pane {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
+/* A card that is expanded in place: its rows replace the active-only list and
+   the card simply gets taller, pushing the rows below it down. */
+.pcard.is-expanded {
   background: var(--bg-primary, #fff);
-  transform-origin: 0 0;
 }
 
-.browse-head {
-  flex: 0 0 auto;
+.pcard-state {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-width: 0;
-  padding: var(--space-3) var(--space-4);
-  background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
-  border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .browse-head:hover {
-    background: color-mix(in srgb, var(--pc, var(--text-primary)) 22%, var(--bg-primary, #fff));
-  }
-}
-
-.browse-title {
-  flex: 0 0 auto;
-  max-width: 55%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #1a1a1a);
-}
-
-.browse-count {
-  flex: 0 0 auto;
-  /* Same round badge as the collapsed card's header. */
-  width: calc(18 * var(--dp));
-  height: calc(18 * var(--dp));
-  display: inline-grid;
-  place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--pc, var(--text-primary)) 16%, transparent);
-  color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
-  font-size: var(--font-size-2xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.browse-chev {
-  flex: 0 0 auto;
-  color: var(--text-muted, #656d76);
-}
-
-.browse-head:hover .browse-chev {
-  color: var(--pc, var(--accent-color, #0066cc));
-}
-
-.browse-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
+  justify-content: center;
+  padding: var(--space-5) var(--space-4);
   color: var(--text-hint, #8c959f);
   font-size: var(--font-size-2xs);
-}
-
-.browse-body {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-/* Rows reuse `.pcard-row`; this hook exists for tests and for the first-row
-   border reset (the frame already provides the top edge). */
-.browse-row:first-child {
-  border-top: 0;
 }
 </style>
