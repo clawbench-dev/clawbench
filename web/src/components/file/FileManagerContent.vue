@@ -3284,7 +3284,8 @@ function scrollSelectedIntoView(path) {
 /* Unified toolbar button */
 /* Labelled buttons grow with their text; the circular shape has to become a
    pill, otherwise `border-radius: 50%` turns a wide button into an ellipse. */
-.dir-toolbar-btns.show-labels .toolbar-btn {
+.dir-toolbar-btns.show-labels .toolbar-btn,
+.dir-toolbar-btns.measure-labels .toolbar-btn {
     width: auto;
     padding: 0 calc(8 * var(--dp));
     border-radius: var(--radius-full);

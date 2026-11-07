@@ -756,7 +756,8 @@ onBeforeUnmount(() => {
 }
 /* Labelled buttons grow with their text; the icon+text gap is what keeps the
    two from touching. */
-.header-actions.show-labels .file-header-btn {
+.header-actions.show-labels .file-header-btn,
+.header-actions.measure-labels .file-header-btn {
     gap: calc(4 * var(--dp));
     padding: 0 calc(8 * var(--dp));
 }

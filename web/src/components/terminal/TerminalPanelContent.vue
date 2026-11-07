@@ -1979,7 +1979,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 /* Labels for the tool group: shown only when the whole strip fits without
    scrolling, so they can never push a key off-screen. The two fixed mode
    toggles outside the strip stay icon-only. */
-.toolbar-scroll.show-labels .btn-func {
+.toolbar-scroll.show-labels .btn-func,
+.toolbar-scroll.measure-labels .btn-func {
   gap: calc(4 * var(--dp));
   padding: 0 calc(8 * var(--dp));
 }

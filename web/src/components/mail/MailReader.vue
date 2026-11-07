@@ -558,12 +558,14 @@ async function remove(): Promise<void> {
 }
 
 /* A labelled button grows with its text instead of staying a 26px square. */
-.mail-reader__actions.show-labels .mail-icon-btn {
+.mail-reader__actions.show-labels .mail-icon-btn,
+.mail-reader__actions.measure-labels .mail-icon-btn {
   width: auto;
   min-width: calc(26 * var(--dp));
   padding: 0 calc(6 * var(--dp));
 }
-.mail-reader__actions.show-labels {
+.mail-reader__actions.show-labels,
+.mail-reader__actions.measure-labels {
   gap: var(--space-2, 4px);
 }
 .mail-icon-btn :deep(svg) {

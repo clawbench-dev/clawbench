@@ -193,7 +193,8 @@ function onSearchInput(e: Event): void {
   flex: 0 0 auto;
 }
 /* Labelled buttons grow with their text instead of staying 26px squares. */
-.mail-bar__top.show-labels .mail-icon-btn {
+.mail-bar__top.show-labels .mail-icon-btn,
+.mail-bar__top.measure-labels .mail-icon-btn {
   width: auto;
   padding: 0 calc(8 * var(--dp));
   gap: calc(4 * var(--dp));

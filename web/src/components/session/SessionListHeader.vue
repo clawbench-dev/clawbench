@@ -198,7 +198,8 @@ const sessionBarColor = computed(() => {
 }
 /* Labelled header buttons grow with their text instead of staying 24px squares
    (labels appear only when the header can hold them — see useActionBarLabels). */
-.session-list-header-content.show-labels .header-action-btn {
+.session-list-header-content.show-labels .header-action-btn,
+.session-list-header-content.measure-labels .header-action-btn {
   width: auto;
   padding: 0 calc(8 * var(--dp));
 }

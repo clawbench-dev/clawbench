@@ -310,7 +310,9 @@ onMounted(refresh)
   flex: 0 0 auto;
 }
 .list-header.show-labels .header-btn,
-.list-header.show-labels .create-btn {
+.list-header.show-labels .create-btn,
+.list-header.measure-labels .header-btn,
+.list-header.measure-labels .create-btn {
   width: auto;
   padding: 0 calc(10 * var(--dp));
   gap: calc(5 * var(--dp));

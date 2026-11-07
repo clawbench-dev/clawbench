@@ -1005,7 +1005,8 @@ function formatTime(iso: string): string {
   flex: 0 0 auto;
 }
 /* Labelled header buttons grow with their text instead of staying squares. */
-.forge-header.show-labels .forge-header-btn {
+.forge-header.show-labels .forge-header-btn,
+.forge-header.measure-labels .forge-header-btn {
   width: auto;
   padding: 0 calc(10 * var(--dp));
   gap: calc(5 * var(--dp));

@@ -350,7 +350,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 1. 容器 `ref` + `:class="{ 'show-labels': showLabels }"`，然后 `useActionBarLabels(() => barRef.value)`。它负责 `ResizeObserver`、50ms 去抖、`scrollWidth > clientWidth + 2` 的判定（容差 2px：亚像素舍入会让刚好放下的一行被判成溢出）。
 2. 每个按钮里放一个 `<span class="action-label">文字</span>`。样式是**全局**的（`web/css/components.css`）：默认 `display: none`，`.show-labels`（最终态）与 `.measure-labels`（量宽用的临时态）两处都让它显示。量的时候**必须**先强制显示，否则量到的是「没有标签」的宽度，结论永远是有空间。
-3. 在自己组件的样式里加「带标签时按钮变宽」的规则：从固定方格改成 `width: auto` + 左右内边距 + 图标与文字之间的 `gap`。这部分必须留在组件里——每条按钮的形状（24/26/28px、圆角、选中态）本来就不同。
+3. 在自己组件的样式里加「带标签时按钮变宽」的规则：从固定方格改成 `width: auto` + 左右内边距 + 图标与文字之间的 `gap`。这部分必须留在组件里——每条按钮的形状（24/26/28px、圆角、选中态）本来就不同。**这条规则的选择器必须同时写 `.show-labels` 和 `.measure-labels`**：只写前者时，测量用的还是图标宽度，量出来永远「放得下」，窄屏上就会带着标签溢出（2026-11-07 实测，文件管理器工具栏就是这样）。
 
 **有标题/面包屑的条要多一步**：这类条的左侧是 `flex: 1` 的自适应块，标签变宽时它会先被压扁，`scrollWidth` 永远不溢出，于是「放不下」永远测不出来。给这种条加一条测量期的规则，把左侧块钉回自然宽度：
 
