@@ -2064,18 +2064,22 @@ onUnmounted(() => {
 .other-cards {
   display: flex;
   flex-direction: column;
-  /* Full-bleed and flush: no padding at all, so the first card starts right
-     after the last session row and the last card ends the list. The gap
-     between two cards stays — removing it would leave their two 1px borders
-     touching and the pair would read as one card. */
-  gap: var(--space-4);
+  /* Flush stack: no padding, no gap. Cards are separated by a single hairline
+     (the next card's top border), so a column of projects reads as one block
+     rather than a pile of floating boxes. */
+  gap: 0;
 }
 
-/* One card per project. Square corners and a crisp outline on purpose: the
-   card edge is what separates "another project" from the user's own list, so it
-   has to read as a hard boundary, not a soft rounded blob. */
+/* One card per project, in a seamless stack: no outer border, only the top
+   hairline, so two adjacent cards share one divider instead of showing a
+   double line. Everything inside a card is derived from the SAME project
+   colour (`--pc`) — the header band is that colour mixed into the surface
+   (opaque, so scrolling content never shows through it), the chips, row
+   separators and hovers are the same colour at low alpha. Status keeps its own
+   meaning: pending stays amber. */
 .pcard {
-  border: 1px solid color-mix(in srgb, var(--text-primary) 34%, var(--border-color));
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 32%, var(--border-color));
   background: var(--bg-primary, #fff);
   overflow: hidden;
 }
@@ -2085,10 +2089,10 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  /* Same light tint the soft design used — the project colour names the card
-     without turning the header into a solid colour band. */
-  background: color-mix(in srgb, var(--pc, var(--text-primary)) 8%, var(--bg-secondary));
-  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 32%, var(--border-color));
+  /* Opaque: mixed into the SURFACE, not into `transparent`, so the band keeps
+     its colour while content scrolls underneath. */
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
+  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
 }
 
 .pcard-dot {
@@ -2113,8 +2117,10 @@ onUnmounted(() => {
 .pcard-count {
   flex: 0 0 auto;
   padding: 0 var(--space-2);
-  background: var(--bg-tertiary, #eef1f4);
-  color: var(--text-muted, #656d76);
+  /* Semi-transparent version of the same project colour — the chip sits on the
+     opaque header, so alpha reads as a tint rather than a separate colour. */
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 16%, transparent);
+  color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
   font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;
 }
@@ -2137,7 +2143,7 @@ onUnmounted(() => {
   gap: var(--space-3);
   min-height: calc(36 * var(--dp));
   padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 14%, transparent);
   cursor: pointer;
 }
 
@@ -2147,7 +2153,7 @@ onUnmounted(() => {
 
 @media (hover: hover) {
   .pcard-row:hover {
-    background: color-mix(in srgb, var(--pc, var(--text-primary)) 8%, transparent);
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 9%, transparent);
   }
 }
 
@@ -2163,6 +2169,10 @@ onUnmounted(() => {
 
 .pcard-row-ring {
   flex: 0 0 auto;
+  /* The shared ring reads its colour from these two variables; pointing them at
+     the project colour keeps the card monochrome. */
+  --li-color: var(--pc, var(--accent-color, #0066cc));
+  --li-track-color: color-mix(in srgb, var(--pc, var(--border-color)) 22%, transparent);
 }
 
 .pcard-row-dot {
@@ -2170,7 +2180,9 @@ onUnmounted(() => {
   width: calc(6 * var(--dp));
   height: calc(6 * var(--dp));
   border-radius: 50%;
-  background: var(--accent-color, #0066cc);
+  /* Same colour as the card: unread is read from the dot's presence, not from
+     a second hue competing with the project's. */
+  background: var(--pc, var(--accent-color, #0066cc));
 }
 
 .pcard-row-pending {
@@ -2197,8 +2209,8 @@ onUnmounted(() => {
 
 @media (hover: hover) {
   .pcard-open:hover {
-    color: var(--accent-color, #0066cc);
-    background: color-mix(in srgb, var(--pc, var(--text-primary)) 12%, transparent);
+    color: var(--pc, var(--accent-color, #0066cc));
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 14%, transparent);
   }
 }
 
