@@ -1605,12 +1605,13 @@ describe('SessionList', () => {
 
       expect(wrapper.find('[data-project-browse]').exists()).toBe(true)
       expect(wrapper.find('.browse-title').text()).toBe('other')
-      // i18n is stubbed to echo the key, so this asserts the count slot is wired.
-      expect(wrapper.find('.browse-count').text()).toBe('session.browseCount')
-      // Both rows, including the one with no activity (the strip only lists
+      // The header mirrors the card's: name, count, path.
+      expect(wrapper.find('.browse-count').text()).toBe('2')
+      expect(wrapper.find('.browse-path').text()).toBe('~/proj/other')
+      // Both rows, including the one with no activity (the cards only list
       // active sessions — browsing shows the whole list).
       expect(wrapper.findAll('.browse-row').length).toBe(2)
-      expect(wrapper.find('.browse-row .session-item-title').text()).toBe('Old one')
+      expect(wrapper.find('.browse-row .pcard-row-title').text()).toBe('Old one')
     })
 
     it('returns to the cards when the back arrow is clicked', async () => {

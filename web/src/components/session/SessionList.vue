@@ -279,21 +279,28 @@
     </div>
 
     <!-- ── Read-only browse of one other project ──
-         Takes over the list area instead of squeezing into the strip: this is a
-         full session list and it must scroll like one. Nothing here mutates the
-         other project — the only way out is the back arrow, or opening a
-         session (which switches the workspace, and is what the user asked for
-         by clicking a row). -->
-    <div v-if="browsingProject" class="browse-pane" data-project-browse>
+         The card, maximised: same project-coloured frame, same header band
+         (name, count, path) and the same row layout, just given the whole list
+         area. Nothing here mutates the other project — the only way out is the
+         back arrow, or opening a session (which switches the workspace, and is
+         what the user asked for by clicking a row). -->
+    <div
+      v-if="browsingProject"
+      class="browse-pane"
+      :style="{ '--pc': projectTintVar(browsingProject) }"
+      data-project-browse
+    >
       <div class="browse-head">
-        <button class="browse-back" :title="t('common.back')" :aria-label="t('common.back')" @click="closeProjectBrowse">
-          <ChevronLeft :size="14" />
-        </button>
-        <span class="browse-title">{{ browsingName }}</span>
-        <span class="browse-count">{{ t('session.browseCount', { n: browsingSessions.length }) }}</span>
-        <span class="browse-dot" :style="{ background: projectTintVar(browsingProject) }" />
+        <div class="browse-head-row">
+          <button class="browse-back" :title="t('common.back')" :aria-label="t('common.back')" @click="closeProjectBrowse">
+            <ChevronLeft :size="14" />
+          </button>
+          <span class="browse-title">{{ browsingName }}</span>
+          <span class="browse-count">{{ browsingSessions.length }}</span>
+          <span class="browse-path" :title="browsingProject">{{ browsingPath }}</span>
+        </div>
+        <div class="browse-note">{{ t('session.browseNote') }}</div>
       </div>
-      <div class="browse-note">{{ t('session.browseNote') }}</div>
       <div class="browse-body">
         <PanelSkeleton v-if="browsingLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
         <div v-else-if="browsingError" class="session-empty">{{ browsingError }}</div>
@@ -302,33 +309,34 @@
         <div
           v-for="session in browsingSessions"
           :key="session.id"
-          class="browse-row"
+          class="pcard-row browse-row"
           :data-session-id="session.id"
           @click="selectCrossSession(session, browsingProject)"
         >
-          <div class="session-item-info">
-            <div class="session-item-header">
-              <span class="session-item-title">{{ session.title }}</span>
-            </div>
-            <div class="session-item-meta">
-              <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-              <span v-if="session.sessionType === 'group'" class="session-item-group">
-                <Users :size="12" />
-                <GroupMemberStack :members="session.groupMembers || []" />
-              </span>
-              <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(session)" :name="sessionAgentName(session)" :avatar="sessionAgentAvatar(session)" size="sm" /> {{ sessionAgentName(session) }}</span>
-            </div>
-          </div>
-          <span
-            v-if="rowStatus(session)"
-            class="session-status"
-            :class="`is-${rowStatus(session)}`"
-            :title="statusLabel(rowStatus(session))"
-            :aria-label="statusLabel(rowStatus(session))"
-            role="img"
-          >
-            <ShieldAlert v-if="rowStatus(session) === 'pending'" :size="14" />
+          <span v-if="rowStatus(session) || session.running" class="pcard-row-status">
+            <span
+              v-if="rowStatus(session) === 'pending'"
+              class="pcard-row-pending"
+              :title="statusLabel('pending')"
+              :aria-label="statusLabel('pending')"
+              role="img"
+            ><ShieldAlert :size="14" /></span>
+            <LoadingIndicator
+              v-else-if="session.running"
+              class="pcard-row-ring"
+              size="sm"
+              inline
+              aria-hidden="true"
+            />
+            <span
+              v-else
+              class="pcard-row-dot"
+              :title="statusLabel('unread')"
+              :aria-label="statusLabel('unread')"
+              role="img"
+            />
           </span>
+          <span class="pcard-row-title">{{ session.title }}</span>
         </div>
         </template>
       </div>
@@ -774,6 +782,7 @@ function findSession(sessionId) {
 // switching chat, files and terminal just to read a list.
 const browsingProject = ref('')
 const browsingName = ref('')
+const browsingPath = ref('')
 const browsingSessions = ref([])
 const browsingLoading = ref(false)
 const browsingError = ref('')
@@ -784,6 +793,7 @@ let browseGeneration = 0
 async function openProjectBrowse(group) {
   browsingProject.value = group.name
   browsingName.value = group.displayName
+  browsingPath.value = group.displayPath
   browsingSessions.value = []
   browsingError.value = ''
   browsingLoading.value = true
@@ -807,6 +817,7 @@ function closeProjectBrowse() {
   browseGeneration++
   browsingProject.value = ''
   browsingName.value = ''
+  browsingPath.value = ''
   browsingSessions.value = []
   browsingError.value = ''
 }
@@ -2229,30 +2240,41 @@ onUnmounted(() => {
   color: var(--pc, var(--accent-color, #0066cc));
 }
 
-/* ── Read-only browse view ── */
+/* ── Read-only browse view ──
+   The card, maximised: the same project-coloured frame, the same tinted header
+   band with name / count / path, and the same compact rows (they reuse
+   `.pcard-row`). Only the back arrow is added, and the hint moves into the
+   header band as a second line. */
 .browse-pane {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
+  background: var(--bg-primary, #fff);
 }
 
 .browse-head {
   flex: 0 0 auto;
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
+  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
+}
+
+.browse-head-row {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-color, #dee2e6);
-  background: var(--bg-secondary, #f6f8fa);
+  min-width: 0;
 }
 
 .browse-back {
   flex: 0 0 auto;
-  width: calc(24 * var(--dp));
-  height: calc(24 * var(--dp));
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
   display: grid;
   place-items: center;
+  margin-left: calc(-1 * var(--space-2));
   padding: 0;
   border: 0;
   background: transparent;
@@ -2262,14 +2284,14 @@ onUnmounted(() => {
 
 @media (hover: hover) {
   .browse-back:hover {
-    color: var(--text-primary, #1a1a1a);
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    color: var(--pc, var(--accent-color, #0066cc));
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 14%, transparent);
   }
 }
 
 .browse-title {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
+  max-width: 55%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2280,22 +2302,26 @@ onUnmounted(() => {
 
 .browse-count {
   flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 16%, transparent);
+  color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.browse-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
   color: var(--text-hint, #8c959f);
   font-size: var(--font-size-2xs);
 }
 
-.browse-dot {
-  flex: 0 0 auto;
-  margin-left: auto;
-  width: calc(8 * var(--dp));
-  height: calc(8 * var(--dp));
-  border-radius: 50%;
-}
-
 .browse-note {
-  flex: 0 0 auto;
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  margin-top: var(--space-2);
   color: var(--text-hint, #8c959f);
   font-size: var(--font-size-2xs);
 }
@@ -2306,22 +2332,9 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.browse-row {
-  display: flex;
-  align-items: center;
-  min-height: calc(44 * var(--dp));
-  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
-  border-top: 1px solid var(--border-color, #dee2e6);
-  cursor: pointer;
-}
-
+/* Rows reuse `.pcard-row`; this hook exists for tests and for the first-row
+   border reset (the frame already provides the top edge). */
 .browse-row:first-child {
   border-top: 0;
-}
-
-@media (hover: hover) {
-  .browse-row:hover {
-    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  }
 }
 </style>
