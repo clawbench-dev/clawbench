@@ -157,10 +157,32 @@ func (s *teamProbeSetup) modeOptions() []string {
 	return out
 }
 
+// teamProbeOptions tunes the client side of a probe session.
+//
+// The defaults reproduce the Agent Teams probe (terminal advertised, no client
+// _meta). Probes that depend on the agent doing something ITSELF — e.g. running
+// a background task internally instead of delegating it to the host terminal —
+// must advertise nothing that would let the agent hand the work over.
+type teamProbeOptions struct {
+	// advertiseTerminal advertises the ACP terminal/* capability. CodeBuddy
+	// then delegates `run_in_background` Bash to the HOST, which means it never
+	// creates a background task of its own and never notifies about one.
+	advertiseTerminal bool
+	// clientMeta is sent as clientCapabilities._meta (CodeBuddy reads
+	// `codebuddy.ai` from it).
+	clientMeta map[string]any
+}
+
 // startTeamProbe spawns a real codebuddy --acp process and completes
 // initialize + session/new. It registers a stream sink so ClawBench's own
 // mapping output is observable alongside the raw wire.
 func startTeamProbe(t *testing.T, ctx context.Context) *teamProbeSetup {
+	t.Helper()
+	return startTeamProbeWith(t, ctx, teamProbeOptions{advertiseTerminal: true})
+}
+
+// startTeamProbeWith is startTeamProbe with explicit client capabilities.
+func startTeamProbeWith(t *testing.T, ctx context.Context, opts teamProbeOptions) *teamProbeSetup {
 	t.Helper()
 
 	cmd := exec.CommandContext(ctx, "codebuddy", "--acp")
@@ -204,7 +226,8 @@ func startTeamProbe(t *testing.T, ctx context.Context) *teamProbeSetup {
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
 			Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
-			Terminal: true,
+			Terminal: opts.advertiseTerminal,
+			Meta:     opts.clientMeta,
 		},
 		ClientInfo: &acp.Implementation{Name: "clawbench-team-probe", Version: "1.0.0"},
 	})
