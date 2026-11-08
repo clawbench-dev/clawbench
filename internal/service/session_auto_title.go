@@ -106,7 +106,7 @@ func userMessageTitleText(content string, files []model.FileEntry) string {
 	}
 }
 
-// quoteTitleBlocks renders every quote entry of one message as a labelled
+// quoteTitleBlocks renders every quote entry of one message as a labeled
 // block. The label (Path) is the quote's human-readable name — for a quote
 // taken from another chat it is that session's title, which is frequently the
 // best topic hint available; for a whole-file quote it is the only content

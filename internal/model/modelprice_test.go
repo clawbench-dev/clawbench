@@ -2,7 +2,7 @@ package model
 
 // Tests for the picker price lookup (issue #643).
 //
-// The behaviour worth pinning is the CHOICE of price, not the arithmetic: the
+// The behavior worth pinning is the CHOICE of price, not the arithmetic: the
 // same model id is resold by dozens of gateways at different prices, and the
 // picker must show the owning vendor's number — or nothing — rather than a
 // random reseller's markup.

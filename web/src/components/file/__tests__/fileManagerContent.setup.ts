@@ -31,8 +31,8 @@ import { vi, beforeEach, afterEach } from 'vitest'
 // module — a suite that forgot it fell back to the 5s default and timed out on
 // a case that takes ~5.4s under load.
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
-import { mount } from '@vue/test-utils'
-import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
+import { mount, enableAutoUnmount } from '@vue/test-utils'
+import { reactive, ref, computed, defineComponent } from 'vue'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createI18n } from 'vue-i18n'
@@ -312,13 +312,13 @@ const mockThumbable = vi.hoisted(() => ({ value: false }))
 
 vi.mock('@/utils/fileManager', () => ({
   buildThumbUrl: (dir: string, name: string) => `/api/fs/thumb?target=${dir}/${name}`,
-  isImage: (e: any) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
-  isAudio: (e: any) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
-  isVideo: (e: any) => /\.(mp4|mov)$/i.test(e.name || ''),
+  isImage: (e: { name?: string }) => /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(e.name || ''),
+  isAudio: (e: { name?: string }) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
+  isVideo: (e: { name?: string }) => /\.(mp4|mov)$/i.test(e.name || ''),
   // Controllable so the thumbnail lazy-mount tests can exercise the real
   // render path. Defaults to false, which is what the pre-existing tests
   // assume (no <img> is expected anywhere in this suite).
-  isThumbable: (e: any) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(e?.name || ''),
+  isThumbable: (e?: { name?: string }) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(e?.name || ''),
   isThumbableExt: (path: string) => mockThumbable.value && /\.(png|jpg|jpeg|gif)$/i.test(path || ''),
   formatSize: (s: number) => {
     if (s >= 1024) return `${(s / 1024).toFixed(1)} KB`
@@ -627,6 +627,17 @@ beforeEach(() => {
 export function cleanupDragGhost(): void {
   cleanupDragGhostImpl()
 }
+
+// Unmount every wrapper a case created, after that case ends.
+//
+// The component arms a highlight-retry timer when asked to scroll to an entry
+// that is not in the listing yet, and the timer keeps firing while the listing
+// is pending. Without unmounting, that loop outlives its own case: the next
+// case's `Element.prototype.scrollIntoView` spy then records a scroll that
+// belongs to the previous test, and `scrollSpy` assertions see phantom calls.
+// `onUnmounted` clears the timer, so unmounting is the actual fix — the drag
+// ghost cleanup below only covers a different timer.
+enableAutoUnmount(afterEach)
 
 
 /** Read the SFC source. jsdom does not load `<style>`, so style assertions must

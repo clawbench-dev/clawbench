@@ -59,12 +59,12 @@ var allowedCJKFiles = map[string]string{
 	// never rendered to a user. The transcript itself is model output.
 	"internal/service/live_notes.go": "AI meeting-minutes prompts (chunk + final summary)",
 	// Shipped VALUES of `stt.trigger_words` / `stt.barge_in_words`: written into
-	// config.yaml and compared against recognised speech, never rendered. The
+	// config.yaml and compared against recognized speech, never rendered. The
 	// labels the settings page shows come from the locale tables.
 	"internal/model/defaults.go": "default trigger / barge-in word values (config data, not UI copy)",
 	// Speech settings DEFAULTS, not UI copy. These are the shipped values of
 	// `stt.trigger_words` / `stt.barge_in_words` — they are written into
-	// config.yaml and compared against recognised speech, never rendered. The
+	// config.yaml and compared against recognized speech, never rendered. The
 	// labels the settings page shows come from the locale tables.
 	"web/src/utils/audioTuning.ts":             "default trigger / barge-in word values (config data, not UI copy)",
 	"web/src/composables/useSettingsConfig.ts": "the same defaults mirrored for the client-side fallback",
@@ -334,7 +334,7 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		// listed so the guard cannot hide a regression behind them.
 		"composables/useLocale.ts": "language-toggle label, intentionally native (EN / 中)",
 		// Shipped VALUES of the trigger / barge-in word settings, mirrored from
-		// the server defaults. They are config data compared against recognised
+		// the server defaults. They are config data compared against recognized
 		// speech, never rendered; the settings labels come from the locales.
 		"utils/audioTuning.ts":                 "default trigger / barge-in word values (config data)",
 		"composables/useSettingsConfig.ts":     "the same defaults mirrored for the client fallback",

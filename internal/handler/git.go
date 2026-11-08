@@ -270,7 +270,7 @@ func getProjectHistory(projectPath string, skip int, refSHA string) ([]commitInf
 	// Walk from the resolved commit instead of the implicit HEAD so a branch
 	// other than the checked-out one can be browsed. An empty repo resolves to
 	// no commit at all, in which case the implicit HEAD (which also fails) keeps
-	// the previous empty-result behaviour.
+	// the previous empty-result behavior.
 	if refSHA != "" {
 		logArgs = append(logArgs, refSHA)
 	}
@@ -437,68 +437,11 @@ func ServeGitBranch(w http.ResponseWriter, r *http.Request) {
 // users see the complete picture of uncommitted modifications.
 func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 	if commit == "" || commit == "HEAD" {
-		// Check if the file is untracked first
-		lsCmd := exec.Command("git", "ls-files", "--error-unmatch", relPath)
-		lsCmd.Dir = projectPath
-		if _, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
-			// File is untracked: diff against /dev/null to show full content as added
-			cmd := exec.Command("git", "diff", "--no-index", "/dev/null", relPath)
-			cmd.Dir = projectPath
-			out, err := cmd.CombinedOutput()
-			// git diff --no-index exits with code 1 when there are differences, which is not an error
-			if err != nil && len(out) == 0 {
-				return nil, err
-			}
-			return out, nil
-		}
-
-		// Staged changes (diff between HEAD and index)
-		cmdCached := exec.Command("git", "diff", "--cached", "--", relPath)
-		cmdCached.Dir = projectPath
-		cached, cachedErr := cmdCached.CombinedOutput()
-
-		// Unstaged changes (diff between index and working tree)
-		cmdUnstaged := exec.Command("git", "diff", "--", relPath)
-		cmdUnstaged.Dir = projectPath
-		unstaged, unstagedErr := cmdUnstaged.CombinedOutput()
-
-		var combined []byte
-		if cachedErr == nil && len(cached) > 0 {
-			combined = append(combined, cached...)
-		}
-		if unstagedErr == nil && len(unstaged) > 0 {
-			if len(combined) > 0 {
-				combined = append(combined, '\n')
-			}
-			combined = append(combined, unstaged...)
-		}
-
-		if cachedErr != nil && unstagedErr != nil {
-			return nil, cachedErr
-		}
-		return combined, nil
+		return workingTreeDiff(projectPath, relPath)
 	}
 
-	// Merge commits get a combined diff from `git show`, which only renders the
-	// lines the merge itself decided (conflict resolutions). Every file the merge
-	// took verbatim from one side produces no output at all — and the commit file
-	// list still lists those files, so each one would open to an empty diff.
-	// Compare against each parent instead and keep the first non-empty result:
-	// for a clean merge exactly one parent differs, and for a real conflict
-	// resolution the first parent wins (same convention as `git show -m`).
 	if parents := getCommitParents(projectPath, commit); len(parents) >= 2 {
-		for _, parent := range parents {
-			parentCmd := exec.Command("git", "diff", parent, commit, "--", relPath)
-			parentCmd.Dir = projectPath
-			out, err := parentCmd.CombinedOutput()
-			if err != nil {
-				continue
-			}
-			if strings.TrimSpace(string(out)) != "" {
-				return out, nil
-			}
-		}
-		return []byte{}, nil
+		return mergeCommitDiff(projectPath, relPath, commit, parents)
 	}
 
 	// Use git show --format="" to get unified diff output. The bare "git show <commit>"
@@ -508,6 +451,75 @@ func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 	cmd := exec.Command("git", "show", "--format=", commit, "--", relPath)
 	cmd.Dir = projectPath
 	return cmd.CombinedOutput()
+}
+
+// workingTreeDiff returns the diff of one path against HEAD, covering both
+// staged and unstaged changes so users see the complete picture of their
+// uncommitted modifications. Untracked files diff against /dev/null.
+func workingTreeDiff(projectPath, relPath string) ([]byte, error) {
+	lsCmd := exec.Command("git", "ls-files", "--error-unmatch", relPath)
+	lsCmd.Dir = projectPath
+	if _, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
+		// File is untracked: diff against /dev/null to show full content as added
+		cmd := exec.Command("git", "diff", "--no-index", "/dev/null", relPath)
+		cmd.Dir = projectPath
+		out, err := cmd.CombinedOutput()
+		// git diff --no-index exits with code 1 when there are differences, which is not an error
+		if err != nil && len(out) == 0 {
+			return nil, err
+		}
+		return out, nil
+	}
+
+	// Staged changes (diff between HEAD and index)
+	cmdCached := exec.Command("git", "diff", "--cached", "--", relPath)
+	cmdCached.Dir = projectPath
+	cached, cachedErr := cmdCached.CombinedOutput()
+
+	// Unstaged changes (diff between index and working tree)
+	cmdUnstaged := exec.Command("git", "diff", "--", relPath)
+	cmdUnstaged.Dir = projectPath
+	unstaged, unstagedErr := cmdUnstaged.CombinedOutput()
+
+	var combined []byte
+	if cachedErr == nil && len(cached) > 0 {
+		combined = append(combined, cached...)
+	}
+	if unstagedErr == nil && len(unstaged) > 0 {
+		if len(combined) > 0 {
+			combined = append(combined, '\n')
+		}
+		combined = append(combined, unstaged...)
+	}
+
+	if cachedErr != nil && unstagedErr != nil {
+		return nil, cachedErr
+	}
+	return combined, nil
+}
+
+// mergeCommitDiff renders the diff of a merge commit against its parents.
+//
+// `git show` gives a combined diff for merges, which only renders the lines the
+// merge itself decided (conflict resolutions). Every file the merge took
+// verbatim from one side produces no output at all — and the commit file list
+// still lists those files, so each one would open to an empty diff. Compare
+// against each parent instead and keep the first non-empty result: for a clean
+// merge exactly one parent differs, and for a real conflict resolution the first
+// parent wins (same convention as `git show -m`).
+func mergeCommitDiff(projectPath, relPath, commit string, parents []string) ([]byte, error) {
+	for _, parent := range parents {
+		parentCmd := exec.Command("git", "diff", parent, commit, "--", relPath)
+		parentCmd.Dir = projectPath
+		out, err := parentCmd.CombinedOutput()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			return out, nil
+		}
+	}
+	return []byte{}, nil
 }
 
 // writeDiffResponse writes the diff response as JSON.

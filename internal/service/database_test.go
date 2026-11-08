@@ -585,7 +585,7 @@ func TestSchema_DisabledColumnAndMemberConversion(t *testing.T) {
 // TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a
 // database created before the column existed (#492), that the migration is
 // idempotent, and that it leaves pre-existing rows at the default 0 — so the
-// list falls back to the newest-first tiebreak rather than pinned-first.
+// list falls back to the most-recently-updated tiebreak rather than pinned-first.
 func TestSchema_SortOrderMigration(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir
@@ -607,11 +607,14 @@ func TestSchema_SortOrderMigration(t *testing.T) {
 	require.NoError(t, err)
 	// Three sessions: 'old' is oldest, 'pinned' is the oldest of all but pinned,
 	// 'new' is newest.
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at) VALUES ('old', 1, 'claude', 'Old', 0, '2024-01-01 00:00:00')")
+	// updated_at mirrors created_at: the list orders unpinned rows by last
+	// activity (issue #635), so a fixture that leaves it at the CURRENT_TIMESTAMP
+	// default would order by insertion second rather than by these timestamps.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at, updated_at) VALUES ('old', 1, 'claude', 'Old', 0, '2024-01-01 00:00:00', '2024-01-01 00:00:00')")
 	require.NoError(t, err)
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at) VALUES ('pinned', 1, 'claude', 'Pinned', 1, '2023-01-01 00:00:00')")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at, updated_at) VALUES ('pinned', 1, 'claude', 'Pinned', 1, '2023-01-01 00:00:00', '2023-01-01 00:00:00')")
 	require.NoError(t, err)
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at) VALUES ('new', 1, 'claude', 'New', 0, '2025-01-01 00:00:00')")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at, updated_at) VALUES ('new', 1, 'claude', 'New', 0, '2025-01-01 00:00:00', '2025-01-01 00:00:00')")
 	require.NoError(t, err)
 	_, err = raw.Exec("DROP INDEX IF EXISTS idx_sessions_order")
 	require.NoError(t, err)
@@ -632,7 +635,7 @@ func TestSchema_SortOrderMigration(t *testing.T) {
 	require.Len(t, sessions, 3)
 	assert.Equal(t, "pinned", sessions[0].ID, "the pinned row must lead after the migration")
 	assert.True(t, sessions[0].Pinned, "the pin marker must be preserved")
-	assert.Equal(t, "new", sessions[1].ID, "unpinned rows stay newest-first")
+	assert.Equal(t, "new", sessions[1].ID, "unpinned rows stay most-recent-first")
 	assert.Equal(t, "old", sessions[2].ID)
 	for _, s := range sessions {
 		assert.Equal(t, 0, s.SortOrder, "migrated rows must keep the default sort_order")

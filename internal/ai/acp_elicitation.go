@@ -303,47 +303,9 @@ func buildElicitationQuestions(schema acp.UnstableElicitationSchema) []elicitati
 
 	out := make([]elicitationQuestion, 0, len(keys))
 	for _, key := range keys {
-		// "<q>_custom" is the agent's "type your own answer" companion field for
-		// question <q>. It is folded into that question instead of becoming a
-		// card of its own (see customKeyFor).
-		if base, ok := strings.CutSuffix(key, "_custom"); ok && present[base] {
-			continue
+		if q, ok := elicitationQuestionFor(key, schema.Properties[key], present); ok {
+			out = append(out, q)
 		}
-		prop, ok := schema.Properties[key].(map[string]any)
-		if !ok {
-			continue
-		}
-		q := elicitationQuestion{
-			Key:      key,
-			Header:   stringField(prop, "title"),
-			Question: stringField(prop, "description"),
-			CustomKey: func() string {
-				if present[key+"_custom"] {
-					return key + "_custom"
-				}
-				return ""
-			}(),
-		}
-		typ := stringField(prop, "type")
-		switch typ {
-		case "array":
-			q.MultiSelect = true
-			if items, ok := prop["items"].(map[string]any); ok {
-				q.Options = elicitationOptions(items)
-			}
-		case "string":
-			q.Options = elicitationOptions(prop)
-		default:
-			// number / integer / boolean: the card has no control for these.
-			// Skipping leaves the field unanswered instead of mis-answering it.
-			continue
-		}
-		// A question with neither text nor options cannot be rendered (and an
-		// empty card would show the "invalid format" notice).
-		if q.Question == "" && q.Header == "" && len(q.Options) == 0 {
-			continue
-		}
-		out = append(out, q)
 	}
 
 	// A question with no options is a free-text field. The card has exactly one
@@ -362,6 +324,51 @@ func buildElicitationQuestions(schema acp.UnstableElicitationSchema) []elicitati
 		out = withOptions
 	}
 	return out
+}
+
+// elicitationQuestionFor builds the card question for one schema property.
+// ok is false when the property should not appear as a card at all.
+func elicitationQuestionFor(key string, raw any, present map[string]bool) (elicitationQuestion, bool) {
+	// "<q>_custom" is the agent's "type your own answer" companion field for
+	// question <q>. It is folded into that question instead of becoming a card
+	// of its own (see customKeyFor).
+	if base, isCustom := strings.CutSuffix(key, "_custom"); isCustom && present[base] {
+		return elicitationQuestion{}, false
+	}
+	prop, isObj := raw.(map[string]any)
+	if !isObj {
+		return elicitationQuestion{}, false
+	}
+	q := elicitationQuestion{
+		Key:      key,
+		Header:   stringField(prop, "title"),
+		Question: stringField(prop, "description"),
+		CustomKey: func() string {
+			if present[key+"_custom"] {
+				return key + "_custom"
+			}
+			return ""
+		}(),
+	}
+	switch typ := stringField(prop, "type"); typ {
+	case "array":
+		q.MultiSelect = true
+		if items, isMap := prop["items"].(map[string]any); isMap {
+			q.Options = elicitationOptions(items)
+		}
+	case "string":
+		q.Options = elicitationOptions(prop)
+	default:
+		// number / integer / boolean: the card has no control for these.
+		// Skipping leaves the field unanswered instead of mis-answering it.
+		return elicitationQuestion{}, false
+	}
+	// A question with neither text nor options cannot be rendered (and an empty
+	// card would show the "invalid format" notice).
+	if q.Question == "" && q.Header == "" && len(q.Options) == 0 {
+		return elicitationQuestion{}, false
+	}
+	return q, true
 }
 
 // elicitationOptions reads the enum carried by a property: `oneOf`/`anyOf`

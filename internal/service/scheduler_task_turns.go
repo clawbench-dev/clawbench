@@ -34,9 +34,93 @@ type taskTurnSpec struct {
 	CountRun bool
 }
 
+// settleTaskAttempt persists one attempt's output and classifies its outcome.
+// An empty return means the turn ended cleanly.
+func settleTaskAttempt(at *activeTurn, taskID int64, sessionID string,
+	executor *SessionExecutor, eventCh <-chan ai.StreamEvent,
+) string {
+	if at.runResult.ReceivedTerminal {
+		// Finalize persists blocks to DB, saves metadata and drains remaining
+		// events — shared with the interactive paths so the persisted shape
+		// cannot drift. It also updates at.runResult with the persisted MsgID and
+		// blocks the completion path needs.
+		return at.runTurnFinalize().AbnormalReason
+	}
+	// If the event channel closed without a terminal event (done/error), the CLI
+	// process likely crashed or was killed (e.g. SIGKILL, OOM). Finalize is
+	// skipped so the partial content is persisted and the orphaned row finalized
+	// by hand, matching the historical behavior.
+	slog.Warn(
+		"task execution ended without terminal event (CLI process crashed?)",
+		slog.Int64("task_id", taskID),
+		slog.String("session_id", sessionID),
+	)
+	abandonTurn(executor, eventCh, sessionID, "")
+	r := at.runResult
+	return classifyTurnAbnormality(r.CancelReason, r.ReceivedTerminal, r.Empty, r.Blocks)
+}
+
+// finishCancelledTask handles a task execution whose context was cancelled.
+func (s *Scheduler) finishCancelledTask(spec taskTurnSpec, at *activeTurn) {
+	sessionID := spec.SessionID
+	task := spec.Task
+	projectPath := spec.ProjectPath
+	executionID := spec.ExecutionID
+	executor := at.executor
+	eventCh := at.eventCh
+	slog.Info(
+		"task execution cancelled",
+		slog.Int64("task_id", task.ID),
+		slog.String("session_id", sessionID),
+	)
+	_ = UpdateExecutionStatus(sessionID, statusCancelled)
+	s.runningExecutions.Delete(sessionID)
+	SetSessionRunning(sessionID, false, true)
+	// Stop the client's stream FIRST: this event is what closes the
+	// frontend's streaming bubble, and it must not wait behind the DB
+	// work below (a busy write can take up to the busy_timeout).
+	// Same wire value as statusCancelled; the client keys the closed
+	// bubble on it either way.
+	ws.EmitToSession(sessionID, ai.StreamEvent{Type: statusCancelled})
+	// Persist any batched tool-call/context-state writes accumulated since
+	// the last flush window, so the cancelled task's final content survives,
+	// then finalize the orphaned streaming row since executor.Finalize() was
+	// skipped. cancelReason="user": this is a user-initiated/graceful cancel
+	// — suppress the misleading "Finalization failed, AI response may be
+	// incomplete" warning block (the stream is truncated by intent, not by
+	// a DB failure).
+	//
+	// This MUST run before emitTaskEvent. That event's response preview and
+	// message id are read back out of the assistant row, and the row only
+	// carries `cancelled:true` (and stops being a streaming row, which the
+	// preview query filters out) once this has stamped it. Emitting first
+	// made the notification describe the interrupted reply as if it had
+	// finished normally.
+	abandonTurn(executor, eventCh, sessionID, cancelReasonUser)
+	emitTaskEvent(fmt.Sprintf("%d", task.ID), statusCancelled, fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+	// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
+	UpdateTaskStats(task)
+}
+
+// finishFailedTask reports an execution that ended abnormally with no retry
+// budget left.
+func (s *Scheduler) finishFailedTask(spec taskTurnSpec) {
+	sessionID := spec.SessionID
+	task := spec.Task
+	projectPath := spec.ProjectPath
+	executionID := spec.ExecutionID
+	_ = UpdateExecutionStatus(sessionID, statusFailed)
+	s.runningExecutions.Delete(sessionID)
+	SetSessionRunning(sessionID, false, true)
+	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution ended unexpectedly"})
+	emitTaskEvent(fmt.Sprintf("%d", task.ID), statusFailed, fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+	// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
+	UpdateTaskStats(task)
+}
+
 // runTaskTurns runs the AI turn(s) of one execution and writes the outcome.
 //
-// The local aliases below are deliberate: this body was moved verbatim out of
+// The local aliases inside are deliberate: this body was moved verbatim out of
 // executeTask, and keeping the original names is what makes the split a pure
 // move (no behavior change) instead of a rewrite.
 func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
@@ -136,70 +220,18 @@ func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
 
 		executor := at.executor
 		eventCh := at.eventCh
-		runResult := at.runResult
 
 		// If context was cancelled, mark execution as cancelled and update stats
 		if ctx.Err() == context.Canceled {
 			at.release()
-			slog.Info(
-				"task execution cancelled",
-				slog.Int64("task_id", task.ID),
-				slog.String("session_id", sessionID),
-			)
-			_ = UpdateExecutionStatus(sessionID, statusCancelled)
-			s.runningExecutions.Delete(sessionID)
-			SetSessionRunning(sessionID, false, true)
-			// Stop the client's stream FIRST: this event is what closes the
-			// frontend's streaming bubble, and it must not wait behind the DB
-			// work below (a busy write can take up to the busy_timeout).
-			// Same wire value as statusCancelled; the client keys the closed
-			// bubble on it either way.
-			ws.EmitToSession(sessionID, ai.StreamEvent{Type: statusCancelled})
-			// Persist any batched tool-call/context-state writes accumulated since
-			// the last flush window, so the cancelled task's final content survives,
-			// then finalize the orphaned streaming row since executor.Finalize() was
-			// skipped. cancelReason="user": this is a user-initiated/graceful cancel
-			// — suppress the misleading "Finalization failed, AI response may be
-			// incomplete" warning block (the stream is truncated by intent, not by
-			// a DB failure).
-			//
-			// This MUST run before emitTaskEvent. That event's response preview and
-			// message id are read back out of the assistant row, and the row only
-			// carries `cancelled:true` (and stops being a streaming row, which the
-			// preview query filters out) once this has stamped it. Emitting first
-			// made the notification describe the interrupted reply as if it had
-			// finished normally.
-			abandonTurn(executor, eventCh, sessionID, cancelReasonUser)
-			emitTaskEvent(fmt.Sprintf("%d", task.ID), statusCancelled, fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-			// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
-			UpdateTaskStats(task)
+			s.finishCancelledTask(spec, at)
 			return
 		}
 
 		// The attempt is over. Persist what it produced, then classify the
 		// outcome to decide whether to resume.
-		var abnormal string
-		if runResult.ReceivedTerminal {
-			// Finalize persists blocks to DB, saves metadata and drains remaining
-			// events — shared with the interactive paths so the persisted shape
-			// cannot drift.
-			abnormal = at.runTurnFinalize().AbnormalReason
-			// at.runResult was updated by Finalize, so it carries the persisted
-			// MsgID and blocks the completion path needs.
-			finalRunResult = at.runResult
-		} else {
-			// If the event channel closed without a terminal event (done/error),
-			// the CLI process likely crashed or was killed (e.g. SIGKILL, OOM).
-			// Finalize is skipped so the partial content is persisted and the
-			// orphaned row finalized by hand, matching the historical behavior.
-			slog.Warn(
-				"task execution ended without terminal event (CLI process crashed?)",
-				slog.Int64("task_id", task.ID),
-				slog.String("session_id", sessionID),
-			)
-			abandonTurn(executor, eventCh, sessionID, "")
-			abnormal = classifyTurnAbnormality(runResult.CancelReason, runResult.ReceivedTerminal, runResult.Empty, runResult.Blocks)
-		}
+		abnormal := settleTaskAttempt(at, task.ID, sessionID, executor, eventCh)
+		finalRunResult = at.runResult
 		at.release()
 
 		// Clean finish — fall through to the completion bookkeeping below.
@@ -246,13 +278,7 @@ func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
 		}
 
 		// No retry available — report the failure.
-		_ = UpdateExecutionStatus(sessionID, statusFailed)
-		s.runningExecutions.Delete(sessionID)
-		SetSessionRunning(sessionID, false, true)
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution ended unexpectedly"})
-		emitTaskEvent(fmt.Sprintf("%d", task.ID), statusFailed, fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
-		UpdateTaskStats(task)
+		s.finishFailedTask(spec)
 		return
 	}
 

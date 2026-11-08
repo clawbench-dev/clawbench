@@ -57,7 +57,7 @@ func TestBuildElicitationQuestions_OrderAndCustomFolding(t *testing.T) {
 		}
 	}
 	got := buildElicitationQuestions(acp.UnstableElicitationSchema{Properties: props})
-	var order []string
+	order := make([]string, 0, len(got))
 	for _, q := range got {
 		order = append(order, q.Key)
 	}

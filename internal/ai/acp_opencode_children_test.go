@@ -22,10 +22,13 @@ func openCodeChildMeta(childID, parentID, title string) map[string]any {
 	}
 }
 
-func sendOpenCodeUpdate(t *testing.T, c *ClawBenchACPClient, sessionID string, update acp.SessionUpdate) {
+// openCodeRootSession is the session id every case in this file drives.
+const openCodeRootSession = "ses_root"
+
+func sendOpenCodeUpdate(t *testing.T, c *ClawBenchACPClient, update acp.SessionUpdate) {
 	t.Helper()
 	require.NoError(t, c.SessionUpdate(context.Background(), acp.SessionNotification{
-		SessionId: acp.SessionId(sessionID),
+		SessionId: acp.SessionId(openCodeRootSession),
 		Update:    update,
 	}))
 }
@@ -50,7 +53,7 @@ func TestOpenCodeChildAttribution_ByTitle(t *testing.T) {
 
 	status := acp.ToolCallStatusInProgress
 	title := "subagent"
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_parent",
 			Title:         &title,
@@ -60,7 +63,7 @@ func TestOpenCodeChildAttribution_ByTitle(t *testing.T) {
 		},
 	})
 
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Meta:          openCodeChildMeta("ses_child", "ses_root", "probe"),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child text", Type: "text"}},
@@ -90,7 +93,7 @@ func TestOpenCodeChildAttribution_ByChildSessionID(t *testing.T) {
 	// NOT match the description, so only the session-id link can attribute it.
 	status := acp.ToolCallStatusCompleted
 	title := "subagent"
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_parent",
 			Title:         &title,
@@ -101,7 +104,7 @@ func TestOpenCodeChildAttribution_ByChildSessionID(t *testing.T) {
 		},
 	})
 
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Meta:          openCodeChildMeta("ses_child", "ses_root", "a different title"),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child text", Type: "text"}},
@@ -125,7 +128,7 @@ func TestOpenCodeChildAttribution_UnattributedIsDropped(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
 	c.RegisterSession("ses_root", ch)
 
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Meta:          openCodeChildMeta("ses_unknown", "ses_root", "no such parent"),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "leaked?", Type: "text"}},
@@ -148,7 +151,7 @@ func TestOpenCodeChildAttribution_NestedSubagent(t *testing.T) {
 	// Root subagent call spawns ses_child.
 	status := acp.ToolCallStatusInProgress
 	title := "subagent"
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_root",
 			Title:         &title,
@@ -161,7 +164,7 @@ func TestOpenCodeChildAttribution_NestedSubagent(t *testing.T) {
 	// A nested subagent call inside ses_child: its frame carries the child meta
 	// and its own toolCallId, and must itself be attributed to call_root.
 	title2 := "subagent"
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			Meta:          openCodeChildMeta("ses_child", "ses_root", "outer"),
 			ToolCallId:    "ses_child:call_inner",
@@ -173,7 +176,7 @@ func TestOpenCodeChildAttribution_NestedSubagent(t *testing.T) {
 	})
 
 	// The grandchild (inside ses_child) must map to the nested call, not the root.
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Meta:          openCodeChildMeta("ses_grandchild", "ses_child", "inner"),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "grandchild", Type: "text"}},
@@ -200,7 +203,7 @@ func TestOpenCodeChildAttribution_ChildToolCall(t *testing.T) {
 
 	status := acp.ToolCallStatusInProgress
 	title := "subagent"
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_parent",
 			Title:         &title,
@@ -210,7 +213,7 @@ func TestOpenCodeChildAttribution_ChildToolCall(t *testing.T) {
 		},
 	})
 
-	sendOpenCodeUpdate(t, c, "ses_root", acp.SessionUpdate{
+	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCall: &acp.SessionUpdateToolCall{
 			Meta:          openCodeChildMeta("ses_child", "ses_root", "probe"),
 			ToolCallId:    "ses_child:call_1",

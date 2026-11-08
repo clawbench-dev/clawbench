@@ -1886,8 +1886,11 @@ describe('ForgePanelContent — header labels', () => {
     const wrapper = await mountOnIssues()
     await nextTick()
 
+    // `.ab--labels` lives on the ActionBar itself, not on the row that wraps it
+    // (same split as the task / notification headers).
     const header = wrapper.find('.forge-header')
-    expect(header.classes()).toContain('ab--labels')
+    const bar = wrapper.find('.forge-header-actions')
+    expect(bar.classes()).toContain('ab--labels')
     // RefreshButton is stubbed (`true`) in this suite, so only the mark-all-read
     // label is in the DOM; assert that one explicitly.
     expect(header.find('.clear-unread-btn .action-label').exists()).toBe(true)

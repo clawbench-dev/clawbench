@@ -403,10 +403,10 @@ func TestRegistry_GetModelListState_DoesNotMutateStoredModels(t *testing.T) {
 	})
 	require.NotNil(t, reg.GetModelListState("stored", ""))
 
-	cap := reg.Get("stored")
-	require.NotNil(t, cap)
-	require.Len(t, cap.AvailableModels, 1)
-	assert.Nil(t, cap.AvailableModels[0].Price, "the stored list must stay price-free")
+	stored := reg.Get("stored")
+	require.NotNil(t, stored)
+	require.Len(t, stored.AvailableModels, 1)
+	assert.Nil(t, stored.AvailableModels[0].Price, "the stored list must stay price-free")
 }
 
 func TestRegistry_GetCommands(t *testing.T) {

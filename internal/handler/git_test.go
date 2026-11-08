@@ -3549,7 +3549,7 @@ func TestServeGitFetch_UpdatesAheadBehind(t *testing.T) {
 	initGitRepo(t, env.ProjectDir)
 	other := repoWithRemote(t, env.ProjectDir)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		createTestFile(t, other, "remote"+string(rune('a'+i))+".txt", "x\n")
 		gitCommitAll(t, other, "remote commit "+string(rune('a'+i)))
 	}

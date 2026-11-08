@@ -281,35 +281,34 @@ func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
 	return model.CatalogModelsForPreset(provider.PresetID)
 }
 
-func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
-	configMutex.RLock()
-	agents := model.GetAgentList()
-	defaultAgent := model.GetDefaultAgentID()
-	configMutex.RUnlock()
+// acpState is the cached ACP capability snapshot attached to each agent in
+// GET /api/agents. It lets the client populate mode chips, effort pickers and
+// slash commands without extra round trips.
+type acpState struct {
+	Mode         *ai.ModeState             `json:"modeState,omitempty"`
+	Effort       *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
+	Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
+	ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
+	Plan         *ai.PlanState             `json:"planState,omitempty"`
+	LoadSession  bool                      `json:"loadSession"`
+	ListSessions bool                      `json:"listSessions"`
+}
 
-	// Scope the list to the caller's current project, then make the reported
-	// default consistent with what is actually visible here.
-	projectPath := middleware.GetProjectFromCookie(r)
-	agents = visibleAgentsInProject(agents, projectPath)
-	defaultAgent = visibleDefaultAgent(defaultAgent, agents, projectPath)
-
-	// Attach cached ACP mode/thinking/commands state to each agent.
-	// This lets the frontend populate mode chips and slash commands without
-	// extra API calls. State comes from the AgentCapabilityRegistry (agent-level)
-	// so it persists across connection lifecycle.
-	type acpState struct {
-		Mode         *ai.ModeState             `json:"modeState,omitempty"`
-		Effort       *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
-		Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
-		ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
-		Plan         *ai.PlanState             `json:"planState,omitempty"`
-		LoadSession  bool                      `json:"loadSession"`
-		ListSessions bool                      `json:"listSessions"`
-	}
-	states := make(map[string]*acpState, len(agents))
-	reg := ai.GetAgentCapabilityRegistry()
-	connManager := ai.GetACPConnManager()
-
+// resolveAgentModelLists fills in each agent's ACP state and replaces the
+// agent's Models with the resolved list (always on a copy).
+//
+// Resolving here, in the backend, means the frontend just renders what it is
+// given. The CLI list supplies order and names; a concrete ACP list is
+// authoritative for membership when present. ACP lists made of tier aliases
+// (claude) are handled differently — see model.ResolveModels, which is the
+// single place this rule lives.
+//
+// The resolved list goes on a COPY of the agent. Mutating the shared *Agent
+// would overwrite the stored CLI-discovered list with a merged one, and the
+// next refresh would treat ACP-only models as CLI-discovered.
+func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
+	reg *ai.AgentCapabilityRegistry, connManager *ai.ACPConnManager,
+) {
 	// Resolve each agent's model list here, in the backend, so the frontend just
 	// renders what it is given. The CLI list supplies order and names; a concrete
 	// ACP list is authoritative for membership when present. ACP lists made of
@@ -407,7 +406,17 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		clone.Models = resolved
 		agents[i] = gateUnconfirmedACPModels(&clone)
 	}
+}
 
+// applyModelPrices attaches per-model prices to every list the picker can
+// render (issue #643).
+//
+// Done here, on copies, rather than inside ResolveModels: prices come from a
+// different source (the weekly catalog snapshot) and must never be written back
+// into the agent's stored model list. Every list the picker can render is
+// priced — the resolved list, the CLI baseline behind the transport switch, and
+// the unconfirmed catalog fallback.
+func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 	// Attach per-model prices (issue #643). Done here, on copies, rather than
 	// inside ResolveModels: prices come from a different source (the weekly
 	// catalog snapshot) and must never be written back into the agent's stored
@@ -433,6 +442,30 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		ml.CLIModels = model.WithPrices(s.ModelList.CLIModels)
 		s.ModelList = &ml
 	}
+}
+
+func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	agents := model.GetAgentList()
+	defaultAgent := model.GetDefaultAgentID()
+	configMutex.RUnlock()
+
+	// Scope the list to the caller's current project, then make the reported
+	// default consistent with what is actually visible here.
+	projectPath := middleware.GetProjectFromCookie(r)
+	agents = visibleAgentsInProject(agents, projectPath)
+	defaultAgent = visibleDefaultAgent(defaultAgent, agents, projectPath)
+
+	// Attach cached ACP mode/thinking/commands state to each agent.
+	// This lets the frontend populate mode chips and slash commands without
+	// extra API calls. State comes from the AgentCapabilityRegistry (agent-level)
+	// so it persists across connection lifecycle.
+	states := make(map[string]*acpState, len(agents))
+	reg := ai.GetAgentCapabilityRegistry()
+	connManager := ai.GetACPConnManager()
+
+	resolveAgentModelLists(agents, states, reg, connManager)
+	applyModelPrices(agents, states)
 
 	// Attach usage counts (interactive sessions / tasks / group memberships) so
 	// the config panel can display them and gate the delete button without a

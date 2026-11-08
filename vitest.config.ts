@@ -23,7 +23,10 @@ try {
 function staticAssetResolver(): import('vite').Plugin {
   return {
     name: 'static-asset-resolver',
-    enforce: 'pre',
+    // NOT `enforce: 'pre'`: running before Vite's own resolution makes the
+    // returned absolute path look like an imported asset, and Vite rewrites the
+    // URL to `/assets/logo-128.png` — which the About page test pins as
+    // `/logo-128.png`. Letting the publicDir (assets/) handle it keeps the URL.
     resolveId(source) {
       if (source === '/logo.png' || source === '/logo-128.png') {
         return resolve(__dirname, 'assets', source.slice(1))
@@ -89,6 +92,12 @@ export default defineConfig({
     // Don't set maxWorkers — let vitest auto-detect (numCPUs-1).
     // The pool cleanup hang is mitigated by vitest-globalSetup.ts worker kill.
     exclude: [
+      // These contracts use node:test and run in the dedicated HarmonyOS job
+      // (`npm --prefix harmony test`). Vitest cannot load them: they read their
+      // fixtures through `new URL(..., import.meta.url)`, which is not a file:
+      // URL under vite-node, so every file fails at import with "The URL must
+      // be of scheme file".
+      '**/harmony/tests/**',
       '**/.worktrees/**',
       '**/.codebuddy/worktrees/**',
       '**/node_modules/**',
