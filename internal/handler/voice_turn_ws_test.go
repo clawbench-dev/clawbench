@@ -5,11 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -482,7 +484,8 @@ func TestVoiceTurnWS_SayPersistsAndAnnouncesUserMessage(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
 		 VALUES (?, ?, 'ghost-backend', 'voice', 'ghost-agent', 'default', '', 'chat', 0)`,
-		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
+	)
 	require.NoError(t, err)
 	mgr.StreamHub().Subscribe(clientID, sessionID)
 
@@ -535,7 +538,8 @@ func TestVoiceTurnWS_BusySessionIsRefused(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
 		 VALUES (?, ?, 'ghost-backend', 'busy', 'ghost-agent', 'default', '', 'chat', 0)`,
-		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
+	)
 	require.NoError(t, err)
 
 	// Another turn owns the session (the web UI is streaming a reply).
@@ -563,7 +567,8 @@ func TestVoiceTurnWS_BusySessionIsRefused(t *testing.T) {
 	// A refused turn must not persist anything: no orphan question without an answer.
 	var users int
 	require.NoError(t, db.QueryRow(
-		`SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user'`, sessionID).Scan(&users))
+		`SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user'`, sessionID,
+	).Scan(&users))
 	assert.Equal(t, 0, users, "a refused turn must not persist the user message")
 }
 
@@ -576,7 +581,8 @@ func TestVoiceTurnWS_GroupSessionIsRejected(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
 		 VALUES (?, ?, 'group', 'group', '', 'default', '', 'group', 0)`,
-		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
+	)
 	require.NoError(t, err)
 
 	conn := dialVoiceTurn(t, srv)
@@ -602,7 +608,8 @@ func TestVoiceTurnWS_ForeignProjectSessionIsRejected(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
 		 VALUES (?, ?, 'ghost-backend', 'foreign', 'ghost-agent', 'default', '', 'chat', 0)`,
-		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
+	)
 	require.NoError(t, err)
 
 	otherProject := filepath.Join(env.WatchDir, "other-project")
@@ -620,4 +627,279 @@ func TestVoiceTurnWS_ForeignProjectSessionIsRejected(t *testing.T) {
 	if frame[ttsWSType] != strError || frame[messageKey] != "session not found" {
 		t.Fatalf("second frame = %v, want the ownership rejection", frame)
 	}
+}
+
+// --- voiceTurnSpeak: the replay/turn speech path ---
+
+// setupSpeakMessage seeds one assistant message and returns its id, so
+// voiceTurnSpeak has a real row to read its spoken text from.
+func setupSpeakMessage(t *testing.T, sessionID, text string) int64 {
+	t.Helper()
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, 1, 'claude', 'voice', 'a', 'default', '', 'chat', 0)`, sessionID,
+	)
+	require.NoError(t, err)
+	msgID, err := service.AddChatMessage("", "claude", sessionID, "assistant",
+		`{"blocks":[{"type":"text","text":"`+text+`"}]}`, nil, false, "")
+	require.NoError(t, err)
+	return msgID
+}
+
+// setupSpeakServer wires voiceTurnSpeak behind a WebSocket the way the handler
+// does, so the test drives the real frame sequence.
+func setupSpeakServer(t *testing.T, projectPath string, messageID int64) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		voiceTurnSpeak(r.Context(), conn, projectPath, messageID, "zh")
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestVoiceTurnSpeak_StreamsTheSummary(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	dir := env.ProjectDir
+	prevProvider := GetSpeechProvider()
+	SetSpeechProvider(&fixtureProvider{})
+	t.Cleanup(func() { SetSpeechProvider(prevProvider) })
+
+	const sessionID = "voice-speak-ok"
+	msgID := setupSpeakMessage(t, sessionID, "回答内容")
+	srv := setupSpeakServer(t, dir, msgID)
+
+	conn := dialStream(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	frames, audio := drainFrames(t, conn)
+	require.NotEmpty(t, frames)
+	assert.Equal(t, ttsWSSummary, frames[0][ttsWSType], "the summary frame comes before any audio")
+	assert.Equal(t, float64(msgID), frames[0]["messageId"])
+	assert.Equal(t, ttsWSDone, frames[len(frames)-1][ttsWSType])
+	assert.NotEmpty(t, audio, "the synthesized audio must be streamed as binary frames")
+}
+
+// A message whose blocks carry no readable text cannot be spoken: the device
+// gets an explicit error instead of an empty stream that looks like success.
+func TestVoiceTurnSpeak_EmptyReplyIsReported(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	dir := env.ProjectDir
+	prevProvider := GetSpeechProvider()
+	SetSpeechProvider(&fixtureProvider{})
+	t.Cleanup(func() { SetSpeechProvider(prevProvider) })
+
+	const sessionID = "voice-speak-empty"
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, 1, 'claude', 'voice', 'a', 'default', '', 'chat', 0)`, sessionID,
+	)
+	require.NoError(t, err)
+	msgID, err := service.AddChatMessage("", "claude", sessionID, "assistant", `{"blocks":[]}`, nil, false, "")
+	require.NoError(t, err)
+	srv := setupSpeakServer(t, dir, msgID)
+
+	conn := dialStream(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	frames, audio := drainFrames(t, conn)
+	require.Len(t, frames, 1)
+	assert.Equal(t, strError, frames[0][ttsWSType])
+	assert.Equal(t, "empty reply", frames[0][messageKey])
+	assert.Empty(t, audio)
+}
+
+// --- voiceTurnTranscribe ---
+
+func TestVoiceTurnTranscribe_ReturnsProviderText(t *testing.T) {
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{text: "识别结果"})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	assert.Equal(t, "识别结果", voiceTurnTranscribe(context.Background(), []byte{1, 2, 3}))
+}
+
+func TestVoiceTurnTranscribe_SkipsProviderWithoutAudio(t *testing.T) {
+	prev := GetSTTProvider()
+	stub := &stubSTT{text: "never asked"}
+	SetSTTProvider(stub)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	assert.Equal(t, "", voiceTurnTranscribe(context.Background(), nil))
+	assert.Zero(t, stub.calls, "an empty utterance must not reach the recognizer")
+}
+
+func TestVoiceTurnTranscribe_SwallowsProviderError(t *testing.T) {
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{err: errors.New("boom")})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	assert.Equal(t, "", voiceTurnTranscribe(context.Background(), []byte{1}),
+		"a failed recognition yields no speech, not a panic")
+}
+
+func TestVoiceTurnTranscribe_WithoutProvider(t *testing.T) {
+	prev := GetSTTProvider()
+	SetSTTProvider(nil)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	assert.Equal(t, "", voiceTurnTranscribe(context.Background(), []byte{1}))
+}
+
+// Replay takes a message id from the device, so it needs the same ownership
+// check as the say path: a logged-in device must not be able to make the server
+// read out another project's reply.
+func TestVoiceTurnWS_ReplayForeignProjectSessionIsRejected(t *testing.T) {
+	env, srv, cleanup := setupVoiceTurn(t)
+	defer cleanup()
+
+	sessionID := "voice-replay-foreign"
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, ?, 'ghost-backend', 'foreign', 'ghost-agent', 'default', '', 'chat', 0)`,
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
+	)
+	require.NoError(t, err)
+
+	otherProject := filepath.Join(env.WatchDir, "other-project")
+	require.NoError(t, os.MkdirAll(otherProject, 0o755))
+
+	conn := dialVoiceTurnAsProject(t, srv, otherProject)
+	defer func() { _ = conn.CloseNow() }()
+
+	sendText(t, conn, `{"type":"replay","sessionId":"`+sessionID+`","messageId":1}`)
+
+	frame := readFrame(t, conn)
+	if frame[ttsWSType] != strError || frame[messageKey] != "session not found" {
+		t.Fatalf("frame = %v, want the ownership rejection", frame)
+	}
+}
+
+// Replay inside the caller's own project is allowed and proceeds to speech.
+func TestVoiceTurnWS_ReplayOwnProjectSession(t *testing.T) {
+	env, srv, cleanup := setupVoiceTurn(t)
+	defer cleanup()
+
+	prevProvider := GetSpeechProvider()
+	SetSpeechProvider(&fixtureProvider{})
+	t.Cleanup(func() { SetSpeechProvider(prevProvider) })
+
+	sessionID := "voice-replay-own"
+	msgID := setupSpeakMessage(t, sessionID, "已保存的回答")
+	// setupSpeakMessage seeds under project 1; point the row at the test project
+	// so the cookie check matches.
+	_, err := store.UnsafeDBForTest().Exec(
+		`UPDATE chat_sessions SET project_id = ? WHERE id = ?`,
+		store.ProjectIDForTest(t, env.ProjectDir), sessionID,
+	)
+	require.NoError(t, err)
+
+	conn := dialVoiceTurnAsProject(t, srv, env.ProjectDir)
+	defer func() { _ = conn.CloseNow() }()
+
+	sendText(t, conn, `{"type":"replay","sessionId":"`+sessionID+`","messageId":`+strconv.FormatInt(msgID, 10)+`}`)
+
+	frame := readFrame(t, conn)
+	if frame[ttsWSType] != ttsWSSummary {
+		t.Fatalf("frame = %v, want the summary of the replayed message", frame)
+	}
+}
+
+// silentProvider reports a successful synthesis but writes no file, which is
+// the only way to reach the "open audio failed" branch: a real provider that
+// succeeds always leaves an MP3 behind.
+type silentProvider struct{}
+
+func (silentProvider) Synthesize(context.Context, string, string, string) error { return nil }
+
+// A missing MP3 after a "successful" synthesis is reported as "open audio
+// failed" rather than closing the socket with no explanation.
+func TestSpeakSummary_MissingFileReportsOpenFailure(t *testing.T) {
+	srv, cleanup := setupSpeakSummary(t, silentProvider{}, filepath.Join(t.TempDir(), "absent.mp3"))
+	defer cleanup()
+
+	conn := dialStream(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	frames, audio := drainFrames(t, conn)
+	require.Len(t, frames, 1)
+	assert.Equal(t, strError, frames[0][ttsWSType])
+	assert.Equal(t, "open audio failed", frames[0][messageKey])
+	assert.Empty(t, audio)
+}
+
+// --- emitVoiceTurnTerminal ---
+
+// collectEvents subscribes a throwaway client and returns the chat-stream events
+// broadcast while fn runs.
+func collectEvents(t *testing.T, sessionID string, fn func()) []string {
+	t.Helper()
+	prevMgr := ws.GetManager()
+	ws.SetManagerForTest(ws.NewManagerForTest())
+	t.Cleanup(func() { ws.SetManagerForTest(prevMgr) })
+	mgr := ws.GetManager()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "voice-terminal-observer", "")
+	require.NotNil(t, sub)
+	mgr.StreamHub().Subscribe("voice-terminal-observer", sessionID)
+
+	fn()
+
+	var types []string
+	for _, ev := range sub.GetBufferedEvents() {
+		if data, ok := ev.Data.(ws.ChatStreamData); ok {
+			types = append(types, data.EventType)
+		}
+	}
+	return types
+}
+
+// A user-cancelled turn must still close the timeline: the device that started
+// it may have no subscription, so nobody else would send the terminal event.
+func TestEmitVoiceTurnTerminal_CancelledTurnClosesTheBubble(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	const sessionID = "voice-terminal-cancelled"
+	types := collectEvents(t, sessionID, func() {
+		emitVoiceTurnTerminal(sessionID, service.TurnResult{CancelReason: "user"})
+	})
+	assert.Contains(t, types, "cancelled")
+	assert.NotContains(t, types, "done", "a cancelled turn must not also look completed")
+}
+
+// A clean turn reports completion.
+func TestEmitVoiceTurnTerminal_CleanTurnEmitsDone(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	const sessionID = "voice-terminal-clean"
+	types := collectEvents(t, sessionID, func() {
+		emitVoiceTurnTerminal(sessionID, service.TurnResult{})
+	})
+	assert.Contains(t, types, "done")
+}
+
+// A turn that ended with an error emits neither: the error was already reported
+// on the voice socket, and claiming completion would close the web bubble as if
+// the answer had arrived.
+func TestEmitVoiceTurnTerminal_FailedTurnEmitsNothing(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	const sessionID = "voice-terminal-failed"
+	types := collectEvents(t, sessionID, func() {
+		emitVoiceTurnTerminal(sessionID, service.TurnResult{Err: "boom"})
+	})
+	assert.NotContains(t, types, "done")
+	assert.NotContains(t, types, "cancelled")
 }
