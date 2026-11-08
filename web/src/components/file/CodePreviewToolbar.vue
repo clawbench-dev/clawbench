@@ -10,7 +10,6 @@
   <ActionBar
     class="code-preview-meta"
     mode="scroll"
-    align="end"
     size="bar"
     @pointerdown="onRowPointerDown"
   >

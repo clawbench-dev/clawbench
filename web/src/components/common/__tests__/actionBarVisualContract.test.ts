@@ -372,7 +372,7 @@ const WRAPPER_EXEMPT: Record<string, string> = {
 }
 
 const BUTTONISH = /^(button|RefreshButton|CopyButton)$/
-const TRANSPARENT = /^(template|Teleport|slot)$/
+const TRANSPARENT = /^(template|slot)$/
 const CONTROL = /^(MenuSelect|input|textarea|select)$/
 const VOID_TAGS = new Set(['input', 'br', 'hr', 'img', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon'])
 
@@ -391,11 +391,23 @@ function parseTags(block: string): Tag[] {
 /** Problems inside one `<ActionBar>…</ActionBar>` block. */
 function barProblems(block: string, file: string): string[] {
   const problems: string[] = []
-  const inner = block.replace(/^<ActionBar[^>]*>/, '').replace(/<\/ActionBar>$/, '')
+  const inner = block
+    .replace(/^<(?:ActionBar|action-bar)[^>]*>/, '')
+    .replace(/<\/(?:ActionBar|action-bar)>$/, '')
   const stack: boolean[] = [] // true = renders no box of its own
   let depth = 0
+  let teleported = 0 // <Teleport> content is not in the row at all
 
   for (const tag of parseTags(inner)) {
+    if (teleported > 0) {
+      // Only balance the Teleport subtree; nothing inside it is a row child.
+      if (!tag.selfClosing && !VOID_TAGS.has(tag.name)) teleported += tag.closing ? -1 : 1
+      continue
+    }
+    if (!tag.closing && tag.name === 'Teleport') {
+      teleported = 1
+      continue
+    }
     if (tag.closing) {
       if (stack.pop() === false) depth--
       continue
@@ -408,7 +420,10 @@ function barProblems(block: string, file: string): string[] {
         problems.push(`${file}: <${tag.name}> is a control — it belongs beside the bar, not in it`)
       }
       if (depth === 0) {
-        if (!BUTTONISH.test(tag.name) && /@click|role="button"/.test(tag.attrs)) {
+        const interactive =
+          !BUTTONISH.test(tag.name) &&
+          (tag.name === 'a' || /@click|@pointerdown|role="button"/.test(tag.attrs))
+        if (interactive) {
           problems.push(`${file}: <${tag.name}> is clickable — only icon buttons may be interactive inside the bar`)
         }
       } else if (BUTTONISH.test(tag.name) && !WRAPPER_EXEMPT[file]) {
@@ -433,7 +448,7 @@ function vueFilesWithBars(): string[] {
         if (entry.name === '__tests__' || entry.name === 'node_modules') continue
         walk(next)
       } else if (entry.name.endsWith('.vue')) {
-        if (readFileSync(join(root, next), 'utf8').includes('<ActionBar')) out.push(next)
+        if (/<(ActionBar|action-bar)\b/.test(readFileSync(join(root, next), 'utf8'))) out.push(next)
       }
     }
   }
@@ -452,10 +467,55 @@ describe('every ActionBar holds icon buttons and inert text only', () => {
     const problems: string[] = []
     for (const file of files) {
       const src = readWebFile(file).replace(/<!--[\s\S]*?-->/g, '')
-      for (const block of src.match(/<ActionBar\b[\s\S]*?<\/ActionBar>/g) ?? []) {
+      for (const block of src.match(/<(?:ActionBar|action-bar)\b[\s\S]*?<\/(?:ActionBar|action-bar)>/g) ?? []) {
         problems.push(...barProblems(block, file))
       }
     }
     expect(problems, problems.join('\n')).toEqual([])
+  })
+})
+
+describe('a scroll row can always reach its content', () => {
+  it('starts at the scroll origin, ignoring align', () => {
+    // Measured in Chromium: `justify-content: flex-end` on a scroll container
+    // puts the overflow on the START side, where the scrollport cannot reach
+    // it — the element even reports scrollWidth === clientWidth, so the bar
+    // concludes "no overflow" and its first buttons are clipped for good.
+    const src = stripComments(readWebFile('src/components/common/ActionBar.vue'))
+    const block = src.match(/(?:^|\n)\s*\.ab--scroll\s*\{([^}]*)\}/)
+    expect(block, '.ab--scroll must exist').not.toBeNull()
+    expect(block![1]).toMatch(/justify-content:\s*flex-start/)
+  })
+})
+
+describe('a bar cannot be squeezed below one button + the more button', () => {
+  it('declares the floor on both size rows', () => {
+    // Below this width the row shows nothing at all: the "more" button itself
+    // is clipped, and the buttons it would have listed are unreachable.
+    for (const cls of ['ab--header', 'ab--bar']) {
+      expect(baseRule(bare, cls), `.${cls} must declare a floor`).toMatch(
+        /min-width:\s*calc\(2 \* var\(--ab-btn-size\) \+ 8 \* var\(--dp\)\)/,
+      )
+    }
+  })
+})
+
+describe('a bar that sits beside a title can still grow', () => {
+  it('gives the task header icon row the leftover width', () => {
+    // `flex: 0 1 auto` pins the row to its content width, so the labels can
+    // never be turned on (the bar measures exactly what it needs) — a silent
+    // regression that no jsdom test can see.
+    const src = stripComments(readWebFile('src/components/task/TaskListPage.vue'))
+    expect(baseRule(src, 'list-header-actions')).toMatch(/flex:\s*1 1 auto/)
+  })
+
+  it('gives the forge header icon row the leftover width', () => {
+    const src = stripComments(readWebFile('src/components/forge/ForgePanelContent.vue'))
+    expect(baseRule(src, 'forge-header-actions')).toMatch(/flex:\s*1 1 auto/)
+  })
+
+  it('gives the mail bar icon row the leftover width', () => {
+    const src = stripComments(readWebFile('src/components/mail/MailFolderBar.vue'))
+    expect(baseRule(src, 'mail-bar__actions')).toMatch(/flex:\s*1 1 auto/)
   })
 })

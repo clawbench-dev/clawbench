@@ -294,7 +294,6 @@ function onSearchInput(e: Event): void {
 
 .mail-bar__actions {
   flex: 1 1 auto;
-  min-width: 0;
 }
 
 /* ── Account: a 22dp avatar, not a field ─────────────────────────────── */

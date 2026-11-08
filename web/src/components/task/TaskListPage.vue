@@ -6,7 +6,7 @@
          the fold decision depend on how long the task name happens to be. -->
     <div class="list-header">
       <TaskBreadcrumb />
-      <ActionBar class="list-header-actions" mode="menu" size="header">
+      <ActionBar class="list-header-actions" mode="menu" align="end" size="header">
         <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh">
           <span class="action-label">{{ t('common.refresh') }}</span>
         </RefreshButton>
@@ -285,11 +285,12 @@ onMounted(refresh)
   gap: var(--space-3);
 }
 
-/* Sizes to its buttons, shrinks only when the breadcrumb has already given all
-   it can — that is what lets the bar fold instead of clipping. */
+/* Takes the room the breadcrumb leaves. It must be WIDER than its own buttons,
+   otherwise the bar can never conclude "the labels fit" (its measured width is
+   exactly its content) and the text labels would never appear. Shrinking below
+   that is what triggers folding. */
 .list-header-actions {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 1 1 auto;
 }
 
 /* Create button — the one primary action in this bar, hence `.is-primary`. */

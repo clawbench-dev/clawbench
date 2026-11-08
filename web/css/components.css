@@ -1624,6 +1624,11 @@
     --ab-btn-pad: calc(10 * var(--dp));
     --ab-btn-gap: calc(5 * var(--dp));
     --ab-icon-size: calc(14 * var(--dp));
+    /* Never narrower than one button + the "more" button. Below that the row can
+       show nothing at all — the "more" button itself gets clipped, and the
+       buttons it would have listed are unreachable. Whatever sits beside the
+       bar (a title, a picker) has to give way instead. */
+    min-width: calc(2 * var(--ab-btn-size) + 8 * var(--dp));
 }
 .ab--bar {
     --ab-btn-size: var(--toolbar-btn-size);
@@ -1631,13 +1636,17 @@
     --ab-btn-pad: calc(8 * var(--dp));
     --ab-btn-gap: calc(4 * var(--dp));
     --ab-icon-size: calc(15 * var(--dp));
+    /* Same floor as the header row — see above. */
+    min-width: calc(2 * var(--ab-btn-size) + 8 * var(--dp));
 }
 
 /* One shape for icon-only and labelled alike: a rounded square. A labelled
    button grows, it does not change silhouette.
-   Descendant rather than child: the file manager's sort button sits inside
-   `.toolbar-dropdown-wrap` (which anchors its popup) and would otherwise be the
-   only button in the row without the shared size and shape.
+   Descendant rather than child: a host may put a button inside a container of
+   its own (the multi-select row, a popup anchor). Such a button must still get
+   the shared size and shape — but note that ActionBar's own folding logic only
+   sees DIRECT children, so wrapping buttons in a bar is a bug, not a layout
+   choice (the structural guard test enforces that).
    Text controls (the forge repo badge, the mail bar's pickers) are NOT buttons
    of this row — they live beside the bar, in the header row itself. */
 .ab--header button:not([data-ab-more]),

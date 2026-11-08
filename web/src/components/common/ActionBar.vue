@@ -438,6 +438,12 @@ let childObserver: MutationObserver | null = null
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  /* Always start at the scroll origin. With `justify-content: flex-end` the
+     overflow lands on the START side, where the scrollport cannot reach it —
+     measured: the element even reports scrollWidth === clientWidth, so the
+     first buttons are clipped and no amount of scrolling brings them back.
+     A scroll row therefore ignores `align`. */
+  justify-content: flex-start;
 }
 .ab--scroll::-webkit-scrollbar {
   display: none;

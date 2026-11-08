@@ -1023,7 +1023,6 @@ function formatTime(iso: string): string {
 
 .forge-header-actions {
   flex: 1 1 auto;
-  min-width: 0;
 }
 
 /* Clickable repository badge — the context switcher for the bound remote,
