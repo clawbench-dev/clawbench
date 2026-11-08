@@ -215,10 +215,7 @@ func emitBackgroundTurnTerminal(timeline string, result RunResult) {
 		ws.EmitToSession(timeline, ai.StreamEvent{Type: statusCancelled})
 		return
 	}
-	ws.EmitToSession(timeline, ai.StreamEvent{Type: eventTypeDone})
-	if EmitSessionPushNotification(timeline, statusCompleted) {
-		EmitSessionEventWSOnly(timeline, statusCompleted, false)
-	}
+	EmitTurnTerminal(timeline)
 }
 
 // resolveBackgroundTurnTarget resolves where an adopted turn's message belongs.

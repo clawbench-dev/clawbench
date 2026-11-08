@@ -212,6 +212,26 @@ func EmitSessionPushNotification(sessionID, status string) bool {
 	return true
 }
 
+// EmitTurnTerminal closes one interactive turn for a caller that runs RunTurn
+// itself instead of going through the chat WebSocket handler.
+//
+// runTurn deliberately does NOT send a terminal event — each entry point owns
+// its own wording — so every caller must repeat the same three steps, and a
+// caller that forgets them leaves the turn invisible to every client: the
+// assistant bubble streams forever (nothing tells the frontend the turn ended),
+// no IM completion push goes out, and other devices keep showing the session as
+// running because the "completed" broadcast never happens.
+//
+// The push and the broadcast are gated on winning the once-per-run guard, so a
+// concurrent cancel that already announced "cancelled" cannot be contradicted
+// (ISS-247).
+func EmitTurnTerminal(sessionID string) {
+	ws.EmitToSession(sessionID, ai.StreamEvent{Type: eventTypeDone})
+	if EmitSessionPushNotification(sessionID, statusCompleted) {
+		EmitSessionEventWSOnly(sessionID, statusCompleted, false)
+	}
+}
+
 // EmitTurnAnsweredNotification pushes a completion notification for ONE turn of
 // a multi-message drain, without claiming the once-per-run terminal guard.
 //

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"clawbench/internal/middleware"
+	"clawbench/internal/model"
+	"clawbench/internal/service"
 	"clawbench/internal/speech"
 	"clawbench/internal/store"
 	"clawbench/internal/ws"
@@ -344,6 +347,23 @@ func dialVoiceTurn(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	return conn
 }
 
+// dialVoiceTurnAsProject connects with a project cookie, so the handler can
+// check that the session belongs to it.
+func dialVoiceTurnAsProject(t *testing.T, srv *httptest.Server, projectPath string) *websocket.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{HTTPHeader: http.Header{
+		"Cookie": []string{model.ScopedCookieName("clawbench_project") + "=" + url.QueryEscape(projectPath)},
+	}}
+	conn, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):]+"/api/voice/turn/ws", opts)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return conn
+}
+
 func sendText(t *testing.T, conn *websocket.Conn, payload string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -500,4 +520,104 @@ func TestVoiceTurnWS_SayPersistsAndAnnouncesUserMessage(t *testing.T) {
 		}
 	}
 	assert.True(t, announced, "a user_message event must be broadcast to the session's subscribers")
+}
+
+func TestVoiceTurnWS_BusySessionIsRefused(t *testing.T) {
+	env, srv, cleanup := setupVoiceTurn(t)
+	defer cleanup()
+
+	prevWait := voiceTurnBusyWait
+	voiceTurnBusyWait = 150 * time.Millisecond
+	t.Cleanup(func() { voiceTurnBusyWait = prevWait })
+
+	sessionID := "voice-turn-busy"
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, ?, 'ghost-backend', 'busy', 'ghost-agent', 'default', '', 'chat', 0)`,
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+	require.NoError(t, err)
+
+	// Another turn owns the session (the web UI is streaming a reply).
+	if _, ok := service.TryClaimSessionRun(sessionID); !ok {
+		t.Fatal("pre-claim must succeed")
+	}
+	defer service.FinishSessionRun(sessionID)
+
+	conn := dialVoiceTurn(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	sendText(t, conn, `{"type":"say","sessionId":"`+sessionID+`","text":"你好"}`)
+
+	if frame := readFrame(t, conn); frame[ttsWSType] != "final" {
+		t.Fatalf("first frame = %v, want the transcript echo", frame)
+	}
+	if frame := readFrame(t, conn); frame[ttsWSType] != speechTypePhase {
+		t.Fatalf("second frame = %v, want the thinking phase", frame)
+	}
+	frame := readFrame(t, conn)
+	if frame[ttsWSType] != strError || frame[messageKey] != "session busy" {
+		t.Fatalf("third frame = %v, want session busy", frame)
+	}
+
+	// A refused turn must not persist anything: no orphan question without an answer.
+	var users int
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user'`, sessionID).Scan(&users))
+	assert.Equal(t, 0, users, "a refused turn must not persist the user message")
+}
+
+func TestVoiceTurnWS_GroupSessionIsRejected(t *testing.T) {
+	env, srv, cleanup := setupVoiceTurn(t)
+	defer cleanup()
+
+	sessionID := "voice-turn-group"
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, ?, 'group', 'group', '', 'default', '', 'group', 0)`,
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+	require.NoError(t, err)
+
+	conn := dialVoiceTurn(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	sendText(t, conn, `{"type":"say","sessionId":"`+sessionID+`","text":"你好"}`)
+
+	if frame := readFrame(t, conn); frame[ttsWSType] != "final" {
+		t.Fatalf("first frame = %v, want the transcript echo", frame)
+	}
+	frame := readFrame(t, conn)
+	if frame[ttsWSType] != strError || frame[messageKey] != "group session not supported" {
+		t.Fatalf("second frame = %v, want the group rejection", frame)
+	}
+}
+
+func TestVoiceTurnWS_ForeignProjectSessionIsRejected(t *testing.T) {
+	env, srv, cleanup := setupVoiceTurn(t)
+	defer cleanup()
+
+	sessionID := "voice-turn-foreign"
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, ?, 'ghost-backend', 'foreign', 'ghost-agent', 'default', '', 'chat', 0)`,
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+	require.NoError(t, err)
+
+	otherProject := filepath.Join(env.WatchDir, "other-project")
+	require.NoError(t, os.MkdirAll(otherProject, 0o755))
+
+	conn := dialVoiceTurnAsProject(t, srv, otherProject)
+	defer func() { _ = conn.CloseNow() }()
+
+	sendText(t, conn, `{"type":"say","sessionId":"`+sessionID+`","text":"你好"}`)
+
+	if frame := readFrame(t, conn); frame[ttsWSType] != "final" {
+		t.Fatalf("first frame = %v, want the transcript echo", frame)
+	}
+	frame := readFrame(t, conn)
+	if frame[ttsWSType] != strError || frame[messageKey] != "session not found" {
+		t.Fatalf("second frame = %v, want the ownership rejection", frame)
+	}
 }
