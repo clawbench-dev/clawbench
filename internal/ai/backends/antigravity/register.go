@@ -17,7 +17,14 @@ func init() {
 			AcpCommand:           "agy acp",
 			ACPLoadSession:       true,
 			InstallCmd:           "curl -fsSL https://antigravity.google/cli/install.sh | bash",
-			SortOrder:            14,
+			// A session is gated on a signed-in Google account: without one,
+			// session/new answers -32000 AUTH_REQUIRED after ~20s (measured
+			// 1.5.2). `agy acp --login` is the CLI's own terminal sign-in entry
+			// ("Log in with Google interactively, then exit"). Declaring it makes
+			// the AUTH_REQUIRED error render an actionable instruction instead of
+			// the agent's bare "Authentication required".
+			LoginCmd:  "agy acp --login",
+			SortOrder: 14,
 		},
 	})
 }

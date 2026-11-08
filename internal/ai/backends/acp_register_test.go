@@ -164,6 +164,12 @@ func TestACPInitRegistration(t *testing.T) {
 		if !p.Spec.ACPLoadSession {
 			t.Error("expected ACPLoadSession=true for antigravity (supports session/load)")
 		}
+		// LoginCmd drives the AUTH_REQUIRED message. Without it an unauthenticated
+		// user sees the agent's bare "Authentication required" and has no idea
+		// what to run; agy gates session/new on a Google account.
+		if p.Spec.LoginCmd != "agy acp --login" {
+			t.Errorf("expected LoginCmd agy acp --login, got %q", p.Spec.LoginCmd)
+		}
 	})
 
 	t.Run("pi", func(t *testing.T) {

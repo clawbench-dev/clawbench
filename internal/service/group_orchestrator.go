@@ -2312,24 +2312,40 @@ func memberNameMap(members []GroupMember) map[string]string {
 func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) {
 	byID = make(map[string]GroupMember, len(members))
 	byName = make(map[string]GroupMember, len(members)*3+1)
+
+	// Pass 1: real display names. They are registered FIRST and are never
+	// overwritten by a generated alias below: a member literally named
+	// `ZCode（智谱 GLM 编码代理）` must keep resolving to itself even when another
+	// member's rendered form spells the same string. Without that priority the
+	// winner would depend on roster order, and a private note addressed to the
+	// former would be delivered to the latter (lookupMemberExact is the
+	// fail-closed path — it must never retarget).
+	for _, m := range members {
+		byID[m.ID] = m
+		byName[strings.TrimSpace(m.Name)] = m
+	}
+
+	// Pass 2: rendered display aliases, so a host model that copies the whole
+	// string from the prompt into targets (e.g. `targets="ZCode（智谱 GLM
+	// 编码代理）"`) resolves to exactly that member, preserving distinct names
+	// like `agy(zhu)` and `agy(hw)`. Keys come from hostMemberAliases so the
+	// prompt renderer stays the single source of the display format. An alias
+	// only fills a key no real name claimed — see pass 1.
+	putAlias := func(alias string, m GroupMember) {
+		if _, taken := byName[alias]; !taken {
+			byName[alias] = m
+		}
+	}
 	for _, m := range members {
 		name := strings.TrimSpace(m.Name)
-		byID[m.ID] = m
-		byName[name] = m
 		if spec := strings.TrimSpace(GetAgentSpecialty(m.AgentID)); spec != "" {
-			// Register the rendered display aliases so that if a host model copies
-			// the entire string from the prompt into targets (e.g.
-			// `targets="ZCode（智谱 GLM 编码代理）"`), it resolves exactly to this
-			// member without ambiguity, preserving distinct names like `agy(zhu)`
-			// and `agy(hw)`. The keys come from hostMemberAliases so the prompt
-			// renderer stays the single source of the display format.
 			for _, alias := range hostMemberAliases(HostMemberInfo{Name: name, Specialty: spec}) {
-				byName[alias] = m
+				putAlias(alias, m)
 			}
 		}
 		if m.Disabled {
 			for _, alias := range hostMemberAliases(HostMemberInfo{Name: name, Disabled: true}) {
-				byName[alias] = m
+				putAlias(alias, m)
 			}
 		}
 	}
@@ -2347,6 +2363,14 @@ func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) 
 // trailing. That rule must stay identical to web/src/utils/groupRouting.ts
 // (stripTrailingSpecParentheses); stripping at an inner parenthesis would let
 // Go route a target the frontend cannot render.
+//
+// KNOWN ASYMMETRY (deliberate, display-only): a SECOND trailing group
+// (`ZCode（spec）（补充）`) strips to the alias `ZCode（spec）` and therefore
+// routes here, while the frontend has no alias table and falls back to the raw
+// text. Dispatching is unaffected; the chip just shows the un-stripped target.
+// Closing this needs the specialty frozen into the share snapshot — tracked as
+// a follow-up, not fixed by tightening the fallback (refusing to route would
+// turn a cosmetic gap into a failed dispatch).
 func lookupMember(tgt string, byID, byName map[string]GroupMember) (GroupMember, bool) {
 	if m, ok := lookupMemberExact(tgt, byID, byName); ok {
 		return m, true

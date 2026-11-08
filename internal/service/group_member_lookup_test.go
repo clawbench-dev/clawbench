@@ -233,3 +233,54 @@ func TestMemberLookups_PrivateNoteRequiresExactMatch(t *testing.T) {
 		t.Fatalf("lookupMemberExact retargeted sloppy bcc to %+v", m)
 	}
 }
+
+// TestMemberLookups_RealNameBeatsGeneratedAlias pins that a member whose DISPLAY
+// NAME happens to equal another member's rendered form still resolves to
+// itself, regardless of roster order. Before the two-pass registration the alias
+// overwrote the real name (or vice versa) depending on order, so a private note
+// addressed to the literal name could be delivered to the other member — the
+// exact retarget lookupMemberExact exists to prevent.
+func TestMemberLookups_RealNameBeatsGeneratedAlias(t *testing.T) {
+	seedSpecialtyAgents(t)
+	literal := "ZCode（" + zcodeSpecialty + "）"
+	named := GroupMember{ID: "m1", Name: literal, AgentID: "antigravity"}
+	aliased := GroupMember{ID: "m2", Name: "ZCode", AgentID: "zcode"} // renders as `literal`
+
+	for label, members := range map[string][]GroupMember{
+		"literal-first": {named, aliased},
+		"alias-first":   {aliased, named},
+	} {
+		byID, byName := memberLookups(members)
+		if m, ok := lookupMemberExact(literal, byID, byName); !ok || m.ID != "m1" {
+			t.Errorf("%s: lookupMemberExact(%q) -> %s, ok=%v; want m1 (the literal display name)",
+				label, literal, m.ID, ok)
+		}
+	}
+}
+
+// TestLookupMember_TwoLevelSuffixStillRoutes pins the deliberate Go/TS
+// asymmetry documented on lookupMember: a second trailing group strips down to
+// the registered alias and routes here, while the frontend (no alias table)
+// renders the raw text. Dispatching must not regress while that gap is open.
+func TestLookupMember_TwoLevelSuffixStillRoutes(t *testing.T) {
+	seedSpecialtyAgents(t)
+	byID, byName := memberLookups([]GroupMember{
+		{ID: "m1", Name: "ZCode", AgentID: "zcode"},
+	})
+
+	if m, ok := lookupMember("ZCode（"+zcodeSpecialty+"）", byID, byName); !ok || m.ID != "m1" {
+		t.Fatalf("one-level suffix failed: got %+v, ok=%v", m, ok)
+	}
+	// Known display-only gap: the backend resolves this, the frontend does not.
+	if m, ok := lookupMember("ZCode（"+zcodeSpecialty+"）（补充）", byID, byName); !ok || m.ID != "m1" {
+		t.Fatalf("two-level suffix must keep routing until the share-snapshot fix lands: got %+v, ok=%v", m, ok)
+	}
+	// A real name that itself ends with a bracket group still gets its own
+	// one-level suffix resolved.
+	byID2, byName2 := memberLookups([]GroupMember{
+		{ID: "m2", Name: "agy(zhu)", AgentID: "antigravity"},
+	})
+	if m, ok := lookupMember("agy(zhu)（架构）", byID2, byName2); !ok || m.ID != "m2" {
+		t.Fatalf("bracketed real name + one-level suffix failed: got %+v, ok=%v", m, ok)
+	}
+}

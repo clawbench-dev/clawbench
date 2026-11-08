@@ -269,6 +269,21 @@ describe('resolveMentionDisplayName', () => {
     expect(resolveMentionDisplayName('ghost', byId, byName, '你')).toBe('ghost')
     expect(resolveMentionDisplayName('ghost', null, null, '你')).toBe('ghost')
   })
+
+  it('strips one leading @/＠ before resolving and in the fallback label', () => {
+    // A model that copies "@Alice" out of a message must resolve to Alice, and
+    // an unresolvable "@ghost" must render WITHOUT the @ (the chip template adds
+    // it back), so the label never doubles up.
+    expect(resolveMentionDisplayName('@Alice', byId, byName, '你')).toBe('Alice')
+    expect(resolveMentionDisplayName('＠Alice', byId, byName, '你')).toBe('Alice')
+    expect(resolveMentionDisplayName('@ghost', byId, byName, '你')).toBe('ghost')
+    expect(resolveMentionDisplayName('＠ghost', byId, byName, '你')).toBe('ghost')
+    // A bare "@" has nothing left after the strip: keep the raw token so the
+    // chip is not rendered empty.
+    expect(resolveMentionDisplayName('@', byId, byName, '你')).toBe('@')
+    // The reserved human target is matched AFTER the strip too.
+    expect(resolveMentionDisplayName('@User', byId, byName, '你')).toBe('你')
+  })
 })
 
 describe('buildMemberCandidates', () => {
