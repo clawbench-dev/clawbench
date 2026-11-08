@@ -6,6 +6,8 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // acp_background_turn_test.go covers the adoption of agent-initiated turns
@@ -299,5 +301,36 @@ func TestSessionEnd_IgnoresTurnWhoseRouteWasTakenOver(t *testing.T) {
 	case ev := <-live:
 		t.Fatalf("live turn received an unexpected event: %+v", ev)
 	default:
+	}
+}
+
+// TestReplayFilter_AdoptedTurnRequestIDBypasses covers the production-only
+// defect behind issue #644's follow-up: CodeBuddy reuses the PREVIOUS turn's
+// requestId for the turn it starts on its own, so the replay filter dropped the
+// whole reply and the user saw a lone tool card with no text.
+func TestReplayFilter_AdoptedTurnRequestIDBypasses(t *testing.T) {
+	conn := &ACPConn{agent: &model.Agent{Backend: "codebuddy"}}
+	const rid = "reused-request-id"
+	conn.setLastCompletedRequestID(rid)
+
+	meta := map[string]any{metaKeyCodeBuddyRequestID: rid}
+	if !isReplayedTurnMeta(conn, "codebuddy", meta) {
+		t.Fatal("baseline should classify a completed turn's id as a replay")
+	}
+
+	conn.noteAdoptedTurnRequestID(rid)
+	if isReplayedTurnMeta(conn, "codebuddy", meta) {
+		t.Fatal("an adopted turn's own requestId must not be treated as a replay")
+	}
+
+	// A different id is still filtered: the whitelist is one id, not a switch.
+	other := map[string]any{metaKeyCodeBuddyRequestID: "some-other-id"}
+	if isReplayedTurnMeta(conn, "codebuddy", other) {
+		t.Fatal("an unrelated id must keep its normal replay treatment")
+	}
+
+	conn.clearAdoptedTurnRequestID(rid)
+	if !isReplayedTurnMeta(conn, "codebuddy", meta) {
+		t.Fatal("clearing the marker must restore the filter")
 	}
 }

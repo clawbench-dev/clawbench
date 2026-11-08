@@ -153,6 +153,9 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 	// see another frame and would hang until its backstop timeout.
 	if turn, adopted := c.backgroundTurns[acpSessionID]; adopted {
 		delete(c.backgroundTurns, acpSessionID)
+		if c.connRef != nil {
+			c.connRef.clearAdoptedTurnRequestID(turn.requestID)
+		}
 		deliverBackgroundTurnEnd(turn)
 	}
 	c.sessionRoutes[acpSessionID] = ch
@@ -325,16 +328,7 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
-	// A turn the agent started on its own (CodeBuddy background_drain) is closed
-	// by the non-standard `session_end` frame, which the SDK re-types as a
-	// SessionInfoUpdate with the payload dropped. Read the discriminator here,
-	// on the SAME goroutine that delivers that turn's content, so the terminal
-	// event is ordered after every frame. (Reading it from the raw stdout tee
-	// instead would let it overtake frames still queued in the SDK and truncate
-	// the reply.)
-	if n.Update.SessionInfoUpdate != nil &&
-		n.Update.SessionInfoUpdate.SessionUpdate == sessionEndVariant &&
-		c.closeBackgroundTurnOnSessionEnd(string(n.SessionId)) {
+	if c.maybeCloseAdoptedTurn(n) {
 		return nil
 	}
 
@@ -444,6 +438,24 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
 	return nil
+}
+
+// maybeCloseAdoptedTurn handles CodeBuddy's non-standard `session_end` frame for
+// a turn the agent started on its own (background_drain).
+//
+// The SDK re-types that frame as a SessionInfoUpdate with its payload dropped,
+// so the discriminator is read from the typed struct here — on the SAME
+// goroutine that delivers the turn's content, which is what keeps the terminal
+// event ordered after every frame. (Reading it from the raw stdout tee instead
+// would let it overtake frames still queued in the SDK and truncate the reply.)
+//
+// Reports whether the frame closed an adopted turn; a user turn's session_end
+// returns false and keeps its existing handling.
+func (c *ClawBenchACPClient) maybeCloseAdoptedTurn(n acp.SessionNotification) bool {
+	if n.Update.SessionInfoUpdate == nil || n.Update.SessionInfoUpdate.SessionUpdate != sessionEndVariant {
+		return false
+	}
+	return c.closeBackgroundTurnOnSessionEnd(string(n.SessionId))
 }
 
 // isModelProgressUpdate reports whether an ACP session update represents

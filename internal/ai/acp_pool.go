@@ -1228,6 +1228,23 @@ type ACPConn struct {
 	// always describes exactly one turn and never becomes a rolling value.
 	turnRequestIDs map[string]struct{}
 
+	// adoptedTurnRequestID is the requestId of a turn the AGENT started on its
+	// own (CodeBuddy background_drain — see acp_background_turn.go), or "" when
+	// no such turn is in flight. Guarded by metaMu.
+	//
+	// It exists because CodeBuddy REUSES the session's conversationRequestId for
+	// that turn. Measured on a production session (2026-11-08): the drain turn's
+	// announcement carried the exact requestId the user's previous turn had just
+	// finished with, so the replay filter above classified the whole NEW turn as
+	// a replay of the previous one and dropped every agent_message_chunk. The
+	// user saw a lone TaskOutput tool card with no text at all — tool calls are
+	// not filtered, which is why only they survived.
+	//
+	// While this id is set, frames carrying it bypass the replay filter: they
+	// provably belong to the turn currently being consumed, not to the one that
+	// completed before it.
+	adoptedTurnRequestID string
+
 	// compactReported is set once this connection has emitted its
 	// compact_detected signal for the current compaction. CodeBuddy stamps the
 	// compaction flag onto EVERY session update emitted while it compacts, so
@@ -2201,8 +2218,37 @@ func (c *ACPConn) isCompletedTurnRequestID(rid string) bool {
 	}
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
+	if rid == c.adoptedTurnRequestID {
+		// An agent-initiated turn reuses the previous turn's requestId, so
+		// membership in the baseline says nothing about it being stale. It is
+		// the turn we are consuming right now — let it through.
+		return false
+	}
 	_, ok := c.lastCompletedRequestIDs[rid]
 	return ok
+}
+
+// noteAdoptedTurnRequestID marks rid as belonging to a turn the agent started on
+// its own, so the replay filter lets its frames through (see
+// adoptedTurnRequestID).
+func (c *ACPConn) noteAdoptedTurnRequestID(rid string) {
+	if rid == "" {
+		return
+	}
+	c.metaMu.Lock()
+	c.adoptedTurnRequestID = rid
+	c.metaMu.Unlock()
+}
+
+// clearAdoptedTurnRequestID drops the marker once that turn is over. Only the
+// matching id is cleared, so a newer turn's marker cannot be wiped by an older
+// turn's cleanup.
+func (c *ACPConn) clearAdoptedTurnRequestID(rid string) {
+	c.metaMu.Lock()
+	if c.adoptedTurnRequestID == rid {
+		c.adoptedTurnRequestID = ""
+	}
+	c.metaMu.Unlock()
 }
 
 // resetTurnRequestIDs drops the current turn's observed-id set. Called at the
