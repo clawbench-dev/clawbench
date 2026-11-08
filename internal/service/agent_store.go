@@ -274,7 +274,9 @@ type agentJSONColumns struct {
 // encodeAgentJSONColumns marshals the JSON-backed agent columns and normalizes
 // them so the table never stores the literal string "null".
 func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
-	modelsJSON, err := json.Marshal(agent.Models)
+	// Prices are derived from the weekly catalog snapshot; persisting one would
+	// freeze it at whatever the catalog said on the day the agent was saved.
+	modelsJSON, err := json.Marshal(model.WithoutPrices(agent.Models))
 	if err != nil {
 		return agentJSONColumns{}, fmt.Errorf("marshal models: %w", err)
 	}

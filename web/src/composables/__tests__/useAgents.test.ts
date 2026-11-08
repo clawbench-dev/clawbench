@@ -779,6 +779,21 @@ describe('useAgents', () => {
     it('does nothing for an unknown agent', () => {
       updateACPModelList('nonexistent', [{ id: 'x', name: 'X' }])
     })
+
+    it('keeps the price through a list rebuild (issue #643)', () => {
+      // The ACP path rebuilds every entry from scratch; a naive map that only
+      // copies id/name/default silently drops the backend-supplied price and
+      // the tag disappears until the next /api/agents fetch.
+      updateACPModelList('claude', [
+        { id: 'glm-5.2', name: 'GLM-5.2', price: { input: 1.4, output: 4.4 } },
+        { id: 'unpriced', name: 'Unpriced' },
+      ], 'glm-5.2')
+
+      const models = getAgentModels('claude')
+      expect(models[0].price).toEqual({ input: 1.4, output: 4.4 })
+      expect(models[0].default).toBe(true)
+      expect(models[1].price).toBeUndefined()
+    })
   })
 
   // --- applyResolvedModelList (preferred path) ---

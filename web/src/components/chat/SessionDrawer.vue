@@ -89,7 +89,7 @@
             @touchmove.passive="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: m.id === effectiveModelId }"></span>
-            <ModelRow :name="m.name" :model-id="m.id" :active="m.id === effectiveModelId" />
+            <ModelRow :name="m.name" :model-id="m.id" :price="m.price" :active="m.id === effectiveModelId" />
             <span v-if="m.id === defaultModelId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
               <span class="default-star"><Star :size="12" fill="currentColor" /></span>

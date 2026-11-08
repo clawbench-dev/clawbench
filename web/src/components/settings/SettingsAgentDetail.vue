@@ -196,6 +196,7 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { apiGet, apiPatch } from '@/utils/api'
+import type { ModelPrice } from '@/utils/modelPrice'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAgentSelfTest, type AgentSelfTestCheck } from '@/composables/useAgentSelfTest'
@@ -415,10 +416,11 @@ const items = computed<AgentItem[]>(() => {
       description: usingCatalogModels ? t('settings.items.agentCatalogModelsDesc') : undefined,
       note: usingCatalogModels ? t('settings.items.agentCatalogModelsNote') : undefined,
       type: 'select',
-      options: modelChoices.map((m: { name: string; id: string }) => ({
+      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice }) => ({
         label: m.name || m.id,
         value: m.id,
         modelName: m.name || m.id,
+        modelPrice: m.price,
         // CodeBuddy ships models that share a display name (deepseek-v4-pro and
         // deepseek-v4-pro-exclusive are both "Deepseek-V4-Pro"), so the id is
         // the only way to tell them apart in the picker. Some ACP agents carry

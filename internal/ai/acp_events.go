@@ -497,7 +497,13 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 						}
 						conn.SetCachedModelListState(modelList)
 					} else {
-						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
+						// No connection to resolve an agent from, so this list
+						// cannot be enriched with the CLI baseline — but it
+						// must still carry prices, or the client (which rebuilds
+						// its picker from this event) would drop every tag.
+						priced := *modelList
+						priced.Models = model.WithPrices(modelList.Models)
+						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: &priced})
 					}
 				}
 			}
@@ -1339,8 +1345,11 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 		return nil
 	}
 	enriched := *modelList
-	enriched.CLIModels = agent.Models
-	enriched.ResolvedModels = model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID)
+	// Prices are attached here so every channel that ships this state over WS
+	// (model_list_update, session bootstrap) carries them; see model.WithPrices.
+	enriched.Models = model.WithPrices(modelList.Models)
+	enriched.CLIModels = model.WithPrices(agent.Models)
+	enriched.ResolvedModels = model.WithPrices(model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID))
 	return &enriched
 }
 

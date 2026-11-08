@@ -1352,3 +1352,28 @@ func TestCreateCustomACPAgent_NameConflicts(t *testing.T) {
 	_, err := service.CreateCustomACPAgent("Taken", "x acp")
 	require.ErrorIs(t, err, service.ErrAgentNameTaken)
 }
+
+// A model price is derived from the weekly catalog snapshot, so persisting it
+// would freeze the number at whatever the catalog said the day the agent was
+// saved (issue #643). It must be stripped on write and come back nil on load.
+func TestSaveAgent_DoesNotPersistModelPrice(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi",
+		Models: []model.AgentModel{{
+			ID: "glm-5.2", Name: "GLM-5.2", Default: true,
+			Price: &model.ModelPrice{Input: 1.4, Output: 4.4},
+		}},
+	}))
+
+	var modelsJSON string
+	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id='pi'").Scan(&modelsJSON))
+	assert.NotContains(t, modelsJSON, "price", "a derived price must never reach the agents table")
+	assert.Contains(t, modelsJSON, "glm-5.2")
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	require.Len(t, agents[0].Models, 1)
+	assert.Nil(t, agents[0].Models[0].Price, "a loaded model carries no stale price")
+}

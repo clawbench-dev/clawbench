@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { apiGet, apiPatch, apiPost, apiDelete, apiPut } from '@/utils/api'
 import { pickDefaultModelId, resolveModelSelection as resolveModelSelectionFromList } from '@/utils/modelSelection'
+import type { ModelPrice } from '@/utils/modelPrice'
 import { gt } from '@/composables/useLocale'
 import { updatePlanEntries } from '@/composables/usePlanProgress'
 import { appLog } from '@/utils/appLog'
@@ -43,9 +44,9 @@ interface AgentRecord {
   backend: string
   command?: string
   specialty?: string
-  models?: Array<{ id: string; name: string; default: boolean }>
+  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
   /** Pure CLI-discovered list, supplied by the backend for the CLI view. */
-  cliModels?: Array<{ id: string; name: string; default: boolean }>
+  cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
   preferredModel?: string
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
@@ -135,9 +136,9 @@ interface AcpState {
   thinkingEffortState?: { availableLevels?: Array<{ id: string; name: string }>; currentId?: string }
   commands?: Array<{ name: string; description: string; inputHint?: string }>
   modelListState?: {
-    models?: Array<{ id: string; name: string }>
-    resolvedModels?: Array<{ id: string; name: string; default: boolean }>
-    cliModels?: Array<{ id: string; name: string; default: boolean }>
+    models?: Array<{ id: string; name: string; price?: ModelPrice }>
+    resolvedModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
+    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
     currentModelId?: string
   }
   planState?: { entries?: Array<Record<string, unknown>> }
@@ -326,7 +327,7 @@ function getDefaultModelId(agentId: string): string {
 }
 
 /** Get the models list for an agent. */
-function getAgentModels(agentId: string): { id: string; name: string; default: boolean }[] {
+function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice }[] {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.models || []
 }
@@ -531,12 +532,14 @@ async function setDefaultAgent(agentId: string): Promise<void> {
  * Falls back to the raw ACP list when the backend could not resolve it (no CLI
  * list available at emit time) — better to show the ACP list alone than nothing.
  */
-export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string }>, currentModelId?: string): void {
+export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string; price?: ModelPrice }>, currentModelId?: string): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
     if (models.length === 0) return
 
-    agent.models = models.map(m => ({ id: m.id, name: m.name, default: m.id === currentModelId }))
+    // Spread first: `price` is backend-derived and must survive every list
+    // rebuild, otherwise the tag disappears until the next /api/agents fetch.
+    agent.models = models.map(m => ({ ...m, default: m.id === currentModelId }))
     // An empty currentModelId means no session context; the backend's resolved
     // list already carries the default flag, so only override when we know it.
     if (currentModelId) {
@@ -555,8 +558,8 @@ export function updateACPModelList(agentId: string, models: Array<{ id: string; 
  */
 export function applyResolvedModelList(
     agentId: string,
-    resolved: Array<{ id: string; name: string; default: boolean }>,
-    cliModels?: Array<{ id: string; name: string; default: boolean }>,
+    resolved: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>,
+    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>,
 ): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
@@ -649,19 +652,20 @@ export function resetModelViewForTransport(agentId: string): void {
  */
 export function applyRefreshedModelList(
     agentId: string,
-    resolved: Array<{ id: string; name: string; default?: boolean }>,
-    cliModels?: Array<{ id: string; name: string; default?: boolean }>,
+    resolved: Array<{ id: string; name: string; default?: boolean; price?: ModelPrice }>,
+    cliModels?: Array<{ id: string; name: string; default?: boolean; price?: ModelPrice }>,
 ): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
+    // Spread keeps the backend-supplied `price` on both views; a refresh is
+    // also the moment the catalog-derived tag is most likely to have changed.
     const cli = (cliModels && cliModels.length > 0 ? cliModels : resolved).map(m => ({
-        id: m.id,
-        name: m.name,
+        ...m,
         default: !!m.default,
     }))
     agent.cliModels = cli
     if (getAgentTransport(agentId) === 'acp-stdio') {
-        agent.models = resolved.map(m => ({ id: m.id, name: m.name, default: !!m.default }))
+        agent.models = resolved.map(m => ({ ...m, default: !!m.default }))
     } else {
         agent.models = cli.map(m => ({ ...m }))
     }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 // calendar date with no code change.
 const catalogSnapshotTemplate = `{
   "fetched_at": "__FETCHED_AT__",
+  "price_schema": __PRICE_SCHEMA__,
   "source": "https://models.dev/api.json",
   "providers": {
     "anthropic": {
@@ -41,12 +43,18 @@ const catalogSnapshotTemplate = `{
 
 // catalogSnapshotFixture renders the template as if it had just been fetched.
 func catalogSnapshotFixture() string {
-	return strings.Replace(
+	// The schema marker is substituted, not hard-coded: a fixture claiming to be
+	// freshly fetched must carry the CURRENT schema, or model.CatalogStale would
+	// age it out and every test using it would see stale=true. Substituting
+	// keeps the fixture honest across a schema bump instead of pinning it to a
+	// literal that silently goes out of date.
+	withDate := strings.Replace(
 		catalogSnapshotTemplate,
 		"__FETCHED_AT__",
 		time.Now().UTC().Format(time.RFC3339),
 		1,
 	)
+	return strings.Replace(withDate, "__PRICE_SCHEMA__", strconv.Itoa(model.CatalogPriceSchema), 1)
 }
 
 // installCatalog writes a snapshot and loads it, so handler tests exercise the

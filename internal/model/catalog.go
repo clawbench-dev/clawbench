@@ -37,6 +37,11 @@ type CatalogModel struct {
 	Name    string `json:"name"`
 	Context int    `json:"context,omitempty"`
 	Output  int    `json:"output,omitempty"`
+	// InputPrice / OutputPrice are USD per million tokens, as published by
+	// models.dev. Zero means the catalog has no price for this entry (or the
+	// provider bills by subscription, which the upstream marks as 0/0).
+	InputPrice  float64 `json:"inputPrice,omitempty"`
+	OutputPrice float64 `json:"outputPrice,omitempty"`
 }
 
 // CatalogProvider is one provider in the snapshot, reduced to the fields this
@@ -54,6 +59,10 @@ type Catalog struct {
 	FetchedAt time.Time                  `json:"fetched_at"`
 	Source    string                     `json:"source"`
 	Providers map[string]CatalogProvider `json:"providers"`
+	// PriceSchema records which extraction schema produced this snapshot.
+	// Older files (0) predate price parsing and are refetched once — see
+	// CatalogStale.
+	PriceSchema int `json:"price_schema,omitempty"`
 }
 
 var (
@@ -88,8 +97,21 @@ func CatalogStale() bool {
 	if cat == nil {
 		return true
 	}
-	return time.Since(cat.FetchedAt) > CatalogTTL
+	if time.Since(cat.FetchedAt) > CatalogTTL {
+		return true
+	}
+	// A snapshot written before prices were parsed carries PriceSchema 0 and no
+	// prices at all. Without this it would keep the model picker price-less for
+	// up to a full TTL after the upgrade, which reads as "the feature does not
+	// work". Keyed on the schema marker rather than "has no prices" so a
+	// catalog that genuinely has none cannot force a download on every boot.
+	return cat.PriceSchema < CatalogPriceSchema
 }
+
+// CatalogPriceSchema is bumped when the fields extracted from models.dev
+// change, so older snapshots are refetched once instead of being read with
+// silently missing data.
+const CatalogPriceSchema = 1
 
 // CatalogPath is where the snapshot lives.
 func CatalogPath() string {
@@ -220,6 +242,13 @@ type catalogDocument map[string]struct {
 			Context int `json:"context"`
 			Output  int `json:"output"`
 		} `json:"limit"`
+		// Cost is the per-million-token price. Providers that bill by
+		// subscription publish 0/0 here; those are dropped in parseCatalog so a
+		// "$0" tag never reaches the picker.
+		Cost struct {
+			Input  float64 `json:"input"`
+			Output float64 `json:"output"`
+		} `json:"cost"`
 	} `json:"models"`
 }
 
@@ -229,9 +258,10 @@ func parseCatalog(body []byte) (*Catalog, error) {
 		return nil, fmt.Errorf("parse model catalog: %w", err)
 	}
 	cat := &Catalog{
-		FetchedAt: time.Now().UTC(),
-		Source:    catalogURL,
-		Providers: make(map[string]CatalogProvider, len(doc)),
+		FetchedAt:   time.Now().UTC(),
+		Source:      catalogURL,
+		Providers:   make(map[string]CatalogProvider, len(doc)),
+		PriceSchema: CatalogPriceSchema,
 	}
 	for id, entry := range doc {
 		protocol := protocolForNPM(entry.NPM)
@@ -257,7 +287,10 @@ func parseCatalog(body []byte) (*Catalog, error) {
 			if name == "" {
 				name = mid
 			}
-			models = append(models, CatalogModel{ID: mid, Name: name, Context: m.Limit.Context, Output: m.Limit.Output})
+			models = append(models, CatalogModel{
+				ID: mid, Name: name, Context: m.Limit.Context, Output: m.Limit.Output,
+				InputPrice: m.Cost.Input, OutputPrice: m.Cost.Output,
+			})
 		}
 		sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })
 		cat.Providers[id] = CatalogProvider{
