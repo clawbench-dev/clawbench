@@ -31,10 +31,11 @@
       :current-branch="store.state.gitBranch"
       :view-branch="viewBranch"
       :fetching="fetching"
+      :divergence="divergence"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
-      @refresh="onRefresh"
+      @refresh="onRefreshAll"
       @fetch="onFetch"
       @manage="navigateToManage"
       @change-branch="onChangeBranch"
@@ -205,7 +206,7 @@ import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { shouldShowFullLoading } from '@/utils/gitFileHistory'
 import { useGitHistoryView } from '@/composables/useGitHistoryView'
-import { gitFetch } from '@/utils/gitApi'
+import { gitFetch, createSeqGuard } from '@/utils/gitApi'
 import { useToast } from '@/composables/useToast'
 import { revealInFileManager } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
@@ -277,8 +278,68 @@ async function loadBranches() {
 async function onChangeBranch(name) {
   if (name === viewBranch.value) return
   viewBranch.value = name
+  // Drop the previous branch's comparison immediately. The request takes a
+  // moment, and until it lands the old numbers would be shown next to the new
+  // branch's commits — including a strip listing commits that branch does not
+  // have.
+  divergence.value = emptyDivergence()
   currentView.value = 'commits'
-  await loadProjectHistory()
+  await Promise.all([loadProjectHistory(), loadDivergence()])
+}
+
+// ─── Divergence from the upstream ──────────────────────────────────────────
+// Which commits are unpushed, and which the remote has and we do not. The
+// branch listing already carries the counts; this carries the commits
+// themselves, so the list can mark rows and the strip can name them.
+//
+// Fetched separately from the history on purpose: /api/git/project-history is
+// cached by (path, skip, HEAD sha), and a fetch only moves remote refs — it
+// would never invalidate that cache.
+function emptyDivergence() {
+  return { hasUpstream: false, upstream: '', ahead: [], behind: [], aheadCount: 0, behindCount: 0 }
+}
+
+const divergence = ref(emptyDivergence())
+// Rapid branch switches must not let a slow earlier response overwrite a newer
+// one — the history list has the same guard for the same reason.
+const divergenceSeq = createSeqGuard()
+
+async function loadDivergence() {
+  const token = divergenceSeq.token()
+  try {
+    const q = viewBranch.value ? `?ref=${encodeURIComponent(viewBranch.value)}` : ''
+    const resp = await gitFetch(`/api/git/divergence${q}`, { signal: token.signal })
+    if (!divergenceSeq.isCurrent(token)) return false
+    if (!resp || !resp.ok) {
+      // Reset rather than keep the old value: after a branch switch, stale
+      // numbers would describe a branch that is no longer on screen.
+      divergence.value = emptyDivergence()
+      return false
+    }
+    const data = await resp.json()
+    divergence.value = {
+      hasUpstream: !!data.hasUpstream,
+      upstream: data.upstream || '',
+      ahead: data.ahead || [],
+      behind: data.behind || [],
+      aheadCount: data.aheadCount || 0,
+      behindCount: data.behindCount || 0,
+    }
+    return true
+  } catch {
+    // A failed comparison must not break the history itself — but it must not
+    // leave the previous branch's comparison on screen either.
+    if (divergenceSeq.isCurrent(token)) divergence.value = emptyDivergence()
+    return false
+  }
+}
+
+// ─── Refresh ───────────────────────────────────────────────────────────────
+// "Refresh" means re-read git state, which includes the comparison. Without
+// this, a commit made in the terminal appears in the list with no "unpushed"
+// mark until the tab is left and re-entered.
+async function onRefreshAll() {
+  await Promise.all([onRefresh(), loadDivergence()])
 }
 
 // ─── Fetch from remotes ────────────────────────────────────────────────────
@@ -298,8 +359,24 @@ async function onFetch() {
     // at 60s).
     const resp = await gitFetch('/api/git/fetch', { method: 'POST', timeoutMs: 90_000 })
     const data = await resp.json().catch(() => ({}))
+    const before = { ahead: divergence.value.aheadCount, behind: divergence.value.behindCount }
+    // Always refresh: the branch list is where ahead/behind comes from, and a
+    // failed fetch may still have updated some remotes.
+    const [, , divergenceOk] = await Promise.all([loadBranches(), store.loadGitBranch(), loadDivergence()])
     if (data.success) {
-      toast.show(data.summary || t('git.fetch.success'), { type: 'success' })
+      // Say what changed. "Fetched" alone leaves the user looking at the same
+      // numbers and wondering whether anything happened.
+      //
+      // Only when the comparison actually reloaded: on failure it is reset to
+      // 0/0, which would otherwise be reported as "now in sync".
+      const changed = divergenceOk
+        && (before.ahead !== divergence.value.aheadCount || before.behind !== divergence.value.behindCount)
+      toast.show(
+        changed
+          ? t('git.fetch.changed', { ahead: divergence.value.aheadCount, behind: divergence.value.behindCount })
+          : (data.summary || t('git.fetch.success')),
+        { type: 'success' },
+      )
     } else if (data.error === 'fetch_timeout') {
       toast.show(t('git.fetch.timeout'), { type: 'error', duration: 6000 })
     } else if (data.error === 'git_busy') {
@@ -309,9 +386,6 @@ async function onFetch() {
       // a generic message.
       toast.show(data.errorDetail || t('git.fetch.failed'), { type: 'error', duration: 8000 })
     }
-    // Always refresh: the branch list is where ahead/behind comes from, and a
-    // failed fetch may still have updated some remotes.
-    await Promise.all([loadBranches(), store.loadGitBranch()])
   } catch (err) {
     const timedOut = err instanceof Error && err.name === 'GitTimeoutError'
     toast.show(timedOut ? t('git.fetch.timeout') : t('git.fetch.failed'), { type: 'error', duration: 6000 })
@@ -348,6 +422,9 @@ const {
   filePath: () => props.file?.path,
   branchRef: () => viewBranch.value,
   useAbortSignal: true,
+  // Remote-only commits are listed above the history, not in it, so selecting
+  // one has to be resolved from the divergence payload.
+  extraCommits: () => divergence.value.behind,
   onProjectHistoryLoaded: () => {
     // Record git state after a successful load so the active watcher can tell
     // whether a later re-entry needs a reload.
@@ -364,6 +441,7 @@ const {
 function resetState() {
   resetListState()
   viewBranch.value = ''
+  divergence.value = emptyDivergence()
   lastProjectRoot.value = null
   lastFilePath.value = null
 }
@@ -446,6 +524,7 @@ watch(() => props.active, async (nowActive) => {
 
   await store.loadGitBranch()
   await loadBranches()
+  await loadDivergence()
   const cur = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty, changeCount: store.state.gitWorkingTreeChangeCount }
   const changed = lastGitState.value.branch &&
     (cur.branch !== lastGitState.value.branch ||
@@ -481,6 +560,7 @@ onMounted(async () => {
   if (props.active) {
     store.loadGitBranch().catch(() => {})
     loadBranches()
+    loadDivergence()
   }
 
   const currentProject = store.state.projectRoot

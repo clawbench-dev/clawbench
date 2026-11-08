@@ -68,6 +68,13 @@ export interface UseGitHistoryViewOptions {
   useAbortSignal?: boolean
   /** Called after a successful project-history load (host records git state). */
   onProjectHistoryLoaded?: () => void
+  /**
+   * Commits the host can show but that are NOT in `commits` — currently the
+   * remote-only commits listed above the history. Selecting one drills into its
+   * files like any other commit, so `selectedCommit` has to be able to resolve
+   * it; otherwise the drill-down header would render an empty commit.
+   */
+  extraCommits?: () => GitCommit[]
 }
 
 export interface UseGitHistoryViewReturn {
@@ -227,7 +234,9 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
   // ─── Computed ────────────────────────────────────────────────────────────
 
   const selectedCommit = computed<GitCommit | null>(() => {
-    return commits.value.find(c => c.sha === selectedSHA.value) || null
+    return commits.value.find(c => c.sha === selectedSHA.value)
+      || options.extraCommits?.().find(c => c.sha === selectedSHA.value)
+      || null
   })
   const isWorkingTree = computed(() => selectedSHA.value === 'HEAD')
 
@@ -713,7 +722,13 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
 
     if (!wasDrilled) return
 
-    if (!commits.value.some(c => c.sha === prev.sha)) {
+    // Remote-only commits are not in `commits` (they live above the history),
+    // so a drill-down into one must be resolved through the same fallback that
+    // selectedCommit uses — otherwise every reload kicks the user back to the
+    // list.
+    const stillThere = commits.value.some(c => c.sha === prev.sha)
+      || !!options.extraCommits?.().some(c => c.sha === prev.sha)
+    if (!stillThere) {
       // The drilled-into entry is gone (workspace became clean, or the commit is
       // no longer reachable) — fall back to the commit list. Set the view
       // directly rather than via drillBack(): the load already cleared

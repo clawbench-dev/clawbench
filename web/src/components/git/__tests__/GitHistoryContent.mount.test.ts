@@ -70,7 +70,7 @@ vi.mock('@/stores/app', () => ({
 vi.mock('@/components/git/GitCommitList.vue', () => ({
   default: defineComponent({
     name: 'GitCommitList',
-    props: ['branches', 'currentBranch', 'viewBranch', 'mode', 'fetching'],
+    props: ['branches', 'currentBranch', 'viewBranch', 'mode', 'fetching', 'divergence'],
     emits: ['change-branch', 'select', 'search', 'load-more', 'refresh', 'manage', 'fetch'],
     template: '<div class="commit-list-stub"><slot /></div>',
   }),
@@ -495,6 +495,19 @@ describe('GitHistoryContent — read-only branch view', () => {
       if (url.startsWith('/api/git/working-tree')) {
         return Promise.resolve({ ok: true, json: async () => ({ files: [] }) })
       }
+      if (url.startsWith('/api/git/divergence')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            hasUpstream: true,
+            upstream: 'origin/main',
+            ahead: ['p1'],
+            behind: [{ sha: 'r1', msg: 'Remote', date: '', author: '' }],
+            aheadCount: 1,
+            behindCount: 1,
+                  }),
+        })
+      }
       return Promise.resolve({ ok: false, json: async () => ({}) })
     })
   }
@@ -508,6 +521,38 @@ describe('GitHistoryContent — read-only branch view', () => {
     expect(list.props('branches')).toEqual([{ name: 'main' }, { name: 'feat/x' }])
     expect(list.props('currentBranch')).toBe('main')
     expect(list.props('viewBranch')).toBe('')
+    wrapper.unmount()
+  })
+
+  it('loads the divergence and hands the commits to the list', async () => {
+    // The counters alone cannot mark rows or name the remote commits; the
+    // detail payload is what the list renders from.
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    expect(list.props('divergence').upstream).toBe('origin/main')
+    expect(list.props('divergence').ahead).toEqual(['p1'])
+    expect(list.props('divergence').behind[0].sha).toBe('r1')
+    wrapper.unmount()
+  })
+
+  it('asks for the divergence of the branch being viewed', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    await list.vm.$emit('change-branch', 'feat/x')
+    await flushPromises()
+
+    // Encoded, because a branch name may contain a slash. The request carries
+    // an abort signal so a slow response cannot overwrite a newer one.
+    expect(mockGitFetch).toHaveBeenCalledWith(
+      '/api/git/divergence?ref=feat%2Fx',
+      expect.objectContaining({ signal: expect.anything() }),
+    )
     wrapper.unmount()
   })
 

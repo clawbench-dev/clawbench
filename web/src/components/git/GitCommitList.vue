@@ -35,15 +35,6 @@
           <ChevronDown :size="10" />
         </button>
 
-        <!-- Divergence from the upstream, right next to the branch it belongs to.
-             Only rendered when there IS a difference: "↑0 ↓0" on every clean
-             branch is noise, and it would read as "in sync" for a branch that
-             has no upstream at all. -->
-        <span v-if="trackInfo" class="branch-track" :title="trackTitle">
-          <span v-if="trackInfo.behind > 0" class="branch-track-behind">↓{{ trackInfo.behind }}</span>
-          <span v-if="trackInfo.ahead > 0" class="branch-track-ahead">↑{{ trackInfo.ahead }}</span>
-        </span>
-
         <div v-if="branchMenuOpen" class="branch-menu" @click.stop>
           <!-- The old bar spent a whole row saying "本地 1 个分支". It belongs
                here: the moment you open the picker is the moment it is useful. -->
@@ -67,6 +58,43 @@
           </button>
         </div>
       </div>
+
+      <!-- Divergence from the upstream, right next to the branch it belongs to.
+           Only rendered when there IS a difference: "↑0 ↓0" on every clean
+           branch is noise, and it would read as "in sync" for a branch that
+           has no upstream at all.
+
+           Outside the branch picker on purpose: the picker is desktop-only
+           chrome, while the numbers also matter to hosts that show no picker.
+
+           The numbers are buttons only when the detail behind them was actually
+           loaded. With counts but no detail (an older server, or a failed
+           request) they stay plain text — a button that silently does nothing
+           is worse than no button. -->
+      <span v-if="trackInfo" class="branch-track">
+        <template v-if="hasDetail">
+          <button
+            v-if="trackInfo.behind > 0"
+            class="branch-track-btn branch-track-behind"
+            :title="trackTitle"
+            :aria-label="t('git.divergence.revealHint', { count: trackInfo.behind })"
+            data-action="track-behind"
+            @click.stop="revealRemoteCommits"
+          >↓{{ trackInfo.behind }}</button>
+          <button
+            v-if="trackInfo.ahead > 0"
+            class="branch-track-btn branch-track-ahead"
+            :title="trackTitle"
+            :aria-label="t('git.divergence.jumpHint', { count: trackInfo.ahead })"
+            data-action="track-ahead"
+            @click.stop="jumpToFirstUnpushed"
+          >↑{{ trackInfo.ahead }}</button>
+        </template>
+        <template v-else>
+          <span v-if="trackInfo.behind > 0" class="branch-track-behind" :title="trackTitle">↓{{ trackInfo.behind }}</span>
+          <span v-if="trackInfo.ahead > 0" class="branch-track-ahead" :title="trackTitle">↑{{ trackInfo.ahead }}</span>
+        </template>
+      </span>
 
       <!-- How many commits are on screen. A badge, not a sentence: the full
            wording ("30+ 条提交记录") is one hover away, and it was eating the
@@ -166,6 +194,46 @@
         {{ t('git.branchView.backTo', { branch: currentBranch }) }}
       </button>
     </div>
+
+    <!-- Commits the upstream has and this branch does not. They are NOT part of
+         the history below: that list is walked from the branch's own commit, and
+         the graph's lanes are drawn from parent links inside it — splicing
+         foreign rows in would draw a graph that contradicts the list.
+
+         Collapsed by default and only present when there is something to show,
+         so a branch that is up to date looks exactly as it did before. -->
+    <div v-if="behindCommits.length" class="remote-commits" :class="{ 'is-open': remoteOpen }">
+      <button
+        class="remote-commits-head"
+        :aria-expanded="remoteOpen"
+        data-action="toggle-remote-commits"
+        @click.stop="toggleRemoteCommits"
+      >
+        <CloudDownload :size="12" class="remote-commits-icon" />
+        <span class="remote-commits-title">
+          {{ t('git.divergence.remoteTitle', { upstream: divergence.upstream, count: behindCount }) }}
+        </span>
+        <ChevronDown :size="12" class="remote-commits-chevron" />
+      </button>
+      <div v-if="remoteOpen" class="remote-commits-list">
+        <div
+          v-for="c in behindCommits"
+          :key="c.sha"
+          class="remote-commit"
+          @click="$emit('select', c)"
+        >
+          <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
+          <span class="remote-commit-msg">{{ c.msg }}</span>
+          <span class="remote-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+          <span class="remote-commit-meta">
+            {{ formatDate(c.date) }}<template v-if="c.author"> · {{ c.author }}</template>
+          </span>
+        </div>
+        <div v-if="behindCount > behindCommits.length" class="remote-commits-more">
+          {{ t('git.divergence.moreRemote', { count: behindCount - behindCommits.length }) }}
+        </div>
+      </div>
+    </div>
     <div class="drilldown-body" ref="bodyRef">
       <div v-if="loading" class="git-history-loading git-history-loading--skeleton">
         <PanelSkeleton variant="list" :rows="10" :meta="true" :label="t('common.loading')" />
@@ -219,7 +287,7 @@
             v-for="(c, idx) in filteredCommits"
             :key="c.sha"
             class="drilldown-item"
-            :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx }"
+            :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx, 'is-unpushed': aheadSet.has(c.sha) }"
             :draggable="isWideScreen && canDragCommit(c)"
             @dragstart="onCommitDragStart(c, $event)"
             @dragend="cleanupDragGhost()"
@@ -236,6 +304,11 @@
               </div>
               <div class="git-commit-meta">
                 <span v-if="!c.isWT" class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+                <!-- Same visual language as a ref tag: this row is on the branch
+                     but not on the upstream, so it has not been pushed yet. -->
+                <span v-if="aheadSet.has(c.sha)" class="git-ref-tag git-ref-tag--unpushed" :title="t('git.divergence.unpushedHint')">
+                  {{ t('git.divergence.unpushed') }}
+                </span>
                 <span v-if="c.refs && c.refs.length" class="git-commit-refs">
                   <span v-for="ref in c.refs" :key="ref" class="git-ref-tag" :class="refTagClass(ref)">{{ refLabelText(ref) }}</span>
                 </span>
@@ -285,9 +358,11 @@ import { formatRelativeTime, formatDateTime } from '@/utils/format'
 import { startQuoteDrag, commitDragPayload } from '@/utils/quoteDrag'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { useToast } from '@/composables/useToast'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { useUiScale } from '@/composables/useUiScale'
 const { t } = useI18n()
+const toast = useToast()
 
 const { isWideScreen } = useWideScreenLayout()
 
@@ -334,6 +409,16 @@ const props = defineProps({
   viewBranch: { type: String, default: '' },
   /** True while a fetch is in flight (drives the button's spinner + disabled state). */
   fetching: { type: Boolean, default: false },
+  /**
+   * Which commits differ from the upstream (see /api/git/divergence).
+   *
+   * Empty by default: hosts that never load it (file mode) simply get no
+   * "unpushed" badges and no remote strip.
+   */
+  divergence: {
+    type: Object,
+    default: () => ({ hasUpstream: false, upstream: '', ahead: [], behind: [], aheadCount: 0, behindCount: 0 }),
+  },
 })
 
 const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage', 'change-branch', 'fetch'])
@@ -344,11 +429,21 @@ const shownBranch = computed(() => props.viewBranch || props.currentBranch)
 /**
  * How far the branch on screen is from its upstream, or null when it matches.
  *
- * `ahead`/`behind` come from the server's `%(upstream:track)` parse. A branch
- * with no upstream reports 0/0, so nothing is shown — there is nothing to be
- * ahead of, and "↑0 ↓0" would read as "in sync" instead.
+ * The divergence endpoint is preferred because it is the same source as the
+ * detail lists below (and it is the only one the mobile sheet loads). The
+ * branch listing is the fallback for hosts/servers that only have counts.
+ *
+ * A branch with no upstream reports nothing at all: "↑0 ↓0" would read as
+ * "in sync", when in fact there is nothing to be in sync with.
  */
 const trackInfo = computed(() => {
+  const d = props.divergence
+  if (d && d.hasUpstream) {
+    const ahead = d.aheadCount || 0
+    const behind = d.behindCount || 0
+    if (ahead === 0 && behind === 0) return null
+    return { ahead, behind, upstream: d.upstream || shownBranch.value }
+  }
   const b = props.branches.find(x => x.name === shownBranch.value)
   if (!b) return null
   const ahead = b.ahead || 0
@@ -362,6 +457,63 @@ const trackTitle = computed(() => t('git.branchView.trackTitle', {
   ahead: trackInfo.value?.ahead || 0,
   behind: trackInfo.value?.behind || 0,
 }))
+
+/** SHAs already on this branch but not on the upstream — the "unpushed" set. */
+const aheadSet = computed(() => new Set(props.divergence?.ahead || []))
+/** Commits only the upstream has, newest first. */
+const behindCommits = computed(() => props.divergence?.behind || [])
+const behindCount = computed(() => props.divergence?.behindCount ?? behindCommits.value.length)
+/**
+ * Whether the commit-level detail behind the numbers is available. The counts
+ * also exist in the branch listing, but that carries no SHAs — the numbers are
+ * then shown as plain text instead of dead buttons.
+ */
+const hasDetail = computed(() => !!props.divergence?.hasUpstream)
+/** The remote strip starts collapsed: it is a notice, not the main list. */
+const remoteOpen = ref(false)
+
+function toggleRemoteCommits() {
+  remoteOpen.value = !remoteOpen.value
+}
+
+/**
+ * "↓3" click: open the strip.
+ *
+ * The strip is pinned above the scrolling body, so opening it is enough to see
+ * the commits — no scrolling, which would also move the history under the user
+ * for no reason.
+ */
+function revealRemoteCommits() {
+  if (!behindCommits.value.length) {
+    // The count is known but the list is not (git log failed, or the payload
+    // was cut). Say so rather than opening an empty strip.
+    toast.show(t('git.divergence.detailUnavailable'), { type: 'info', duration: 4000 })
+    return
+  }
+  remoteOpen.value = true
+}
+
+/**
+ * "↑2" click: jump to the newest commit that has not been pushed.
+ *
+ * The unpushed commits are the newest ones on the branch, so the first match is
+ * also the most relevant. When the current list holds none of them (a search
+ * filter, or a page that ends before them) there is nothing to scroll to — say
+ * so instead of doing nothing.
+ */
+function jumpToFirstUnpushed() {
+  const el = contentRef.value?.querySelector('.drilldown-item.is-unpushed')
+  if (!el) {
+    toast.show(t('git.divergence.notInPage'), { type: 'info', duration: 4000 })
+    return
+  }
+  el.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  el.classList.add('is-flash')
+  flashTimer = window.setTimeout(() => {
+    el.classList.remove('is-flash')
+    flashTimer = null
+  }, 1400)
+}
 const showBranchBar = computed(() => props.mode !== 'file' && props.branches.length > 0)
 
 // ── Branch picker ──
@@ -478,6 +630,9 @@ function closeSearch() {
 // minimum-visible window and dedup clicks.
 const refreshing = ref(false)
 let refreshTimer = null
+// The highlight on the row an "↑N" jump landed on. Cleared on unmount so a
+// pending timer cannot touch a detached element (and so tests do not leak it).
+let flashTimer = null
 function handleRefresh() {
   if (refreshing.value) return
   refreshing.value = true
@@ -646,6 +801,7 @@ onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick)
   clearTimeout(searchTimer)
   if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
+  if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
 })
 
 defineExpose({ observeList, unobserveList, commitSearch })
@@ -775,7 +931,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin-left: var(--space-2);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -788,6 +943,145 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 .branch-track-ahead {
   color: var(--text-muted);
+}
+
+/* The numbers are buttons now (jump to the commits they count), so strip the
+   native button chrome and keep the text exactly as it was. */
+.branch-track-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.branch-track-btn:hover {
+  text-decoration: underline;
+}
+
+.branch-track-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+/* Commits the upstream has and this branch does not. A notice strip above the
+   history, not part of it: the list below is walked from this branch's own
+   commit and its graph would contradict foreign rows. */
+.remote-commits {
+  flex: none;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.remote-commits-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: calc(6 * var(--dp)) calc(14 * var(--dp));
+  background: none;
+  border: 0;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.remote-commits-icon {
+  flex: none;
+  color: var(--accent-color);
+}
+
+.remote-commits-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-commits-chevron {
+  flex: none;
+  transition: transform var(--duration-fast, 0.15s) ease;
+}
+
+.remote-commits.is-open .remote-commits-chevron {
+  transform: rotate(180deg);
+}
+
+.remote-commits-list {
+  max-height: calc(220 * var(--dp));
+  overflow-y: auto;
+  border-top: 1px solid var(--border-color);
+}
+
+.remote-commit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: calc(5 * var(--dp)) calc(14 * var(--dp));
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.remote-commit:hover {
+  background: var(--bg-tertiary);
+}
+
+.remote-commit-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-commit-sha {
+  flex: none;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+}
+
+.remote-commit-meta {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+}
+
+.remote-commits-more {
+  padding: calc(5 * var(--dp)) calc(14 * var(--dp));
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+}
+
+/* Flash the row we just jumped to. A background tint rather than a border:
+   the row already has hover/selected backgrounds, and a border would shift
+   the text by a pixel. */
+.drilldown-item.is-flash {
+  animation: unpushed-flash 1.4s ease-out;
+}
+
+@keyframes unpushed-flash {
+  0%,
+  35% {
+    background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* The flash only reinforces where the jump landed — the scroll position already
+   carries that information, so dropping the animation loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .drilldown-item.is-flash {
+    animation: none;
+  }
 }
 
 /* Read-only strip: a warning about where the workspace is, not a toolbar.
@@ -1175,5 +1469,18 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .ref-head { background: #1a1a2e; color: #fff; }
 .ref-branch { background: rgba(74, 144, 217, 0.15); color: #4a90d9; }
 .ref-tag { background: rgba(85, 85, 85, 0.15); color: #666; }
+
+/* Outlined rather than filled, so "unpushed" reads as a state of the commit
+   instead of another ref pointing at it. */
+.git-ref-tag--unpushed {
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+
+.git-ref-tag--remote {
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  color: var(--accent-color);
+}
 
 </style>

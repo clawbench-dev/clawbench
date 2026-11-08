@@ -3332,6 +3332,32 @@ paths:
         "409":
           description: "已有另一次获取正在进行（error 为 git_busy）。"
 
+  /api/git/divergence:
+    get:
+      tags: [Git]
+      summary: 分支与上游的具体差异（哪些提交未推送、哪些只在远端）
+      description: >
+        只读本地引用，不访问网络。`ahead` 是本地有、上游没有的提交 SHA
+        （供列表把对应行标为「未推送」）；`behind` 是上游有、本地没有的提交，
+        带标题 / 时间 / 作者，供列表顶部直接列出。分支没有上游（detached HEAD
+        或从未推送）时 `hasUpstream=false`，其余字段为空数组。
+        结果基于上次获取时的远端记录，不代表实时远端。
+      operationId: gitDivergence
+      parameters:
+        - name: ref
+          in: query
+          required: false
+          description: 要比较的本地分支名；留空表示当前 HEAD 所在分支。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >
+            差异结果。`aheadCount` / `behindCount` 是总数；`ahead` 最多返回 500 条、
+            `behind` 最多 50 条，列表比总数短时说明被截断。
+        "400":
+          description: "不是 git 仓库，或 ref 不是合法的本地分支名（UnknownBranch）。"
+
   /api/git/tags:
     get:
       tags: [Git]
