@@ -131,10 +131,15 @@ type TurnResult struct {
 	// rather than a clean finish.
 	ReceivedTerminal bool
 
-	// AbnormalReason is non-empty when the turn ended abnormally in a way that
-	// is worth resuming (see classifyTurnAbnormality). It is empty both for a
-	// clean finish and for failures that must NOT be resumed (user cancel,
-	// timeout, panic, …), so callers can treat "" as "do not auto-continue".
+	// AbnormalReason is non-empty when the turn did not finish cleanly. It names
+	// either a resumable failure (see retryableWarningReasons) or a permanent one
+	// (abnormalTerminalFailure — an exhausted quota, a signed-out agent), which
+	// must not be resumed. An empty value means a CLEAN FINISH and nothing else:
+	// callers use "" to decide whether to push a "turn answered" notification or
+	// to start an auto-cruise round, so a permanent failure must never be
+	// reported as empty.
+	//
+	// Use shouldRetryTurn to decide whether to auto-continue.
 	//
 	// Only ever set on the finalized path: an early failure (backend create /
 	// stream start / placeholder) returns earlyFails without going through

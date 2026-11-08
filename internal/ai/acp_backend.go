@@ -298,10 +298,14 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			// useful to the end user — we want the code and just the .Message
 			// field (e.g. "Internal error: Upstream request failed: [invalid_request_error] Insufficient Balance").
 			acpErrCode, acpHTTPStatus := acpErrorDetails(err)
+			// A prompt error that says "out of credit" is classified separately:
+			// the remedy is the user's, and auto-continue must not re-send it.
+			// OpenCode answers this over ACP as -32603 whose data carries
+			// errorName=provider.quota (verified against 2.2.6).
 			forwardACPEvent(ch, StreamEvent{
 				Type:        "warning",
 				Content:     acpErrorText(err),
-				Reason:      ReasonRequestFailed,
+				Reason:      promptErrorReason(err),
 				ErrorCode:   acpErrCode,
 				HTTPStatus:  acpHTTPStatus,
 				ErrorSource: "agent",
@@ -463,6 +467,82 @@ func acpErrorDetails(err error) (code int, httpStatus int) {
 
 // Ensure compile-time interface compliance
 var _ AIBackend = (*ACPBackend)(nil)
+
+// promptErrorReason picks the warning reason for a non-fatal prompt error.
+//
+// Quota/limit failures get their own reason because the remedy belongs to the
+// user and auto-continue must not re-send them (see retryableWarningReasons).
+func promptErrorReason(err error) string {
+	if isACPQuotaError(err) {
+		return ReasonQuotaExhausted
+	}
+	return ReasonRequestFailed
+}
+
+// isACPQuotaError reports whether a prompt error means the account is out of
+// credit or over its plan limit, i.e. the user must act before a retry can
+// possibly succeed.
+//
+// Recognized shapes (verified against opencode 2.2.6):
+//   - HTTP 402 in the RequestError data, or
+//   - data.errorName naming one of OpenCode's own limit types
+//     (provider.quota / provider.rate-limit / …), or
+//   - a message containing one of the limit phrases.
+//
+// The agent's own error text is scanned ONLY here, on the transport-level error
+// object. Assistant content is never inspected, so a model discussing quotas
+// cannot trip this.
+//
+// NOTE on provider.rate-limit: it is treated as non-retryable because the agent
+// has already exhausted its own retry budget by the time it reports a prompt
+// error (measured: opencode retries a persistent 429 eleven times over ~85s
+// before returning). That is verified for opencode only; other agents are
+// assumed to behave the same, and the worst case of being wrong is that the
+// user retries by hand instead of automatically.
+func isACPQuotaError(err error) bool {
+	var reqErr *acp.RequestError
+	if !errors.As(err, &reqErr) {
+		return false
+	}
+	// Data may be a map OR a JSON-encoded string (see acpErrorDetails), so the
+	// structured fields are read through a normalizer rather than a bare type
+	// assertion — otherwise the 402/errorName fast paths silently do nothing for
+	// the string form and only the text match remains.
+	data := acpErrorDataMap(reqErr.Data)
+	if hs, ok := data["httpStatus"].(float64); ok && int(hs) == 402 {
+		return true
+	}
+	if name, ok := data["errorName"].(string); ok && openCodeLimitTypes[strings.ToLower(name)] {
+		return true
+	}
+	haystack := strings.ToLower(reqErr.Message + " " + fmt.Sprint(reqErr.Data))
+	for _, phrase := range openCodeLimitPhrases {
+		if strings.Contains(haystack, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// acpErrorDataMap normalizes a RequestError's Data into a map, accepting both
+// the already-parsed form and the JSON-string form some agents send.
+func acpErrorDataMap(data any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	if m, ok := data.(map[string]any); ok {
+		return m
+	}
+	raw, ok := data.(string)
+	if !ok {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil
+	}
+	return m
+}
 
 // acpAuthRequiredCode is ACP's AuthenticationRequired error code. It sits in
 // the -32000..-32099 range the ACP schema reserves for protocol-level errors

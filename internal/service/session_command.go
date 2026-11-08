@@ -395,11 +395,15 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 					cfg.Files = nil
 					res := executeStreamRunShared(ctx, cfg)
 					return DrainResult{
-						CancelReason:  res.cancelReason,
-						Err:           res.err,
-						Empty:         res.empty,
-						MsgID:         res.msgID,
-						GoalSatisfied: res.goalSatisfied,
+						CancelReason: res.cancelReason,
+						Err:          res.err,
+						Empty:        res.empty,
+						// See the handler/chat.go twin: a failed confirmation
+						// round must stop the cruise, not look like a clean
+						// finish.
+						AbnormalReason: res.abnormalReason,
+						MsgID:          res.msgID,
+						GoalSatisfied:  res.goalSatisfied,
 					}
 				},
 			}),

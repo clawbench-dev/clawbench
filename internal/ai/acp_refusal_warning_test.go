@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -54,4 +56,92 @@ func TestEmitRefusalWarning_IgnoresNonRefusal(t *testing.T) {
 
 	conn.emitRefusalWarningIfRefused(acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, ch, "acp-sid")
 	assert.Empty(t, ch)
+}
+
+// TestIsACPQuotaError covers the ACP shape of the same failure. OpenCode answers
+// over ACP with JSON-RPC -32603 whose data carries errorName=provider.quota
+// (captured from 2.2.6 against a 402 mock), so the classification cannot rely on
+// an HTTP status the way the CLI frame can.
+func TestIsACPQuotaError(t *testing.T) {
+	quotaErr := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: Insufficient Balance",
+		Data:    map[string]any{"service": "session", "errorName": "provider.quota"},
+	}
+	rateLimitErr := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: Rate limit exceeded, please try again later",
+		Data:    map[string]any{"service": "session", "errorName": "provider.rate-limit"},
+	}
+	plainErr := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: something else broke",
+		Data:    map[string]any{"service": "session", "errorName": "provider.api_error"},
+	}
+	http402 := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error",
+		Data:    map[string]any{"httpStatus": float64(402)},
+	}
+
+	assert.True(t, isACPQuotaError(quotaErr), "provider.quota must classify as quota")
+	assert.True(t, isACPQuotaError(rateLimitErr), "provider.rate-limit must classify as quota")
+	assert.True(t, isACPQuotaError(http402), "an HTTP 402 must classify as quota")
+	assert.False(t, isACPQuotaError(plainErr), "an unrelated internal error must stay request_failed")
+	assert.False(t, isACPQuotaError(errors.New("acp: prompt: peer disconnected")),
+		"a non-RequestError must not be mistaken for a quota failure")
+}
+
+// The classification must survive the wrapping ExecuteStream applies, since
+// that is the error value the branch actually inspects.
+func TestIsACPQuotaError_ThroughWrappedError(t *testing.T) {
+	inner := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: Insufficient Balance",
+		Data:    map[string]any{"errorName": "provider.quota"},
+	}
+	wrapped := fmt.Errorf("acp: prompt: %w", inner)
+	assert.True(t, isACPQuotaError(wrapped))
+}
+
+// TestPromptErrorReason pins the mapping helper itself. It does NOT prove that
+// ExecuteStream's warning branch calls it — that branch lives behind a real ACP
+// connection and is covered only by the `integration`-tagged tests. Kept
+// separate from TestIsACPQuotaError so a change to the mapping (not the
+// predicate) fails on its own.
+func TestPromptErrorReason(t *testing.T) {
+	quota := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: Insufficient Balance",
+		Data:    map[string]any{"errorName": "provider.quota"},
+	}
+	assert.Equal(t, ReasonQuotaExhausted, promptErrorReason(quota))
+	assert.Equal(t, ReasonQuotaExhausted, promptErrorReason(fmt.Errorf("acp: prompt: %w", quota)),
+		"the wrapped error is what the branch actually receives")
+
+	plain := &acp.RequestError{Code: -32603, Message: "Internal error: bad substitution"}
+	assert.Equal(t, ReasonRequestFailed, promptErrorReason(plain))
+}
+
+// Some agents send RequestError.Data as a JSON STRING rather than a parsed map
+// (see acpErrorDetails). The 402 / errorName fast paths must still work there,
+// otherwise only the weaker text match remains.
+func TestIsACPQuotaError_StringFormData(t *testing.T) {
+	strData := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error",
+		Data:    `{"service":"session","errorName":"provider.quota"}`,
+	}
+	assert.True(t, isACPQuotaError(strData), "errorName inside a JSON-string Data must be recognized")
+
+	str402 := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error",
+		Data:    `{"httpStatus":402}`,
+	}
+	assert.True(t, isACPQuotaError(str402), "httpStatus 402 inside a JSON-string Data must be recognized")
+
+	// Malformed string Data must not panic and must fall through to text match.
+	broken := &acp.RequestError{Code: -32603, Message: "Internal error", Data: `not json`}
+	assert.False(t, isACPQuotaError(broken))
 }

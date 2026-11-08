@@ -211,7 +211,12 @@ func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
 		// attempt-1 is the number of RETRIES already spent: attempt counts turns
 		// (the first turn is attempt 1 and is not a retry), while max_retries
 		// counts resumes. Passing attempt here would spend one retry too few.
-		if AutoContinueEnabled() && AutoContinueAttemptsAllowed(attempt-1, model.ChatAutoContinueMaxRetries) {
+		//
+		// shouldRetryTurn excludes permanent failures (an exhausted quota, a
+		// signed-out agent): those fall straight through to the failure report
+		// below instead of burning the retry budget on a request that cannot
+		// succeed.
+		if AutoContinueEnabled() && shouldRetryTurn(abnormal) && AutoContinueAttemptsAllowed(attempt-1, model.ChatAutoContinueMaxRetries) {
 			if autoContinueSleep(ctx, autoContinueDelay) && ctx.Err() == nil {
 				// Close the failed turn's bubble before resuming, mirroring the
 				// interactive runner. Without this per-turn boundary the live

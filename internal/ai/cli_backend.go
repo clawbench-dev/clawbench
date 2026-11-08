@@ -371,6 +371,17 @@ func (b *CLIBackend) runStream(
 				slog.String("exit_error", waitErr.Error()),
 				slog.String("stderr", stderr),
 			)
+			// A parser that already classified this failure from the agent's own
+			// output (OpenCode's `{"type":"error"}` frame) has reported a
+			// precise, non-retryable reason. Adding the generic one would give
+			// the turn TWO warning blocks — and this one is tagged
+			// ReasonBackendExit, which auto-continue retries, so a quota error
+			// would be re-sent indefinitely.
+			if reported, ok := parser.(streamErrorReporter); ok && reported.ReportedStreamError() {
+				slog.Info(b.BackendName+" stream: parser already reported this failure, suppressing generic exit warning",
+					slog.String("session_id", req.SessionID))
+				return
+			}
 			warnMsg := "AI backend exited abnormally"
 			if stderr != "" {
 				warnMsg = fmt.Sprintf("AI backend exited abnormally\n%s", stderr)

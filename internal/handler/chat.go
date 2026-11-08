@@ -766,11 +766,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
 					confirmResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, confirmReq, fileDir)
 					return service.DrainResult{
-						CancelReason:  confirmResult.cancelReason,
-						Err:           confirmResult.err,
-						Empty:         confirmResult.empty,
-						MsgID:         confirmResult.msgID,
-						GoalSatisfied: confirmResult.goalSatisfied,
+						CancelReason: confirmResult.cancelReason,
+						Err:          confirmResult.err,
+						Empty:        confirmResult.empty,
+						// A confirmation round can fail too (quota exhausted
+						// mid-cruise). Without this the loop sees a clean finish
+						// and keeps starting rounds against an account that
+						// cannot answer, up to the speech cap.
+						AbnormalReason: confirmResult.abnormalReason,
+						MsgID:          confirmResult.msgID,
+						GoalSatisfied:  confirmResult.goalSatisfied,
 					}
 				},
 			}),
@@ -969,7 +974,7 @@ type streamRunResult struct {
 	cancelReason   string // "", "user"
 	err            string // error message if execution failed
 	empty          bool   // true if AI returned no content
-	abnormalReason string // non-empty when the turn may be auto-resumed
+	abnormalReason string // non-empty when the turn did NOT finish cleanly (may be a permanent, non-resumable failure)
 	msgID          int64  // finalized assistant row id (0 if none) — see DrainResult.MsgID
 	goalSatisfied  bool   // true when the reply declared <clawbench-goal-satisfied/>
 }

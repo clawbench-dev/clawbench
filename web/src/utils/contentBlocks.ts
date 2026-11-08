@@ -71,7 +71,7 @@ export function getWarningText(
           return translated + ': ' + block.text.substring(colonIdx + 2) + codeSuffix
         }
       }
-      if (block.reason === 'request_failed' && block.text) {
+      if ((block.reason === 'request_failed' || block.reason === 'quota_exhausted') && block.text) {
         return translated + ': ' + block.text + codeSuffix
       }
       return translated + detailSuffix + codeSuffix
