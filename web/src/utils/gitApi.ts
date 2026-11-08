@@ -31,6 +31,11 @@ export interface GitFetchOptions {
     signal?: AbortSignal
     /** Override the default timeout (ms). Defaults to GIT_TIMEOUT_MS. */
     timeoutMs?: number
+    /**
+     * HTTP method. Defaults to GET. Only mutating calls (fetch) need POST, and
+     * they pass a longer timeout: the request waits on the remote.
+     */
+    method?: string
 }
 
 /**
@@ -61,7 +66,11 @@ export function gitFetch(url: string, opts: GitFetchOptions = {}): Promise<Respo
     const onExternalAbort = () => controller.abort()
     opts.signal?.addEventListener('abort', onExternalAbort)
 
-    return fetch(url, { headers: localeHeaders(), signal: controller.signal }).catch((err: unknown) => {
+    return fetch(url, {
+        method: opts.method ?? 'GET',
+        headers: localeHeaders(),
+        signal: controller.signal,
+    }).catch((err: unknown) => {
         // Distinguish error sources by the timedOut flag, not by inspecting
         // opts.signal.aborted after the fact. That post-hoc check has a race:
         // if the internal timeout fired and the external signal happens to

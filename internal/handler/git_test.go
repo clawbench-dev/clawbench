@@ -3448,3 +3448,195 @@ func TestForceRemoveWorktree_Failure(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, "delete_failed", resp["error"])
 }
+
+// --- ServeGitFetch ---
+
+// repoWithRemote points the project repo at a bare remote and returns a second
+// clone that plays "someone else's machine".
+func repoWithRemote(t *testing.T, projectDir string) string {
+	t.Helper()
+	base := t.TempDir()
+	remoteDir := filepath.Join(base, "remote.git")
+	otherDir := filepath.Join(base, "other")
+
+	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+		t.Fatalf("mkdir bare remote: %v", err)
+	}
+	runGitIn(t, remoteDir, "init", "--bare", ".")
+	runGitIn(t, projectDir, "remote", "add", "origin", remoteDir)
+	runGitIn(t, projectDir, "push", "-u", "origin", "HEAD")
+
+	// `git init --bare` points HEAD at refs/heads/master, but initGitRepo names
+	// the branch "main" — without this the clone below lands on an unborn master
+	// and pushes to a branch the project does not track.
+	branch := currentBranchOf(t, projectDir)
+	runGitIn(t, remoteDir, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+
+	runGitIn(t, base, "clone", remoteDir, otherDir)
+	runGitIn(t, otherDir, "checkout", branch)
+	runGitIn(t, otherDir, "config", "user.email", "other@test.com")
+	runGitIn(t, otherDir, "config", "user.name", "Other")
+	return otherDir
+}
+
+// currentBranchOf returns the checked-out branch name of dir.
+func currentBranchOf(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("read branch of %s: %v", dir, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func fetchRequest(t *testing.T, projectDir string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newRequest(t, http.MethodPost, "/api/git/fetch", nil)
+	withProjectCookie(req, projectDir)
+	return callHandler(ServeGitFetch, req)
+}
+
+type fetchResponse struct {
+	Success     bool   `json:"success"`
+	Error       string `json:"error"`
+	ErrorDetail string `json:"errorDetail"`
+	Summary     string `json:"summary"`
+}
+
+// The whole point of fetch: the remote ref moves, the branch and the working
+// tree do not.
+func TestServeGitFetch_UpdatesRemoteRefWithoutMovingBranch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	createTestFile(t, other, "remote.txt", "from remote\n")
+	gitCommitAll(t, other, "remote commit")
+	runGitIn(t, other, "push")
+	remoteHead := getHeadSHA(t, other)
+	localBefore := getHeadSHA(t, env.ProjectDir)
+	assert.NotEqual(t, remoteHead, localBefore, "premise: the local branch is behind")
+
+	w := fetchRequest(t, env.ProjectDir)
+	assertOK(t, w)
+
+	var body fetchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.True(t, body.Success, "body: %s", w.Body.String())
+
+	// The remote-tracking ref is now current…
+	refCmd := exec.Command("git", "rev-parse", "origin/"+currentBranchOf(t, env.ProjectDir))
+	refCmd.Dir = env.ProjectDir
+	refOut, refErr := refCmd.Output()
+	require.NoError(t, refErr)
+	assert.Equal(t, remoteHead, strings.TrimSpace(string(refOut)))
+	// …but HEAD did not move and no file appeared on disk.
+	assert.Equal(t, localBefore, getHeadSHA(t, env.ProjectDir), "fetch must not move the branch")
+	_, statErr := os.Stat(filepath.Join(env.ProjectDir, "remote.txt"))
+	assert.True(t, os.IsNotExist(statErr), "fetch must not touch the working tree")
+}
+
+// Ahead/behind is what the toolbar renders, so a fetch must make the tracking
+// counter change without any pull.
+func TestServeGitFetch_UpdatesAheadBehind(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	for i := 0; i < 2; i++ {
+		createTestFile(t, other, "remote"+string(rune('a'+i))+".txt", "x\n")
+		gitCommitAll(t, other, "remote commit "+string(rune('a'+i)))
+	}
+	runGitIn(t, other, "push")
+
+	// Before fetching, the local view of the upstream is stale.
+	_, behindBefore := trackingCounts(t, env.ProjectDir)
+	assert.Equal(t, 0, behindBefore, "premise: nothing is known to be behind before fetching")
+
+	w := fetchRequest(t, env.ProjectDir)
+	assertOK(t, w)
+
+	ahead, behind := trackingCounts(t, env.ProjectDir)
+	assert.Equal(t, 0, ahead)
+	assert.Equal(t, 2, behind, "fetch must bring the tracking count up to date")
+}
+
+// trackingCounts reads `%(upstream:track)` the same way ServeGitBranches does.
+func trackingCounts(t *testing.T, dir string) (ahead, behind int) {
+	t.Helper()
+	branch := currentBranchOf(t, dir)
+	cmd := exec.Command("git", "for-each-ref", "--format=%(upstream:track)", "refs/heads/"+branch)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	return parseTrackInfo(strings.TrimSpace(string(out)))
+}
+
+func TestServeGitFetch_NoRemoteIsNotAnError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	w := fetchRequest(t, env.ProjectDir)
+	assertOK(t, w)
+
+	var body fetchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.True(t, body.Success, "a repo without remotes has nothing to fetch, not an error")
+}
+
+func TestServeGitFetch_BusyWhenAnotherFetchRuns(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	fetchMu.Lock()
+	defer fetchMu.Unlock()
+
+	req := newRequest(t, http.MethodPost, "/api/git/fetch", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGitFetch, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var body fetchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.False(t, body.Success)
+	assert.Equal(t, "git_busy", body.Error)
+}
+
+// A fetch must not be blocked by (or block) a branch switch: they touch
+// different state, so they use different locks.
+func TestServeGitFetch_DoesNotTakeTheCheckoutLock(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	checkoutMu.Lock()
+	defer checkoutMu.Unlock()
+
+	req := newRequest(t, http.MethodPost, "/api/git/fetch", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGitFetch, req)
+	assert.NotEqual(t, http.StatusConflict, w.Code)
+}
+
+func TestServeGitFetch_RejectsGet(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodGet, "/api/git/fetch", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGitFetch, req)
+	assert.NotEqual(t, http.StatusOK, w.Code)
+}

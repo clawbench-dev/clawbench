@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref, defineComponent } from 'vue'
 import GitHistoryContent from '@/components/git/GitHistoryContent.vue'
+import { useToast } from '@/composables/useToast'
+import { GIT_TIMEOUT_MS } from '@/utils/gitApi'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -38,6 +40,9 @@ vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
 // loadProjectHistory into its error branch.
 vi.mock('@/utils/gitApi', () => ({
   gitFetch: mockGitFetch,
+  // Mirrors the real constant: the fetch test asserts the caller asks for a
+  // longer budget than the default read timeout.
+  GIT_TIMEOUT_MS: 10_000,
   GitTimeoutError: class GitTimeoutError extends Error {},
   createSeqGuard: () => {
     let current: { __seqToken: true; signal: AbortSignal } | null = null
@@ -65,8 +70,8 @@ vi.mock('@/stores/app', () => ({
 vi.mock('@/components/git/GitCommitList.vue', () => ({
   default: defineComponent({
     name: 'GitCommitList',
-    props: ['branches', 'currentBranch', 'viewBranch', 'mode'],
-    emits: ['change-branch', 'select', 'search', 'load-more', 'refresh', 'manage'],
+    props: ['branches', 'currentBranch', 'viewBranch', 'mode', 'fetching'],
+    emits: ['change-branch', 'select', 'search', 'load-more', 'refresh', 'manage', 'fetch'],
     template: '<div class="commit-list-stub"><slot /></div>',
   }),
 }))
@@ -569,5 +574,78 @@ describe('GitHistoryContent — read-only branch view', () => {
     expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history', expect.anything())
     expect(mockGitFetch.mock.calls.some(([url]) => String(url).startsWith('/api/git/working-tree'))).toBe(true)
     wrapper.unmount()
+  })
+})
+
+// ── Fetch from remotes ──────────────────────────────────────
+// The handler is the only place that knows the fetch endpoint exists; the child
+// toolbar only emits `fetch`. These pin the request shape (POST, long timeout)
+// and that both outcomes refresh the numbers the toolbar shows.
+describe('fetch from remotes', () => {
+  function routeWithFetch(fetchBody: Record<string, unknown>) {
+    const calls: Array<{ url: string; opts?: Record<string, unknown> }> = []
+    mockGitFetch.mockImplementation((url: string, opts?: Record<string, unknown>) => {
+      if (url === '/api/git/fetch') {
+        calls.push({ url, opts })
+        return Promise.resolve({ ok: true, json: async () => fetchBody })
+      }
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            isGit: true,
+            commits: [{ sha: 'c0ffee1', msg: 'first', date: '2026-01-01T00:00:00Z', author: 'a' }],
+            hasMore: false,
+          }),
+        })
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) })
+    })
+    return calls
+  }
+
+  async function mountAndFetch() {
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    await (wrapper.vm as any).onFetch()
+    await flushPromises()
+    return wrapper
+  }
+
+  it('posts to the fetch endpoint with a budget longer than the read timeout', async () => {
+    const calls = routeWithFetch({ success: true, summary: 'From github.com:org/repo' })
+    const toast = useToast()
+    toast.dismiss()
+
+    await mountAndFetch()
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].opts).toMatchObject({ method: 'POST' })
+    // A fetch waits on the remote; the default 10s would abort a slow one.
+    expect((calls[0].opts as { timeoutMs?: number }).timeoutMs).toBeGreaterThan(GIT_TIMEOUT_MS)
+    expect(toast.message.value).toBe('From github.com:org/repo')
+    expect(mockLoadGitBranch).toHaveBeenCalled()
+  })
+
+  it("shows git's own explanation when the fetch fails", async () => {
+    routeWithFetch({
+      success: false,
+      error: 'fetch_failed',
+      errorDetail: 'fatal: unable to access: Could not resolve host.',
+    })
+    const toast = useToast()
+    toast.dismiss()
+
+    await mountAndFetch()
+
+    // A generic "fetch failed" would hide the reason the user has to act on
+    // (bad credentials, unreachable host).
+    expect(toast.message.value).toContain('Could not resolve host')
+    // The branch state is still refreshed: a failed fetch may still have moved
+    // some remotes.
+    expect(mockLoadGitBranch).toHaveBeenCalled()
   })
 })

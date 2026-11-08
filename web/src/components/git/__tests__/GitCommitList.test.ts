@@ -758,3 +758,73 @@ describe('search field', () => {
     expect(wrapper.findAll('.drilldown-item')).toHaveLength(5)
   })
 })
+
+// ── Fetch from remotes ───────────────────────────────────────
+// The toolbar only emits; the host owns the request. Fetch never moves the
+// branch, so unlike a pull it stays available everywhere except file mode.
+describe('fetch from remotes', () => {
+  it('emits fetch when clicked', async () => {
+    const wrapper = mountList()
+    await wrapper.find('[data-action="fetch"]').trigger('click')
+    expect(wrapper.emitted('fetch')).toHaveLength(1)
+  })
+
+  it('disables itself while a fetch is in flight', () => {
+    const wrapper = mountList({ fetching: true })
+    expect(wrapper.find('[data-action="fetch"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('is absent in file mode', () => {
+    const wrapper = mountList({ mode: 'file' })
+    expect(wrapper.find('[data-action="fetch"]').exists()).toBe(false)
+  })
+
+  it('stays available while reading another branch', () => {
+    // Fetch only moves remote-tracking refs, so it is safe from any branch view
+    // — and it is exactly how that branch's ahead/behind numbers get current.
+    const wrapper = mountList({
+      branches: [{ name: 'main' }, { name: 'feat/payments' }],
+      currentBranch: 'main',
+      viewBranch: 'feat/payments',
+    })
+    expect(wrapper.find('[data-action="fetch"]').exists()).toBe(true)
+  })
+})
+
+// ── Upstream divergence ──────────────────────────────────────
+// ahead/behind come from the server's %(upstream:track) parse. Only render a
+// side that is non-zero, and render nothing at all for a branch with no
+// upstream (0/0 there would read as "in sync").
+describe('upstream divergence', () => {
+  const branch = (ahead: number, behind: number, remoteTracking = 'origin/main') => ({
+    branches: [{ name: 'main', remoteTracking, ahead, behind }],
+    currentBranch: 'main',
+  })
+
+  it('shows both directions next to the branch', () => {
+    const wrapper = mountList(branch(2, 3))
+    expect(wrapper.find('.branch-track-ahead').text()).toBe('↑2')
+    expect(wrapper.find('.branch-track-behind').text()).toBe('↓3')
+  })
+
+  it('omits the side that is zero', () => {
+    const wrapper = mountList(branch(0, 4))
+    expect(wrapper.find('.branch-track-ahead').exists()).toBe(false)
+    expect(wrapper.find('.branch-track-behind').text()).toBe('↓4')
+  })
+
+  it('renders nothing when the branch matches its upstream', () => {
+    const wrapper = mountList(branch(0, 0))
+    expect(wrapper.find('.branch-track').exists()).toBe(false)
+  })
+
+  it('renders nothing when the branch has no upstream', () => {
+    const wrapper = mountList(branch(0, 0, ''))
+    expect(wrapper.find('.branch-track').exists()).toBe(false)
+  })
+
+  it('explains the numbers on hover', () => {
+    const wrapper = mountList(branch(2, 3))
+    expect(wrapper.find('.branch-track').attributes('title')).toBe('git.branchView.trackTitle')
+  })
+})

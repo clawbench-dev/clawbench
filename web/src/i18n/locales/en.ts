@@ -2587,6 +2587,13 @@ export default {
       hideMerges: 'Hide merge commits',
       showMerges: 'Show merge commits',
     },
+    fetch: {
+      title: 'Fetch',
+      success: 'Fetched',
+      failed: 'Fetch failed',
+      timeout: 'Fetch timed out — check the network and try again',
+      busy: 'Another fetch is already running — try again in a moment',
+    },
     branchView: {
       branches: 'Local branches',
       localCount: 'Local branches · {count}',
@@ -2596,6 +2603,7 @@ export default {
       current: 'Current',
       manage: 'Manage branches / worktrees…',
       fileActionsDisabled: 'This version belongs to another branch and is not in the workspace',
+      trackTitle: 'vs {upstream}: {ahead} ahead, {behind} behind',
     },
     diffView: {
       noChanges: 'No changes',

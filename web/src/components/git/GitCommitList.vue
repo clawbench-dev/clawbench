@@ -35,6 +35,15 @@
           <ChevronDown :size="10" />
         </button>
 
+        <!-- Divergence from the upstream, right next to the branch it belongs to.
+             Only rendered when there IS a difference: "↑0 ↓0" on every clean
+             branch is noise, and it would read as "in sync" for a branch that
+             has no upstream at all. -->
+        <span v-if="trackInfo" class="branch-track" :title="trackTitle">
+          <span v-if="trackInfo.behind > 0" class="branch-track-behind">↓{{ trackInfo.behind }}</span>
+          <span v-if="trackInfo.ahead > 0" class="branch-track-ahead">↑{{ trackInfo.ahead }}</span>
+        </span>
+
         <div v-if="branchMenuOpen" class="branch-menu" @click.stop>
           <!-- The old bar spent a whole row saying "本地 1 个分支". It belongs
                here: the moment you open the picker is the moment it is useful. -->
@@ -84,6 +93,23 @@
         >
           <Search :size="14" />
           <span class="action-label">{{ t('git.commitList.search') }}</span>
+        </button>
+        <!-- Fetch from every remote. Only the remote-tracking refs move, so this
+             is safe to press at any time — the working tree and the current
+             branch stay exactly as they are; the numbers next to the branch are
+             what change. -->
+        <button
+          v-if="isGit && mode !== 'file' && commits.length > 0"
+          class="drilldown-refresh-btn"
+          :title="t('git.fetch.title')"
+          :aria-label="t('git.fetch.title')"
+          :disabled="fetching"
+          data-action="fetch"
+          @click.stop="$emit('fetch')"
+        >
+          <LoadingIndicator v-if="fetching" size="sm" inline />
+          <CloudDownload v-else :size="14" />
+          <span class="action-label">{{ t('git.fetch.title') }}</span>
         </button>
         <RefreshButton
           v-if="commits.length > 0"
@@ -243,7 +269,7 @@
 </template>
 
 <script setup>
-import { FileText, GitBranch, GitCommitHorizontal, GitMerge, Info, ListTree, MessageSquare, Search, ChevronDown, Check, Eye, Settings } from 'lucide-vue-next'
+import { FileText, GitBranch, GitCommitHorizontal, GitMerge, CloudDownload, Info, ListTree, MessageSquare, Search, ChevronDown, Check, Eye, Settings } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
@@ -306,12 +332,36 @@ const props = defineProps({
   currentBranch: { type: String, default: '' },
   /** Branch whose history is on screen ('' = the checked-out branch). */
   viewBranch: { type: String, default: '' },
+  /** True while a fetch is in flight (drives the button's spinner + disabled state). */
+  fetching: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage', 'change-branch'])
+const emit = defineEmits(['select', 'search', 'load-more', 'refresh', 'manage', 'change-branch', 'fetch'])
 
 const isOtherBranch = computed(() => !!props.viewBranch && props.viewBranch !== props.currentBranch)
 const shownBranch = computed(() => props.viewBranch || props.currentBranch)
+
+/**
+ * How far the branch on screen is from its upstream, or null when it matches.
+ *
+ * `ahead`/`behind` come from the server's `%(upstream:track)` parse. A branch
+ * with no upstream reports 0/0, so nothing is shown — there is nothing to be
+ * ahead of, and "↑0 ↓0" would read as "in sync" instead.
+ */
+const trackInfo = computed(() => {
+  const b = props.branches.find(x => x.name === shownBranch.value)
+  if (!b) return null
+  const ahead = b.ahead || 0
+  const behind = b.behind || 0
+  if (ahead === 0 && behind === 0) return null
+  return { ahead, behind, upstream: b.remoteTracking || shownBranch.value }
+})
+
+const trackTitle = computed(() => t('git.branchView.trackTitle', {
+  upstream: trackInfo.value?.upstream || '',
+  ahead: trackInfo.value?.ahead || 0,
+  behind: trackInfo.value?.behind || 0,
+}))
 const showBranchBar = computed(() => props.mode !== 'file' && props.branches.length > 0)
 
 // ── Branch picker ──
@@ -716,6 +766,28 @@ defineExpose({ observeList, unobserveList, commitSearch })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Divergence from the upstream (↑ahead ↓behind), right after the branch chip.
+   The numbers carry the meaning; the colour only marks the actionable
+   direction — "behind" means there is something to fetch. */
+.branch-track {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: none;
+}
+
+.branch-track-behind {
+  color: var(--accent-color);
+}
+
+.branch-track-ahead {
+  color: var(--text-muted);
 }
 
 /* Read-only strip: a warning about where the workspace is, not a toolbar.

@@ -2583,6 +2583,13 @@ export default {
       hideMerges: '隐藏合并提交',
       showMerges: '显示合并提交',
     },
+    fetch: {
+      title: '获取',
+      success: '已获取',
+      failed: '获取失败',
+      timeout: '获取超时，请检查网络后重试',
+      busy: '已有另一次获取正在进行，请稍后再试',
+    },
     branchView: {
       branches: '本地分支',
       localCount: '本地分支 · {count}',
@@ -2592,6 +2599,7 @@ export default {
       current: '当前',
       manage: '管理分支 / 工作树…',
       fileActionsDisabled: '这是其他分支的版本，工作区里没有这份文件',
+      trackTitle: '与 {upstream} 相比：领先 {ahead} 个提交，落后 {behind} 个提交',
     },
     diffView: {
       noChanges: '无变更',

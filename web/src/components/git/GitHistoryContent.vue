@@ -30,10 +30,12 @@
       :branches="branches"
       :current-branch="store.state.gitBranch"
       :view-branch="viewBranch"
+      :fetching="fetching"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
       @refresh="onRefresh"
+      @fetch="onFetch"
       @manage="navigateToManage"
       @change-branch="onChangeBranch"
     />
@@ -204,6 +206,7 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { shouldShowFullLoading } from '@/utils/gitFileHistory'
 import { useGitHistoryView } from '@/composables/useGitHistoryView'
 import { gitFetch } from '@/utils/gitApi'
+import { useToast } from '@/composables/useToast'
 import { revealInFileManager } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
@@ -276,6 +279,45 @@ async function onChangeBranch(name) {
   viewBranch.value = name
   currentView.value = 'commits'
   await loadProjectHistory()
+}
+
+// ─── Fetch from remotes ────────────────────────────────────────────────────
+// The server runs `git fetch --all`: remote-tracking refs move, the branch and
+// the working tree do not. That is why this is safe to press while reading
+// history — nothing on disk changes, only the ahead/behind numbers next to the
+// branch.
+const fetching = ref(false)
+const toast = useToast()
+
+async function onFetch() {
+  if (fetching.value) return
+  fetching.value = true
+  try {
+    // A fetch waits on the network, so it gets a much longer budget than the
+    // 10s default used by the read-only history requests (the server gives up
+    // at 60s).
+    const resp = await gitFetch('/api/git/fetch', { method: 'POST', timeoutMs: 90_000 })
+    const data = await resp.json().catch(() => ({}))
+    if (data.success) {
+      toast.show(data.summary || t('git.fetch.success'), { type: 'success' })
+    } else if (data.error === 'fetch_timeout') {
+      toast.show(t('git.fetch.timeout'), { type: 'error', duration: 6000 })
+    } else if (data.error === 'git_busy') {
+      toast.show(t('git.fetch.busy'), { type: 'error', duration: 6000 })
+    } else {
+      // git's own wording (auth failure, unreachable host) is more useful than
+      // a generic message.
+      toast.show(data.errorDetail || t('git.fetch.failed'), { type: 'error', duration: 8000 })
+    }
+    // Always refresh: the branch list is where ahead/behind comes from, and a
+    // failed fetch may still have updated some remotes.
+    await Promise.all([loadBranches(), store.loadGitBranch()])
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === 'GitTimeoutError'
+    toast.show(timedOut ? t('git.fetch.timeout') : t('git.fetch.failed'), { type: 'error', duration: 6000 })
+  } finally {
+    fetching.value = false
+  }
 }
 
 /**

@@ -1634,6 +1634,89 @@ func ServeGitCheckout(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo
 	})
 }
 
+// fetchTimeout bounds a fetch. The request may wait on a remote that never
+// answers, and the UI must get an answer instead of an endless spinner.
+const fetchTimeout = 60 * time.Second
+
+// fetchMu serializes fetches: two `git fetch` runs on one repo fight over the
+// same ref locks. It is deliberately NOT checkoutMu — a fetch only updates
+// remote-tracking refs, so it must not block (or be blocked by) a branch switch.
+var fetchMu sync.Mutex
+
+// ServeGitFetch downloads new commits from every remote without touching the
+// working tree or the current branch.
+//
+// POST /api/git/fetch
+//
+// Fetch, not pull, on purpose: the history panel is a place to *look* at what
+// the remote has. Moving the branch (and with it the user's files) belongs to a
+// deliberate pull elsewhere. After a fetch the ahead/behind numbers next to the
+// branch are current, and nothing on disk has changed.
+func ServeGitFetch(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	if !isGitRepo(projectPath) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAGitRepoShort")
+		return
+	}
+
+	if !fetchMu.TryLock() {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"success": false,
+			"error":   "git_busy",
+		})
+		return
+	}
+	defer fetchMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(r.Context(), fetchTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--all")
+	cmd.Dir = projectPath
+	out, err := cmd.CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+
+	if ctx.Err() == context.DeadlineExceeded {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "fetch_timeout",
+		})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success":     false,
+			"error":       "fetch_failed",
+			"errorDetail": msg,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		// Empty when nothing new arrived: `git fetch` prints nothing in that case,
+		// and the UI falls back to its own "fetched" wording.
+		"summary": lastNonEmptyLine(msg),
+	})
+}
+
+// lastNonEmptyLine returns the last line with content in s.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
 // tagInfo represents a git tag in API responses.
 type tagInfo struct {
 	Name   string `json:"name"`

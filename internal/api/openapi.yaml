@@ -3314,6 +3314,24 @@ paths:
         "200":
           description: 结果
 
+  /api/git/fetch:
+    post:
+      tags: [Git]
+      summary: 获取远端更新（只更新远端跟踪分支，不动工作区）
+      description: >
+        对所有远端执行 `git fetch --all`。只更新远端跟踪引用，不移动当前分支、
+        不改工作区里的任何文件；获取之后提交列表旁的「领先 / 落后」数字即为最新。
+        需要真正把分支往前挪时用 `git pull`，本接口刻意不做。
+      operationId: gitFetch
+      responses:
+        "200":
+          description: >
+            结果。`success=true` 时带 `summary`（git 输出的最后一行，没有新内容时为空）；
+            `success=false` 时带 `error`（`fetch_failed` / `fetch_timeout`）
+            与 `errorDetail`（git 原文）。
+        "409":
+          description: "已有另一次获取正在进行（error 为 git_busy）。"
+
   /api/git/tags:
     get:
       tags: [Git]
