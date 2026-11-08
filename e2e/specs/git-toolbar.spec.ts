@@ -34,7 +34,8 @@ test.describe('Git history toolbar', () => {
     // place instead of by each button's own width rules.
     await expect(bar.locator('.git-actions [data-action="search"]')).toBeVisible()
     await expect(bar.locator('.git-actions [data-action="refresh"]')).toBeVisible()
-    await expect(bar.locator('.git-actions [data-action="manage"]')).toBeVisible()
+    // Manage lives in the branch picker's menu, not at the end of the bar.
+    await expect(bar.locator('.git-actions [data-action="manage"]')).toHaveCount(0)
 
     // The second row is gone — no leftover branch bar anywhere in the panel.
     await expect(page.locator('.branch-bar')).toHaveCount(0)

@@ -167,19 +167,10 @@
             <GitMerge :size="14" />
             <span class="action-label">{{ t('git.commitList.mergeFilter') }}</span>
           </button>
-          <!-- Branch / tag / worktree management. NOT a "more" glyph: the bar has
-               its own overflow button, and two ⋮ sitting a few pixels apart for
-               different things is unreadable. -->
-          <button
-            v-if="isGit && mode !== 'file'"
-            class="drilldown-refresh-btn"
-            :title="t('git.manage.title')"
-            data-action="manage"
-            @click.stop="$emit('manage')"
-          >
-            <ListTree :size="14" />
-            <span class="action-label">{{ t('git.manage.title') }}</span>
-          </button>
+          <!-- No manage button here: the branch picker's menu already carries
+               one, and a second entry to the same panel sat at the far end of
+               the bar where it read as a peer of search/refresh rather than as
+               "everything about branches". -->
         </ActionBar>
       </div>
 
@@ -352,7 +343,7 @@
 </template>
 
 <script setup>
-import { FileText, GitBranch, GitCommitHorizontal, GitMerge, CloudDownload, Info, ListTree, MessageSquare, Search, ChevronDown, Check, Eye, Settings } from 'lucide-vue-next'
+import { FileText, GitBranch, GitCommitHorizontal, GitMerge, CloudDownload, Info, MessageSquare, Search, ChevronDown, Check, Eye, Settings } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'

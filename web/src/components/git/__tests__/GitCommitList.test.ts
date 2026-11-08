@@ -237,18 +237,24 @@ describe('GitCommitList', () => {
       expect(wrapper.emitted('refresh')).toBeTruthy()
     })
 
-    it('emits manage when manage button is clicked (non-file mode)', async () => {
+    it('has no manage button of its own — the branch menu owns that entry', () => {
+      // The bar used to end with a manage button; the branch picker's menu
+      // carries the same action, so the duplicate is gone.
       const wrapper = mountList()
-      // Stable hook rather than a positional index: the toolbar gained a filter
-      // toggle, and index-based selection silently clicked the wrong button.
-      const btn = wrapper.find('[data-action="manage"]')
-      await btn.trigger('click')
+      expect(wrapper.find('[data-action="manage"]').exists()).toBe(false)
+    })
+
+    it('emits manage from the branch menu (non-file mode)', async () => {
+      const wrapper = mountList({ branches: [{ name: 'main' }], currentBranch: 'main' })
+      await wrapper.find('.branch-chip').trigger('click')
+      const items = wrapper.findAll('.branch-menu-item')
+      await items[items.length - 1].trigger('click')
       expect(wrapper.emitted('manage')).toBeTruthy()
     })
 
-    it('hides manage button in file mode', () => {
-      const wrapper = mountList({ mode: 'file' })
-      expect(wrapper.find('[data-action="manage"]').exists()).toBe(false)
+    it('offers no branch picker (hence no manage entry) in file mode', () => {
+      const wrapper = mountList({ mode: 'file', branches: [{ name: 'main' }] })
+      expect(wrapper.find('.branch-picker').exists()).toBe(false)
       // Refresh and search stay: a single file's history is still searchable.
       expect(wrapper.find('[data-action="refresh"]').exists()).toBe(true)
       expect(wrapper.find('[data-action="search"]').exists()).toBe(true)

@@ -187,8 +187,11 @@ describe('git history header matches the forge panel header', () => {
     // on specificity, which is what the assertion above pins for forge.
     expect(baseRule(componentsCss, 'drilldown-refresh-btn')).not.toBeNull()
 
+    // Descendant, not a child combinator: dfaaa70f5 relaxed it so a row button
+    // wrapped in a container (the file manager's sort button) still lights up.
+    // This assertion kept the old `>` and had been failing since.
     const shared = stripComments(componentsCss).match(
-      /\.ab--header > button:not\(\[data-ab-more\]\):hover:not\(:disabled\)[^{]*\{([^}]*)\}/,
+      /\.ab--header button:not\(\[data-ab-more\]\):hover:not\(:disabled\)[^{]*\{([^}]*)\}/,
     )
     expect(shared, 'the shared ActionBar hover rule must exist').not.toBeNull()
     expect(shared![1]).toMatch(/color:\s*var\(--text-primary\)/)
@@ -313,47 +316,27 @@ describe('the header search field is borderless and fills the free space', () =>
   })
 })
 
-describe('the manage button does not repeat the branch glyph', () => {
-  it('uses a different icon from the picker', () => {
-    // The picker carries GitBranch. The manage button opens the branch/worktree/
-    // tag panel, so it originally reused GitBranch too — two identical icons in
-    // one bar. It then moved to MoreVertical, which stopped working once the
-    // bar gained ActionBar's own ⋮ overflow button. ListTree is the one glyph
-    // that says "a panel of three lists" and collides with neither.
+describe('the toolbar has exactly one entry to the manage panel', () => {
+  it('keeps it in the branch menu and out of the action bar', () => {
+    // The bar used to end with a manage button while the branch picker's menu
+    // carried the same action — two doors to one panel. The menu is the one
+    // that survived: it sits next to the thing being managed.
     const src = readWebFile('src/components/git/GitCommitList.vue')
-    const picker = src.match(/<div v-if="showBranchBar" class="branch-picker">([\s\S]*?)<\/button>/)
-    expect(picker, 'the branch picker must exist').not.toBeNull()
-    const pickerIcon = picker![1].match(/<([A-Z][A-Za-z0-9]*)\s+:size/)
-    expect(pickerIcon, 'the picker must render an icon').not.toBeNull()
-    expect(pickerIcon![1]).toBe('GitBranch')
-
-    // Anchor on the button's own attribute: an unanchored `<button[\s\S]*?`
-    // starts at the FIRST button in the header, so any new toolbar button placed
-    // before this one makes the block start elsewhere and the icon check reads
-    // the wrong glyph.
-    const manageBtn = src.match(
-      /<button\b[^>]*data-action="manage"[\s\S]*?<\/button>/,
+    expect(src, 'the branch menu must still offer manage').toContain(
+      'git.branchView.manage',
     )
-    expect(manageBtn, 'the manage button must exist').not.toBeNull()
-    const manageIcon = manageBtn![0].match(/<([A-Z][A-Za-z0-9]*)\s+:size/)
-    expect(manageIcon, 'the manage button must render an icon').not.toBeNull()
-
     expect(
-      manageIcon![1],
-      'the manage button must not reuse the branch glyph',
-    ).not.toBe(pickerIcon![1])
-    // NOT MoreVertical: the bar owns an overflow button that already wears ⋮,
-    // and two of them a few pixels apart for different actions is unreadable.
-    expect(manageIcon![1]).toBe('ListTree')
+      src,
+      'the action bar must not carry a second manage button',
+    ).not.toMatch(/data-action="manage"/)
   })
 
-  it('imports the manage icon so the button is not empty', () => {
-    // A missing import renders an empty <svg>-less button that no existence
-    // assertion would catch — see concurrent_git_safety §9.
+  it('does not keep the now-unused panel glyph imported', () => {
+    // A leftover import is dead weight; worse, it invites re-adding the button
+    // without anyone noticing there are two.
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
     expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('ListTree')
-    expect(imports![1], 'the ⋮ glyph now belongs to the overflow button').not.toContain('MoreVertical')
+    expect(imports![1]).not.toContain('ListTree')
   })
 })
