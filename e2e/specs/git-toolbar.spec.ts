@@ -1,5 +1,10 @@
 import { test, expect } from '../fixtures'
 import { NavigationPage } from '../pages/navigation.page'
+import { apiFetch } from '../helpers/auth'
+import { execFileSync } from 'child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 
 /**
  * Git history toolbar.
@@ -14,7 +19,50 @@ import { NavigationPage } from '../pages/navigation.page'
  * behaviour is what makes the single row fit, and it is decided at runtime by
  * ActionBar's measurement, not by CSS alone.
  */
+/**
+ * A throwaway repo with TWO local branches.
+ *
+ * The default e2e project is the checkout this suite runs in, and CI checks that
+ * out as a detached HEAD with a single `main` ref — `git for-each-ref refs/heads/`
+ * still lists one, but `git symbolic-ref HEAD` fails, so the branch picker had
+ * nothing to show and `.branch-chip` never rendered. Building the repo here makes
+ * the assertions independent of how the runner checked the code out.
+ */
+function createToolbarRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'clawbench-git-toolbar-'))
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+  git('init', '-q', '-b', 'main')
+  git('config', 'user.email', 'e2e@example.invalid')
+  git('config', 'user.name', 'e2e')
+  writeFileSync(join(dir, 'README.md'), '# toolbar fixture\n')
+  git('add', '.')
+  git('commit', '-q', '-m', 'fixture commit')
+  git('branch', 'feature/other')
+  return dir
+}
+
 test.describe('Git history toolbar', () => {
+  let repoDir = ''
+
+  test.beforeAll(async () => {
+    repoDir = createToolbarRepo()
+    await apiFetch('/api/project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: repoDir }),
+    })
+  })
+
+  test.afterAll(async () => {
+    await apiFetch('/api/project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: process.cwd() }),
+    }).catch(() => {})
+    try { rmSync(repoDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  })
+
   test.beforeEach(async ({ page }) => {
     // switchToTab, not switchToHistory: the latter drives the narrow dock's
     // overflow menu, which does not exist at the default (wide) viewport.
