@@ -349,3 +349,113 @@ describe('the bar holds icon buttons only', () => {
     expect(readWebFile('src/components/mail/MailFolderBar.vue')).not.toContain('ab-auto')
   })
 })
+
+/* --------------------------------------------------------------------------
+   Structural audit: every ActionBar in the app.
+
+   The bar manages icon buttons — labels, folding into "more", scrolling — and
+   pins the odd inert text item (a title, a breadcrumb, a count) to its natural
+   width. Anything else inside it is a bug:
+     - a text control gets squashed by the icon-button box and makes the fold
+       decision depend on its own content;
+     - a clickable fixed item is a control the bar does not manage;
+     - a wrapper element hides its buttons from the bar entirely (they never
+       fold and are clipped on a narrow row).
+   `<template>` / `<Teleport>` / `<slot>` render no box of their own, so their
+   contents still count as row children.
+   -------------------------------------------------------------------------- */
+
+/** Files allowed to keep a wrapper element around buttons, with the reason. */
+const WRAPPER_EXEMPT: Record<string, string> = {
+  'src/components/terminal/TerminalPanelContent.vue':
+    'virtual keyboard: keys are grouped into .key-group for the layout (dividers between groups), not to manage the row',
+}
+
+const BUTTONISH = /^(button|RefreshButton|CopyButton)$/
+const TRANSPARENT = /^(template|Teleport|slot)$/
+const CONTROL = /^(MenuSelect|input|textarea|select)$/
+const VOID_TAGS = new Set(['input', 'br', 'hr', 'img', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon'])
+
+interface Tag { name: string; attrs: string; closing: boolean; selfClosing: boolean }
+
+function parseTags(block: string): Tag[] {
+  const out: Tag[] = []
+  const re = /<(\/?)([A-Za-z][\w.-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(block)) !== null) {
+    out.push({ closing: m[1] === '/', name: m[2], attrs: m[3], selfClosing: m[4] === '/' })
+  }
+  return out
+}
+
+/** Problems inside one `<ActionBar>…</ActionBar>` block. */
+function barProblems(block: string, file: string): string[] {
+  const problems: string[] = []
+  const inner = block.replace(/^<ActionBar[^>]*>/, '').replace(/<\/ActionBar>$/, '')
+  const stack: boolean[] = [] // true = renders no box of its own
+  let depth = 0
+
+  for (const tag of parseTags(inner)) {
+    if (tag.closing) {
+      if (stack.pop() === false) depth--
+      continue
+    }
+    const transparent = TRANSPARENT.test(tag.name)
+    const insideTransparent = stack.some(Boolean)
+
+    if (!insideTransparent) {
+      if (CONTROL.test(tag.name)) {
+        problems.push(`${file}: <${tag.name}> is a control — it belongs beside the bar, not in it`)
+      }
+      if (depth === 0) {
+        if (!BUTTONISH.test(tag.name) && /@click|role="button"/.test(tag.attrs)) {
+          problems.push(`${file}: <${tag.name}> is clickable — only icon buttons may be interactive inside the bar`)
+        }
+      } else if (BUTTONISH.test(tag.name) && !WRAPPER_EXEMPT[file]) {
+        problems.push(`${file}: <${tag.name}> is nested inside another element — the bar only manages its direct children, so it never folds`)
+      }
+    }
+
+    if (VOID_TAGS.has(tag.name) || tag.selfClosing) continue
+    stack.push(transparent)
+    if (!transparent) depth++
+  }
+  return problems
+}
+
+function vueFilesWithBars(): string[] {
+  const root = process.cwd().endsWith('/web') ? process.cwd() : join(process.cwd(), 'web')
+  const out: string[] = []
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+      const next = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        if (entry.name === '__tests__' || entry.name === 'node_modules') continue
+        walk(next)
+      } else if (entry.name.endsWith('.vue')) {
+        if (readFileSync(join(root, next), 'utf8').includes('<ActionBar')) out.push(next)
+      }
+    }
+  }
+  walk('src')
+  return out
+}
+
+describe('every ActionBar holds icon buttons and inert text only', () => {
+  const files = vueFilesWithBars()
+
+  it('finds the bars to audit', () => {
+    expect(files.length, 'the audit must actually walk the source tree').toBeGreaterThan(10)
+  })
+
+  it('has no control, clickable fixed item or hidden button in any bar', () => {
+    const problems: string[] = []
+    for (const file of files) {
+      const src = readWebFile(file).replace(/<!--[\s\S]*?-->/g, '')
+      for (const block of src.match(/<ActionBar\b[\s\S]*?<\/ActionBar>/g) ?? []) {
+        problems.push(...barProblems(block, file))
+      }
+    }
+    expect(problems, problems.join('\n')).toEqual([])
+  })
+})

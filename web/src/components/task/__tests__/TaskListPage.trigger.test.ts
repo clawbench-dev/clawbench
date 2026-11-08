@@ -274,7 +274,9 @@ describe('TaskListPage — header labels', () => {
     // room — the wide-pane case. The width decisions live in ActionBar; this
     // pins the wiring (label spans + the class that reveals them).
     const wrapper = await mountWith([])
-    const header = wrapper.find('.list-header')
+    // The row itself is not the ActionBar any more: the breadcrumb sits beside
+    // it, and only the icon buttons live inside.
+    const header = wrapper.find('.list-header-actions')
     expect(header.classes()).toContain('ab--labels')
     expect(header.findAll('.action-label').length).toBeGreaterThanOrEqual(2)
   })

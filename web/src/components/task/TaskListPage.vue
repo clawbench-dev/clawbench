@@ -1,20 +1,25 @@
 <template>
   <div class="task-list-page">
-    <!-- Compact header: breadcrumb + refresh + create button -->
-    <ActionBar class="list-header" mode="menu" size="header">
+    <!-- Compact header: breadcrumb + refresh + create button.
+         The breadcrumb is NOT inside the ActionBar: its crumbs are clickable
+         navigation, and a fixed-width, scrollable control inside the bar made
+         the fold decision depend on how long the task name happens to be. -->
+    <div class="list-header">
       <TaskBreadcrumb />
-      <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh">
-        <span class="action-label">{{ t('common.refresh') }}</span>
-      </RefreshButton>
-      <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
-        <CheckCheck :size="14" />
-        <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
-      </button>
-      <button class="create-btn is-primary" @click="$emit('create')" :title="t('task.form.createTitle')">
-        <Plus :size="16" />
-        <span class="action-label">{{ t('task.form.createTitle') }}</span>
-      </button>
-    </ActionBar>
+      <ActionBar class="list-header-actions" mode="menu" size="header">
+        <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh">
+          <span class="action-label">{{ t('common.refresh') }}</span>
+        </RefreshButton>
+        <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
+          <CheckCheck :size="14" />
+          <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
+        </button>
+        <button class="create-btn is-primary" @click="$emit('create')" :title="t('task.form.createTitle')">
+          <Plus :size="16" />
+          <span class="action-label">{{ t('task.form.createTitle') }}</span>
+        </button>
+      </ActionBar>
+    </div>
     <div class="task-list-body">
       <div v-if="loading && tasks.length === 0" class="task-loading task-loading--skeleton">
         <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
@@ -278,6 +283,13 @@ onMounted(refresh)
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   gap: var(--space-3);
+}
+
+/* Sizes to its buttons, shrinks only when the breadcrumb has already given all
+   it can — that is what lets the bar fold instead of clipping. */
+.list-header-actions {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 /* Create button — the one primary action in this bar, hence `.is-primary`. */

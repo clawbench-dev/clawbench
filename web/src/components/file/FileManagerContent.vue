@@ -33,41 +33,39 @@
           </button>
         </div>
         <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu" size="bar">
-          <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
-            <button class="toolbar-btn" :class="{ active: sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
-              <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
-              <ArrowUpZa v-else :size="16" />
-              <span class="action-label">{{ t('file.sortDefault') }}</span>
+          <button ref="sortBtnRef" class="toolbar-btn" :class="{ active: sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
+            <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
+            <ArrowUpZa v-else :size="16" />
+            <span class="action-label">{{ t('file.sortDefault') }}</span>
+          </button>
+          <Teleport to="body">
+            <div v-if="sortMenuOpen" class="toolbar-dropdown" :style="sortMenuStyle" @click.stop>
+            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'name' }" @click="onSortSelect('name')">
+              <ArrowDownAz :size="14" />
+              <span>{{ t('file.sortByName') }}</span>
+              <ChevronUp v-if="sortField === 'name' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+              <ChevronDown v-else-if="sortField === 'name' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
             </button>
-            <Teleport to="body">
-              <div v-if="sortMenuOpen" class="toolbar-dropdown" :style="sortMenuStyle" @click.stop>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'name' }" @click="onSortSelect('name')">
-                <ArrowDownAz :size="14" />
-                <span>{{ t('file.sortByName') }}</span>
-                <ChevronUp v-if="sortField === 'name' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'name' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'time' }" @click="onSortSelect('time')">
-                <Clock :size="14" />
-                <span>{{ t('file.sortByTime') }}</span>
-                <ChevronUp v-if="sortField === 'time' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'time' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'type' }" @click="onSortSelect('type')">
-                <FileText :size="14" />
-                <span>{{ t('file.sortByType') }}</span>
-                <ChevronUp v-if="sortField === 'type' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'type' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'size' }" @click="onSortSelect('size')">
-                <HardDrive :size="14" />
-                <span>{{ t('file.sortBySize') }}</span>
-                <ChevronUp v-if="sortField === 'size' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'size' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-            </div>
-            </Teleport>
+            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'time' }" @click="onSortSelect('time')">
+              <Clock :size="14" />
+              <span>{{ t('file.sortByTime') }}</span>
+              <ChevronUp v-if="sortField === 'time' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+              <ChevronDown v-else-if="sortField === 'time' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+            </button>
+            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'type' }" @click="onSortSelect('type')">
+              <FileText :size="14" />
+              <span>{{ t('file.sortByType') }}</span>
+              <ChevronUp v-if="sortField === 'type' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+              <ChevronDown v-else-if="sortField === 'type' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+            </button>
+            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'size' }" @click="onSortSelect('size')">
+              <HardDrive :size="14" />
+              <span>{{ t('file.sortBySize') }}</span>
+              <ChevronUp v-if="sortField === 'size' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+              <ChevronDown v-else-if="sortField === 'size' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+            </button>
           </div>
+          </Teleport>
           <RefreshButton icon="RotateCw" :size="16" class="toolbar-btn" :loading="dirRefreshing" :disabled="dirRefreshing" :title="t('nav.refresh')" @click="triggerRefresh()">
             <span class="action-label">{{ t('nav.refresh') }}</span>
           </RefreshButton>
@@ -823,12 +821,12 @@ const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile'
 const sortMenuOpen = ref(false)
 
 // Dropdown positioning (same pattern as FileHeader.vue)
-const sortDropdownWrapRef = ref(null)
+const sortBtnRef = ref(null)
 const sortMenuStyle = ref({})
 
 function updateSortMenuStyle() {
-  if (!sortDropdownWrapRef.value) return
-  const rect = sortDropdownWrapRef.value.getBoundingClientRect()
+  if (!sortBtnRef.value) return
+  const rect = sortBtnRef.value.getBoundingClientRect()
   sortMenuStyle.value = {
     position: 'fixed',
     top: `${toFixedCSS(rect.bottom + 4)}px`,
@@ -1211,9 +1209,13 @@ function onSortSelect(field) {
 }
 
 function closeDropdowns(e) {
-  if (!e.target.closest('.toolbar-dropdown-wrap') && !e.target.closest('.toolbar-dropdown')) {
-    sortMenuOpen.value = false
-  }
+  const target = e.target
+  // The trigger is a direct child of the toolbar now (no wrapper to match), and
+  // this runs on the document AFTER the button's own click — without the guard
+  // the menu would open and immediately close again.
+  if (sortBtnRef.value?.contains(target)) return
+  if (target?.closest('.toolbar-dropdown')) return
+  sortMenuOpen.value = false
 }
 
 // ── Highlight file item (from navToFileInManager calls in FileHeader/highlight-file-item) ──
@@ -3163,9 +3165,8 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
 }
 /* The "on" look (sort field, preview toggle, multi-select) comes from the shared
-   `.ab button.active` rule. The radius has to be restated: the sort button sits
-   inside `.toolbar-dropdown-wrap`, so it is not a direct child of the bar and
-   the shared `> button` sizing rule never reaches it (it came out square). */
+   `.ab button.active` rule. The radius is restated because the same class is
+   also used by the multi-select row, which is not an ActionBar. */
 .toolbar-btn {
     border-radius: var(--radius-sm);
 }
@@ -3188,10 +3189,6 @@ function scrollSelectedIntoView(path) {
 }
 
 /* Sort dropdown */
-.toolbar-dropdown-wrap {
-    position: relative;
-    flex-shrink: 0;
-}
 
 /* ── File Items ── */
 

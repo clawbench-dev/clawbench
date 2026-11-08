@@ -199,15 +199,6 @@ body.code-preview-resizing * {
   max-width: 100%;
 }
 
-.code-preview-actions {
-  display: flex;
-  align-items: center;
-  /* Matches the ActionBar row gap: these buttons live in a wrapper inside the
-     bar, so the bar's own gap does not reach between them. */
-  gap: var(--space-4);
-  flex-shrink: 0;
-}
-
 /* Size, radius, colour and hover come from the shared ActionBar row rules
    (size="bar"); this block keeps only what is specific to the preview card. */
 .code-preview-btn {

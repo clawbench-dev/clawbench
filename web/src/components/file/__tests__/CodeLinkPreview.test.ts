@@ -1025,7 +1025,7 @@ describe('CodeLinkPreview.vue', () => {
       global: { plugins: [i18n] },
     })
 
-    const firstBtn = document.querySelector('.code-preview-actions button') as HTMLButtonElement
+    const firstBtn = document.querySelector('.code-preview-meta button') as HTMLButtonElement
     expect(firstBtn).not.toBeNull()
     firstBtn.focus = vi.fn()
 
@@ -1363,7 +1363,7 @@ describe('CodeLinkPreview.vue', () => {
 
     // Copy path now lives in the shared tool row (the same row the floating
     // card and the docked pane render — there is no sheet-specific toolbar).
-    const copyBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn') as HTMLButtonElement
+    const copyBtn = document.querySelector('.code-preview-meta .copy-path-btn') as HTMLButtonElement
     expect(copyBtn).not.toBeNull()
 
     // Clicking the copy button copies the full path
@@ -1430,7 +1430,7 @@ describe('CodeLinkPreview.vue', () => {
     // one shared with the floating card and the docked pane.
     expect(document.querySelector('.code-preview-sheet-footer')).toBeNull()
 
-    const actions = document.querySelector('.code-preview-meta .code-preview-actions') as HTMLElement
+    const actions = document.querySelector('.code-preview-meta') as HTMLElement
     expect(actions).not.toBeNull()
 
     // Refresh is an icon button in the tool row (no `.refresh-btn` pill class).
@@ -1465,7 +1465,7 @@ describe('CodeLinkPreview.vue', () => {
     // Reveal in tree lives in the same row. Re-open the sheet first (quote closed it).
     preview.visible.value = true
     await nextTick()
-    const revealBtn = Array.from(document.querySelectorAll('.code-preview-meta .code-preview-actions button'))
+    const revealBtn = Array.from(document.querySelectorAll('.code-preview-meta button'))
       .find(b => (b.getAttribute('title') || '') === 'Open Directory') as HTMLButtonElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
@@ -2065,10 +2065,10 @@ describe('CodeLinkPreview.vue', () => {
     const metaInfo = document.querySelector('.code-preview-meta-info')
     expect(metaInfo?.textContent).toContain('3525')
 
-    const copyPathBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')
+    const copyPathBtn = document.querySelector('.code-preview-meta .copy-path-btn')
     expect(copyPathBtn).not.toBeNull()
 
-    const actionBtns = document.querySelectorAll('.code-preview-meta .code-preview-actions button')
+    const actionBtns = document.querySelectorAll('.code-preview-meta button')
     expect(actionBtns.length).toBeGreaterThanOrEqual(8)
 
     wrapper.unmount()
@@ -2108,7 +2108,7 @@ describe('CodeLinkPreview.vue', () => {
 
     // Copy path now lives in the shared tool row (header has no buttons)
     expect(document.querySelector('.bs-header-actions')).toBeNull()
-    const copyBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')
+    const copyBtn = document.querySelector('.code-preview-meta .copy-path-btn')
     expect(copyBtn).not.toBeNull()
 
     // Body toolbar: the SAME `.code-preview-meta` row the floating card and the
@@ -2121,7 +2121,7 @@ describe('CodeLinkPreview.vue', () => {
     // The sheet shows the same tool set as the floating card, so the count is
     // the full row (search/wrap/line-numbers/refresh/quote/copy/copy-path/
     // reveal/open-full), not the old sheet-only four.
-    const tools = toolbar?.querySelectorAll('.code-preview-actions button')
+    const tools = toolbar?.querySelectorAll('.code-preview-meta button')
     expect(tools?.length).toBeGreaterThanOrEqual(8)
     const titles = Array.from(tools || []).map(b => b.getAttribute('aria-label') || b.getAttribute('title') || '')
     expect(titles.some(t => /wrap/i.test(t))).toBe(true)
@@ -2206,7 +2206,7 @@ describe('CodeLinkPreview.vue', () => {
 
     // 1. Header has no action buttons; copy-path lives in the shared tool row.
     expect(document.querySelector('.bs-header-actions')).toBeNull()
-    const copyPathBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn') as HTMLElement
+    const copyPathBtn = document.querySelector('.code-preview-meta .copy-path-btn') as HTMLElement
     expect(copyPathBtn).not.toBeNull()
     copyPathBtn.click()
     await nextTick()
@@ -2215,7 +2215,7 @@ describe('CodeLinkPreview.vue', () => {
     // 2. Body toolbar = the shared `.code-preview-meta` row (same as floating).
     const toolbar = document.querySelector('.code-preview-sheet-body .code-preview-meta')
     expect(toolbar).not.toBeNull()
-    const toolBtns = toolbar?.querySelectorAll('.code-preview-actions button')
+    const toolBtns = toolbar?.querySelectorAll('.code-preview-meta button')
     expect(toolBtns?.length).toBeGreaterThanOrEqual(8)
 
     const titleOf = (b: Element) => b.getAttribute('aria-label') || b.getAttribute('title') || ''
@@ -2351,7 +2351,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // No render toggle for a non-renderable file (ts) — the eye must be absent,
     // not merely inert. It is the only button labeled Rendered preview / Source
     // code, so its absence is unambiguous.
-    const renderToggle = Array.from(document.querySelectorAll('.code-preview-actions button'))
+    const renderToggle = Array.from(document.querySelectorAll('.code-preview-meta button'))
       .find(b => /Rendered preview|Source code/.test(b.getAttribute('aria-label') || ''))
     expect(renderToggle).toBeUndefined()
     wrapperTs.unmount()
@@ -2382,7 +2382,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await nextTick()
 
     // Rendered view active + toggle present (first action button is the eye)
-    let eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    let eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn).not.toBeNull()
     expect(eyeBtn.getAttribute('aria-label')).toContain('Source')
     expect(document.querySelector('.md-preview-body')).not.toBeNull()
@@ -2390,7 +2390,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // Toggle to source -> code rows appear
     eyeBtn.click()
     await nextTick()
-    eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
     expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
     expect(document.querySelector('.md-preview-body')).toBeNull()
@@ -2434,7 +2434,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
 
     // …but the eye toggle is present (renderable Markdown), labeled for the
     // view it would switch to ('Rendered preview').
-    const eyeBtn = document.querySelector('.code-preview-actions button[aria-pressed]') as HTMLElement
+    const eyeBtn = document.querySelector('.code-preview-meta button[aria-pressed]') as HTMLElement
     expect(eyeBtn).not.toBeNull()
     expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
 
@@ -2470,7 +2470,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await flushPromises()
 
     expect(document.querySelector('.md-preview-body')).not.toBeNull()
-    expect(document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')).not.toBeNull()
+    expect(document.querySelector('.code-preview-meta .copy-path-btn')).not.toBeNull()
 
     wrapper.unmount()
   })
@@ -2691,7 +2691,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await nextTick()
 
     // Rendered view active + eye toggle present.
-    let eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    let eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn).not.toBeNull()
     expect(eyeBtn.getAttribute('aria-label')).toContain('Source')
     expect(document.querySelector('iframe.html-preview-iframe')).not.toBeNull()
@@ -2699,7 +2699,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // Toggle to source -> the line-slice view (which keeps its own slicing).
     eyeBtn.click()
     await nextTick()
-    eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
     expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
     expect(document.querySelector('iframe.html-preview-iframe')).toBeNull()
@@ -3334,7 +3334,7 @@ describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => 
       // where a long tool set could crowd it.
       const close = wrapper.find('.code-preview-header-actions .close')
       expect(close.exists()).toBe(true)
-      expect(wrapper.find('.code-preview-actions').element.contains(close.element)).toBe(false)
+      expect(wrapper.find('.code-preview-meta').element.contains(close.element)).toBe(false)
 
       wrapper.unmount()
     } finally {

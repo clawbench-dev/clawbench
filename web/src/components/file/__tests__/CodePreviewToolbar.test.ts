@@ -51,7 +51,7 @@ describe('CodePreviewToolbar labels', () => {
     const wrapper = mountToolbar()
     await nextTick()
 
-    const buttons = wrapper.findAll('.code-preview-actions .code-preview-btn')
+    const buttons = wrapper.findAll('.code-preview-meta .code-preview-btn')
     expect(buttons.length).toBeGreaterThan(5)
     for (const b of buttons) {
       const hasLabel =
