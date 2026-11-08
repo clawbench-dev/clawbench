@@ -9,13 +9,18 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/speech"
+	"clawbench/internal/store"
+	"clawbench/internal/ws"
 
 	"github.com/coder/websocket"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // tinyMP3Base64 is a 0.3 s 440 Hz sine, 24 kHz mono, 48 kbps MP3 generated with
@@ -312,9 +317,9 @@ func TestDownmixFrames(t *testing.T) {
 
 // --- VoiceTurnWS protocol ---
 
-func setupVoiceTurn(t *testing.T) (*httptest.Server, func()) {
+func setupVoiceTurn(t *testing.T) (*testEnv, *httptest.Server, func()) {
 	t.Helper()
-	_, teardown := setupTestEnv(t)
+	env, teardown := setupTestEnv(t)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/voice/turn/ws", middleware.Auth(VoiceTurnWS))
@@ -324,7 +329,7 @@ func setupVoiceTurn(t *testing.T) (*httptest.Server, func()) {
 		server.Close()
 		teardown()
 	}
-	return server, cleanup
+	return env, server, cleanup
 }
 
 func dialVoiceTurn(t *testing.T, srv *httptest.Server) *websocket.Conn {
@@ -367,7 +372,7 @@ func readFrame(t *testing.T, conn *websocket.Conn) map[string]any {
 }
 
 func TestVoiceTurnWS_SayWithoutTextIsRejected(t *testing.T) {
-	srv, cleanup := setupVoiceTurn(t)
+	_, srv, cleanup := setupVoiceTurn(t)
 	defer cleanup()
 
 	conn := dialVoiceTurn(t, srv)
@@ -381,7 +386,7 @@ func TestVoiceTurnWS_SayWithoutTextIsRejected(t *testing.T) {
 }
 
 func TestVoiceTurnWS_SayUnknownSession(t *testing.T) {
-	srv, cleanup := setupVoiceTurn(t)
+	_, srv, cleanup := setupVoiceTurn(t)
 	defer cleanup()
 
 	conn := dialVoiceTurn(t, srv)
@@ -392,17 +397,16 @@ func TestVoiceTurnWS_SayUnknownSession(t *testing.T) {
 	if frame := readFrame(t, conn); frame[ttsWSType] != "final" || frame[sttWSText] != "你好" {
 		t.Fatalf("first frame = %v, want the echo of the spoken text", frame)
 	}
-	if frame := readFrame(t, conn); frame[ttsWSType] != speechTypePhase || frame[speechTypePhase] != speechPhaseThink {
-		t.Fatalf("second frame = %v, want thinking phase", frame)
-	}
+	// The session is resolved before the thinking phase is announced: an
+	// unknown session must fail without telling the device a turn is running.
 	frame := readFrame(t, conn)
 	if frame[ttsWSType] != strError || frame[messageKey] != "session not found" {
-		t.Fatalf("third frame = %v, want session not found", frame)
+		t.Fatalf("second frame = %v, want session not found", frame)
 	}
 }
 
 func TestVoiceTurnWS_ReplayUnknownMessage(t *testing.T) {
-	srv, cleanup := setupVoiceTurn(t)
+	_, srv, cleanup := setupVoiceTurn(t)
 	defer cleanup()
 
 	conn := dialVoiceTurn(t, srv)
@@ -416,7 +420,7 @@ func TestVoiceTurnWS_ReplayUnknownMessage(t *testing.T) {
 }
 
 func TestVoiceTurnWS_EndWithoutAudio(t *testing.T) {
-	srv, cleanup := setupVoiceTurn(t)
+	_, srv, cleanup := setupVoiceTurn(t)
 	defer cleanup()
 
 	conn := dialVoiceTurn(t, srv)
@@ -428,4 +432,72 @@ func TestVoiceTurnWS_EndWithoutAudio(t *testing.T) {
 	if frame[ttsWSType] != strError || frame[messageKey] != "no speech" {
 		t.Fatalf("frame = %v, want no speech error", frame)
 	}
+}
+
+// TestVoiceTurnWS_SayPersistsAndAnnouncesUserMessage covers the voice channel's
+// own copy of the "persist + announce" step.
+//
+// RunTurn only writes the assistant placeholder, so a turn started from this
+// WebSocket used to leave the user's sentence out of chat_history entirely and
+// broadcast no user_message: the web UI never showed the question, and a reload
+// did not bring it back. The session here points at a backend that does not
+// exist, so RunTurn fails fast after the persistence step and the test does not
+// spawn a real agent.
+func TestVoiceTurnWS_SayPersistsAndAnnouncesUserMessage(t *testing.T) {
+	env, srv, cleanup := setupVoiceTurn(t)
+	defer cleanup()
+
+	prevMgr := ws.GetManager()
+	ws.SetManagerForTest(ws.NewManagerForTest())
+	t.Cleanup(func() { ws.SetManagerForTest(prevMgr) })
+	mgr := ws.GetManager()
+
+	const clientID = "voice-user-message-client"
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, clientID, "")
+	require.NotNil(t, sub, "subscribing the observer client must succeed")
+
+	sessionID := "voice-turn-user-message"
+	db := store.UnsafeDBForTest()
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, ?, 'ghost-backend', 'voice', 'ghost-agent', 'default', '', 'chat', 0)`,
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir))
+	require.NoError(t, err)
+	mgr.StreamHub().Subscribe(clientID, sessionID)
+
+	conn := dialVoiceTurn(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	sendText(t, conn, `{"type":"say","sessionId":"`+sessionID+`","text":"你好"}`)
+
+	// final -> phase -> error(turn failed): the error frame proves RunTurn
+	// returned, so the assertions below do not race the turn.
+	if frame := readFrame(t, conn); frame[ttsWSType] != "final" || frame[sttWSText] != "你好" {
+		t.Fatalf("first frame = %v, want the echo of the spoken text", frame)
+	}
+	if frame := readFrame(t, conn); frame[ttsWSType] != speechTypePhase {
+		t.Fatalf("second frame = %v, want the thinking phase", frame)
+	}
+	if frame := readFrame(t, conn); frame[ttsWSType] != strError || frame[messageKey] != "turn failed" {
+		t.Fatalf("third frame = %v, want turn failed", frame)
+	}
+
+	var content string
+	require.NoError(t,
+		db.QueryRow(`SELECT content FROM chat_history WHERE session_id = ? AND role = 'user'`, sessionID).Scan(&content),
+		"the spoken sentence must be persisted as a user message")
+	assert.Equal(t, "你好", content)
+
+	announced := false
+	for _, ev := range sub.GetBufferedEvents() {
+		data, ok := ev.Data.(ws.ChatStreamData)
+		if !ok || data.EventType != "user_message" {
+			continue
+		}
+		if payload, ok := data.Payload.(map[string]any); ok && payload["content"] == "你好" {
+			announced = true
+		}
+	}
+	assert.True(t, announced, "a user_message event must be broadcast to the session's subscribers")
 }

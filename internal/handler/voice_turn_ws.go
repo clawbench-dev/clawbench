@@ -9,12 +9,24 @@ import (
 	"os"
 	"path/filepath"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
+	"clawbench/internal/ws"
 
 	"github.com/coder/websocket"
+)
+
+// Voice turn protocol string constants (goconst). The frame vocabulary is
+// shared with the speech stream, so the type/phase/text keys reuse the
+// constants declared in speech_stream.go.
+const (
+	voiceTurnKindListen = "listen"
+	voiceTurnKindReplay = "replay"
+	voiceTurnKindSay    = "say"
+	voiceTurnFinalType  = "final"
 )
 
 // voiceTurnControl is a JSON control frame from the device.
@@ -67,7 +79,7 @@ func VoiceTurnWS(w http.ResponseWriter, r *http.Request) {
 		if kind == "" {
 			return
 		}
-		if kind == "replay" {
+		if kind == voiceTurnKindReplay {
 			if info := service.GetSessionFullInfo(sessionID); info != nil && info.ProjectPath != "" {
 				projectPath = info.ProjectPath
 			}
@@ -75,40 +87,58 @@ func VoiceTurnWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if text == "" {
-			writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "no speech"})
+			_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "no speech"})
 			continue
 		}
 
-		if err := writeSpeechFrame(ctx, conn, map[string]any{"type": "final", "text": text}); err != nil {
+		if err := writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: voiceTurnFinalType, sttWSText: text}); err != nil {
 			return
 		}
 		slog.Info("voice turn ws: transcribed", slog.String("text", text), slog.Int("runes", len([]rune(text))))
 
-		if err := writeSpeechFrame(ctx, conn, map[string]any{"type": "phase", "phase": "thinking"}); err != nil {
-			return
-		}
 		// 项目以会话所属为准:cookie 里的项目在连接建立时可能还没设置。
 		info := service.GetSessionFullInfo(sessionID)
 		if info == nil || info.ProjectPath == "" {
 			slog.Warn("voice turn ws: session lookup failed", slog.String("session", sessionID))
-			writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "session not found"})
+			_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "session not found"})
 			continue
 		}
 		projectPath = info.ProjectPath
+
+		// 设备只连这条语音 WS、不订阅聊天流,所以这句提问必须在这里自己落库并
+		// 广播:RunTurn 只写助手占位行,不碰用户消息。少了这一步,网页端看不到
+		// 用户气泡,刷新后这句提问也根本不存在。
+		userMsgID, saveErr := service.AddChatMessage(projectPath, info.Backend, sessionID, "user", text, nil, false, "")
+		if saveErr != nil {
+			slog.Error("voice turn ws: save user message failed", slog.String("error", saveErr.Error()))
+			_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "save failed"})
+			continue
+		}
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "user_message",
+			UserMessage: &ai.UserMessageData{
+				MessageID: userMsgID,
+				Content:   text,
+			},
+		})
+
+		if err := writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: speechTypePhase, speechTypePhase: speechPhaseThink}); err != nil {
+			return
+		}
 		res := service.RunTurn(service.TurnSpec{
-			Ctx:             ctx,
-			Mode:            service.ModeInteractive,
-			ProjectPath:     projectPath,
-			BackendName:     info.Backend,
-			SessionID:       sessionID,
-			AgentID:         info.AgentID,
+			Ctx:         ctx,
+			Mode:        service.ModeInteractive,
+			ProjectPath: projectPath,
+			BackendName: info.Backend,
+			SessionID:   sessionID,
+			AgentID:     info.AgentID,
 			ChatReq: service.BuildChatRequest(text, sessionID, projectPath, info.Backend,
 				info.AgentID, "", "", "", "", "", false),
 			DrainOnFinalize: true,
 		})
 		if res.Err != "" || res.MsgID == 0 {
 			slog.Warn("voice turn ws: turn failed", slog.String("error", res.Err))
-			writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "turn failed"})
+			_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "turn failed"})
 			continue
 		}
 		voiceTurnSpeak(ctx, conn, projectPath, res.MsgID, lang)
@@ -135,14 +165,14 @@ func voiceTurnRead(ctx context.Context, conn *websocket.Conn) (kind, text, sessi
 			continue
 		}
 		switch ctrl.Type {
-		case "listen":
+		case voiceTurnKindListen:
 			sessionID = ctrl.SessionID
 			if ctrl.Language != "" {
 				lang = ctrl.Language
 			}
-		case "replay":
-			return "replay", "", ctrl.SessionID, lang, ctrl.MessageID
-		case "say":
+		case voiceTurnKindReplay:
+			return voiceTurnKindReplay, "", ctrl.SessionID, lang, ctrl.MessageID
+		case voiceTurnKindSay:
 			if ctrl.SessionID != "" {
 				sessionID = ctrl.SessionID
 			}
@@ -150,8 +180,8 @@ func voiceTurnRead(ctx context.Context, conn *websocket.Conn) (kind, text, sessi
 				lang = ctrl.Language
 			}
 			return "say", ctrl.Text, sessionID, lang, 0
-		case "end":
-			return "say", voiceTurnTranscribe(ctx, buf.Bytes()), sessionID, lang, 0
+		case sttWSEndCtl:
+			return voiceTurnKindSay, voiceTurnTranscribe(ctx, buf.Bytes()), sessionID, lang, 0
 		}
 	}
 }
@@ -177,7 +207,7 @@ func voiceTurnTranscribe(ctx context.Context, audio []byte) string {
 func voiceTurnSpeak(ctx context.Context, conn *websocket.Conn, projectPath string, messageID int64, lang string) {
 	text := ttsExtractConclusion(messageID)
 	if text == "" {
-		writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "empty reply"})
+		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "empty reply"})
 		return
 	}
 
@@ -188,11 +218,11 @@ func voiceTurnSpeak(ctx context.Context, conn *websocket.Conn, projectPath strin
 	summary, ok := ttsSummarize(ctx, GetSummarizer(), cacheKey, text, lang, messageID,
 		"SummarizeFailed", true)
 	if !ok {
-		writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "summarize failed"})
+		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "summarize failed"})
 		return
 	}
 	if err := writeSpeechFrame(ctx, conn, map[string]any{
-		"type": "summary", "text": summary, "messageId": messageID,
+		ttsWSType: ttsWSSummary, sttWSText: summary, "messageId": messageID,
 	}); err != nil {
 		return
 	}
@@ -210,7 +240,7 @@ func voiceTurnSpeak(ctx context.Context, conn *websocket.Conn, projectPath strin
 	err := provider.Synthesize(sctx, spoken, mp3Path, lang)
 	scancel()
 	if err != nil {
-		writeSpeechFrame(ctx, conn, map[string]any{"type": "error", "message": "synthesize failed"})
+		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "synthesize failed"})
 		return
 	}
 	streamPCMFile(ctx, conn, mp3Path)
