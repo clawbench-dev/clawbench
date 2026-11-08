@@ -6838,18 +6838,21 @@ func TestNewSessionLandsOnTop(t *testing.T) {
 
 	a := helperCreateSession(t, projectPath, "claude", "A")
 	b := helperCreateSession(t, projectPath, "claude", "B")
-	// Put B on top, then A. Their created_at differs, so pin down the drag order
-	// explicitly by backdating to make the assertion meaningful.
-	_, err := store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", a)
+	// Ordering is (pinned DESC, sort_order ASC, updated_at DESC, id DESC) — the
+	// tiebreak column is updated_at, NOT created_at. Backdate updated_at so every
+	// step below is deterministic instead of depending on the second-precision
+	// CURRENT_TIMESTAMP (which used to make fresh-vs-b fall through to the random
+	// id DESC comparison and fail intermittently).
+	_, err := store.WriteExec("UPDATE chat_sessions SET updated_at = '2024-01-01 00:00:00' WHERE id = ?", a)
 	require.NoError(t, err)
-	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", b)
+	_, err = store.WriteExec("UPDATE chat_sessions SET updated_at = '2024-01-02 00:00:00' WHERE id = ?", b)
 	require.NoError(t, err)
 	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a}))
 
 	fresh := helperCreateSession(t, projectPath, "claude", "Fresh")
 	// The fresh session defaults to sort_order 0, tied with b; give it a newer
-	// created_at so the tiebreak is deterministic rather than second-precision.
-	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
+	// updated_at so the tiebreak is deterministic.
+	_, err = store.WriteExec("UPDATE chat_sessions SET updated_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions(projectPath, "")
