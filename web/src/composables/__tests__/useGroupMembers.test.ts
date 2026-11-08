@@ -144,8 +144,40 @@ describe('useGroupMembers', () => {
     expect(resolveByName('  Alice  ')).toEqual({
       name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude', agentId: 'agent-claude',
     })
+    // Leading @ and specialty in parentheses resolve the same member.
+    expect(resolveByName('@Alice')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude', agentId: 'agent-claude',
+    })
+    expect(resolveByName('Alice（架构助手）')).toEqual({
+      name: 'Alice', backend: 'claude', avatar: '<svg>member</svg>', agentName: 'Claude', agentId: 'agent-claude',
+    })
     // Unknown name resolves to null.
     expect(resolveByName('Bob')).toBeNull()
+  })
+
+  it('resolveByName prefers an exact name over an earlier bare-prefix member', async () => {
+    // Roster order puts the bare `agy` first. A single-pass fuzzy find would
+    // strip `(zhu)` from the target and wrongly attribute the chip to `agy`; the
+    // exact-first pass must win regardless of order (mirrors lookupMember in
+    // internal/service/group_orchestrator.go).
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        members: [
+          { id: 'm1', agentId: 'agent-agy', name: 'agy', backend: 'antigravity', disabled: false, isHost: true },
+          { id: 'm2', agentId: 'agent-agy', name: 'agy(zhu)', backend: 'antigravity', disabled: false, isHost: false },
+        ],
+      }),
+    })))
+
+    const sid = ref('group-exact-first')
+    const { resolveByName } = useGroupMembers(sid)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(resolveByName('agy(zhu)')?.name).toBe('agy(zhu)')
+    expect(resolveByName('agy(zhu)（架构）')?.name).toBe('agy(zhu)')
+    expect(resolveByName('agy')?.name).toBe('agy')
   })
 
   it('drops a stale response so a slow previous session cannot clobber the current one', async () => {

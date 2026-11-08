@@ -349,11 +349,7 @@ func participantHeader(roster []ParticipantInfo) string {
 	}
 	rendered := make([]string, 0, len(roster))
 	for _, p := range roster {
-		if p.Specialty == "" {
-			rendered = append(rendered, p.Name)
-			continue
-		}
-		rendered = append(rendered, p.Name+"（"+p.Specialty+"）")
+		rendered = append(rendered, renderHostMember(HostMemberInfo{Name: p.Name, Specialty: p.Specialty}))
 	}
 	return "参与者：" + strings.Join(rendered, "、")
 }

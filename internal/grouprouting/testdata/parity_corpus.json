@@ -55,6 +55,145 @@
       }
     },
     {
+      "name": "multiple_targets_cjk_dunhao",
+      "text": "<clawbench-mention targets=\"A、B、C\">各自表态</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [
+          "A",
+          "B",
+          "C"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B",
+              "C"
+            ],
+            "parallel": false,
+            "instruction": "各自表态"
+          }
+        ],
+        "instruction": "各自表态",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "multiple_targets_cjk_comma",
+      "text": "<clawbench-mention targets=\"A，B，C\">各自表态</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [
+          "A",
+          "B",
+          "C"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A",
+              "B",
+              "C"
+            ],
+            "parallel": false,
+            "instruction": "各自表态"
+          }
+        ],
+        "instruction": "各自表态",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "targets_cjk_separators_inside_balanced_parens",
+      "text": "<clawbench-mention targets=\"ZCode（写码、调试）, Bob\">分别表态</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [
+          "ZCode（写码、调试）",
+          "Bob"
+        ],
+        "groups": [
+          {
+            "members": [
+              "ZCode（写码、调试）",
+              "Bob"
+            ],
+            "parallel": false,
+            "instruction": "分别表态"
+          }
+        ],
+        "instruction": "分别表态",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "targets_ascii_comma_inside_balanced_ascii_parens",
+      "text": "<clawbench-mention targets=\"A(x,y), B\">分别表态</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [
+          "A(x,y)",
+          "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A(x,y)",
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "分别表态"
+          }
+        ],
+        "instruction": "分别表态",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "targets_unbalanced_parens_fall_back_to_ascii_split",
+      "text": "<clawbench-mention targets=\"A（x、y,B\">未闭合</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "goalSatisfied": false,
+        "speakers": [
+          "A（x、y",
+          "B"
+        ],
+        "groups": [
+          {
+            "members": [
+              "A（x、y",
+              "B"
+            ],
+            "parallel": false,
+            "instruction": "未闭合"
+          }
+        ],
+        "instruction": "未闭合",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
       "name": "end_signal_only",
       "text": "讨论已充分。<clawbench-group-end/>",
       "want": {

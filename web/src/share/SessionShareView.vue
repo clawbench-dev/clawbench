@@ -245,7 +245,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
 import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
-import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, type MentionSpeaker } from '@/utils/groupRouting'
+import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, matchSpeakerName, normalizeSpeakerTarget, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -425,13 +425,18 @@ const stackMembers = computed<StackMember[]>(() =>
 // it every group message reads as a plain member and the card never appears.
 const hostMemberId = ref('')
 // The routing @-chips name their targets by DISPLAY NAME, not row id; resolve
-// against the same frozen roster.
+// against the same frozen roster. Tolerates leading @/＠ and trailing parentheses.
+// Exact names are matched first so a bare `agy` cannot shadow `agy(zhu)`.
 const resolveSpeakerByName = computed(() => (name: string) => {
-  const target = (name || '').trim()
+  const target = normalizeSpeakerTarget(name)
   if (!target || !speakers.value) return null
   for (const id of Object.keys(speakers.value)) {
     const s = speakers.value[id]
     if (s && (s.name || '').trim() === target) return s
+  }
+  for (const id of Object.keys(speakers.value)) {
+    const s = speakers.value[id]
+    if (s && matchSpeakerName(target, s.name)) return s
   }
   return null
 })
