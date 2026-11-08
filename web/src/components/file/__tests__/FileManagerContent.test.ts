@@ -412,6 +412,21 @@ vi.mock('@/composables/useFileSearch', () => ({
 const i18n = createI18n({
   legacy: false,
   locale: 'zh',
+  // The `messages` below are a hand-picked SUBSET of the real locales, so every
+  // key a component asks for that is not in it logs a warning: 20 keys x 384
+  // mounts = ~77k lines, about 30s of this file's runtime.
+  //
+  // Silencing the warning here is safe because it does not hide a defect: a
+  // genuinely missing key is caught by `src/i18n/__tests__/literalKeys.test.ts`,
+  // which scans every literal `t('a.b.c')` in the source against the REAL
+  // locale objects. What is missing here is only this file's convenience
+  // dictionary — copying the real locales in would just be a second copy to
+  // maintain, and would still need re-copying on every new string.
+  //
+  // These cases assert behaviour (did the click do the right thing, which
+  // element rendered), not rendered copy, so nothing here depends on the text.
+  missingWarn: false,
+  fallbackWarn: false,
   messages: {
     zh: {
       file: {
