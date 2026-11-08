@@ -91,260 +91,262 @@
           >↑{{ trackInfo.ahead }}</button>
         </template>
         <template v-else>
-          <span v-if="trackInfo.behind > 0" class="branch-track-behind" :title="trackTitle">↓{{ trackInfo.behind }}</span>
-          <span v-if="trackInfo.ahead > 0" class="branch-track-ahead" :title="trackTitle">↑{{ trackInfo.ahead }}</span>
-        </template>
-      </span>
-
-      <!-- How many commits are on screen. A badge, not a sentence: the full
-           wording ("30+ 条提交记录") is one hover away, and it was eating the
-           width the branch picker and the buttons needed. -->
-      <span
-        v-if="commits.length > 0"
-        class="drilldown-count count-badge git-count"
-        :title="countTitle"
-      >
-        <LoadingIndicator v-if="searchLoading" size="sm" inline />
-        <template v-else>{{ countText }}</template>
-      </span>
-      <span v-else-if="!isGit" class="drilldown-count count-badge">{{ t('git.commitList.notInitialized') }}</span>
-      <span v-else-if="!untracked" class="drilldown-count count-badge">{{ t('git.commitList.loading') }}</span>
-
-      <ActionBar class="git-actions" mode="menu" align="end" size="header">
-        <button
-          v-if="commits.length > 0"
-          class="drilldown-refresh-btn"
-          data-action="search"
-          :title="t('git.commitList.search')"
-          :aria-label="t('git.commitList.search')"
-          @click.stop="openSearch"
-        >
-          <Search :size="14" />
-          <span class="action-label">{{ t('git.commitList.search') }}</span>
-        </button>
-        <!-- Fetch from every remote. Only the remote-tracking refs move, so this
-             is safe to press at any time — the working tree and the current
-             branch stay exactly as they are; the numbers next to the branch are
-             what change. -->
-        <button
-          v-if="isGit && mode !== 'file' && commits.length > 0"
-          class="drilldown-refresh-btn"
-          :title="t('git.fetch.title')"
-          :aria-label="t('git.fetch.title')"
-          :disabled="fetching"
-          data-action="fetch"
-          @click.stop="$emit('fetch')"
-        >
-          <LoadingIndicator v-if="fetching" size="sm" inline />
-          <CloudDownload v-else :size="14" />
-          <span class="action-label">{{ t('git.fetch.title') }}</span>
-        </button>
-        <RefreshButton
-          v-if="commits.length > 0"
-          class="drilldown-refresh-btn"
-          data-action="refresh"
-          :class="{ 'refresh-pulse': refreshHint }"
-          :loading="refreshing"
-          :disabled="refreshing"
-          :title="t('git.commitList.refresh')"
-          @click.stop="handleRefresh"
-        >
-          <span class="action-label">{{ t('git.commitList.refresh') }}</span>
-        </RefreshButton>
-        <!-- Merge-commit filter. A merge row lists every file both sides touched,
-             so in a history full of branch merges the interesting commits drown.
-             Off by default: hiding commits is a view choice, not a correction. -->
-        <button
-          v-if="isGit && mode !== 'file' && commits.length > 0"
-          class="drilldown-refresh-btn"
-          :class="{ 'is-on': hideMerges }"
-          :title="hideMerges ? t('git.commitList.showMerges') : t('git.commitList.hideMerges')"
-          :aria-label="hideMerges ? t('git.commitList.showMerges') : t('git.commitList.hideMerges')"
-          :aria-pressed="hideMerges"
-          data-action="toggle-merge-commits"
-          @click.stop="hideMerges = !hideMerges"
-        >
-          <GitMerge :size="14" />
-          <span class="action-label">{{ t('git.commitList.mergeFilter') }}</span>
-        </button>
-        <!-- Branch / tag / worktree management. NOT a "more" glyph: the bar has
-             its own overflow button, and two ⋮ sitting a few pixels apart for
-             different things is unreadable. -->
-        <button
-          v-if="isGit && mode !== 'file'"
-          class="drilldown-refresh-btn"
-          :title="t('git.manage.title')"
-          data-action="manage"
-          @click.stop="$emit('manage')"
-        >
-          <ListTree :size="14" />
-          <span class="action-label">{{ t('git.manage.title') }}</span>
-        </button>
-      </ActionBar>
-    </div>
-
-    <!-- Reading another branch is a read-only view: nothing is checked out, so
-         the bar has to keep saying where the workspace actually is. This is a
-         strip rather than part of the toolbar because it is a warning, not a
-         control — and it only exists in that one state. -->
-    <div v-if="isOtherBranch && showBranchBar" class="branch-alert">
-      <Eye :size="11" class="branch-alert-icon" />
-      <span class="branch-note branch-note--warn">{{ t('git.branchView.readOnly', { branch: currentBranch }) }}</span>
-      <button class="branch-back-btn" @click.stop="emit('change-branch', '')">
-        {{ t('git.branchView.backTo', { branch: currentBranch }) }}
-      </button>
-    </div>
-
-    <!-- Commits the upstream has and this branch does not. They are NOT part of
-         the history below: that list is walked from the branch's own commit, and
-         the graph's lanes are drawn from parent links inside it — splicing
-         foreign rows in would draw a graph that contradicts the list.
-
-         Collapsed by default and only present when there is something to show,
-         so a branch that is up to date looks exactly as it did before. -->
-    <div v-if="behindCommits.length" class="remote-commits" :class="{ 'is-open': remoteOpen }">
-      <button
-        class="remote-commits-head"
-        :aria-expanded="remoteOpen"
-        data-action="toggle-remote-commits"
-        @click.stop="toggleRemoteCommits"
-      >
-        <CloudDownload :size="12" class="remote-commits-icon" />
-        <span class="remote-commits-title">
-          {{ t('git.divergence.remoteTitle', { upstream: divergence.upstream, count: behindCount }) }}
+            <span v-if="trackInfo.behind > 0" class="branch-track-behind" :title="trackTitle">↓{{ trackInfo.behind }}</span>
+            <span v-if="trackInfo.ahead > 0" class="branch-track-ahead" :title="trackTitle">↑{{ trackInfo.ahead }}</span>
+          </template>
         </span>
-        <ChevronDown :size="12" class="remote-commits-chevron" />
-      </button>
-      <div v-if="remoteOpen" class="remote-commits-list">
-        <div
-          v-for="c in behindCommits"
-          :key="c.sha"
-          class="remote-commit"
-          @click="$emit('select', c)"
+
+        <!-- How many commits are on screen. A badge, not a sentence: the full
+             wording ("30+ 条提交记录") is one hover away, and it was eating the
+             width the branch picker and the buttons needed. -->
+        <span
+          v-if="commits.length > 0"
+          class="drilldown-count count-badge git-count"
+          :title="countTitle"
         >
-          <!-- Same type scale and two-line shape as a normal commit row, so the
-               two lists read as one thing. The only difference is the tag that
-               says where the commit lives. -->
-          <div class="git-commit-info">
-            <div class="git-commit-msg">
-              <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
-              <span class="git-commit-msg-text">{{ c.msg }}</span>
-            </div>
-            <div class="git-commit-meta">
-              <span class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
-              <span>{{ formatDate(c.date) }}</span>
-              <span v-if="c.author"> · {{ c.author }}</span>
-            </div>
-          </div>
-        </div>
-        <div v-if="behindCount > behindCommits.length" class="remote-commits-more">
-          {{ t('git.divergence.moreRemote', { count: behindCount - behindCommits.length }) }}
-        </div>
-      </div>
-    </div>
-    <div class="drilldown-body" ref="bodyRef">
-      <div v-if="loading" class="git-history-loading git-history-loading--skeleton">
-        <PanelSkeleton variant="list" :rows="10" :meta="true" :label="t('common.loading')" />
-      </div>
-      <div v-else-if="error" class="git-history-error">{{ error }}</div>
-      <div v-else-if="!isGit" class="git-history-empty">
-        <div class="empty-state-card">
-          <GitBranch class="empty-state__icon" />
-          <div class="empty-state-title">{{ t('git.commitList.notGitRepo') }}</div>
-          <div class="empty-state-desc">{{ t('git.commitList.notGitRepoDesc') }}</div>
-          <div class="empty-state-hint">
-            <code>git init</code>
-          </div>
-        </div>
-      </div>
-      <div v-else-if="commits.length === 0 && untracked" class="git-history-empty">
-        <div class="empty-state-card">
-          <FileText class="empty-state__icon" />
-          <div class="empty-state-title">{{ t('git.commitList.untrackedFile') }}</div>
-          <div class="empty-state-desc">{{ t('git.commitList.untrackedDesc') }}</div>
-          <div class="empty-state-hint">
-            <code>git add &lt;filename&gt;</code> {{ t('git.commitList.untrackedHint') }}
-          </div>
-        </div>
-      </div>
-      <div v-else-if="commits.length === 0" class="git-history-empty">
-        <div class="empty-state-card">
-          <GitCommitHorizontal class="empty-state__icon" />
-          <div class="empty-state-title">{{ t('git.commitList.noCommits') }}</div>
-        </div>
-      </div>
-      <div v-else class="commit-list-container">
-        <!-- Graph SVG - hidden during search or file mode (no multi-branch graph for single file).
-             Also hidden while merge commits are filtered out: the lanes are drawn
-             from parent links, so removing the merge rows would leave a graph that
-             silently contradicts the list next to it. -->
-        <GitGraph
-          v-if="!isSearching && !hideMerges && mode !== 'file'"
-          class="commit-list-graph"
-          :commits="filteredCommits"
-          :row-height="graphRowHeight"
-          :collapsed="graphCollapsed"
-          @update:collapsed="graphCollapsed = $event"
-        />
-        <div v-else-if="isSearching" class="commit-list-graph-hint">
-          <Info :size="14" />
-        </div>
-        <!-- Commit rows -->
-        <div class="commit-list-content" ref="contentRef" @touchstart.passive="onTouchStart" @touchend="onTouchEnd">
-          <div
-            v-for="(c, idx) in filteredCommits"
-            :key="c.sha"
-            class="drilldown-item"
-            :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx, 'is-unpushed': aheadSet.has(c.sha) }"
-            :draggable="isWideScreen && canDragCommit(c)"
-            @dragstart="onCommitDragStart(c, $event)"
-            @dragend="cleanupDragGhost()"
-            @click="$emit('select', c)"
+          <LoadingIndicator v-if="searchLoading" size="sm" inline />
+          <template v-else>{{ countText }}</template>
+        </span>
+        <span v-else-if="!isGit" class="drilldown-count count-badge">{{ t('git.commitList.notInitialized') }}</span>
+        <span v-else-if="!untracked" class="drilldown-count count-badge">{{ t('git.commitList.loading') }}</span>
+
+        <ActionBar class="git-actions" mode="menu" align="end" size="header">
+          <button
+            v-if="commits.length > 0"
+            class="drilldown-refresh-btn"
+            data-action="search"
+            :title="t('git.commitList.search')"
+            :aria-label="t('git.commitList.search')"
+            @click.stop="openSearch"
           >
-            <div class="git-commit-info">
-              <div class="git-commit-msg">
-                <span class="git-commit-msg-text">{{ c.msg }}</span>
-                <span
-                  v-if="c.isWT && wtFileCount > 0"
-                  class="git-commit-file-count count-badge"
-                  :title="t('git.history.fileCount', { count: wtFileCount })"
-                >{{ wtFileCount }}</span>
-              </div>
-              <div class="git-commit-meta">
-                <span v-if="!c.isWT" class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
-                <!-- Same visual language as a ref tag: this row is on the branch
-                     but not on the upstream, so it has not been pushed yet. -->
-                <span v-if="aheadSet.has(c.sha)" class="git-ref-tag git-ref-tag--unpushed" :title="t('git.divergence.unpushedHint')">
-                  {{ t('git.divergence.unpushed') }}
-                </span>
-                <span v-if="c.refs && c.refs.length" class="git-commit-refs">
-                  <span v-for="ref in c.refs" :key="ref" class="git-ref-tag" :class="refTagClass(ref)">{{ refLabelText(ref) }}</span>
-                </span>
-                <span>{{ formatDate(c.date) }}</span>
-                <span v-if="c.author"> · {{ c.author }}</span>
-              </div>
-            </div>
-            <!-- Quote this commit into a conversation. Dragging the row does the
-                 same thing, but a drag is invisible: every other quotable object
-                 (issue/PR, meeting, file) also has a button, and a commit row
-                 was the one place the action could not be discovered. -->
-            <button
-              v-if="!c.isWT && c.sha"
-              class="commit-quote-btn"
-              :title="t('file.header.quoteInChat')"
-              :aria-label="t('file.header.quoteInChat')"
-              @click.stop="quoteCommit(c)"
-            >
-              <MessageSquare :size="14" />
-            </button>
-          </div>
-          <div ref="listRef" class="git-load-more-sentinel">
-            <div v-if="hasMore && loadingMore" class="git-load-more">
-              <LoadingIndicator size="sm" inline />
+            <Search :size="14" />
+            <span class="action-label">{{ t('git.commitList.search') }}</span>
+          </button>
+          <!-- Fetch from every remote. Only the remote-tracking refs move, so this
+               is safe to press at any time — the working tree and the current
+               branch stay exactly as they are; the numbers next to the branch are
+               what change. -->
+          <button
+            v-if="isGit && mode !== 'file' && commits.length > 0"
+            class="drilldown-refresh-btn"
+            :title="t('git.fetch.title')"
+            :aria-label="t('git.fetch.title')"
+            :disabled="fetching"
+            data-action="fetch"
+            @click.stop="$emit('fetch')"
+          >
+            <LoadingIndicator v-if="fetching" size="sm" inline />
+            <CloudDownload v-else :size="14" />
+            <span class="action-label">{{ t('git.fetch.title') }}</span>
+          </button>
+          <RefreshButton
+            v-if="commits.length > 0"
+            class="drilldown-refresh-btn"
+            data-action="refresh"
+            :class="{ 'refresh-pulse': refreshHint }"
+            :loading="refreshing"
+            :disabled="refreshing"
+            :title="t('git.commitList.refresh')"
+            @click.stop="handleRefresh"
+          >
+            <span class="action-label">{{ t('git.commitList.refresh') }}</span>
+          </RefreshButton>
+          <!-- Merge-commit filter. A merge row lists every file both sides touched,
+               so in a history full of branch merges the interesting commits drown.
+               Off by default: hiding commits is a view choice, not a correction. -->
+          <button
+            v-if="isGit && mode !== 'file' && commits.length > 0"
+            class="drilldown-refresh-btn"
+            :class="{ 'is-on': hideMerges }"
+            :title="hideMerges ? t('git.commitList.showMerges') : t('git.commitList.hideMerges')"
+            :aria-label="hideMerges ? t('git.commitList.showMerges') : t('git.commitList.hideMerges')"
+            :aria-pressed="hideMerges"
+            data-action="toggle-merge-commits"
+            @click.stop="hideMerges = !hideMerges"
+          >
+            <GitMerge :size="14" />
+            <span class="action-label">{{ t('git.commitList.mergeFilter') }}</span>
+          </button>
+          <!-- Branch / tag / worktree management. NOT a "more" glyph: the bar has
+               its own overflow button, and two ⋮ sitting a few pixels apart for
+               different things is unreadable. -->
+          <button
+            v-if="isGit && mode !== 'file'"
+            class="drilldown-refresh-btn"
+            :title="t('git.manage.title')"
+            data-action="manage"
+            @click.stop="$emit('manage')"
+          >
+            <ListTree :size="14" />
+            <span class="action-label">{{ t('git.manage.title') }}</span>
+          </button>
+        </ActionBar>
+      </div>
+
+      <!-- Reading another branch is a read-only view: nothing is checked out, so
+           the bar has to keep saying where the workspace actually is. This is a
+           strip rather than part of the toolbar because it is a warning, not a
+           control — and it only exists in that one state. -->
+      <div v-if="isOtherBranch && showBranchBar" class="branch-alert">
+        <Eye :size="11" class="branch-alert-icon" />
+        <span class="branch-note branch-note--warn">{{ t('git.branchView.readOnly', { branch: currentBranch }) }}</span>
+        <button class="branch-back-btn" @click.stop="emit('change-branch', '')">
+          {{ t('git.branchView.backTo', { branch: currentBranch }) }}
+        </button>
+      </div>
+
+      <div class="drilldown-body" ref="bodyRef">
+        <div v-if="loading" class="git-history-loading git-history-loading--skeleton">
+          <PanelSkeleton variant="list" :rows="10" :meta="true" :label="t('common.loading')" />
+        </div>
+        <div v-else-if="error" class="git-history-error">{{ error }}</div>
+        <div v-else-if="!isGit" class="git-history-empty">
+          <div class="empty-state-card">
+            <GitBranch class="empty-state__icon" />
+            <div class="empty-state-title">{{ t('git.commitList.notGitRepo') }}</div>
+            <div class="empty-state-desc">{{ t('git.commitList.notGitRepoDesc') }}</div>
+            <div class="empty-state-hint">
+              <code>git init</code>
             </div>
           </div>
         </div>
-      </div>
+        <div v-else-if="commits.length === 0 && untracked" class="git-history-empty">
+          <div class="empty-state-card">
+            <FileText class="empty-state__icon" />
+            <div class="empty-state-title">{{ t('git.commitList.untrackedFile') }}</div>
+            <div class="empty-state-desc">{{ t('git.commitList.untrackedDesc') }}</div>
+            <div class="empty-state-hint">
+              <code>git add &lt;filename&gt;</code> {{ t('git.commitList.untrackedHint') }}
+            </div>
+          </div>
+        </div>
+        <div v-else-if="commits.length === 0" class="git-history-empty">
+          <div class="empty-state-card">
+            <GitCommitHorizontal class="empty-state__icon" />
+            <div class="empty-state-title">{{ t('git.commitList.noCommits') }}</div>
+          </div>
+        </div>
+        <template v-else>
+        <!-- Commits the upstream has and this branch does not. They are NOT part of
+             the history below: that list is walked from the branch's own commit, and
+             the graph's lanes are drawn from parent links inside it — splicing
+             foreign rows in would draw a graph that contradicts the list.
+
+             Collapsed by default and only present when there is something to show,
+             so a branch that is up to date looks exactly as it did before. -->
+        <div v-if="behindCommits.length" class="remote-commits" :class="{ 'is-open': remoteOpen }">
+          <button
+            class="remote-commits-head"
+            :aria-expanded="remoteOpen"
+            data-action="toggle-remote-commits"
+            @click.stop="toggleRemoteCommits"
+          >
+            <CloudDownload :size="12" class="remote-commits-icon" />
+            <span class="remote-commits-title">
+              {{ t('git.divergence.remoteTitle', { upstream: divergence.upstream, count: behindCount }) }}
+            </span>
+            <ChevronDown :size="12" class="remote-commits-chevron" />
+          </button>
+          <div v-if="remoteOpen" class="remote-commits-list">
+            <div
+              v-for="c in behindCommits"
+              :key="c.sha"
+              class="remote-commit"
+              @click="$emit('select', c)"
+            >
+              <!-- Same type scale and two-line shape as a normal commit row, so the
+                   two lists read as one thing. The only difference is the tag that
+                   says where the commit lives. -->
+              <div class="git-commit-info">
+                <div class="git-commit-msg">
+                  <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
+                  <span class="git-commit-msg-text">{{ c.msg }}</span>
+                </div>
+                <div class="git-commit-meta">
+                  <span class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+                  <span>{{ formatDate(c.date) }}</span>
+                  <span v-if="c.author"> · {{ c.author }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="behindCount > behindCommits.length" class="remote-commits-more">
+              {{ t('git.divergence.moreRemote', { count: behindCount - behindCommits.length }) }}
+            </div>
+          </div>
+        </div>
+        <div class="commit-list-container">
+          <!-- Graph SVG - hidden during search or file mode (no multi-branch graph for single file).
+               Also hidden while merge commits are filtered out: the lanes are drawn
+               from parent links, so removing the merge rows would leave a graph that
+               silently contradicts the list next to it. -->
+          <GitGraph
+            v-if="!isSearching && !hideMerges && mode !== 'file'"
+            class="commit-list-graph"
+            :commits="filteredCommits"
+            :row-height="graphRowHeight"
+            :collapsed="graphCollapsed"
+            @update:collapsed="graphCollapsed = $event"
+          />
+          <div v-else-if="isSearching" class="commit-list-graph-hint">
+            <Info :size="14" />
+          </div>
+          <!-- Commit rows -->
+          <div class="commit-list-content" ref="contentRef" @touchstart.passive="onTouchStart" @touchend="onTouchEnd">
+            <div
+              v-for="(c, idx) in filteredCommits"
+              :key="c.sha"
+              class="drilldown-item"
+              :class="{ 'drilldown-item-selected': c.sha === selectedSHA, 'drilldown-item-active': listNav.activeIndex.value === idx, 'is-unpushed': aheadSet.has(c.sha) }"
+              :draggable="isWideScreen && canDragCommit(c)"
+              @dragstart="onCommitDragStart(c, $event)"
+              @dragend="cleanupDragGhost()"
+              @click="$emit('select', c)"
+            >
+              <div class="git-commit-info">
+                <div class="git-commit-msg">
+                  <span class="git-commit-msg-text">{{ c.msg }}</span>
+                  <span
+                    v-if="c.isWT && wtFileCount > 0"
+                    class="git-commit-file-count count-badge"
+                    :title="t('git.history.fileCount', { count: wtFileCount })"
+                  >{{ wtFileCount }}</span>
+                </div>
+                <div class="git-commit-meta">
+                  <span v-if="!c.isWT" class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+                  <!-- Same visual language as a ref tag: this row is on the branch
+                       but not on the upstream, so it has not been pushed yet. -->
+                  <span v-if="aheadSet.has(c.sha)" class="git-ref-tag git-ref-tag--unpushed" :title="t('git.divergence.unpushedHint')">
+                    {{ t('git.divergence.unpushed') }}
+                  </span>
+                  <span v-if="c.refs && c.refs.length" class="git-commit-refs">
+                    <span v-for="ref in c.refs" :key="ref" class="git-ref-tag" :class="refTagClass(ref)">{{ refLabelText(ref) }}</span>
+                  </span>
+                  <span>{{ formatDate(c.date) }}</span>
+                  <span v-if="c.author"> · {{ c.author }}</span>
+                </div>
+              </div>
+              <!-- Quote this commit into a conversation. Dragging the row does the
+                   same thing, but a drag is invisible: every other quotable object
+                   (issue/PR, meeting, file) also has a button, and a commit row
+                   was the one place the action could not be discovered. -->
+              <button
+                v-if="!c.isWT && c.sha"
+                class="commit-quote-btn"
+                :title="t('file.header.quoteInChat')"
+                :aria-label="t('file.header.quoteInChat')"
+                @click.stop="quoteCommit(c)"
+              >
+                <MessageSquare :size="14" />
+              </button>
+            </div>
+            <div ref="listRef" class="git-load-more-sentinel">
+              <div v-if="hasMore && loadingMore" class="git-load-more">
+                <LoadingIndicator size="sm" inline />
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -487,9 +489,8 @@ function toggleRemoteCommits() {
 /**
  * "↓3" click: open the strip.
  *
- * The strip is pinned above the scrolling body, so opening it is enough to see
- * the commits — no scrolling, which would also move the history under the user
- * for no reason.
+ * It expands in place at the top of the history and scrolls with it, so the
+ * commits are right there — no scrolling needed, and no inner scrollbar.
  */
 function revealRemoteCommits() {
   if (!behindCommits.value.length) {
@@ -979,7 +980,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
    history, not part of it: the list below is walked from this branch's own
    commit and its graph would contradict foreign rows. */
 .remote-commits {
-  flex: none;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
@@ -1021,11 +1021,9 @@ defineExpose({ observeList, unobserveList, commitSearch })
   transform: rotate(180deg);
 }
 
+/* No inner scroll: the strip expands in place and scrolls together with the
+   history below it, so the panel keeps a single scrollbar. */
 .remote-commits-list {
-  /* Taller than before: each entry is now two lines. Roughly five entries stay
-     visible before the list scrolls. */
-  max-height: calc(260 * var(--dp));
-  overflow-y: auto;
   border-top: 1px solid var(--border-color);
 }
 
