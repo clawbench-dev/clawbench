@@ -26,7 +26,7 @@
       <button
         v-if="showRenderToggle"
         class="code-preview-btn"
-        :class="{ 'is-active': isRenderedView }"
+        :class="{ active: isRenderedView }"
         :aria-pressed="isRenderedView"
         :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
         :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
@@ -43,7 +43,7 @@
         v-if="showTextTools && !isRenderedView"
         ref="firstActionBtnRef"
         class="code-preview-btn"
-        :class="{ 'is-active': isSearchOpen }"
+        :class="{ active: isSearchOpen }"
         :title="t('file.codePreview.findInPreview')"
         :aria-label="t('file.codePreview.findInPreview')"
         :data-tooltip="t('file.codePreview.findInPreview')"
@@ -57,7 +57,7 @@
       <button
         v-if="showTextTools && !isRenderedView"
         class="code-preview-btn"
-        :class="{ 'is-active': isWordWrap }"
+        :class="{ active: isWordWrap }"
         :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
         :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
         :aria-pressed="isWordWrap"
@@ -72,7 +72,7 @@
       <button
         v-if="showTextTools && !isRenderedView"
         class="code-preview-btn"
-        :class="{ 'is-active': showLineNumbers }"
+        :class="{ active: showLineNumbers }"
         :aria-pressed="showLineNumbers"
         :title="t('file.header.lineNumbers')"
         :aria-label="t('file.header.lineNumbers')"

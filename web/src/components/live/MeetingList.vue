@@ -730,10 +730,8 @@ onMounted(() => {
    .drilldown-refresh-btn / .forge-header-btn scale). The spin + green check
    come from RefreshButton itself. */
 .meeting-refresh-btn {
-  transition: transform var(--duration-slow) ease, background var(--duration-slow) ease,
-    color var(--duration-slow) ease;
+  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
 }
-.meeting-refresh-btn:active:not(:disabled) { transform: scale(0.9); }
 
 .meeting-body {
   flex: 1;
@@ -986,7 +984,6 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   border: none;
-  background: transparent;
   cursor: pointer;
   flex-shrink: 0;
 }

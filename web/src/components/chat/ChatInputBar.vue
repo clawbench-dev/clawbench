@@ -2557,7 +2557,7 @@ defineExpose({
   cursor: pointer;
   color: var(--text-secondary);
   padding: calc(5 * var(--dp)) var(--space-4);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   line-height: 1;
   transition: color var(--duration-base), background var(--duration-base), transform var(--duration-fast);
@@ -2575,17 +2575,14 @@ defineExpose({
   }
 }
 
+/* Pressed: the shared recipe (accent 14% tint, no colour change, no scale).
+   Stated here because this row is `size="custom"` — it keeps the composer's
+   own geometry, so the size-specific shared rules do not reach it. Keep these
+   three declarations identical to the shared ones in components.css. */
 .chat-action-btn:active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
-  transform: scale(0.92);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
 }
 
-
-.chat-action-btn.active:active {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
-  transform: scale(0.92);
-}
 
 .chat-action-btn:disabled {
   cursor: not-allowed;
@@ -2607,7 +2604,6 @@ defineExpose({
 .chat-action-btn-archive:not(.disabled):active {
   color: var(--color-orange);
   background: color-mix(in srgb, var(--color-orange) 18%, transparent);
-  transform: scale(0.92);
 }
 
 .chat-action-btn-archive.disabled {
@@ -2665,7 +2661,6 @@ defineExpose({
 
 .chat-action-btn.has-running:active {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
-    transform: scale(0.92);
 }
 
 /* The running tint above outranks the generic `.chat-action-btn:hover` rule

@@ -292,42 +292,25 @@ onMounted(refresh)
 
 
 
-/* Header icon button (refresh, etc.) */
+/* Header icon button. Size, radius, colour, hover and press all come from the
+   shared ActionBar row rules (size="header"); this block used to restate every
+   one of them (28 / radius-lg / secondary colour / its own hover / a press
+   scale) and every one of those declarations lost to the shared rules — the
+   file said one thing and the screen showed another. Only what the shared
+   rules do not set lives here. */
 .header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--text-secondary, #666);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
 
 .header-btn:disabled {
   opacity: var(--opacity-muted);
   cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary, #eef1f4);
-    color: var(--accent-color, #0066cc);
-  }
-}
-
-.header-btn:active:not(:disabled) {
-  transform: scale(0.9);
-}
-
-/* Clear-unread button accent when unread messages exist */
-
-.create-btn:active {
-  transform: scale(0.9);
 }
 
 .task-list-body {

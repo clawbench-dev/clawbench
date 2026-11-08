@@ -174,7 +174,6 @@ const sessionBarColor = computed(() => {
 .header-action-btn {
   margin-left: var(--space-3);
   border: none;
-  background: none;
   cursor: pointer;
   display: flex;
   align-items: center;

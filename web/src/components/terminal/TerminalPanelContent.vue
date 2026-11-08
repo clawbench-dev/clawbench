@@ -153,7 +153,7 @@
         <button class="toolbar-btn modifier gesture-toggle btn-func" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
           <OmegaIcon :size="14" />
         </button>
-        <ActionBar ref="toolbarScrollRef" class="toolbar-scroll" mode="scroll">
+        <ActionBar ref="toolbarScrollRef" class="toolbar-scroll" mode="scroll" :gap="0">
           <button
             v-for="def in visibleKeys"
             :key="def.id"

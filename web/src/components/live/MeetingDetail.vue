@@ -1144,7 +1144,10 @@ onMounted(() => {
 .meeting-header__spacer { flex: 1; }
 .meeting-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  border: none; background: transparent;
+  border: none;
+  /* Needed by the back/rename buttons, which sit in the header row OUTSIDE the
+     ActionBar and so do not get the shared transparent background. */
+  background: transparent;
   cursor: pointer; flex-shrink: 0;
 }
 

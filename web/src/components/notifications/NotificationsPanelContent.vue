@@ -645,7 +645,6 @@ function forgeTargetFromItemKey(key: string) {
   justify-content: center;
   transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
-.header-btn:active:not(:disabled) { transform: scale(0.9); }
 .header-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
 
 /* Filter row — three dropdowns + the count.

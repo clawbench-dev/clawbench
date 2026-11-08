@@ -1603,10 +1603,14 @@
    icon-to-text gaps. The same control read as a different control depending on
    which panel it was in, and a new bar could silently pick a fourth size.
 
-   `size` on the component picks a row; these rules own the shape:
+   `size` on the component picks a row; these rules own the shape. BOTH rows
+   use the same radius: one shape everywhere. The header row used to be a pill
+   (999px), which made a toggled button read as a different control from the
+   identically-toggled button one tab over — a round dot in the task header, a
+   rounded square in the meeting header, for the same action.
 
      header — panel/app headers (tasks, notifications, forge, git history,
-              file viewer): 28 tall, pill, 10 padding, 5 gap, 14 icon
+              file viewer): 28 tall, 6 radius, 10 padding, 5 gap, 14 icon
      bar    — tool strips inside content (file manager, code preview, session
               header, mail): 26 tall, 6 radius, 8 padding, 4 gap, 15 icon
 
@@ -1616,7 +1620,7 @@
    ========================================================================== */
 .ab--header {
     --ab-btn-size: calc(28 * var(--dp));
-    --ab-btn-radius: var(--radius-full);
+    --ab-btn-radius: var(--radius-sm);
     --ab-btn-pad: calc(10 * var(--dp));
     --ab-btn-gap: calc(5 * var(--dp));
     --ab-icon-size: calc(14 * var(--dp));
@@ -1629,8 +1633,8 @@
     --ab-icon-size: calc(15 * var(--dp));
 }
 
-/* Square when icon-only, a pill when labelled: a fixed `border-radius: 50%`
-   would turn a wide button into an ellipse.
+/* One shape for icon-only and labelled alike: a rounded square. A labelled
+   button grows, it does not change silhouette.
    Descendant rather than child: the file manager's sort button sits inside
    `.toolbar-dropdown-wrap` (which anchors its popup) and would otherwise be the
    only button in the row without the shared size and shape. */
@@ -1727,6 +1731,41 @@
 }
 
 
+
+/* ==========================================================================
+   ActionBar danger button — ONE recipe for the red
+
+   Destructive actions (delete / clear) used to carry their own colours: a
+   hard-coded #ef4444 in two places, a #dc2626 + #fef2f2 pair with a second
+   dark-theme copy in a third, and a mail-reader rule that was out-ranked by the
+   row's resting colour and silently rendered grey. Red now comes from
+   `--color-red`, mixed the same way as every other bar state.
+
+   Declared after the hover/press rules on purpose: those selectors have the
+   same weight, so the later block is what wins for a danger button.
+
+   The bare `.is-danger` selector covers rows that are not ActionBars (the file
+   manager's multi-select strip); the `.ab`-prefixed ones out-rank the row's own
+   colour inside a bar.
+   ========================================================================== */
+.is-danger {
+    color: var(--color-red);
+}
+.ab button.is-danger:not([data-ab-more]) {
+    color: var(--color-red);
+}
+@media (hover: hover) {
+    /* `button.` on purpose: `.is-danger` is also a status-pill modifier, and a
+       span must not gain a hover tint. */
+    button.is-danger:hover:not(:disabled),
+    .ab button.is-danger:not([data-ab-more]):hover:not(:disabled) {
+        color: var(--color-red);
+        background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    }
+}
+.ab button.is-danger:not([data-ab-more]):active:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red) 14%, transparent);
+}
 
 /* No transitions while measuring.
    A width transition on the buttons makes the forced-on layout report the

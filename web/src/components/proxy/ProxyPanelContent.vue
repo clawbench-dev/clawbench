@@ -679,11 +679,6 @@ async function handleRetryTunnel() {
   cursor: not-allowed;
 }
 
-.header-btn:active:not(:disabled),
-.create-btn:active:not(:disabled) {
-  transform: scale(0.9);
-}
-
 /* Current-transport row (app mode) */
 .tunnel-transport {
   display: flex;

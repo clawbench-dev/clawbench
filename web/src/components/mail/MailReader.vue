@@ -51,7 +51,7 @@
         <MailOpen v-else />
         <span class="action-label">{{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}</span>
       </button>
-      <button class="mail-icon-btn mail-icon-btn--danger" :title="t('mail.reader.delete')"
+      <button class="mail-icon-btn is-danger" :title="t('mail.reader.delete')"
         :aria-label="t('mail.reader.delete')" :disabled="busy" @click="remove">
         <Trash2 />
         <span class="action-label">{{ t('mail.reader.delete') }}</span>
@@ -335,7 +335,6 @@ async function remove(): Promise<void> {
   color: var(--text-primary);
 }
 .mail-reader__actions {
-  gap: var(--space-1, 2px);
   padding: var(--space-1, 2px) var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -526,6 +525,8 @@ async function remove(): Promise<void> {
   align-items: center;
   justify-content: center;
   border: none;
+  /* Needed by the back/star buttons in the head row, which are NOT inside an
+     ActionBar and so do not get the shared transparent background. */
   background: none;
   cursor: pointer;
   flex: none;
@@ -533,11 +534,6 @@ async function remove(): Promise<void> {
 .mail-icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
-}
-/* Delete keeps the red it had as a text chip, so it is not mistaken for one of
-   the neutral actions sitting beside it. */
-.mail-icon-btn--danger {
-  color: var(--color-red);
 }
 
 

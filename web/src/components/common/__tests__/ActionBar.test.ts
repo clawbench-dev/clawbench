@@ -265,3 +265,25 @@ describe('ActionBar — scrolling (scroll mode)', () => {
     expect(bar.dataset.fadeRight).toBe('0')
   })
 })
+
+describe('ActionBar — row gap', () => {
+  const mountWith = (props: Record<string, unknown>) =>
+    mount(ActionBar, {
+      props,
+      global: { plugins: [i18n] },
+      slots: { default: () => h('button', 'A') },
+    })
+
+  it('separates the buttons by default', () => {
+    // Regression: the gap was left to each host's CSS and the chat row ended up
+    // at 0 — as soon as one button's background lit up, the two tints touched
+    // and the pair read as a single control.
+    const wrapper = mountWith({})
+    expect((wrapper.element as HTMLElement).style.gap).toBe('calc(8 * var(--dp))')
+  })
+
+  it('lets a keyboard-like strip ask for zero', () => {
+    const wrapper = mountWith({ gap: 0 })
+    expect((wrapper.element as HTMLElement).style.gap).toBe('calc(0 * var(--dp))')
+  })
+})

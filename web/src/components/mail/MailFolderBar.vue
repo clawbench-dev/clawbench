@@ -281,7 +281,6 @@ function onSearchInput(e: Event): void {
 .mail-bar__top {
   display: flex;
   align-items: center;
-  gap: var(--space-1, 2px);
 }
 
 /* ── Account: a 22dp avatar, not a field ─────────────────────────────── */

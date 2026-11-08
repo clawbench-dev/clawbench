@@ -13,7 +13,7 @@
         'ab--bar': size === 'bar',
       },
     ]"
-    :style="gap ? { gap: `calc(${gap} * var(--dp))` } : undefined"
+    :style="gap != null ? { gap: `calc(${gap} * var(--dp))` } : undefined"
     @scroll.passive="onScroll"
   >
     <slot />
@@ -74,6 +74,10 @@
  * `<span class="action-label">…</span>` inside it. The width a labelled button
  * needs is therefore measured from the real DOM, not estimated.
  *
+ * The gap between buttons is owned here too. It used to be left to each host's
+ * CSS and one row ended up at 0: as soon as a button's background lit up (hover
+ * or toggled on) the two tints touched and the pair read as a single control.
+ *
  * Design notes: docs/spec/client/design-guide.md
  * 「图标按钮：空间够就带上文字标签」.
  */
@@ -87,7 +91,8 @@ const props = withDefaults(
   defineProps<{
     /** How the row degrades when it runs out of room. */
     mode?: 'menu' | 'scroll'
-    /** Gap between buttons, in design px. Omit to keep the caller's CSS gap. */
+    /** Gap between buttons, in design px. Defaults to the shared row rhythm;
+     *  pass 0 for a keyboard-like strip whose keys are meant to touch. */
     gap?: number
     /** Width reserved for the "more" button, in design px. */
     moreWidth?: number
@@ -111,7 +116,7 @@ const props = withDefaults(
   }>(),
   {
     mode: 'menu',
-    gap: undefined,
+    gap: 8,
     moreWidth: 28,
     moreLabel: '',
     align: 'start',

@@ -524,7 +524,10 @@ function handleFileNameDragEnd() {
     gap: var(--space-2);
     height: var(--header-height);
     padding: 0 var(--space-2) 0 var(--space-3);
-    background: var(--bg-secondary);
+    /* Follows the surface it sits on (same rule as every other panel header).
+       A fixed `--bg-secondary` made this one header a different colour from the
+       task / notification / meeting headers directly above it in the layout. */
+    background: transparent;
     border: none;
     border-bottom: 1px solid var(--border-color);
     font-size: var(--font-size-sm);
@@ -590,7 +593,6 @@ function handleFileNameDragEnd() {
 
 /* Region 2: Toolbar — takes remaining space, shrinks to trigger overflow */
 .header-actions {
-    gap: var(--space-4);
     flex: 1 1 0;
 }
 
@@ -617,19 +619,6 @@ function handleFileNameDragEnd() {
         color: var(--text-secondary);
     }
 }
-.file-header-btn.danger {
-    color: #ef4444;
-}
-@media (hover: hover) {
-    .file-header-btn.danger:hover {
-        background: #fef2f2;
-        color: #dc2626;
-    }
-    [data-theme-base="dark"] .file-header-btn.danger:hover {
-        background: #2d1b1b;
-    }
-}
-
 /* Dropdown */
 .dropdown-wrapper {
     position: relative;

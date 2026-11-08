@@ -28,7 +28,7 @@
           <button v-if="isNativeApp && allSelectedAreFiles" class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.multiSelect.share')" @click="doBatchShare">
             <Share2 :size="16" />
           </button>
-          <button class="toolbar-btn ms-toolbar-danger" :disabled="multiSelect.selected.size === 0" :title="t('common.delete')" @click="doBatchDelete">
+          <button class="toolbar-btn ms-toolbar-danger is-danger" :disabled="multiSelect.selected.size === 0" :title="t('common.delete')" @click="doBatchDelete">
             <Trash2 :size="16" />
           </button>
         </div>
@@ -3074,17 +3074,6 @@ function scrollSelectedIntoView(path) {
     .ms-select-all-btn:hover {
         background: var(--bg-tertiary, #d8d8d8);
         color: var(--accent-color, #4a90d9);
-    }
-}
-
-.toolbar-btn.ms-toolbar-danger {
-    color: #ef4444;
-}
-
-@media (hover: hover) {
-    .toolbar-btn.ms-toolbar-danger:hover {
-        background: color-mix(in srgb, #ef4444 12%, transparent);
-        color: #ef4444;
     }
 }
 

@@ -202,7 +202,9 @@ body.code-preview-resizing * {
 .code-preview-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  /* Matches the ActionBar row gap: these buttons live in a wrapper inside the
+     bar, so the bar's own gap does not reach between them. */
+  gap: var(--space-4);
   flex-shrink: 0;
 }
 
@@ -225,10 +227,13 @@ body.code-preview-resizing * {
   outline-offset: -1px;
 }
 
-.code-preview-btn.is-pinned,
-.code-preview-btn.is-active {
+/* Toggled-on (pinned) state, for the floating card header only — inside the
+   shared tool row the `.active` class hands this to the ActionBar rules, which
+   out-rank a two-class rule like this one. The old hard-coded rgba() was a
+   fixed blue that ignored all 36 themes. */
+.code-preview-btn.is-pinned {
   color: var(--accent-color);
-  background: rgba(26, 115, 232, 0.1);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .code-preview-btn.is-copied {
@@ -508,7 +513,9 @@ body.code-preview-resizing * {
   gap: var(--space-4);
   padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp)) var(--space-6);
   min-height: calc(28 * var(--dp));
-  background: var(--bg-secondary, #f8f9fa);
+  /* Follows the card it sits on, like every other panel header. It used to be
+     `--bg-secondary`, which painted a grey band across the white preview card. */
+  background: transparent;
   border-bottom: 1px solid var(--border-color, #e0e0e0);
   user-select: none;
   touch-action: none;
