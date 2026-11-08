@@ -212,3 +212,42 @@ describe('no dead overrides left behind', () => {
     expect(src).toMatch(/active:\s*isWordWrap/)
   })
 })
+
+describe('one toolbar row height', () => {
+  const vars = stripComments(readWebFile('css/variables.css'))
+
+  it('declares the row tokens once', () => {
+    expect(vars, 'button size token').toMatch(/--toolbar-btn-size:\s*calc\(26 \* var\(--dp\)\)/)
+    expect(vars, 'row height token').toMatch(/--toolbar-row-height:\s*calc\(32 \* var\(--dp\)\)/)
+  })
+
+  it('has the bar-size ActionBar take its button size from the token', () => {
+    const decls = baseRule(bare, 'ab--bar')
+    expect(decls).toMatch(/--ab-btn-size:\s*var\(--toolbar-btn-size\)/)
+  })
+
+  it('sizes every content tool strip from the row token', () => {
+    // Regression: the file manager swaps its browse toolbar for the
+    // multi-select one in the same slot, and the row used to be sized by its
+    // tallest child — opening multi-select shrank the whole toolbar by 8px.
+    const ROWS: Array<[string, string]> = [
+      ['src/components/file/FileManagerContent.vue', 'dir-toolbar'],
+      ['src/assets/code-link-preview.css', 'code-preview-meta'],
+      ['src/components/file/DirPreviewBody.vue', 'dir-preview-meta'],
+      ['src/components/mail/MailReader.vue', 'mail-reader__actions'],
+    ]
+    for (const [file, cls] of ROWS) {
+      const decls = baseRule(stripComments(readWebFile(file)), cls)
+      expect(decls, `.${cls} must exist in ${file}`).not.toBeNull()
+      expect(decls, `.${cls} must take its height from --toolbar-row-height`).toMatch(
+        /height:\s*var\(--toolbar-row-height\)/,
+      )
+    }
+  })
+
+  it('gives the multi-select buttons the same box as the ActionBar ones', () => {
+    const src = stripComments(readWebFile('src/components/file/FileManagerContent.vue'))
+    expect(src).toMatch(/\.ms-toolbar-btns \.toolbar-btn \{[^}]*height:\s*var\(--toolbar-btn-size\)/)
+    expect(baseRule(src, 'ms-select-all-btn')).toMatch(/height:\s*var\(--toolbar-btn-size\)/)
+  })
+})

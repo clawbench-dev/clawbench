@@ -1626,7 +1626,7 @@
     --ab-icon-size: calc(14 * var(--dp));
 }
 .ab--bar {
-    --ab-btn-size: calc(26 * var(--dp));
+    --ab-btn-size: var(--toolbar-btn-size);
     --ab-btn-radius: var(--radius-sm);
     --ab-btn-pad: calc(8 * var(--dp));
     --ab-btn-gap: calc(4 * var(--dp));

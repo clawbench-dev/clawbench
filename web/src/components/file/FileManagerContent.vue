@@ -2964,7 +2964,11 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     min-width: 0;
     background: transparent;
-    padding: calc(3 * var(--dp)) var(--space-4);
+    /* Height comes from the shared token, not from the tallest child: the browse
+       toolbar and the multi-select toolbar swap in this slot, and a row sized by
+       its content shrank by 8px the moment multi-select opened. */
+    height: var(--toolbar-row-height);
+    padding: 0 var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
 
@@ -3045,6 +3049,13 @@ function scrollSelectedIntoView(path) {
 }
 .ms-toolbar-btns::-webkit-scrollbar { display: none; }
 
+/* Same box as the ActionBar buttons they replace, so the icons sit on the same
+   line and the row keeps its height (see --toolbar-btn-size). */
+.ms-toolbar-btns .toolbar-btn {
+    width: var(--toolbar-btn-size);
+    height: var(--toolbar-btn-size);
+}
+
 /* Selection summary fills the free space so the action buttons stay right-aligned. */
 .ms-toolbar-text {
     flex: 1;
@@ -3058,8 +3069,10 @@ function scrollSelectedIntoView(path) {
 
 .ms-select-all-btn {
     width: auto;
-    height: auto;
-    padding: calc(3 * var(--dp)) var(--space-5);
+    height: var(--toolbar-btn-size);
+    display: inline-flex;
+    align-items: center;
+    padding: 0 var(--space-5);
     border: none;
     border-radius: var(--radius-md);
     font-size: var(--font-size-xs);

@@ -63,6 +63,15 @@
 
     /* ── Static layout values (never change with theme) ──────────── */
     --header-height: calc(36 * var(--dp));
+    /* One row of icon buttons inside a content strip. Both values are public
+       because two kinds of row share the same slot: ActionBar's `bar` size and
+       the hand-rolled rows that stand in for it (the file manager's
+       multi-select toolbar, the code preview's meta row). A row that set only
+       the button size let the whole toolbar change height the moment it was
+       swapped in — 8px of jump in the file manager. Row height = button + the
+       row's own vertical padding. */
+    --toolbar-btn-size: calc(26 * var(--dp));
+    --toolbar-row-height: calc(32 * var(--dp));
     /* The safe-area inset is a DEVICE measurement, so it must NOT be scaled —
        a notch is the same physical size whatever the UI scale. */
     --header-safe-area-top: env(safe-area-inset-top, 0px);

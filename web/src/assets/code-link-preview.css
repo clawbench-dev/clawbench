@@ -511,8 +511,10 @@ body.code-preview-resizing * {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp)) var(--space-6);
-  min-height: calc(28 * var(--dp));
+  padding: 0 var(--space-3) 0 var(--space-6);
+  /* One row height for every content tool strip (see --toolbar-row-height);
+     this row used to be 34, the file manager's 32 and the mail reader's 30. */
+  height: var(--toolbar-row-height);
   /* Follows the card it sits on, like every other panel header. It used to be
      `--bg-secondary`, which painted a grey band across the white preview card. */
   background: transparent;

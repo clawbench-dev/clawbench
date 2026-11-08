@@ -216,9 +216,11 @@ function onEntryClick(entry: DirPreviewEntry) {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: calc(3 * var(--dp)) var(--space-3) calc(3 * var(--dp)) var(--space-6);
-  min-height: calc(28 * var(--dp));
-  background: var(--bg-secondary, #f8f9fa);
+  padding: 0 var(--space-3) 0 var(--space-6);
+  /* Same token as .code-preview-meta, which this row mirrors — including the
+     transparent fill, so the row follows the card instead of painting a band. */
+  height: var(--toolbar-row-height);
+  background: transparent;
   border-bottom: 1px solid var(--border-color, #e0e0e0);
   user-select: none;
   flex-shrink: 0;

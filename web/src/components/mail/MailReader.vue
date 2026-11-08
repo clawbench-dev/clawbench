@@ -335,7 +335,8 @@ async function remove(): Promise<void> {
   color: var(--text-primary);
 }
 .mail-reader__actions {
-  padding: var(--space-1, 2px) var(--space-3, 6px);
+  height: var(--toolbar-row-height);
+  padding: 0 var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
