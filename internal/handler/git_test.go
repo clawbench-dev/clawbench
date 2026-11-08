@@ -3811,3 +3811,33 @@ func TestServeGitDivergence_UpstreamRefGone(t *testing.T) {
 	assert.Empty(t, body.Ahead)
 	assert.Empty(t, body.Behind)
 }
+
+// A path that is neither staged nor modified in a tracked file yields an empty
+// diff, not an error: the file list can offer it (e.g. after the change was
+// reverted) and the viewer must show "no changes" instead of failing.
+func TestGitDiff_TrackedFileWithoutChanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	output, err := gitDiff(env.ProjectDir, "README.md", "HEAD")
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(string(output)))
+}
+
+// mergeCommitDiff falls through to an empty result when NO parent shows a
+// difference for the path. That happens for a file the merge took verbatim from
+// one side while the caller asked about a path only touched on the other.
+func TestMergeCommitDiff_NoParentDiffers(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	// A path that does not exist in either parent: both `git diff` calls fail,
+	// so the loop must skip them and return an empty diff rather than the error.
+	out, err := mergeCommitDiff(env.ProjectDir, "never-existed.txt", "HEAD", []string{"HEAD~1", "HEAD~2"})
+	require.NoError(t, err)
+	assert.Empty(t, out)
+}

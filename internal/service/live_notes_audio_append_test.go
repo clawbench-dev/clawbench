@@ -121,3 +121,46 @@ func TestMergeLiveNoteAudio_DropsTheDuplicateSoloFileAssembledLive(t *testing.T)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 	require.FileExists(t, filepath.Join(paths.Audio, LiveNoteMeetingAudioFile))
 }
+
+// An empty segment path is not folded: the append path is only for segments the
+// splitter actually wrote to disk, and the caller passes "" when there was none.
+func TestAppendLiveNoteAudio_EmptyPathIsNoOp(t *testing.T) {
+	consumed, err := AppendLiveNoteAudio(audioPaths(t), "mic", 1_700_000_000_000, "")
+	require.NoError(t, err)
+	assert.False(t, consumed)
+}
+
+// A corrupt sidecar must not wedge the channel: it is treated as "start over"
+// so the next segment still gets folded, rather than failing every upload for
+// the rest of the meeting.
+func TestAppendLiveNoteAudio_CorruptSidecarStartsOver(t *testing.T) {
+	paths := audioPaths(t)
+	seg := writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))
+	sidecar := filepath.Join(paths.Audio, "mic.append.json")
+	require.NoError(t, os.WriteFile(sidecar, []byte("{not json"), 0o644))
+
+	consumed, err := AppendLiveNoteAudio(paths, "mic", 1_700_000_000_000, seg)
+	require.NoError(t, err)
+	assert.True(t, consumed, "a bad sidecar means start over, not fail the upload")
+	require.FileExists(t, filepath.Join(paths.Audio, "mic.webm"))
+}
+
+// A recording left by an earlier run whose bookkeeping did not survive (crash
+// between the header patch and the sidecar write) must not be truncated: the
+// segments are already gone, so the file is the only copy of those minutes.
+func TestAppendLiveNoteAudio_KeepsAnOrphanedRecording(t *testing.T) {
+	paths := audioPaths(t)
+	channel := filepath.Join(paths.Audio, "mic.webm")
+	require.NoError(t, os.MkdirAll(paths.Audio, 0o755))
+	require.NoError(t, os.WriteFile(channel, []byte("previous run"), 0o644))
+
+	seg := writeSegment(t, paths, 1_700_000_000_000, "mic", testSegment(t, testCluster{timecode: 0}))
+	consumed, err := AppendLiveNoteAudio(paths, "mic", 1_700_000_000_000, seg)
+	require.NoError(t, err)
+	assert.False(t, consumed, "the segment is left for the end-of-meeting merge")
+
+	data, err := os.ReadFile(channel)
+	require.NoError(t, err)
+	assert.Equal(t, "previous run", string(data), "the earlier recording must be untouched")
+	require.FileExists(t, seg, "the segment must survive so the merge can still use it")
+}

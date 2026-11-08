@@ -630,3 +630,17 @@ func TestBroadcastSessionTitleUpdate_EmitsEvent(t *testing.T) {
 	}
 	assert.True(t, found, "expected session_title_update carrying the new title, got %v", evts)
 }
+
+// A quote with only one of the two parts still contributes what it has: the
+// titler should never see an empty "[Quote]" stub.
+func TestUserMessageTitleText_QuoteWithOnlyOnePart(t *testing.T) {
+	bodyOnly := []model.FileEntry{{Path: "  ", Kind: "quote", Text: "只有正文"}}
+	assert.Equal(t, "[Quote]\n只有正文", userMessageTitleText("", bodyOnly))
+
+	labelOnly := []model.FileEntry{{Path: "只有标签", Kind: "quote", Text: "  "}}
+	assert.Equal(t, "[Quote] 只有标签", userMessageTitleText("", labelOnly))
+
+	// Neither part: the entry contributes nothing rather than an empty stub.
+	empty := []model.FileEntry{{Path: "", Kind: "quote", Text: ""}}
+	assert.Equal(t, "", userMessageTitleText("", empty))
+}

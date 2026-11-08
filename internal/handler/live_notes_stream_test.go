@@ -323,3 +323,60 @@ func TestWAVFromPCM_WrapsTheSamplesInAContainer(t *testing.T) {
 	assert.Equal(t, "data", string(out[36:40]))
 	assert.Equal(t, uint32(len(pcm)), uint32(out[40])|uint32(out[41])<<8|uint32(out[42])<<16|uint32(out[43])<<24)
 }
+
+// The stream endpoint is reachable without a session cookie only for a valid
+// share token; an unknown token must 404 rather than upgrade the socket.
+func TestLiveNotesStream_RejectsUnknownToken(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+	project := projPath("/proj/a")
+	_, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{text: "x"})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	srv := httptest.NewServer(http.HandlerFunc(LiveNotesStreamWS))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx,
+		"ws"+strings.TrimPrefix(srv.URL, "http")+"/api/live-share/notes/stream?token=not-a-real-token&channel=0",
+		&websocket.DialOptions{HTTPHeader: http.Header{
+			"Cookie": {model.ScopedCookieName("clawbench_project") + "=" + url.QueryEscape(project)},
+		}})
+	require.Error(t, err, "an unknown share token must not be accepted")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+// Without a recognizer there is nothing the endpoint could do with the audio,
+// so it refuses before upgrading the socket instead of accepting and dropping.
+func TestLiveNotesStream_RefusesWithoutRecognizer(t *testing.T) {
+	setupLiveNotesDB(t)
+	resetLiveRegistry(t)
+	project := projPath("/proj/a")
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+
+	prev := GetSTTProvider()
+	SetSTTProvider(nil)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	srv := httptest.NewServer(http.HandlerFunc(LiveNotesStreamWS))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx,
+		"ws"+strings.TrimPrefix(srv.URL, "http")+"/api/live-share/notes/stream?token="+
+			url.QueryEscape(room.Token())+"&channel=mic",
+		&websocket.DialOptions{HTTPHeader: http.Header{
+			"Cookie": {model.ScopedCookieName("clawbench_project") + "=" + url.QueryEscape(project)},
+		}})
+	require.Error(t, err, "no recognizer means no stream")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+}

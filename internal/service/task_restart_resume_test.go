@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -336,4 +337,87 @@ func TestCancelAllRunning_MarksAIExecutions(t *testing.T) {
 
 	_, flag := executionRow(t, execID)
 	assert.Equal(t, 1, flag, "a graceful shutdown must mark its AI executions")
+}
+
+// TestStartTaskRestartResume_UsesProductionDefaults pins the exported entry
+// point to the parameterized implementation.
+//
+// StartTaskRestartResume is what main calls at boot, and it is the only place
+// the production delay and resume function are chosen. Every other case drives
+// startTaskRestartResume directly, so a swap of those two arguments (or an
+// accidental early return) would leave the whole suite green while startup
+// resumed nothing.
+func TestStartTaskRestartResume_UsesProductionDefaults(t *testing.T) {
+	prev := model.ChatAutoContinueEnabled
+	model.ChatAutoContinueEnabled = false // keeps the goroutine out of this test
+	t.Cleanup(func() { model.ChatAutoContinueEnabled = prev })
+
+	_, _, _, execID := seedInterruptedExecution(t, newResumeBackend(), "active")
+
+	// The switch is off, so the production call must still find and consume the
+	// row — that is the only observable side effect available without letting a
+	// real resume run.
+	ids := StartTaskRestartResume()
+	assert.Nil(t, ids, "auto-continue is off, so nothing is scheduled")
+
+	_, flag := executionRow(t, execID)
+	assert.Equal(t, 0, flag, "the production entry point must reach interruptedExecutionIDs")
+}
+
+// A shutdown that lands during the delay must stop the remaining executions:
+// resuming one after the DB starts closing leaves a fresh streaming row that
+// the next boot resumes again.
+func TestStartTaskRestartResume_AbortsOnShutdown(t *testing.T) {
+	prev := model.ChatAutoContinueEnabled
+	model.ChatAutoContinueEnabled = true
+	t.Cleanup(func() { model.ChatAutoContinueEnabled = prev })
+
+	prevShutdown := ResetShuttingDownForTest()
+	if prevShutdown {
+		t.Fatal("setup: the package must not already be marked as shutting down")
+	}
+	t.Cleanup(func() { ResetShuttingDownForTest() })
+
+	_, _, _, execID := seedInterruptedExecution(t, newResumeBackend(), "active")
+
+	resumed := make(chan int64, 4)
+	ids := startTaskRestartResume(120*time.Millisecond, func(id int64) error {
+		resumed <- id
+		return nil
+	})
+	require.Equal(t, []int64{execID}, ids)
+	MarkShuttingDown()
+
+	select {
+	case got := <-resumed:
+		t.Fatalf("execution %d must not resume after shutdown began", got)
+	case <-time.After(400 * time.Millisecond):
+	}
+}
+
+// A panicking resume must not take the process down: this runs in a bare
+// goroutine seconds after startup, against historical rows.
+func TestResumeExecutionSafely_SwallowsPanic(t *testing.T) {
+	assert.NotPanics(t, func() {
+		resumeExecutionSafely(42, func(int64) error {
+			panic("boom")
+		})
+	})
+}
+
+// A resume that returns an error is logged, not propagated: the loop must keep
+// going with the remaining executions.
+func TestResumeExecutionSafely_ContinuesPastAnError(t *testing.T) {
+	assert.NotPanics(t, func() {
+		resumeExecutionSafely(42, func(int64) error { return errors.New("nope") })
+	})
+}
+
+// interruptedExecutionIDs is a no-op before the DB is up (early startup paths
+// call the resume chain unconditionally).
+func TestInterruptedExecutionIDs_WithoutDB(t *testing.T) {
+	// A nil write handle is exactly the "not opened yet" state the guard checks.
+	t.Cleanup(store.SetDBForTest(nil, nil))
+
+	assert.Nil(t, interruptedExecutionIDs())
 }

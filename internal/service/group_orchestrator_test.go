@@ -12,6 +12,9 @@ import (
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newScriptedRunner writes a scripted assistant message to the group timeline on
@@ -1913,4 +1916,65 @@ func TestGroupOrchestrator_TurnWithNoCleanSpeechIsAbnormal(t *testing.T) {
 	if awaitingOf(t, groupID) {
 		t.Fatal("an abnormal turn must not light the unread badge")
 	}
+}
+
+// A turn where every speaker failed must not be reported as a clean finish: the
+// drain loop would treat it as answered (no "your turn" line, no unread badge)
+// and the user would see a quota error as a completed discussion.
+//
+// Free mode is the case that can reach this: in host mode the host's own turn
+// counts as a clean speech, so `tally.clean` is never 0.
+func TestGroupOrchestrator_AllSpeechesFailedIsAbnormal(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-failed"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	runner := func(context.Context, string, groupMemberTurn) groupMemberResult {
+		// An agent that crashed without a terminal event: resumable, so the turn
+		// must be classified as "no terminal" rather than "terminal".
+		return groupMemberResult{AbnormalReason: abnormalNoTerminal}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	assert.False(t, res.clean(), "a turn with no clean speech must not read as answered")
+	assert.Equal(t, abnormalNoTerminal, res.AbnormalReason,
+		"only resumable failures were seen, so the reason must name that")
+}
+
+// The same turn, but one member did answer: that is a real discussion, so the
+// failure of another member must not mark the whole turn abnormal.
+func TestGroupOrchestrator_OneCleanSpeechKeepsTheTurnClean(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-mixed"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	require.NoError(t, err)
+	_, err = AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	require.NoError(t, err)
+
+	runner := func(_ context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == hostID {
+			_, err := AddChatMessageWithAgent(project, "codebuddy", gid, "assistant",
+				`{"blocks":[{"type":"text","text":"<clawbench-mention targets=\"A\">做</clawbench-mention>"}]}`,
+				nil, false, "", turn.MemberRowID)
+			require.NoError(t, err)
+			return groupMemberResult{}
+		}
+		_, err := AddChatMessageWithAgent(project, "claude", gid, "assistant",
+			`{"blocks":[{"type":"text","text":"A 做完了"}]}`, nil, false, "", turn.MemberRowID)
+		require.NoError(t, err)
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	assert.True(t, res.clean(), "one clean answer makes it a real discussion")
+	assert.Empty(t, res.AbnormalReason)
 }
