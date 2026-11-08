@@ -9,6 +9,8 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
 )
 
 // ===========================================================================
@@ -145,6 +147,29 @@ func findUnsolicitedTurnIndex(notifs []acp.SessionNotification) int {
 	return -1
 }
 
+// seedCompletedTurnBaseline reproduces what ACPConn.Prompt does at the end of a
+// successful turn: it promotes that turn's requestId to the replay baseline.
+//
+// The probe drives the raw SDK connection, so without this the baseline stays
+// empty and the replay filter is inert — which is how a production-only defect
+// (CodeBuddy reusing the previous turn's requestId for the drain turn, so every
+// chunk of it was dropped as a replay) went unnoticed the first time.
+func seedCompletedTurnBaseline(setup *teamProbeSetup) string {
+	rid := ""
+	for _, n := range setup.client.notifications() {
+		if n.Update.AgentMessageChunk == nil {
+			continue
+		}
+		if v := metaString(n.Update.AgentMessageChunk.Meta[metaKeyCodeBuddyRequestID]); v != "" {
+			rid = v
+		}
+	}
+	if rid != "" && setup.client.connRef != nil {
+		setup.client.connRef.setLastCompletedRequestID(rid)
+	}
+	return rid
+}
+
 // TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn is the end-to-end probe for
 // issue #644: an agent-initiated turn must be adopted and fully delivered.
 func TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn(t *testing.T) {
@@ -163,7 +188,16 @@ func TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn(t *testing.T) {
 
 	// The harness client is not bound to an ACPConn (no clawbench session id),
 	// and adoption is keyed on it. Bind a stand-in so the production path runs.
-	setup.client.connRef = &ACPConn{clawbenchSID: "probe-bg-drain"}
+	//
+	// The backend matters: the replay filter (isReplayedTurnMeta) is CodeBuddy
+	// only, and CodeBuddy reuses the previous turn's requestId for the drain
+	// turn. With a backend-less stand-in the filter is inert and the probe would
+	// happily pass while production drops every chunk — which is exactly what
+	// happened on the first real session.
+	setup.client.connRef = &ACPConn{
+		clawbenchSID: "probe-bg-drain",
+		agent:        &model.Agent{Backend: "codebuddy"},
+	}
 
 	// Install the PRODUCTION consumer. The probe records instead of persisting,
 	// but everything up to the callback (announcement parsing, route opening,
@@ -189,7 +223,11 @@ func TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn(t *testing.T) {
 	t.Logf("dispatch stopReason=%s", promptResp.StopReason)
 
 	// 2) Mirror production: the user's turn is over, so its route is gone and
-	//    the session is idle when the agent comes back.
+	//    the session is idle when the agent comes back. Also promote its
+	//    requestId to the replay baseline, exactly as ACPConn.Prompt does — the
+	//    drain turn reuses it, so the filter must not treat that turn as stale.
+	prevRID := seedCompletedTurnBaseline(setup)
+	t.Logf("previous turn requestId=%s (seeded as the replay baseline)", prevRID)
 	setup.client.UnregisterSession(setup.session)
 
 	// 3) Wait for the host to adopt the agent-initiated turn.

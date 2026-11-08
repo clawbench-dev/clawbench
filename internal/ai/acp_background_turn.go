@@ -108,6 +108,11 @@ func (c *ClawBenchACPClient) adoptBackgroundTurn(acpSessionID, requestID string)
 	if !ok {
 		return
 	}
+	// CodeBuddy reuses the previous turn's requestId for this turn, so the
+	// replay filter would otherwise drop the whole reply as "stale". Whitelist
+	// the id for as long as the turn is being consumed.
+	conn.noteAdoptedTurnRequestID(requestID)
+
 	sid := conn.clawbenchSID
 	slog.Info("acp: adopting agent-initiated turn",
 		"clawbench_sid", sid,
@@ -166,6 +171,9 @@ func (c *ClawBenchACPClient) beginBackgroundTurn(acpSessionID, requestID string)
 // turn may have replaced it (RegisterSession), and deleting that would cut the
 // user's own stream. The registry entry is cleared either way.
 func (c *ClawBenchACPClient) releaseBackgroundRoute(acpSessionID string, turn *backgroundTurn) {
+	if c.connRef != nil {
+		c.connRef.clearAdoptedTurnRequestID(turn.requestID)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if cur, ok := c.backgroundTurns[acpSessionID]; ok && cur == turn {
