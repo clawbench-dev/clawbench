@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -379,4 +380,59 @@ func TestLiveNotesStream_RefusesWithoutRecognizer(t *testing.T) {
 	require.Error(t, err, "no recognizer means no stream")
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+}
+
+// commitBufferedIfDue must not call the recognizer for a chunk shorter than its
+// ~250 ms floor: those are single frames, and transcribing each one would flood
+// the engine and the transcript with fragments.
+func TestCommitBufferedIfDue_IgnoresAShortChunk(t *testing.T) {
+	stub := &stubSTT{text: "x"}
+	prev := GetSTTProvider()
+	SetSTTProvider(stub)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	relay := &notesStreamRelay{channel: "mic"}
+	relay.pending = make([]byte, notesStreamSampleRate/2-2)
+	relay.pendingFrom = time.Now().Add(-time.Hour)
+	relay.lastVoiceAt = time.Now().Add(-time.Hour)
+
+	relay.commitBufferedIfDue(context.Background())
+
+	assert.Zero(t, stub.calls, "a sub-250 ms chunk must not reach the recognizer")
+	assert.NotEmpty(t, relay.pending, "the audio stays buffered for the next frame")
+}
+
+// A chunk that is long enough but still being spoken is not committed either:
+// committing mid-sentence would split one utterance into several lines.
+func TestCommitBufferedIfDue_WaitsForSilence(t *testing.T) {
+	stub := &stubSTT{text: "x"}
+	prev := GetSTTProvider()
+	SetSTTProvider(stub)
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	relay := &notesStreamRelay{channel: "mic"}
+	relay.pending = make([]byte, notesStreamSampleRate) // 500 ms
+	relay.pendingFrom = time.Now()
+	relay.lastVoiceAt = time.Now() // audio is still arriving
+
+	relay.commitBufferedIfDue(context.Background())
+
+	assert.Zero(t, stub.calls, "a chunk still being spoken must not be committed")
+	assert.NotEmpty(t, relay.pending)
+}
+
+// A recognizer failure is logged and the audio is dropped rather than retried
+// forever: the next chunk starts a new one.
+func TestCommitBufferedIfDue_TranscribeFailureDropsTheChunk(t *testing.T) {
+	prev := GetSTTProvider()
+	SetSTTProvider(&stubSTT{err: errors.New("boom")})
+	t.Cleanup(func() { SetSTTProvider(prev) })
+
+	relay := &notesStreamRelay{channel: "mic"}
+	relay.pending = make([]byte, notesStreamSampleRate)
+	relay.pendingFrom = time.Now().Add(-time.Hour)
+	relay.lastVoiceAt = time.Now().Add(-time.Hour)
+
+	assert.NotPanics(t, func() { relay.commitBufferedIfDue(context.Background()) })
+	assert.Empty(t, relay.pending, "the failed chunk is consumed, not kept forever")
 }

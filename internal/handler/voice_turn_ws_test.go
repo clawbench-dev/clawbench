@@ -909,3 +909,37 @@ func TestEmitVoiceTurnTerminal_FailedTurnEmitsNothing(t *testing.T) {
 	assert.NotContains(t, types, "done")
 	assert.NotContains(t, types, "cancelled")
 }
+
+// A client that hangs up mid-stream must not keep the handler writing forever:
+// pumpPCM stops at the first failed frame write. This is the branch that keeps a
+// dropped device from pinning a goroutine for the length of the audio.
+func TestSpeakSummary_ClientGoneStopsTheStream(t *testing.T) {
+	dir := t.TempDir()
+	mp3Path := filepath.Join(dir, "cached.mp3")
+	require.NoError(t, os.WriteFile(mp3Path, tinyMP3(), 0o644))
+
+	done := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		speakSummary(r.Context(), conn, &fixtureProvider{}, "你好", mp3Path, "zh")
+		close(done)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	conn := dialStream(t, srv)
+	// Hang up immediately: the handler is still inside the summary/audio write
+	// sequence, so at least one frame write has nowhere to go.
+	_ = conn.CloseNow()
+
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the handler kept streaming to a closed connection")
+	}
+}
