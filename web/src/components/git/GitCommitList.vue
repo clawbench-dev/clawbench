@@ -222,16 +222,19 @@
           class="remote-commit"
           @click="$emit('select', c)"
         >
-          <!-- Two lines: the subject needs the width, and cramming the hash,
-               date and author onto the same line left it clipped to a stub. -->
-          <div class="remote-commit-head">
-            <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
-            <span class="remote-commit-msg">{{ c.msg }}</span>
-          </div>
-          <div class="remote-commit-meta">
-            <span class="remote-commit-sha">{{ c.sha.slice(0, 7) }}</span>
-            <span>{{ formatDate(c.date) }}</span>
-            <span v-if="c.author">· {{ c.author }}</span>
+          <!-- Same type scale and two-line shape as a normal commit row, so the
+               two lists read as one thing. The only difference is the tag that
+               says where the commit lives. -->
+          <div class="git-commit-info">
+            <div class="git-commit-msg">
+              <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
+              <span class="git-commit-msg-text">{{ c.msg }}</span>
+            </div>
+            <div class="git-commit-meta">
+              <span class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+              <span>{{ formatDate(c.date) }}</span>
+              <span v-if="c.author"> · {{ c.author }}</span>
+            </div>
           </div>
         </div>
         <div v-if="behindCount > behindCommits.length" class="remote-commits-more">
@@ -1026,57 +1029,30 @@ defineExpose({ observeList, unobserveList, commitSearch })
   border-top: 1px solid var(--border-color);
 }
 
+/* Same row shape as a normal commit (.drilldown-item), minus the fixed height:
+   the subject may take two lines here. Type scale and colours come from the
+   shared .git-commit-* rules, so the two lists look like one list. */
 .remote-commit {
-  display: flex;
-  flex-direction: column;
-  gap: calc(3 * var(--dp));
-  padding: calc(7 * var(--dp)) calc(14 * var(--dp));
-  font-size: var(--font-size-xs);
+  padding: calc(8 * var(--dp)) calc(14 * var(--dp));
+  border-bottom: 1px solid var(--border-color);
   cursor: pointer;
+  transition: background var(--duration-base);
 }
 
+/* The strip already sits on --bg-secondary, so hover steps up one surface
+   instead of using the same colour as the list it is drawn on. */
 .remote-commit:hover {
   background: var(--bg-tertiary);
 }
 
-.remote-commit-head {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
-
 /* The tag is fixed-width furniture; only the subject may shrink. */
-.remote-commit-head .git-ref-tag {
+.remote-commit .git-ref-tag {
   flex: none;
 }
 
-/* Up to two lines: commit subjects are prose, and a single clipped line made
-   every entry look identical. */
-.remote-commit-msg {
-  flex: 1;
-  min-width: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  line-height: 1.45;
-}
-
-.remote-commit-sha {
-  flex: none;
-  font-family: var(--font-mono, monospace);
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted);
-}
-
-.remote-commit-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
-  color: var(--text-muted);
-  font-size: var(--font-size-2xs);
+/* The strip itself already draws the closing line — do not double it. */
+.remote-commits-list > .remote-commit:last-child {
+  border-bottom: 0;
 }
 
 .remote-commits-more {

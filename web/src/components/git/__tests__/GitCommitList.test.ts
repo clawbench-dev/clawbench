@@ -879,18 +879,19 @@ describe('divergence detail', () => {
     expect(listed[0].find('.git-ref-tag--remote').text()).toBe('git.divergence.remoteTag')
   })
 
-  it('gives each remote commit two lines: subject, then hash/date/author', async () => {
-    // One line clipped the subject to a stub, so every entry looked the same.
+  it('uses the same two-line row shape as a normal commit', async () => {
+    // Same type scale and layout as .drilldown-item rows, so the strip reads as
+    // part of the same list rather than a different widget.
     const wrapper = mountWith()
     await wrapper.find('[data-action="toggle-remote-commits"]').trigger('click')
 
     const row = wrapper.find('.remote-commit')
-    const head = row.find('.remote-commit-head')
-    const meta = row.find('.remote-commit-meta')
-    expect(head.text()).toContain('Remote work')
-    expect(head.find('.remote-commit-sha').exists()).toBe(false)
-    // The secondary facts moved to their own line.
-    expect(meta.find('.remote-commit-sha').exists()).toBe(true)
+    const head = row.find('.git-commit-msg')
+    const meta = row.find('.git-commit-meta')
+    expect(head.find('.git-commit-msg-text').text()).toBe('Remote work')
+    expect(head.find('.git-commit-sha').exists()).toBe(false)
+    // The secondary facts live on their own line, as in a normal commit row.
+    expect(meta.find('.git-commit-sha').exists()).toBe(true)
     expect(meta.text()).toContain('2025-01-02')
     expect(meta.text()).toContain('Other')
   })
