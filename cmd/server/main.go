@@ -1188,6 +1188,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		service.EmitSessionEvent(service.ResolveGroupTimelineID(clawbenchSID), status, false, toolName, toolInput)
 	})
 
+	// Inject the consumer for turns the AGENT starts on its own (CodeBuddy
+	// background_drain: a background task finished and the CLI opens a new turn
+	// on the idle session). Without a consumer every frame of that turn is
+	// dropped and the session stays silent — issue #644. The AI layer has
+	// already routed the turn's frames to the channel it hands over, so the
+	// service layer only has to run the ordinary turn lifecycle on them.
+	ai.SetBackgroundTurnCallback(service.RunBackgroundTurn)
+
 	// The TTS summarizer is initialized further down, after the provider
 	// registry is in memory (see the SetSummarizer call after
 	// LoadProvidersIntoMemory). Language is per-request (sent from the

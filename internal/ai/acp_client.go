@@ -65,6 +65,14 @@ type ClawBenchACPClient struct {
 	loadSessionBuf   []acp.SessionNotification
 	loadSessionBufMu sync.Mutex
 
+	// backgroundTurns holds the routes opened for agent-initiated turns
+	// (CodeBuddy background_drain — see acp_background_turn.go). Keyed by ACP
+	// session id and guarded by mu. Kept apart from sessionRoutes so the
+	// terminal handler can tell "this route belongs to a turn the agent started"
+	// from "this route belongs to the user's turn": only the former may be
+	// closed by the agent's session_end frame.
+	backgroundTurns map[string]*backgroundTurn
+
 	// replayEndSeen records whether CodeBuddy's explicit "history replay end"
 	// marker arrived during the current LoadSession replay. CodeBuddy brackets
 	// its replay with session_info_update._meta["codebuddy.ai/historyReplay"] =
@@ -98,6 +106,7 @@ func NewClawBenchACPClient() *ClawBenchACPClient {
 		debouncers:        make(map[string]*toolCallDebouncer),
 		terminals:         make(map[string]*terminalSession),
 		toolInputs:        make(map[string]string),
+		backgroundTurns:   make(map[string]*backgroundTurn),
 	}
 }
 
@@ -117,6 +126,13 @@ func newConnClient(conn *ACPConn) *ClawBenchACPClient {
 func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- StreamEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// A user turn is taking the session over. Close out any agent-initiated turn
+	// still being adopted: its route is about to be replaced, so it would never
+	// see another frame and would hang until its backstop timeout.
+	if turn, adopted := c.backgroundTurns[acpSessionID]; adopted {
+		delete(c.backgroundTurns, acpSessionID)
+		deliverBackgroundTurnEnd(turn)
+	}
 	c.sessionRoutes[acpSessionID] = ch
 	c.debouncers[acpSessionID] = newToolCallDebouncer(ch, c.connRef)
 	// Reset the tool-input cache for this session at the start of each turn: a
@@ -145,6 +161,12 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// An adopted turn (agent-initiated, see acp_background_turn.go) never went
+	// through Prompt, so the Prompt that owns this call must not take its route
+	// away. The consumer releases it when the turn ends.
+	if _, adopted := c.backgroundTurns[acpSessionID]; adopted {
+		return
+	}
 	delete(c.sessionRoutes, acpSessionID)
 
 	// Flush and remove debouncer
@@ -274,6 +296,19 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
+	// A turn the agent started on its own (CodeBuddy background_drain) is closed
+	// by the non-standard `session_end` frame, which the SDK re-types as a
+	// SessionInfoUpdate with the payload dropped. Read the discriminator here,
+	// on the SAME goroutine that delivers that turn's content, so the terminal
+	// event is ordered after every frame. (Reading it from the raw stdout tee
+	// instead would let it overtake frames still queued in the SDK and truncate
+	// the reply.)
+	if n.Update.SessionInfoUpdate != nil &&
+		n.Update.SessionInfoUpdate.SessionUpdate == sessionEndVariant &&
+		c.closeBackgroundTurnOnSessionEnd(string(n.SessionId)) {
+		return nil
+	}
+
 	// The SDK's SessionUpdate union misclassifies extension variants: its
 	// fallback blocks match on field presence, so an unknown discriminator can
 	// be parsed into a known struct (e.g. `tool_call_pending` with toolCallId +
@@ -331,6 +366,16 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		c.loadSessionBuf = append(c.loadSessionBuf, n)
 		c.loadSessionBufMu.Unlock()
 		return nil
+	}
+
+	// An agent-initiated turn (CodeBuddy background_drain) announces itself on
+	// an IDLE session: the user's turn returned long ago, so no route is
+	// registered and the lookup below would drop the whole turn. Open a route
+	// for it first — see acp_background_turn.go and issue #644.
+	if n.Update.SessionInfoUpdate != nil {
+		if reqID, isBackgroundTurn := codeBuddyUnsolicitedTurn(n.Update.SessionInfoUpdate.Meta); isBackgroundTurn {
+			c.adoptBackgroundTurn(string(n.SessionId), reqID)
+		}
 	}
 
 	c.mu.Lock()

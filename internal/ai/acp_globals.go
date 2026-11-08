@@ -1,5 +1,7 @@
 package ai
 
+import "sync"
+
 // ---------------------------------------------------------------------------
 // Global function variables — set by the application startup to break
 // import cycles between internal/ai and internal/service packages.
@@ -59,4 +61,35 @@ var onPermissionStateChange = func(clawbenchSID string, pending bool, toolName s
 // the service layer (avoids circular import between ai and service/ws packages).
 func SetPermissionStateChangeCallback(fn func(clawbenchSID string, pending bool, toolName string, toolInput string)) {
 	onPermissionStateChange = fn
+}
+
+// onBackgroundTurn, when set, consumes a turn the AGENT started on its own
+// (CodeBuddy background_drain — see acp_background_turn.go).
+//
+// The host has no user message and no prompt of its own for such a turn, so the
+// consumer is entirely the service layer's: it creates the assistant row,
+// broadcasts stream_start, runs the event loop and finalizes. `end` releases the
+// stream route this package opened and is idempotent; the caller must invoke it
+// (a deferred call is enough) or the route leaks for the life of the connection.
+//
+// Nil (the default) means "no consumer": adopted turns are not routed and fall
+// back to the previous drop behavior.
+var (
+	backgroundTurnMu sync.RWMutex
+	onBackgroundTurn func(clawbenchSID string, events <-chan StreamEvent, end func())
+)
+
+// SetBackgroundTurnCallback registers the consumer for agent-initiated turns.
+// Must be called once during startup, before any agent connection is spawned.
+func SetBackgroundTurnCallback(fn func(clawbenchSID string, events <-chan StreamEvent, end func())) {
+	backgroundTurnMu.Lock()
+	onBackgroundTurn = fn
+	backgroundTurnMu.Unlock()
+}
+
+// backgroundTurnHandler returns the registered consumer, or nil.
+func backgroundTurnHandler() func(string, <-chan StreamEvent, func()) {
+	backgroundTurnMu.RLock()
+	defer backgroundTurnMu.RUnlock()
+	return onBackgroundTurn
 }
