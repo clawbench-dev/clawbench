@@ -787,12 +787,32 @@ describe('FileManagerContent — sort', () => {
     await sortBtn.trigger('click')
     await nextTick()
 
-    // Click a sort option
+    // Click a sort option. Assert the list exists first: a conditional block
+    // here would pass even if the dropdown never opened.
     const sortItems = wrapper.findAll('.toolbar-dropdown-item')
-    if (sortItems.length > 0) {
-      await sortItems[0].trigger('click')
-      expect(wrapper.emitted('toggleSort')).toBeTruthy()
-    }
+    expect(sortItems.length).toBeGreaterThan(0)
+    await sortItems[0].trigger('click')
+    expect(wrapper.emitted('toggleSort')).toBeTruthy()
+  })
+
+  it('keeps the sort button neutral like its neighbours when a sort is applied', async () => {
+    // The chosen field is remembered across sessions, so an `.active` tint left
+    // this one button in the accent colour for good while the other twelve
+    // stayed neutral — it read as a different kind of control in the same row.
+    const wrapper = mountContent({ sortField: 'name', sortDir: 'desc' })
+    const sortBtn = wrapper.findAll('.toolbar-btn')[0]
+    expect(sortBtn.classes()).toEqual(['toolbar-btn'])
+    // Direction is still visible: descending swaps the glyph.
+    expect(sortBtn.find('svg.lucide-arrow-up-z-a').exists()).toBe(true)
+
+    // …and the open menu still marks which field is chosen, so the state is
+    // not lost by dropping the tint.
+    await sortBtn.trigger('click')
+    await nextTick()
+    const activeItem = wrapper
+      .findAll('.toolbar-dropdown-item')
+      .find((item) => item.classes().includes('active'))
+    expect(activeItem?.text()).toContain('按名称')
   })
 
   it('sorts entries by name when sortField is name', () => {

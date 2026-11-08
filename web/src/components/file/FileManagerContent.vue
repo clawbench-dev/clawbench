@@ -33,7 +33,11 @@
           </button>
         </div>
         <ActionBar v-else ref="browseToolbarRef" class="dir-toolbar-btns" mode="menu" size="bar">
-          <button ref="sortBtnRef" class="toolbar-btn" :class="{ active: sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
+          <!-- No `.active` tint: the sort choice is remembered across sessions, so
+               an "on" look would leave this one button in the accent colour for
+               good while the rest of the row stays neutral. Direction is already
+               told by the icon, and the open menu marks the chosen field. -->
+          <button ref="sortBtnRef" class="toolbar-btn" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
             <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
             <ArrowUpZa v-else :size="16" />
             <span class="action-label">{{ t('file.sortDefault') }}</span>
@@ -3164,9 +3168,10 @@ function scrollSelectedIntoView(path) {
     transition: background-color var(--duration-base), color var(--duration-base);
     flex-shrink: 0;
 }
-/* The "on" look (sort field, preview toggle, multi-select) comes from the shared
+/* The "on" look (preview toggle, multi-select) comes from the shared
    `.ab button.active` rule. The radius is restated because the same class is
-   also used by the multi-select row, which is not an ActionBar. */
+   also used by the multi-select row, which is not an ActionBar.
+   The sort button is deliberately NOT one of them — see the template comment. */
 .toolbar-btn {
     border-radius: var(--radius-sm);
 }
