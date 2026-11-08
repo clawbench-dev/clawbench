@@ -57,14 +57,26 @@ var allowedCJKFiles = map[string]string{
 	// Live meeting-notes summarisation: the chunk and final-minute prompts are
 	// instructions to the model (section headings, "mark uncertain parts"),
 	// never rendered to a user. The transcript itself is model output.
-	"internal/service/live_notes.go":         "AI meeting-minutes prompts (chunk + final summary)",
-	"internal/service/live_notes_revise.go":  "AI proofreading prompt (replacement-pair format) and its NO_CHANGES sentinel",
-	"internal/service/live_notes_context.go": "AI prompt blocks (glossary, meeting info, chat, key frames, previous todos); not user-visible",
-	"internal/summarize/task.go":             "AI summarization prompt",
-	"internal/summarize/recommend.go":        "AI recommendation prompt + its quick-command header",
-	"internal/summarize/title.go":            "AI title-output prefix stripping (标题：)",
+	"internal/service/live_notes.go": "AI meeting-minutes prompts (chunk + final summary)",
+	// Shipped VALUES of `stt.trigger_words` / `stt.barge_in_words`: written into
+	// config.yaml and compared against recognized speech, never rendered. The
+	// labels the settings page shows come from the locale tables.
+	"internal/model/defaults.go": "default trigger / barge-in word values (config data, not UI copy)",
+	// Speech settings DEFAULTS, not UI copy. These are the shipped values of
+	// `stt.trigger_words` / `stt.barge_in_words` — they are written into
+	// config.yaml and compared against recognized speech, never rendered. The
+	// labels the settings page shows come from the locale tables.
+	"web/src/utils/audioTuning.ts":             "default trigger / barge-in word values (config data, not UI copy)",
+	"web/src/composables/useSettingsConfig.ts": "the same defaults mirrored for the client-side fallback",
+	"internal/service/live_notes_revise.go":    "AI proofreading prompt (replacement-pair format) and its NO_CHANGES sentinel",
+	"internal/service/live_notes_context.go":   "AI prompt blocks (glossary, meeting info, chat, key frames, previous todos); not user-visible",
+	"internal/summarize/task.go":               "AI summarization prompt",
+	"internal/summarize/recommend.go":          "AI recommendation prompt + its quick-command header",
+	"internal/summarize/title.go":              "AI title-output prefix stripping (标题：)",
 	// Parsers that must recognize CJK punctuation/numerals in model or CLI
 	// output; the literals are matched, not displayed.
+	"internal/grouprouting/grouprouting.go":      "group routing mention target delimiters (CJK comma and dunhao)",
+	"internal/service/group_orchestrator.go":     "group routing mention target alias matching (CJK fullwidth parens and disabled suffix)",
 	"internal/askquestion/markdown.go":           "ordered-list marker regex (CJK numerals)",
 	"internal/ai/backends/deepseek/discovery.go": "model-list output parser (（默认：/ 的模型)",
 	"internal/rag/chunker.go":                    "sentence-boundary detector (。！？) for chunking",
@@ -320,7 +332,12 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		// text. Not the "Chinese-only, no English path" defect this guard
 		// targets, but they SHOULD eventually move into the locale tables —
 		// listed so the guard cannot hide a regression behind them.
-		"composables/useLocale.ts":             "language-toggle label, intentionally native (EN / 中)",
+		"composables/useLocale.ts": "language-toggle label, intentionally native (EN / 中)",
+		// Shipped VALUES of the trigger / barge-in word settings, mirrored from
+		// the server defaults. They are config data compared against recognized
+		// speech, never rendered; the settings labels come from the locales.
+		"utils/audioTuning.ts":                 "default trigger / barge-in word values (config data)",
+		"composables/useSettingsConfig.ts":     "the same defaults mirrored for the client fallback",
 		"utils/exportMarkdownHtml.ts":          "standalone export HTML embeds labels via ad-hoc isZh branch",
 		"components/file/CodeMirrorViewer.vue": "CodeMirror search panel labels via ad-hoc zh branch",
 	}

@@ -3,6 +3,8 @@ package service
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestBuildHostSystemPrompt(t *testing.T) {
@@ -133,6 +135,15 @@ func TestBuildHostSystemPrompt_DelegatesWork(t *testing.T) {
 	}
 	if !strings.Contains(p, "拆解任务") {
 		t.Fatalf("host prompt must state what the host DOES own: %q", p)
+	}
+	// A single "don't do it first" sentence still let hosts spawn their own
+	// sub-agents and impersonate members; the ban must be explicit, with the
+	// user-request escape hatch preserved.
+	if !strings.Contains(p, "严禁使用") || !strings.Contains(p, "subagent") {
+		t.Fatalf("host prompt must explicitly ban spawning its own sub-agents: %q", p)
+	}
+	if !strings.Contains(p, "用户本轮明确要求") {
+		t.Fatalf("host prompt must keep the explicit-user-request escape hatch: %q", p)
 	}
 	if !strings.Contains(p, "例外") || !strings.Contains(p, "/cb-*") {
 		t.Fatalf("host prompt must carve out the exceptions (host-only group, /cb-*): %q", p)
@@ -533,4 +544,17 @@ func TestBuildCruiseSingleConfirmPrompt(t *testing.T) {
 	if strings.Contains(p, "<clawbench-mention") {
 		t.Fatalf("single-chat confirm prompt must not mention routing: %q", p)
 	}
+}
+
+// Routing accepts the display form AND the ASCII-wrapper form models retype.
+// The two collapse to one entry when the member has no specialty, which is the
+// case that used to register a duplicate alias.
+func TestHostMemberAliases_IncludesBothWrapperForms(t *testing.T) {
+	withSpecialty := hostMemberAliases(HostMemberInfo{Name: "agy", Specialty: "前端"})
+	assert.Equal(t, []string{"agy（前端）", "agy(前端)"}, withSpecialty)
+
+	// No specialty: both renderers produce the bare name, so the list must not
+	// carry it twice.
+	bare := hostMemberAliases(HostMemberInfo{Name: "agy"})
+	assert.Equal(t, []string{"agy"}, bare)
 }

@@ -317,6 +317,10 @@ func renderMentionsReadable(text string, names map[string]string) string {
 // formatter (model.ClassifyAttachments + model.ApplyAttachmentPrefixes) rather
 // than writing a second format that could drift.
 //
+// Two callers share it: the group injector (below) and mid-turn insertion
+// (midturn.go), where the prefix is what tells the agent a file was attached —
+// attachments are never transferred as bytes.
+//
 // The excludePaths set is nil: in this path the attachment list IS the files
 // channel (there is no separate "current file" argument), so nothing must be
 // filtered out. A message with no attachments is returned unchanged — the
@@ -345,11 +349,7 @@ func participantHeader(roster []ParticipantInfo) string {
 	}
 	rendered := make([]string, 0, len(roster))
 	for _, p := range roster {
-		if p.Specialty == "" {
-			rendered = append(rendered, p.Name)
-			continue
-		}
-		rendered = append(rendered, p.Name+"（"+p.Specialty+"）")
+		rendered = append(rendered, renderHostMember(HostMemberInfo{Name: p.Name, Specialty: p.Specialty}))
 	}
 	return "参与者：" + strings.Join(rendered, "、")
 }

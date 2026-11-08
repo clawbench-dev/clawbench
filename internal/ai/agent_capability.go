@@ -26,14 +26,35 @@ func boolPtrVal(p *bool) string {
 // agent binary (e.g., Claude's available modes: [ask, architect, code])
 // and do not vary between sessions.
 type AgentCapability struct {
-	AvailableModes           []ModeDef
+	AvailableModes []ModeDef
+	// AvailableThinkingEfforts is the last level list any model reported. It is
+	// NO LONGER the display source and is not persisted (issue #637): levels
+	// are per model (see ThinkingEffortsByModel), and showing this list is what
+	// made two sessions on different models disagree. What remains is the
+	// baseline for "did the list change?" (HasNewAvailableThinkingEfforts) and
+	// the fallback used when validating an agent-level setting that has no
+	// model yet.
 	AvailableThinkingEfforts []ThinkingEffortDef
-	AvailableModels          []model.AgentModel
-	AvailableCommands        []AvailableCommandInfo
-	ConfigOptionState        *ConfigOptionState
-	LoadSession              *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
-	ListSessions             *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
-	DeleteSession            *bool // SessionCapabilities.Delete != nil from ACP Initialize (nil = not yet set)
+	// ThinkingEffortsByModel is the level list each MODEL advertised, keyed by
+	// model id (issue #637). Some agents (OpenCode) report a different set per
+	// model — glm-5.3: low/high/max/default, deepseek-v4-pro: high/max/default
+	// — so the single AvailableThinkingEfforts list above cannot answer for a
+	// session: it only remembers whichever model reported last, and every other
+	// session would show that model's levels. Keyed by model, the same model
+	// looks identical in every session and every entry point.
+	//
+	// An absent entry means this model's list has never been learned. There is
+	// deliberately no fallback to AvailableThinkingEfforts (which would show
+	// another model's levels); callers that must show something use the
+	// backend's static list. The "" key holds the list of agents that advertise
+	// levels without any model option (OpenClaw).
+	ThinkingEffortsByModel map[string][]ThinkingEffortDef `json:"-"`
+	AvailableModels        []model.AgentModel
+	AvailableCommands      []AvailableCommandInfo
+	ConfigOptionState      *ConfigOptionState
+	LoadSession            *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
+	ListSessions           *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
+	DeleteSession          *bool // SessionCapabilities.Delete != nil from ACP Initialize (nil = not yet set)
 	// McpHTTP / McpSSE are AgentCapabilities.McpCapabilities from ACP
 	// Initialize. stdio is mandatory in the spec and never advertised, so it
 	// has no flag. Sending http/sse to an agent that did not advertise them is
@@ -58,10 +79,43 @@ type AgentCapability struct {
 	refreshedInProcess bool
 }
 
+// clone returns a deep copy that can be read WITHOUT holding the registry
+// lock. persistAsync marshals the snapshot on a goroutine while other
+// goroutines keep updating the live entry — sharing the pointer made the
+// per-model map a fatal "concurrent map read and map write" (issue #637).
+func (c *AgentCapability) clone() *AgentCapability {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.AvailableModes = append([]ModeDef(nil), c.AvailableModes...)
+	out.AvailableThinkingEfforts = append([]ThinkingEffortDef(nil), c.AvailableThinkingEfforts...)
+	if c.ThinkingEffortsByModel != nil {
+		out.ThinkingEffortsByModel = make(map[string][]ThinkingEffortDef, len(c.ThinkingEffortsByModel))
+		for modelID, levels := range c.ThinkingEffortsByModel {
+			out.ThinkingEffortsByModel[modelID] = append([]ThinkingEffortDef(nil), levels...)
+		}
+	}
+	out.AvailableModels = append([]model.AgentModel(nil), c.AvailableModels...)
+	out.AvailableCommands = append([]AvailableCommandInfo(nil), c.AvailableCommands...)
+	if c.ConfigOptionState != nil {
+		cfg := *c.ConfigOptionState
+		out.ConfigOptionState = &cfg
+	}
+	if c.AvailableOptions != nil {
+		out.AvailableOptions = make(map[string][]SelectOptionDef, len(c.AvailableOptions))
+		for k, v := range c.AvailableOptions {
+			out.AvailableOptions[k] = append([]SelectOptionDef(nil), v...)
+		}
+	}
+	return &out
+}
+
 // HasData returns true if the capability has any non-empty data.
 func (c *AgentCapability) HasData() bool {
 	return len(c.AvailableModes) > 0 ||
 		len(c.AvailableThinkingEfforts) > 0 ||
+		len(c.ThinkingEffortsByModel) > 0 ||
 		len(c.AvailableModels) > 0 ||
 		len(c.AvailableCommands) > 0 ||
 		c.ConfigOptionState != nil ||
@@ -79,6 +133,12 @@ func (c *AgentCapability) HasData() bool {
 type AgentCapabilityRegistry struct {
 	mu   sync.RWMutex
 	caps map[string]*AgentCapability // agentID -> capability
+
+	// persistMu serializes the background DB writes. Each update spawns a
+	// goroutine, and without this an older snapshot could land last and drop a
+	// newer entry — the per-model level map accumulates knowledge, so a lost
+	// write is a lost model.
+	persistMu sync.Mutex
 }
 
 // Global singleton
@@ -137,6 +197,14 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	if len(src.AvailableThinkingEfforts) > 0 {
 		existing.AvailableThinkingEfforts = src.AvailableThinkingEfforts
 	}
+	if len(src.ThinkingEffortsByModel) > 0 {
+		if existing.ThinkingEffortsByModel == nil {
+			existing.ThinkingEffortsByModel = make(map[string][]ThinkingEffortDef, len(src.ThinkingEffortsByModel))
+		}
+		for modelID, levels := range src.ThinkingEffortsByModel {
+			existing.ThinkingEffortsByModel[modelID] = levels
+		}
+	}
 	if len(src.AvailableModels) > 0 {
 		existing.AvailableModels = src.AvailableModels
 	}
@@ -180,6 +248,60 @@ func (r *AgentCapabilityRegistry) UpdateModes(agentID string, modes []ModeDef) {
 // UpdateThinkingEfforts updates only the available thinking effort levels.
 func (r *AgentCapabilityRegistry) UpdateThinkingEfforts(agentID string, levels []ThinkingEffortDef) {
 	r.Update(agentID, &AgentCapability{AvailableThinkingEfforts: levels})
+}
+
+// UpdateThinkingEffortsForModel records the level list ONE model advertised
+// (issue #637). Empty lists are ignored (they carry no information).
+//
+// An EMPTY model id is a legitimate key: some ACP agents advertise
+// `thought_level` but no model option at all (OpenClaw), so their levels are
+// agent-wide and are stored under "". Readers that have no model for the
+// session use the same empty key.
+func (r *AgentCapabilityRegistry) UpdateThinkingEffortsForModel(agentID, modelID string, levels []ThinkingEffortDef) {
+	if len(levels) == 0 {
+		return
+	}
+	copied := make([]ThinkingEffortDef, len(levels))
+	copy(copied, levels)
+	r.Update(agentID, &AgentCapability{ThinkingEffortsByModel: map[string][]ThinkingEffortDef{modelID: copied}})
+}
+
+// ThinkingEffortsForModel returns the level list recorded for this model, if
+// one was ever reported.
+func (r *AgentCapabilityRegistry) ThinkingEffortsForModel(agentID, modelID string) ([]ThinkingEffortDef, bool) {
+	r.mu.RLock()
+	agentCap, ok := r.caps[agentID]
+	var levels []ThinkingEffortDef
+	if ok && agentCap != nil {
+		levels = agentCap.ThinkingEffortsByModel[modelID]
+	}
+	r.mu.RUnlock()
+	if len(levels) == 0 {
+		return nil, false
+	}
+	out := make([]ThinkingEffortDef, len(levels))
+	copy(out, levels)
+	return out, true
+}
+
+// GetThinkingEffortStateForModel returns the thinking-level state for ONE
+// model, or nil when that model's list has never been reported.
+//
+// There is deliberately NO fallback to the agent-level list (issue #637): that
+// list only remembers whichever model reported last, so falling back would show
+// a different model's levels — exactly the bug this scoping exists to remove.
+// Callers that must show something anyway (the settings picker) use the
+// backend's static level list instead.
+func (r *AgentCapabilityRegistry) GetThinkingEffortStateForModel(agentID, modelID, currentID string) *ThinkingEffortState {
+	levels, ok := r.ThinkingEffortsForModel(agentID, modelID)
+	if !ok {
+		return nil
+	}
+	state := &ThinkingEffortState{CurrentID: currentID, AvailableLevels: levels}
+	if base := r.GetThinkingEffortState(agentID, currentID); base != nil {
+		state.ConfigID = base.ConfigID
+	}
+	return state
 }
 
 // UpdateModels updates only the available models.
@@ -237,6 +359,21 @@ func (r *AgentCapabilityRegistry) ForceUpdate(agentID string, agentCap *AgentCap
 	}
 	agentCap.UpdatedAt = time.Now()
 	agentCap.refreshedInProcess = true
+	// The per-model level lists are ACCUMULATED knowledge (one entry per model
+	// the agent has run), not part of the "current agent process" snapshot this
+	// call replaces. Carrying them through keeps every other model's list after
+	// the first session of a process — otherwise a restart would drop them all
+	// and every session would fall back to the agent-level list again.
+	if ok && existing != nil && len(existing.ThinkingEffortsByModel) > 0 {
+		merged := make(map[string][]ThinkingEffortDef, len(existing.ThinkingEffortsByModel))
+		for modelID, levels := range existing.ThinkingEffortsByModel {
+			merged[modelID] = levels
+		}
+		for modelID, levels := range agentCap.ThinkingEffortsByModel {
+			merged[modelID] = levels
+		}
+		agentCap.ThinkingEffortsByModel = merged
+	}
 	r.caps[agentID] = agentCap
 	r.mu.Unlock()
 	r.persistAsync(agentID)
@@ -337,6 +474,15 @@ func (r *AgentCapabilityRegistry) GetThinkingEffortState(agentID, currentID stri
 
 // GetModelListState returns a ModelListState combining agent-level available
 // models with the session-level current model ID.
+//
+// Prices are attached here (issue #643) because this is the one place every
+// model_list_update emit path funnels through — the per-turn re-emit, the
+// reconnect replay and the HTTP endpoints. Attaching them at the emitters
+// instead left whichever path was missed shipping an unpriced list, and the
+// client rebuilds its picker from it, so the tags vanished mid-session.
+//
+// WithPrices returns a COPY, which is required: AvailableModels is persisted to
+// agents.acp_available_models, and a price must never reach the database.
 func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID string) *ModelListState {
 	r.mu.RLock()
 	agentCap, ok := r.caps[agentID]
@@ -346,7 +492,7 @@ func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID stri
 	}
 	return &ModelListState{
 		CurrentModelID: currentModelID,
-		Models:         agentCap.AvailableModels,
+		Models:         model.WithPrices(agentCap.AvailableModels),
 	}
 }
 
@@ -832,15 +978,27 @@ func (r *AgentCapabilityRegistry) persistAsync(agentID string) {
 		return
 	}
 
-	r.mu.RLock()
-	agentCap, ok := r.caps[agentID]
-	r.mu.RUnlock()
-	if !ok || agentCap == nil {
-		return
-	}
-
 	go func() {
-		if err := r.saveToDB(db, agentID, agentCap); err != nil {
+		// Serialize writes and take the snapshot AT WRITE TIME: two rapid
+		// updates spawn two goroutines, and an older snapshot landing last
+		// would silently drop the newer entry. Cloning under r.mu also keeps
+		// the marshal away from the live entry (a shared map here was a fatal
+		// "concurrent map read and map write", issue #637).
+		r.persistMu.Lock()
+		defer r.persistMu.Unlock()
+
+		r.mu.RLock()
+		agentCap := r.caps[agentID]
+		var snapshot *AgentCapability
+		if agentCap != nil {
+			snapshot = agentCap.clone()
+		}
+		r.mu.RUnlock()
+		if snapshot == nil {
+			return
+		}
+
+		if err := r.saveToDB(db, agentID, snapshot); err != nil {
 			slog.Warn("failed to persist agent capability to DB", "agent", agentID, "error", err)
 		}
 	}()
@@ -852,9 +1010,12 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if string(modesJSON) == "null" {
 		modesJSON = []byte("[]")
 	}
-	effortsJSON, _ := json.Marshal(agentCap.AvailableThinkingEfforts)
-	if string(effortsJSON) == "null" {
-		effortsJSON = []byte("[]")
+	// Per-model level lists (issue #637). Persisted separately from the
+	// agent-level list above so a restart keeps each model's own levels instead
+	// of collapsing back to whichever model was seen last.
+	effortsByModelJSON, _ := json.Marshal(agentCap.ThinkingEffortsByModel)
+	if string(effortsByModelJSON) == "null" {
+		effortsByModelJSON = []byte("{}")
 	}
 	cmdsJSON, _ := json.Marshal(agentCap.AvailableCommands)
 	if string(cmdsJSON) == "null" {
@@ -891,7 +1052,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	_, err := db.Exec(`
 		UPDATE agents SET
 			acp_available_modes = ?,
-			acp_available_thinking_efforts = ?,
+			acp_thinking_efforts_by_model = ?,
 			acp_available_commands = ?,
 			acp_available_models = ?,
 			acp_config_options = ?,
@@ -901,7 +1062,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_mcp_sse = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		string(modesJSON), string(effortsJSON), string(cmdsJSON), string(modelsJSON), configJSON,
+		string(modesJSON), string(effortsByModelJSON), string(cmdsJSON), string(modelsJSON), configJSON,
 		loadSessionVal, listSessionsVal, mcpHTTPVal, mcpSSEVal, agentID)
 	return err
 }
@@ -909,7 +1070,8 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 // LoadFromDB loads persisted capabilities from the agents table on startup.
 func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
-		SELECT id, acp_available_modes, acp_available_thinking_efforts,
+		SELECT id, acp_available_modes,
+		       acp_thinking_efforts_by_model,
 		       acp_available_commands, acp_available_models, acp_config_options,
 		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse
 		FROM agents
@@ -926,7 +1088,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 
 	for rows.Next() {
 		var row capabilityRow
-		if err := rows.Scan(&row.agentID, &row.modes, &row.efforts, &row.commands,
+		if err := rows.Scan(&row.agentID, &row.modes, &row.effortsByModel, &row.commands,
 			&row.models, &row.config, &row.loadSession, &row.listSessions,
 			&row.mcpHTTP, &row.mcpSSE); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
@@ -951,30 +1113,30 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 
 // capabilityRow is one raw agents row, with the JSON columns still as strings.
 type capabilityRow struct {
-	agentID      string
-	modes        string
-	efforts      string
-	commands     string
-	models       string
-	config       string
-	loadSession  bool
-	listSessions bool
-	mcpHTTP      bool
-	mcpSSE       bool
+	agentID        string
+	modes          string
+	effortsByModel string
+	commands       string
+	models         string
+	config         string
+	loadSession    bool
+	listSessions   bool
+	mcpHTTP        bool
+	mcpSSE         bool
 }
 
 // toCapability decodes the JSON columns. An unparseable column is skipped rather
 // than failing the row: the other capability fields are still worth loading.
 func (row *capabilityRow) toCapability() *AgentCapability {
 	capability := &AgentCapability{
-		AvailableModes:           decodeJSONSlice[ModeDef](row.modes),
-		AvailableThinkingEfforts: decodeJSONSlice[ThinkingEffortDef](row.efforts),
-		AvailableCommands:        decodeJSONSlice[AvailableCommandInfo](row.commands),
-		AvailableModels:          decodeJSONSlice[model.AgentModel](row.models),
-		LoadSession:              &row.loadSession,
-		ListSessions:             &row.listSessions,
-		McpHTTP:                  &row.mcpHTTP,
-		McpSSE:                   &row.mcpSSE,
+		AvailableModes:         decodeJSONSlice[ModeDef](row.modes),
+		ThinkingEffortsByModel: decodeEffortsByModel(row.effortsByModel),
+		AvailableCommands:      decodeJSONSlice[AvailableCommandInfo](row.commands),
+		AvailableModels:        decodeJSONSlice[model.AgentModel](row.models),
+		LoadSession:            &row.loadSession,
+		ListSessions:           &row.listSessions,
+		McpHTTP:                &row.mcpHTTP,
+		McpSSE:                 &row.mcpSSE,
 	}
 	if row.config != "" {
 		var config ConfigOptionState
@@ -998,6 +1160,20 @@ func decodeJSONSlice[T any](raw string) []T {
 		return nil
 	}
 	var out []T
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// decodeEffortsByModel decodes the per-model level map. An unparseable value
+// yields nil (readers then fall back to the agent-level list) rather than
+// failing the whole capability row.
+func decodeEffortsByModel(raw string) map[string][]ThinkingEffortDef {
+	if raw == "" || raw == "{}" || raw == "null" {
+		return nil
+	}
+	var out map[string][]ThinkingEffortDef
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil
 	}

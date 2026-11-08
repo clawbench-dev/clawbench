@@ -512,7 +512,7 @@ import { buildHtmlPreviewSrc } from '@/utils/htmlPreview'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { designToCss } from '@/utils/uiScale'
-import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { quoteItemFromTarget } from '@/utils/quoteItem.ts'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
@@ -530,6 +530,7 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 const { localConfig, setLocalConfig } = useSettingsConfig()
+const quoteQuestion = useQuoteQuestion()
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
 /** Shared full-screen image viewer, provided by App.vue (and the share SPA).
  *  Injected rather than imported so this card stays free of the Lightbox's
@@ -944,29 +945,21 @@ const handleQuoteToChat = () => {
   const startLine = sliced?.startLine ?? target.lineStart ?? 1
   const endLine = sliced?.endLine ?? target.lineEnd ?? (startLine + Math.max(0, code.split('\n').length - 1))
 
-  // The card is a quote (with the code as its content), not a bare attachment
-  // chip — see the note below. It goes to the conversation the user is working
-  // in (issue #560: the card is opened FROM that context, so asking again is
-  // friction); the picker appears only when there is no active session.
-  requestTarget({
-    mode: 'add',
-    quotes: [{
-      // Shared builder (also used by the file/issue/task entry points), so this
-      // surface cannot drift on which fields a quote carries. The id comes from
-      // the one minter: a hand-rolled id format here was a second convention.
-      ...quoteItemFromTarget({
-        filePath: target.filePath,
-        language: ft.lang || '',
-        text: code,
-        startLine,
-        endLine,
-      }),
-      note: '',
-      id: mintPendingQuoteId(),
-    }],
-    attachments: [],
-    text: '',
-  }, { deliverTo: 'active' })
+  // Same interaction as every other quote entry point (file header, issue, task,
+  // mail, meeting): the shared quote bar opens so the user can add a note, and
+  // the commit lands in the conversation they are working in — no destination
+  // picker (issue #560).
+  //
+  // Shared builder (also used by the file/issue/task entry points), so this
+  // surface cannot drift on which fields a quote carries.
+  const quote = quoteItemFromTarget({
+    filePath: target.filePath,
+    language: ft.lang || '',
+    text: code,
+    startLine,
+    endLine,
+  })
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
   props.preview.close()
 }
 

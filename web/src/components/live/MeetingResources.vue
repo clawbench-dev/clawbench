@@ -354,7 +354,7 @@ function metaFor(item: MeetingResourceItem): string {
 .res-head__main { flex: 1; min-width: 0; }
 .res-head__title { font-size: var(--font-size-sm); font-weight: 650; color: var(--text-primary); }
 .res-head__path {
-  margin-top: 2px;
+  margin-top: calc(2 * var(--dp));
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   color: var(--text-muted);
@@ -362,7 +362,7 @@ function metaFor(item: MeetingResourceItem): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.res-head__meta { margin-top: 3px; font-size: var(--font-size-2xs); color: var(--text-hint); }
+.res-head__meta { margin-top: calc(3 * var(--dp)); font-size: var(--font-size-2xs); color: var(--text-hint); }
 .res-head__actions { display: flex; gap: var(--space-1); flex-shrink: 0; }
 
 /* The meeting link block: same column rhythm as a resource group, but it is
@@ -465,7 +465,7 @@ function metaFor(item: MeetingResourceItem): string {
   gap: var(--space-1);
   flex-shrink: 0;
   opacity: 0;
-  transform: translateX(3px);
+  transform: translateX(calc(3 * var(--dp)));
   transition: opacity var(--duration-fast, 0.12s) ease, transform var(--duration-fast, 0.12s) ease;
 }
 .res-row:hover .res-actions,

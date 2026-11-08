@@ -78,28 +78,39 @@ const JOIN_GATE = 'src/share/LiveJoinGate.vue'
 
 describe('touch targets', () => {
   it('gives every dock button a 28dp minimum in both axes', () => {
+    const css = styleBlock(DOCK_BUTTON)
     const bodies = bodiesOf(DOCK_BUTTON, '.live-dock-btn')
     expect(bodies.length).toBeGreaterThan(0)
 
     // Height: one rule is enough, it applies everywhere.
     expect(bodies.some((b) => /min-height:\s*calc\(28 \* var\(--dp\)\)/.test(b))).toBe(true)
 
-    // Width: only needed once the label is dropped. It must live in THAT
-    // breakpoint — a min-width on the labelled variant is dead weight and would
+    // Width: only needed once the label is dropped, so it must live in THAT
+    // state — a min-width on the labelled variant is dead weight and would
     // prove nothing about the icon-only case.
-    const narrow = mediaBlock(styleBlock(DOCK_BUTTON), '@media (max-width: 520px)')
-    expect(narrow, 'the ≤520px block is missing').not.toBe('')
+    //
+    // The state is a class driven by the design-width composable, not a media
+    // query: the threshold has to follow the interface scale (a 640px window at
+    // 1.33× has only ~480 design px of room). See useDesignWidth.test.ts for
+    // the measurement itself.
+    const compactRules = rules(css).filter((r) => r.selector.includes('--compact'))
+    expect(compactRules.length, 'no --compact rules').toBeGreaterThan(0)
 
-    // The breakpoint really is the one that drops the label (otherwise the
-    // min-width below would be asserting the wrong thing).
-    const narrowRules = rules(narrow)
+    // It really is the state that drops the label...
     expect(
-      narrowRules.some((r) => r.selector === '.live-dock-label' && /display:\s*none/.test(r.body)),
+      compactRules.some(
+        (r) => /\.live-dock-label$/.test(r.selector) && /display:\s*none/.test(r.body),
+      ),
+      'the compact state must hide the label',
     ).toBe(true)
 
-    const narrowButton = narrowRules.filter((r) => r.selector === '.live-dock-btn')
-    expect(narrowButton, 'no .live-dock-btn rule inside the ≤520px block').toHaveLength(1)
-    expect(narrowButton[0].body).toMatch(/min-width:\s*calc\(28 \* var\(--dp\)\)/)
+    // ...and the button itself becomes square there.
+    const compactButton = compactRules.filter((r) => /\.live-dock-btn--compact$/.test(r.selector))
+    expect(compactButton, 'no .live-dock-btn--compact rule').toHaveLength(1)
+    expect(compactButton[0].body).toMatch(/min-width:\s*calc\(28 \* var\(--dp\)\)/)
+
+    // A leftover media query would mean two competing sources of truth.
+    expect(css).not.toMatch(/@media[^{]*max-width:\s*520px/)
   })
 
   it('raises the join gate field and button to 44dp', () => {
@@ -144,21 +155,45 @@ describe('touch targets', () => {
 
   /**
    * The control pill ("等待主持人批准…" / "结束控制") floats just above the dock.
-   * Once the dock may take two rows, a fixed 52dp offset would put the pill in
-   * the middle of it — covering the very buttons the viewer is reaching for,
-   * and the pill has the higher z-index.
+   * Once the dock may take two rows, a fixed offset would put the pill in the
+   * middle of it — covering the very buttons the viewer is reaching for, and
+   * the pill has the higher z-index.
+   *
+   * The height is MEASURED now, not guessed from a breakpoint. It used to be
+   * `34dp`, or `66dp` under `(max-width: 520px)`, describing "one row" / "two
+   * rows" — and that guess broke as soon as the interface scale was applied to
+   * the share page: the buttons are 28dp, so at 1.33× the seven of them stop
+   * fitting on a window the breakpoint still calls wide. The dock wraps, the
+   * breakpoint says one row, and the pill lands on the second row. No constant
+   * can describe where a wrap happens, because it depends on the scale too.
+   *
+   * So the guard is now about the MEASUREMENT: the pill must read the variable,
+   * and the variable must come from the dock's own box.
    */
-  it('keeps the control pill above the dock when the dock wraps', () => {
+  it('positions the control pill from the dock’s measured height', () => {
     const css = styleBlock('src/share/LiveShareView.vue')
 
     const banner = rules(css).filter((r) => /\.live-control-banner/.test(r.selector))
     expect(banner.length).toBeGreaterThan(0)
     expect(banner.some((r) => /bottom:[^;]*var\(--live-dock-height\)/.test(r.body))).toBe(true)
 
-    // ...and the narrow breakpoint really reserves the two-row height.
-    const narrow = mediaBlock(css, '@media (max-width: 520px)')
-    expect(narrow, 'the ≤520px block is missing').not.toBe('')
-    expect(narrow).toMatch(/--live-dock-height:\s*calc\(66 \* var\(--dp\)\)/)
+    // The constant-based guess must be GONE: a breakpoint that reserves a
+    // two-row height would now fight the measurement (an inline style wins, so
+    // it would be dead weight that only misleads the next reader).
+    expect(css, 'the fixed two-row breakpoint must be gone').not.toMatch(
+      /@media \(max-width: 520px\)[^}]*\{[^}]*--live-dock-height/,
+    )
+
+    // The value is written from the dock element's own height, so a wrap at any
+    // scale is accounted for.
+    const src = readWebFile('src/share/LiveShareView.vue')
+    expect(src).toMatch(/dockHeight\.value\s*=\s*dock\.getBoundingClientRect\(\)\.height/)
+    // ...and it is applied to the containing block the pill is positioned in.
+    expect(src).toMatch(/'--live-dock-height':\s*`\$\{dockHeight\}px`/)
+    // Observed, not sampled once: a wrap can happen without a window resize
+    // (scale change, font loading, a label appearing inside a button).
+    expect(src).toContain('new ResizeObserver(sync)')
+    expect(src).toContain('dockResizeObserver?.disconnect()')
   })
 })
 

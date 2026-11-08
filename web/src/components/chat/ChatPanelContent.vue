@@ -84,6 +84,10 @@
     <!-- Agent Team roster (CodeBuddy teams) -->
     <TeamPanel />
 
+    <!-- Upstream retry notice — transient, never part of the transcript. Sits
+         above the queue so a long silent retry explains itself. -->
+    <RetryNotice :sessionId="identity.currentSessionId.value" :active="loading" />
+
     <!-- Queued messages — kept OUT of the conversation list; shown and managed
          here, directly above the input. -->
     <QueuedMessageBar
@@ -111,6 +115,8 @@
       :mentions="stagedMentions"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
+      :freeDialogPhase="freeDialog.phase.value"
+      :freeDialogTranscript="freeDialog.liveTranscript.value"
       :refreshingSession="refreshingSession"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
@@ -144,6 +150,7 @@
       @open-session-search="$emit('open-session-search')"
       @file-tag-click="handleFileTagClick"
       @toggle-auto-speech="autoSpeech.toggle"
+      @toggle-free-dialog="toggleFreeDialog"
       @create-session="() => manager.createSession()"
       @show-agent-selector="handleShowAgentSelector"
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
@@ -155,6 +162,7 @@
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
       @switch-transport="handleSwitchTransport"
+      @switch-config-option="handleSwitchConfigOption"
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
       @toggle-group-cruise="$emit('toggle-group-cruise', $event)"
@@ -305,6 +313,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
+import RetryNotice from './RetryNotice.vue'
 import QueuedMessageEditSheet from './QueuedMessageEditSheet.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
@@ -345,6 +354,7 @@ import { sameFilePath } from '@/utils/path.ts'
 import { decidePendingNavigation, jumpFailureMessageKey } from '@/utils/pendingNavigation.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
+import { useFreeDialog, freeDialogSessionId } from '@/composables/useFreeDialog.ts'
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { store } from '@/stores/app.ts'
@@ -584,6 +594,7 @@ async function handleSyncAcpSession() {
 const dialog = useDialog()
 const notification = useNotification()
 const autoSpeech = useAutoSpeech()
+const freeDialog = useFreeDialog()
 const theme = inject('theme', ref('light'))
 const { openFilePath } = useFilePathAnnotation()
 const quoteDetail = useQuoteDetail()
@@ -1010,6 +1021,97 @@ function handleMemberFinalize(messageId) {
   autoSpeech.speakMessage(msg.id, fullText, speaker?.name || '')
 }
 
+// ── Free-dialog mode (UI name: 连续对话) ────────────────
+// The loop itself lives in useFreeDialog (a module singleton); this is the
+// panel-side wiring: what to send, when a turn has finished, and when the user
+// switched sessions out from under it.
+
+function toggleFreeDialog() {
+  if (freeDialog.phase.value !== 'idle') {
+    freeDialog.stop()
+    return
+  }
+  if (!identity.currentSessionId.value) return
+  void freeDialog.start({
+    sessionId: identity.currentSessionId.value,
+    // A turn that is already running changes what the microphone is for: the
+    // user is waiting for this answer, so speaking should cut in rather than
+    // queue a second message behind it.
+    busy: loading.value,
+    onInterrupt: () => { void stream.cancelStream() },
+    onSend: (text) => {
+      // A send that never reached the server leaves `loading` untouched, so the
+      // watcher below would never fire and the loop would sit in 'thinking'
+      // forever with the microphone closed. Release it explicitly.
+      void sendVoiceMessage(text).then((ok) => {
+        if (!ok) freeDialog.setThinking(false)
+      })
+    },
+  })
+}
+
+/**
+ * Sends a spoken message WITHOUT touching the composer.
+ *
+ * `sendMessage` is the composer's send: it consumes the staged quotes, mention
+ * cards, attachments and pending uploads, and clears the textarea. That is
+ * right for every entry point that starts from the composer, and wrong for the
+ * voice loop — the user may well have a half-typed message or a staged file
+ * while talking, and having "发送" swallow it (or ship the attachment with a
+ * spoken sentence) is data loss they did not ask for.
+ */
+async function sendVoiceMessage(text) {
+  const clean = text.trim()
+  if (!clean) return false
+  if (loading.value) {
+    // Session busy: queue it, same as the composer path, but leave the composer
+    // alone. The queue panel is the feedback.
+    try {
+      await enqueueAndMaybeStart({
+        sessionId: identity.currentSessionId.value,
+        text: clean,
+        attachedFiles: [],
+        pendingFiles: [],
+        onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+        enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
+      })
+      return true
+    } catch (err) {
+      appLog.w(TAG, 'voice enqueue failed', err)
+      return false
+    }
+  }
+  try {
+    await sendMessageNow(clean, [], [])
+    return true
+  } catch (err) {
+    appLog.w(TAG, 'voice send failed', err)
+    return false
+  }
+}
+
+/**
+ * Tells the loop the turn it started is over.
+ *
+ * `loading` is the authority: a turn ends on done, cancel or error, and the loop
+ * only needs to know that the microphone may be reopened. When auto-speech is on
+ * the loop stays in 'speaking' until playback ends — it decides that itself.
+ */
+watch(loading, (now, before) => {
+  if (!before || now) return
+  if (freeDialog.phase.value === 'idle') return
+  freeDialog.setThinking(false)
+})
+
+// Switching sessions ends the loop: the trigger words and the reply belong to
+// the conversation the user was talking to, and sending into a different one
+// would be worse than stopping.
+watch(() => identity.currentSessionId.value, (sid) => {
+  if (freeDialog.phase.value === 'idle') return
+  if (sid === freeDialogSessionId()) return
+  freeDialog.stop()
+})
+
 // onStreamEnd: fires when current session stream completes with a reason
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by
 //   useSessionManager's watch(loading) safety net (loading true→false triggers fetchQueue)
@@ -1380,7 +1482,18 @@ async function handleSwitchModel(model) {
     } else {
       dismissSwitchingToast()
     }
+    // Thinking levels are per MODEL: apply the new list BEFORE resolving the
+    // level's display name, or the drawer keeps offering the previous model's
+    // options (and may not find a name for a level only the new model has).
+    if (res?.thinkingEffortState?.availableLevels?.length > 0) {
+      identity.updateAvailableThinkingEfforts(res.thinkingEffortState.availableLevels)
+    }
     applyEffortAfterModelSwitch(res, effortBefore)
+    // The new model may not support every agent-declared option (codex only
+    // advertises Fast mode for models with a fast tier). The server returns the
+    // refreshed list after a switch, so drop or keep the toggle immediately
+    // instead of leaving a dead choice on screen until the next turn.
+    if (Array.isArray(res?.configOptions)) identity.setConfigOptions(res.configOptions)
   } catch (err) {
     // Same stale-session guard on the failure path — and the spinner must go,
     // or it hangs on screen for a switch the user has already navigated away from.
@@ -1461,6 +1574,26 @@ function restoreModelSelection(sid) {
       identity.currentModelName.value = fallback.modelName
     })
     .catch(() => { /* best effort — the next loadHistory reconciles */ })
+}
+
+/**
+ * Flip an agent-declared generic option (issue #634, codex "fast-mode").
+ *
+ * Optimistic: the row updates immediately and the server forwards the pick to
+ * the agent. Unlike thinking effort there is no per-model validation here — the
+ * option only exists for models that support it (the agent stops advertising it
+ * otherwise), so there is nothing to reject against.
+ */
+function handleSwitchConfigOption(payload) {
+  const configId = payload?.configId
+  const value = payload?.value
+  if (!configId || !value) return
+  identity.setConfigOptionValue(configId, value)
+  persistSessionUpdate({ configOptions: { [configId]: value } }).then((res) => {
+    if (res?.saveFailed) {
+      toast.show(t('chat.sessionSetting.configOptionSaveFailed'), { icon: 'warning', type: 'error' })
+    }
+  })
 }
 
 function handleSwitchThinkingEffort(level) {
@@ -1548,6 +1681,7 @@ function handleSwitchTransport(transport) {
     identity.clearModeState()
     identity.clearCommandState()
     identity.clearThinkingEffortState()
+    identity.clearConfigOptions()
   }
 }
 
@@ -2278,10 +2412,16 @@ watch(
 
 // Async render flush (throttled 300ms + rAF) grows the content height AFTER
 // the initial scroll-to-bottom already ran. If the user has not scrolled away
-// (shouldStayPinned — e.g. just switched into this session), force re-pin so
-// the list stays glued to the bottom. If the user scrolled away, nothing happens.
+// (shouldStayPinned — e.g. just switched into this session), re-pin so the list
+// stays glued to the bottom. If the user scrolled away, nothing happens.
+//
+// NON-force on purpose: this is content growth, not a user action, so it must
+// obey the same rules as the other streamed pins — in particular it must not
+// cancel a wheel gesture that is still in flight (issue #632). `force` here
+// bypassed the wheel/mouse gate and put the viewport back at the bottom
+// mid-notch, so the "locked scroll" survived even after the gate was added.
 function handleRenderFlush() {
-    if (messageListRef.value?.shouldStayPinned?.()) scrollBottom(true)
+    if (messageListRef.value?.shouldStayPinned?.()) scrollBottom(false)
 }
 
 async function handleLoadMore() {

@@ -34,6 +34,20 @@ type sessionStateExtracted struct {
 	// "effort" where the historical hardcoded guess was "thinkingEffort".
 	effortConfigID string
 	modelConfigID  string
+	// extras are the agent-advertised select options ClawBench has no
+	// dedicated plumbing for (see ExtraConfigOption), and extrasKnown says the
+	// response actually listed configOptions. The flag matters: an agent that
+	// omits configOptions entirely must not be read as "the option is gone"
+	// (that would clear the toggle on every resume), while a response that DOES
+	// list options and no longer contains it is authoritative — codex drops
+	// Fast mode when the user switches to a model that does not support it.
+	//
+	// The test is "listed at least one option", not "the field was present":
+	// agents that never advertise extras omit the field, and treating an empty
+	// list as authoritative would mark every one of them as "advertises extras"
+	// and have them emit an empty event on every turn.
+	extras      []ExtraConfigOption
+	extrasKnown bool
 }
 
 // CacheNewSessionState extracts and caches mode/config/thinking/model state from
@@ -136,7 +150,12 @@ func (c *ACPConn) extractLoadedSessionState(loadResp *acp.LoadSessionResponse) s
 			slog.Info("acp: extracted model list from loaded SessionModelState extension", "current", cached.CurrentModelID, "available", len(cached.Models))
 		}
 	}
+	if len(loadResp.ConfigOptions) > 0 {
+		ext.extras = extractExtraConfigOptions(loadResp.ConfigOptions)
+		ext.extrasKnown = true
+	}
 
+	ext.fillModeFromConfigOptions()
 	return ext
 }
 
@@ -185,6 +204,10 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 		} else {
 			slog.Info("acp: no model list from configOptions")
 		}
+		if len(newResp.ConfigOptions) > 0 {
+			ext.extras = extractExtraConfigOptions(newResp.ConfigOptions)
+			ext.extrasKnown = true
+		}
 	} else {
 		if modeState := extractACPModeStateFromResume(resumeResp); modeState != nil {
 			ext.modes = modeState.AvailableModes
@@ -210,9 +233,38 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 				slog.Info("acp: extracted model list from resumed SessionModelState extension", "current", cached.CurrentModelID, "available", len(cached.Models))
 			}
 		}
+		if len(resumeResp.ConfigOptions) > 0 {
+			ext.extras = extractExtraConfigOptions(resumeResp.ConfigOptions)
+			ext.extrasKnown = true
+		}
 	}
 
+	ext.fillModeFromConfigOptions()
 	return ext
+}
+
+// fillModeFromConfigOptions derives mode state from the agent's `configOptions`
+// when the legacy `modes` field is absent.
+//
+// ACP v2 agents (OpenCode 2.x) dropped `modes` and report the mode picker only
+// as a config option with category "mode". Without this fallback the current
+// mode and the available list both stay empty, so the frontend mode chip shows
+// nothing (found by TestIntegration_ACP/opencode after the opencode CLI moved to
+// 2.2.6). The legacy field still wins when present.
+func (ext *sessionStateExtracted) fillModeFromConfigOptions() {
+	if ext.modeCurrentID != "" && len(ext.modes) > 0 {
+		return
+	}
+	derived := modeStateFromConfigState(ext.configState)
+	if derived == nil {
+		return
+	}
+	if len(ext.modes) == 0 {
+		ext.modes = derived.AvailableModes
+	}
+	if ext.modeCurrentID == "" {
+		ext.modeCurrentID = derived.CurrentModeID
+	}
 }
 
 // applyExtractedState sets session-level current values and updates the agent-level registry.
@@ -230,6 +282,11 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 		ext.modes = nil
 		ext.modeCurrentID = ""
 	}
+
+	// The level list in this response belongs to the model the AGENT is
+	// currently running — capture it before the pre-applied user pick below
+	// overwrites modelCurrentID with the model the next turn will switch to.
+	reportedModelID := ext.modelCurrentID
 
 	currentIDs := map[string]*string{
 		"mode":          &ext.modeCurrentID,
@@ -265,6 +322,11 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	c.SetCurrentThinkingEffortID(ext.effortCurrentID)
 	c.SetCurrentModelID(ext.modelCurrentID)
 
+	// The level LIST is per MODEL (OpenCode reports a different set for each
+	// model), so record it under the model it belongs to. The agent-level list
+	// stays as the fallback for agents whose levels are model-independent.
+	GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel(c.AgentID(), reportedModelID, ext.efforts)
+
 	// Force-update agent-level registry (full overwrite, once per process instance)
 	// LoadSession comes from BackendSpec (authoritative), ListSessions from the
 	// registry — it must be carried through because ForceUpdate fully replaces
@@ -282,6 +344,21 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	// carried through).
 	mcpCaps := reg.GetMCPCapabilities(agentID)
 	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, ext.configState, loadSession, listSessions, mcpCaps.HTTP, mcpCaps.SSE)
+
+	// Generic agent options (codex-acp's Fast mode) are SESSION-scoped: the
+	// agent only advertises them for models that support them, so they must not
+	// go into the agent-level registry above (another session on a different
+	// model would inherit the toggle).
+	//
+	// Two conditions, both required:
+	//   - the response actually listed configOptions (an agent that omits the
+	//     field must not be read as "the option is gone"), and
+	//   - it carries one now, or this session already had one (otherwise every
+	//     ACP agent would be flagged as "advertises extras" and start emitting
+	//     an empty config_options_update on every turn).
+	if ext.extrasKnown && (len(ext.extras) > 0 || c.HasExtraConfigOptions()) {
+		c.SetExtraConfigOptions(ext.extras)
+	}
 }
 
 // mergeWireConfigIDs merges the config-option ids the agent advertised (per
@@ -371,35 +448,40 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	agentID := c.AgentID()
 	reg := GetAgentCapabilityRegistry()
 
-	// Unified: iterate categories and build state via SelectState → domain type
-	categories := []struct {
-		category string
-		emit     func(SelectState)
-	}{
-		{"mode", func(sel SelectState) {
-			if ms := sel.ToModeState(); ms != nil {
-				slog.Info("acp: emitting mode_update for new session", "current_mode", ms.CurrentModeID, "available", len(ms.AvailableModes))
-				forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: ms})
-			}
-		}},
-		{"thought_level", func(sel SelectState) {
-			if tes := sel.ToThinkingEffortState(); tes != nil {
-				slog.Debug("acp: emitting thinking_effort_update for new session", "current", tes.CurrentID, "available", len(tes.AvailableLevels))
-				forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: tes})
-			}
-		}},
-	}
-	for _, cat := range categories {
-		currentID := c.GetCurrentSelection(cat.category)
-		if sel := reg.GetSelectState(agentID, cat.category, currentID); sel != nil && !sel.IsEmpty() {
-			cat.emit(*sel)
+	if sel := reg.GetSelectState(agentID, "mode", c.GetCurrentSelection("mode")); sel != nil && !sel.IsEmpty() {
+		if ms := sel.ToModeState(); ms != nil {
+			slog.Info("acp: emitting mode_update for new session", "current_mode", ms.CurrentModeID, "available", len(ms.AvailableModes))
+			forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: ms})
 		}
+	}
+
+	// Thinking levels are per MODEL: resolve them for the model this session is
+	// running. Emitting the agent-level list here is what made a session on
+	// deepseek show glm's levels (and vice versa), depending on which session
+	// had refreshed the registry last.
+	if effort := reg.GetThinkingEffortStateForModel(agentID, c.GetCurrentModelID(), c.GetCurrentSelection("thought_level")); effort != nil {
+		slog.Debug("acp: emitting thinking_effort_update for new session", "current", effort.CurrentID, "available", len(effort.AvailableLevels))
+		forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effort})
 	}
 
 	// Model list has a different structure (AgentModel with Default field), kept separate
 	if modelListState := reg.GetModelListState(agentID, c.GetCurrentModelID()); modelListState != nil {
 		slog.Debug("acp: emitting model_list_update for new session", "current", modelListState.CurrentModelID, "available", len(modelListState.Models))
 		forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelListState})
+	}
+
+	// Generic agent options (e.g. codex-acp's Fast mode) ride their own event:
+	// config_update carries a single option and is already used for mode, so
+	// piggy-backing a list onto it would change that payload's shape.
+	//
+	// Emitted even when the list is EMPTY, as long as the agent has advertised
+	// options at some point: that is the "the current model no longer supports
+	// it" signal, and without it a toggle would survive a model switch and
+	// offer a choice the agent rejects.
+	if c.HasExtraConfigOptions() {
+		extras := c.GetExtraConfigOptions()
+		slog.Debug("acp: emitting config_options_update", "count", len(extras))
+		forwardACPEvent(ch, StreamEvent{Type: "config_options_update", ConfigOptions: extras})
 	}
 }
 

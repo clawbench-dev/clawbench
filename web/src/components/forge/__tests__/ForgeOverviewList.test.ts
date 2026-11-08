@@ -46,6 +46,14 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// The row's quote action goes through the global quote bar. Mocked so the test
+// asserts the payload handed over instead of the bar's own behaviour (which has
+// its own suite).
+const mockOpenComposer = vi.fn()
+vi.mock('@/composables/useQuoteQuestion', () => ({
+  useQuoteQuestion: () => ({ openComposer: mockOpenComposer }),
+}))
+
 // Must cover every icon the panel's transitive imports touch — RefreshButton
 // pulls in the four rotate/check icons, and a missing export throws at mount.
 vi.mock('lucide-vue-next', () => {
@@ -53,8 +61,8 @@ vi.mock('lucide-vue-next', () => {
   return {
     AlertCircle: stub('AlertCircle'),
     CheckCheck: stub('CheckCheck'),
-    ChevronRight: stub('ChevronRight'),
     Inbox: stub('Inbox'),
+    MessageSquare: stub('MessageSquare'),
     Rss: stub('Rss'),
     RefreshCw: stub('RefreshCw'),
     RotateCw: stub('RotateCw'),
@@ -319,5 +327,37 @@ describe('ForgeOverviewList', () => {
     await nextTick()
 
     expect(w.vm.loading, 'settled request must clear the flag').toBe(false)
+  })
+
+  it('replaces the trailing chevron with a quote action', async () => {
+    // The row already opens the detail on click, so the chevron only repeated
+    // that. The scheduled-task list puts a quote button in the same slot; the
+    // forge lists must match it.
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/1')] })
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+
+    expect(w.find('.forge-row-quote').exists(), 'row must offer a quote action').toBe(true)
+    expect(w.findComponent({ name: 'MessageSquare' }).exists(), 'quote action uses the message glyph').toBe(true)
+  })
+
+  it('quotes the row into the chat without opening it', async () => {
+    // The button sits inside a clickable row, so it must stop propagation:
+    // otherwise quoting would also mark the item read and drill into the detail.
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/455')] })
+    const w = mountPanel()
+    await nextTick()
+    await nextTick()
+
+    await w.find('.forge-row-quote').trigger('click')
+
+    expect(mockOpenComposer).toHaveBeenCalledTimes(1)
+    const ctx = mockOpenComposer.mock.calls[0][0] as { quote?: { filePath?: string; language?: string; url?: string }; label?: string }
+    expect(ctx.quote?.filePath).toBe('acme/widgets#455')
+    expect(ctx.quote?.language).toBe('pr')
+    expect(ctx.quote?.url).toBe('https://example.com/x')
+    expect(ctx.label).toBe('acme/widgets#455')
+    expect(w.emitted('open-item'), 'quoting must not drill into the detail').toBeFalsy()
   })
 })

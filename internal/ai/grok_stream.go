@@ -114,7 +114,13 @@ func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		if msg.SessionID != "" {
 			p.sessionID = msg.SessionID
 		}
-		emitStreamEvent(ch, "grok", StreamEvent{Type: "error", Error: errMsg})
+		// Reason: see streamErrorReason — a bare error event becomes a warning
+		// block with no reason, which classification reads as a clean finish.
+		emitStreamEvent(ch, "grok", StreamEvent{
+			Type:   "error",
+			Error:  errMsg,
+			Reason: streamErrorReason(errMsg),
+		})
 
 	default:
 		// Non-exhaustive protocol: ignore unknown event types.

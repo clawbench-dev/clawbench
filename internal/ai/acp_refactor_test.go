@@ -502,6 +502,11 @@ func TestRefactor_ExtractToolName(t *testing.T) {
 		assert.Equal(t, "Grep", extractToolName("grep", acp.ToolKindSearch, ""))
 		assert.Equal(t, "LS", extractToolName("ls", acp.ToolKindOther, ""))
 		assert.Equal(t, "LS", extractToolName("list", acp.ToolKindOther, ""))
+		// OpenCode 2.x's delegation tool (v1 called it "task").
+		assert.Equal(t, "Agent", extractToolName("subagent", acp.ToolKindOther, "opencode"))
+		assert.Equal(t, "Agent", extractToolName("Subagent", acp.ToolKindOther, ""))
+		assert.Equal(t, "Agent", extractToolName("Sub Agent", acp.ToolKindOther, ""))
+		assert.Equal(t, "Agent", extractToolName("Sub-agent", acp.ToolKindOther, ""))
 	})
 
 	t.Run("prefix_patterns", func(t *testing.T) {
@@ -2650,7 +2655,7 @@ func TestRefactor_EmitSessionStateEvents(t *testing.T) {
 	t.Run("with_registry_data", func(t *testing.T) {
 		reg := GetAgentCapabilityRegistry()
 		reg.UpdateModes("test-emit-state", []ModeDef{{ID: "ask", Name: "Ask"}, {ID: "code", Name: "Code"}})
-		reg.UpdateThinkingEfforts("test-emit-state", []ThinkingEffortDef{{ID: "low", Name: "Low"}, {ID: "high", Name: "High"}})
+		reg.UpdateThinkingEffortsForModel("test-emit-state", "gpt-4", []ThinkingEffortDef{{ID: "low", Name: "Low"}, {ID: "high", Name: "High"}})
 		reg.UpdateModels("test-emit-state", []model.AgentModel{{ID: "gpt-4", Name: "GPT-4"}})
 
 		conn := newACPConn(agent, "test-emit-state")

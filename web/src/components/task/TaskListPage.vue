@@ -1,15 +1,24 @@
 <template>
   <div class="task-list-page">
-    <!-- Compact header: breadcrumb + refresh + create button -->
+    <!-- Compact header: breadcrumb + refresh + create button.
+         The breadcrumb is NOT inside the ActionBar: its crumbs are clickable
+         navigation, and a fixed-width, scrollable control inside the bar made
+         the fold decision depend on how long the task name happens to be. -->
     <div class="list-header">
       <TaskBreadcrumb />
-      <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh" />
-      <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
-        <CheckCheck :size="14" />
-      </button>
-      <button class="create-btn" @click="$emit('create')" :title="t('task.form.createTitle')">
-        <Plus :size="16" />
-      </button>
+      <ActionBar class="list-header-actions" mode="menu" align="end" size="header">
+        <RefreshButton class="header-btn refresh-btn" :loading="loading" :disabled="loading" :title="t('common.refresh')" @click="refresh">
+          <span class="action-label">{{ t('common.refresh') }}</span>
+        </RefreshButton>
+        <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
+          <CheckCheck :size="14" />
+          <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
+        </button>
+        <button class="create-btn is-primary" @click="$emit('create')" :title="t('task.form.createTitle')">
+          <Plus :size="16" />
+          <span class="action-label">{{ t('task.form.createTitle') }}</span>
+        </button>
+      </ActionBar>
     </div>
     <div class="task-list-body">
       <div v-if="loading && tasks.length === 0" class="task-loading task-loading--skeleton">
@@ -129,6 +138,7 @@ import { eventTypesSummary } from '@/utils/forgeEventLabels'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { startQuoteDrag, taskDragPayload } from '@/utils/quoteDrag'
@@ -275,69 +285,45 @@ onMounted(refresh)
   gap: var(--space-3);
 }
 
-/* Create button in header toolbar */
-.create-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
-  border: none;
-  border-radius: var(--radius-lg);
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
+/* Takes the room the breadcrumb leaves. It must be WIDER than its own buttons,
+   otherwise the bar can never conclude "the labels fit" (its measured width is
+   exactly its content) and the text labels would never appear. Shrinking below
+   that is what triggers folding. */
+.list-header-actions {
+  flex: 1 1 auto;
 }
 
-/* Header icon button (refresh, etc.) */
-.header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
+/* Create button — the one primary action in this bar, hence `.is-primary`. */
+.create-btn {
   border: none;
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-secondary, #666);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
+}
+
+
+
+/* Header icon button. Size, radius, colour, hover and press all come from the
+   shared ActionBar row rules (size="header"); this block used to restate every
+   one of them (28 / radius-lg / secondary colour / its own hover / a press
+   scale) and every one of those declarations lost to the shared rules — the
+   file said one thing and the screen showed another. Only what the shared
+   rules do not set lives here. */
+.header-btn {
+  border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
 
 .header-btn:disabled {
   opacity: var(--opacity-muted);
   cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary, #eef1f4);
-    color: var(--accent-color, #0066cc);
-  }
-}
-
-.header-btn:active:not(:disabled) {
-  transform: scale(0.9);
-}
-
-/* Clear-unread button accent when unread messages exist */
-.clear-unread-btn.active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, var(--bg-secondary, #f1f3f5));
-}
-
-@media (hover: hover) {
-  .create-btn:hover {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    transform: translateY(-1px);
-  }
-}
-
-.create-btn:active {
-  transform: scale(0.9);
 }
 
 .task-list-body {

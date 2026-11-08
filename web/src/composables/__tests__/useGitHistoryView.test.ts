@@ -144,6 +144,28 @@ describe('useGitHistoryView — computed', () => {
     expect(v.selectedCommit.value).toBeNull()
   })
 
+  it('selectedCommit resolves commits the host lists outside the history', () => {
+    // Remote-only commits are rendered above the history, not in it — but
+    // drilling into one must still find it, or the drill-down header renders
+    // an empty commit.
+    const v = useGitHistoryView({
+      t,
+      mode: () => 'project',
+      extraCommits: () => [{ sha: 'remote', msg: 'R', date: '', author: '' }],
+    })
+    v.commits.value = [{ sha: 'local', msg: 'L', date: '', author: '' }]
+
+    v.selectedSHA.value = 'remote'
+    expect(v.selectedCommit.value).toEqual({ sha: 'remote', msg: 'R', date: '', author: '' })
+
+    // A local commit still wins the normal path.
+    v.selectedSHA.value = 'local'
+    expect(v.selectedCommit.value).toEqual({ sha: 'local', msg: 'L', date: '', author: '' })
+
+    v.selectedSHA.value = 'nowhere'
+    expect(v.selectedCommit.value).toBeNull()
+  })
+
   it('isWorkingTree is true only for HEAD', () => {
     const v = setup()
     v.selectedSHA.value = 'HEAD'
@@ -659,6 +681,27 @@ describe('useGitHistoryView — working tree view stays fresh', () => {
     expect(v.selectedSHA.value).toBeNull()
   })
 
+  it('reloadPreservingDrillDown keeps a drill-down into a remote-only commit', async () => {
+    // That commit is not in `commits` (it is listed above the history), so the
+    // "is it still there" check has to consult the host's extra commits too —
+    // otherwise every reload silently kicks the user back to the list.
+    route({ files: [] })
+    const v = useGitHistoryView({
+      t,
+      mode: () => 'project',
+      extraCommits: () => [{ sha: 'remote', msg: 'R', date: '', author: '' }],
+    })
+    await v.loadProjectHistory()
+
+    v.onCommitSelect({ sha: 'remote', msg: 'R', date: '', author: '' })
+    expect(v.currentView.value).toBe('files')
+
+    await v.reloadPreservingDrillDown()
+
+    expect(v.currentView.value).toBe('files')
+    expect(v.selectedSHA.value).toBe('remote')
+  })
+
   it('reloadPreservingDrillDown leaves the commit-list view alone', async () => {
     route({ files: [] })
     const v = setup()
@@ -735,5 +778,68 @@ describe('useGitHistoryView — files view refresh button', () => {
 
     release(null)
     await vi.waitFor(() => expect(v.filesRefreshing.value).toBe(false))
+  })
+})
+
+// ── Read-only branch view ────────────────────────────────────
+// Browsing another branch sends ?ref= and must not describe the working tree:
+// the uncommitted-changes row belongs to the checked-out branch, not to the one
+// on screen.
+describe('read-only branch view', () => {
+  function setupRef(ref: string) {
+    return useGitHistoryView({ t, mode: () => 'project', branchRef: () => ref })
+  }
+
+  it('sends the branch as ref and skips the working-tree lookup', async () => {
+    const v = setupRef('feat/payments')
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/working-tree')) {
+        return Promise.resolve(okJson({ files: [{ path: 'dirty.txt', type: 'M' }] }))
+      }
+      return Promise.resolve(okJson({
+        isGit: true,
+        commits: [{ sha: 'p1', msg: 'payment commit', date: '', author: '' }],
+        hasMore: false,
+      }))
+    })
+
+    await v.loadProjectHistory()
+
+    expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history?ref=feat%2Fpayments')
+    expect(mockGitFetch.mock.calls.some(([url]) => String(url).startsWith('/api/git/working-tree'))).toBe(false)
+    // No synthetic working-tree row: every entry is a real commit.
+    expect(v.commits.value.map(c => c.sha)).toEqual(['p1'])
+    expect(v.commits.value.some(c => c.isWT)).toBe(false)
+  })
+
+  it('carries the branch into pagination', async () => {
+    const v = setupRef('feat/payments')
+    mockGitFetch.mockResolvedValue(okJson({
+      isGit: true,
+      commits: [{ sha: 'p1', msg: 'one', date: '', author: '' }],
+      hasMore: true,
+    }))
+    await v.loadProjectHistory()
+
+    mockGitFetch.mockClear()
+    mockGitFetch.mockResolvedValue(okJson({ commits: [], hasMore: false }))
+    await v.loadMoreCommits()
+
+    expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history?skip=1&ref=feat%2Fpayments')
+  })
+
+  it('keeps the current-branch behaviour when no ref is set', async () => {
+    const v = useGitHistoryView({ t, mode: () => 'project', branchRef: () => '' })
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/working-tree')) {
+        return Promise.resolve(okJson({ files: [{ path: 'dirty.txt', type: 'M' }] }))
+      }
+      return Promise.resolve(okJson({ isGit: true, commits: [{ sha: 'c1', msg: 'one', date: '', author: '' }], hasMore: false }))
+    })
+
+    await v.loadProjectHistory()
+
+    expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history')
+    expect(v.commits.value[0].isWT).toBe(true)
   })
 })

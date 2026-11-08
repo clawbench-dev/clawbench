@@ -33,7 +33,14 @@
         >
           <Eye :size="16" />
         </button>
-        <button v-if="hasToc" class="share-btn" type="button" :title="t('share.toggleToc')" @click="tocOpen = !tocOpen">
+        <button
+          v-if="hasToc"
+          class="share-btn share-toc-toggle"
+          type="button"
+          :title="t('share.toggleToc')"
+          data-action="share-toc"
+          @click="tocOpen = !tocOpen"
+        >
           <List :size="16" />
         </button>
       </div>
@@ -46,10 +53,12 @@
       >
         <Download :size="16" />
       </button>
-      <!-- Theme picker is the right-most control and is ALWAYS available (not
-           behind hasToc / error): it is the one action a reader needs on a page
-           that failed to load or whose palette is unreadable, and keeping it in
-           a fixed slot means it never shifts when the others appear. -->
+      <!-- Both of these are ALWAYS available (not behind hasToc / error) and
+           in a fixed order, so they never shift when the other actions appear:
+           the theme picker is the one control a reader needs on a page that
+           failed to load or whose palette is unreadable, and the fit switch is
+           the answer to "why is this page so small on my monitor". -->
+      <ShareFitButton />
       <ShareThemeButton />
     </div>
 
@@ -294,6 +303,9 @@ import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl, shareDocUrl, encodeShareDocDir } from '@/share/shareMode'
 import { SHARE_OPEN_FILE_EVENT, shareDeepLink } from '@/share/shareLinks'
 import ShareThemeButton from './ShareThemeButton.vue'
+import ShareFitButton from './ShareFitButton.vue'
+import { shareNarrowQuery } from './shareScale'
+import { UI_SCALE_EVENT } from '@/utils/uiScale'
 import { shareThemeId } from './shareTheme'
 import { buildLocalFileUrl } from '@/utils/download'
 import { baseName, dirName } from '@/utils/path'
@@ -362,12 +374,42 @@ const sharedPath = ref('')
  *  re-render when a link is followed. */
 const pushedDepth = ref(0)
 const tocOpen = ref(true)
-/** Narrow layout (<900px): TOC moves to a slide-in drawer over the content. */
+/**
+ * Narrow layout: the TOC moves to a slide-in drawer over the content.
+ *
+ * The threshold is a DESIGN width (900), so it is scaled by the applied factor
+ * — the share page sizes itself to the screen, and a bigger UI needs more
+ * window before a side rail leaves the text readable. See shareNarrowQuery.
+ */
 const isNarrow = ref(false)
 let tocMq: MediaQueryList | null = null
 function syncNarrow() {
   if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
-  isNarrow.value = window.matchMedia('(max-width: 899px)').matches
+  isNarrow.value = window.matchMedia(shareNarrowQuery()).matches
+}
+/**
+ * Re-create the media query after the interface scale changed.
+ *
+ * `shareNarrowQuery()` bakes the scale into the px threshold, so the query
+ * string itself is stale the moment the reader flips the fit switch — and the
+ * cached MediaQueryList only fires `change` when the WINDOW crosses its own
+ * (old) threshold, which may never happen. Without this the outline rail stays
+ * on a window that is now too narrow for it, squeezing the text, until the
+ * reader happens to resize the window.
+ */
+function rebuildNarrowQuery() {
+  if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
+  tocMq?.removeEventListener('change', syncNarrow)
+  tocMq = window.matchMedia(shareNarrowQuery())
+  tocMq.addEventListener('change', syncNarrow)
+  const wasNarrow = isNarrow.value
+  syncNarrow()
+  // Crossing the breakpoint resets the outline to its mode's default, the same
+  // way opening a document does (see the `tocOpen = !isNarrow` in the loader).
+  // Without it, turning the switch on leaves the reader staring at a drawer
+  // that appeared unrequested and covers the page — including the switch that
+  // opened it.
+  if (isNarrow.value !== wasNarrow) tocOpen.value = !isNarrow.value
 }
 const wordWrap = ref(false)
 const contentRef = ref<HTMLElement | null>(null)
@@ -857,11 +899,11 @@ function scrollToTocItem(item: TocItem) {
 }
 
 onMounted(() => {
-  syncNarrow()
-  if (typeof window.matchMedia === 'function') {
-    tocMq = window.matchMedia('(max-width: 899px)')
-    tocMq.addEventListener('change', syncNarrow)
-  }
+  rebuildNarrowQuery()
+  // The scale is part of the query string, so flipping the fit switch needs a
+  // fresh MediaQueryList — see rebuildNarrowQuery. UI_SCALE_EVENT (not `resize`)
+  // is the only signal, because scaling does not change the viewport.
+  window.addEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
 
   const token = parseTokenFromPath()
   if (!token) {
@@ -882,6 +924,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
   tocMq?.removeEventListener('change', syncNarrow)
   tocMq = null
   contentRef.value?.removeEventListener('scroll', onContentScroll)
@@ -901,12 +944,6 @@ onBeforeUnmount(() => {
 
 .share-status { font-size: var(--font-size-sm); color: var(--text-muted, #656d76); }
 .share-error { color: #cf222e; }
-
-/* Active (rendered preview shown) state for the view toggle */
-.share-btn.active {
-  background: var(--bg-tertiary, #eaeef2);
-  color: var(--accent-color, #0969da);
-}
 
 .share-center-hint {
   display: flex;
@@ -939,7 +976,7 @@ onBeforeUnmount(() => {
 }
 
 .share-error-title { font-size: var(--font-size-2xl); font-weight: var(--font-weight-semibold); color: var(--text-primary, #1f2328); }
-.share-error-desc { font-size: var(--font-size-md); max-width: 480px; word-break: break-word; }
+.share-error-desc { font-size: var(--font-size-md); max-width: calc(480 * var(--dp)); word-break: break-word; }
 
 .share-html-iframe {
   width: 100%;

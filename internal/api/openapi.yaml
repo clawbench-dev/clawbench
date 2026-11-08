@@ -1714,6 +1714,37 @@ paths:
         "200":
           description: 已回应
 
+  /api/ai/elicitation/respond:
+    post:
+      tags: [Chat]
+      summary: 回应 ACP 表单提问
+      description: >-
+        把用户在选择卡片上选中的答案回传给正在阻塞等待的 ACP
+        `elicitation/create` 请求（OpenCode 的 question 工具走这条链路）。
+        与权限审批不同，这里回传的是按 JSON Schema 属性名组织的答案对象。
+      operationId: elicitationRespond
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                elicitationId:
+                  type: string
+                  description: 提问卡片携带的请求 ID（elic_ 前缀）。
+                content:
+                  type: object
+                  additionalProperties: true
+                  description: 属性名 → 答案；多选为字符串数组。
+      responses:
+        "200":
+          description: 已回应
+        "404":
+          description: 没有对应的待回答问题（卡片已过期或已作答）
+
   /api/chat/quick-send:
     get:
       tags: [Chat]
@@ -1847,7 +1878,10 @@ paths:
       parameters:
         - name: cursor
           in: query
-          description: 游标；上一页最后一行的 `createdAt`，需与 `cursor_id` 同时提供才生效。
+          description: |
+            游标；上一页最后一行的 `updatedAt`，需与 `cursor_id` 同时提供才生效。
+            注意 `updatedAt` 是「最后活动时间」，会话收到新消息时会变——翻页期间列表本身
+            发生变化时，边界行可能被跳过或重复，客户端应按 `id` 去重。
           schema:
             type: string
         - name: cursor_id
@@ -1858,16 +1892,16 @@ paths:
           in: query
           description: |
             游标；上一页最后一行的 `sortOrder`。
-            排序为 `pinned DESC, sort_order ASC, created_at DESC, id DESC`，
+            排序为 `pinned DESC, sort_order ASC, updated_at DESC, id DESC`，
             游标必须同时携带 sort_order 与 pinned，否则同一 (pinned, sort_order) 的行会在每一页重复返回。
-            省略时退回旧的 created_at-only 行为。
+            省略时退回仅按 `updated_at` + `id` 比较的行为（不感知置顶与手动顺序）。
           schema:
             type: integer
         - name: cursor_pinned
           in: query
           description: |
             游标；上一页最后一行的 `pinned`（`1`/`0`）。置顶会话是固定在最前的区块，
-            游标必须携带它才能正确翻页。省略时退回旧的 created_at-only 行为。
+            游标必须携带它才能正确翻页。省略时退回仅按 `updated_at` + `id` 比较的行为。
           schema:
             type: integer
             enum: [0, 1]
@@ -1988,6 +2022,39 @@ paths:
             各项目会话概览（`{projects: [{name, sessions}], total}`）。每行携带
             `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
 
+  /api/ai/sessions/by-project:
+    get:
+      tags: [Sessions]
+      summary: 只读浏览指定项目的会话列表
+      description: |
+        返回**指定项目**的完整会话列表，供会话列表底部的「其他项目」卡片
+        点「查看该项目全部会话」时使用。与 `GET /api/ai/sessions` 的区别只有
+        一处：项目来自 `path` 参数而不是项目 cookie，因此可以在**不切换整个
+        工作区**（聊天、文件、终端）的前提下先看一眼别的项目有什么。
+
+        与 `/api/ai/sessions/overview` 的区别：那个只返回**活跃**会话
+        （running / 待审批 / 有未读），本端点返回**全部**未归档会话，因为用户
+        是主动来浏览的。行上的派生字段（`running` / `pendingApproval` /
+        `agentName` / `agentAvatar` / `tags` / `groupMembers`）与
+        `GET /api/ai/sessions` 完全同源，由同一个装饰函数填充。
+
+        只读：本端点不接受写操作，也不产生副作用（不会注册未知项目）。
+      operationId: sessionsByProject
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+          description: 目标项目的绝对路径（取 `GET /api/ai/sessions/overview` 的项目名）。必须是已注册的项目。
+      responses:
+        "200":
+          description: |
+            `{sessions: [...], totalCount: n}`，会话行与 `GET /api/ai/sessions` 同形。
+        "400":
+          description: 缺少 `path`
+        "404":
+          description: 项目未注册（从未打开过）
+
   /api/ai/session/settings:
     get:
       tags: [Sessions]
@@ -2035,6 +2102,14 @@ paths:
                     type: object
                     nullable: true
                     description: 与 `GET /api/ai/chat` 的 `thinkingEffortState` 同形
+                  configOptions:
+                    type: array
+                    nullable: true
+                    description: |
+                      与 `GET /api/ai/chat` 的 `configOptions` 同形：agent 自己
+                      声明的通用选项（如 codex 的 `fast-mode`），会话级、随模型
+                      变化，为空表示当前模型不支持。
+                    items: {type: object}
                   modelListState:
                     type: object
                     nullable: true
@@ -2086,6 +2161,16 @@ paths:
                 transport: {type: string, enum: [acp-stdio, cli]}
                 autoApprove: {type: boolean}
                 cruise: {type: boolean}
+                configOptions:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: |
+                    按 **agent 自己声明的配置项 id** 设置选项，例如 codex 的
+                    `{"fast-mode": "on"}`（"1.5x speed, increased usage"）。
+                    这是给 mode / model / thinkingEffort 之外那些「ClawBench 没有
+                    专门管道」的选项留的通用通道；可选值与当前值由 agent 通过
+                    `config_options_update` 事件 / `GET /api/ai/chat` 的
+                    `configOptions` 字段下发，前端直接照抄即可。
       responses:
         "200":
           description: 已应用（`modelSwitchDeferred` 表示模型切换推迟到下一轮）
@@ -2139,6 +2224,13 @@ paths:
                   type: string
                 modelId:
                   type: string
+                configOptions:
+                  type: object
+                  additionalProperties: {type: string}
+                  description: |
+                    按 agent 自己声明的配置项 id 设置选项，例如 codex 的
+                    `{"fast-mode": "on"}`。与 `PATCH /api/ai/session/settings`
+                    的同名字段语义一致。
                 transport:
                   type: string
                 autoApprove:
@@ -2193,6 +2285,11 @@ paths:
             `thinkingEffortNotRemembered=true` 表示档位本次已生效，但写库失败（agent
             行不存在等），**重启/新会话后会丢失**。客户端应提示用户，否则只会在之后
             莫名其妙地回到默认值。
+
+            `thinkingEffortState` 仅当请求带 `modelId` 且切换未被推迟时出现：思考档位是
+            **按模型**下发的（OpenCode 不同模型分别提供 `low/high/max/default`、
+            `high/max/default`，非推理模型一个都没有），切换模型后客户端必须用它替换
+            选择器的选项，否则会继续显示上一个模型的档位。
           content:
             application/json:
               schema:
@@ -2211,6 +2308,25 @@ paths:
                     type: boolean
                   thinkingEffortNotRemembered:
                     type: boolean
+                  thinkingEffortState:
+                    type: object
+                    description: |
+                      该会话当前模型可选的全部思考档位（档位按模型变化，见上）。
+                    properties:
+                      configId:
+                        type: string
+                        description: agent 自己声明的配置项 id（如 `effort`），未上报时省略。
+                      currentId:
+                        type: string
+                      availableLevels:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            name:
+                              type: string
         "422":
           description: |
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
@@ -3029,9 +3145,16 @@ paths:
           in: query
           schema:
             type: integer
+        - name: ref
+          in: query
+          description: 本地分支名；只读取该分支的历史，不切换工作区。缺省为当前分支。
+          schema:
+            type: string
       responses:
         "200":
           description: 提交列表
+        "400":
+          description: 分支不存在或名称非法
 
   /api/git/history:
     get:
@@ -3190,6 +3313,50 @@ paths:
       responses:
         "200":
           description: 结果
+
+  /api/git/fetch:
+    post:
+      tags: [Git]
+      summary: 获取远端更新（只更新远端跟踪分支，不动工作区）
+      description: >
+        对所有远端执行 `git fetch --all`。只更新远端跟踪引用，不移动当前分支、
+        不改工作区里的任何文件；获取之后提交列表旁的「领先 / 落后」数字即为最新。
+        需要真正把分支往前挪时用 `git pull`，本接口刻意不做。
+      operationId: gitFetch
+      responses:
+        "200":
+          description: >
+            结果。`success=true` 时带 `summary`（git 输出的最后一行，没有新内容时为空）；
+            `success=false` 时带 `error`（`fetch_failed` / `fetch_timeout`）
+            与 `errorDetail`（git 原文）。
+        "409":
+          description: "已有另一次获取正在进行（error 为 git_busy）。"
+
+  /api/git/divergence:
+    get:
+      tags: [Git]
+      summary: 分支与上游的具体差异（哪些提交未推送、哪些只在远端）
+      description: >
+        只读本地引用，不访问网络。`ahead` 是本地有、上游没有的提交 SHA
+        （供列表把对应行标为「未推送」）；`behind` 是上游有、本地没有的提交，
+        带标题 / 时间 / 作者，供列表顶部直接列出。分支没有上游（detached HEAD
+        或从未推送）时 `hasUpstream=false`，其余字段为空数组。
+        结果基于上次获取时的远端记录，不代表实时远端。
+      operationId: gitDivergence
+      parameters:
+        - name: ref
+          in: query
+          required: false
+          description: 要比较的本地分支名；留空表示当前 HEAD 所在分支。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >
+            差异结果。`aheadCount` / `behindCount` 是总数；`ahead` 最多返回 500 条、
+            `behind` 最多 50 条，列表比总数短时说明被截断。
+        "400":
+          description: "不是 git 仓库，或 ref 不是合法的本地分支名（UnknownBranch）。"
 
   /api/git/tags:
     get:
@@ -4221,6 +4388,42 @@ paths:
           description: token 不存在或不属于当前项目
         "502":
           description: STT 转写失败（该段留空，不影响共享）
+
+  /api/live-share/notes/stream:
+    get:
+      tags: [LiveShare]
+      summary: 流式转写一路音频（WebSocket）
+      description: |
+        发布端把某一信道的 16 kHz 单声道 16 位 PCM 边录边发上来，服务端边识别边
+        落库，并把结果推回客户端。相比 `/notes/segment`（切成文件再上传）省掉了
+        「等停顿 + 上传 + 整段识别」三段延迟。
+
+        查询参数：`token`、`channel`、`speaker`。鉴权与分段上传相同。
+
+        **客户端只走这一条路，引擎差异由服务端消化**：流式引擎（豆包）收到音频就
+        识别；只支持整段的引擎（OpenAI 兼容 / Whisper）由服务端攒成 WAV，安静超过
+        0.8 秒或攒满 10 秒就转写一次。因此换引擎不需要改前端，也没有能力位开关。
+
+        客户端 → 服务端：
+          - 二进制帧：PCM
+          - 文本帧：`{"type":"end"}` 表示这一路结束
+
+        服务端 → 客户端：
+          - `{"type":"partial","text":...}` 正在修正的当前这句
+          - `{"type":"line","text":...,"startedAt":...,"durationMs":...}` 已落库的一行
+          - `{"type":"error","message":...}`
+
+        流式引擎不会说「这句说完了」，它只是一直重发当前这句的全文。服务端用
+        **稳定 1.2 秒没有新修订**作为一句结束的判据；一行最长 15 秒强制收口，
+        避免有人连续朗读时整场变成一行。
+      operationId: liveShareNotesStream
+      responses:
+        "101":
+          description: 协议升级成功
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
 
   /api/live-share/notes/audio/merge:
     post:
@@ -6362,7 +6565,10 @@ paths:
       description: |
         返回该提供商可用的模型。始终以端点实测为准（必要时补 `/v1`），失败再用权威目录兜底
         （`source: "live" | "catalog"`）；同时返回用户已保存的清单 `curated`。
-        返回 `{models:[...], curated:[...], source, status?, error?}`。
+        返回 `{models:[...], curated:[...], prices:{id:{input,output,approx?}}, source, status?, error?}`。
+        `prices` 是每个模型每百万 token 的美元单价（输入/输出），由权威目录快照在响应时计算、不落库；
+        只包含能可靠匹配到的 id，取不到价格的模型不会出现在该 map 里（前端据此不显示标签）。
+        `approx: true` 表示价格来自多个第三方渠道的共识而非模型厂商自己的报价。
         已保存清单不覆盖实测列表——它只表示「用户选了哪些」，选择器要靠实测列表才能继续添加模型；
         网关不暴露列表时返回空数组与原因，前端退化为手动输入，不阻塞配置。
       operationId: providersModels
@@ -6473,58 +6679,6 @@ paths:
         "200":
           description: 音频
 
-  /api/tts/generate/pcm:
-    post:
-      tags: [TTS]
-      summary: 合成裸 PCM 语音（供嵌入式设备）
-      description: |
-        与 `/api/tts/generate` 相同的摘要与缓存链路，但**同步返回音频字节**而不是
-        job id，并且输出无容器头的裸 PCM（16-bit 小端、单声道），供无法解码
-        MP3 的嵌入式设备直接写入 I2S。
-
-        实现方式：先按既有链路合成并缓存 MP3（与网页端共用同一份缓存），再用纯
-        Go 解码器转成 PCM 并缓存为 `.pcm`。采样率跟随源 MP3（Edge TTS 为
-        24 kHz），不做重采样。
-
-        响应 `Content-Type` 为
-        `audio/L16; rate=<采样率>; channels=<声道数>; endianness=little`，
-        采样位深见 `X-Audio-Bits`。`endianness=little` 是必须声明的：RFC 3551 的
-        `L16` 定义为**大端**，而本端点返回的负载是小端，按裸媒体类型解码的客户端
-        会得到满量程噪声。PCM 缓存文件名内嵌采样参数，命中时无需解码。
-      operationId: ttsGeneratePcm
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                text:
-                  type: string
-                language:
-                  type: string
-                  description: 语言代码（如 zh / en），缺省 zh。
-                messageId:
-                  type: integer
-                  description: 关联的 chat_history.id，用于 TTS 摘要缓存。
-                speakerName:
-                  type: string
-                  description: 群聊发言人显示名；设置后朗读音频带「<名>说：」前缀。
-      responses:
-        "200":
-          description: 裸 PCM 音频流
-          content:
-            audio/L16:
-              schema:
-                type: string
-                format: binary
-        "400":
-          description: 文本为空或超长
-        "500":
-          description: 解码或缓存写入失败（`InternalError`）。该端点对任何能产出 MP3 的语音提供方都成立，不存在「不支持裸 PCM」的独立状态码。
-        "502":
-          description: 摘要或语音合成失败（`SummarizeFailed` / `SynthesizeFailed`）
-
   /api/tts/stream/{jobId}:
     get:
       tags: [TTS]
@@ -6550,6 +6704,21 @@ paths:
       summary: TTS 音频 WebSocket（升级）
       description: WebSocket 端点，流式推送合成音频块。OpenAPI 不建模升级握手。
       operationId: ttsAudioWS
+      responses:
+        "101":
+          description: Switching Protocols
+
+  /api/voice/turn/ws:
+    get:
+      tags: [STT]
+      summary: 一体化语音回合 WebSocket（识别 + 一轮 + 朗读）
+      description: |
+        WebSocket 端点，一条连接跑多轮完整语音回合：收 16 kHz 单声道 PCM
+        二进制帧与 `listen`/`end`/`replay`/`say` 控制帧，依次回 `final`、
+        `phase`、`summary`、音频格式帧、二进制 PCM 帧与 `done`。
+        做成一条连接是为了每轮只做一次 TLS 握手。
+        OpenAPI 不建模升级握手。
+      operationId: voiceTurnWS
       responses:
         "101":
           description: Switching Protocols

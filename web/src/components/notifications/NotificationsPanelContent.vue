@@ -1,7 +1,7 @@
 <template>
   <div class="notif-panel">
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
-    <div class="list-header">
+    <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
         <Inbox class="crumb-icon" :size="14" />
         <span>{{ t('notifications.title') }}</span>
@@ -13,7 +13,9 @@
         :disabled="loading"
         :title="t('notifications.refresh')"
         @click="refresh"
-      />
+      >
+        <span class="action-label">{{ t('notifications.refresh') }}</span>
+      </RefreshButton>
       <button
         class="header-btn"
         :disabled="items.length === 0 || loading"
@@ -22,8 +24,9 @@
         @click="onClear"
       >
         <Trash2 :size="14" />
+        <span class="action-label">{{ t('notifications.clear') }}</span>
       </button>
-    </div>
+    </ActionBar>
 
     <!-- Filters: three dropdowns on one row (project / type / time). -->
     <div class="notif-filters">
@@ -187,8 +190,9 @@ import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
   Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Video, Hand,
 } from 'lucide-vue-next'
-import MenuSelect, { type MenuSelectOption } from '@/components/common/MenuSelect.vue'
+import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
@@ -290,13 +294,13 @@ const rangeOptions = computed<MenuSelectOption[]>(() => [
   { value: '30d', label: t('notifications.range.30d') },
 ])
 
-function onKindChange(v: string | number) {
+function onKindChange(v: MenuSelectValue) {
   void setKind(v === '__all__' ? '' : (v as NotificationKind))
 }
-function onRangeChange(v: string | number) {
+function onRangeChange(v: MenuSelectValue) {
   void setRange(v === '__all__' ? '' : (v as NotificationRange))
 }
-function onProjectChange(v: string | number) {
+function onProjectChange(v: MenuSelectValue) {
   void setProject(v === '__all__' ? ALL_PROJECTS : String(v))
 }
 
@@ -631,27 +635,16 @@ function forgeTargetFromItemKey(key: string) {
   overflow: hidden;
 }
 .crumb-icon { color: var(--accent-color); flex-shrink: 0; }
+/* Header buttons take their size, radius, colour and hover from the shared
+   ActionBar rules (size="header"); only what is genuinely theirs lives here. */
 .header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: all var(--duration-slow) ease;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
-@media (hover: hover) {
-  .header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
-}
-.header-btn:active:not(:disabled) { transform: scale(0.9); }
 .header-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
 
 /* Filter row — three dropdowns + the count.

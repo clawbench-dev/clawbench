@@ -610,6 +610,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			script_stdout TEXT NOT NULL DEFAULT '',
 			script_stderr TEXT NOT NULL DEFAULT '',
 			script_duration_ms INTEGER NOT NULL DEFAULT 0,
+			restart_interrupted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -1384,6 +1385,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"script_stdout", "ALTER TABLE task_executions ADD COLUMN script_stdout TEXT NOT NULL DEFAULT ''"},
 		{"script_stderr", "ALTER TABLE task_executions ADD COLUMN script_stderr TEXT NOT NULL DEFAULT ''"},
 		{"script_duration_ms", "ALTER TABLE task_executions ADD COLUMN script_duration_ms INTEGER NOT NULL DEFAULT 0"},
+		{"restart_interrupted", "ALTER TABLE task_executions ADD COLUMN restart_interrupted INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)
@@ -2058,6 +2060,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_config_options TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add acp_config_options column: %w", err)
+		}
+	}
+
+	// Migrate: per-model thinking-effort levels (issue #637). Some agents
+	// (OpenCode) advertise a different level set for each model, so the single
+	// agent-level list above cannot answer for a session — it only remembers
+	// whichever model reported last. Keyed by model id, the same model looks
+	// identical in every session and entry point.
+	//
+	// No data migration is possible: the existing column does not record which
+	// model its list came from. It stays as the fallback for agents whose levels
+	// are model-independent, and this column fills up as sessions report.
+	var hasEffortByModelLevels int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_thinking_efforts_by_model'").Scan(&hasEffortByModelLevels)
+	if hasEffortByModelLevels == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_thinking_efforts_by_model TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add acp_thinking_efforts_by_model column to agents: %w", err)
 		}
 	}
 
@@ -3469,19 +3488,20 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 
 // sessionOrderIndexSQL is the desired definition of idx_sessions_order: the
 // covering index for the session list's ORDER BY (pinned DESC, sort_order ASC,
-// created_at DESC, id DESC) under the WHERE (session_type, project_id,
+// updated_at DESC, id DESC) under the WHERE (session_type, project_id,
 // archived) prefix.
-const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC)"
+const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, updated_at DESC, id DESC)"
 
 // rebuildSessionOrderIndexIfNeeded rebuilds idx_sessions_order when its stored
 // definition does not match sessionOrderIndexSQL.
 //
-// The index has been reshaped twice (created_at-only → +pinned → +sort_order →
-// now pinned + sort_order), and each shape change needs a rebuild because
-// CREATE INDEX IF NOT EXISTS silently keeps whatever already exists. Comparing
-// the stored SQL from sqlite_master is what makes the migration idempotent: an
-// install already on the current shape is a no-op, while one on any older shape
-// is rebuilt exactly once.
+// The index has been reshaped repeatedly (created_at-only → +pinned →
+// +sort_order → pinned + sort_order → created_at replaced by updated_at for
+// #635), and each shape change needs a rebuild because CREATE INDEX IF NOT
+// EXISTS silently keeps whatever already exists. Comparing the stored SQL from
+// sqlite_master is what makes the migration idempotent: an install already on
+// the current shape is a no-op, while one on any older shape is rebuilt exactly
+// once.
 //
 // Failure is returned, not swallowed: a missing/mismatched index only costs
 // query planning (the list still returns correctly), but silently leaving a

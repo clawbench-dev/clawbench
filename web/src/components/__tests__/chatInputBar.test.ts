@@ -185,6 +185,9 @@ function mountInputBar(props = {}, { deep = false }: { deep?: boolean } = {}) {
       stubs: {
         Teleport: TeleportStub,
         PopupMenu: true,
+        // ActionBar renders the slotted buttons (the real one is exercised by
+        // its own test); a shallow stub would drop them from this suite.
+        ActionBar: false,
         QuickSendDrawer: true,
         // QuoteCard must render for real: the staged-quote chip assertions below
         // target the card's own root classes, which a shallow stub would drop.
@@ -617,36 +620,22 @@ describe('ChatInputBar — user message index button', () => {
   })
 })
 
-describe('ChatInputBar — action labels by container width', () => {
+describe('ChatInputBar — action bar labels', () => {
   function actionBar(wrapper: ReturnType<typeof mount>) {
     return wrapper.find('.chat-top-actions')
   }
   function labelTexts(wrapper: ReturnType<typeof mount>) {
-    return wrapper.findAll('.chat-action-label').map(el => el.text())
-  }
-  function mockBarWidth(wrapper: ReturnType<typeof mount>, scrollWidth: number, clientWidth: number) {
-    const bar = actionBar(wrapper).element as HTMLElement
-    Object.defineProperty(bar, 'scrollWidth', { configurable: true, value: scrollWidth })
-    Object.defineProperty(bar, 'clientWidth', { configurable: true, value: clientWidth })
+    return wrapper.findAll('.action-label').map(el => el.text())
   }
 
-  it('hides labels when the container is too narrow (icons only)', async () => {
-    const wrapper = mountInputBar({}, { deep: true })
-    await nextTick()
-    // jsdom measures 0x0, which fits → labels shown by default. Force overflow.
-    mockBarWidth(wrapper, 600, 400)
-    wrapper.vm.measureActionLabels()
-    await nextTick()
-
-    expect(actionBar(wrapper).classes()).not.toContain('show-labels')
-    expect(wrapper.find('.chat-group-label').exists()).toBe(false)
-  })
-
-  it('shows short Chinese labels for every action button when width suffices', async () => {
+  it('shows the short labels for every action button', async () => {
+    // jsdom has no layout: ActionBar measures 0 wide and assumes there is room,
+    // which is the wide-pane case. The width decisions live in ActionBar's own
+    // test; this pins the wiring (labels present, class that reveals them).
     const wrapper = mountInputBar({}, { deep: true })
     await nextTick()
 
-    expect(actionBar(wrapper).classes()).toContain('show-labels')
+    expect(actionBar(wrapper).classes()).toContain('ab--labels')
     const texts = labelTexts(wrapper)
     // 列表、创建、搜索、跳转、归档、朗读、刷新 always render; 同步 only when
     // the current session uses ACP transport (isACPTransport computed).
@@ -664,64 +653,35 @@ describe('ChatInputBar — action labels by container width', () => {
     const wrapper = mountInputBar({ currentTransport: 'acp-stdio' }, { deep: true })
     await nextTick()
 
-    expect(actionBar(wrapper).classes()).toContain('show-labels')
+    expect(actionBar(wrapper).classes()).toContain('ab--labels')
     const texts = labelTexts(wrapper)
     expect(texts).toContain('同步')
     expect(texts).toContain('跳转')
   })
 
-  it('renders session actions flat — no grouping wrapper or group label', async () => {
+  it('renders the actions flat — no grouping wrapper or group label', async () => {
     const wrapper = mountInputBar({}, { deep: true })
     await nextTick()
-    expect(actionBar(wrapper).classes()).toContain('show-labels')
+    expect(actionBar(wrapper).classes()).toContain('ab--labels')
     // Buttons are direct children of the action bar; no group container/label.
     expect(wrapper.find('.chat-action-group').exists()).toBe(false)
     expect(wrapper.find('.chat-group-label').exists()).toBe(false)
-    const directButtons = actionBar(wrapper).element.children
-    expect(Array.from(directButtons).every(el => el.classList.contains('chat-action-btn'))).toBe(true)
+    // The only non-button child is ActionBar's own "more" slot marker (not
+    // rendered in scroll mode); every real child is an action button.
+    const directButtons = Array.from(actionBar(wrapper).element.children).filter(
+      el => el.tagName === 'BUTTON',
+    )
+    expect(directButtons.length).toBeGreaterThan(5)
+    expect(directButtons.every(el => el.classList.contains('chat-action-btn'))).toBe(true)
   })
 
-  it('marks the bar draggable only while it actually overflows', async () => {
+  it('runs in scroll mode, so no button is ever folded into a menu', async () => {
+    // The chat bar scrolls (drag + edge fades) instead of collapsing: every
+    // action must stay reachable in the strip.
     const wrapper = mountInputBar({}, { deep: true })
     await nextTick()
-    // jsdom measures 0x0, which fits → no overflow, so no drag affordance.
-    expect(actionBar(wrapper).classes()).not.toContain('is-overflowing')
-
-    mockBarWidth(wrapper, 600, 400)
-    wrapper.vm.measureActionLabels()
-    await nextTick()
-    expect(actionBar(wrapper).classes()).toContain('is-overflowing')
-  })
-
-  it('attaches drag-to-scroll only while overflowing, and detaches on unmount', async () => {
-    const addSpy = vi.spyOn(HTMLElement.prototype, 'addEventListener')
-    const removeSpy = vi.spyOn(HTMLElement.prototype, 'removeEventListener')
-    const wrapper = mountInputBar({}, { deep: true })
-    await nextTick()
-    const bar = actionBar(wrapper).element as HTMLElement
-    // Other handlers on the bar (and elsewhere) also register pointerdown, so
-    // scope every count to THIS element via the call's `this` context.
-    const calls = (spy: typeof addSpy, type: string) =>
-      spy.mock.calls.filter(([t], i) => t === type && spy.mock.contexts[i] === bar)
-
-    // Fits → no pointerdown listener from the drag module.
-    expect(calls(addSpy, 'pointerdown')).toHaveLength(0)
-
-    mockBarWidth(wrapper, 600, 400)
-    wrapper.vm.measureActionLabels()
-    await nextTick()
-    expect(actionBar(wrapper).classes()).toContain('is-overflowing')
-    expect(calls(addSpy, 'pointerdown')).toHaveLength(1)
-
-    // Shrinking back to fit must DETACH it again, not merely hide the cursor.
-    mockBarWidth(wrapper, 300, 300)
-    wrapper.vm.measureActionLabels()
-    await nextTick()
-    expect(actionBar(wrapper).classes()).not.toContain('is-overflowing')
-    expect(calls(removeSpy, 'pointerdown').length).toBeGreaterThan(0)
-
-    wrapper.unmount()
-    addSpy.mockRestore()
-    removeSpy.mockRestore()
+    expect(actionBar(wrapper).classes()).toContain('ab--scroll')
+    expect(actionBar(wrapper).find('[data-ab-more]').exists()).toBe(false)
+    expect(wrapper.findAll('.chat-action-btn').length).toBeGreaterThan(5)
   })
 })

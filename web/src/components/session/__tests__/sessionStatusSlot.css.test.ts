@@ -437,7 +437,9 @@ describe('session status slot', () => {
 
     // And the row's own right inset must be the matching 8px, not the 12px the
     // other sides use — otherwise the gap only moves from one side to the other.
-    for (const sel of ['\\.session-item', '\\.cross-session-item']) {
+    // Only the project rows carry this slot: the other-project strip uses
+    // compact one-line rows with their own marker layout.
+    for (const sel of ['\\.session-item']) {
       const rule = list.match(new RegExp(`\\n${sel}\\s*\\{[^}]*\\}`))?.[0]
       expect(rule, `${sel} should exist`).toBeTruthy()
       // Shorthand padding: top | right | bottom | left.

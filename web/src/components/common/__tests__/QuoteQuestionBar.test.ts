@@ -96,6 +96,18 @@ describe('QuoteQuestionBar', () => {
       expect(wrapper.text()).toContain('build failed on main')
     })
 
+    it('offers a visible close button in the expanded panel', async () => {
+      // Clicking outside and Escape both dismiss the bar, but neither is
+      // visible — on a phone there was nothing to aim at.
+      const wrapper = mountBar({ composerMode: true })
+      const close = wrapper.find('.qq-close-btn')
+      expect(close.exists(), 'the expanded bar must have a dismiss affordance').toBe(true)
+      expect(close.attributes('aria-label')).toBe('common.close')
+
+      await close.trigger('click')
+      expect(wrapper.emitted('close')).toHaveLength(1)
+    })
+
     it('pins the bar on open so it survives selection loss', () => {
       const wrapper = mountBar({ composerMode: true })
       expect(wrapper.emitted('pin')).toBeTruthy()

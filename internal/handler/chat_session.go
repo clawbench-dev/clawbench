@@ -16,6 +16,7 @@ import (
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // ServeSessionsOverview handles GET /api/ai/sessions/overview.
@@ -122,6 +123,67 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
 }
 
+// decorateSessionRows fills the derived fields every session-list response
+// carries: live run state, pending-approval state, tags, group member previews
+// and the agent display identity. Shared by the current project's list and the
+// read-only cross-project list so the two can never drift apart.
+func decorateSessionRows(sessions []model.ChatSession, projectPath string) {
+	// Batch-check running state: single mutex acquisition instead of N
+	runningIDs := service.GetRunningSessionIDs()
+	runningSet := make(map[string]bool, len(runningIDs))
+	for _, id := range runningIDs {
+		runningSet[id] = true
+	}
+	// Batch-check pending approval state from ACP connection pool
+	pendingApprovalSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
+	for i := range sessions {
+		sessions[i].Running = runningSet[sessions[i].ID]
+		sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
+	}
+	attachSessionTags(sessions)
+	attachGroupMembers(sessions)
+	attachAgentIdentity(sessions, projectPath)
+}
+
+// ServeProjectSessions handles GET /api/ai/sessions/by-project?path=<abs path>.
+//
+// Read-only browse of ANOTHER project's sessions, reached from the session
+// list's "other projects" cards. The ordinary list endpoint resolves the
+// project from the cookie, so using it here would mean switching the whole
+// workspace (chat, files, terminal) just to read a list.
+//
+// The project must already be registered: an arbitrary path must not be usable
+// to probe the session table.
+func ServeProjectSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if projectPath == "" {
+		model.WriteError(w, model.NewAppError(http.StatusBadRequest, "path is required", nil))
+		return
+	}
+	if _, ok, err := store.ProjectIDByPath(projectPath); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project")))
+		return
+	} else if !ok {
+		model.WriteError(w, model.NotFound(fmt.Errorf("unknown project"), "project not found"))
+		return
+	}
+
+	sessions, err := service.GetSessions(projectPath, "")
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load sessions")))
+		return
+	}
+	decorateSessionRows(sessions, projectPath)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sessions":   sessions,
+		"totalCount": len(sessions),
+	})
+}
+
 // ServeSessions handles GET (list) and POST (create) for chat sessions.
 func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-method session handler
 	projectPath, ok := requireProject(w, r)
@@ -146,10 +208,10 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// would show "no matches" until the user scrolled far enough.
 		tagName := strings.TrimSpace(r.URL.Query().Get("tag"))
 		// cursor_sort_order + cursor_pinned complete the keyset: the list is
-		// ordered by (pinned DESC, sort_order ASC, created_at DESC, id DESC), so
-		// paging on created_at alone re-returns rows sharing the cursor's
+		// ordered by (pinned DESC, sort_order ASC, updated_at DESC, id DESC), so
+		// paging on the timestamp alone re-returns rows sharing the cursor's
 		// (pinned, sort_order) on every page. Absent/empty keeps the legacy
-		// created_at-only predicate.
+		// timestamp-only predicate.
 		var cursorSortOrder *int
 		if p := r.URL.Query().Get("cursor_sort_order"); p != "" {
 			if v, err := strconv.Atoi(p); err == nil {
@@ -186,21 +248,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to load sessions")))
 			return
 		}
-		// Batch-check running state: single mutex acquisition instead of N
-		runningIDs := service.GetRunningSessionIDs()
-		runningSet := make(map[string]bool, len(runningIDs))
-		for _, id := range runningIDs {
-			runningSet[id] = true
-		}
-		// Batch-check pending approval state from ACP connection pool
-		pendingApprovalSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
-		for i := range sessions {
-			sessions[i].Running = runningSet[sessions[i].ID]
-			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
-		}
-		attachSessionTags(sessions)
-		attachGroupMembers(sessions)
-		attachAgentIdentity(sessions, projectPath)
+		decorateSessionRows(sessions, projectPath)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
@@ -605,11 +653,17 @@ type sessionUpdateRequest struct {
 	ModeID         string `json:"modeId"`
 	ThinkingEffort string `json:"thinkingEffort"`
 	ModelID        string `json:"modelId"`
-	Transport      string `json:"transport"`
-	AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
-	Cruise         *bool  `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
-	Title          string `json:"title"`
-	Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
+	// ConfigOptions sets agent-specific select options by the agent's own
+	// config-option id, e.g. {"fast-mode": "on"}. This is the generic channel
+	// for options ClawBench has no dedicated plumbing for (issue #634);
+	// mode/model/thinkingEffort keep their own fields because they carry
+	// extra behavior (persistence, per-model validation).
+	ConfigOptions map[string]string `json:"configOptions"`
+	Transport     string            `json:"transport"`
+	AutoApprove   *bool             `json:"autoApprove"` // pointer: distinguish "not sent" from false
+	Cruise        *bool             `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
+	Title         string            `json:"title"`
+	Pinned        *bool             `json:"pinned"` // pointer: distinguish "not sent" from false
 	// Tags replaces the session's full tag set when non-nil. A pointer is
 	// required here: `"tags": []` (clear all) must be distinguishable from
 	// the field being absent (leave tags untouched), which a plain slice
@@ -668,7 +722,21 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// of leaving the old level on the chip.
 		effectiveEffort = switchSessionEffortToModel(sessionID, req.ModelID, modelSwitchDeferred)
 	}
+	applyExtraConfigOptions(sessionID, req.ConfigOptions)
+
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
+	attachConfigOptionsAfterModelSwitch(resp, sessionID, req.ModelID)
+	// The level list is per MODEL, so a switch changes the picker's options.
+	// The agent reports the new list only inside the set_config_option
+	// RESPONSE (no config_option_update follows), so returning it here is what
+	// keeps the open drawer in step — without it the drawer keeps showing the
+	// previous model's levels until the next turn, and two sessions on the same
+	// agent disagree about the same model.
+	if req.ModelID != "" && !modelSwitchDeferred {
+		if state := thinkingEffortStateAfterModelSwitch(sessionID); state != nil {
+			resp["thinkingEffortState"] = state
+		}
+	}
 	if effectiveEffort != "" {
 		resp["thinkingEffort"] = effectiveEffort
 	}
@@ -686,6 +754,21 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		resp["thinkingEffortNotRemembered"] = true
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// thinkingEffortStateAfterModelSwitch returns the thinking levels of the model
+// the session now runs, for the click-time switch response.
+//
+// The live connection is authoritative. A switch made before the first message
+// has no connection at all, so the list is resolved from the persisted model
+// and the registry — without that fallback the drawer keeps the previous
+// model's levels, which is issue #637's most common path.
+func thinkingEffortStateAfterModelSwitch(sessionID string) *ai.ThinkingEffortState {
+	if state := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID).Effort; state != nil {
+		return state
+	}
+	return ai.GetAgentCapabilityRegistry().GetThinkingEffortStateForModel(
+		service.GetSessionAgentID(sessionID), service.GetSessionModel(sessionID), "")
 }
 
 // applyNonModelFields persists every session-scoped field EXCEPT the model.
@@ -789,15 +872,13 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	// (the ACP layer reports a refusal instead of recording it, so a bad pick
 	// cannot get stuck).
 	//
-	// The registry's list is agent-level and, before this fix, was only updated
-	// when a model advertised an ID it had not seen — a narrower model's list
-	// (deepseek: high/max/default) is a SUBSET of the previous one (glm:
-	// low/high/max/default), so it was never refreshed and this check would
-	// happily accept a level the current model rejects. The registry now also
-	// tracks removals, and an UNKNOWN list (nothing advertised yet) must not
-	// discard the user's choice — the agent stays authoritative in that case.
+	// The list is looked up for the model being switched TO (issue #637). The
+	// agent-level list would describe whichever model reported last — accepting
+	// levels this model rejects and dropping ones it offers. An UNKNOWN list
+	// (nothing advertised yet) must not discard the user's choice — the agent
+	// stays authoritative in that case.
 	if !deferred {
-		if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortState(agent.ID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
+		if levels := ai.GetAgentCapabilityRegistry().GetThinkingEffortStateForModel(agent.ID, modelID, ""); levels != nil && len(levels.AvailableLevels) > 0 {
 			valid := false
 			for _, l := range levels.AvailableLevels {
 				if l.ID == effort {
@@ -903,6 +984,68 @@ func applySessionCruise(sessionID string, enabled bool) {
 	service.SetSessionCruise(sessionID, enabled)
 	if enabled {
 		applyAutoApprove(sessionID, true)
+	}
+}
+
+// sessionExtraConfigOptions returns the session's agent-declared options, or
+// nil when the agent has advertised none (callers omit the field then).
+//
+// Used to refresh the drawer right after a MODEL SWITCH: the set_config_option
+// response re-states the option list, and a model without a fast tier drops it.
+// Sending the fresh list back in the PATCH response is what removes the toggle
+// immediately instead of leaving it on screen until the next turn starts.
+func sessionExtraConfigOptions(sessionID string) []ai.ExtraConfigOption {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return nil
+	}
+	return conn.GetExtraConfigOptions()
+}
+
+// attachConfigOptionsAfterModelSwitch adds the refreshed generic option list to
+// a PATCH response when the request switched models.
+//
+// Only after a switch: the list is re-stated by the set_config_option response,
+// so it is fresh exactly then. On other requests the key is omitted ("leave the
+// client's copy alone") — a JSON null would instead mean "clear".
+func attachConfigOptionsAfterModelSwitch(resp map[string]any, sessionID, modelID string) {
+	if modelID == "" {
+		return
+	}
+	if extras := sessionExtraConfigOptions(sessionID); extras != nil {
+		resp["configOptions"] = extras
+	}
+}
+
+// applyExtraConfigOptions forwards agent-specific select options (e.g. codex's
+// "fast-mode": on/off) to the session's live connection.
+//
+// Keys are the wire ids the agent itself advertised, so no category resolution
+// is needed. Forwarded asynchronously like mode: the click must not wait on the
+// agent, which echoes its new state back over the WebSocket.
+func applyExtraConfigOptions(sessionID string, opts map[string]string) {
+	if len(opts) == 0 {
+		return
+	}
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return
+	}
+	// Only ids the agent itself advertised for THIS session are accepted. This
+	// is not mere validation: without it the generic channel would be a way to
+	// write "mode"/"model" behind the dedicated paths' backs — no persistence,
+	// no per-model effort validation, no auto-approve bookkeeping.
+	known := make(map[string]bool)
+	for _, extra := range conn.GetExtraConfigOptions() {
+		known[extra.ConfigID] = true
+	}
+	for id, value := range opts {
+		if id == "" || value == "" || !known[id] {
+			slog.Warn("session update: ignoring config option the agent did not advertise",
+				"session_id", sessionID, "config_id", id)
+			continue
+		}
+		forwardSessionConfigOption(sessionID, id, value)
 	}
 }
 

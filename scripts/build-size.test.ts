@@ -200,6 +200,16 @@ describe('Build output verification (Issue #328)', () => {
             //     That is broad, incremental growth — an order of magnitude
             //     smaller than the CodeMirror step, and no single heavy module
             //     entered the preload set.
+            //   - 2026-11-08 re-measured at 3,977,314 (+98,589 over the 11-04
+            //     number). Attribution: `actionLabels.*` landed in BOTH locales
+            //     (the short toolbar labels every ActionBar row renders —
+            //     新建目录 / 全部已读 / 已分享 / 固定 …), plus the provider
+            //     unit-price strings and the mail dictionary. Both locales are
+            //     eagerly bundled, so a UI string added once is paid twice.
+            //     No dependency changed and the preload set is the same 9
+            //     files, so this is dictionary growth, not a heavy module
+            //     leaking into the entry. Measured, then budget raised by the
+            //     same ~40KB headroom the earlier entries kept.
             //   - 2026-11-04 re-measured at 3,878,725 (+144,789 over the 11-02
             //     number) after the built-in mail client landed. Attribution:
             //     the panel itself stays async (MailPanel.vue is a
@@ -221,7 +231,7 @@ describe('Build output verification (Issue #328)', () => {
             // Going lower needs one of: lazy katex (582KB, invasive — the
             // render path is synchronous), per-locale i18n chunks (270KB), or
             // trimming the eager highlight.js language set.
-            const firstScreenThreshold = 3_920_000
+            const firstScreenThreshold = 4_020_000
 
             console.log(`  First-screen JS payload:`)
             for (const d of details) console.log(`    ${d}`)

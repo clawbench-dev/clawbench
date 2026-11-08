@@ -155,7 +155,11 @@ func (p *CodexStreamParser) handleTurnFailed(msg *CodexStreamMessage, ch chan<- 
 	if msg.Error != nil && msg.Error.Message != "" {
 		errMsg = msg.Error.Message
 	}
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "error", Error: errMsg, Reason: ReasonRequestFailed})
+	emitStreamEvent(ch, "codex", StreamEvent{
+		Type:   "error",
+		Error:  errMsg,
+		Reason: streamErrorReason(errMsg),
+	})
 	emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})
 }
 
@@ -229,7 +233,14 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 
 		// Handle ERROR lines from codex resume output
 		if errMsg, ok := strings.CutPrefix(line, "ERROR:"); ok && errMsg != "" {
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "error", Error: errMsg})
+			// Reason: see streamErrorReason. Without one the warning block this
+			// becomes carries no classification, so the turn reported a clean
+			// finish after the error.
+			emitStreamEvent(ch, "codex", StreamEvent{
+				Type:   "error",
+				Error:  errMsg,
+				Reason: streamErrorReason(errMsg),
+			})
 			// ISS-079: must emit done so the stream consumer can finalize;
 			// without this, the SSE stream hangs indefinitely.
 			emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})

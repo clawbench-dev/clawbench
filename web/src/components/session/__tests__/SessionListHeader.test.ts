@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { readWebFile } from '@/testUtils/readWebFile'
 
@@ -146,5 +147,47 @@ describe('SessionListHeader', () => {
     // Refresh completes → spin ends
     await wrapper.setProps({ refreshing: false })
     expect(btn.classes()).not.toContain('refresh-spin--active')
+  })
+})
+
+describe('SessionListHeader — action labels', () => {
+  it('shows the action labels when the header can hold them', async () => {
+    // jsdom has no layout, so the header measures 0 wide and assumes there is
+    // room — the wide-header case. The measure/overflow maths lives in
+    // ActionBar.test.ts; this pins the wiring.
+    const wrapper = mountHeader()
+    // The measurement runs on mount and flips the flag on the next render.
+    await nextTick()
+    const content = wrapper.find('.session-header-actions')
+    expect(content.classes()).toContain('ab--labels')
+    expect(wrapper.findAll('.header-action-btn .action-label').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('labels the refresh action too when the sidebar is pinned', async () => {
+    const wrapper = mountHeader({ pinned: true })
+    await nextTick()
+    const refresh = wrapper.find('.header-action-btn[data-action="refresh"]')
+    expect(refresh.find('.action-label').exists()).toBe(true)
+  })
+})
+
+describe('SessionListHeader — slot buttons', () => {
+  it('host-injected buttons carry labels too', async () => {
+    // The shared-sessions / pin / unpin buttons are injected by the parent
+    // through the header's slots; they must follow the same labelling contract
+    // as the built-in buttons.
+    const wrapper = mount(SessionListHeader, {
+      props: { sessionCount: 0, sessionMaxCount: 10 },
+      slots: {
+        actions: '<button class="header-action-btn"><span class="action-label">已分享</span></button>',
+        'actions-end': '<button class="header-action-btn"><span class="action-label">固定</span></button>',
+      },
+    })
+    // The measurement runs on mount and flips the flag on the next render.
+    await nextTick()
+    const bar = wrapper.find('.session-header-actions')
+    // Labels on slot buttons are shown/hidden by the same `.ab--labels` class.
+    expect(bar.classes()).toContain('ab--labels')
+    expect(wrapper.findAll('.header-action-btn .action-label').length).toBe(4)
   })
 })

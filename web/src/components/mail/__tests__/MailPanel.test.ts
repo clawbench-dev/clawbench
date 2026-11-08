@@ -102,7 +102,10 @@ vi.mock('../MailReader.vue', () => ({
     props: { messageId: { type: Number, required: true } },
     emits: ['back', 'reply', 'deleted', 'updated'],
     template:
-      '<div class="reader-stub" :data-msg="messageId"><button class="reader-stub-reply" @click="$emit(\'reply\', \'reply\')">reply</button></div>',
+      '<div class="reader-stub" :data-msg="messageId">'
+      + '<button class="reader-stub-reply" @click="$emit(\'reply\', \'reply\')">reply</button>'
+      + '<button class="reader-stub-seen" @click="$emit(\'updated\', { id: messageId, seen: true })">seen</button>'
+      + '</div>',
   }),
 }))
 
@@ -286,6 +289,47 @@ describe('MailPanel wide layout', () => {
 
     expect(wrapper.find('.mail-compose').exists()).toBe(true)
     expect(wrapper.find('.list-stub-open').exists()).toBe(true)
+    wrapper.unmount()
+  })
+})
+
+describe('MailPanel unread sync', () => {
+  it('refetches the folder counters when an opened message becomes read', async () => {
+    mocks.accounts.value = [{ id: 1, lastSyncAt: 123 } as MailAccount]
+    mocks.messages.value = [{ id: 7, seen: false }]
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('.list-stub-open').trigger('click')
+    await flushPromises()
+
+    mocks.loadFolders.mockClear()
+    mocks.patchMessage.mockClear()
+
+    await wrapper.find('.reader-stub-seen').trigger('click')
+    await flushPromises()
+
+    // The row itself is patched (that is what drops the unread styling)…
+    expect(mocks.patchMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 7, seen: true }))
+    // …and the folder's unread counter follows, since the row alone cannot
+    // update the folder bar / picker count.
+    expect(mocks.loadFolders).toHaveBeenCalledWith(1)
+    wrapper.unmount()
+  })
+
+  it('leaves the folder counters alone when the flags did not change', async () => {
+    mocks.accounts.value = [{ id: 1, lastSyncAt: 123 } as MailAccount]
+    mocks.messages.value = [{ id: 7, seen: true }]
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('.list-stub-open').trigger('click')
+    await flushPromises()
+
+    mocks.loadFolders.mockClear()
+
+    await wrapper.find('.reader-stub-seen').trigger('click')
+    await flushPromises()
+
+    expect(mocks.loadFolders).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

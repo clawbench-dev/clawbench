@@ -12,6 +12,11 @@ export interface GitCommit {
   msg: string
   date: string
   author: string
+  /**
+   * Parent SHAs (2+ means a merge commit). Absent/null for a root commit and in
+   * hosts that do not ask git for `%P` — always guard with `?.length`.
+   */
+  parents?: string[]
   /** Frontend-only synthetic row for the working tree. */
   isWT?: boolean
   refs?: string[]
@@ -41,8 +46,19 @@ export type GitHistoryView = string
 export interface UseGitHistoryViewOptions {
   /** i18n translate function (injected so callers keep their i18n mock). */
   t: (key: string, named?: Record<string, unknown>) => string
-  /** Reads the host's `mode` prop: 'project' | 'file'. */
+  /**
+   * Reads the host's `mode` prop: 'project' | 'file'.
+   */
   mode: () => string
+  /**
+   * Branch whose history is being viewed ('' = the checked-out branch).
+   *
+   * Non-empty means a read-only view of another branch: requests carry `ref`,
+   * and the working-tree row is suppressed — it describes the workspace on
+   * disk, which is a different branch's state and would read as "this branch
+   * has uncommitted changes".
+   */
+  branchRef?: () => string
   /** Reads the host's `file.path` (only meaningful when mode === 'file'). */
   filePath?: () => string | undefined
   /**
@@ -52,6 +68,13 @@ export interface UseGitHistoryViewOptions {
   useAbortSignal?: boolean
   /** Called after a successful project-history load (host records git state). */
   onProjectHistoryLoaded?: () => void
+  /**
+   * Commits the host can show but that are NOT in `commits` — currently the
+   * remote-only commits listed above the history. Selecting one drills into its
+   * files like any other commit, so `selectedCommit` has to be able to resolve
+   * it; otherwise the drill-down header would render an empty commit.
+   */
+  extraCommits?: () => GitCommit[]
 }
 
 export interface UseGitHistoryViewReturn {
@@ -138,7 +161,22 @@ export interface UseGitHistoryViewReturn {
  * state it uses to decide whether a tab re-entry needs a reload.
  */
 export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHistoryViewReturn {
-  const { t, mode: readMode, filePath, useAbortSignal = false, onProjectHistoryLoaded } = options
+  const { t, mode: readMode, filePath, branchRef, useAbortSignal = false, onProjectHistoryLoaded } = options
+
+  /** True when the host is showing a branch other than the checked-out one. */
+  function isOtherBranch(): boolean {
+    return !!branchRef?.()
+  }
+
+  /** `/api/git/project-history` URL with the paging and branch parameters. */
+  function projectHistoryUrl(skip: number): string {
+    const params = new URLSearchParams()
+    if (skip > 0) params.set('skip', String(skip))
+    const ref = branchRef?.()
+    if (ref) params.set('ref', ref)
+    const qs = params.toString()
+    return '/api/git/project-history' + (qs ? '?' + qs : '')
+  }
 
   // Sequence guard to suppress stale concurrent loads. A refresh, re-entry, or
   // load-more can overlap an in-flight request; only the latest call may write
@@ -196,7 +234,9 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
   // ─── Computed ────────────────────────────────────────────────────────────
 
   const selectedCommit = computed<GitCommit | null>(() => {
-    return commits.value.find(c => c.sha === selectedSHA.value) || null
+    return commits.value.find(c => c.sha === selectedSHA.value)
+      || options.extraCommits?.().find(c => c.sha === selectedSHA.value)
+      || null
   })
   const isWorkingTree = computed(() => selectedSHA.value === 'HEAD')
 
@@ -301,7 +341,7 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
     isGit.value = true
 
     try {
-      const resp = await req('/api/git/project-history', seq)
+      const resp = await req(projectHistoryUrl(0), seq)
       if (!historySeq.isCurrent(seq)) return // superseded by a newer load
       if (!resp.ok) {
         const data = await resp.json()
@@ -319,13 +359,18 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
 
       isGit.value = true
 
-      // Check working tree changes
-      const wtResp = await req('/api/git/working-tree', seq)
+      // Check working tree changes. Skipped when browsing another branch: the
+      // working tree belongs to the checked-out branch, so neither its file
+      // list nor the synthetic "uncommitted changes" row describes what the
+      // user is looking at.
       let loadedWtFiles: GitFile[] = []
-      if (wtResp.ok) {
-        const wt = await wtResp.json()
-        loadedWtFiles = wt.files || []
-        wtFiles.value = loadedWtFiles
+      if (!isOtherBranch()) {
+        const wtResp = await req('/api/git/working-tree', seq)
+        if (wtResp.ok) {
+          const wt = await wtResp.json()
+          loadedWtFiles = wt.files || []
+          wtFiles.value = loadedWtFiles
+        }
       }
 
       if (!historySeq.isCurrent(seq)) return // superseded while working-tree was in flight
@@ -440,7 +485,7 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
       // Count only git commits (exclude WT node) for the skip parameter,
       // since WT is a frontend-only entry not present in git log output.
       const gitCount = commits.value.filter(c => !c.isWT).length
-      const resp = await req(`/api/git/project-history?skip=${gitCount}`)
+      const resp = await req(projectHistoryUrl(gitCount))
       if (!resp.ok) return
       const data = await resp.json()
       commits.value.push(...(data.commits || []))
@@ -462,7 +507,7 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
       while (hasMore.value) {
         if (!historySeq.isCurrent(seq)) return // superseded by a refresh/load
         const gitCount = commits.value.filter(c => !c.isWT).length
-        const resp = await req(`/api/git/project-history?skip=${gitCount}`, seq)
+        const resp = await req(projectHistoryUrl(gitCount), seq)
         if (!resp.ok) break
         const data = await resp.json()
         commits.value.push(...(data.commits || []))
@@ -677,7 +722,13 @@ export function useGitHistoryView(options: UseGitHistoryViewOptions): UseGitHist
 
     if (!wasDrilled) return
 
-    if (!commits.value.some(c => c.sha === prev.sha)) {
+    // Remote-only commits are not in `commits` (they live above the history),
+    // so a drill-down into one must be resolved through the same fallback that
+    // selectedCommit uses — otherwise every reload kicks the user back to the
+    // list.
+    const stillThere = commits.value.some(c => c.sha === prev.sha)
+      || !!options.extraCommits?.().some(c => c.sha === prev.sha)
+    if (!stillThere) {
       // The drilled-into entry is gone (workspace became clean, or the commit is
       // no longer reachable) — fall back to the commit list. Set the view
       // directly rather than via drillBack(): the load already cleared

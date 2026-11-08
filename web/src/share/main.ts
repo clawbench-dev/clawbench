@@ -77,6 +77,7 @@ import { installExternalLinkClick } from '../utils/externalLinkClick'
 // them itself or a switch would leave diagrams and Swagger docs on the old
 // palette.
 import { installShareThemeSync } from './shareTheme'
+import { applyShareUIScale } from './shareScale'
 import { startSystemThemeWatcher } from '../composables/useSettingsConfig'
 
 configureMarkedRenderer()
@@ -106,6 +107,12 @@ installShareThemeSync()
 // would resolve once at load and then never react to the OS flipping scheme —
 // a visible gap in the very feature the picker offers.
 startSystemThemeWatcher()
+
+// Apply the "fit to screen" switch BEFORE the app mounts, so a reader who left
+// it on does not see one frame at the design size and then a reflow. Off (the
+// default, and the state for anyone who never touched it) applies 100%, i.e.
+// nothing happens at all — see shareScale.ts.
+applyShareUIScale()
 
 const app = createApp(ShareRoot)
 app.use(i18n)

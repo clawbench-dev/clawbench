@@ -38,6 +38,11 @@ function block(key: string, speaker: string, text: string): NoteBlock {
   return { key, channel: speaker, speaker, startedAt: 0, text }
 }
 
+/** A row that is still being revised by the engine (see NoteBlock.pending). */
+function pendingBlock(key: string, speaker: string, text: string): NoteBlock {
+  return { key, channel: speaker, speaker, startedAt: 0, text, pending: true }
+}
+
 function mountList(blocks: NoteBlock[], fill = false) {
   return mount(TranscriptList, {
     props: { blocks, fill },
@@ -543,5 +548,19 @@ describe('TranscriptList', () => {
     FakeResizeObserver.last().fire()
 
     expect(readTop()).toBe(100)
+  })
+
+  it('renders a still-revising line muted, and marks it apart from stored rows', async () => {
+    // The engine rewrites the sentence while someone talks. It has to be
+    // visible before it is stored, and visually distinguishable so it is not
+    // read as something already in the record.
+    const w = mountList([block('n1', '我', '已经存下来的一句'), pendingBlock('p我', '我', '还在改的这一句')])
+    await nextTick()
+
+    const rows = w.findAll('.transcript__row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].classes()).not.toContain('transcript__row--pending')
+    expect(rows[1].classes()).toContain('transcript__row--pending')
+    expect(rows[1].text()).toContain('还在改的这一句')
   })
 })

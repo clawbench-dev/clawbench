@@ -218,14 +218,19 @@ describe('LiveShareView control dock', () => {
     w.unmount()
   })
 
-  it('replaces the page header: the logo lives in the dock', async () => {
+  it('carries a topbar with the brand, and the dock does not duplicate it', async () => {
     const w = mountView()
     await flushPromises()
 
-    // The 44px bar cost picture height and duplicated state the overlay already
-    // reports; the brand moved into the dock instead.
-    expect(w.find('.live-topbar').exists()).toBe(false)
-    expect(w.find('.live-dock .live-dock-logo').exists()).toBe(true)
+    // The bar used to be removed because it cost picture height. It is back by
+    // request: it is the only place the fit-to-screen switch can live, and a
+    // viewer on a 4K screen otherwise has no way to enlarge the page. It hides
+    // itself in fullscreen, where the reader has asked for the picture alone.
+    expect(w.find('.live-topbar').exists()).toBe(true)
+    expect(w.find('.live-topbar .share-logo').exists()).toBe(true)
+
+    // ...so the dock must NOT render a second logo a few dp below it.
+    expect(w.find('.live-dock .live-dock-logo').exists()).toBe(false)
 
     w.unmount()
   })
@@ -254,27 +259,15 @@ describe('LiveShareView control dock', () => {
     w.unmount()
   })
 
-  it('marks the brand as live only while playing', async () => {
+  it('offers the theme switch in the topbar, like every other share page', async () => {
     const w = mountView()
     await flushPromises()
 
-    expect(w.find('.live-dock-dot').exists()).toBe(false)
-
-    lastViewer?.opts?.callbacks?.onStateChange?.('playing')
-    await flushPromises()
-
-    expect(w.find('.live-dock-dot').exists()).toBe(true)
-
-    w.unmount()
-  })
-
-  it('drops the theme switch', async () => {
-    const w = mountView()
-    await flushPromises()
-
-    // Removed deliberately: the page has one palette and a viewer cannot be
-    // expected to theme someone else's share.
-    expect(w.find('.share-theme-btn').exists()).toBe(false)
+    // This page used to drop it ("one palette, a viewer should not theme
+    // someone else's share"). It is back because the topbar is now the same
+    // chrome as the file/conversation/record pages, and a share page whose only
+    // action cluster differs from the others is its own kind of inconsistency.
+    expect(w.find('.live-topbar .share-theme-btn').exists()).toBe(true)
 
     w.unmount()
   })

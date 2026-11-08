@@ -21,10 +21,12 @@ import {
   type LiveNoteSegment,
   type NoteBlock,
   type NoteFileEvent,
+  type NotesStreamHandle,
   type NotesUploadArgs,
   type NotesUploader,
   type NoteTimelineRow,
   type NoteShotEvent,
+  type VoiceSensitivity,
 } from './liveNotes'
 
 const TAG = 'LiveNotes'
@@ -33,6 +35,14 @@ const TAG = 'LiveNotes'
  *  from whatever landed. Generous on purpose: a shorter cut would drop the tail
  *  of every long meeting. */
 const FINISH_UPLOAD_TIMEOUT_MS = 180_000
+
+/**
+ * How long to wait before redialling a dropped transcript socket.
+ *
+ * The audio keeps recording throughout, so a reconnect only costs the sentence
+ * that was in flight — and the recording can be re-transcribed later.
+ */
+const NOTES_STREAM_RECONNECT_MS = 2_000
 
 /**
  * A channel that has carried no speech for this long is called out.
@@ -101,6 +111,13 @@ export type { NoteFileEvent, NoteTimelineRow, NoteShotEvent }
 
 const phase = ref<NotesPhase>('idle')
 const segments = ref<LiveNoteSegment[]>([])
+/**
+ * Text the engine is still revising, per channel.
+ *
+ * Shown under the committed lines so the reader sees words appear while
+ * someone is talking, instead of waiting for the sentence to end.
+ */
+const liveLines = ref<Record<string, string>>({})
 const minutes = ref('')
 /** Path of the Markdown copy written inside the project (empty until saved). */
 const minutesFile = ref('')
@@ -201,10 +218,15 @@ function uploadSegment(token: string): NotesUploader {
   return async (args) => {
     const resp = await fetch('/api/live-share/notes/segment', {
       method: 'POST',
-      body: segmentForm(token, args, false),
+      // Archive only: the transcript now comes from the live socket, so
+      // transcribing this file as well would double the cost and race the
+      // stream for the same sentence. The file stays the recording, and the
+      // thing "重新生成转写" re-runs ASR on if the stream failed.
+      body: segmentForm(token, args, true),
     })
     if (!resp.ok) throw new Error(`segment upload failed: ${resp.status}`)
     const data = (await resp.json()) as LiveNoteSegment & { id: number }
+    // Archive uploads answer with id 0: nothing was transcribed here.
     if (!data.id || !data.text) return null
     const seg: LiveNoteSegment = {
       id: data.id,
@@ -233,6 +255,70 @@ function uploadArchiveSegment(token: string): NotesUploader {
     })
     if (!resp.ok) throw new Error(`archive upload failed: ${resp.status}`)
     return null
+  }
+}
+
+/** One live transcript socket, with its own reconnect. */
+function openLiveStream(
+  token: string,
+  channel: string,
+  speaker: string,
+  onLine: (line: LiveNoteSegment) => void,
+  onPartial: (channel: string, text: string) => void,
+): NotesStreamHandle {
+  let closed = false
+  let sock: WebSocket | null = null
+  const url = () => {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    return `${proto}://${window.location.host}/api/live-share/notes/stream?token=${encodeURIComponent(token)}` +
+      `&channel=${encodeURIComponent(channel)}&speaker=${encodeURIComponent(speaker)}`
+  }
+  const dial = () => {
+    if (closed) return
+    const ws = new WebSocket(url())
+    sock = ws
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data as string) as {
+          type?: string; id?: number; text?: string; channel?: string; speaker?: string
+          startedAt?: number; durationMs?: number
+        }
+        if (msg.type === 'partial' && msg.text) {
+          onPartial(channel, msg.text)
+        } else if (msg.type === 'line' && msg.text) {
+          // The server echoes the stored row's id. Without it `mergeNoteSegments`
+          // drops the row (it only keeps ids > 0) and the transcript stays empty
+          // for the whole meeting.
+          onLine({
+            id: msg.id ?? 0,
+            channel: msg.channel ?? channel,
+            speaker: msg.speaker ?? speaker,
+            startedAt: msg.startedAt ?? Date.now(),
+            durationMs: msg.durationMs ?? 0,
+            text: msg.text,
+          })
+        } else if (msg.type === 'error') {
+          appLog.w(TAG, 'live transcript stream error', channel, msg.text)
+        }
+      } catch { /* ignore malformed */ }
+    }
+    // A dropped socket means the sentence in flight is lost, so reconnect
+    // rather than silently ending the transcript for the rest of the meeting.
+    ws.onclose = () => {
+      if (closed) return
+      setTimeout(dial, NOTES_STREAM_RECONNECT_MS)
+    }
+  }
+  dial()
+  return {
+    send: (pcm: ArrayBuffer) => {
+      if (sock && sock.readyState === WebSocket.OPEN) sock.send(pcm)
+    },
+    close: () => {
+      closed = true
+      sock?.close()
+      sock = null
+    },
   }
 }
 
@@ -314,6 +400,10 @@ export function useLiveNotes() {
     label?: (channel: string) => string
     resume?: boolean
     autoMinutes?: boolean
+    /** Shared voice-gate switch (`stt.voice_gate`); defaults to on. */
+    voiceGate?: boolean
+    /** Shared sensitivity (`stt.voice_gate_sensitivity`); defaults to standard. */
+    sensitivity?: VoiceSensitivity
   }): void {
     // No recorder on this engine: leave the module idle and say so once. The
     // meeting continues (picture / microphone / chat), it just has no 听记.
@@ -334,9 +424,27 @@ export function useLiveNotes() {
     if (opts.title !== undefined) sessionTitle = opts.title
     if (opts.label) labelFor = opts.label
     capture = new LiveNotesCapture(opts.ctx, uploadSegment(opts.token), {
+      voiceGate: opts.voiceGate,
+      sensitivity: opts.sensitivity,
       // The mix track is the file the user actually listens to: one recording
       // of the whole meeting instead of one per participant.
       archiveUpload: uploadArchiveSegment(opts.token),
+      openStream: (channel, speaker) =>
+        openLiveStream(
+          opts.token,
+          channel,
+          speaker,
+          (line) => {
+            segments.value = mergeNoteSegments(segments.value, [line])
+            // The committed line replaces whatever was still being revised.
+            const rest = { ...liveLines.value }
+            delete rest[line.channel]
+            liveLines.value = rest
+          },
+          (ch, text) => {
+            liveLines.value = { ...liveLines.value, [ch]: text }
+          },
+        ),
       // Losing a segment is a permanent hole in the transcript, so the count is
       // surfaced instead of being logged and forgotten.
       onSegmentLost: () => {
@@ -655,6 +763,7 @@ export function useLiveNotes() {
     sessionTitle = ''
     phase.value = 'idle'
     segments.value = []
+    liveLines.value = {}
     minutes.value = ''
     minutesFile.value = ''
     minutesPhase.value = 'idle'
@@ -675,6 +784,7 @@ export function useLiveNotes() {
   return {
     phase,
     segments,
+    liveLines,
     minutes,
     minutesFile,
     minutesPhase,

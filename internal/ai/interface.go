@@ -169,6 +169,21 @@ const (
 	// writing a spurious user+assistant row pair each time for a failure that can
 	// only be fixed in a terminal.
 	ReasonAuthRequired = "auth_required"
+	// ReasonQuotaExhausted means the upstream provider refused the call because
+	// the account is out of credit or over its plan limit (HTTP 402, or a
+	// provider-specific "quota"/"insufficient balance" error).
+	//
+	// It needs its own reason for two reasons. The user-facing remedy is
+	// specific ("top up or switch model"), which a generic "AI request failed"
+	// hides; and it must NOT be auto-continued — retrying an empty balance
+	// spends the retry budget and writes a user+assistant row pair per attempt
+	// for a failure only the user can fix.
+	//
+	// Both transports report it, in different shapes: the CLI prints a
+	// `type:"error"` frame with `error.type == "provider.quota"`, while ACP
+	// returns a JSON-RPC error whose data carries `errorName: "provider.quota"`
+	// (see opencode_stream.go and isACPQuotaError).
+	ReasonQuotaExhausted = "quota_exhausted"
 )
 
 // SelectOptionDef describes a single selectable option (e.g., mode, thinking effort level).
@@ -347,6 +362,28 @@ type ConfigOptionState struct {
 	Options   []ConfigOptionDef `json:"options,omitempty"`
 }
 
+// ExtraConfigOption is an agent-advertised select option that ClawBench has no
+// dedicated plumbing for (mode / model / thought_level each have their own).
+//
+// The first user is codex-acp's "Fast mode": a select with id "fast-mode",
+// category "model_config" and values on/off, advertised only for models that
+// support the faster service tier. Rather than hardcoding each such option, the
+// UI renders whatever the agent advertises from this generic shape — the name,
+// description and value labels all come from the agent, so no per-option
+// translation is needed.
+//
+// Both the option LIST and its current value are session-scoped: codex only
+// advertises Fast mode for models that support it, so an agent-level cache
+// would leak the toggle into sessions running a different model.
+type ExtraConfigOption struct {
+	ConfigID    string              `json:"configId"` // wire id, e.g. "fast-mode"
+	Name        string              `json:"name,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Category    string              `json:"category"`       // e.g. "model_config"
+	CurrentID   string              `json:"currentValueId"` // empty when the agent reported none
+	Values      []ConfigOptionValue `json:"values,omitempty"`
+}
+
 // AvailableCommandInfo represents a slash command discovered from an ACP agent
 // via the available_commands_update session notification.
 type AvailableCommandInfo struct {
@@ -440,7 +477,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "system_message", "stream_start", "replay_done", "content_reset"
+	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "config_options_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "system_message", "stream_start", "replay_done", "content_reset"
 	Content string // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	// ThinkID is the stable identity of a thinking block, set on Type=thinking
 	// from the moment the block opens (see AccumulateBlock, which mints it and
@@ -465,6 +502,7 @@ type StreamEvent struct {
 	QueueEvent     *QueueEventData        // Queue data (Type=queue_drain, queue_inject, queue_cancel)
 	Mode           *ModeState             // Mode state (Type=mode_update)
 	Config         *ConfigOptionState     // Config option state (Type=config_update)
+	ConfigOptions  []ExtraConfigOption    // Agent-specific select options (Type=config_options_update)
 	Commands       []AvailableCommandInfo // Slash commands (Type=commands_update)
 	ThinkingEffort *ThinkingEffortState   // Thinking effort state (Type=thinking_effort_update)
 	Plan           *PlanState             // Plan state (Type=plan_update)
@@ -501,6 +539,10 @@ type StreamEvent struct {
 	// Team is the full team snapshot (Type=team_update). Session-level state:
 	// the latest snapshot replaces the previous one.
 	Team *TeamState `json:"team,omitempty"`
+	// RetryNotice is set on a "retry_notice" event: the agent is retrying an
+	// upstream failure on its own, so the turn is neither over nor progressing.
+	// See RetryNoticeData.
+	RetryNotice *RetryNoticeData `json:"retryNotice,omitempty"`
 	// MemberName is the Agent Team member that produced this event (Type=content,
 	// thinking, tool_use, tool_result). Empty for top-level content and for
 	// ordinary sub-agents. Extracted from _meta["codebuddy.ai/memberEvent"];
@@ -564,6 +606,30 @@ type SteerBoundaryData struct {
 type StreamSplitData struct {
 	// MessageID is the DB id of the new "after" streaming assistant row.
 	MessageID int64 `json:"message_id"`
+}
+
+// RetryNoticeData describes an in-flight upstream retry.
+//
+// It exists because a retrying CLI emits NOTHING for the duration: measured
+// against opencode 2.2.6 with a persistent 429, the agent retried eleven times
+// over ~85 seconds and then reported the terminal error. The user saw a spinner
+// with no explanation for well over a minute, which is indistinguishable from a
+// hang.
+//
+// Deliberately NOT a warning block: a retry that SUCCEEDS must leave no trace in
+// the transcript (a permanent "rate limited" card on a turn that actually
+// worked is misleading, and — because classification reads reasons off blocks —
+// it also made the turn look failed). The frontend shows this as a transient
+// notice and drops it on the next content event or the terminal one.
+type RetryNoticeData struct {
+	// Attempt is the retry number the agent is starting, when it reports one.
+	// 0 means "unknown".
+	Attempt int `json:"attempt,omitempty"`
+	// Message is the upstream error text (e.g. "Rate limit exceeded"). Shown as
+	// a detail so the user can tell a transient limit from an outage.
+	Message string `json:"message,omitempty"`
+	// HTTPStatus is the upstream status when known (429, 503, …).
+	HTTPStatus int `json:"http_status,omitempty"`
 }
 
 // ToolCall represents a tool invocation by the AI.

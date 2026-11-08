@@ -127,6 +127,7 @@
     <string name="share_in_success">Received %1$d file(s), can be added to a session via chat attachment</string>
     <string name="share_in_failed">Failed to receive files</string>
     <string name="share_in_no_server">Not connected to a server, cannot receive files</string>
+    <string name="share_in_unsupported">Nothing importable in the shared content</string>
     <!-- Push event notifications (aligned with DingTalk templates) -->
     <string name="push_session_completed">Session completed</string>
     <string name="push_session_cancelled">Session cancelled</string>

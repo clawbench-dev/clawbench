@@ -178,6 +178,11 @@ func TestDeepSeekStreamParserError(t *testing.T) {
 		if evt.Error != "API rate limit exceeded" {
 			t.Errorf("unexpected error message: %s", evt.Error)
 		}
+		// The reason is what makes the turn classify as failed instead of
+		// clean; a limit message must also be non-retryable.
+		if evt.Reason != ReasonQuotaExhausted {
+			t.Errorf("expected reason %q, got %q", ReasonQuotaExhausted, evt.Reason)
+		}
 	default:
 		t.Error("expected event on channel")
 	}

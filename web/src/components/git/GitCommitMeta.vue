@@ -1,19 +1,20 @@
 <template>
-  <div v-if="commit || isWorkingTree" class="diff-meta-panel">
+  <div v-if="commit || isWorkingTree" class="diff-meta-panel" :class="{ 'is-actions-disabled': disableFileActions }">
     <template v-if="filePath">
       <div class="diff-meta-row">
         <span class="diff-meta-label">{{ t('git.commitMeta.file') }}</span>
         <span
           class="diff-meta-value diff-meta-file-name diff-meta-annotation"
-          :title="t('git.commitMeta.openFile')"
-          @click="emit('open-file', filePath)"
+          :title="fileActionTitle('git.commitMeta.openFile')"
+          @click="openFile"
         >{{ fileName }}</span>
         <button
           class="diff-meta-open-btn"
           type="button"
-          :title="t('git.commitMeta.openFile')"
-          :aria-label="t('git.commitMeta.openFile')"
-          @click.stop="emit('open-file', filePath)"
+          :title="fileActionTitle('git.commitMeta.openFile')"
+          :aria-label="fileActionTitle('git.commitMeta.openFile')"
+          :disabled="disableFileActions"
+          @click.stop="openFile"
           v-html="FILE_OPEN_ICON_SVG"
         ></button>
       </div>
@@ -21,15 +22,16 @@
         <span class="diff-meta-label">{{ t('git.commitMeta.path') }}</span>
         <span
           class="diff-meta-value diff-meta-file-path diff-meta-annotation"
-          :title="t('git.commitMeta.revealInManager')"
-          @click="emit('reveal-file', filePath)"
+          :title="fileActionTitle('git.commitMeta.revealInManager')"
+          @click="revealFile"
         >{{ filePath }}</span>
         <button
           class="diff-meta-open-btn"
           type="button"
-          :title="t('git.commitMeta.revealInManager')"
-          :aria-label="t('git.commitMeta.revealInManager')"
-          @click.stop="emit('reveal-file', filePath)"
+          :title="fileActionTitle('git.commitMeta.revealInManager')"
+          :aria-label="fileActionTitle('git.commitMeta.revealInManager')"
+          :disabled="disableFileActions"
+          @click.stop="revealFile"
           v-html="FILE_OPEN_ICON_SVG"
         ></button>
       </div>
@@ -73,6 +75,12 @@ const props = defineProps({
   commit: Object,
   isWorkingTree: Boolean,
   filePath: String,
+  /**
+   * True while the panel describes a commit from a branch other than the
+   * checked-out one. The workspace does not hold that branch's files, so
+   * "open" / "reveal" would either open a different version or fail outright.
+   */
+  disableFileActions: Boolean,
 })
 
 // Both row actions are delegated to the host. The panel renders inside the
@@ -98,6 +106,21 @@ function copySHA() {
     shaCopied.value = true
     setTimeout(() => { shaCopied.value = false }, 1500)
   })
+}
+
+/** Tooltip for a file action, replacing it with the reason when disabled. */
+function fileActionTitle(key) {
+  return props.disableFileActions ? t('git.branchView.fileActionsDisabled') : t(key)
+}
+
+function openFile() {
+  if (props.disableFileActions) return
+  emit('open-file', props.filePath)
+}
+
+function revealFile() {
+  if (props.disableFileActions) return
+  emit('reveal-file', props.filePath)
 }
 
 function formatDate(dateStr) {
@@ -186,6 +209,26 @@ function formatDate(dateStr) {
   margin-left: calc(var(--space-2) * -1);
   transition: background var(--duration-base), color var(--duration-base);
   min-width: 0;
+}
+
+/* A commit from another branch: the workspace does not hold these files, so
+   the two file actions are inert. Muting them (rather than hiding them) keeps
+   the row's shape stable while the reason lives in the tooltip. */
+.is-actions-disabled .diff-meta-annotation {
+  cursor: default;
+  color: var(--text-muted, #999);
+}
+
+@media (hover: hover) {
+  .is-actions-disabled .diff-meta-annotation:hover {
+    background: transparent;
+    color: var(--text-muted, #999);
+  }
+}
+
+.is-actions-disabled .diff-meta-open-btn {
+  cursor: default;
+  opacity: var(--opacity-disabled, 0.45);
 }
 
 @media (hover: hover) {

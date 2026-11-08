@@ -153,8 +153,7 @@
         <button class="toolbar-btn modifier gesture-toggle btn-func" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
           <OmegaIcon :size="14" />
         </button>
-        <div class="scroll-wrapper" :class="{ 'scroll-fade-left': toolbarScrollFade.left, 'scroll-fade-right': toolbarScrollFade.right }">
-          <div ref="toolbarScrollRef" class="toolbar-scroll" @scroll="updateToolbarScrollFade">
+        <ActionBar ref="toolbarScrollRef" class="toolbar-scroll" mode="scroll" :gap="0">
           <button
             v-for="def in visibleKeys"
             :key="def.id"
@@ -171,27 +170,32 @@
           <div class="key-group btn-func-group">
             <button ref="clipboardBtnRef" class="toolbar-btn btn-action btn-func" @click="openInput" :title="t('terminal.input')">
               <PenLineIcon :size="14" />
+              <span class="action-label">{{ t('terminal.input') }}</span>
             </button>
             <button ref="cmdBtnRef" class="toolbar-btn btn-action btn-func" @click="openCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
+              <span class="action-label">{{ t('terminal.quickCommands') }}</span>
             </button>
             <button v-if="cwdProbeSupported === true" class="toolbar-btn btn-action btn-func" @click="openCurrentDirInFileManager" :title="t('terminal.openCurrentDir')">
               <FolderOpenIcon :size="14" />
+              <span class="action-label">{{ t('actionLabels.openDir') }}</span>
             </button>
             <button class="toolbar-btn btn-action btn-func" @click="openThemeMenu" :title="t('terminal.theme')">
               <PaletteIcon :size="14" />
+              <span class="action-label">{{ t('terminal.theme') }}</span>
             </button>
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action btn-func" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
               <KeyboardIcon :size="14" />
+              <span class="action-label">{{ t('actionLabels.keyConfig') }}</span>
             </button>
             <!-- Help button -->
             <button class="toolbar-btn btn-action btn-func" @click="helpDrawer.open()" :title="t('terminal.helpTitle')">
               <CircleHelpIcon :size="14" />
+              <span class="action-label">{{ t('actionLabels.help') }}</span>
             </button>
           </div>
-        </div>
-        </div>
+        </ActionBar>
       </div>
     </div>
     </template>
@@ -308,6 +312,7 @@ import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText } from '@/utils/clipboard.ts'
 import { isCopySelectionShortcut } from '@/utils/terminalClipboardUtils'
 import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
@@ -438,7 +443,7 @@ const showSymbolBar = ref(false)
 const rebuildingTabId = ref<string | null>(null)
 
 // Scroll fade state for toolbar and symbol bar
-const toolbarScrollFade = reactive({ left: false, right: false })
+
 const symbolBarScrollFade = reactive({ left: false, right: false })
 
 function computeScrollFade(el: HTMLElement): { left: boolean; right: boolean } {
@@ -449,13 +454,6 @@ function computeScrollFade(el: HTMLElement): { left: boolean; right: boolean } {
   }
 }
 
-function updateToolbarScrollFade(e: Event) {
-  const el = e.currentTarget as HTMLElement
-  const fade = computeScrollFade(el)
-  toolbarScrollFade.left = fade.left
-  toolbarScrollFade.right = fade.right
-}
-
 function updateSymbolBarScrollFade(e: Event) {
   const el = e.currentTarget as HTMLElement
   const fade = computeScrollFade(el)
@@ -463,16 +461,13 @@ function updateSymbolBarScrollFade(e: Event) {
   symbolBarScrollFade.right = fade.right
 }
 
-// Refs for scroll containers
-const toolbarScrollRef = ref<HTMLElement | null>(null)
+// Refs for scroll containers. The tool strip is an ActionBar: it owns its own
+// scroller, drag-to-scroll, edge fades and the label decision.
+const toolbarScrollRef = ref<{ measure: () => void } | null>(null)
 const symbolBarScrollRef = ref<HTMLElement | null>(null)
 
 function refreshToolbarFade() {
-  const el = toolbarScrollRef.value
-  if (!el) return
-  const fade = computeScrollFade(el)
-  toolbarScrollFade.left = fade.left
-  toolbarScrollFade.right = fade.right
+  toolbarScrollRef.value?.measure()
 }
 
 // Tab menu state
@@ -1962,6 +1957,10 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   scrollbar-width: none;
 }
 .toolbar-scroll::-webkit-scrollbar { display: none; }
+/* Labels for the tool group: shown only when the whole strip fits without
+   scrolling, so they can never push a key off-screen. The two fixed mode
+   toggles outside the strip stay icon-only. */
+
 
 .key-group { display: flex; align-items: center; gap: 3px; }
 .key-group + .key-group { position: relative; margin-left: var(--space-3); }

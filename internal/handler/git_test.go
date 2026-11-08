@@ -812,6 +812,110 @@ func TestServeGitProjectHistory_IncludesParents(t *testing.T) {
 	assert.GreaterOrEqual(t, len(parents), 1)
 }
 
+// runGitIn runs a git command in dir and fails the test on error.
+func runGitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+// projectHistoryRequest loads /api/git/project-history for the given ref ("" =
+// current branch) and returns the decoded commit messages.
+func projectHistoryRequest(t *testing.T, projectDir, ref string) ([]string, *httptest.ResponseRecorder) {
+	t.Helper()
+	url := "/api/git/project-history"
+	if ref != "" {
+		url += "?ref=" + ref
+	}
+	req := newRequest(t, http.MethodGet, url, nil)
+	withProjectCookie(req, projectDir)
+	w := callHandler(ServeGitProjectHistory, req)
+
+	var resp struct {
+		Commits []struct {
+			Msg string `json:"msg"`
+		} `json:"commits"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	msgs := make([]string, 0, len(resp.Commits))
+	for _, c := range resp.Commits {
+		msgs = append(msgs, c.Msg)
+	}
+	return msgs, w
+}
+
+func TestServeGitProjectHistory_ReadsOtherBranchWithoutCheckout(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	headBefore := getHeadSHA(t, env.ProjectDir)
+
+	// A branch that is NOT checked out at request time.
+	runGitIn(t, env.ProjectDir, "checkout", "-b", "feature")
+	createTestFile(t, env.ProjectDir, "feature.txt", "feature")
+	gitCommitAll(t, env.ProjectDir, "feature only commit")
+	runGitIn(t, env.ProjectDir, "checkout", "main")
+
+	// Current branch history must not contain the feature commit.
+	mainMsgs, w := projectHistoryRequest(t, env.ProjectDir, "")
+	assertOK(t, w)
+	assert.NotContains(t, mainMsgs, "feature only commit")
+
+	// Reading the other branch returns its commits...
+	featureMsgs, w := projectHistoryRequest(t, env.ProjectDir, "feature")
+	assertOK(t, w)
+	assert.Contains(t, featureMsgs, "feature only commit")
+
+	// ...and the read did not touch the working tree: same HEAD, same branch,
+	// and no stray checkout.
+	assert.Equal(t, headBefore, getHeadSHA(t, env.ProjectDir))
+	out, err := exec.Command("git", "-C", env.ProjectDir, "symbolic-ref", "--short", "HEAD").Output()
+	assert.NoError(t, err)
+	assert.Equal(t, "main", strings.TrimSpace(string(out)))
+	_, statErr := os.Stat(filepath.Join(env.ProjectDir, "feature.txt"))
+	assert.True(t, os.IsNotExist(statErr), "feature.txt must not appear in the working tree")
+
+	// The cache is keyed by the resolved commit, so alternating between the two
+	// branches must not leak one branch's page into the other.
+	againMsgs, _ := projectHistoryRequest(t, env.ProjectDir, "")
+	assert.NotContains(t, againMsgs, "feature only commit")
+}
+
+func TestServeGitProjectHistory_UnknownRef(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	_, w := projectHistoryRequest(t, env.ProjectDir, "no-such-branch")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, "UnknownBranch", resp["msgKey"])
+}
+
+func TestServeGitProjectHistory_RefRejectsNonBranchRefs(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	runGitIn(t, env.ProjectDir, "tag", "v1.0")
+
+	// Tags are deliberately not accepted: the picker only offers local branches,
+	// and accepting arbitrary revisions here would widen the read surface.
+	if _, err := resolveRefCommit(env.ProjectDir, "v1.0"); err == nil {
+		t.Fatal("resolveRefCommit must reject a tag name")
+	}
+
+	// A name that starts with "-" can never reach git as an option.
+	_, w := projectHistoryRequest(t, env.ProjectDir, "--upload-pack=evil")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -821,12 +925,12 @@ func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	gitCommitAll(t, env.ProjectDir, "first commit")
 
 	// Prime the cache.
-	commits1, hasMore1 := getProjectHistory(env.ProjectDir, 0)
+	commits1, hasMore1 := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.GreaterOrEqual(t, len(commits1), 1)
 	assert.False(t, hasMore1)
 
 	// Repeated call must return the same data without re-running git.
-	commits2, _ := getProjectHistory(env.ProjectDir, 0)
+	commits2, _ := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.Equal(t, len(commits1), len(commits2))
 	if len(commits2) > 0 {
 		assert.Equal(t, commits1[0].SHA, commits2[0].SHA)
@@ -837,7 +941,7 @@ func TestGetProjectHistory_CacheHitsAndInvalidates(t *testing.T) {
 	gitCommitAll(t, env.ProjectDir, "second commit")
 
 	// initGitRepo already created an initial commit, so total is 3.
-	commits3, _ := getProjectHistory(env.ProjectDir, 0)
+	commits3, _ := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.Equal(t, 3, len(commits3))
 }
 
@@ -876,7 +980,7 @@ func TestGetProjectHistory_CacheEviction(t *testing.T) {
 
 	// This call computes a fresh key (real HEAD sha, skip=0) and, before
 	// inserting it, triggers the eviction block because the cache is full.
-	commits, _ := getProjectHistory(env.ProjectDir, 0)
+	commits, _ := getProjectHistory(env.ProjectDir, 0, projectHistoryHeadSHA(env.ProjectDir))
 	assert.GreaterOrEqual(t, len(commits), 1)
 
 	projectHistoryCache.Lock()
@@ -2083,6 +2187,87 @@ func TestGitDiff_StagedAndUnstaged(t *testing.T) {
 	assert.Contains(t, string(output), "# Staged")
 }
 
+// --- gitDiff on merge commits ---
+
+// A merge commit's file list is expanded per parent, so every file that came
+// verbatim from one side is listed. `git show <merge>` renders a *combined*
+// diff and returns nothing for those files — the diff must be taken against the
+// parent that differs instead, or each listed file opens to an empty view.
+func TestGitDiff_MergeCommitFileHasChanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// A file both sides have: the branch modifies it, main leaves it alone.
+	createTestFile(t, env.ProjectDir, "shared.txt", "base\n")
+	gitCommitAll(t, env.ProjectDir, "main: add shared.txt")
+
+	run("git", "checkout", "-b", "feature")
+	createTestFile(t, env.ProjectDir, "shared.txt", "base\nfeature line\n")
+	gitCommitAll(t, env.ProjectDir, "feature: edit shared.txt")
+
+	run("git", "checkout", "main")
+	createTestFile(t, env.ProjectDir, "main.txt", "main work")
+	gitCommitAll(t, env.ProjectDir, "main: add main.txt")
+
+	run("git", "merge", "feature", "-m", "Merge branch 'feature' into main")
+	mergeSHA := getHeadSHA(t, env.ProjectDir)
+
+	// Sanity check the premise: the command the old code used yields nothing.
+	showCmd := exec.Command("git", "show", "--format=", mergeSHA, "--", "shared.txt")
+	showCmd.Dir = env.ProjectDir
+	showOut, _ := showCmd.CombinedOutput()
+	assert.Empty(t, strings.TrimSpace(string(showOut)),
+		"premise: a combined diff for a cleanly-merged file is empty")
+
+	output, err := gitDiff(env.ProjectDir, "shared.txt", mergeSHA)
+	assert.NoError(t, err)
+	assert.Contains(t, string(output), "+feature line",
+		"merge diff must show what the merge brought in from the other side")
+	assert.Contains(t, string(output), "@@")
+}
+
+// A file introduced only on the merged branch is listed too, and must also open
+// with content rather than an empty diff.
+func TestGitDiff_MergeCommitAddedFileHasChanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	run("git", "checkout", "-b", "feature")
+	createTestFile(t, env.ProjectDir, "added.txt", "brand new\n")
+	gitCommitAll(t, env.ProjectDir, "feature: add added.txt")
+
+	run("git", "checkout", "main")
+	createTestFile(t, env.ProjectDir, "main.txt", "main work")
+	gitCommitAll(t, env.ProjectDir, "main: add main.txt")
+
+	run("git", "merge", "feature", "-m", "Merge branch 'feature' into main")
+	mergeSHA := getHeadSHA(t, env.ProjectDir)
+
+	output, err := gitDiff(env.ProjectDir, "added.txt", mergeSHA)
+	assert.NoError(t, err)
+	assert.Contains(t, string(output), "+brand new")
+}
+
 func TestGitDiff_SpecificCommit(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -3262,4 +3447,397 @@ func TestForceRemoveWorktree_Failure(t *testing.T) {
 	var resp map[string]interface{}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, "delete_failed", resp["error"])
+}
+
+// --- ServeGitFetch ---
+
+// repoWithRemote points the project repo at a bare remote and returns a second
+// clone that plays "someone else's machine".
+func repoWithRemote(t *testing.T, projectDir string) string {
+	t.Helper()
+	base := t.TempDir()
+	remoteDir := filepath.Join(base, "remote.git")
+	otherDir := filepath.Join(base, "other")
+
+	if err := os.MkdirAll(remoteDir, 0o755); err != nil {
+		t.Fatalf("mkdir bare remote: %v", err)
+	}
+	runGitIn(t, remoteDir, "init", "--bare", ".")
+	runGitIn(t, projectDir, "remote", "add", "origin", remoteDir)
+	runGitIn(t, projectDir, "push", "-u", "origin", "HEAD")
+
+	// `git init --bare` points HEAD at refs/heads/master, but initGitRepo names
+	// the branch "main" — without this the clone below lands on an unborn master
+	// and pushes to a branch the project does not track.
+	branch := currentBranchOf(t, projectDir)
+	runGitIn(t, remoteDir, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+
+	runGitIn(t, base, "clone", remoteDir, otherDir)
+	runGitIn(t, otherDir, "checkout", branch)
+	runGitIn(t, otherDir, "config", "user.email", "other@test.com")
+	runGitIn(t, otherDir, "config", "user.name", "Other")
+	return otherDir
+}
+
+// currentBranchOf returns the checked-out branch name of dir.
+func currentBranchOf(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("read branch of %s: %v", dir, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func fetchRequest(t *testing.T, projectDir string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newRequest(t, http.MethodPost, "/api/git/fetch", nil)
+	withProjectCookie(req, projectDir)
+	return callHandler(ServeGitFetch, req)
+}
+
+type fetchResponse struct {
+	Success     bool   `json:"success"`
+	Error       string `json:"error"`
+	ErrorDetail string `json:"errorDetail"`
+	Summary     string `json:"summary"`
+}
+
+// The whole point of fetch: the remote ref moves, the branch and the working
+// tree do not.
+func TestServeGitFetch_UpdatesRemoteRefWithoutMovingBranch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	createTestFile(t, other, "remote.txt", "from remote\n")
+	gitCommitAll(t, other, "remote commit")
+	runGitIn(t, other, "push")
+	remoteHead := getHeadSHA(t, other)
+	localBefore := getHeadSHA(t, env.ProjectDir)
+	assert.NotEqual(t, remoteHead, localBefore, "premise: the local branch is behind")
+
+	w := fetchRequest(t, env.ProjectDir)
+	assertOK(t, w)
+
+	var body fetchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.True(t, body.Success, "body: %s", w.Body.String())
+
+	// The remote-tracking ref is now current…
+	refCmd := exec.Command("git", "rev-parse", "origin/"+currentBranchOf(t, env.ProjectDir))
+	refCmd.Dir = env.ProjectDir
+	refOut, refErr := refCmd.Output()
+	require.NoError(t, refErr)
+	assert.Equal(t, remoteHead, strings.TrimSpace(string(refOut)))
+	// …but HEAD did not move and no file appeared on disk.
+	assert.Equal(t, localBefore, getHeadSHA(t, env.ProjectDir), "fetch must not move the branch")
+	_, statErr := os.Stat(filepath.Join(env.ProjectDir, "remote.txt"))
+	assert.True(t, os.IsNotExist(statErr), "fetch must not touch the working tree")
+}
+
+// Ahead/behind is what the toolbar renders, so a fetch must make the tracking
+// counter change without any pull.
+func TestServeGitFetch_UpdatesAheadBehind(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	for i := range 2 {
+		createTestFile(t, other, "remote"+string(rune('a'+i))+".txt", "x\n")
+		gitCommitAll(t, other, "remote commit "+string(rune('a'+i)))
+	}
+	runGitIn(t, other, "push")
+
+	// Before fetching, the local view of the upstream is stale.
+	_, behindBefore := trackingCounts(t, env.ProjectDir)
+	assert.Equal(t, 0, behindBefore, "premise: nothing is known to be behind before fetching")
+
+	w := fetchRequest(t, env.ProjectDir)
+	assertOK(t, w)
+
+	ahead, behind := trackingCounts(t, env.ProjectDir)
+	assert.Equal(t, 0, ahead)
+	assert.Equal(t, 2, behind, "fetch must bring the tracking count up to date")
+}
+
+// trackingCounts reads `%(upstream:track)` the same way ServeGitBranches does.
+func trackingCounts(t *testing.T, dir string) (ahead, behind int) {
+	t.Helper()
+	branch := currentBranchOf(t, dir)
+	cmd := exec.Command("git", "for-each-ref", "--format=%(upstream:track)", "refs/heads/"+branch)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	return parseTrackInfo(strings.TrimSpace(string(out)))
+}
+
+func TestServeGitFetch_NoRemoteIsNotAnError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	w := fetchRequest(t, env.ProjectDir)
+	assertOK(t, w)
+
+	var body fetchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.True(t, body.Success, "a repo without remotes has nothing to fetch, not an error")
+}
+
+func TestServeGitFetch_BusyWhenAnotherFetchRuns(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	fetchMu.Lock()
+	defer fetchMu.Unlock()
+
+	req := newRequest(t, http.MethodPost, "/api/git/fetch", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGitFetch, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var body fetchResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.False(t, body.Success)
+	assert.Equal(t, "git_busy", body.Error)
+}
+
+// A fetch must not be blocked by (or block) a branch switch: they touch
+// different state, so they use different locks.
+func TestServeGitFetch_DoesNotTakeTheCheckoutLock(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	checkoutMu.Lock()
+	defer checkoutMu.Unlock()
+
+	req := newRequest(t, http.MethodPost, "/api/git/fetch", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGitFetch, req)
+	assert.NotEqual(t, http.StatusConflict, w.Code)
+}
+
+func TestServeGitFetch_RejectsGet(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	req := newRequest(t, http.MethodGet, "/api/git/fetch", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeGitFetch, req)
+	assert.NotEqual(t, http.StatusOK, w.Code)
+}
+
+// ── Divergence: which commits, not just how many ───────────────────────────
+
+type divergenceResponse struct {
+	HasUpstream bool     `json:"hasUpstream"`
+	Upstream    string   `json:"upstream"`
+	Ahead       []string `json:"ahead"`
+	Behind      []struct {
+		SHA    string `json:"sha"`
+		Msg    string `json:"msg"`
+		Date   string `json:"date"`
+		Author string `json:"author"`
+	} `json:"behind"`
+	AheadCount  int `json:"aheadCount"`
+	BehindCount int `json:"behindCount"`
+}
+
+func divergenceRequest(t *testing.T, projectDir, ref string) *httptest.ResponseRecorder {
+	t.Helper()
+	url := "/api/git/divergence"
+	if ref != "" {
+		url += "?ref=" + ref
+	}
+	req := newRequest(t, http.MethodGet, url, nil)
+	withProjectCookie(req, projectDir)
+	return callHandler(ServeGitDivergence, req)
+}
+
+func decodeDivergence(t *testing.T, w *httptest.ResponseRecorder) divergenceResponse {
+	t.Helper()
+	assertOK(t, w)
+	var body divergenceResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), "body: %s", w.Body.String())
+	return body
+}
+
+// The counters say "1 ahead, 1 behind"; this endpoint has to say which commits
+// those are, or the list cannot mark rows or name the remote ones.
+func TestServeGitDivergence_ListsBothDirections(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	// One commit only the remote has…
+	createTestFile(t, other, "remote.txt", "from remote\n")
+	gitCommitAll(t, other, "remote commit")
+	runGitIn(t, other, "push")
+	remoteHead := getHeadSHA(t, other)
+
+	// …and one only the local branch has.
+	createTestFile(t, env.ProjectDir, "local.txt", "from local\n")
+	gitCommitAll(t, env.ProjectDir, "local commit")
+	localHead := getHeadSHA(t, env.ProjectDir)
+
+	// The comparison reads local remote-tracking refs, so it is blind until a
+	// fetch (which is the point: no network from a GET).
+	runGitIn(t, env.ProjectDir, "fetch", "--all")
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+
+	assert.True(t, body.HasUpstream)
+	assert.Equal(t, "origin/"+currentBranchOf(t, env.ProjectDir), body.Upstream)
+	assert.Equal(t, 1, body.AheadCount)
+	assert.Equal(t, 1, body.BehindCount)
+	require.Len(t, body.Ahead, 1)
+	assert.Equal(t, localHead, body.Ahead[0], "the unpushed SHA must match HEAD")
+	require.Len(t, body.Behind, 1)
+	assert.Equal(t, remoteHead, body.Behind[0].SHA)
+	assert.Equal(t, "remote commit", body.Behind[0].Msg)
+	assert.NotEmpty(t, body.Behind[0].Author)
+	assert.NotEmpty(t, body.Behind[0].Date)
+}
+
+// Before a fetch the endpoint must report what the local refs know (nothing),
+// not silently reach the network.
+func TestServeGitDivergence_ReflectsLastFetchOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	createTestFile(t, other, "remote.txt", "x\n")
+	gitCommitAll(t, other, "remote commit")
+	runGitIn(t, other, "push")
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.True(t, body.HasUpstream, "the branch is tracked even before fetching")
+	assert.Equal(t, 0, body.BehindCount, "unfetched remote commits are unknown, not invented")
+	assert.Empty(t, body.Behind)
+
+	runGitIn(t, env.ProjectDir, "fetch", "--all")
+	body = decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.Equal(t, 1, body.BehindCount, "after fetching the same request sees it")
+}
+
+// A branch with no upstream has nothing to compare against. Reporting 0/0 would
+// read as "in sync".
+func TestServeGitDivergence_NoUpstream(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.False(t, body.HasUpstream)
+	assert.Empty(t, body.Upstream)
+	assert.Empty(t, body.Ahead)
+	assert.Empty(t, body.Behind)
+}
+
+// ?ref= compares the named branch, not HEAD — the history panel can be showing
+// another branch read-only.
+func TestServeGitDivergence_RefSelectsBranch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	repoWithRemote(t, env.ProjectDir)
+	branch := currentBranchOf(t, env.ProjectDir)
+
+	// topic: pushed, so it matches its upstream.
+	runGitIn(t, env.ProjectDir, "checkout", "-b", "topic")
+	createTestFile(t, env.ProjectDir, "topic.txt", "x\n")
+	gitCommitAll(t, env.ProjectDir, "topic commit")
+	runGitIn(t, env.ProjectDir, "push", "-u", "origin", "topic")
+	// main: one unpushed commit.
+	runGitIn(t, env.ProjectDir, "checkout", branch)
+	createTestFile(t, env.ProjectDir, "main.txt", "y\n")
+	gitCommitAll(t, env.ProjectDir, "main commit")
+
+	topic := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, "topic"))
+	assert.Equal(t, 0, topic.AheadCount, "topic is fully pushed")
+	assert.Equal(t, "origin/topic", topic.Upstream)
+
+	main := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, branch))
+	assert.Equal(t, 1, main.AheadCount, "main has one unpushed commit")
+}
+
+func TestServeGitDivergence_RejectsUnknownRef(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	w := divergenceRequest(t, env.ProjectDir, "no-such-branch")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// The branch is still configured to track a remote branch, but that ref no
+// longer exists (deleted on the server and pruned locally). There is nothing to
+// compare against, and reporting 0/0 would read as "in sync".
+func TestServeGitDivergence_UpstreamRefGone(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	repoWithRemote(t, env.ProjectDir)
+	branch := currentBranchOf(t, env.ProjectDir)
+
+	// The remote branch was deleted on the server and pruned locally, so the
+	// remote-tracking ref is gone while the branch still says it tracks it.
+	runGitIn(t, env.ProjectDir, "update-ref", "-d", "refs/remotes/origin/"+branch)
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.False(t, body.HasUpstream)
+	assert.Empty(t, body.Ahead)
+	assert.Empty(t, body.Behind)
+}
+
+// A path that is neither staged nor modified in a tracked file yields an empty
+// diff, not an error: the file list can offer it (e.g. after the change was
+// reverted) and the viewer must show "no changes" instead of failing.
+func TestGitDiff_TrackedFileWithoutChanges(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	output, err := gitDiff(env.ProjectDir, "README.md", "HEAD")
+	require.NoError(t, err)
+	assert.Empty(t, strings.TrimSpace(string(output)))
+}
+
+// mergeCommitDiff falls through to an empty result when NO parent shows a
+// difference for the path. That happens for a file the merge took verbatim from
+// one side while the caller asked about a path only touched on the other.
+func TestMergeCommitDiff_NoParentDiffers(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	// A path that does not exist in either parent: both `git diff` calls fail,
+	// so the loop must skip them and return an empty diff rather than the error.
+	out, err := mergeCommitDiff(env.ProjectDir, "never-existed.txt", "HEAD", []string{"HEAD~1", "HEAD~2"})
+	require.NoError(t, err)
+	assert.Empty(t, out)
 }

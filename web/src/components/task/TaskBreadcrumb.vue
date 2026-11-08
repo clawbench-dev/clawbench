@@ -77,7 +77,9 @@ function navigate(target) {
   align-items: center;
   overflow-x: auto;
   scrollbar-width: none;
-  flex: 1;
+  /* Natural width, shrinks (and then scrolls) only when the row runs out of
+     room; the icon row beside it takes the leftover. */
+  flex: 0 1 auto;
   min-width: 0;
   font-size: var(--font-size-md);
   color: var(--text-muted, #6c757d);

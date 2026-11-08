@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import {
   // Tool icons
   Eye, PenLine, FilePenLine, SquareTerminal, Terminal, Search, Folder,
@@ -76,7 +77,18 @@ export const FALLBACK_TOOL_ICON = { icon: WrenchFallback, category: 'fallback' }
 const AGENT_SUBTYPE_NAMES = new Set([
   'explore', 'plan', 'general-purpose', 'general', 'claude',
   'code-reviewer', 'statusline-setup', 'fork',
+  // OpenCode 2.x's delegation tool; older stored blocks still carry this name
+  // verbatim, so the icon must resolve even without the backend remap.
+  'subagent', 'sub agent', 'sub-agent',
 ])
+
+/** Tool names that are the Agent delegation card (all backends' spellings). */
+const AGENT_FAMILY_NAMES = new Set(['agent', 'task', 'subagent', 'sub agent', 'sub-agent'])
+
+/** Whether a tool name belongs to the Agent delegation family. */
+export function isAgentFamilyToolName(name?: string): boolean {
+  return !!name && AGENT_FAMILY_NAMES.has(name.toLowerCase())
+}
 
 /**
  * Lowercased tool name → entry, built once at module load.
@@ -106,6 +118,33 @@ export function getToolIcon(name: string) {
 }
 
 /**
+ * Readable card titles for the task-management tool family.
+ *
+ * Their inputs carry no descriptive text — TaskOutput/TaskStop take a bare
+ * `task_id` (e.g. "cyqjeL") and TaskUpdate takes `{taskId, status}` — so the
+ * generic summary chain degrades to an opaque identifier and the card strip
+ * reads "TaskOutput  cyqjeL", which says nothing about what happened. The pill
+ * title states the ACTION instead, leaving the id as the secondary summary
+ * (see toolCallSummary, which already derives it from the input).
+ *
+ * Keyed by the lowercased canonical tool name.
+ *
+ * Exported so the key-parity test can iterate THIS table instead of a
+ * hand-copied list — a hand-copied list silently stops guarding the moment a
+ * seventh tool is added here, which is the same blind spot that made the
+ * literal-key scan miss this map in the first place (it only sees a quoted key
+ * written directly at a translate call site).
+ */
+export const TASK_TOOL_TITLE_KEYS: Readonly<Record<string, string>> = Object.freeze({
+  taskcreate: 'tool.task.action.create',
+  taskupdate: 'tool.task.action.update',
+  tasklist: 'tool.task.action.list',
+  taskget: 'tool.task.action.get',
+  taskstop: 'tool.task.action.stop',
+  taskoutput: 'tool.task.action.output',
+})
+
+/**
  * Return the display name for a tool call block.
  * For Agent/Task calls with a subagent_type, show the sub-agent name
  * (PascalCased) instead of the generic "Agent".
@@ -115,10 +154,22 @@ export function toolDisplayName(name: string, input?: Record<string, unknown>, d
   if (displayName) return displayName
   const safeName = name || ''
   const lower = safeName.toLowerCase()
-  if ((lower === 'agent' || lower === 'task') && input?.subagent_type) {
-    // PascalCase the subagent_type: "explore" → "Explore", "general-purpose" → "General-purpose"
-    const raw = String(input.subagent_type)
-    return raw.charAt(0).toUpperCase() + raw.slice(1)
+  // Agent-family tools: show the sub-agent type instead of the generic label.
+  // OpenCode 2.x uses `subagent` + an `agent` input field (v1/Claude use `task`/
+  // `agent` + `subagent_type`), so both shapes resolve here.
+  if (AGENT_FAMILY_NAMES.has(lower)) {
+    const raw = input?.subagent_type || input?.agent || input?.mode
+    if (raw) {
+      const s = String(raw)
+      return s.charAt(0).toUpperCase() + s.slice(1)
+    }
+    if (lower !== 'agent' && lower !== 'task') return 'Agent'
   }
+  // `Object.hasOwn` rather than a truthiness check: the tool name comes from the
+  // agent (custom ACP / MCP servers may report anything), and a plain object
+  // lookup would resolve inherited keys — "constructor" would return the Object
+  // constructor's source text, "__proto__" an object, both rendered into the
+  // pill instead of the tool's own name.
+  if (Object.hasOwn(TASK_TOOL_TITLE_KEYS, lower)) return i18n.global.t(TASK_TOOL_TITLE_KEYS[lower])
   return safeName
 }

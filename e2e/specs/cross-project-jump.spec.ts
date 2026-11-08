@@ -142,19 +142,14 @@ test.describe.serial('Cross-project session jump', () => {
     const chat = new ChatPage(page)
     await expect(chat.textarea).toBeVisible({ timeout: 20000 })
 
-    // The "other projects" tab only exists while some other project has an
-    // active session — wait for it rather than assuming it is there.
-    // `data-session-tab` is the stable hook; matching the label text would break
-    // the moment either locale's wording changes.
-    const crossTab = page.locator('[data-session-tab="cross"]').first()
-    await expect(crossTab, 'seeded session never surfaced in the other-projects tab').toBeVisible({ timeout: 30000 })
-    await crossTab.click()
-
-    const targetRow = page.locator(`.cross-session-row[data-session-id="${targetId}"]`)
-    await expect(targetRow).toBeVisible({ timeout: 15000 })
+    // The "other projects" strip only exists while some other project has an
+    // active session — wait for it rather than assuming it is there. The strip
+    // is always on screen (no tab to click), so the row itself is the hook.
+    const targetRow = page.locator(`.pcard-row[data-session-id="${targetId}"]`)
+    await expect(targetRow, 'seeded session never surfaced in the other-projects cards').toBeVisible({ timeout: 30000 })
 
     chatGets.length = 0 // ignore anything the initial load did
-    await targetRow.locator('.cross-session-item').click()
+    await targetRow.click()
 
     // The clicked conversation must actually be on screen…
     await expect(page.locator('.chat-message.user').filter({ hasText: /cross target/ }).first())

@@ -1153,3 +1153,105 @@ func TestCruiseFree_SwitchToggledOffMidTurnStops(t *testing.T) {
 		t.Fatalf("switch-off must not be reported as a confirmed goal (count=%d)", n)
 	}
 }
+
+// A free-mode confirmation round in which NO member answers cleanly has no
+// verdict to read. When the failures are permanent (quota exhausted), every
+// further round fails identically, so the cruise must stop instead of burning
+// the whole speech cap — and the turn must not be announced as "your turn".
+func TestCruiseFree_PermanentFailureStopsConfirmation(t *testing.T) {
+	setupGroupDB(t)
+	setGroupMaxSpeechesForTest(t, 20)
+	project := "/tmp/cruise-free-quota"
+	groupID, byName := createFreeGroup(t, project, "A", "B")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		byName["A"]: {"A 说"},
+		byName["B"]: {"B 说"},
+	}
+	base, order := freeScriptedRunner(t, project, groupID, script)
+	counts := map[string]int{}
+	var mu sync.Mutex
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		mu.Lock()
+		counts[turn.MemberRowID]++
+		n := counts[turn.MemberRowID]
+		mu.Unlock()
+		// The SECOND turn is the confirmation round: the account is out of
+		// credit, so the turn ends with a warning block and no output.
+		if n >= 2 {
+			return groupMemberResult{AbnormalReason: abnormalTerminalFailure}
+		}
+		return base(ctx, gid, turn)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "大家聊聊", nil)
+
+	if res.AbnormalReason == "" {
+		t.Fatalf("expected an abnormal result, got %+v (order=%v)", res, *order)
+	}
+	// One confirmation round only: the second would fail identically.
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupCruiseConfirming")); n != 1 {
+		t.Fatalf("confirmation line count=%d want 1 (order=%v)", n, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupDiscussionLimitReached")); n != 0 {
+		t.Fatalf("the turn must stop on the failure, not on the cap (order=%v)", *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
+		t.Fatalf("an abnormal turn must not announce the user's turn, count=%d", n)
+	}
+	if len(*order) > 8 {
+		t.Fatalf("cruise did not stop promptly: %d turns (order=%v)", len(*order), *order)
+	}
+}
+
+// Host-mode cruise: a confirmation turn that fails PERMANENTLY (quota
+// exhausted) must end the turn. Falling back to a member round-robin would hit
+// the same dead account, and the loop would otherwise spend the whole speech cap
+// on identical failures while the timeline filled with warning cards.
+func TestCruiseHost_PermanentConfirmFailureStops(t *testing.T) {
+	setupGroupDB(t)
+	setGroupMaxSpeechesForTest(t, 20)
+	project := "/tmp/cruise-host-quota"
+	groupID, hostID, byName := createHostGroup(t, project, "A")
+	enableCruise(t, groupID)
+
+	script := map[string][]string{
+		hostID: {
+			`<clawbench-mention targets="A">先做</clawbench-mention>`,
+			`差不多了。<clawbench-group-end/>`,
+		},
+		byName["A"]: {"A 完成了一部分"},
+	}
+	base, order := newScriptedRunner(t, groupID, project, script)
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == hostID {
+			hostTurns++
+			if hostTurns >= 3 {
+				// The confirmation turn: out of credit.
+				return groupMemberResult{AbnormalReason: abnormalTerminalFailure}
+			}
+		}
+		return base(ctx, gid, turn)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "做个任务", nil)
+
+	if res.AbnormalReason == "" {
+		t.Fatalf("expected an abnormal result, got %+v (order=%v)", res, *order)
+	}
+	if hostTurns != 3 {
+		t.Fatalf("host turns=%d want 3 (route + end + failed confirm, no fallback) order=%v", hostTurns, *order)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupDiscussionLimitReached")); n != 0 {
+		t.Fatalf("the turn must stop on the failure, not on the cap (order=%v)", *order)
+	}
+	if n := countSystemLine(t, groupID, "自动巡航：任务已确认完成"); n != 0 {
+		t.Fatalf("a failed confirmation must not write the cruise-complete line, count=%d", n)
+	}
+}

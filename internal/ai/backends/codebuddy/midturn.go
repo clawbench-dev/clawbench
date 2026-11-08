@@ -56,11 +56,13 @@ type midTurnInjector struct{}
 // It declines (returning Injected=false, no error) whenever injection is not
 // clearly safe, so the caller falls back to its normal queueing path:
 //
-//   - attachments: the queue path already builds the file/directory prompt
-//     prefixes; duplicating that here would drift. Declined.
 //   - no ACP session yet: nothing is running.
 //   - agent replied {steered:false}: the turn ended ("idle") or the client's
 //     expectedRequestId no longer matches ("stale"). Both mean "queue it".
+//
+// Attachments need no special case: req.Content already carries the
+// "[User uploaded …]" / quote headers core flow built for it, exactly as a
+// normal turn would. Nothing here has to know a file was referenced.
 //
 // A transport error is returned so the shared seam can log it; the caller still
 // falls back to queueing either way.
@@ -69,10 +71,6 @@ func (m *midTurnInjector) Inject(
 	transport ai.RawRPCTransport,
 	req ai.MidTurnInjectRequest,
 ) (ai.MidTurnInjectResult, error) {
-	if len(req.Files) > 0 {
-		return ai.MidTurnInjectResult{Reason: "unsupported"}, nil
-	}
-
 	sessionID := transport.AcpSessionID()
 	if sessionID == "" {
 		return ai.MidTurnInjectResult{Reason: "idle"}, nil

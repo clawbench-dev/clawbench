@@ -162,6 +162,10 @@ const mockIdentity = {
   currentModeId: ref('code'),
   autoApprove: ref(false),
   toggleAutoApprove: vi.fn(),
+  // Agent-declared generic options (issue #634). The drawer reads this on every
+  // render, so the mock must provide it even when no test exercises the tab.
+  configOptions: ref([]),
+  setConfigOptionValue: vi.fn(),
 }
 
 describe('SessionDrawer', () => {

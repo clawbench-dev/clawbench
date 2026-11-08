@@ -168,6 +168,7 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
   Object.assign(notesApi, {
     phase: r('idle'),
     segments: r([]),
+    liveLines: r({}),
     minutes: r(''),
     minutesPhase: r('idle'),
     revisePhase: r('idle'),
@@ -677,6 +678,9 @@ describe('MeetingStage picture toggles', () => {
     ;(shareApi.captureSourceId as { value: string }).value = 'screen:0:0'
     const wrapper = mountPanel()
     await flushPromises()
+    // The list is only asked for when the host asks to share.
+    await wrapper.find('[data-source="__pick__"]').trigger('click')
+    await flushPromises()
 
     // Sharing: the live tile is the selected one, not the "off" tile.
     expect(wrapper.find('[data-source="screen:0:0"]').classes()).toContain('capture-source--on')
@@ -706,6 +710,8 @@ describe('MeetingStage picture toggles', () => {
     ])
     ;(shareApi.captureSourceId as { value: string }).value = 'screen:0:0'
     const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('[data-source="__pick__"]').trigger('click')
     await flushPromises()
 
     await wrapper.find('[data-source="window:1:0"]').trigger('click')

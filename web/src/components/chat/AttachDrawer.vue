@@ -221,20 +221,40 @@
       </template>
     </div>
 
-    <!-- Footer: the DRAFT selection (not the composer's list — nothing is
-         applied until OK) above the shared .fbtn action pair. Always rendered:
+    <!-- Footer: the DRAFT selection (not the composer's list — a pick is not
+         applied until OK, except a finished upload, which is committed as it
+         lands) above the shared .fbtn action pair. Always rendered:
          Cancel/OK are the sheet's only explicit exit, since the narrow header
          tap is not discoverable and the wide card has its own X. -->
     <template #footer>
       <div class="ad-footer">
-        <AttachmentTags
-          v-if="draft.length > 0"
-          :files="draft"
-          @file-click="emit('file-open', $event)"
-          @remove="removeFromDraft"
-        />
+        <!-- Selected-so-far. A bare strip of chips was not readable as a list:
+             no count, no way to clear it, and no hint that it scrolls sideways.
+             The head line answers "how many" and "get me out", the fades say
+             "there is more this way" (and disappear once scrolled there). -->
+        <div v-if="draft.length > 0" class="ad-selected">
+          <div class="ad-selected-head">
+            <span class="ad-selected-count" data-role="attach-selected-count">
+              {{ t('chat.attach.selectedCount', { n: draft.length }) }}
+            </span>
+            <button type="button" class="ad-selected-clear" data-action="attach-clear-selection" @click="clearDraft">
+              {{ t('chat.attach.clearAll') }}
+            </button>
+          </div>
+          <div
+            ref="selectedStripRef"
+            class="ad-selected-strip"
+            :class="{ 'more-right': selectedMoreRight }"
+          >
+            <AttachmentTags
+              :files="draft"
+              @file-click="emit('file-open', $event)"
+              @remove="removeFromDraft"
+            />
+          </div>
+        </div>
         <div class="ad-footer-actions">
-          <button type="button" class="fbtn" data-action="attach-cancel" @click="emit('close')">{{ t('common.cancel') }}</button>
+          <button type="button" class="fbtn" data-action="attach-cancel" @click="handleCancel">{{ t('common.cancel') }}</button>
           <button type="button" class="fbtn fbtn-primary" data-action="attach-ok" @click="handleConfirm">{{ t('common.confirm') }}</button>
         </div>
       </div>
@@ -333,7 +353,7 @@ const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUpload
 // always the chat draft (the queued-message editor passes its own list).
 // Shadowing them made a file picked from that editor vanish from the footer —
 // the selection only ever reached the caller, never the shared draft.
-const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, chatUploadCancelled } = useFileUpload()
+const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, cancelChatUpload, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -434,34 +454,99 @@ async function onFileSelect(e: Event) {
   // the transfer needs somewhere to report progress: jump to the uploads tab
   // before awaiting, which is where the in-flight rows and the terminate
   // button live. A cancelled picker reports 0 and leaves the tab alone.
-  if (readPickedCount(e) > 0) activeTab.value = 'uploads'
-  const uploadedPaths = await handleFileSelect(e)
-  // Terminated mid-batch: the user asked to clear everything, so do not select
-  // the files that had already finished. The terminate handler already dropped
-  // them, and `chatUploadCancelled` is only reset when a new batch starts.
-  if (chatUploadCancelled.value) return
-  if (uploadedPaths.length === 0) return
-  // Freshly uploaded files join the DRAFT only. They reach the composer on OK,
-  // like every other selection — uploading is not a reason to bypass the
-  // commit step.
-  const known = new Set(draft.value.map(f => f.path))
-  for (const path of uploadedPaths) {
-    if (!known.has(path)) draft.value = [...draft.value, { path, isDir: false }]
+  if (readPickedCount(e) > 0) {
+    activeTab.value = 'uploads'
+    // A fresh picker batch: the previous batch's committed paths are no longer
+    // this batch's to clear. Only on a real pick — re-opening the picker and
+    // cancelling it starts no batch, and clearing the list there would leave
+    // the still-running batch's finished files with nobody to clear them.
+    batchCommitted = []
   }
-  activeTab.value = 'uploads'
+  // A finished upload lands in THIS sheet's draft — never in the composer.
+  //
+  // The composer is only touched by OK (see `handleConfirm`). That is the
+  // picker's promise: nothing you did not confirm ends up in the message. It is
+  // also why the input bar hides in-flight cards while this sheet is open
+  // (ChatInputBar's `visiblePendingFiles`) — otherwise the pending card unmounted
+  // the moment `uploading` flipped false, the strip went empty, and the user read
+  // it as "the thumbnail flashed and the file was lost" (#629).
+  //
+  // The commit is PER FILE (`onFileUploaded`), not once per batch: the footer
+  // chips then grow as each transfer lands instead of everything appearing at
+  // the end of a long batch.
+  const commit = (path: string) => {
+    // `isAttached` looks at the draft only; a path can also already sit in the
+    // baseline (seeded from the composer on open) and must not be added twice.
+    if (isAttached(path) || attachSnapshot.value.some(f => f.path === path)) return
+    draft.value = [...draft.value, { path, isDir: false }]
+    batchCommitted.push(path)
+  }
+  // Marks the window in which a batch THIS sheet started is still running —
+  // the only window in which Cancel has a transfer of its own to abort (see
+  // `handleCancel`).
+  uploadsInFlight++
+  try {
+    const uploadedPaths = await handleFileSelect(e, commit)
+    // Terminated mid-batch: the user asked to clear everything, so do not
+    // select the files that had already finished. The terminate handler already
+    // dropped them, and `chatUploadCancelled` is only reset when a new batch
+    // starts.
+    if (chatUploadCancelled.value) return
+    if (uploadedPaths.length === 0) return
+    activeTab.value = 'uploads'
+  } finally {
+    uploadsInFlight--
+  }
 }
 
 /**
  * Terminate the whole in-flight upload batch.
  *
- * The action itself lives in useFileUpload.terminateChatUploadBatch, shared
- * with the input bar's attachment strip — that strip is where the user actually
- * is after the sheet closes, and the sheet's own banner is where they are while
- * it stays open. Two copies of "cancel, abort, then detach the finished ones"
- * would drift on exactly that last step.
+ * The transfer work lives in useFileUpload.terminateChatUploadBatch, shared
+ * with the input bar's attachment strip — the same control, reachable from
+ * whichever surface the user is looking at. Two copies of "cancel, then abort"
+ * would drift on exactly that step.
  */
 function handleTerminateUpload() {
   terminateChatUploadBatch()
+  // "Terminate = clear everything" for THIS sheet's view. Nothing was handed to
+  // the host (the draft only lands on OK), so there is nothing to tell it about
+  // — the paths are ours alone to forget.
+  if (batchCommitted.length === 0) return
+  const gone = new Set(batchCommitted)
+  batchCommitted = []
+  draft.value = draft.value.filter(f => !gone.has(f.path))
+}
+
+/**
+ * How many batches THIS sheet started are still running.
+ *
+ * Leaving the sheet must stop them — but `cancelChatUpload` works on the
+ * module-level chat batch, which a drag-drop or paste can own just as well.
+ * Aborting that one from here silently killed a transfer the user never asked
+ * to stop, so the sheet only reaches for it while one of its own is in flight.
+ *
+ * A COUNT, not a flag: two picks can overlap (the sheet stays open and the
+ * upload entry stays tappable), and the superseded one settles first — a flag
+ * would read "nothing of mine is running" while the second batch still is.
+ */
+let uploadsInFlight = 0
+
+/**
+ * Leave the sheet without pressing OK: stop the transfer and drop the draft.
+ *
+ * This is the ONE meaning of leaving without OK, whatever the gesture got you
+ * here: the Cancel button, a swipe, the back gesture, an overlay tap or the
+ * header ×. Nothing reached the composer (the draft only lands on OK), so
+ * "undo" is just: abort the transfers and let the draft be reseeded from the
+ * composer next time the sheet opens.
+ */
+function handleCancel() {
+  // Stop the batch first: `commit` fires per file as it lands, so aborting must
+  // happen before the remaining transfers can reach it.
+  if (uploadsInFlight > 0) cancelChatUpload()
+  batchCommitted = []
+  emit('close')
 }
 
 // When uploads complete, remove finished items from pendingFiles
@@ -491,15 +576,31 @@ watch(uploadingFiles, (now) => {
 
 /**
  * The selection being edited. This sheet is a PICKER: tapping a row only
- * changes this draft, and the composer is touched exactly once, on OK. So
- * Cancel needs no undo bookkeeping — the draft is simply dropped.
+ * changes this draft, and the composer is touched on OK — uploads included.
+ * That is the whole contract: nothing the user did not confirm reaches the
+ * message, so leaving the sheet any other way simply drops the draft.
  *
  * Seeded from the caller's list when the sheet opens (see the open watcher);
  * the composer's own `attachedFiles` is read only to compute the OK delta.
  */
 const draft = ref<FileEntry[]>([])
 
-/** The composer's list when the sheet opened — the baseline for OK's delta. */
+/**
+ * Paths this batch uploaded into the draft, in upload order.
+ *
+ * "Terminate" has to drop them from the footer too, and the sheet cannot ask
+ * the shared helper which ones: `terminateChatUploadBatch` reports only what it
+ * detached from the GLOBAL composer list, which this sheet never touches. Left
+ * unhandled, terminating a batch left the already-uploaded images sitting in
+ * the draft as if they had survived.
+ */
+let batchCommitted: string[] = []
+
+/**
+ * The composer's list when the sheet opened — the baseline for OK's delta.
+ * Uploaded files are deliberately NOT added to it: they are new, so OK must
+ * emit `add-attached` for them. Nothing else advances it.
+ */
 const attachSnapshot = ref<FileEntry[]>([])
 
 function isAttached(path: string) {
@@ -518,6 +619,58 @@ function toggleAttached(path: string, isDir: boolean = false) {
 function removeFromDraft(entry: FileEntry) {
   draft.value = draft.value.filter(f => f.path !== entry.path)
 }
+
+/** Empty the selection in one tap (the footer's 清空). */
+function clearDraft() {
+  draft.value = []
+  // Nothing of this batch is left in the draft, so "terminate" has nothing to
+  // clear either.
+  batchCommitted = []
+}
+
+// ── Footer selection strip: right-edge fade ──
+// Same rule as the composer's action bar: the fade exists only while there is
+// hidden content on that side. Left opaque on purpose — the strip always starts
+// at scrollLeft 0, so a left fade would dim the first chip for no reason.
+//
+// The scrolling element is AttachmentTags' own root (it owns `overflow-x`), so
+// the listener is attached there rather than on the wrapper — `scroll` does not
+// bubble, and the wrapper never scrolls.
+const selectedStripRef = ref<HTMLElement | null>(null)
+const selectedMoreRight = ref(false)
+
+function selectedScroller(): HTMLElement | null {
+  return (selectedStripRef.value?.firstElementChild as HTMLElement | null) ?? null
+}
+
+function updateSelectedFade() {
+  const el = selectedScroller()
+  if (!el) {
+    selectedMoreRight.value = false
+    return
+  }
+  // 1px tolerance for sub-pixel rounding, mirroring the overflow test used by
+  // the composer's strip.
+  selectedMoreRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+let stopSelectedScroll: (() => void) | null = null
+
+/** Re-bind whenever the strip mounts (it only exists while something is selected). */
+function bindSelectedScroll() {
+  stopSelectedScroll?.()
+  stopSelectedScroll = null
+  const el = selectedScroller()
+  if (!el) return
+  el.addEventListener('scroll', updateSelectedFade, { passive: true })
+  stopSelectedScroll = () => el.removeEventListener('scroll', updateSelectedFade)
+  updateSelectedFade()
+}
+
+watch(selectedStripRef, bindSelectedScroll)
+// Content changes (a file lands, a chip is removed) move the overflow boundary
+// without any scroll event.
+watch(draft, () => nextTick(updateSelectedFade), { deep: true })
 
 /**
  * Forget paths that were destroyed on disk.
@@ -554,6 +707,10 @@ function handleConfirm() {
   for (const entry of attachSnapshot.value) {
     if (!now.has(entry.path)) emit('remove-attached', { path: entry.path, isDir: entry.isDir })
   }
+  // The user has accepted this batch's uploads, so a later "terminate" (which
+  // can fire for a batch started elsewhere while the sheet is reopened) must
+  // not detach them again.
+  batchCommitted = []
   emit('close')
 }
 
@@ -702,6 +859,8 @@ watch(() => props.open, async (v) => {
     // the caller's objects.
     attachSnapshot.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
     draft.value = (props.attachedFiles ?? []).map(e => ({ ...e }))
+    // A fresh session: the previous batch's paths are not this one's to clear.
+    batchCommitted = []
     loading.value = true
     try {
       await Promise.all([fetchRecentShares(), fetchRecentUploads()])
@@ -751,6 +910,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('focus', onWindowFocus)
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  stopSelectedScroll?.()
 })
 
 // ── Drawer close handler ──
@@ -759,7 +919,10 @@ onUnmounted(() => {
 // closeGuard prop handles all close blocking while the native file
 // picker is open.
 function onDrawerClose() {
-  emit('close')
+  // Swipe / back / overlay tap / header × — every way of leaving without OK is
+  // a dismissal, and a dismissal is a cancel: same handler, so the two can
+  // never drift on whether the uploads stay (issue #629 follow-up).
+  handleCancel()
 }
 
 // Expose for parent: activeTab + handleFileDrop (for drag-and-drop from ChatInputBar)
@@ -912,13 +1075,31 @@ defineExpose({ activeTab, handleFileDrop })
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
+  position: relative;
   transition: background var(--duration-fast);
 }
 .ad-file-row:active {
   background: var(--bg-hover);
 }
+/* Selected row: the design guide's three-signal pattern — 2px accent bar +
+   12% accent tint + a heavier name. Deliberately NOT the old "dim the whole
+   row" treatment: lowering opacity reads as disabled / unavailable, which is
+   the opposite of "you picked this". The bar is load-bearing (the tint alone
+   measures ~1.09 contrast on light themes). */
 .ad-file-attached {
-  opacity: var(--opacity-disabled);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+.ad-file-attached::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: calc(6 * var(--dp));
+  bottom: calc(6 * var(--dp));
+  width: calc(2 * var(--dp));
+  background: var(--accent-color);
+}
+.ad-file-attached .ad-file-name {
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Icon container: holds icon or thumbnail.
@@ -1000,14 +1181,16 @@ defineExpose({ activeTab, handleFileDrop })
   }
 }
 
-/* Attachment check badge: sits on the bottom-right corner of the icon */
+/* Attachment check badge: sits on the bottom-right corner of the icon.
+   16dp rather than 14: at 14 the tick was unreadable on a phone, and it is the
+   second signal that a row is selected (the accent bar is the first). */
 .ad-icon-wrap .ad-icon-check {
   position: absolute;
   right: calc(-3 * var(--dp));
   bottom: calc(-3 * var(--dp));
-  width: calc(14 * var(--dp));
-  height: calc(14 * var(--dp));
-  padding: var(--space-1);
+  width: calc(16 * var(--dp));
+  height: calc(16 * var(--dp));
+  padding: calc(2 * var(--dp));
   box-sizing: border-box;
   border-radius: 50%;
   background: var(--accent-color);
@@ -1193,5 +1376,56 @@ defineExpose({ activeTab, handleFileDrop })
   gap: var(--space-4);
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* ── Selected-so-far list ──
+   A bare strip of chips did not read as a list: no count, no way to clear it,
+   and no hint that it scrolls sideways. */
+.ad-selected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ad-selected-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 calc(14 * var(--dp));
+}
+.ad-selected-count {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+.ad-selected-clear {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: color var(--duration-fast);
+}
+.ad-selected-clear:active {
+  color: var(--accent-color);
+}
+@media (hover: hover) {
+  .ad-selected-clear:hover {
+    color: var(--accent-color);
+  }
+}
+.ad-selected-strip {
+  min-width: 0;
+}
+/* Edge fade while the strip still has hidden content on the right. A MASK, not
+   an overlay of a background-coloured gradient: the sheet can sit over a
+   wallpaper, so an opaque gradient would paint a visible band. The fade is
+   dropped once the user reaches the end (see `selectedMoreRight`) — otherwise
+   the last chip looks clipped rather than reachable. */
+.ad-selected-strip.more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20 * var(--dp)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20 * var(--dp)), transparent 100%);
 }
 </style>

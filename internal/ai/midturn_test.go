@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"clawbench/internal/model"
 )
 
 // stubInjector records whether it was consulted.
@@ -28,7 +26,7 @@ func TestInjectMidTurn_NoLookupFnIsSafe(t *testing.T) {
 	LookupMidTurnInjectorFn = nil
 	t.Cleanup(func() { LookupMidTurnInjectorFn = orig })
 
-	res := InjectMidTurn(context.Background(), "codebuddy", "sess", "agent", "hi", nil, "q1")
+	res := InjectMidTurn(context.Background(), "codebuddy", "sess", "agent", "hi", "q1")
 	assert.False(t, res.Injected, "must decline rather than panic when unwired")
 }
 
@@ -39,7 +37,7 @@ func TestInjectMidTurn_UnknownBackendDeclines(t *testing.T) {
 	LookupMidTurnInjectorFn = func(string) MidTurnInjector { return nil }
 	t.Cleanup(func() { LookupMidTurnInjectorFn = orig })
 
-	res := InjectMidTurn(context.Background(), "claude", "sess", "agent", "hi", nil, "q1")
+	res := InjectMidTurn(context.Background(), "claude", "sess", "agent", "hi", "q1")
 	assert.False(t, res.Injected)
 }
 
@@ -53,7 +51,7 @@ func TestInjectMidTurn_NoLiveConnectionDeclines(t *testing.T) {
 	t.Cleanup(func() { LookupMidTurnInjectorFn = orig })
 
 	// A session id that certainly has no pooled connection.
-	res := InjectMidTurn(context.Background(), "codebuddy", "no-such-session-xyz", "agent", "hi", nil, "q1")
+	res := InjectMidTurn(context.Background(), "codebuddy", "no-such-session-xyz", "agent", "hi", "q1")
 
 	assert.False(t, res.Injected)
 	assert.False(t, stub.called, "policy must not run without a live connection")
@@ -91,5 +89,4 @@ func TestMidTurnInjectResult_ZeroValueMeansQueue(t *testing.T) {
 
 	// Guard the JSON shape used on the raw wire is not accidentally coupled here.
 	_ = json.RawMessage(nil)
-	_ = model.FileEntry{}
 }

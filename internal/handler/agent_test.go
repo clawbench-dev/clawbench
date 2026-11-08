@@ -1365,7 +1365,7 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 
 	// Populate agent-level capabilities in the registry
 	ai.GetAgentCapabilityRegistry().UpdateModes("acp-agent", []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}})
-	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts("acp-agent", []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEffortsForModel("acp-agent", "m1", []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
 	ai.GetAgentCapabilityRegistry().UpdateModels("acp-agent", []model.AgentModel{{ID: "acp-m1", Name: "ACP Model 1", Default: true}})
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
@@ -2985,4 +2985,35 @@ func TestAgentPatch_RenameCollisionReturnsConflict(t *testing.T) {
 			assert.Equal(t, "Claude", a.Name, "a rejected rename must not persist")
 		}
 	}
+}
+
+// Issue #637 — thinking levels are per MODEL, so validation must use the model
+// the session runs. The agent-level list only holds whichever model reported
+// last, which both rejected valid picks and accepted levels the model refuses.
+func TestIsValidThinkingEffort_UsesTheSessionsModel(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	agent := &model.Agent{ID: "effort-scope-agent", Backend: "opencode", Transport: "acp-stdio"}
+
+	// Agent-level fallback (used only when the session's model is unknown).
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("effort-scope-agent", &ai.AgentCapability{
+		AvailableThinkingEfforts: []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}},
+	})
+	// The model this session runs advertises a different set.
+	reg.UpdateThinkingEffortsForModel("effort-scope-agent", "deepseek-v4-pro",
+		[]ai.ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}})
+
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, agent_id, session_type, model) VALUES ('effort-scope-session', 'effort-scope-agent', 'chat', 'deepseek-v4-pro')`)
+	require.NoError(t, err)
+
+	assert.True(t, isValidThinkingEffort(agent, "max", "effort-scope-session"),
+		"the session's model offers max")
+	assert.False(t, isValidThinkingEffort(agent, "low", "effort-scope-session"),
+		"only the other model offers low")
+
+	// Without a session (agent settings) the agent-level list still applies.
+	assert.True(t, isValidThinkingEffort(agent, "low", ""))
+	assert.False(t, isValidThinkingEffort(agent, "max", ""))
 }

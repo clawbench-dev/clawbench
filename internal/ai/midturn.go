@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-
-	"clawbench/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -48,10 +46,13 @@ type RawRPCTransport interface {
 
 // MidTurnInjectRequest describes a user message that arrived mid-turn.
 type MidTurnInjectRequest struct {
-	SessionID           string // ClawBench session id
-	AgentID             string
+	SessionID string // ClawBench session id
+	AgentID   string
+	// Content is the COMPLETE text the agent must see, attachments included.
+	// Core flow builds the same "[User uploaded …]" / quote prefixes it would
+	// build for a normal turn, so a policy never has to reconstruct them —
+	// and never has a reason to decline a message for carrying attachments.
 	Content             string
-	Files               []model.FileEntry
 	ClientUserMessageID string // stable correlation id (ClawBench queueID)
 }
 
@@ -106,7 +107,6 @@ var LookupMidTurnInjectorFn func(backendID string) MidTurnInjector
 func InjectMidTurn(
 	ctx context.Context,
 	backendID, sessionID, agentID, content string,
-	files []model.FileEntry,
 	clientUserMessageID string,
 ) MidTurnInjectResult {
 	if LookupMidTurnInjectorFn == nil {
@@ -126,7 +126,6 @@ func InjectMidTurn(
 		SessionID:           sessionID,
 		AgentID:             agentID,
 		Content:             content,
-		Files:               files,
 		ClientUserMessageID: clientUserMessageID,
 	})
 	if err != nil {

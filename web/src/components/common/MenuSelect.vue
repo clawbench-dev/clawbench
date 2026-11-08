@@ -9,10 +9,17 @@
     class="menu-select"
     :class="{ 'is-open': show, 'is-disabled': disabled, 'is-block': block }"
     :disabled="disabled"
+    :title="triggerTitle"
     @click.stop="toggle"
   >
-    <span class="menu-select-label">{{ selectedOption ? selectedOption.label : placeholder }}</span>
-    <ChevronDown class="menu-select-caret" :size="14" />
+    <!-- Default trigger: label + caret. A caller that needs a richer face
+         (the mail bar's account avatar / folder + unread badge) supplies the
+         slot; the button, popup anchoring and exclusive-open behaviour stay
+         exactly the same either way. -->
+    <slot name="trigger" :open="show" :label="triggerLabel">
+      <span class="menu-select-label">{{ triggerLabel }}</span>
+      <ChevronDown class="menu-select-caret" :size="14" />
+    </slot>
   </button>
 
   <PopupMenu
@@ -23,6 +30,7 @@
     :max-height="maxHeight"
     :menu-items-count="options.length"
     :app-surface="appSurface"
+    :close-on-click="!multiple"
     @update:show="onShowUpdate"
   >
     <!-- The popup's min-width (the trigger width) keeps the menu lined up with
@@ -36,12 +44,15 @@
             :key="String(opt.value)"
             type="button"
             class="menu-select-item"
-            :class="{ active: opt.value === modelValue }"
+            :class="{ active: isSelected(opt.value), 'is-locked': isLocked(opt.value) }"
             :title="opt.label"
+            :disabled="isLocked(opt.value)"
+            :role="multiple ? 'menuitemcheckbox' : 'menuitem'"
+            :aria-checked="multiple ? isSelected(opt.value) : undefined"
             @click="choose(opt.value)"
           >
             <span class="menu-select-item-label">{{ opt.label }}</span>
-            <Check v-if="opt.value === modelValue" class="menu-select-item-check" :size="14" />
+            <Check v-if="isSelected(opt.value)" class="menu-select-item-check" :size="14" />
           </button>
         </slot>
       </div>
@@ -60,8 +71,11 @@ export interface MenuSelectOption {
   label: string
 }
 
+/** A selection: one value in single mode, a list in `multiple` mode. */
+export type MenuSelectValue = string | number | (string | number)[]
+
 const props = withDefaults(defineProps<{
-  modelValue: string | number
+  modelValue: MenuSelectValue
   options: MenuSelectOption[]
   /** Shown when no option matches modelValue. */
   placeholder?: string
@@ -76,6 +90,15 @@ const props = withDefaults(defineProps<{
   appSurface?: boolean
   /** Optional heading rendered as an `.app-menu-title` above the list. */
   menuTitle?: string
+  /**
+   * Allow several options to be selected at once. The menu stays open while
+   * rows are toggled (it closes on outside click / the trigger / Escape), and
+   * the trigger collapses the selection to "first label +N".
+   */
+  multiple?: boolean
+  /** `multiple` only: never allow the selection to shrink below this count.
+   *  Rows that would break the floor are rendered disabled. */
+  minSelected?: number
 }>(), {
   placeholder: '',
   disabled: false,
@@ -84,20 +107,55 @@ const props = withDefaults(defineProps<{
   menuWidth: 260,
   appSurface: false,
   menuTitle: '',
+  multiple: false,
+  minSelected: 0,
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string | number]
-  change: [value: string | number]
+  'update:modelValue': [value: MenuSelectValue]
+  change: [value: MenuSelectValue]
 }>()
 
 const anchorRef = ref<HTMLElement | null>(null)
 const show = ref(false)
 const menuMinWidth = ref(0)
 
-const selectedOption = computed(
-  () => props.options.find(o => o.value === props.modelValue) ?? null,
+const selectedValues = computed<(string | number)[]>(() =>
+  Array.isArray(props.modelValue) ? props.modelValue : [props.modelValue],
 )
+
+const selectedOptions = computed<MenuSelectOption[]>(() =>
+  // Ordered by the selection, not the option list: the trigger collapses a
+  // multi selection to its first label, which should be the value the user
+  // chose first, not whichever row happens to sort first in the menu.
+  selectedValues.value
+    .map(v => props.options.find(o => o.value === v))
+    .filter((o): o is MenuSelectOption => !!o),
+)
+
+const triggerLabel = computed(() => {
+  const sel = selectedOptions.value
+  if (sel.length === 0) return props.placeholder
+  if (!props.multiple || sel.length === 1) return sel[0].label
+  // Compact multi-selection: the first label plus a count. The full list is on
+  // the trigger's `title`, so a hover (or long-press) still reads it.
+  return `${sel[0].label} +${sel.length - 1}`
+})
+
+const triggerTitle = computed(() =>
+  selectedOptions.value.map(o => o.label).join(' / ') || props.placeholder,
+)
+
+function isSelected(value: string | number): boolean {
+  return selectedValues.value.includes(value)
+}
+
+/** A row whose removal would break `minSelected` — rendered disabled. */
+function isLocked(value: string | number): boolean {
+  return props.multiple
+    && selectedValues.value.length <= props.minSelected
+    && isSelected(value)
+}
 
 /**
  * Inline style for the popup body.
@@ -164,6 +222,19 @@ onBeforeUnmount(() => {
 })
 
 function choose(value: string | number) {
+  if (isLocked(value)) return
+  if (props.multiple) {
+    const current = selectedValues.value
+    const next = current.includes(value)
+      ? current.filter(v => v !== value)
+      : [...current, value]
+    if (next.length === 0) return
+    // Deliberately stays open: toggling three columns should not cost three
+    // visits to the trigger. PopupMenu is told not to close on content clicks.
+    emit('update:modelValue', next)
+    emit('change', next)
+    return
+  }
   close()
   if (value === props.modelValue) return
   emit('update:modelValue', value)
@@ -277,9 +348,16 @@ function choose(value: string | number) {
 }
 
 @media (hover: hover) {
-  .menu-select-item:hover {
+  .menu-select-item:not(.is-locked):hover {
     background: var(--bg-tertiary, #eef1f4);
   }
+}
+
+/* `multiple` floor: the last selected row is disabled so the selection can
+   never drop below the consumer's minimum. */
+.menu-select-item.is-locked {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
 }
 
 .menu-select-item.active {

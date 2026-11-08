@@ -202,6 +202,12 @@ func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- StreamE
 		if errMsg == "" {
 			errMsg = "unknown error"
 		}
-		emitStreamEvent(ch, "pi", StreamEvent{Type: "error", Error: errMsg})
+		// Reason: see streamErrorReason — an unclassified error event is read as
+		// a clean finish by the turn classifier.
+		emitStreamEvent(ch, "pi", StreamEvent{
+			Type:   "error",
+			Error:  errMsg,
+			Reason: streamErrorReason(errMsg),
+		})
 	}
 }

@@ -488,6 +488,20 @@ describe('ChatPanelContent — ensureMessageContent scroll re-sync', () => {
     // pinned; user reading earlier → position kept.
     expect(region).toMatch(/shouldStayPinned\?\.\(\).*scrollBottom\(true\)/)
   })
+
+  it('render-flush re-pin is NON-force so it cannot cancel a wheel gesture', async () => {
+    // Issue #632: the throttled render flush fires every ~300ms while a reply
+    // streams. As a force pin it bypassed shouldPin's wheel gate and put the
+    // viewport back at the bottom mid-notch, so the "locked scroll" survived
+    // the gate itself. It is content growth, not a user action — it must obey
+    // the same rules as the other streamed pins (shouldStayPinned already
+    // supplies the user-left-bottom part of that decision).
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const region = source.slice(source.indexOf('function handleRenderFlush'), source.indexOf('async function handleLoadMore'))
+    expect(region).toMatch(/shouldStayPinned\?\.\(\)\).*scrollBottom\(false\)/)
+    expect(region).not.toContain('scrollBottom(true)')
+  })
 })
 
 // ── Failed-send input restore ──

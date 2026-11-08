@@ -1,33 +1,32 @@
 <template>
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
-    <div class="chat-top-actions" ref="actionBarRef"
-      :class="{ 'show-labels': showActionLabels, 'is-overflowing': actionBarOverflow }">
+    <ActionBar class="chat-top-actions" ref="actionBarRef" mode="scroll">
       <button class="chat-action-btn" data-action="session"
         :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
         @click="$emit('open-session-tab', 'sessions')"
         :title="t('chat.actions.session')">
         <List :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.session') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.session') }}</span>
       </button>
       <button class="chat-action-btn"
         @click="handleCreateClick"
         @contextmenu.prevent="emit('create-session')"
         :title="t('chat.create.selectAgentOrLongPress')">
         <Plus :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.create') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.create') }}</span>
       </button>
       <button class="chat-action-btn"
         @click="$emit('open-session-search')"
         :title="t('chat.actions.sessionSearch')">
         <Search :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.search') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.search') }}</span>
       </button>
       <button class="chat-action-btn"
         @click="$emit('open-user-msg-index')"
         :title="t('chat.actions.userMsgIndex')">
         <MessagesSquare :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
       </button>
       <button
         v-if="isACPTransport && !isGroupSession"
@@ -40,13 +39,13 @@
       >
         <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
         <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
       </button>
       <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
         @click="handleShare"
         :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
         <MessageSquareShare :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.share') }}</span>
       </button>
       <!-- Archive sits LAST: it is the destructive/terminal action on the
            session, so it is separated from the navigation buttons. -->
@@ -54,17 +53,49 @@
         @click="handleArchive"
         :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
         <Archive :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
       </button>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
         <Volume2 :size="14" />
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
+      </button>
+      <!-- Continuous conversation mode: keep the microphone open, send on a
+           trigger word or a pause, and resume listening once the reply has been
+           read out. Sits next to auto-speech because the two are used together
+           (the loop waits for the read-aloud to finish).
+
+           Idle icon is a conversation bubble, not a muted microphone: MicOff
+           reads as "microphone is off", which is the opposite of what pressing
+           this button does. -->
+      <button class="chat-action-btn free-dialog-btn" :class="['active-flag-' + freeDialogPhase, { active: freeDialogPhase !== 'idle' }]"
+        data-action="free-dialog"
+        :disabled="!currentSessionId"
+        @click="$emit('toggle-free-dialog')"
+        :title="freeDialogTitle">
+        <LoadingIndicator v-if="freeDialogPhase === 'thinking'" size="sm" inline />
+        <Mic v-else-if="freeDialogPhase === 'listening'" :size="14" class="free-dialog-mic" />
+        <AudioLines v-else-if="freeDialogPhase === 'speaking'" :size="14" />
+        <MessageCircleMore v-else :size="14" />
+        <span class="action-label">{{ t('chat.actions.wideLabels.freeDialog') }}</span>
       </button>
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
+        <span class="action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
+    </ActionBar>
+    <!-- Free-dialog status strip: what the microphone is hearing right now.
+         Without it the mode is a black box — the transcript was collected but
+         never shown, so "did it hear me?" could only be answered by waiting to
+         see whether a message went out. One line: the live transcript while
+         listening, otherwise what the loop is doing. -->
+    <div v-if="freeDialogPhase !== 'idle'" class="free-dialog-slot" data-role="free-dialog-strip">
+      <div class="free-dialog-strip">
+        <span class="free-dialog-dot" :class="'is-' + freeDialogPhase" aria-hidden="true"></span>
+        <span class="free-dialog-text" :class="{ 'is-hint': !freeDialogTranscript }">
+          {{ freeDialogTranscript || freeDialogHint }}
+        </span>
+      </div>
     </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space.
          Two elements, two motions: the outer slot owns the height collapse (so retiring the banner doesn't
@@ -119,7 +150,7 @@
           @remove="$emit('remove-quote', quote.id)"
         />
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
-        <AttachmentTags :files="attachedFiles" :pending-files="pendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
+        <AttachmentTags :files="attachedFiles" :pending-files="visiblePendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
@@ -206,6 +237,7 @@
         @switch-thinking-effort="handleSwitchThinkingEffort"
         @switch-mode="handleSwitchMode"
         @switch-transport="handleSwitchTransport"
+        @switch-config-option="handleSwitchConfigOption"
       />
       <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
       <!-- Unified completion menus (shared component).
@@ -322,7 +354,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert, Mic, MessageCircleMore, AudioLines } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -343,7 +375,6 @@ import QuoteCard from '@/components/chat/QuoteCard.vue'
 import MentionCard from '@/components/chat/MentionCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
-import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 const QuickSendDrawer = defineAsyncComponent(
@@ -371,6 +402,7 @@ import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
+import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
@@ -405,6 +437,25 @@ const acpSyncTitle = computed(() => {
   if (currentSessionRunning.value) return t('chat.actions.acpSyncRunning')
   if (sessionEmpty.value) return t('chat.actions.acpSyncEmpty')
   return t('chat.actions.acpSync')
+})
+
+/** What the strip says when there is no transcript yet. */
+const freeDialogHint = computed(() => {
+  switch (props.freeDialogPhase) {
+    case 'listening': return t('chat.actions.freeDialogListening')
+    case 'thinking': return t('chat.actions.freeDialogThinking')
+    case 'speaking': return t('chat.actions.freeDialogSpeaking')
+    default: return ''
+  }
+})
+
+const freeDialogTitle = computed(() => {
+  switch (props.freeDialogPhase) {
+    case 'listening': return t('chat.actions.freeDialogListening')
+    case 'thinking': return t('chat.actions.freeDialogThinking')
+    case 'speaking': return t('chat.actions.freeDialogSpeaking')
+    default: return t('chat.actions.freeDialog')
+  }
 })
 
 const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
@@ -643,6 +694,10 @@ const props = defineProps({
    *  cards themselves live in useChatContext so they survive a session switch
    *  alongside the file/quote drafts; this is just the render binding. */
   mentions: { type: Array, default: () => [] },
+  /** Free-dialog mode phase ('idle' | 'listening' | 'thinking' | 'speaking'). */
+  freeDialogPhase: { type: String, default: 'idle' },
+  /** What the microphone has recognised so far in this utterance. */
+  freeDialogTranscript: { type: String, default: '' },
 })
 
 const emit = defineEmits([
@@ -661,6 +716,7 @@ const emit = defineEmits([
   'open-session-search',
   'file-tag-click',
   'toggle-auto-speech',
+  'toggle-free-dialog',
   'create-session',
   'show-agent-selector',
   'archive-session',
@@ -672,6 +728,7 @@ const emit = defineEmits([
   'switch-thinking-effort',
   'switch-mode',
   'switch-transport',
+  'switch-config-option',
   'sync-acp-session',
   'toggle-group-cruise',
   'toggle-group-parallel',
@@ -950,64 +1007,6 @@ function onVoiceBlurStop() {
 const rootRef = ref(null)
 const textareaRef = ref(null)
 const actionBarRef = ref(null)
-/**
- * Action-bar labels visibility: labels are shown only when the chat pane is
- * wide enough to hold them. We force labels on, measure whether the action bar
- * overflows its container, and toggle a flag. This keeps labels off on narrow
- * chat panes regardless of wide-screen mode.
- */
-const showActionLabels = ref(false)
-/**
- * Whether the action bar actually overflows its pane — i.e. some buttons are
- * off-screen. The strip's scrollbar is hidden, so in that state a plain mouse
- * wheel cannot reach them; the grab cursor and the drag-to-scroll gesture are
- * both gated on this flag so a strip that fits behaves like a normal row.
- */
-const actionBarOverflow = ref(false)
-let actionBarObserver = null
-let actionBarMeasureTimer = null
-/** Disposer for the action bar's drag-to-scroll, or null when not attached. */
-let stopDragScroll = null
-
-/**
- * Attach or detach drag-to-scroll to match `actionBarOverflow`.
- *
- * Attached only while the strip overflows: a strip that fits must not intercept
- * a press-and-drag (there is nothing to scroll), and must not show a grab
- * cursor. Idempotent, so it can be called after every re-measure.
- */
-function syncActionBarDragScroll() {
-  const el = actionBarRef.value
-  if (!el) return
-  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
-  if (shouldAttach && !stopDragScroll) {
-    stopDragScroll = attachDragScroll(el)
-  } else if (!shouldAttach && stopDragScroll) {
-    stopDragScroll()
-    stopDragScroll = null
-  }
-}
-
-function measureActionLabels() {
-  const el = actionBarRef.value
-  if (!el) return
-  // Force the labels-on layout synchronously via .measure-labels (shows the
-  // label spans) so scrollWidth reflects the intended final width, then compare
-  // against the available clientWidth.
-  el.classList.add('measure-labels')
-  const overflow = el.scrollWidth > el.clientWidth + 2
-  el.classList.remove('measure-labels')
-  showActionLabels.value = !overflow
-  actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
-  syncActionBarDragScroll()
-}
-function scheduleMeasureActionLabels() {
-  if (actionBarMeasureTimer) clearTimeout(actionBarMeasureTimer)
-  actionBarMeasureTimer = setTimeout(() => {
-    actionBarMeasureTimer = null
-    measureActionLabels()
-  }, 50)
-}
 const isPasteOver = ref(false)
 let pasteOverlayTimer = 0
 const attachDrawer = useTabDrawer('chat')
@@ -1831,11 +1830,20 @@ const hasInputContent = computed(() => inputText.value.trim() || props.attachedF
 // retains completed (non-uploading) entries as a mirror of attachedFiles, but
 // AttachmentTags only draws in-flight ones — counting those mirrors here would
 // mount a childless container whose padding shows as dead vertical space.
+//
+// While the attachment sheet is open the picker owns the progress display (its
+// Uploads tab), and nothing it uploads may reach the composer before OK. Showing
+// the in-flight cards here as well produced the reported #629 flash: the card
+// unmounted the instant `uploading` flipped false, so the strip went from one
+// card to none and the file looked lost.
+const visiblePendingFiles = computed(() =>
+  attachDrawer.effectiveOpen.value ? [] : pendingFiles.value,
+)
 const hasAttachmentTags = computed(() =>
   quoteItems.value.length > 0
   || mentionItems.value.length > 0
   || props.attachedFiles.length > 0
-  || pendingFiles.value.some(f => f.uploading),
+  || visiblePendingFiles.value.some(f => f.uploading),
 )
 
 // Extract recently referenced files from message history
@@ -2213,6 +2221,10 @@ function handleSwitchTransport(transport) {
   emit('switch-transport', transport)
 }
 
+function handleSwitchConfigOption(payload) {
+  emit('switch-config-option', payload)
+}
+
 // Menu mutual exclusion: opening one closes the others
 watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
 watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
@@ -2243,11 +2255,6 @@ onMounted(() => {
   // Caret moves (clicks / arrow keys) can enter or leave an @ trigger without
   // changing the text, so the @ menu must re-evaluate on selection changes.
   document.addEventListener('selectionchange', onTextareaSelectionChange)
-  measureActionLabels()
-  if (typeof ResizeObserver !== 'undefined' && actionBarRef.value) {
-    actionBarObserver = new ResizeObserver(() => scheduleMeasureActionLabels())
-    actionBarObserver.observe(actionBarRef.value)
-  }
 })
 
 onBeforeUnmount(() => {
@@ -2277,16 +2284,6 @@ onBeforeUnmount(() => {
   voiceInput.cancel()
   endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
-  if (actionBarObserver) {
-    actionBarObserver.disconnect()
-    actionBarObserver = null
-  }
-  stopDragScroll?.()
-  stopDragScroll = null
-  if (actionBarMeasureTimer) {
-    clearTimeout(actionBarMeasureTimer)
-    actionBarMeasureTimer = null
-  }
   stopPlaceholderRotation()
 })
 
@@ -2314,7 +2311,7 @@ defineExpose({
   handleQuickSendClick,
   handleQuickSendInject,
   handleArchive,
-  measureActionLabels,
+  measureActionLabels: () => actionBarRef.value?.measure(),
 })
 </script>
 
@@ -2389,6 +2386,9 @@ defineExpose({
   padding: var(--space-2) var(--space-4) 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
+  /* Metadata under the composer, not body copy: the chips are one tier below
+     the text you type. The "off" states of the mode chips read as muted (see
+     .session-info-cruise-on), which only holds while this stays muted. */
   color: var(--text-muted, #999);
   overflow: hidden;
   white-space: nowrap;
@@ -2521,53 +2521,31 @@ defineExpose({
 }
 
 /* Top action bar (above input box, compact) */
+/* The strip is ActionBar (scroll mode): it owns the scroller, the hidden
+   scrollbar, the grab cursor, the edge masks and the label decision. Only the
+   composer-specific chrome stays here. */
 .chat-top-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   padding: var(--space-1) var(--space-2) var(--space-3);
-  /* When labels are briefly rendered during measurement (or when the chat pane
-     is too narrow), allow horizontal scroll with a hidden scrollbar instead of
-     clipping the trailing buttons. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.chat-top-actions::-webkit-scrollbar {
-  display: none;
-}
-/* Drag-to-scroll affordance, only while buttons are actually off-screen.
-   Deliberately NO touch-action here: it applies to touch/pen pointers, and the
-   drag module skips touch precisely so a finger keeps panning the strip
-   natively. Setting `pan-y` would disable that pan and leave touch users unable
-   to reach the off-screen buttons at all. Mouse dragging needs no touch-action. */
-.chat-top-actions.is-overflowing {
-  cursor: grab;
-}
-.chat-top-actions.is-dragging {
-  cursor: grabbing;
-  /* The pointer is captured, so the drag must not start a text selection. */
-  user-select: none;
-}
-
-/* Wide-screen short label next to the action icon. Always in the DOM so the
-   action bar can be measured with labels forced on (see .measure-labels);
-   hidden unless the container proves it has room for them. */
-.chat-action-label {
-  font-size: var(--font-size-xs);
-  line-height: 1;
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: none;
-}
-.chat-top-actions.show-labels .chat-action-label,
-.chat-top-actions.measure-labels .chat-action-label {
-  display: inline-block;
 }
 
 /* Auto-speech toggle button */
 .auto-speech-btn {
   flex-shrink: 0;
+}
+
+/* Free-dialog button: the active state comes from `.active`, but the phase
+   adds a motion cue — a pulsing mic while listening, a breathing wave while the
+   reply is being read. Colour alone is not enough here: 3 of the 36 themes have
+   an accent identical to the running orange. */
+.free-dialog-btn {
+  flex-shrink: 0;
+}
+.free-dialog-btn.active-flag-listening .free-dialog-mic {
+  animation: free-dialog-pulse 1.4s ease-in-out infinite;
+}
+@keyframes free-dialog-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.88); }
 }
 
 .chat-action-btn {
@@ -2577,9 +2555,9 @@ defineExpose({
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   padding: calc(5 * var(--dp)) var(--space-4);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   line-height: 1;
   transition: color var(--duration-base), background var(--duration-base), transform var(--duration-fast);
@@ -2588,36 +2566,32 @@ defineExpose({
 }
 
 @media (hover: hover) {
+  /* Hover uses the same recipe as every other ActionBar: primary text on a
+     neutral 12% tint. The accent is not usable as text (fails 4.5:1 in 15 of 36
+     themes, worst 1.92) and `--bg-tertiary` is nearly the panel colour in many. */
   .chat-action-btn:hover {
-    color: var(--accent-color, #0066cc);
-    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
   }
 }
 
+/* Pressed: the shared recipe (accent 14% tint, no colour change, no scale).
+   Stated here because this row is `size="custom"` — it keeps the composer's
+   own geometry, so the size-specific shared rules do not reach it. Keep these
+   three declarations identical to the shared ones in components.css. */
 .chat-action-btn:active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
-  transform: scale(0.92);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
 }
 
-.chat-action-btn.active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
-}
-
-.chat-action-btn.active:active {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
-  transform: scale(0.92);
-}
 
 .chat-action-btn:disabled {
   cursor: not-allowed;
   opacity: var(--opacity-disabled);
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
 }
 
 .chat-action-btn-archive:not(.disabled) {
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
 }
 
 @media (hover: hover) {
@@ -2630,7 +2604,6 @@ defineExpose({
 .chat-action-btn-archive:not(.disabled):active {
   color: var(--color-orange);
   background: color-mix(in srgb, var(--color-orange) 18%, transparent);
-  transform: scale(0.92);
 }
 
 .chat-action-btn-archive.disabled {
@@ -2688,7 +2661,6 @@ defineExpose({
 
 .chat-action-btn.has-running:active {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
-    transform: scale(0.92);
 }
 
 /* The running tint above outranks the generic `.chat-action-btn:hover` rule
@@ -2791,7 +2763,7 @@ defineExpose({
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
   padding: 0;
@@ -2867,6 +2839,66 @@ defineExpose({
   .recommend-slide-enter-active,
   .recommend-slide-leave-active {
     transition: none;
+  }
+}
+
+/* Free-dialog status strip.
+   Neutral surface rather than the recommendation chip's accent tint: this is a
+   status line, not something to act on, and an accent-tinted bar above the
+   composer reads as a prompt. Background is a text-primary mix so it holds up
+   on the translucent dock island and across all 36 themes (no fixed
+   background step — see design-guide 红线 4). */
+.free-dialog-slot {
+  margin: 0 0 var(--space-3);
+}
+.free-dialog-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  color: var(--text-primary);
+}
+.free-dialog-dot {
+  flex-shrink: 0;
+  width: calc(7 * var(--dp));
+  height: calc(7 * var(--dp));
+  border-radius: 50%;
+  background: var(--text-muted, #999);
+}
+.free-dialog-dot.is-listening {
+  background: var(--accent-color, #0066cc);
+  animation: free-dialog-pulse 1.4s ease-in-out infinite;
+}
+.free-dialog-dot.is-thinking {
+  background: var(--color-orange, #f59e0b);
+  animation: free-dialog-pulse 1.4s ease-in-out infinite;
+}
+.free-dialog-dot.is-speaking {
+  background: var(--color-success, #16a34a);
+}
+.free-dialog-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Nothing recognised yet: this is a hint, not content — muted so it is not
+   mistaken for what the microphone heard. */
+.free-dialog-text.is-hint {
+  color: var(--text-muted, #999);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The dot's pulse is decoration here: the strip's own text already says
+     whether it is listening, thinking or speaking. */
+  .free-dialog-dot.is-listening,
+  .free-dialog-dot.is-thinking {
+    animation: none;
   }
 }
 
@@ -3190,6 +3222,10 @@ defineExpose({
 }
 
 .chat-textarea::placeholder {
+  /* The muted tier, not --text-secondary: a placeholder is a hint, not content.
+     It was swept up by a bulk --text-muted → --text-secondary replacement during
+     the toolbar-colour refactor and became the only placeholder in the app one
+     step brighter than the rest, reading like already-typed text. */
   color: var(--text-muted, #999);
 }
 
@@ -3377,7 +3413,7 @@ defineExpose({
 .qs-cmd {
   flex: 1;
   min-width: 0;
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   overflow: hidden;
@@ -3394,7 +3430,7 @@ defineExpose({
   width: calc(24 * var(--dp));
   height: calc(24 * var(--dp));
   border-radius: var(--radius-xs);
-  color: var(--text-muted, #999);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--duration-base), color var(--duration-base);
 }

@@ -67,6 +67,22 @@ describe('chat input type scale matches the message body', () => {
     expect(block).not.toMatch(/line-height:\s*[\d.]+em/)
   })
 
+  // Hints, metadata and placeholders sit BELOW the secondary body tier. Using
+  // --text-secondary makes a hint read as content the user already produced.
+  // A bulk --text-muted → --text-secondary sweep in the toolbar colour refactor
+  // (0de95d933) hit these along with the real toolbar buttons; the buttons were
+  // the intended target, these four were collateral.
+  it.each([
+    ['textarea placeholder', '.chat-textarea::placeholder'],
+    ['voice hint text', '.free-dialog-text.is-hint'],
+    ['model/mode info bar', '.chat-session-info'],
+    ['attachment file size', '.attachment-filesize'],
+  ])('keeps the %s on the muted tier', (_name, selector) => {
+    const block = ruleBlock(inputBar, selector)
+    expect(block).toMatch(/color:\s*var\(--text-muted\b/)
+    expect(block).not.toMatch(/color:\s*var\(--text-secondary\)/)
+  })
+
   it('keeps --input-line-height a whole number of px', () => {
     // The integer constraint is the entire point of the token, and nothing else
     // in the design system enforces it — a retune to e.g. 1.4em or 18.2px would

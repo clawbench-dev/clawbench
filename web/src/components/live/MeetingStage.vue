@@ -43,7 +43,7 @@
         @dragend="cleanupDragGhost()"
         @click="quoteLiveMeeting"
       >
-        <MessageSquarePlus :size="14" />
+        <MessageSquare :size="14" />
       </button>
     </div>
 
@@ -476,7 +476,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Captions, ImageIcon, MessageSquarePlus, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Captions, ImageIcon, MessageSquare, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
@@ -672,6 +672,15 @@ const screenBusy = ref(false)
 
 const captureSources = ref<CaptureSource[]>([])
 const loadingSources = ref(false)
+/**
+ * Whether the OS has actually been asked for a source list.
+ *
+ * The stage is mounted for the whole life of the meeting panel, so enumerating
+ * screens here would raise the OS screen-share dialog the moment the panel is
+ * opened — Wayland goes through the desktop portal, which asks its own question.
+ * Nothing is enumerated until the host clicks "选择共享画面".
+ */
+const sourcesProbed = ref(false)
 
 /** A native host that can enumerate screens and windows. */
 const hasNativeCapture = computed(() => Boolean(getNative()?.listCaptureSources))
@@ -719,7 +728,12 @@ const pickLabel = computed(() => {
  * minimum size, so the body could squash it to a single clipped row.
  */
 const sourceHint = computed(() => {
-  if (captureSources.value.length === 0 && canCapture.value && !loadingSources.value) {
+  if (
+    sourcesProbed.value &&
+    captureSources.value.length === 0 &&
+    canCapture.value &&
+    !loadingSources.value
+  ) {
     return t('liveShare.noSources')
   }
   return ''
@@ -1022,25 +1036,38 @@ async function onKickViewer(viewerId: string): Promise<void> {
 }
 
 /**
- * Load the tiles the picture grid offers.
+ * Draw the picture tiles for a source list.
+ *
+ * `[]` is a legitimate input and means "nobody has been asked yet": Android and
+ * a plain browser still get their synthetic tile from it, while a native host
+ * gets the "选择共享画面" tile that asks for a real list when clicked.
+ */
+function applyChoices(list: CaptureSource[]): void {
+  captureSources.value = buildCaptureChoices({
+    list,
+    android: isAndroidCapture.value,
+    browser: browserCapture && !hasNativeCapture.value,
+    entireScreen: t('liveShare.entireScreen'),
+    browserSource: t('meeting.create.browserSource'),
+  })
+}
+
+/**
+ * Load the tiles the picture grid offers — the click on "选择共享画面".
  *
  * Same builder as the create form, so the two screens cannot disagree about
- * what a host with no source list should see. The camera probe rides along:
- * it answers the same "what can this machine send" question.
+ * what a host with no source list should see. This is the ONLY place that
+ * enumerates screens: the panel stays mounted while the host reads records, so
+ * asking here at mount time made the OS raise its dialog on every visit.
  */
 async function loadSources(): Promise<void> {
   if (loadingSources.value) return
   loadingSources.value = true
   try {
     const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
+    sourcesProbed.value = true
     cameraAvailable.value = hasCamera
-    captureSources.value = buildCaptureChoices({
-      list,
-      android: isAndroidCapture.value,
-      browser: browserCapture && !hasNativeCapture.value,
-      entireScreen: t('liveShare.entireScreen'),
-      browserSource: t('meeting.create.browserSource'),
-    })
+    applyChoices(list)
   } catch (e) {
     appLog.e('MeetingStage', 'loadSources failed', e)
   } finally {
@@ -1099,7 +1126,23 @@ const noteBlocks = computed(() => {
       fullUrl: shotFullUrl(token, s.id),
     })),
   )
-  return groupNoteSegments(rows).slice(-40)
+  // What the microphone is hearing right now, per channel. It sits at the end
+  // of the timeline and is replaced by the stored row the moment the engine
+  // settles — this is the "live subtitle" half of streaming; without it the
+  // text only appears once a sentence is finished.
+  const live = Object.entries(notes.liveLines.value)
+    .map(([channel, text]) => ({ channel, text: text.trim() }))
+    .filter((l) => l.text !== '')
+    .map((l) => ({
+      id: -1,
+      channel: l.channel,
+      speaker: [...rows].reverse().find((r) => r.channel === l.channel)?.speaker ?? '',
+      startedAt: Date.now(),
+      durationMs: 0,
+      text: l.text,
+      pending: true,
+    }))
+  return groupNoteSegments([...rows, ...live]).slice(-40)
 })
 
 // ── Runtime capture switches ────────────────────────────────────────────────
@@ -1230,10 +1273,15 @@ onMounted(() => {
   // The stage stays mounted across the meeting list, so this only matters for
   // the lines archived before it existed (a reload, or another host device).
   void loadChatHistory()
-  // The source list is what the picture grid draws; the camera probe rides
-  // along in the same call, so a machine without a camera does not offer a
-  // group that can only fail.
-  void loadSources()
+  // The source list is what the picture grid draws. Only the tiles that need no
+  // OS call are drawn up front (Android's sentinel, a browser's own picker): a
+  // native list is asked for when the host clicks "选择共享画面", not here — this
+  // component is mounted for as long as the meeting panel is open, and on
+  // Wayland enumerating screens makes the desktop portal raise its dialog.
+  applyChoices([])
+  void hasCameraDevice().then((has) => {
+    cameraAvailable.value = has
+  })
 })
 
 onBeforeUnmount(() => {
@@ -1742,7 +1790,9 @@ watch(
   flex-shrink: 0;
   transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
 }
-.live-panel__back:hover { background: var(--bg-hover); color: var(--text-primary); }
+@media (hover: hover) {
+  .live-panel__back:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+}
 .live-panel__back:active { transform: scale(0.92); }
 
 /* Quote-into-chat, pinned to the header's right edge. Same 26px square as the
@@ -1764,7 +1814,9 @@ watch(
   flex-shrink: 0;
   transition: background var(--duration-fast, 0.1s) ease, color var(--duration-fast, 0.1s) ease;
 }
-.live-panel__quote:hover { background: var(--bg-hover); color: var(--text-primary); }
+@media (hover: hover) {
+  .live-panel__quote:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+}
 .live-panel__quote:active { transform: scale(0.92); }
 
 .live-panel__title {
@@ -1800,8 +1852,8 @@ watch(
 }
 
 .live-panel__dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: currentColor;
   animation: live-panel-pulse 1.4s ease-in-out infinite;
@@ -1967,8 +2019,8 @@ watch(
    error or a destructive action in this UI, while a running recorder is normal
    ongoing work. */
 .live-tab__rec {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   background: var(--accent-color, #4a90d9);
   animation: live-panel-pulse 1.4s ease-in-out infinite;

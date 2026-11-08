@@ -30,7 +30,33 @@ const (
 	abnormalNoTerminal = "no_terminal"
 	// abnormalEmpty: the turn completed structurally but produced nothing.
 	abnormalEmpty = "empty"
+	// abnormalTerminalFailure: the turn failed in a way NO automatic mechanism
+	// can fix — the user must act (top up a balance, sign in, restart the
+	// server). It is a failure, not a clean finish, but it is also not
+	// resumable.
+	//
+	// It exists because those two facts need separate signals. Before it,
+	// classifyTurnAbnormality returned "" for both "finished cleanly" and
+	// "failed permanently", and every consumer read "" as "clean" — so a quota
+	// error let auto-cruise start confirmation rounds (up to the 100-speech
+	// cap), told the drain loop to push a "turn answered" notification, and made
+	// a scheduled task report `completed`. Every consumer now checks this
+	// sentinel explicitly, so a permanent failure can never be mistaken for
+	// success while still being excluded from auto-continue.
+	abnormalTerminalFailure = "terminal_failure"
 )
+
+// terminalFailureReasons are the warning reasons that mean "only the user can
+// fix this". They are deliberately NOT in retryableWarningReasons, and they must
+// additionally be distinguishable from a clean finish — see
+// abnormalTerminalFailure.
+var terminalFailureReasons = map[string]bool{
+	ai.ReasonAuthRequired:     true, // nobody is signed in
+	ai.ReasonQuotaExhausted:   true, // out of credit / over the plan limit
+	ai.ReasonAgentInitTimeout: true, // the agent never came up
+	ai.ReasonTimeout:          true, // the turn already spent its full budget
+	ai.ReasonPanic:            true, // a deterministic internal defect
+}
 
 // retryableWarningReasons is the set of backend-reported warning reasons that
 // mean "this turn did not really happen", as opposed to "the model answered
@@ -45,6 +71,11 @@ const (
 //   - agent_init_timeout: the agent never answered the handshake. The source
 //     comment on ReasonAgentInitTimeout states the identical handshake would
 //     simply time out again, so it is not retryable by design.
+//   - auth_required: only the user can sign in; see ReasonAuthRequired.
+//   - quota_exhausted: only the user can top up or switch model. Retrying burns
+//     the attempt budget and writes a user+assistant row pair per attempt, and
+//     for a rate-limited upstream each attempt takes ~85s (measured: opencode
+//     2.2.6 retries a persistent 429 eleven times before giving up).
 var retryableWarningReasons = map[string]bool{
 	ai.ReasonBackendExit:   true, // CLI process exited abnormally
 	ai.ReasonParseError:    true, // CLI output could not be parsed
@@ -53,18 +84,21 @@ var retryableWarningReasons = map[string]bool{
 	ai.ReasonAgentNoRun:    true, // agent accepted the prompt but never ran the model
 }
 
-// classifyTurnAbnormality reports whether a finished turn ended abnormally in a
-// way that is worth resuming, and names the reason.
+// classifyTurnAbnormality reports whether a finished turn ended abnormally and
+// names the reason.
 //
-// An empty return means "do not auto-continue". That deliberately covers BOTH a
-// clean finish and a non-retryable failure (user cancel, timeout, panic, …):
-// from the retry loop's point of view they are the same decision, and collapsing
-// them keeps the caller from having to re-derive the exclusion list.
+// A return of "" means "the turn finished cleanly". Anything else is a failure:
+// either one worth resuming (a value in retryableWarningReasons) or a permanent
+// one (abnormalTerminalFailure). Callers that only care about retrying test
+// retryableWarningReasons; callers that need to tell success from failure test
+// the empty string, and this is why a permanent failure is no longer reported as
+// "".
 //
 // Cancel reasons are checked FIRST and unconditionally. They are the one signal
 // that must never be overridden by anything else: a user who pressed stop, or
 // redirected the turn with "interrupt and send", must not have their session
 // silently resumed — that is the single hardest requirement of this feature.
+// A cancellation is also not a failure to report as such: the user ended it.
 //
 // Partial output does NOT suppress a retry. An earlier version required "no
 // readable text yet", on the theory that re-prompting a model which already
@@ -91,8 +125,22 @@ func classifyTurnAbnormality(cancelReason string, receivedTerminal, empty bool, 
 		if retryableWarningReasons[blocks[i].Reason] {
 			return blocks[i].Reason
 		}
+		if terminalFailureReasons[blocks[i].Reason] {
+			return abnormalTerminalFailure
+		}
 	}
 	return ""
+}
+
+// shouldRetryTurn reports whether the given abnormal reason is worth an
+// automatic resume. A permanent failure (abnormalTerminalFailure) is not: the
+// user has to act, so re-sending the same request only spends the retry budget
+// and writes a user+assistant row pair per attempt.
+func shouldRetryTurn(abnormalReason string) bool {
+	if abnormalReason == "" || abnormalReason == abnormalTerminalFailure {
+		return false
+	}
+	return true
 }
 
 // AutoContinueEnabled reports whether the user opted into auto-resuming

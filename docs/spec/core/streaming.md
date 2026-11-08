@@ -94,6 +94,7 @@ sequenceDiagram
   - 聊天内容事件：`ChatStreamData` 携带 `event_type`（`content`/`thinking`/`tool_use` 等子事件），通过 `StreamHub.EmitToSession` 推送
   - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`，`summary_update` 事件携带 `SummaryCards` 结构化卡片元数据
   - 信号事件：`replay_done`（LoadSession 异步回放完成，空 payload）、`thinking_done`、`done`（均为空 payload）
+  - 瞬时提示：`retry_notice`（后端 agent 正在自行重试上游失败，如 opencode 对 429 会重试 11 次、约 85 秒）。**不落块、不落库**：重试成功必须在对话里零痕迹（落成 warning 块会让"其实成功了"的回合看起来失败，分类也读块里的 reason），前端只在输入框上方显示一条提示，下一条 `content`/`thinking`/`tool_use` 或任何终态事件即撤掉。没有 payload 的 `retry_notice` 会被 `Emit` 丢弃，所以 `StreamEventToPayload` 必须给出 map
   - 遥测事件：`system_resources`（系统资源指标，由 `MetricsPusher` 按订阅需求推送）。**不进回放缓冲**——1Hz 遥测会在一分钟内冲爆 50 条缓冲并挤掉聊天/任务事件，因此走独立的非缓冲投递路径，且队列满时丢弃而非断连
   - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`pong`/`metrics_preference` 六种客户端消息。`metrics_preference` 声明是否订阅系统资源推送及速率（前台 1000ms / 后台 5000ms / 关闭），服务端仅在存在订阅者时采样，按最快请求速率推送；新连接会清空该偏好，客户端每次重连后重新声明
 - **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`。后端重放时给缓冲事件打 `Replayed` 标记（`replayed: true`），前端据此进入 `isReplayingEvents` 状态——补发的历史终态事件（如断线期间已完成的 `session_update`/`task_update`）不再被当作 live 事件处理，避免刷新后误弹历史完成通知/完成弹窗

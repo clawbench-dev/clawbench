@@ -76,6 +76,34 @@ describe('useWakeLock', () => {
     expect(mockSentinel.release).toHaveBeenCalled()
   })
 
+  it('releases a request that resolves after the lock was released', async () => {
+    // Otherwise the screen stays on until the page goes away: the late sentinel
+    // is installed with no entry in `holders`, and every later release()
+    // short-circuits on `holders.delete` returning false.
+    let resolveFirst: (s: typeof mockSentinel) => void = () => {}
+    mockWakeLockRequest.mockReturnValueOnce(new Promise((r) => { resolveFirst = r }))
+
+    const { held, acquire, release } = await importUseWakeLock()
+    void acquire('dialog')
+    // The mode is closed before the browser answers the request.
+    release('dialog')
+    expect(held.value).toBe(false)
+
+    const stale = { release: vi.fn(), released: false, onrelease: null }
+    resolveFirst(stale)
+    await vi.waitFor(() => expect(stale.release).toHaveBeenCalled())
+    expect(held.value).toBe(false)
+
+    // A later acquire must not be blocked by a phantom lock.
+    const fresh = { release: vi.fn(), released: false, onrelease: null }
+    mockWakeLockRequest.mockResolvedValueOnce(fresh)
+    await acquire('dialog')
+    expect(held.value).toBe(true)
+    release('dialog')
+    expect(fresh.release).toHaveBeenCalled()
+    expect(held.value).toBe(false)
+  })
+
   it('handles unsupported browser (no navigator.wakeLock)', async () => {
     Object.defineProperty(globalThis, 'navigator', {
       value: {},

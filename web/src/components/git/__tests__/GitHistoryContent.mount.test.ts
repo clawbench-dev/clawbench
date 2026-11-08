@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, defineComponent } from 'vue'
 import GitHistoryContent from '@/components/git/GitHistoryContent.vue'
+import { useToast } from '@/composables/useToast'
+import { GIT_TIMEOUT_MS } from '@/utils/gitApi'
 
 // ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
@@ -38,6 +40,9 @@ vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
 // loadProjectHistory into its error branch.
 vi.mock('@/utils/gitApi', () => ({
   gitFetch: mockGitFetch,
+  // Mirrors the real constant: the fetch test asserts the caller asks for a
+  // longer budget than the default read timeout.
+  GIT_TIMEOUT_MS: 10_000,
   GitTimeoutError: class GitTimeoutError extends Error {},
   createSeqGuard: () => {
     let current: { __seqToken: true; signal: AbortSignal } | null = null
@@ -63,7 +68,12 @@ vi.mock('@/stores/app', () => ({
 
 // Child components
 vi.mock('@/components/git/GitCommitList.vue', () => ({
-  default: { template: '<div class="commit-list-stub"><slot /></div>' },
+  default: defineComponent({
+    name: 'GitCommitList',
+    props: ['branches', 'currentBranch', 'viewBranch', 'mode', 'fetching', 'divergence'],
+    emits: ['change-branch', 'select', 'search', 'load-more', 'refresh', 'manage', 'fetch'],
+    template: '<div class="commit-list-stub"><slot /></div>',
+  }),
 }))
 vi.mock('@/components/git/GitManageContent.vue', () => ({
   default: { template: '<div class="manage-stub"><slot /></div>' },
@@ -454,5 +464,233 @@ describe('GitHistoryContent — commit meta file annotation', () => {
     expect(mockRevealInFileManager).toHaveBeenCalledTimes(1)
     expect(mockRevealInFileManager).toHaveBeenCalledWith('a.ts', 'history')
     wrapper.unmount()
+  })
+})
+
+describe('GitHistoryContent — read-only branch view', () => {
+  function mountContent() {
+    return mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: {
+        stubs: { Teleport: { template: '<div><slot /></div>' } },
+      },
+    })
+  }
+
+  /** Serve the branch list plus a one-commit history for any branch. */
+  function routeBranchFetch() {
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/branches')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, refView: true, branches: [{ name: 'main' }, { name: 'feat/x' }] }),
+        })
+      }
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, commits: [{ sha: 'p1', msg: 'P', date: '', author: '' }], hasMore: false }),
+        })
+      }
+      if (url.startsWith('/api/git/working-tree')) {
+        return Promise.resolve({ ok: true, json: async () => ({ files: [] }) })
+      }
+      if (url.startsWith('/api/git/divergence')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            hasUpstream: true,
+            upstream: 'origin/main',
+            ahead: ['p1'],
+            behind: [{ sha: 'r1', msg: 'Remote', date: '', author: '' }],
+            aheadCount: 1,
+            behindCount: 1,
+                  }),
+        })
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) })
+    })
+  }
+
+  it('loads the branch list and passes it to the list chrome', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    expect(list.props('branches')).toEqual([{ name: 'main' }, { name: 'feat/x' }])
+    expect(list.props('currentBranch')).toBe('main')
+    expect(list.props('viewBranch')).toBe('')
+    wrapper.unmount()
+  })
+
+  it('loads the divergence and hands the commits to the list', async () => {
+    // The counters alone cannot mark rows or name the remote commits; the
+    // detail payload is what the list renders from.
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    expect(list.props('divergence').upstream).toBe('origin/main')
+    expect(list.props('divergence').ahead).toEqual(['p1'])
+    expect(list.props('divergence').behind[0].sha).toBe('r1')
+    wrapper.unmount()
+  })
+
+  it('asks for the divergence of the branch being viewed', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    await list.vm.$emit('change-branch', 'feat/x')
+    await flushPromises()
+
+    // Encoded, because a branch name may contain a slash. The request carries
+    // an abort signal so a slow response cannot overwrite a newer one.
+    expect(mockGitFetch).toHaveBeenCalledWith(
+      '/api/git/divergence?ref=feat%2Fx',
+      expect.objectContaining({ signal: expect.anything() }),
+    )
+    wrapper.unmount()
+  })
+
+  it('hides the picker when the server cannot read other branches', async () => {
+    // An older binary ignores ?ref= and would answer with the current branch's
+    // commits, so a picker there would mislabel history. The flag is the guard.
+    mockGitFetch.mockImplementation((url: string) => {
+      if (url.startsWith('/api/git/branches')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, branches: [{ name: 'main' }, { name: 'feat/x' }] }),
+        })
+      }
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ isGit: true, commits: [{ sha: 'c1', msg: 'C', date: '', author: '' }], hasMore: false }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ files: [] }) })
+    })
+
+    const wrapper = mountContent()
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'GitCommitList' }).props('branches')).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('reloads the history of the picked branch and stops describing the workspace', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    mockGitFetch.mockClear()
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    list.vm.$emit('change-branch', 'feat/x')
+    await flushPromises()
+
+    expect(list.props('viewBranch')).toBe('feat/x')
+    expect(mockGitFetch).toHaveBeenCalledWith(
+      '/api/git/project-history?ref=feat%2Fx',
+      expect.objectContaining({ signal: expect.anything() }),
+    )
+    // The uncommitted-changes row belongs to the checked-out branch only.
+    expect(mockGitFetch.mock.calls.some(([url]) => String(url).startsWith('/api/git/working-tree'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('going back clears the branch view and reloads the current branch', async () => {
+    routeBranchFetch()
+    const wrapper = mountContent()
+    await flushPromises()
+
+    const list = wrapper.findComponent({ name: 'GitCommitList' })
+    list.vm.$emit('change-branch', 'feat/x')
+    await flushPromises()
+
+    mockGitFetch.mockClear()
+    list.vm.$emit('change-branch', '')
+    await flushPromises()
+
+    expect(list.props('viewBranch')).toBe('')
+    expect(mockGitFetch).toHaveBeenCalledWith('/api/git/project-history', expect.anything())
+    expect(mockGitFetch.mock.calls.some(([url]) => String(url).startsWith('/api/git/working-tree'))).toBe(true)
+    wrapper.unmount()
+  })
+})
+
+// ── Fetch from remotes ──────────────────────────────────────
+// The handler is the only place that knows the fetch endpoint exists; the child
+// toolbar only emits `fetch`. These pin the request shape (POST, long timeout)
+// and that both outcomes refresh the numbers the toolbar shows.
+describe('fetch from remotes', () => {
+  function routeWithFetch(fetchBody: Record<string, unknown>) {
+    const calls: Array<{ url: string; opts?: Record<string, unknown> }> = []
+    mockGitFetch.mockImplementation((url: string, opts?: Record<string, unknown>) => {
+      if (url === '/api/git/fetch') {
+        calls.push({ url, opts })
+        return Promise.resolve({ ok: true, json: async () => fetchBody })
+      }
+      if (url.startsWith('/api/git/project-history')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            isGit: true,
+            commits: [{ sha: 'c0ffee1', msg: 'first', date: '2026-01-01T00:00:00Z', author: 'a' }],
+            hasMore: false,
+          }),
+        })
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) })
+    })
+    return calls
+  }
+
+  async function mountAndFetch() {
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: { stubs: { Teleport: { template: '<div><slot /></div>' } } },
+    })
+    await flushPromises()
+    await (wrapper.vm as any).onFetch()
+    await flushPromises()
+    return wrapper
+  }
+
+  it('posts to the fetch endpoint with a budget longer than the read timeout', async () => {
+    const calls = routeWithFetch({ success: true, summary: 'From github.com:org/repo' })
+    const toast = useToast()
+    toast.dismiss()
+
+    await mountAndFetch()
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].opts).toMatchObject({ method: 'POST' })
+    // A fetch waits on the remote; the default 10s would abort a slow one.
+    expect((calls[0].opts as { timeoutMs?: number }).timeoutMs).toBeGreaterThan(GIT_TIMEOUT_MS)
+    expect(toast.message.value).toBe('From github.com:org/repo')
+    expect(mockLoadGitBranch).toHaveBeenCalled()
+  })
+
+  it("shows git's own explanation when the fetch fails", async () => {
+    routeWithFetch({
+      success: false,
+      error: 'fetch_failed',
+      errorDetail: 'fatal: unable to access: Could not resolve host.',
+    })
+    const toast = useToast()
+    toast.dismiss()
+
+    await mountAndFetch()
+
+    // A generic "fetch failed" would hide the reason the user has to act on
+    // (bad credentials, unreachable host).
+    expect(toast.message.value).toContain('Could not resolve host')
+    // The branch state is still refreshed: a failed fetch may still have moved
+    // some remotes.
+    expect(mockLoadGitBranch).toHaveBeenCalled()
   })
 })

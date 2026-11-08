@@ -936,9 +936,15 @@ describe('tunnel/h2: local listener preserves TCP half-close', () => {
     const entry = () => listeningServer(PORT_A)!
 
     for (let i = 0; i < 6; i++) {
+      // Take the stream THIS dial created, measured as a delta. An absolute
+      // `streams.length === i + 1` also fails when a stray connection from the
+      // preceding case is still being accepted (it lands as streams[i+1] before
+      // this dial's own stream), which made this case fail only in a full-suite
+      // run. The leak itself is still asserted exactly, once, at the end.
+      const before = h2State.streams.length
       const { client, chunks, ended } = await dialHalfOpen(PORT_A)
-      await vi.waitFor(() => expect(h2State.streams.length).toBe(i + 1))
-      const stream = h2State.streams[i]
+      await vi.waitFor(() => expect(h2State.streams.length).toBe(before + 1))
+      const stream = h2State.streams[before]
 
       if (i % 2 === 0) {
         // Half-close first, target replies, then the response ends. Both
@@ -974,6 +980,8 @@ describe('tunnel/h2: local listener preserves TCP half-close', () => {
     })
     const conns = await new Promise<number>((r) => entry().server.getConnections((_e: unknown, c: number) => r(c)))
     expect(conns).toBe(0)
+    // Six dials, six streams: nothing was opened twice and nothing leaked.
+    expect(h2State.streams.length).toBe(6)
   })
 
   it('reclaims the socket on an abrupt client reset', async () => {

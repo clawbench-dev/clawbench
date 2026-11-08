@@ -356,7 +356,13 @@ function onMessageDeleted(): void {
 }
 
 function onMessageUpdated(msg: MailMessage): void {
+  const prev = list.messages.value.find((m) => m.id === msg.id)
   list.patchMessage(msg)
+  // A seen flip also moves the folder's unread counter, which the row alone
+  // does not cover: the folder bar (and the picker's "(N)") would keep showing
+  // the old number until the next sync. Opening a message flips it too — the
+  // reader reports the loaded row for exactly this reason.
+  if (!prev || prev.seen !== msg.seen) void list.loadFolders(activeAccountId.value)
 }
 
 /**

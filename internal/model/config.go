@@ -454,6 +454,28 @@ type STTConfig struct {
 	Streaming       bool   `yaml:"streaming"`         // true=streaming incremental, false=non-streaming full (default: false)
 	ChunkMs         int    `yaml:"chunk_ms"`          // Streaming slice interval in ms (default: 1000)
 	ShortcutKey     string `yaml:"shortcut_key"`      // Recording shortcut (default: "F9")
+
+	// Microphone preprocessing. Applied where the microphone is opened, so the
+	// echo/noise/gain trio also reaches a meeting audience; the band filter is
+	// applied on the recogniser side only (see web/src/utils/audioTuning.ts).
+	MicEchoCancel    bool `yaml:"mic_echo_cancel"`    // Browser echo cancellation (default: true)
+	MicNoiseSuppress bool `yaml:"mic_noise_suppress"` // Browser noise suppression (default: true)
+	MicAutoGain      bool `yaml:"mic_auto_gain"`      // Browser automatic gain control (default: true)
+	MicBandFilter    bool `yaml:"mic_band_filter"`    // Cut sub-100Hz rumble and above-8kHz hiss before recognition (default: true)
+
+	// Voice gate. Audio that carries no speech is not sent to the engine at all,
+	// which saves recognition cost and stops the model from inventing words out
+	// of room tone.
+	VoiceGate            bool   `yaml:"voice_gate"`             // Skip silent audio (default: true)
+	VoiceGateSensitivity string `yaml:"voice_gate_sensitivity"` // conservative | standard | aggressive (default: standard)
+
+	// Free-dialog mode: keep the microphone open, send on a trigger word or a
+	// long pause, and resume listening once the reply has been read out.
+	TriggerWords       string `yaml:"trigger_words"`        // Comma-separated send words (default: 发送,好了,就这样)
+	SilenceSendSeconds int    `yaml:"silence_send_seconds"` // Pause that also sends, 0 = never (default: 3)
+	IdleExitSeconds    int    `yaml:"idle_exit_seconds"`    // Leave the mode after this long with no recognized words, 0 = never (default: 60)
+	BargeIn            string `yaml:"barge_in"`             // off | any | keyword (default: any)
+	BargeInWords       string `yaml:"barge_in_words"`       // Comma-separated interrupt words (default: 等等,停一下)
 }
 
 // FileSearchConfig holds configuration for the file search feature.

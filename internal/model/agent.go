@@ -11,6 +11,12 @@ type AgentModel struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Default bool   `json:"default"`
+	// Price is the per-million-token list price shown next to this model in the
+	// picker (issue #643). It is DERIVED from the catalog snapshot at response
+	// time by WithPrices and must never be persisted: the snapshot refreshes
+	// weekly, so a stored copy would freeze last month's number. Nil means no
+	// trustworthy price — the picker then shows no tag at all.
+	Price *ModelPrice `json:"price,omitempty"`
 }
 
 // Agent represents an AI agent with its own system prompt, backend, and models.

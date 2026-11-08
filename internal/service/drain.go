@@ -17,10 +17,11 @@ type DrainResult struct {
 	CancelReason string
 	Err          string
 	Empty        bool
-	// AbnormalReason is non-empty when the turn ended abnormally in a way that
-	// is worth resuming (see classifyTurnAbnormality). Empty means "do not
-	// auto-continue" — which covers both a clean finish and a non-retryable
-	// failure such as a user cancel.
+	// AbnormalReason is non-empty when the turn did not finish cleanly. It names
+	// either a resumable failure or a permanent one (abnormalTerminalFailure);
+	// only the former is auto-continued (see shouldRetryTurn). Empty means a
+	// clean finish — do not test `== ""` for "do not auto-continue", because a
+	// permanent failure is also non-resumable.
 	AbnormalReason string
 	// MsgID is the finalized assistant row id this turn produced (0 when the
 	// turn never opened one). Auto-continue needs it to emit a stream_finalize
@@ -35,6 +36,17 @@ type DrainResult struct {
 	// decide whether a CONFIRMATION round ends the run (see cruise.go). It is
 	// only consulted for a clean turn.
 	GoalSatisfied bool
+}
+
+// clean reports whether this turn produced an answer worth acting on: not
+// cancelled, not errored, and not classified as abnormal.
+//
+// Empty is deliberately not tested separately: a turn that produced nothing is
+// classified as abnormalEmpty by classifyTurnAbnormality, so AbnormalReason
+// already covers it. Callers that predate that classification still test Empty
+// on its own.
+func (r DrainResult) clean() bool {
+	return r.CancelReason == "" && r.Err == "" && r.AbnormalReason == ""
 }
 
 // DrainConfig holds the parameters for the drain loop.
@@ -237,7 +249,7 @@ func drainHandleTerminal(cfg DrainConfig, result DrainResult) bool {
 //   - the user must have nothing queued. Their explicit message outranks an
 //     automatic resume.
 func shouldAutoContinue(cfg DrainConfig, result DrainResult, attempts int) bool {
-	if cfg.AutoContinue == nil || result.AbnormalReason == "" {
+	if cfg.AutoContinue == nil || !shouldRetryTurn(result.AbnormalReason) {
 		return false
 	}
 	if GetQueuedCount(cfg.SessionID) > 0 {

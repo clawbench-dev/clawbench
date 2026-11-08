@@ -10,457 +10,476 @@
   <!-- Shell: the picture column plus the side panel, side by side. The panel is
        a SIBLING of the picture, never an overlay: opening it must squeeze the
        stage, so nothing the presenter draws ends up hidden behind it. -->
-  <LiveStageLayout
-    v-else
-    ref="layoutRef"
-    :side-open="sideOpen"
-    :active-tab="sideTab"
-    :notes-available="notesAvailable"
-    participants-available
-    :participant-count="roster.length"
-    @update:active-tab="setSideTab"
-    @close="closeSide"
-    @resize="syncInkRect"
-  >
-    <div class="live-share-view">
-      <div
-        ref="stageRef"
-        class="live-stage"
-        :class="{ 'live-stage--zoomed': zoom.scale > 1 }"
-        @wheel.prevent="onStageWheel"
-        @pointerdown="onStageDown"
-        @pointermove="onStageMove"
-        @pointerup="onStageUp"
-        @pointercancel="onStageUp"
-        @dblclick="resetZoom"
-      >
-        <!-- Zoom/pan transform wraps the picture AND the ink layer, so an
-             annotation stays glued to the pixel it was drawn on. -->
-        <div class="live-zoom" :style="zoomStyle">
-          <!-- The <video> is always mounted so `srcObject` survives a re-render.
-               It is hidden while there is nothing to show, which keeps the error
-               and waiting states from rendering a black rectangle.
-
-               `!videoEnabled` is part of that: the publisher stopping its screen
-               (or turning the camera off) leaves the m-line in place and only
-               stops sending frames, so the element keeps painting its LAST one.
-               The stage is still `playing` — the meeting goes on with audio —
-               so without this the final screen stays behind the transparent
-               "no picture" placeholder. Hiding (not clearing `srcObject`) is
-               deliberate: the same element carries the mixed audio. -->
-          <video
-            ref="videoRef"
-            class="live-video"
-            :class="{
-              'live-video--hidden': state !== 'playing' || viewMode === 'member' || !videoEnabled,
-            }"
-            autoplay
-            playsinline
-            muted
-            @loadedmetadata="syncInkRect"
-          />
-
-          <!-- A member's screen, forwarded by the host. Its own element rather than
-               swapping srcObject: switching back to the host must not depend on
-               re-attaching a stream that is still live. -->
-          <video
-            v-show="viewMode === 'member'"
-            ref="memberVideoRef"
-            class="live-video"
-            autoplay
-            playsinline
-            muted
-            @loadedmetadata="syncInkRect"
-          />
-
-          <!-- Ink covers exactly the picture, not the letterbox: a stroke drawn
-               at 0.5/0.5 must land in the middle of the CONTENT on every screen.
-               Screens only: a stroke over a camera image has nothing to annotate. -->
-          <div v-if="hostScreen" class="live-ink-wrap" :style="inkWrapStyle">
-            <LiveInkLayer :strokes="board.strokes.value" :laser="board.laser.value" />
-          </div>
-        </div>
-
-        <!-- The publisher's camera, when the meeting shows a screen AND a camera.
-             Outside the zoom wrapper on purpose: the screen may be zoomed and
-             panned, the face must not be. -->
-        <video
-          v-show="hostScreen && cameraMode && cameraStream"
-          ref="cameraVideoRef"
-          class="live-camera-pip"
-          autoplay
-          playsinline
-          muted
-          data-role="camera-pip"
-        />
-
-        <!-- No picture right now. Meetings have no type: the host may start a
-             screen share or turn the camera on at any moment, so this says "not
-             yet" instead of naming a kind of meeting. A black rectangle here
-             would read as a broken stream.
-
-             Gated on `playing` as well: this and `.live-overlay` below are the
-             SAME slot (both `inset: 0`, centred), so their conditions must be
-             mutually exclusive. "Not sharing yet" only means anything while the
-             meeting is live — the host stopping its picture leaves
-             `videoEnabled` false, and if the room then ends (or the viewer
-             retries and lands in connecting/failed) both blocks would render at
-             once, superimposing two sets of copy. -->
-        <div
-          v-if="!videoEnabled && state === 'playing'"
-          class="live-voice-stage"
-          data-role="no-picture"
-        >
-          <Mic :size="34" />
-          <div class="live-voice-stage__title">{{ t('share.live.noPictureTitle') }}</div>
-          <div class="live-voice-stage__desc">{{ t('share.live.noPictureDesc') }}</div>
-        </div>
-
-        <!-- Connection health. Only shown once there is a reading, and it never
-             covers the picture: a corner chip is enough to answer "is it me or
-             them" when the video stutters. -->
-        <div
-          v-if="stats && state === 'playing'"
-          class="live-quality"
-          :class="`live-quality--${quality.level}`"
-          :title="quality.detail"
-          data-role="quality"
-          data-local-ui
-        >
-          <span class="live-quality__dot" />
-          {{ quality.label }}
-        </div>
-
-        <!-- Remote control state. Loud on purpose: while it is on, this viewer's
-             pointer is moving someone else's mouse. `data-local-ui` keeps the
-             release button pressable: without it the stage forwards (and
-             captures) the press, so the host receives a click and the viewer
-             never gets one — the mouse is "hijacked" with no way out. -->
-        <div
-          v-if="controlState !== 'none'"
-          class="live-screen-banner live-control-banner"
-          data-role="control-banner"
-          data-local-ui
-        >
-          <span>{{ controlState === 'granted' ? t('share.live.controlling') : t('share.live.controlPending') }}</span>
-          <button
-            class="live-screen-banner-btn"
-            type="button"
-            data-action="control-release"
-            @click="releaseControl"
-          >
-            {{ controlState === 'granted' ? t('share.live.controlRelease') : t('share.live.controlCancel') }}
-          </button>
-        </div>
-
-        <!-- Who is presenting. Without it a viewer cannot tell whose screen this
-             is, and "why did the picture change" becomes a support question. -->
-        <div v-if="screenBanner" class="live-screen-banner" data-role="screen-banner" data-local-ui>
-          <span>{{ screenBanner }}</span>
-          <button
-            v-if="memberStream"
-            class="live-screen-banner-btn"
-            type="button"
-            data-action="toggle-view"
-            @click="toggleView"
-          >
-            {{ viewMode === 'member' ? t('share.live.backToHost') : t('share.live.viewShared') }}
-          </button>
-        </div>
-
-        <div v-if="state !== 'playing'" class="live-overlay" data-local-ui>
-          <template v-if="state === 'connecting' || state === 'negotiating'">
-            <LoadingIndicator />
-            <!-- The header used to carry this. A spinner alone does not say
-                 whether the viewer is still dialling or already negotiating. -->
-            <div class="live-overlay-desc">{{ statusText }}</div>
-          </template>
-          <template v-else>
-            <VideoOff :size="40" />
-            <div class="live-overlay-title">{{ overlayTitle }}</div>
-            <div class="live-overlay-desc">{{ overlayDesc }}</div>
-            <button v-if="state === 'failed' || state === 'ended'" class="live-retry" type="button" @click="retry">
-              {{ t('share.live.retry') }}
-            </button>
-          </template>
-        </div>
-      </div>
-
-      <!-- Browser-only hint: the link works, but the desktop client is what
-           unlocks capture and remote control. Shown only when the host actually
-           allows screen sharing, so it is not noise on every share. -->
-      <div
-        v-if="!clientMode && screenEnabled && !canShareScreen && !clientHintClosed"
-        class="live-client-hint"
-        data-role="client-hint"
-      >
-        <span>{{ t('share.live.clientHint') }}</span>
-        <button
-          class="live-client-hint__close"
-          type="button"
-          :aria-label="t('common.close')"
-          @click="clientHintClosed = true"
-        >
-          ×
-        </button>
-      </div>
-
-      <!-- Who is speaking. The publisher measures every microphone (it is the
-           only place all of them meet) and broadcasts a level; without this chip
-           a viewer hears a voice with no idea whose it is. -->
-      <div v-if="speaking" class="live-speaker" data-role="speaker">
-        <span class="live-speaker__dot" />
-        {{ t('share.live.speaking', { name: speakerLabel }) }}
-      </div>
-
-      <!-- Floating control dock. The pill and its buttons are the shared
-           LiveDock / LiveDockButton the host's picture of a member's screen
-           uses too: same object, different actions. -->
-      <LiveDock brand :live="state === 'playing'" :title="title || t('share.live.title')">
-        <!-- Autoplay with audio is blocked without a user gesture, so playback
-             starts muted and the viewer opts in here. A switch, labelled by
-             STATE exactly like the microphone next to it (声音已关 / 声音已开),
-             so the way back to silence is the same control. Only shown when the
-             stream actually carries audio — there is nothing to switch on a
-             silent share. -->
-        <LiveDockButton
-          v-if="hasAudio"
-          :live="!soundMuted"
-          role="switch"
-          :aria-checked="!soundMuted"
-          :aria-label="t('share.live.soundToggle')"
-          :title="soundMuted ? t('share.live.soundOffHint') : t('share.live.soundOnHint')"
-          data-action="toggle-sound"
-          @click="toggleSound"
-        >
-          <template #icon>
-            <VolumeX v-if="soundMuted" :size="16" />
-            <Volume2 v-else :size="16" />
-          </template>
-          {{ soundMuted ? t('share.live.soundOff') : t('share.live.soundOn') }}
-        </LiveDockButton>
-
-        <!-- One toggle: on = live, off = muted. No approval step — the
-             publisher's room-level switch is the whole authorisation model, and
-             it can be turned off at any moment (arrives as talk-revoked, which
-             flips this back to off). -->
-        <LiveDockButton
-          v-if="talkEnabled"
-          :live="talking"
-          role="switch"
-          :aria-checked="talking"
-          :aria-label="t('share.live.micToggle')"
-          :disabled="!canTalk || mutedByHost"
-          :title="
-            mutedByHost
-              ? t('share.live.micMutedByHost')
-              : !canTalk
-                ? t('share.live.micNeedsHttps')
-                : talking
-                  ? t('share.live.micOnHint')
-                  : t('share.live.micOffHint')
-          "
-          data-action="mic-toggle"
-          @click="toggleMic"
-        >
-          <template #icon>
-            <Mic v-if="talking" :size="16" />
-            <MicOff v-else :size="16" />
-          </template>
-          {{ mutedByHost ? t('share.live.micMutedByHost') : talking ? t('share.live.micOn') : t('share.live.micOff') }}
-        </LiveDockButton>
-
-        <!-- Shown whenever the host shares a screen, even when THIS page cannot
-             drive it: hiding it entirely leaves a member wondering why the button
-             their colleague sees is missing. Disabled + a title explains it. -->
-        <LiveDockButton
-          v-if="controlState === 'none' && hostScreen"
-          :disabled="!canRequestControl"
-          :aria-label="t('share.live.requestControl')"
-          :title="
-            canRequestControl ? t('share.live.requestControlHint') : t('share.live.controlUnavailable')
-          "
-          data-action="request-control"
-          @click="requestControl"
-        >
-          <template #icon><MousePointer2 :size="16" /></template>
-          {{ t('share.live.requestControl') }}
-        </LiveDockButton>
-
-        <LiveDockButton
-          v-if="screenEnabled"
-          :live="sharingScreen"
-          role="switch"
-          :aria-checked="sharingScreen"
-          :disabled="!canShareScreen"
-          :aria-label="t('share.live.shareScreen')"
-          :title="
-            !canShareScreen
-              ? t('share.live.screenNeedsHttps')
-              : sharingScreen
-                ? t('share.live.stopSharingHint')
-                : t('share.live.shareScreenHint')
-          "
-          data-action="screen-share"
-          @click="toggleScreenShare"
-        >
-          <template #icon>
-            <ScreenShare v-if="!sharingScreen" :size="16" />
-            <ScreenShareOff v-else :size="16" />
-          </template>
-          {{ sharingScreen ? t('share.live.stopSharing') : t('share.live.shareScreen') }}
-        </LiveDockButton>
-
-        <LiveDockButton
-          :live="chatOpen"
-          :badge="unread"
-          :aria-pressed="chatOpen"
-          :aria-label="t('share.live.chatTitle')"
-          :title="t('share.live.chatTitle')"
-          data-action="chat"
-          @click="toggleSide('chat')"
-        >
-          <template #icon><MessageSquare :size="16" /></template>
-          {{ t('share.live.chat') }}
-        </LiveDockButton>
-
-        <LiveDockButton
-          v-if="notesAvailable"
-          :live="notesOpen"
-          :aria-pressed="notesOpen"
-          :aria-label="t('share.live.notesTitle')"
-          :title="t('share.live.notesTitle')"
-          data-action="notes"
-          @click="toggleSide('notes')"
-        >
-          <template #icon><FileText :size="16" /></template>
-          {{ t('share.live.notes') }}
-        </LiveDockButton>
-
-        <LiveDockButton
-          :aria-pressed="isFullscreen"
-          :aria-label="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
-          :title="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
-          data-action="fullscreen"
-          @click="toggleFullscreen"
-        >
-          <template #icon>
-            <Minimize v-if="isFullscreen" :size="16" />
-            <Maximize v-else :size="16" />
-          </template>
-          {{ isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen') }}
-        </LiveDockButton>
-      </LiveDock>
+  <div v-else class="live-view">
+    <!-- The same topbar chrome every public share page uses. It costs one row
+         of the picture, which is why it disappears in fullscreen — there the
+         reader has explicitly asked for the picture and nothing else. -->
+    <div v-if="!isFullscreen" class="share-topbar live-topbar">
+      <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
+      <h1 class="share-file-name live-topbar__title">{{ title || t('share.live.title') }}</h1>
+      <span class="share-spacer" />
+      <ShareFitButton />
+      <ShareThemeButton />
     </div>
 
-    <template #chat>
-      <LiveChatPanel :messages="chatMessages" @send="sendChat" />
-    </template>
-
-    <template #notes>
-      <!-- Transcription is over, but the lines it already produced stay. The
-           hint is what stops "nothing new is appearing" from reading as a
-           broken panel. -->
-      <div v-if="!notesEnabled && noteBlocks.length > 0" class="live-notes-stopped" data-role="notes-stopped">
-        {{ t('share.live.notesStoppedHint') }}
-      </div>
-      <!-- Same shape as the record's 转写 tab: centred glyph, title, one line
-           of context. "Waiting" only makes sense while 听记 is on; once it is
-           off, the honest line is that nothing was recorded. -->
-      <MeetingEmpty
-        v-if="noteBlocks.length === 0"
-        :icon="Captions"
-        :title="t(notesEnabled ? 'share.live.notesWaiting' : 'share.live.notesOffTitle')"
-        :desc="t(notesEnabled ? 'share.live.notesWaitingDesc' : 'share.live.notesOffDesc')"
-        data-role="notes-empty"
-      />
-      <!-- The same rows the publisher's 转写 tab draws: one implementation. -->
-      <TranscriptList v-else :blocks="noteBlocks" fill />
-    </template>
-
-    <template #participants>
-      <!-- The audience's view of the room. No actions here on purpose: only the
-           host can mute or remove somebody, so a member list that offered
-           buttons would be a set of controls that always fail. -->
-      <!-- Headcount first, then the rows: the same number the tab carries, so
-           the pane answers "how many" on its own after the tab bar scrolls out
-           of view. -->
-      <p v-if="roster.length > 0" class="live-members-total" data-role="members-total">
-        {{ t('share.live.memberCount', { n: roster.length }) }}
-      </p>
-      <ul v-if="roster.length > 0" class="live-members" data-role="members-list">
-        <li v-for="m in roster" :key="m.id" class="live-member" :data-member-id="m.id">
-          <SpeakerAvatar class="live-member__avatar" :name="memberName(m)" />
-          <span class="live-member__name" :title="memberName(m)">{{ memberName(m) }}</span>
-          <span v-if="m.host" class="live-member__chip live-member__chip--role">
-            {{ t('share.live.hostRole') }}
-          </span>
-          <span
-            v-else-if="m.id === myViewerId"
-            class="live-member__chip live-member__chip--you"
-            data-role="member-you"
-          >
-            {{ t('share.live.memberYou') }}
-          </span>
-          <span
-            v-if="screenSharer === m.id"
-            class="live-member__chip"
-            data-role="member-sharing"
-          >
-            {{ t('share.live.memberSharing') }}
-          </span>
-          <span
-            v-if="m.talking"
-            class="live-member__chip live-member__chip--live"
-            data-role="member-talking"
-          >
-            {{ t('share.live.memberTalking') }}
-          </span>
-          <span
-            v-else-if="m.muted"
-            class="live-member__chip live-member__chip--muted"
-            data-role="member-muted"
-          >
-            {{ t('share.live.memberMuted') }}
-          </span>
-        </li>
-      </ul>
-      <p v-else class="live-members-empty" data-role="members-empty">
-        {{ t('share.live.membersEmpty') }}
-      </p>
-    </template>
-
-    <template #overlay>
-  <!-- Client-mode source picker. Electron refuses an undeclared capture
-           source, so the choice has to happen before getDisplayMedia. It is a
-           shell-level modal, not a picture-level one: the choice concerns the
-           whole page, so it must also cover an open side panel. -->
+    <LiveStageLayout
+      ref="layoutRef"
+      :side-open="sideOpen"
+      :active-tab="sideTab"
+      :notes-available="notesAvailable"
+      participants-available
+      :participant-count="roster.length"
+      @update:active-tab="setSideTab"
+      @close="closeSide"
+      @resize="syncInkRect"
+    >
       <div
-        v-if="pickingSource"
-        class="live-picker"
-        data-role="source-picker"
-        @click.self="pickingSource = false"
+        ref="rootRef"
+        class="live-share-view"
+        :style="dockHeight > 0 ? { '--live-dock-height': `${dockHeight}px` } : undefined"
       >
-        <div class="live-picker__card">
-          <div class="live-picker__title">{{ t('share.live.pickSource') }}</div>
-          <div class="live-picker__list">
+        <div
+          ref="stageRef"
+          class="live-stage"
+          :class="{ 'live-stage--zoomed': zoom.scale > 1 }"
+          @wheel.prevent="onStageWheel"
+          @pointerdown="onStageDown"
+          @pointermove="onStageMove"
+          @pointerup="onStageUp"
+          @pointercancel="onStageUp"
+          @dblclick="resetZoom"
+        >
+          <!-- Zoom/pan transform wraps the picture AND the ink layer, so an
+               annotation stays glued to the pixel it was drawn on. -->
+          <div class="live-zoom" :style="zoomStyle">
+            <!-- The <video> is always mounted so `srcObject` survives a re-render.
+                 It is hidden while there is nothing to show, which keeps the error
+                 and waiting states from rendering a black rectangle.
+
+                 `!videoEnabled` is part of that: the publisher stopping its screen
+                 (or turning the camera off) leaves the m-line in place and only
+                 stops sending frames, so the element keeps painting its LAST one.
+                 The stage is still `playing` — the meeting goes on with audio —
+                 so without this the final screen stays behind the transparent
+                 "no picture" placeholder. Hiding (not clearing `srcObject`) is
+                 deliberate: the same element carries the mixed audio. -->
+            <video
+              ref="videoRef"
+              class="live-video"
+              :class="{
+                'live-video--hidden': state !== 'playing' || viewMode === 'member' || !videoEnabled,
+              }"
+              autoplay
+              playsinline
+              muted
+              @loadedmetadata="syncInkRect"
+            />
+
+            <!-- A member's screen, forwarded by the host. Its own element rather than
+                 swapping srcObject: switching back to the host must not depend on
+                 re-attaching a stream that is still live. -->
+            <video
+              v-show="viewMode === 'member'"
+              ref="memberVideoRef"
+              class="live-video"
+              autoplay
+              playsinline
+              muted
+              @loadedmetadata="syncInkRect"
+            />
+
+            <!-- Ink covers exactly the picture, not the letterbox: a stroke drawn
+                 at 0.5/0.5 must land in the middle of the CONTENT on every screen.
+                 Screens only: a stroke over a camera image has nothing to annotate. -->
+            <div v-if="hostScreen" class="live-ink-wrap" :style="inkWrapStyle">
+              <LiveInkLayer :strokes="board.strokes.value" :laser="board.laser.value" />
+            </div>
+          </div>
+
+          <!-- The publisher's camera, when the meeting shows a screen AND a camera.
+               Outside the zoom wrapper on purpose: the screen may be zoomed and
+               panned, the face must not be. -->
+          <video
+            v-show="hostScreen && cameraMode && cameraStream"
+            ref="cameraVideoRef"
+            class="live-camera-pip"
+            autoplay
+            playsinline
+            muted
+            data-role="camera-pip"
+          />
+
+          <!-- No picture right now. Meetings have no type: the host may start a
+               screen share or turn the camera on at any moment, so this says "not
+               yet" instead of naming a kind of meeting. A black rectangle here
+               would read as a broken stream.
+
+               Gated on `playing` as well: this and `.live-overlay` below are the
+               SAME slot (both `inset: 0`, centred), so their conditions must be
+               mutually exclusive. "Not sharing yet" only means anything while the
+               meeting is live — the host stopping its picture leaves
+               `videoEnabled` false, and if the room then ends (or the viewer
+               retries and lands in connecting/failed) both blocks would render at
+               once, superimposing two sets of copy. -->
+          <div
+            v-if="!videoEnabled && state === 'playing'"
+            class="live-voice-stage"
+            data-role="no-picture"
+          >
+            <Mic :size="34" />
+            <div class="live-voice-stage__title">{{ t('share.live.noPictureTitle') }}</div>
+            <div class="live-voice-stage__desc">{{ t('share.live.noPictureDesc') }}</div>
+          </div>
+
+          <!-- Connection health. Only shown once there is a reading, and it never
+               covers the picture: a corner chip is enough to answer "is it me or
+               them" when the video stutters. -->
+          <div
+            v-if="stats && state === 'playing'"
+            class="live-quality"
+            :class="`live-quality--${quality.level}`"
+            :title="quality.detail"
+            data-role="quality"
+            data-local-ui
+          >
+            <span class="live-quality__dot" />
+            {{ quality.label }}
+          </div>
+
+          <!-- Remote control state. Loud on purpose: while it is on, this viewer's
+               pointer is moving someone else's mouse. `data-local-ui` keeps the
+               release button pressable: without it the stage forwards (and
+               captures) the press, so the host receives a click and the viewer
+               never gets one — the mouse is "hijacked" with no way out. -->
+          <div
+            v-if="controlState !== 'none'"
+            class="live-screen-banner live-control-banner"
+            data-role="control-banner"
+            data-local-ui
+          >
+            <span>{{ controlState === 'granted' ? t('share.live.controlling') : t('share.live.controlPending') }}</span>
             <button
-              v-for="src in clientSources"
-              :key="src.id"
-              class="live-picker__item"
+              class="live-screen-banner-btn"
               type="button"
-              @click="startClientShare(src.id)"
+              data-action="control-release"
+              @click="releaseControl"
             >
-              {{ src.name }}
+              {{ controlState === 'granted' ? t('share.live.controlRelease') : t('share.live.controlCancel') }}
             </button>
           </div>
-          <button class="live-picker__cancel" type="button" @click="pickingSource = false">
-            {{ t('common.cancel') }}
+
+          <!-- Who is presenting. Without it a viewer cannot tell whose screen this
+               is, and "why did the picture change" becomes a support question. -->
+          <div v-if="screenBanner" class="live-screen-banner" data-role="screen-banner" data-local-ui>
+            <span>{{ screenBanner }}</span>
+            <button
+              v-if="memberStream"
+              class="live-screen-banner-btn"
+              type="button"
+              data-action="toggle-view"
+              @click="toggleView"
+            >
+              {{ viewMode === 'member' ? t('share.live.backToHost') : t('share.live.viewShared') }}
+            </button>
+          </div>
+
+          <div v-if="state !== 'playing'" class="live-overlay" data-local-ui>
+            <template v-if="state === 'connecting' || state === 'negotiating'">
+              <LoadingIndicator />
+              <!-- The header used to carry this. A spinner alone does not say
+                   whether the viewer is still dialling or already negotiating. -->
+              <div class="live-overlay-desc">{{ statusText }}</div>
+            </template>
+            <template v-else>
+              <VideoOff :size="40" />
+              <div class="live-overlay-title">{{ overlayTitle }}</div>
+              <div class="live-overlay-desc">{{ overlayDesc }}</div>
+              <button v-if="state === 'failed' || state === 'ended'" class="live-retry" type="button" @click="retry">
+                {{ t('share.live.retry') }}
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Browser-only hint: the link works, but the desktop client is what
+             unlocks capture and remote control. Shown only when the host actually
+             allows screen sharing, so it is not noise on every share. -->
+        <div
+          v-if="!clientMode && screenEnabled && !canShareScreen && !clientHintClosed"
+          class="live-client-hint"
+          data-role="client-hint"
+        >
+          <span>{{ t('share.live.clientHint') }}</span>
+          <button
+            class="live-client-hint__close"
+            type="button"
+            :aria-label="t('common.close')"
+            @click="clientHintClosed = true"
+          >
+            ×
           </button>
         </div>
+
+        <!-- Who is speaking. The publisher measures every microphone (it is the
+             only place all of them meet) and broadcasts a level; without this chip
+             a viewer hears a voice with no idea whose it is. -->
+        <div v-if="speaking" class="live-speaker" data-role="speaker">
+          <span class="live-speaker__dot" />
+          {{ t('share.live.speaking', { name: speakerLabel }) }}
+        </div>
+
+        <!-- Floating control dock. The pill and its buttons are the shared
+             LiveDock / LiveDockButton the host's picture of a member's screen
+             uses too: same object, different actions.
+             No `brand`: the topbar above the picture already carries the logo
+             and the title, and two marks a few dp apart read as a mistake. The
+             "live" dot it also rendered is already in the status overlay. -->
+        <LiveDock>
+          <!-- Autoplay with audio is blocked without a user gesture, so playback
+               starts muted and the viewer opts in here. A switch, labelled by
+               STATE exactly like the microphone next to it (声音已关 / 声音已开),
+               so the way back to silence is the same control. Only shown when the
+               stream actually carries audio — there is nothing to switch on a
+               silent share. -->
+          <LiveDockButton
+            v-if="hasAudio"
+            :live="!soundMuted"
+            role="switch"
+            :aria-checked="!soundMuted"
+            :aria-label="t('share.live.soundToggle')"
+            :title="soundMuted ? t('share.live.soundOffHint') : t('share.live.soundOnHint')"
+            data-action="toggle-sound"
+            @click="toggleSound"
+          >
+            <template #icon>
+              <VolumeX v-if="soundMuted" :size="16" />
+              <Volume2 v-else :size="16" />
+            </template>
+            {{ soundMuted ? t('share.live.soundOff') : t('share.live.soundOn') }}
+          </LiveDockButton>
+
+          <!-- One toggle: on = live, off = muted. No approval step — the
+               publisher's room-level switch is the whole authorisation model, and
+               it can be turned off at any moment (arrives as talk-revoked, which
+               flips this back to off). -->
+          <LiveDockButton
+            v-if="talkEnabled"
+            :live="talking"
+            role="switch"
+            :aria-checked="talking"
+            :aria-label="t('share.live.micToggle')"
+            :disabled="!canTalk || mutedByHost"
+            :title="
+              mutedByHost
+                ? t('share.live.micMutedByHost')
+                : !canTalk
+                  ? t('share.live.micNeedsHttps')
+                  : talking
+                    ? t('share.live.micOnHint')
+                    : t('share.live.micOffHint')
+            "
+            data-action="mic-toggle"
+            @click="toggleMic"
+          >
+            <template #icon>
+              <Mic v-if="talking" :size="16" />
+              <MicOff v-else :size="16" />
+            </template>
+            {{ mutedByHost ? t('share.live.micMutedByHost') : talking ? t('share.live.micOn') : t('share.live.micOff') }}
+          </LiveDockButton>
+
+          <!-- Shown whenever the host shares a screen, even when THIS page cannot
+               drive it: hiding it entirely leaves a member wondering why the button
+               their colleague sees is missing. Disabled + a title explains it. -->
+          <LiveDockButton
+            v-if="controlState === 'none' && hostScreen"
+            :disabled="!canRequestControl"
+            :aria-label="t('share.live.requestControl')"
+            :title="
+              canRequestControl ? t('share.live.requestControlHint') : t('share.live.controlUnavailable')
+            "
+            data-action="request-control"
+            @click="requestControl"
+          >
+            <template #icon><MousePointer2 :size="16" /></template>
+            {{ t('share.live.requestControl') }}
+          </LiveDockButton>
+
+          <LiveDockButton
+            v-if="screenEnabled"
+            :live="sharingScreen"
+            role="switch"
+            :aria-checked="sharingScreen"
+            :disabled="!canShareScreen"
+            :aria-label="t('share.live.shareScreen')"
+            :title="
+              !canShareScreen
+                ? t('share.live.screenNeedsHttps')
+                : sharingScreen
+                  ? t('share.live.stopSharingHint')
+                  : t('share.live.shareScreenHint')
+            "
+            data-action="screen-share"
+            @click="toggleScreenShare"
+          >
+            <template #icon>
+              <ScreenShare v-if="!sharingScreen" :size="16" />
+              <ScreenShareOff v-else :size="16" />
+            </template>
+            {{ sharingScreen ? t('share.live.stopSharing') : t('share.live.shareScreen') }}
+          </LiveDockButton>
+
+          <LiveDockButton
+            :live="chatOpen"
+            :badge="unread"
+            :aria-pressed="chatOpen"
+            :aria-label="t('share.live.chatTitle')"
+            :title="t('share.live.chatTitle')"
+            data-action="chat"
+            @click="toggleSide('chat')"
+          >
+            <template #icon><MessageSquare :size="16" /></template>
+            {{ t('share.live.chat') }}
+          </LiveDockButton>
+
+          <LiveDockButton
+            v-if="notesAvailable"
+            :live="notesOpen"
+            :aria-pressed="notesOpen"
+            :aria-label="t('share.live.notesTitle')"
+            :title="t('share.live.notesTitle')"
+            data-action="notes"
+            @click="toggleSide('notes')"
+          >
+            <template #icon><FileText :size="16" /></template>
+            {{ t('share.live.notes') }}
+          </LiveDockButton>
+
+          <LiveDockButton
+            :aria-pressed="isFullscreen"
+            :aria-label="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
+            :title="isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen')"
+            data-action="fullscreen"
+            @click="toggleFullscreen"
+          >
+            <template #icon>
+              <Minimize v-if="isFullscreen" :size="16" />
+              <Maximize v-else :size="16" />
+            </template>
+            {{ isFullscreen ? t('share.live.exitFullscreen') : t('share.live.fullscreen') }}
+          </LiveDockButton>
+        </LiveDock>
       </div>
-    </template>
-  </LiveStageLayout>
+
+      <template #chat>
+        <LiveChatPanel :messages="chatMessages" @send="sendChat" />
+      </template>
+
+      <template #notes>
+        <!-- Transcription is over, but the lines it already produced stay. The
+             hint is what stops "nothing new is appearing" from reading as a
+             broken panel. -->
+        <div v-if="!notesEnabled && noteBlocks.length > 0" class="live-notes-stopped" data-role="notes-stopped">
+          {{ t('share.live.notesStoppedHint') }}
+        </div>
+        <!-- Same shape as the record's 转写 tab: centred glyph, title, one line
+             of context. "Waiting" only makes sense while 听记 is on; once it is
+             off, the honest line is that nothing was recorded. -->
+        <MeetingEmpty
+          v-if="noteBlocks.length === 0"
+          :icon="Captions"
+          :title="t(notesEnabled ? 'share.live.notesWaiting' : 'share.live.notesOffTitle')"
+          :desc="t(notesEnabled ? 'share.live.notesWaitingDesc' : 'share.live.notesOffDesc')"
+          data-role="notes-empty"
+        />
+        <!-- The same rows the publisher's 转写 tab draws: one implementation. -->
+        <TranscriptList v-else :blocks="noteBlocks" fill />
+      </template>
+
+      <template #participants>
+        <!-- The audience's view of the room. No actions here on purpose: only the
+             host can mute or remove somebody, so a member list that offered
+             buttons would be a set of controls that always fail. -->
+        <!-- Headcount first, then the rows: the same number the tab carries, so
+             the pane answers "how many" on its own after the tab bar scrolls out
+             of view. -->
+        <p v-if="roster.length > 0" class="live-members-total" data-role="members-total">
+          {{ t('share.live.memberCount', { n: roster.length }) }}
+        </p>
+        <ul v-if="roster.length > 0" class="live-members" data-role="members-list">
+          <li v-for="m in roster" :key="m.id" class="live-member" :data-member-id="m.id">
+            <SpeakerAvatar class="live-member__avatar" :name="memberName(m)" />
+            <span class="live-member__name" :title="memberName(m)">{{ memberName(m) }}</span>
+            <span v-if="m.host" class="live-member__chip live-member__chip--role">
+              {{ t('share.live.hostRole') }}
+            </span>
+            <span
+              v-else-if="m.id === myViewerId"
+              class="live-member__chip live-member__chip--you"
+              data-role="member-you"
+            >
+              {{ t('share.live.memberYou') }}
+            </span>
+            <span
+              v-if="screenSharer === m.id"
+              class="live-member__chip"
+              data-role="member-sharing"
+            >
+              {{ t('share.live.memberSharing') }}
+            </span>
+            <span
+              v-if="m.talking"
+              class="live-member__chip live-member__chip--live"
+              data-role="member-talking"
+            >
+              {{ t('share.live.memberTalking') }}
+            </span>
+            <span
+              v-else-if="m.muted"
+              class="live-member__chip live-member__chip--muted"
+              data-role="member-muted"
+            >
+              {{ t('share.live.memberMuted') }}
+            </span>
+          </li>
+        </ul>
+        <p v-else class="live-members-empty" data-role="members-empty">
+          {{ t('share.live.membersEmpty') }}
+        </p>
+      </template>
+
+      <template #overlay>
+    <!-- Client-mode source picker. Electron refuses an undeclared capture
+             source, so the choice has to happen before getDisplayMedia. It is a
+             shell-level modal, not a picture-level one: the choice concerns the
+             whole page, so it must also cover an open side panel. -->
+        <div
+          v-if="pickingSource"
+          class="live-picker"
+          data-role="source-picker"
+          @click.self="pickingSource = false"
+        >
+          <div class="live-picker__card">
+            <div class="live-picker__title">{{ t('share.live.pickSource') }}</div>
+            <div class="live-picker__list">
+              <button
+                v-for="src in clientSources"
+                :key="src.id"
+                class="live-picker__item"
+                type="button"
+                @click="startClientShare(src.id)"
+              >
+                {{ src.name }}
+              </button>
+            </div>
+            <button class="live-picker__cancel" type="button" @click="pickingSource = false">
+              {{ t('common.cancel') }}
+            </button>
+          </div>
+        </div>
+      </template>
+    </LiveStageLayout>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -500,6 +519,8 @@ import LiveDock from './LiveDock.vue'
 import LiveDockButton from './LiveDockButton.vue'
 import LiveStageLayout from './LiveStageLayout.vue'
 import MeetingShareDetail from './MeetingShareDetail.vue'
+import ShareFitButton from './ShareFitButton.vue'
+import ShareThemeButton from './ShareThemeButton.vue'
 import { useInkBoard } from './useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from './liveControl'
 import { appendChatMessage, mergeChatHistory } from './chatHistory'
@@ -693,6 +714,24 @@ const notesFiles = ref<NoteFileEvent[]>([])
 // ── Control channel: ink, chat, quality, presence ───────────────────────────
 const board = useInkBoard()
 const stageRef = ref<HTMLElement | null>(null)
+/** The picture column — the containing block of the dock and the control pill. */
+const rootRef = ref<HTMLElement | null>(null)
+/**
+ * How much height the floating dock takes, in CSS px.
+ *
+ * MEASURED, not assumed. It used to be a constant (`34dp`, or `66dp` under a
+ * `(max-width: 520px)` breakpoint) describing "one row" / "two rows". That
+ * cannot survive interface scaling: the buttons are 28dp, so at 1.33× the seven
+ * of them no longer fit a window the breakpoint still calls wide, the dock
+ * wraps, and the control pill above it — positioned with this number — lands on
+ * top of the second row. A breakpoint can only guess where the wrap happens;
+ * the dock itself knows.
+ *
+ * 0 means "not measured yet": the stylesheet's own default then applies, so the
+ * first paint is never worse than before.
+ */
+const dockHeight = ref(0)
+let dockResizeObserver: ResizeObserver | null = null
 const inkRect = ref<ContentRect>({ left: 0, top: 0, width: 0, height: 0 })
 const chatMessages = ref<ChatMessage[]>([])
 const unread = ref(0)
@@ -1670,7 +1709,66 @@ function syncFullscreen(): void {
   // Read from the DOM rather than tracking a boolean: the user can leave
   // fullscreen with Esc or F11, which never reaches our click handler.
   isFullscreen.value = !!document.fullscreenElement
+  // The topbar is hidden in fullscreen, so the picture gains a row and the ink
+  // layer's coordinate box has to follow. `nextTick` because the class is only
+  // applied after the re-render.
+  void nextTick(syncInkRect)
 }
+
+/**
+ * Track the floating dock's real height.
+ *
+ * The control pill is positioned above the dock, so it needs the dock's height
+ * — and that height is not a constant: the pill wraps to a second row whenever
+ * the seven buttons stop fitting, which depends on the window width AND on the
+ * interface scale (the buttons are 28dp, so a bigger UI wraps on a wider
+ * window). A media query can only guess; observing the element is exact, and it
+ * also covers a label appearing or disappearing inside a button.
+ *
+ * The dock only exists AFTER the viewer joins (before that the page shows the
+ * nickname gate), so this cannot run once at mount — it is driven by the same
+ * `joined` flag that renders the shell, and it tears down its observer when the
+ * shell goes away.
+ *
+ * `ResizeObserver` is used rather than a window `resize` listener because the
+ * wrap can change without the window changing at all (a scale change, a font
+ * loading, the brand logo rendering).
+ */
+function stopObservingDock(): void {
+  dockResizeObserver?.disconnect()
+  dockResizeObserver = null
+  dockHeight.value = 0
+}
+
+function observeDock(): void {
+  stopObservingDock()
+  const dock = rootRef.value?.querySelector<HTMLElement>('.live-dock')
+  if (!dock) return
+  const sync = () => {
+    dockHeight.value = dock.getBoundingClientRect().height
+  }
+  sync()
+  if (typeof ResizeObserver !== 'function') return // jsdom / very old engines
+  dockResizeObserver = new ResizeObserver(sync)
+  dockResizeObserver.observe(dock)
+}
+
+// The shell (and therefore the dock) is created by the join and torn down when
+// the meeting ends into the record view.
+//
+// The teardown must NOT call observeDock: this watcher runs before the DOM is
+// patched, so the shell is still in place and observing again would re-attach
+// to a subtree that is about to be removed (and write the stale height back
+// after it was reset). `post` makes the mount case run after the patch, which
+// is when the dock actually exists.
+watch(
+  joined,
+  (isJoined) => {
+    if (isJoined) observeDock()
+    else stopObservingDock()
+  },
+  { flush: 'post' },
+)
 
 /**
  * Toggle fullscreen for the whole viewer.
@@ -1825,6 +1923,7 @@ onBeforeUnmount(() => {
   // The lock lives in the composable, not in this component: unmounting without
   // releasing it would leave the screen on for the rest of the session.
   wakeLock.release('meeting-viewer')
+  stopObservingDock()
   stopStatsPolling()
   clearNegotiationWatchdog()
   // The "is speaking" chip clears itself on a timer; leaving it armed would
@@ -1852,6 +1951,35 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* Column wrapper around the topbar and the stage. `.live-shell` is the child
+   component's root, so it carries this component's scope id too — the rule
+   below is what makes it take the height LEFT after the topbar instead of
+   claiming 100% of the wrapper and pushing the topbar off screen. */
+.live-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.live-view > .live-shell {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.live-topbar__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The picture column. `min-width: 0` is what lets it actually shrink when the
    side panel opens: a flex item's default `min-width: auto` refuses to go below
    its content, and the video would push the panel off the screen instead. */
@@ -1864,20 +1992,14 @@ onBeforeUnmount(() => {
   /* Positioning context for the floating dock and the banners. */
   position: relative;
   background: var(--bg-primary, #0d1117);
-  /* How much of the bottom the dock occupies — one 28dp row plus the pill's own
-     2 × 2dp padding and its 1px borders. The control pill is positioned above
-     it, so the two cannot drift apart. */
+  /* Fallback for the dock's height, used only until the measurement in
+     `observeDock()` lands (and in jsdom, where nothing is laid out). The real
+     value is written inline by the component: the dock wraps to a second row
+     once its seven 28dp buttons stop fitting, and that point moves with both
+     the window width and the interface scale, so no constant can describe it.
+     The control pill is positioned above the dock with this number — see
+     `.live-screen-banner.live-control-banner`. */
   --live-dock-height: calc(34 * var(--dp));
-}
-
-/* The dock wraps once its buttons stop fitting (seven 28dp controls do not fit
-   a 320dp phone, and interface scaling multiplies the whole pill), so on narrow
-   screens the control pill above it has to clear TWO rows: 2 × 28dp + 4dp gap +
-   2 × 2dp padding + borders. */
-@media (max-width: 520px) {
-  .live-share-view {
-    --live-dock-height: calc(66 * var(--dp));
-  }
 }
 
 .live-stage {
@@ -1953,7 +2075,7 @@ onBeforeUnmount(() => {
 
 .live-retry {
   margin-top: var(--space-4, 8px);
-  padding: 6px 14px;
+  padding: calc(6 * var(--dp)) calc(14 * var(--dp));
   border-radius: var(--radius-md, 6px);
   border: 1px solid var(--border-color, #30363d);
   background: var(--bg-secondary, #161b22);
@@ -2062,7 +2184,7 @@ onBeforeUnmount(() => {
   color: inherit;
   font-size: calc(14 * var(--dp));
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0 calc(2 * var(--dp));
 }
 
 .live-picker {
@@ -2079,7 +2201,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-4, 8px);
-  width: min(calc(360 * var(--dp)), calc(100vw - 32px));
+  width: min(calc(360 * var(--dp)), calc(100vw - calc(32 * var(--dp))));
   max-height: 70vh;
   padding: var(--space-5, 10px);
   border-radius: var(--radius-lg, 10px);

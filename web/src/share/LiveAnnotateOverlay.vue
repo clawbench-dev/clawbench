@@ -312,7 +312,7 @@ onBeforeUnmount(() => {
 
 .anno__sep {
   width: 1px;
-  height: 18px;
+  height: calc(18 * var(--dp));
   margin: 0 var(--space-2, 4px);
   background: var(--border-color, #30363d);
 }

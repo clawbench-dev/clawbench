@@ -170,9 +170,25 @@ func tryEmitStreamEvent(ch chan<- StreamEvent, source string, event StreamEvent)
 // It tries a non-blocking send first (the overwhelmingly common case, no
 // latency added), then waits for room up to criticalSendTimeout.
 func emitCriticalStreamEvent(ch chan<- StreamEvent, source string, event StreamEvent) {
+	emitCriticalStreamEventReport(ch, source, event)
+}
+
+// emitCriticalStreamEventReport is emitCriticalStreamEvent with a delivery
+// report.
+//
+// Callers that latch a one-shot signal need the report, and they cannot get it
+// from a non-blocking tryEmitStreamEvent: that variant skips the critical
+// send's grace period, DOWNGRADING an event whose whole purpose is not to be
+// dropped. So the grace period stays and the outcome is returned instead.
+//
+// A false result means the consumer was stuck for the full criticalSendTimeout
+// and the event was dropped. Callers must treat that as "not reported": their
+// latch would otherwise suppress the fallback message and leave the user with
+// nothing at all.
+func emitCriticalStreamEventReport(ch chan<- StreamEvent, source string, event StreamEvent) (delivered bool) {
 	select {
 	case ch <- event:
-		return
+		return true
 	default:
 	}
 
@@ -183,11 +199,13 @@ func emitCriticalStreamEvent(ch chan<- StreamEvent, source string, event StreamE
 	case ch <- event:
 		slog.Warn(source+": stream channel full, critical event delivered after waiting",
 			"type", event.Type, "source", source)
+		return true
 	case <-timer.C:
 		// The consumer is not just behind, it is stuck. Dropping is still a
 		// failure, but blocking here would hang the agent's output goroutine, so
 		// surface it loudly and move on.
 		slog.Error(source+": stream channel full, DROPPED critical event after timeout",
 			"type", event.Type, "source", source, "timeout", criticalSendTimeout.String())
+		return false
 	}
 }

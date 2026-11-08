@@ -73,6 +73,18 @@ describe('shouldPin', () => {
     expect(shouldPin(baseInput({ mouseDownActive: true }), true)).toBe(true)
   })
 
+  it('a live wheel gesture or scrollbar drag suppresses a NON-force pin', () => {
+    // Issue #632: while a reply streams, a pin runs on every streamed frame.
+    // WebKit animates a wheel notch over several frames, so a pin written
+    // between them cancelled the gesture before it had moved the viewport past
+    // the RESUME_FOLLOW_PX band — every notch bounced straight back to the
+    // bottom and the transcript could not be scrolled at all during a turn.
+    // Both flags have their own end signal (wheel: decay window, mouse:
+    // document mouseup), so this can never starve the follow.
+    expect(shouldPin(baseInput({ wheelActive: true }), false)).toBe(false)
+    expect(shouldPin(baseInput({ mouseDownActive: true }), false)).toBe(false)
+  })
+
   it('pins unconditionally when the user never left the bottom', () => {
     expect(shouldPin(baseInput({}), false)).toBe(true)
     expect(shouldPin(baseInput({ userLeftBottom: false }), false)).toBe(true)

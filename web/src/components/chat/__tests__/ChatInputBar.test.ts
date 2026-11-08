@@ -552,6 +552,9 @@ const stubs = {
   ShieldAlert: true,
   Activity: true,
   Minimize2: true,
+  Mic: true,
+  MessageCircleMore: true,
+  AudioLines: true,
 }
 
 describe('ChatInputBar', () => {
@@ -606,6 +609,141 @@ describe('ChatInputBar', () => {
   it('renders the attach button', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
+  })
+
+  describe('action bar edge fade', () => {
+    /**
+     * jsdom has no layout: `scrollWidth`/`clientWidth` are 0 and nothing scrolls.
+     * The fade is a function of those numbers, so the test drives them directly
+     * and fires the real `scroll` listener the template binds — that is the part
+     * with behaviour (which side fades, and that a scrolled-to-the-end strip
+     * stops fading).
+     */
+    function setMetrics(el: Element, m: { scrollLeft: number; scrollWidth: number; clientWidth: number }) {
+      Object.defineProperty(el, 'scrollLeft', { value: m.scrollLeft, configurable: true, writable: true })
+      Object.defineProperty(el, 'scrollWidth', { value: m.scrollWidth, configurable: true })
+      Object.defineProperty(el, 'clientWidth', { value: m.clientWidth, configurable: true })
+    }
+
+    function bar(wrapper: ReturnType<typeof mountBar>) {
+      const el = wrapper.find('.chat-top-actions').element
+      return el as HTMLElement
+    }
+
+    it('fades the right edge when buttons are hidden past it', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 600, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeRight).toBe('1')
+      // Nothing is hidden to the left at scrollLeft 0.
+      expect(el.dataset.fadeLeft).toBe('0')
+    })
+
+    it('fades the left edge once the strip has been scrolled', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 100, scrollWidth: 600, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeLeft).toBe('1')
+      expect(el.dataset.fadeRight).toBe('1')
+    })
+
+    it('stops fading at the end of the strip', async () => {
+      // A fade with nothing hidden behind it reads as clipped content, so the
+      // trailing edge must go fully opaque once the last button is reachable.
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 200, scrollWidth: 600, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeLeft).toBe('1')
+      expect(el.dataset.fadeRight).toBe('0')
+    })
+
+    it('shows no fade at all when every button fits', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 400, clientWidth: 400 })
+      await wrapper.find('.chat-top-actions').trigger('scroll')
+      const el = wrapper.find('.chat-top-actions').element as HTMLElement
+      expect(el.dataset.fadeLeft).toBe('0')
+      expect(el.dataset.fadeRight).toBe('0')
+    })
+  })
+
+  it('drives the edge fade from a CSS mask, not an opaque gradient overlay', () => {
+    // Source contract: the composer sits on a translucent island when a
+    // wallpaper is active, so an overlay painted in the background colour would
+    // show two differently-shaded panels. Only a mask works against every
+    // background and all 36 themes.
+    const fs = require('node:fs') as typeof import('node:fs')
+    const path = require('node:path') as typeof import('node:path')
+    const source = fs.readFileSync(path.resolve(__dirname, '..', 'ChatInputBar.vue'), 'utf8')
+    // The scoped block only: the trailing non-scoped <style> is the quick-send menu.
+    const scoped = source.slice(0, source.lastIndexOf('<style>'))
+    const css = scoped.replace(/\/\*[\s\S]*?\*\//g, '')
+
+    // The fade is ActionBar's now (it owns the scroller). The composer must not
+    // re-declare it, or the two copies drift the way they already had.
+    expect(css, 'the composer must not paint its own edge fade').not.toMatch(
+      /\.chat-top-actions\.more-(left|right)/,
+    )
+    const bar = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'common', 'ActionBar.vue'),
+      'utf8',
+    )
+    expect(bar, 'ActionBar must mask the trailing edge').toMatch(
+      /\[data-fade-right='1'\][^{]*\{[^}]*mask-image:\s*linear-gradient/,
+    )
+  })
+
+  it('renders the free-dialog button and emits its toggle', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1' })
+    const btn = wrapper.find('[data-action="free-dialog"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(wrapper.emitted('toggle-free-dialog')).toHaveLength(1)
+  })
+
+  it('marks the free-dialog button active and phase-specific while running', () => {
+    const idle = mountBar({ currentSessionId: 's1', freeDialogPhase: 'idle' })
+    expect(idle.find('[data-action="free-dialog"]').classes()).not.toContain('active')
+    const listening = mountBar({ currentSessionId: 's1', freeDialogPhase: 'listening' })
+    const cls = listening.find('[data-action="free-dialog"]').classes()
+    expect(cls).toContain('active')
+    // The pulse class is what makes "listening" readable without relying on
+    // colour alone (3 of the 36 themes have accent == running orange).
+    expect(cls).toContain('active-flag-listening')
+  })
+
+  it('shows the live transcript while free-dialog mode is listening', () => {
+    // The mode collects a transcript; without surfacing it, "did it hear me?"
+    // can only be answered by waiting to see whether a message goes out.
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      freeDialogPhase: 'listening',
+      freeDialogTranscript: '帮我看下这个报错',
+    })
+    const strip = wrapper.find('[data-role="free-dialog-strip"]')
+    expect(strip.exists()).toBe(true)
+    expect(strip.text()).toContain('帮我看下这个报错')
+  })
+
+  it('falls back to the phase hint when nothing has been recognised yet', () => {
+    const wrapper = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogTranscript: '' })
+    const strip = wrapper.find('[data-role="free-dialog-strip"]')
+    expect(strip.exists()).toBe(true)
+    // The hint is muted so it cannot be mistaken for recognised speech.
+    expect(strip.find('.free-dialog-text').classes()).toContain('is-hint')
+  })
+
+  it('renders no strip when the mode is off', () => {
+    const wrapper = mountBar({ currentSessionId: 's1', freeDialogPhase: 'idle' })
+    expect(wrapper.find('[data-role="free-dialog-strip"]').exists()).toBe(false)
+  })
+
+  it('disables the free-dialog button without a session', () => {
+    const wrapper = mountBar({ currentSessionId: '' })
+    expect(wrapper.find('[data-action="free-dialog"]').attributes('disabled')).toBeDefined()
   })
 
   describe('Android select-all delete recovery', () => {
@@ -2079,6 +2217,29 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar({ attachedFiles: [] })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)
+    expect(wrapper.find('.attachment-pending').exists()).toBe(true)
+    mockPendingFilesValue.value = []
+  })
+
+  it('hides in-flight cards while the attachment sheet is open', async () => {
+    // The picker owns the progress display (its Uploads tab), and nothing it
+    // uploads may reach the composer before OK. Drawing the card here as well
+    // made the strip go from one card to none the instant the transfer
+    // finished, which read as "the thumbnail flashed and the file was lost"
+    // (#629).
+    mockPendingFilesValue.value = [
+      { path: '', previewUrl: null, isImage: true, uploading: true, progress: 40, size: 10 },
+    ]
+    mockEffectiveOpen.value = true
+    const wrapper = mountBar({ attachedFiles: [] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.attachment-pending').exists()).toBe(false)
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(false)
+
+    // Closing the sheet brings them back: the strip is the only progress
+    // display left once the picker is gone.
+    mockEffectiveOpen.value = false
+    await wrapper.vm.$nextTick()
     expect(wrapper.find('.attachment-pending').exists()).toBe(true)
     mockPendingFilesValue.value = []
   })

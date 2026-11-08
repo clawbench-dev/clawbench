@@ -270,6 +270,10 @@ func ExtractDisplayName(name string, input map[string]any) string {
 		if v, _ := input["subagent_type"].(string); v != "" {
 			return v
 		}
+		// OpenCode 2.x names the sub-agent in `agent` (v1/Claude use subagent_type).
+		if v, _ := input["agent"].(string); v != "" {
+			return strings.ToUpper(v[:1]) + v[1:]
+		}
 	}
 	if nameLower == "agent" {
 		if v, _ := input["activityKind"].(string); v != "" {

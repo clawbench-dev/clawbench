@@ -20,10 +20,8 @@
 
 import { execSync } from 'node:child_process'
 
-// Find fork workers that are children of THIS vitest process.
-// Uses PPID matching (pgrep -P) instead of pgrep -f to avoid killing
-// workers from other vitest instances (e.g., worktrees).
-function killOurWorkers(label: string) {
+/** Fork workers that are still children of THIS vitest process. */
+function findOurWorkers(): number[] {
   try {
     // Fork workers are direct children of the vitest main process.
     // process.pid is the vitest main process when running in teardown().
@@ -48,17 +46,27 @@ function killOurWorkers(label: string) {
         }
       } catch {}
     }
+    return workerPids
+  } catch {
+    return []
+  }
+}
 
-    if (workerPids.length > 0) {
-      console.error(
-        `[vitest-globalSetup] ${label}: killing ${workerPids.length} fork worker(s) ` +
-        `(children of PID ${ourPid}, vitest pool cleanup hang — vitest-dev/vitest#8766)`
-      )
-      for (const pid of workerPids) {
-        try { process.kill(pid, 'SIGKILL') } catch {}
-      }
-    }
-  } catch {}
+/** SIGKILL the given workers; returns how many were actually signalled. */
+function killPids(label: string, workerPids: number[]): number {
+  if (workerPids.length === 0) return 0
+  console.error(
+    `[vitest-globalSetup] ${label}: killing ${workerPids.length} fork worker(s) ` +
+    `(children of PID ${process.pid}, vitest pool cleanup hang — vitest-dev/vitest#8766)`
+  )
+  let killed = 0
+  for (const pid of workerPids) {
+    try {
+      process.kill(pid, 'SIGKILL')
+      killed++
+    } catch {}
+  }
+  return killed
 }
 
 export function setup() {
@@ -70,11 +78,27 @@ export function teardown() {
   // At this point all tests have finished and vitest is about to call
   // pool.close(). If workers have open handles, pool.close() will hang.
   // Killing workers lets pool.close() return so vitest can exit.
-  killOurWorkers('POST-TEST CLEANUP')
+  const first = findOurWorkers()
+  const killed = killPids('POST-TEST CLEANUP', first)
+  if (killed === 0) return
 
-  // Secondary safety net: kill any workers that respawn or linger
-  // after the first kill attempt.
+  // Secondary safety net, but only when the first pass actually killed
+  // something: a worker that respawns, or one whose SIGKILL has not been
+  // reaped yet. Re-scan before deciding to wait — on a healthy run the workers
+  // are gone within a few milliseconds (verified: SIGKILL of a child of the
+  // vitest process leaves no entry in `pgrep -P` on the very next sample), so
+  // the common case must not pay a fixed delay.
+  //
+  // The wait used to be unconditional `setTimeout(..., 3000)`, which added 3s
+  // to EVERY run — a 3-test file took 6.0s wall clock instead of 2.9s.
+  const stillThere = findOurWorkers()
+  if (stillThere.length === 0) return
+
+  console.error(
+    `[vitest-globalSetup] POST-TEST CLEANUP: ${stillThere.length} worker(s) still ` +
+    `alive after SIGKILL, waiting up to 3s for them to be reaped`
+  )
   setTimeout(() => {
-    killOurWorkers('POST-TEARDOWN CLEANUP')
+    killPids('POST-TEARDOWN CLEANUP', findOurWorkers())
   }, 3_000)
 }

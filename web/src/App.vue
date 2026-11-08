@@ -261,7 +261,6 @@
                     :active="panelIsActive('forge')"
                     :project-path="store.state.projectRoot"
                     @request-project="switchTab('chat')"
-                    @quote="handleForgeQuote"
                   />
                 </TabPanel>
 
@@ -783,7 +782,7 @@ import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
-import { consumeShareTargetResult, stageShareTargetResult, nativeShareTargetResult } from './utils/shareTarget.ts'
+import { consumeShareTargetResult, stageShareTargetResult, nativeShareTargetResult, nativeShareTargetSavedElsewhere } from './utils/shareTarget.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from './composables/useForgeBinding.ts'
 import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
@@ -2849,10 +2848,52 @@ function handleNativeError(event: Event) {
 }
 
 function handleNativeShareImport(event: Event) {
-  const result = nativeShareTargetResult((event as CustomEvent<unknown>).detail, store.state.projectRoot)
-  if (!result) return
+  const detail = (event as CustomEvent<unknown>).detail
+  // HarmonyOS hands over the whole result in the event. Android only rings the
+  // bell: its payload waits behind a bridge call so a share that arrived before
+  // the page was ready still survives (see pullPendingShareImport).
+  if (detail == null) {
+    void pullPendingShareImport()
+    return
+  }
+  applyNativeShareDetail(detail)
+}
+
+/** Attach what a native shell imported, or explain why it could not. */
+function applyNativeShareDetail(detail: unknown) {
+  const result = nativeShareTargetResult(detail, store.state.projectRoot)
+  if (!result) {
+    // The shell uploaded the files but they belong to another project (the
+    // project changed between the share and the app becoming ready). Silence
+    // here reads as "the share failed" even though the files are on disk.
+    if (nativeShareTargetSavedElsewhere(detail, store.state.projectRoot)) {
+      toast.show(t('chat.attach.shareTargetSavedElsewhere'), { icon: 'attach', type: 'info', duration: 3000 })
+    }
+    return
+  }
   const { toastKey, toastParams, variant } = stageShareTargetResult(result, path => addAttachedFile(path, false))
   toast.show(t(toastKey, toastParams), { icon: variant.icon, type: variant.type, duration: variant.duration })
+}
+
+/**
+ * Take a share the native shell stored before this page could accept it.
+ *
+ * The shell keeps it until someone asks (cold start lands on the login page or
+ * the splash, where no listener exists). Pulling is only safe once the project
+ * is known — the payload is validated against it — and the bridge clears the
+ * value on read, so one share is attached exactly once.
+ */
+async function pullPendingShareImport() {
+  if (!isAppMode.value || !store.state.projectRoot) return
+  const native = getNative()
+  if (!native?.getPendingShareImport) return
+  try {
+    const raw = await native.getPendingShareImport()
+    if (!raw) return
+    applyNativeShareDetail(JSON.parse(raw))
+  } catch (err) {
+    appLog.w(TAG, 'failed to pull the pending native share import', err)
+  }
 }
 
 let appEventListenersRegistered = false
@@ -3013,6 +3054,10 @@ async function initializeApp() {
   // and before isAuthenticated flips, so the composer mounts with the cards
   // already staged instead of flashing an empty input first.
   applyShareTargetAttachments()
+
+  // The native shell (Android) keeps a share until the app can name its
+  // project; this is the first moment that is true.
+  void pullPendingShareImport()
 
   return true
 }
@@ -3832,24 +3877,6 @@ async function handleMeetingQuoteButton(token: string): Promise<void> {
     return
   }
   quoteQuestion.openComposer({ quote, label: quote.filePath })
-}
-
-// "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
-// composer mode: the issue/PR URL is previewed as a chip in the bar and NO body
-// text is quoted by default — the user selects the part they care about, then
-// types their message. The attachment only reaches a chat input when the user
-// commits (send / add), so dismissing the bar leaves the input untouched.
-// The bar is global (position: fixed), so no tab switch is needed on open;
-// committing goes through the session picker, whose "add and open" reveals chat.
-function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
-  const it = payload?.item
-  if (!it) return
-  quoteQuestion.openComposer({
-    url: it.url,
-    // A pipeline run has no issue/PR number, so its caller supplies a label
-    // that names the run; otherwise `slug#number` would read like a PR number.
-    label: it.label ?? `${it.slug}#${it.number}`,
-  })
 }
 
 // "Quote in chat" from the file browser header. Same composer as the forge

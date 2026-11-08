@@ -11,6 +11,7 @@
         {{ record?.title || title || t('meeting.list.untitled') }}
       </h1>
       <span class="share-spacer" />
+      <ShareFitButton />
       <ShareThemeButton />
     </div>
 
@@ -189,6 +190,7 @@ import { appLog } from '@/utils/appLog'
 import { readMeetingNick } from './meetingNickname'
 import { getShareToken } from './shareMode'
 import ShareThemeButton from './ShareThemeButton.vue'
+import ShareFitButton from './ShareFitButton.vue'
 import {
   fetchMeetingRecord,
   type ShareChatMessage,

@@ -40,9 +40,20 @@ type ClawBenchACPClient struct {
 	sessionRoutes     map[string]chan<- StreamEvent // acpSessionID → streamCh
 	commands          []acp.AvailableCommand        // cached from available_commands_update
 	pendingPermission map[string]*pendingPermission // PermissionKey → pending request
-	poolEntry         *ACPConn                      // reference to pool entry for cache updates (deprecated alias)
-	connRef           *ACPConn                      // reference to ACPConn for cache updates
-	debouncers        map[string]*toolCallDebouncer // acpSessionID → debouncer
+	// pendingElicitations tracks blocking `elicitation/create` requests (see
+	// acp_elicitation.go). Keyed by the card block id, which is unique per
+	// request and is what the frontend posts back.
+	pendingElicitations map[string]*pendingElicitation
+	// activeSessionID is the ACP session id of the turn currently streaming on
+	// this connection. Elicitation requests carry no session id in the typed SDK
+	// struct, and reading it off ACPConn would take ACPConn.mu from an inbound
+	// request goroutine — the deadlock this client is careful to avoid. One
+	// connection serves one session at a time, so the value set by
+	// RegisterSession is the right one.
+	activeSessionID string
+	poolEntry       *ACPConn                      // reference to pool entry for cache updates (deprecated alias)
+	connRef         *ACPConn                      // reference to ACPConn for cache updates
+	debouncers      map[string]*toolCallDebouncer // acpSessionID → debouncer
 
 	// cwd is the project working directory the agent process was spawned in
 	// (cmd.Dir). Written once by spawnLocked before the connection starts, then
@@ -60,10 +71,26 @@ type ClawBenchACPClient struct {
 	// the approval card can still show WHAT the agent wants to run. Guarded by mu.
 	toolInputs map[string]string
 
+	// OpenCode v2 sub-agent attribution (see acp_opencode_children.go). Child
+	// frames carry only the child session id + title, so the spawning `subagent`
+	// tool call is matched by (session where the call ran, description) while the
+	// child runs, and by the exact child session id once the tool result arrives.
+	// Both maps are guarded by mu.
+	subagentByTitle map[string]string // "<sessionID>\x00<description>" → toolCallID
+	subagentByChild map[string]string // child session id → toolCallID
+
 	// LoadSession replay buffer: during LoadSession, SessionUpdate messages
 	// are collected here instead of being routed to WS stream channels.
 	loadSessionBuf   []acp.SessionNotification
 	loadSessionBufMu sync.Mutex
+
+	// backgroundTurns holds the routes opened for agent-initiated turns
+	// (CodeBuddy background_drain — see acp_background_turn.go). Keyed by ACP
+	// session id and guarded by mu. Kept apart from sessionRoutes so the
+	// terminal handler can tell "this route belongs to a turn the agent started"
+	// from "this route belongs to the user's turn": only the former may be
+	// closed by the agent's session_end frame.
+	backgroundTurns map[string]*backgroundTurn
 
 	// replayEndSeen records whether CodeBuddy's explicit "history replay end"
 	// marker arrived during the current LoadSession replay. CodeBuddy brackets
@@ -93,11 +120,15 @@ type ClawBenchACPClient struct {
 // NewClawBenchACPClient creates a new ACP client with session routing support.
 func NewClawBenchACPClient() *ClawBenchACPClient {
 	return &ClawBenchACPClient{
-		sessionRoutes:     make(map[string]chan<- StreamEvent),
-		pendingPermission: make(map[string]*pendingPermission),
-		debouncers:        make(map[string]*toolCallDebouncer),
-		terminals:         make(map[string]*terminalSession),
-		toolInputs:        make(map[string]string),
+		sessionRoutes:       make(map[string]chan<- StreamEvent),
+		pendingPermission:   make(map[string]*pendingPermission),
+		pendingElicitations: make(map[string]*pendingElicitation),
+		debouncers:          make(map[string]*toolCallDebouncer),
+		terminals:           make(map[string]*terminalSession),
+		toolInputs:          make(map[string]string),
+		subagentByTitle:     make(map[string]string),
+		subagentByChild:     make(map[string]string),
+		backgroundTurns:     make(map[string]*backgroundTurn),
 	}
 }
 
@@ -117,7 +148,18 @@ func newConnClient(conn *ACPConn) *ClawBenchACPClient {
 func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- StreamEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// A user turn is taking the session over. Close out any agent-initiated turn
+	// still being adopted: its route is about to be replaced, so it would never
+	// see another frame and would hang until its backstop timeout.
+	if turn, adopted := c.backgroundTurns[acpSessionID]; adopted {
+		delete(c.backgroundTurns, acpSessionID)
+		if c.connRef != nil {
+			c.connRef.clearAdoptedTurnRequestID(turn.requestID)
+		}
+		deliverBackgroundTurnEnd(turn)
+	}
 	c.sessionRoutes[acpSessionID] = ch
+	c.activeSessionID = acpSessionID
 	c.debouncers[acpSessionID] = newToolCallDebouncer(ch, c.connRef)
 	// Reset the tool-input cache for this session at the start of each turn: a
 	// tool_call always precedes its permission request within the same turn, so
@@ -145,7 +187,19 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// An adopted turn (agent-initiated, see acp_background_turn.go) never went
+	// through Prompt, so the Prompt that owns this call must not take its route
+	// away. The consumer releases it when the turn ends.
+	if _, adopted := c.backgroundTurns[acpSessionID]; adopted {
+		return
+	}
 	delete(c.sessionRoutes, acpSessionID)
+
+	// A question still waiting on the user belongs to the turn that just
+	// ended. Leaving it blocked would keep the handler alive and
+	// pendingElicitations > 0 — which disables the stall watchdog for the rest
+	// of the connection's life.
+	c.cancelElicitationsLocked(acpSessionID)
 
 	// Flush and remove debouncer
 	if deb, ok := c.debouncers[acpSessionID]; ok {
@@ -274,6 +328,10 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
+	if c.maybeCloseAdoptedTurn(n) {
+		return nil
+	}
+
 	// The SDK's SessionUpdate union misclassifies extension variants: its
 	// fallback blocks match on field presence, so an unknown discriminator can
 	// be parsed into a known struct (e.g. `tool_call_pending` with toolCallId +
@@ -333,6 +391,16 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		return nil
 	}
 
+	// An agent-initiated turn (CodeBuddy background_drain) announces itself on
+	// an IDLE session: the user's turn returned long ago, so no route is
+	// registered and the lookup below would drop the whole turn. Open a route
+	// for it first — see acp_background_turn.go and issue #644.
+	if n.Update.SessionInfoUpdate != nil {
+		if reqID, isBackgroundTurn := codeBuddyUnsolicitedTurn(n.Update.SessionInfoUpdate.Meta); isBackgroundTurn {
+			c.adoptBackgroundTurn(string(n.SessionId), reqID)
+		}
+	}
+
 	c.mu.Lock()
 	ch, ok := c.sessionRoutes[string(n.SessionId)]
 	deb := c.debouncers[string(n.SessionId)]
@@ -346,6 +414,20 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		return nil
 	}
 
+	// OpenCode v2 sub-agent attribution (see acp_opencode_children.go): record
+	// the spawning `subagent` tool call, then stamp child frames with its id so
+	// they fold under the Agent card. A child frame whose parent cannot be
+	// resolved yet is dropped — it must never leak into the main timeline
+	// (issue #639).
+	c.noteOpenCodeSubagentCall(string(n.SessionId), n.Update)
+	if isOpenCodeChildSessionUpdate(n.Update) {
+		parentID := c.resolveOpenCodeChildParent(n.Update)
+		if parentID == "" {
+			return nil
+		}
+		stampParentToolCallID(&n.Update, parentID)
+	}
+
 	// Cache tool input from tool_call / tool_call_update frames. Some agents
 	// (Cursor) send rawInput on the tool_call but omit it from the later
 	// session/request_permission, so RequestPermission reads it back from here
@@ -356,6 +438,24 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
 	return nil
+}
+
+// maybeCloseAdoptedTurn handles CodeBuddy's non-standard `session_end` frame for
+// a turn the agent started on its own (background_drain).
+//
+// The SDK re-types that frame as a SessionInfoUpdate with its payload dropped,
+// so the discriminator is read from the typed struct here — on the SAME
+// goroutine that delivers the turn's content, which is what keeps the terminal
+// event ordered after every frame. (Reading it from the raw stdout tee instead
+// would let it overtake frames still queued in the SDK and truncate the reply.)
+//
+// Reports whether the frame closed an adopted turn; a user turn's session_end
+// returns false and keeps its existing handling.
+func (c *ClawBenchACPClient) maybeCloseAdoptedTurn(n acp.SessionNotification) bool {
+	if n.Update.SessionInfoUpdate == nil || n.Update.SessionInfoUpdate.SessionUpdate != sessionEndVariant {
+		return false
+	}
+	return c.closeBackgroundTurnOnSessionEnd(string(n.SessionId))
 }
 
 // isModelProgressUpdate reports whether an ACP session update represents

@@ -45,7 +45,11 @@ func TestSessionExecutor_Finalize_ACPModeInjection(t *testing.T) {
 	// Register agent capabilities so GetModeState/GetThinkingEffortState return non-nil
 	reg := ai.GetAgentCapabilityRegistry()
 	reg.UpdateModes(agentID, []ai.ModeDef{{ID: "architect", Name: "Architect"}})
-	reg.UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{{ID: "high", Name: "High"}})
+	// Thinking levels are keyed per MODEL since #637, and this connection has no
+	// model yet (currentModelID == ""), so register under the empty key — the
+	// same shape an agent that advertises thought_level without a model option
+	// reports (OpenClaw).
+	reg.UpdateThinkingEffortsForModel(agentID, "", []ai.ThinkingEffortDef{{ID: "high", Name: "High"}})
 	defer reg.UpdateModes(agentID, nil)
 
 	// Inject ACP connection with cached mode and effort

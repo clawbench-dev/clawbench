@@ -39,15 +39,36 @@ const holders = new Set<string>()
 let webWakeLock: WakeLockSentinel | null = null
 
 /**
+ * Bumped by every acquisition attempt.
+ *
+ * `navigator.wakeLock.request()` is async, and a caller may release (or
+ * re-acquire) while it is still pending. An older request that resolves later
+ * must not install its sentinel: it would leave a lock held with no entry in
+ * `holders`, and `release()` short-circuits on `holders.delete` returning
+ * false — so nothing would ever release it again and the screen would stay on
+ * until the page goes away. The same applies to the native flag, which is why
+ * the stale branch returns before touching it.
+ */
+let acquireGen = 0
+
+/**
  * Internal: actually acquire the wake lock via Web API and/or Android bridge.
  * Does NOT check shouldHold — callers must handle that.
  */
 async function _doAcquire() {
+  const myGen = ++acquireGen
+
   // 1. Web Wake Lock API
-  try {
-    if ('wakeLock' in navigator) {
-      webWakeLock = await navigator.wakeLock.request('screen')
-      webWakeLock.onrelease = () => {
+  if ('wakeLock' in navigator) {
+    try {
+      const sentinel = await navigator.wakeLock.request('screen')
+      if (myGen !== acquireGen || !shouldHold) {
+        // Released, or superseded by a newer attempt, while we were waiting.
+        try { sentinel.release() } catch { /* already gone */ }
+        return
+      }
+      webWakeLock = sentinel
+      sentinel.onrelease = () => {
         appLog.i(TAG, 'Web Wake Lock released by browser')
         webWakeLock = null
         // If we still want the lock (e.g. browser auto-released on visibility change),
@@ -58,9 +79,9 @@ async function _doAcquire() {
       }
       held.value = true
       appLog.i(TAG, 'Web Wake Lock acquired')
+    } catch (e) {
+      appLog.w(TAG, 'Web Wake Lock acquire failed:', e)
     }
-  } catch (e) {
-    appLog.w(TAG, 'Web Wake Lock acquire failed:', e)
   }
 
   // 2. Native bridge (setKeepScreenOn) — extra safety in WebView

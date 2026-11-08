@@ -567,12 +567,24 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // usable — it just cannot survive a re-render (the historical behaviour).
   const askKeyAttr = blockCtx?.askKey ? ` data-ask-key="${escapeHtml(blockCtx.askKey)}"` : ''
 
+  // Live elicitation (ACP `elicitation/create`): the agent is BLOCKED until
+  // this card is answered, so submitting must post the selection back instead
+  // of sending a chat message (see submitElicitation). The id is the card's
+  // handle on that pending request.
+  const elicitationId = str(input.elicitationId)
+  const elicitationAttr = elicitationId ? ` data-elicitation-id="${escapeHtml(elicitationId)}"` : ''
+  // Once answered (block done) the request no longer exists: render the card as
+  // a record instead of an answerable one, otherwise a reload would show live
+  // buttons whose POST can only fail.
+  const readOnly = !!elicitationId && !!blockCtx?.done
+  const readOnlyAttr = readOnly ? ' data-readonly="1"' : ''
+
   // `tabindex="-1"` makes the card programmatically focusable (not tab-reachable,
   // so it does not add a stop to keyboard navigation). This is what lets the
   // Ctrl/Cmd+Enter shortcut work after a MOUSE selection: the options are
   // <div>s, so clicking one leaves focus on <body>, and a keydown fired there
   // never reaches the card container the shortcut is bound to. See focusAskView.
-  let html = `<div class="ask-question-view"${askKeyAttr} tabindex="-1">`
+  let html = `<div class="ask-question-view"${askKeyAttr}${elicitationAttr}${readOnlyAttr} tabindex="-1">`
 
   for (let qi = 0; qi < questions.length; qi++) {
     const q = questions[qi]
@@ -580,8 +592,16 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
     const question = str(q.question)
     const multiSelect = !!q.multiSelect
     const options = Array.isArray(q.options) ? q.options : []
+    // `key` / `customKey` exist only on elicitation questions: the agent wants
+    // answers keyed by JSON-schema property name, and the "type your own
+    // answer" companion field has its own property.
+    const fieldKey = str(q.key)
+    const customKey = str(q.customKey)
 
-    html += `<div class="ask-question-item" data-multi="${multiSelect}">`
+    html += `<div class="ask-question-item" data-multi="${multiSelect}"`
+    if (fieldKey) html += ` data-key="${escapeHtml(fieldKey)}"`
+    if (customKey) html += ` data-custom-key="${escapeHtml(customKey)}"`
+    html += '>'
 
     if (header) {
       html += `<div class="ask-question-header">${escapeHtml(header)}</div>`
@@ -599,7 +619,11 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
         const opt = options[oi]
         const label = typeof opt === 'string' ? opt : (opt.label || '')
         const desc = typeof opt === 'object' ? (opt.description || '') : ''
-        html += `<div class="ask-question-option" data-qi="${qi}" data-oi="${oi}" data-label="${escapeHtml(label)}">`
+        // `value` is what the agent expects back (JSON-schema `const`); the
+        // label is only what the user reads. They coincide for every backend
+        // seen so far, but they are separate fields on the wire.
+        const value = typeof opt === 'object' ? (str((opt as Record<string, unknown>).value) || label) : label
+        html += `<div class="ask-question-option" data-qi="${qi}" data-oi="${oi}" data-label="${escapeHtml(label)}" data-value="${escapeHtml(value)}">`
         // The indicator is an EMPTY box drawn entirely in CSS (see
         // .ask-option-indicator in web/css/components.css) — never a glyph. A
         // glyph's size depends on the font, so no ◯/● (or ☐/☑) pair can be kept
@@ -622,28 +646,38 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
     html += '</div>'
   }
 
-  html += '<div class="ask-question-supplementary">'
-  html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
-  // A textarea (not an input) so the note can run to several lines — a long
-  // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
-  // fitAskSupplementaryInput give the one-line look until the text wraps;
-  // Enter inserts a newline (submission stays on the button), which is the
-  // expectation a multiline box sets up. The class name is kept because every
-  // read/write site (value, disabled) treats both elements identically.
-  html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
-  html += '</div>'
+  // A read-only elicitation card (already answered) shows the questions as a
+  // record: no note field and no buttons, since the pending request is gone.
+  if (!readOnly) {
+    html += '<div class="ask-question-supplementary">'
+    html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
+    // A textarea (not an input) so the note can run to several lines — a long
+    // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
+    // fitAskSupplementaryInput give the one-line look until the text wraps;
+    // Enter inserts a newline (submission stays on the button), which is the
+    // expectation a multiline box sets up. The class name is kept because every
+    // read/write site (value, disabled) treats both elements identically.
+    html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
+    html += '</div>'
 
-  html += '<div class="ask-question-actions">'
-  // The chord hint sits in the empty space to the LEFT of the buttons (the row
-  // is right-aligned, so `margin-right: auto` parks it against the far edge).
-  // It is deliberately not inside the Submit button: it describes a keyboard
-  // gesture for the whole card, not a second label on one button. Hidden on
-  // touch-primary pointers by CSS (no physical keyboard there), which keeps
-  // this a pure string renderer — no reactive platform read.
-  html += `<kbd class="ask-submit-kbd">${escapeHtml(askSubmitHint())}</kbd>`
-  html += `<button class="ask-question-recommend">${gt('tool.askUser.recommend')}</button>`
-  html += `<button class="ask-question-submit" disabled>${gt('tool.askUser.submit')}</button>`
-  html += '</div>'
+    html += '<div class="ask-question-actions">'
+    // The chord hint sits in the empty space to the LEFT of the buttons (the row
+    // is right-aligned, so `margin-right: auto` parks it against the far edge).
+    // It is deliberately not inside the Submit button: it describes a keyboard
+    // gesture for the whole card, not a second label on one button. Hidden on
+    // touch-primary pointers by CSS (no physical keyboard there), which keeps
+    // this a pure string renderer — no reactive platform read.
+    html += `<kbd class="ask-submit-kbd">${escapeHtml(askSubmitHint())}</kbd>`
+    // "Recommend" asks the AI for a suggestion by sending a chat message. That
+    // is meaningless while the agent is blocked on this very request (the
+    // message would queue behind the turn it is supposed to unblock), so a live
+    // elicitation card offers only Submit.
+    if (!elicitationId) {
+      html += `<button class="ask-question-recommend">${gt('tool.askUser.recommend')}</button>`
+    }
+    html += `<button class="ask-question-submit" disabled>${gt('tool.askUser.submit')}</button>`
+    html += '</div>'
+  }
   html += '</div>'
 
   return html
@@ -854,7 +888,8 @@ function renderAgentCall(input: ToolInput): string {
 
   const description = str(input.description)
   const prompt = str(input.prompt)
-  const subagentType = str(input.subagent_type) || str(input.mode)
+  // OpenCode 2.x names the sub-agent in `agent` (v1/Claude use `subagent_type`).
+  const subagentType = str(input.subagent_type) || str(input.mode) || str(input.agent)
 
   let html = '<div class="agent-call-view">'
 
@@ -2098,6 +2133,30 @@ async function respondPermission(sessionId: string, toolCallId: string, optionId
   }
 }
 
+/**
+ * Call the elicitation respond API — the answer to a blocking ACP
+ * `elicitation/create` (see submitElicitation).
+ */
+async function respondElicitation(
+  sessionId: string,
+  elicitationId: string,
+  content: Record<string, unknown>,
+): Promise<boolean> {
+  if (isShareMode()) return false
+
+  try {
+    const resp = await fetch('/api/ai/elicitation/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, elicitationId, content }),
+    })
+    return resp.ok
+  } catch (e) {
+    appLog.e(TAG, 'elicitation respond failed:', e)
+    return false
+  }
+}
+
 /** The key identifying an ask card's answer state, from its container. */
 function askKeyOf(view: Element): string {
   return (view as HTMLElement).dataset?.askKey || ''
@@ -2403,6 +2462,9 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
     event.stopPropagation()
     event.preventDefault()
     const view = optionEl.closest('.ask-question-view')
+    // An answered elicitation card is a record: the pending request is gone, so
+    // a click must not pretend a new selection can still be sent.
+    if (view && (view as HTMLElement).dataset?.readonly === '1') return true
     if (view && !view.classList.contains('ask-submitted')) {
       const multiSelect = (optionEl.closest('.ask-question-item') as HTMLElement | null)?.dataset.multi === 'true'
 
@@ -2517,6 +2579,120 @@ function focusAskView(view: Element): void {
 }
 
 /**
+ * Put the card into its terminal ("submitted") look.
+ *
+ * Shared by the ordinary path and the elicitation path: both end with a card
+ * that must not accept a second answer, and the DOM state (dead pointer events,
+ * dimmed unselected options, disabled note, relabelled button) is identical.
+ */
+function markAskViewSubmitted(view: Element): void {
+  view.classList.add('ask-submitted')
+  const allOptions = view.querySelectorAll('.ask-question-option')
+  for (const opt of allOptions) {
+    ;(opt as HTMLElement).style.pointerEvents = 'none'
+    if (!opt.classList.contains('selected')) {
+      ;(opt as HTMLElement).style.opacity = 'var(--opacity-disabled)'
+    }
+  }
+  const supplementaryInput = askSupplementaryField(view)
+  if (supplementaryInput) {
+    supplementaryInput.disabled = true
+    supplementaryInput.style.opacity = 'var(--opacity-muted)'
+  }
+  const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+  if (submitBtn) {
+    submitBtn.textContent = gt('tool.askUser.submitted')
+    submitBtn.disabled = true
+  }
+}
+
+/**
+ * Put the card into its terminal state AND record that in the answer store.
+ *
+ * One implementation for every exit of the card (chat message, live
+ * elicitation): the terminal look and the persisted `submitted` flag must never
+ * drift apart, and the store is what keeps a card from coming back answerable
+ * after a re-render.
+ *
+ * Recorded BEFORE the send and deliberately NOT cleared on success: the card
+ * must still render as submitted after a reload, and `restoreAskStateFromStore`
+ * bails out entirely when no state exists — dropping it would resurrect the very
+ * bug the store exists to prevent. Entries are swept when the session is
+ * archived/destroyed (see useSessionManager). On a FAILED send the caller
+ * reverts it (see revertAskSubmission), keeping the selection and note for a
+ * retry.
+ *
+ * Returns the card key (empty when the card has no identity).
+ */
+function commitAskSubmission(view: Element): string {
+  markAskViewSubmitted(view)
+  const cardKey = askKeyOf(view)
+  patchAskState(cardKey, { selected: readSelectedFromDom(view), submitted: true })
+  return cardKey
+}
+
+/**
+ * Answer a live ACP elicitation: turn the card's selection into the
+ * `{property: answer}` object the agent's JSON-schema form expects and post it.
+ *
+ * Content is keyed by `data-key` (the schema property name) and valued by
+ * `data-value` (the schema `const`), never by the visible label — the two only
+ * coincide by convention.
+ *
+ * The single supplementary box doubles as the "type your own answer" field when
+ * the form has exactly one question that carries one (OpenCode always adds such
+ * a companion field). With several questions one shared box cannot be attributed
+ * to a question, so it is ignored rather than guessed at.
+ */
+function submitElicitation(view: Element, elicitationId: string): boolean {
+  const content: Record<string, unknown> = {}
+  const items = view.querySelectorAll('.ask-question-item')
+  for (const item of items) {
+    const el = item as HTMLElement
+    const key = el.dataset.key || ''
+    if (!key) continue
+    const values = [...item.querySelectorAll('.ask-question-option.selected')]
+      .map(o => (o as HTMLElement).dataset.value ?? (o as HTMLElement).dataset.label ?? '')
+      .filter(v => v !== '')
+    if (values.length === 0) continue
+    content[key] = el.dataset.multi === 'true' ? values : values[values.length - 1]
+  }
+
+  const note = askSupplementaryField(view)?.value?.trim() || ''
+  if (note && items.length === 1) {
+    const el = items[0] as HTMLElement
+    const customKey = el.dataset.customKey || ''
+    const fieldKey = el.dataset.key || ''
+    if (customKey) content[customKey] = note
+    // A free-text question (a schema property with no options) has no companion
+    // field — the note IS its answer. Without this the card would show an
+    // enabled Submit that silently sends nothing.
+    else if (fieldKey && content[fieldKey] === undefined) content[fieldKey] = note
+  }
+
+  if (Object.keys(content).length === 0) return false
+
+  const cardKey = commitAskSubmission(view)
+
+  // The session id rides on the tool-detail container (same source the
+  // PermissionApproval card uses); the global singleton is the fallback for
+  // hosts that do not wrap the card in one.
+  const toolDetail = view.closest('.tool-detail') as HTMLElement | null
+  const sessionId = toolDetail?.dataset?.sessionId || getCurrentSessionId()
+
+  void respondElicitation(sessionId, elicitationId, content).then(ok => {
+    if (ok) return
+    // The request is gone (turn already ended, or a stale card restored from
+    // history). Undo the terminal look so the user sees that nothing was sent
+    // instead of a card that silently claims to be answered.
+    if (cardKey) revertAskSubmission(cardKey)
+    else makeAskViewAnswerable(view)
+  })
+
+  return true
+}
+
+/**
  * Submit an ask card: collect the answer, mark the card terminal, persist the
  * state and emit `send-message`.
  *
@@ -2538,6 +2714,12 @@ function submitAskView(view: Element, emit: (type: string, payload?: unknown, de
   if (view.classList.contains('ask-submitted')) return true
   if (!askViewReady(view)) return false
 
+  // A live elicitation is a BLOCKED agent, not a finished turn: its answer has
+  // to travel back as the RPC result, not as a chat message (which would queue
+  // behind the very turn it is meant to unblock).
+  const elicitationId = (view as HTMLElement).dataset?.elicitationId || ''
+  if (elicitationId) return submitElicitation(view, elicitationId)
+
   const answers: string[] = []
   const items = view.querySelectorAll('.ask-question-item')
   for (const item of items) {
@@ -2556,36 +2738,7 @@ function submitAskView(view: Element, emit: (type: string, payload?: unknown, de
   if (answers.length === 0) return false
 
   // Mark as submitted
-  view.classList.add('ask-submitted')
-  const allOptions = view.querySelectorAll('.ask-question-option')
-  for (const opt of allOptions) {
-    ;(opt as HTMLElement).style.pointerEvents = 'none'
-    if (!opt.classList.contains('selected')) {
-      ;(opt as HTMLElement).style.opacity = 'var(--opacity-disabled)'
-    }
-  }
-  if (supplementaryInput) {
-    supplementaryInput.disabled = true
-    supplementaryInput.style.opacity = 'var(--opacity-muted)'
-  }
-  const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
-  if (submitBtn) {
-    submitBtn.textContent = gt('tool.askUser.submitted')
-    submitBtn.disabled = true
-  }
-
-  // Record the terminal state BEFORE emitting. It is deliberately NOT
-  // cleared on a successful send: the card must still render as submitted
-  // after a reload, and `restoreAskStateFromStore` bails out entirely when
-  // no state exists — so dropping it here would resurrect the very bug this
-  // fixes (the card coming back answerable). Entries are swept when the
-  // session is archived/destroyed (see useSessionManager).
-  //
-  // On a FAILED send the caller reverts `submitted` so the card becomes
-  // answerable again, keeping the selection and note for a retry — see
-  // revertAskSubmission.
-  const cardKey = askKeyOf(view)
-  patchAskState(cardKey, { selected: readSelectedFromDom(view), submitted: true })
+  const cardKey = commitAskSubmission(view)
 
   // The card key rides along so the caller can revert this submission if
   // the send fails (see revertAskSubmission). Sent only when the card has a

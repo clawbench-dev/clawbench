@@ -34,6 +34,17 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		backendID = conn.BackendID()
 	}
 
+	// OpenCode v2 runs sub-agents in child sessions and projects the child's
+	// updates into the PARENT session's stream, tagged only with
+	// `_meta["opencode/child-session"]` and carrying no parent tool-call link.
+	// The client resolves that link before this point (acp_opencode_children.go)
+	// and stamps it into the meta; frames it could not attribute are dropped
+	// here so they never render as top-level main-timeline content (issue #639).
+	if isOpenCodeChildSessionUpdate(update) &&
+		metaString(acpUpdateMeta(update)[metaKeyClawBenchParentToolCallID]) == "" {
+		return
+	}
+
 	// Compaction detection — runs before the event-type switch because the
 	// compaction flag rides on the _meta of whatever update the agent happened
 	// to be sending (CodeBuddy flags every update emitted while compacting).
@@ -496,9 +507,44 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 							forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: enrichModelList(conn, modelList)})
 						}
 						conn.SetCachedModelListState(modelList)
+						// The notification states what the agent is actually
+						// running, so the session cache must follow — the
+						// per-model level list is looked up by it. Skipped while
+						// the session is being established: the agent is then
+						// announcing its own persisted default, and the user's
+						// pre-applied pick must win.
+						if !conn.IsEstablishingSession() && modelList.CurrentModelID != "" {
+							conn.UpdateCachedCurrent("model", modelList.CurrentModelID)
+						}
 					} else {
-						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
+						// No connection to resolve an agent from, so this list
+						// cannot be enriched with the CLI baseline — but it
+						// must still carry prices, or the client (which rebuilds
+						// its picker from this event) would drop every tag.
+						priced := *modelList
+						priced.Models = model.WithPrices(modelList.Models)
+						forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: &priced})
 					}
+				}
+
+			default:
+				// Agent-specific option (codex's "model_config" / fast-mode).
+				//
+				// This is the CORRECTION path: the notification states what the
+				// agent is actually running, so it overrides the optimistic value
+				// the drawer applied on click (the agent may have refused or
+				// rewritten the pick). Dropping it — the previous behavior, the
+				// switch had no default — left the drawer showing a value the agent
+				// never accepted until the next full reload.
+				//
+				// Only this one option is merged; the rest of the list stays, since
+				// a config_option_update may carry a single entry.
+				if conn == nil {
+					continue
+				}
+				if extras := extractExtraConfigOptions([]acp.SessionConfigOption{opt}); len(extras) == 1 {
+					conn.UpsertExtraConfigOption(extras[0])
+					forwardACPEvent(ch, StreamEvent{Type: "config_options_update", ConfigOptions: conn.GetExtraConfigOptions()})
 				}
 			}
 		}
@@ -762,6 +808,12 @@ func applyConfigSelectToSessionCache(sel SelectState, conn *ACPConn, reg *AgentC
 		}
 		conn.UpdateCachedCurrent(sel.Category, sel.CurrentID)
 	case "thought_level":
+		// The level LIST is per model too: an agent that reports a new list
+		// through this notification (rather than inside the set_config_option
+		// response) must be recorded against the model it belongs to.
+		if newOpts {
+			reg.UpdateThinkingEffortsForModel(conn.AgentID(), conn.GetCurrentModelID(), levelsFromSelect(sel))
+		}
 		// Only update session cache when the value actually changed,
 		// to avoid overwriting the user's selection with the agent's default
 		if currentChanged {
@@ -1339,8 +1391,11 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 		return nil
 	}
 	enriched := *modelList
-	enriched.CLIModels = agent.Models
-	enriched.ResolvedModels = model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID)
+	// Prices are attached here so every channel that ships this state over WS
+	// (model_list_update, session bootstrap) carries them; see model.WithPrices.
+	enriched.Models = model.WithPrices(modelList.Models)
+	enriched.CLIModels = model.WithPrices(agent.Models)
+	enriched.ResolvedModels = model.WithPrices(model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID))
 	return &enriched
 }
 

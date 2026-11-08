@@ -281,35 +281,34 @@ func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
 	return model.CatalogModelsForPreset(provider.PresetID)
 }
 
-func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
-	configMutex.RLock()
-	agents := model.GetAgentList()
-	defaultAgent := model.GetDefaultAgentID()
-	configMutex.RUnlock()
+// acpState is the cached ACP capability snapshot attached to each agent in
+// GET /api/agents. It lets the client populate mode chips, effort pickers and
+// slash commands without extra round trips.
+type acpState struct {
+	Mode         *ai.ModeState             `json:"modeState,omitempty"`
+	Effort       *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
+	Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
+	ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
+	Plan         *ai.PlanState             `json:"planState,omitempty"`
+	LoadSession  bool                      `json:"loadSession"`
+	ListSessions bool                      `json:"listSessions"`
+}
 
-	// Scope the list to the caller's current project, then make the reported
-	// default consistent with what is actually visible here.
-	projectPath := middleware.GetProjectFromCookie(r)
-	agents = visibleAgentsInProject(agents, projectPath)
-	defaultAgent = visibleDefaultAgent(defaultAgent, agents, projectPath)
-
-	// Attach cached ACP mode/thinking/commands state to each agent.
-	// This lets the frontend populate mode chips and slash commands without
-	// extra API calls. State comes from the AgentCapabilityRegistry (agent-level)
-	// so it persists across connection lifecycle.
-	type acpState struct {
-		Mode         *ai.ModeState             `json:"modeState,omitempty"`
-		Effort       *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
-		Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
-		ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
-		Plan         *ai.PlanState             `json:"planState,omitempty"`
-		LoadSession  bool                      `json:"loadSession"`
-		ListSessions bool                      `json:"listSessions"`
-	}
-	states := make(map[string]*acpState, len(agents))
-	reg := ai.GetAgentCapabilityRegistry()
-	connManager := ai.GetACPConnManager()
-
+// resolveAgentModelLists fills in each agent's ACP state and replaces the
+// agent's Models with the resolved list (always on a copy).
+//
+// Resolving here, in the backend, means the frontend just renders what it is
+// given. The CLI list supplies order and names; a concrete ACP list is
+// authoritative for membership when present. ACP lists made of tier aliases
+// (claude) are handled differently — see model.ResolveModels, which is the
+// single place this rule lives.
+//
+// The resolved list goes on a COPY of the agent. Mutating the shared *Agent
+// would overwrite the stored CLI-discovered list with a merged one, and the
+// next refresh would treat ACP-only models as CLI-discovered.
+func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
+	reg *ai.AgentCapabilityRegistry, connManager *ai.ACPConnManager,
+) {
 	// Resolve each agent's model list here, in the backend, so the frontend just
 	// renders what it is given. The CLI list supplies order and names; a concrete
 	// ACP list is authoritative for membership when present. ACP lists made of
@@ -356,7 +355,12 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.Mode = reg.GetModeState(a.ID, "")
-		s.Effort = reg.GetThinkingEffortState(a.ID, "")
+		// Levels are per MODEL (issue #637). Resolve them against the agent's
+		// DEFAULT model: it is what the settings picker configures, and it is
+		// deterministic — the live "current model" is whichever connection
+		// happened to be picked from a map, so the list would flip between
+		// requests when two sessions run different models.
+		s.Effort = reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), "")
 		s.Commands = reg.GetCommands(a.ID)
 		s.ModelList = reg.GetModelListState(a.ID, connManager.GetCurrentModelIDByAgentID(a.ID))
 		states[a.ID] = s
@@ -402,6 +406,66 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		clone.Models = resolved
 		agents[i] = gateUnconfirmedACPModels(&clone)
 	}
+}
+
+// applyModelPrices attaches per-model prices to every list the picker can
+// render (issue #643).
+//
+// Done here, on copies, rather than inside ResolveModels: prices come from a
+// different source (the weekly catalog snapshot) and must never be written back
+// into the agent's stored model list. Every list the picker can render is
+// priced — the resolved list, the CLI baseline behind the transport switch, and
+// the unconfirmed catalog fallback.
+func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
+	// Attach per-model prices (issue #643). Done here, on copies, rather than
+	// inside ResolveModels: prices come from a different source (the weekly
+	// catalog snapshot) and must never be written back into the agent's stored
+	// model list. Every list the picker can render is priced — the resolved
+	// list, the CLI baseline behind the transport switch, and the unconfirmed
+	// catalog fallback.
+	for i, a := range agents {
+		priced := *a
+		priced.Models = model.WithPrices(a.Models)
+		priced.CLIModels = model.WithPrices(a.CLIModels)
+		priced.CatalogModels = model.WithPrices(a.CatalogModels)
+		agents[i] = &priced
+	}
+	for _, s := range states {
+		if s.ModelList == nil {
+			continue
+		}
+		// The client renders modelListState directly after creating a session,
+		// so it needs the same prices the agent list carries. Models is already
+		// priced by GetModelListState; the two derived lists are built here.
+		ml := *s.ModelList
+		ml.ResolvedModels = model.WithPrices(s.ModelList.ResolvedModels)
+		ml.CLIModels = model.WithPrices(s.ModelList.CLIModels)
+		s.ModelList = &ml
+	}
+}
+
+func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	agents := model.GetAgentList()
+	defaultAgent := model.GetDefaultAgentID()
+	configMutex.RUnlock()
+
+	// Scope the list to the caller's current project, then make the reported
+	// default consistent with what is actually visible here.
+	projectPath := middleware.GetProjectFromCookie(r)
+	agents = visibleAgentsInProject(agents, projectPath)
+	defaultAgent = visibleDefaultAgent(defaultAgent, agents, projectPath)
+
+	// Attach cached ACP mode/thinking/commands state to each agent.
+	// This lets the frontend populate mode chips and slash commands without
+	// extra API calls. State comes from the AgentCapabilityRegistry (agent-level)
+	// so it persists across connection lifecycle.
+	states := make(map[string]*acpState, len(agents))
+	reg := ai.GetAgentCapabilityRegistry()
+	connManager := ai.GetACPConnManager()
+
+	resolveAgentModelLists(agents, states, reg, connManager)
+	applyModelPrices(agents, states)
 
 	// Attach usage counts (interactive sessions / tasks / group memberships) so
 	// the config panel can display them and gate the delete button without a
@@ -720,7 +784,8 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 // isValidThinkingEffort checks if a thinking effort level is valid for an agent
 // in a given session. It checks levels based on the transport that session's
 // turns will actually use:
-//   - ACP mode: only ACP-reported levels from AgentCapabilityRegistry
+//   - ACP mode: the live session's own model list when it has one, otherwise
+//     the agent-level levels from AgentCapabilityRegistry
 //   - CLI mode: only static ThinkingEffortLevels from BackendSpec
 //   - Neither has levels: allow any value (backward compatible)
 //
@@ -748,7 +813,15 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 	reg := ai.GetAgentCapabilityRegistry()
 
 	if transport == "acp-stdio" {
-		// ACP mode: only check ACP-reported levels
+		// ACP mode: prefer the list THIS session's model advertised. The
+		// agent-level registry only remembers whichever session refreshed it
+		// last, and levels are per model — validating a deepseek pick against
+		// glm's list both rejects valid levels and accepts ones the model will
+		// refuse.
+		if offered, known := sessionOffersThinkingEffort(sessionID, agent.ID, level); known {
+			return offered
+		}
+		// ACP-reported agent-level levels
 		if es := reg.GetThinkingEffortState(agent.ID, ""); es != nil && len(es.AvailableLevels) > 0 {
 			for _, l := range es.AvailableLevels {
 				if l.ID == level {
@@ -773,6 +846,36 @@ func isValidThinkingEffort(agent *model.Agent, level, sessionID string) bool {
 
 	// No static levels and not ACP — allow any value
 	return true
+}
+
+// sessionOffersThinkingEffort reports whether the model this session runs
+// advertises the level. known=false means that model's list has not been
+// learned yet (callers fall back to the agent-level registry).
+func sessionOffersThinkingEffort(sessionID, agentID, level string) (offered, known bool) {
+	if sessionID == "" {
+		return false, false
+	}
+	// The session row's model is authoritative; a session created without one
+	// will run the agent's default on its first turn.
+	modelID := service.GetSessionModel(sessionID)
+	if modelID == "" {
+		if a := model.GetAgent(agentID); a != nil {
+			modelID = a.DefaultModelID()
+		}
+	}
+	if modelID == "" {
+		return false, false
+	}
+	levels, ok := ai.GetAgentCapabilityRegistry().ThinkingEffortsForModel(agentID, modelID)
+	if !ok {
+		return false, false
+	}
+	for _, l := range levels {
+		if l.ID == level {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // maxAgentAvatarBytes caps the stored agent avatar (a raw DiceBear SVG string).
@@ -1525,8 +1628,11 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	resolved := resolveRefreshedModels(agent, models)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"models":    resolved,
-		"cliModels": models,
+		// Prices must be attached on BOTH refresh paths: the client writes these
+		// lists straight onto the agent, so a refresh that omitted them would
+		// wipe every price tag until the next /api/agents fetch.
+		"models":    model.WithPrices(resolved),
+		"cliModels": model.WithPrices(models),
 	})
 }
 
@@ -1629,8 +1735,8 @@ func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Age
 		"elapsed", time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"models":    resolved,
-		"cliModels": cliModels,
+		"models":    model.WithPrices(resolved),
+		"cliModels": model.WithPrices(cliModels),
 		"acpState":  state,
 	})
 }

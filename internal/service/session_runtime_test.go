@@ -3495,3 +3495,37 @@ func TestEmitSessionEvent_Completed_FeishuStarted(t *testing.T) {
 	// Should not panic — Feishu code path exercised
 	EmitSessionEvent("session-feishu-1", "completed", true)
 }
+
+// TestEmitTurnTerminal_BroadcastsDoneAndCompleted pins the three steps every
+// non-chat entry point must perform after RunTurn returns. runTurn itself sends
+// no terminal event, so a caller that skips this leaves the assistant bubble
+// streaming forever on every subscribed client and never pushes a completion.
+func TestEmitTurnTerminal_BroadcastsDoneAndCompleted(t *testing.T) {
+	db := setupPushNotificationTest(t, "session-turn-terminal")
+	insertTestMessage(t, db, "session-turn-terminal", "user", "question")
+	content := model.ContentBlock{Type: "text", Text: "answer"}
+	contentJSON, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{content}})
+	insertTestMessage(t, db, "session-turn-terminal", "assistant", string(contentJSON))
+
+	mgr := ws.NewManagerForTest()
+	prev := ws.GetManager()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(prev) })
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "turn-terminal-client", "")
+	require.NotNil(t, sub)
+	mgr.StreamHub().Subscribe("turn-terminal-client", "session-turn-terminal")
+	t.Cleanup(func() { mgr.StreamHub().UnsubscribeAll("turn-terminal-client") })
+
+	EmitTurnTerminal("session-turn-terminal")
+
+	var done bool
+	for _, ev := range sub.GetBufferedEvents() {
+		if data, ok := ev.Data.(ws.ChatStreamData); ok && data.EventType == "done" {
+			done = true
+		}
+	}
+	assert.True(t, done, "the subscriber must receive a terminal done event")
+	assert.Equal(t, 1, pendingEventCount(t, db), "exactly one completion push must be issued")
+}

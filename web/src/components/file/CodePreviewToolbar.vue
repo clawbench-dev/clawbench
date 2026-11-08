@@ -7,174 +7,190 @@
        `.code-preview-sheet-row2` + a bottom pill-button footer while the other
        two rendered this row, so the same preview had two different toolbars.
        Keep the surfaces on this markup: any divergence here is the bug. -->
-  <div class="code-preview-meta" @pointerdown="onRowPointerDown">
+  <ActionBar
+    class="code-preview-meta"
+    mode="scroll"
+    size="bar"
+    @pointerdown="onRowPointerDown"
+  >
+    <!-- The line/size summary is a fixed item: ActionBar pins it to its natural
+         width while measuring, so "does it fit" is answered about the tools. -->
     <div class="code-preview-meta-info">
       <span>{{ metaText || t('file.codePreview.title') }}</span>
     </div>
 
-    <div class="code-preview-actions" @pointerdown.stop>
-      <!-- Rendered / Source toggle (Markdown / HTML; always shown for a
-           renderable document, even with a line range) -->
-      <button
-        v-if="showRenderToggle"
-        class="code-preview-btn"
-        :class="{ 'is-active': isRenderedView }"
-        :aria-pressed="isRenderedView"
-        :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-        :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-        :data-tooltip="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-        @pointerenter="showTooltip($event, isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('toggle-render-view')"
-      >
-        <Eye :size="12" />
-      </button>
-      <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
-      <button
-        v-if="showTextTools && !isRenderedView"
-        ref="firstActionBtnRef"
-        class="code-preview-btn"
-        :class="{ 'is-active': isSearchOpen }"
-        :title="t('file.codePreview.findInPreview')"
-        :aria-label="t('file.codePreview.findInPreview')"
-        :data-tooltip="t('file.codePreview.findInPreview')"
-        @pointerenter="showTooltip($event, t('file.codePreview.findInPreview'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('toggle-search')"
-      >
-        <Search :size="12" />
-      </button>
-      <button
-        v-if="showTextTools && !isRenderedView"
-        class="code-preview-btn"
-        :class="{ 'is-active': isWordWrap }"
-        :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-        :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-        :aria-pressed="isWordWrap"
-        :data-tooltip="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-        @pointerenter="showTooltip($event, isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('toggle-word-wrap')"
-      >
-        <TextWrap :size="12" />
-      </button>
-      <button
-        v-if="showTextTools && !isRenderedView"
-        class="code-preview-btn"
-        :class="{ 'is-active': showLineNumbers }"
-        :aria-pressed="showLineNumbers"
-        :title="t('file.header.lineNumbers')"
-        :aria-label="t('file.header.lineNumbers')"
-        :data-tooltip="t('file.header.lineNumbers')"
-        @pointerenter="showTooltip($event, t('file.header.lineNumbers'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('toggle-line-numbers')"
-      >
-        <Hash :size="12" />
-      </button>
-      <button
-        class="code-preview-btn"
-        :title="t('file.codePreview.refresh')"
-        :aria-label="t('file.codePreview.refresh')"
-        :data-tooltip="t('file.codePreview.refresh')"
-        @pointerenter="showTooltip($event, t('file.codePreview.refresh'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('refresh')"
-      >
-        <RefreshCw :size="12" />
-      </button>
+    <!-- Rendered / Source toggle (Markdown / HTML; always shown for a
+         renderable document, even with a line range) -->
+    <button
+      v-if="showRenderToggle"
+      class="code-preview-btn"
+      :class="{ active: isRenderedView }"
+      :aria-pressed="isRenderedView"
+      :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+      :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+      :data-tooltip="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+      @pointerenter="showTooltip($event, isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('toggle-render-view')"
+    >
+      <Eye :size="12" />
+      <span class="action-label">{{ isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView') }}</span>
+    </button>
+    <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
+    <button
+      v-if="showTextTools && !isRenderedView"
+      ref="firstActionBtnRef"
+      class="code-preview-btn"
+      :class="{ active: isSearchOpen }"
+      :title="t('file.codePreview.findInPreview')"
+      :aria-label="t('file.codePreview.findInPreview')"
+      :data-tooltip="t('file.codePreview.findInPreview')"
+      @pointerenter="showTooltip($event, t('file.codePreview.findInPreview'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('toggle-search')"
+    >
+      <Search :size="12" />
+      <span class="action-label">{{ t('file.codePreview.findInPreview') }}</span>
+    </button>
+    <button
+      v-if="showTextTools && !isRenderedView"
+      class="code-preview-btn"
+      :class="{ active: isWordWrap }"
+      :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
+      :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
+      :aria-pressed="isWordWrap"
+      :data-tooltip="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
+      @pointerenter="showTooltip($event, isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('toggle-word-wrap')"
+    >
+      <TextWrap :size="12" />
+      <span class="action-label">{{ isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap') }}</span>
+    </button>
+    <button
+      v-if="showTextTools && !isRenderedView"
+      class="code-preview-btn"
+      :class="{ active: showLineNumbers }"
+      :aria-pressed="showLineNumbers"
+      :title="t('file.header.lineNumbers')"
+      :aria-label="t('file.header.lineNumbers')"
+      :data-tooltip="t('file.header.lineNumbers')"
+      @pointerenter="showTooltip($event, t('file.header.lineNumbers'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('toggle-line-numbers')"
+    >
+      <Hash :size="12" />
+      <span class="action-label">{{ t('file.header.lineNumbers') }}</span>
+    </button>
+    <button
+      class="code-preview-btn"
+      :title="t('file.codePreview.refresh')"
+      :aria-label="t('file.codePreview.refresh')"
+      :data-tooltip="t('file.codePreview.refresh')"
+      @pointerenter="showTooltip($event, t('file.codePreview.refresh'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('refresh')"
+    >
+      <RefreshCw :size="12" />
+      <span class="action-label">{{ t('file.codePreview.refresh') }}</span>
+    </button>
 
-      <span class="code-preview-actions-divider" />
+    <span class="code-preview-actions-divider" />
 
-      <!-- Actions: Quote, Copy Code (code view). Then the contiguous file
-           tools — Copy Path / Open Directory (reveal) / Open File — with no
-           dividers between them, in that left-to-right order. -->
-      <button
-        v-if="showTextTools"
-        class="code-preview-btn"
-        :title="t('file.codePreview.quoteToChat')"
-        :aria-label="t('file.codePreview.quoteToChat')"
-        :data-tooltip="t('file.codePreview.quoteToChat')"
-        @pointerenter="showTooltip($event, t('file.codePreview.quoteToChat'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('quote')"
-      >
-        <MessageSquare :size="12" />
-      </button>
-      <CopyButton
-        v-if="showTextTools && !isRenderedView"
-        :copied="copied"
-        :size="12"
-        title-key="file.codePreview.copy"
-        copied-key="file.codePreview.copied"
-        class="code-preview-btn"
-        :data-tooltip="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-        @pointerenter="showTooltip($event, copied ? t('file.codePreview.copied') : t('file.codePreview.copy'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('copy')"
-      />
+    <!-- Actions: Quote, Copy Code (code view). Then the contiguous file
+         tools — Copy Path / Open Directory (reveal) / Open File — with no
+         dividers between them, in that left-to-right order. -->
+    <button
+      v-if="showTextTools"
+      class="code-preview-btn"
+      :title="t('file.codePreview.quoteToChat')"
+      :aria-label="t('file.codePreview.quoteToChat')"
+      :data-tooltip="t('file.codePreview.quoteToChat')"
+      @pointerenter="showTooltip($event, t('file.codePreview.quoteToChat'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('quote')"
+    >
+      <MessageSquare :size="12" />
+      <span class="action-label">{{ t('file.codePreview.quoteToChat') }}</span>
+    </button>
+    <CopyButton
+      v-if="showTextTools && !isRenderedView"
+      :copied="copied"
+      :size="12"
+      :label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
+      title-key="file.codePreview.copy"
+      copied-key="file.codePreview.copied"
+      class="code-preview-btn"
+      :data-tooltip="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
+      @pointerenter="showTooltip($event, copied ? t('file.codePreview.copied') : t('file.codePreview.copy'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('copy')"
+    />
 
-      <!-- Copy Path -->
-      <CopyButton
-        :copied="isPathCopied"
-        :size="12"
-        title-key="file.codePreview.copyPath"
-        copied-key="file.codePreview.pathCopied"
-        class="code-preview-btn copy-path-btn"
-        :data-tooltip="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-        @pointerenter="showTooltip($event, isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('copy-path')"
-      ><template #icon><Link :size="12" /></template></CopyButton>
-      <!-- Open Directory (reveal in tree) -->
-      <button
-        class="code-preview-btn"
-        :title="t('file.codePreview.revealInTree')"
-        :aria-label="t('file.codePreview.revealInTree')"
-        :data-tooltip="t('file.codePreview.revealInTree')"
-        @pointerenter="showTooltip($event, t('file.codePreview.revealInTree'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('reveal')"
-      >
-        <Folder :size="12" />
-      </button>
-      <!-- Open File / View Details.
-           A too-large file used to swap this for a wide text button reading
-           "View details / Download", which was 4x the width of every other
-           control in the row (111px vs 26px) and broke the icon strip. It
-           also did nothing different: it called the same openFull() as the
-           normal case. So the icon is used in both cases, and only the
-           tooltip changes — it carries the "download" affordance for an
-           oversize file. -->
-      <button
-        v-if="!isDirView"
-        class="code-preview-btn"
-        :title="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
-        :aria-label="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
-        :data-tooltip="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
-        @pointerenter="showTooltip($event, tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('open-full')"
-      >
-        <ExternalLink :size="12" />
-      </button>
-      <!-- Zoom image (image targets only): opens the shared Lightbox.
-           Sits directly beside Open File — both are file-level actions, so
-           they stay grouped and separate from the code tools above. -->
-      <button
-        v-if="isImageTarget"
-        class="code-preview-btn"
-        :title="t('file.codePreview.openLightbox')"
-        :aria-label="t('file.codePreview.openLightbox')"
-        :data-tooltip="t('file.codePreview.openLightbox')"
-        @pointerenter="showTooltip($event, t('file.codePreview.openLightbox'))"
-        @pointerleave="hideTooltip()"
-        @click="$emit('view-lightbox')"
-      >
-        <Maximize2 :size="12" />
-      </button>
-    </div>
-  </div>
+    <!-- Copy Path -->
+    <CopyButton
+      :copied="isPathCopied"
+      :size="12"
+      :label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+      title-key="file.codePreview.copyPath"
+      copied-key="file.codePreview.pathCopied"
+      class="code-preview-btn copy-path-btn"
+      :data-tooltip="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+      @pointerenter="showTooltip($event, isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('copy-path')"
+    ><template #icon><Link :size="12" /></template></CopyButton>
+    <!-- Open Directory (reveal in tree) -->
+    <button
+      class="code-preview-btn"
+      :title="t('file.codePreview.revealInTree')"
+      :aria-label="t('file.codePreview.revealInTree')"
+      :data-tooltip="t('file.codePreview.revealInTree')"
+      @pointerenter="showTooltip($event, t('file.codePreview.revealInTree'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('reveal')"
+    >
+      <Folder :size="12" />
+      <span class="action-label">{{ t('file.codePreview.revealInTree') }}</span>
+    </button>
+    <!-- Open File / View Details.
+         A too-large file used to swap this for a wide text button reading
+         "View details / Download", which was 4x the width of every other
+         control in the row (111px vs 26px) and broke the icon strip. It
+         also did nothing different: it called the same openFull() as the
+         normal case. So the icon is used in both cases, and only the
+         tooltip changes — it carries the "download" affordance for an
+         oversize file. -->
+    <button
+      v-if="!isDirView"
+      class="code-preview-btn"
+      :title="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+      :aria-label="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+      :data-tooltip="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+      @pointerenter="showTooltip($event, tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('open-full')"
+    >
+      <ExternalLink :size="12" />
+      <span class="action-label">{{ tooLarge ? t('actionLabels.viewDetails') : t('file.codePreview.openFull') }}</span>
+    </button>
+    <!-- Zoom image (image targets only): opens the shared Lightbox.
+         Sits directly beside Open File — both are file-level actions, so
+         they stay grouped and separate from the code tools above. -->
+    <button
+      v-if="isImageTarget"
+      class="code-preview-btn"
+      :title="t('file.codePreview.openLightbox')"
+      :aria-label="t('file.codePreview.openLightbox')"
+      :data-tooltip="t('file.codePreview.openLightbox')"
+      @pointerenter="showTooltip($event, t('file.codePreview.openLightbox'))"
+      @pointerleave="hideTooltip()"
+      @click="$emit('view-lightbox')"
+    >
+      <Maximize2 :size="12" />
+      <span class="action-label">{{ t('file.codePreview.openLightbox') }}</span>
+    </button>
+  </ActionBar>
 </template>
 
 <script setup lang="ts">
@@ -182,8 +198,10 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquare, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
+
 
 withDefaults(defineProps<{
   /** Line/size (or entry-count) summary shown on the left. Empty falls back to

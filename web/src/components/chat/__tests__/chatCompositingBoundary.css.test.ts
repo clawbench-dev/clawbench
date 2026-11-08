@@ -124,6 +124,38 @@ describe('chat compositing boundary (Android WebView GPU ghost)', () => {
     ).toEqual([])
   })
 
+  /**
+   * `mask-image` also promotes its element on Chromium, and it is the one
+   * promotion the chat tree genuinely needs (an edge fade has to be a mask —
+   * an opaque gradient overlay breaks on a translucent wallpaper surface).
+   *
+   * The list below is an allow-list, not a ban: a new masked element must be
+   * added here deliberately, together with the reason its size is stable along
+   * the masked axis. That is the property that decides whether it can hit the
+   * resize-ghost — the bar's HEIGHT is fixed, but its WIDTH follows the pane,
+   * so it is accepted on the judgement that the pane does not resize during a
+   * turn (the ghost path is "height changes when a reply finalizes").
+   */
+  it('only masks elements whose size is stable along the masked axis', () => {
+    const ALLOWED: Record<string, string> = {
+      'ChatMessageRail.vue': 'vertical rail: height is the pane height, stable across turns',
+      'ChatInputBar.vue': 'action bar: fixed height; width follows the pane, which does not resize on turn end',
+      'AttachDrawer.vue': 'selected-chip strip: horizontal fade inside the attach sheet, height is the chip row (fixed), width only changes while the user scrolls the strip',
+    }
+    const offenders: string[] = []
+    for (const file of readdirSync(chatDir).filter((f) => f.endsWith('.vue'))) {
+      const src = stripComments(readFileSync(resolve(chatDir, file), 'utf8'))
+      if (!/mask-image/.test(src)) continue
+      if (!(file in ALLOWED)) offenders.push(file)
+    }
+    expect(
+      offenders,
+      'mask-image promotes the element to a composited layer, which Android ' +
+      'WebView mis-draws when its size changes. Add the file to ALLOWED only ' +
+      'after checking the masked axis is size-stable across a turn boundary.',
+    ).toEqual([])
+  })
+
   it('keeps the row itself uncomposited but clipped', () => {
     // Belt-and-braces against a regression of the exact rule that produced the
     // 4px squashed meta bar: the row must never be promoted, only clipped.

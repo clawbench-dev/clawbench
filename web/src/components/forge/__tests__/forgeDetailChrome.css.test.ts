@@ -64,7 +64,7 @@ const SHARED_CHROME = [
   'forge-row-title',
   'forge-row-meta',
   'forge-row-time',
-  'forge-row-chevron',
+  'forge-row-quote',
   'forge-state',
   'forge-empty-card',
   // No 'forge-empty-icon': the glyph's size/stroke/colour come from the app-wide

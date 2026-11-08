@@ -601,6 +601,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)
 	register("/api/ai/sessions/overview", ServeSessionsOverview)
+	register("/api/ai/sessions/by-project", ServeProjectSessions)
 	register("/api/ai/sessions/reorder", ServeSessionsReorder)
 	register("/api/ai/session/archive", ArchiveSession)
 	register("/api/ai/session/destroy", DestroySession)
@@ -631,6 +632,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/stats", ServeGitStats)
 	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)
+	register("/api/ai/elicitation/respond", ServeElicitationRespond)
 	register("/api/upload/file", UploadFile)
 	register("/api/upload/check", UploadCheck)
 	register("/api/upload/recent", UploadRecent)
@@ -705,6 +707,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// merged timeline back, and asks for the minutes once the share ends.
 	register("/api/live-share/notes", ServeLiveShareNotes)
 	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
+	register("/api/live-share/notes/stream", LiveNotesStreamWS)
 	// Folds the per-segment audio into one file per channel plus the
 	// whole-meeting mix; called once the upload queue has drained.
 	register("/api/live-share/notes/audio/merge", ServeLiveNotesAudioMerge)
@@ -754,6 +757,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/verify-commits", ServeGitVerifyCommits)
 	register("/api/git/worktrees", ServeGitWorktrees)
 	register("/api/git/checkout", ServeGitCheckout)
+	register("/api/git/fetch", ServeGitFetch)
+	register("/api/git/divergence", ServeGitDivergence)
 	register("/api/git/tags", ServeGitTags)
 	register("/api/file/rename", ServeFileRename)
 	register("/api/file/write", ServeFileWrite)
@@ -784,9 +789,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
 	register("/api/tts/generate", TTSGenerate)
-	register("/api/tts/generate/pcm", TTSPCMGenerate)
 	register("/api/tts/stream/", TTSStream)
 	register("/api/tts/audio/ws", TTSAudioWS)
+	register("/api/voice/turn/ws", VoiceTurnWS)
 	register("/api/stt/transcribe", STTTranscribe)
 	register("/api/stt/transcribe/ws", STTTranscribeWS)
 	register("/api/tasks", ServeTasks)

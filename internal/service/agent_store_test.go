@@ -294,8 +294,11 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"models": true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
-		"acp_available_models": true,
-		"acp_config_options":   true, "acp_mcp_http": true, "acp_mcp_sse": true,
+		// Per-model thinking levels (issue #637): some agents advertise a
+		// different level set per model, so the list is keyed by model id.
+		"acp_thinking_efforts_by_model": true,
+		"acp_available_models":          true,
+		"acp_config_options":            true, "acp_mcp_http": true, "acp_mcp_sse": true,
 		"auto_approve": true, "disabled": true,
 		"project_id": true,
 		// Model-provider binding (NULL = use the CLI's own configuration).
@@ -1351,4 +1354,29 @@ func TestCreateCustomACPAgent_NameConflicts(t *testing.T) {
 
 	_, err := service.CreateCustomACPAgent("Taken", "x acp")
 	require.ErrorIs(t, err, service.ErrAgentNameTaken)
+}
+
+// A model price is derived from the weekly catalog snapshot, so persisting it
+// would freeze the number at whatever the catalog said the day the agent was
+// saved (issue #643). It must be stripped on write and come back nil on load.
+func TestSaveAgent_DoesNotPersistModelPrice(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi",
+		Models: []model.AgentModel{{
+			ID: "glm-5.2", Name: "GLM-5.2", Default: true,
+			Price: &model.ModelPrice{Input: 1.4, Output: 4.4},
+		}},
+	}))
+
+	var modelsJSON string
+	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id='pi'").Scan(&modelsJSON))
+	assert.NotContains(t, modelsJSON, "price", "a derived price must never reach the agents table")
+	assert.Contains(t, modelsJSON, "glm-5.2")
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	require.Len(t, agents[0].Models, 1)
+	assert.Nil(t, agents[0].Models[0].Price, "a loaded model carries no stale price")
 }

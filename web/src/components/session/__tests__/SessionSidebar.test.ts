@@ -36,11 +36,6 @@ vi.mock('@/components/session/SessionListHeader.vue', () => ({
     emits: ['refresh', 'create'],
   },
 }))
-// Stubbed so the test does not pull in the real tabs component (and with it the
-// app store / i18n / api import chain this suite deliberately avoids).
-vi.mock('@/components/session/SessionListTabs.vue', () => ({
-  default: { name: 'SessionListTabs', template: '<div class="tabs-stub" />', props: ['activeTab'] },
-}))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div />' },
 }))

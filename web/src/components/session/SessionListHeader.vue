@@ -18,22 +18,26 @@
         <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
       </div>
     </div>
-    <div class="session-header-actions">
+    <ActionBar class="session-header-actions" mode="menu" align="end" size="bar">
       <slot name="actions" />
       <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
         <Search :size="16" />
+        <span class="action-label">{{ t('sessionSearch.title') }}</span>
       </button>
-      <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
+      <button class="header-action-btn is-primary" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
+        <span class="action-label">{{ t('session.newSession') }}</span>
       </button>
       <template v-if="pinned">
-        <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh" />
+        <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh">
+          <span class="action-label">{{ t('common.refresh') }}</span>
+        </RefreshButton>
       </template>
       <!-- Trailing slot: hosts put the sidebar pin/unpin toggle here so it is the
            right-most control in the header, after search/create/refresh. The
            leading #actions slot is rendered before the built-in buttons. -->
       <slot name="actions-end" />
-    </div>
+    </ActionBar>
   </div>
 </template>
 
@@ -42,6 +46,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { List, Search, Plus } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 
 const props = defineProps({
   sessionCount: { type: Number, default: 0 },
@@ -152,6 +157,7 @@ const sessionBarColor = computed(() => {
   align-items: center;
   justify-content: flex-end;
 }
+
 </style>
 
 <style>
@@ -159,23 +165,29 @@ const sessionBarColor = computed(() => {
    applies to buttons injected into the #actions slot by parents (e.g. the
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
+/* Size, radius, colour, hover AND the gap between buttons come from the shared
+   ActionBar row rules (size="bar"). The row is a utility row (search / shared /
+   create / refresh / pin) and stays neutral, with two exceptions that are
+   DELIBERATE and mean something different from each other:
+     - `is-primary` marks the single create entry (the "+"), the one action the
+       row wants to stand out — the same marking the task and proxy headers use;
+     - `.active` marks a TOGGLED-ON state (the sidebar pin), which is a state,
+       not emphasis.
+   Painting any other button of the row in the accent is what this rule forbids:
+   the accent used to make one or two utilities read as a different kind of
+   control.
+
+   This block used to add `margin-left: var(--space-3)` as well, which stacked on
+   top of the bar's own 8px gap: the row measured 14px between buttons, and it
+   got worse when the labels appeared (each button also gained 8px of side
+   padding, so the visual gap read as even wider). The bar owns the spacing —
+   nothing here should repeat it. */
 .header-action-btn {
-  margin-left: var(--space-3);
-  width: calc(24 * var(--dp));
-  height: calc(24 * var(--dp));
   border: none;
-  background: none;
-  color: var(--accent-color, #0066cc);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-xs);
-  transition: background var(--duration-base);
 }
-@media (hover: hover) {
-  .header-action-btn:hover {
-    background: rgba(0, 102, 204, 0.1);
-  }
-}
+
 </style>

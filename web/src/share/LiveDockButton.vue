@@ -1,7 +1,7 @@
 <template>
   <button
     class="live-dock-btn"
-    :class="{ 'live-dock-btn--live': live }"
+    :class="{ 'live-dock-btn--live': live, 'live-dock-btn--compact': compact }"
     type="button"
   >
     <slot name="icon" />
@@ -11,6 +11,8 @@
 </template>
 
 <script setup lang="ts">
+import { useDesignWidthAtMost } from './useDesignWidth'
+
 /**
  * One control in a `LiveDock` pill: icon, label, optional unread badge.
  *
@@ -23,6 +25,14 @@ withDefaults(defineProps<{ live?: boolean; badge?: number }>(), {
   live: false,
   badge: 0,
 })
+
+/**
+ * "Not enough room for a label" is a DESIGN width, so it has to be measured
+ * against the window divided by the interface scale — a media query would keep
+ * the labels on a window that the scaled pill no longer fits (see
+ * useDesignWidthAtMost).
+ */
+const compact = useDesignWidthAtMost(520)
 </script>
 
 <style scoped>
@@ -86,18 +96,19 @@ withDefaults(defineProps<{ live?: boolean; badge?: number }>(), {
 }
 
 /* The label is the first thing to drop when space runs out: the icon and the
-   tint still carry the meaning, and the title has the full sentence. */
-@media (max-width: 520px) {
-  .live-dock-label {
-    display: none;
-  }
+   tint still carry the meaning, and the title has the full sentence.
+   `.live-dock-btn--compact` is set from script rather than a media query — the
+   threshold is a design width, and scaling shrinks the design width of a window
+   without changing the window (see useDesignWidthAtMost). */
+.live-dock-btn--compact .live-dock-label {
+  display: none;
+}
 
-  .live-dock-btn {
-    padding: var(--space-2, 4px) var(--space-3, 6px);
-    /* Icon only from here on, so the horizontal target collapses with the
-       label: pin the width to the button's height and it stays a square. */
-    min-width: calc(28 * var(--dp));
-  }
+.live-dock-btn--compact {
+  padding: var(--space-2, 4px) var(--space-3, 6px);
+  /* Icon only from here on, so the horizontal target collapses with the label:
+     pin the width to the button's height and it stays a square. */
+  min-width: calc(28 * var(--dp));
 }
 
 /* Unread counter on the dock button. Accent, not red: red means an error or a

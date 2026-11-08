@@ -204,6 +204,10 @@ func TestPiStreamParser_ErrorMessage(t *testing.T) {
 			if evt.Error != "403 forbidden" {
 				t.Errorf("expected error message '403 forbidden', got '%s'", evt.Error)
 			}
+			// A missing reason made the turn look like a clean finish.
+			if evt.Reason != ReasonRequestFailed {
+				t.Errorf("expected reason %q, got %q", ReasonRequestFailed, evt.Reason)
+			}
 		}
 	}
 	if !foundError {

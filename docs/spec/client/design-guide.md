@@ -14,6 +14,7 @@
 | 加一套新主题 | [主题系统](#主题系统) |
 | 摆布局、调头部 / 宽屏 / 安全区 | [布局骨架](#布局骨架) |
 | 做按钮、角标、弹层、菜单 | [组件约定](#组件约定) |
+| 做一条放不下会横向滚动的条 | [横向滚动的条：溢出必须有视觉提示](#横向滚动的条溢出必须有视觉提示) |
 | 加动画 | [动效](#动效) |
 | **写 CSS 前** | [七条红线](#七条红线先读这节再写-css) |
 | 提 PR 前自检 | [改动检查清单](#改动检查清单) |
@@ -337,6 +338,66 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **只有正文里的行内小动作**才允许更小的局部类（会议详情的「复制路径」、共享面板的「静音」）：**页脚里不放小按钮，正文里不放 `.fbtn` 大按钮**。
 - 守卫：`components/live/__tests__/meetingFooterButtons.test.ts`（页脚条逐声明对比任务动作条、页脚里只能是 `.fbtn`、组件自己 import 样式表）。
 
+### 图标按钮：统一用 ActionBar
+
+一排图标按钮不要各写一套宽度逻辑。`web/src/components/common/ActionBar.vue` 是唯一的实现，它管三件事：
+
+1. **标签**：空间够就在图标后面显示文字，不够就只剩图标。
+2. **折叠**（`mode="menu"`）：按图标宽度把放不下的按钮收进「更多」菜单，菜单项从被收起的按钮自动生成（图标 + 文字）。`always-more` 用于自己还有常驻菜单项的宿主（文件查看器）。
+3. **滚动**（`mode="scroll"`）：按钮一个都不收起，超出后可以左右拖拽，两侧有渐变提示（只在真的有内容被挡住的那一侧显示）。
+
+接入方式：容器写成 `<ActionBar class="你的类" mode="...">`，里面放普通的 `<button>`，想要标签的按钮里加 `<span class="action-label">文字</span>`。宽度是量出来的，不估算。
+
+三条硬要求：
+
+- 按钮「带标签时变宽」的样式要写成 `.你的类.ab--labels .你的按钮 { width: auto; ... }`。ActionBar 测量时会临时加 `.ab-measuring`（全局样式里与 `.ab--labels` 同规则），所以**不要**再自己写 `measure-labels` 之类的类。
+- 标签文字最多四个字，完整说明放 `title` / `aria-label`。跨功能短标签放 i18n 的 `actionLabels` 段。
+- 条里如果有标题/面包屑这类非按钮元素，ActionBar 会在测量时把它们钉成自然宽度，所以不需要额外处理。
+- **菜单项的样式必须在全局**（`web/css/components.css`），不能写在 ActionBar 的 scoped 块里：条目由宿主经插槽提供、带的是**宿主的 scope id**，scoped 规则一条都匹配不上——症状是条目退化成 inline-block、没有内边距、背景是 UA 灰块、横向折行成好几排。这是「v-html / 插槽注入的元素匹配不到 scoped 规则」这条红线在组件插槽上的同型表现。
+
+**临界宽度不能来回闪**：全局有 `.ab-measuring * { transition: none }`，并且「关」是溢出就关、「开」要求 12px 真实余量。这两条缺一个都会在边界反复切换。
+
+**滚动模式的条忽略 `align`**：横向溢出配 `justify-content: flex-end` 会把溢出甩到**起点那一侧**，滚动条根本滚不到（实测元素连 `scrollWidth === clientWidth` 都报，等于"没有溢出"），最前面几个按钮被永久裁掉。`.ab--scroll` 固定 `flex-start`，靠条里 `flex: 1` 的说明文字把按钮推到右边。
+
+**条有最小宽度**（一个按钮 + 更多按钮）：再窄就什么都显示不出来，「更多」自己会被裁掉。所以条旁边的标题/选择器必须能被压缩（`flex: 0 1 auto` 且 `min-width: 0`），让条拿到属于它的那份。
+
+**外观只有一套，全部在 `web/css/components.css`，宿主一个数值都不要写**（写了也会被全局规则压掉，看起来改了其实没改）：
+
+- **形状只有一种：6px 圆角方形**。不带字和带字都是这个形状，带字只是变宽。header 尺码以前是全圆（不带字是圆点、带字是胶囊），同一个「开关亮起」的按钮在任务页是圆的、在会议页是方的。
+- **颜色五个状态**：平时 `--text-secondary` + 透明底；悬停 `--text-primary` + 12% 文字色底；按下 14% 主题色底（**不缩放**，全仓没有按下缩放动画）；选中（开关亮起）主题色文字 + 14% 主题色底；危险操作用 `is-danger`（`--color-red`，12% 悬停 / 14% 按下）。主题色不能当正文颜色（15 个主题低于 4.5 对比度，最差 1.92），所以只有图标和「这一个主操作」能用。
+- **条自身底色跟随所在面板**（`transparent`），不要铺 `--bg-secondary`：页头和页脚都是被一条发丝线分开的操作区，不是第二种底色。
+- **按钮之间的间距也由 ActionBar 给**（默认 8dp，写在组件里、宿主 CSS 覆盖不了）。宿主不要自己写 `gap`：有一条曾经是 0，按钮底色一亮两个按钮就粘成一个。终端键盘是唯一例外，传 `:gap="0"`。
+- **一行工具条的高度是一个 token**：`--toolbar-row-height`（32dp）+ `--toolbar-btn-size`（26dp）。凡是和 ActionBar 占同一个位置的手写工具条（文件管理器多选、代码预览的 meta 行）都必须用它们——文件管理器那条以前按内容撑高，一进多选就比浏览工具条矮 8px，整条工具栏跳一下。
+- `size="custom"` 是给「不是工具条」的行留的（聊天输入区、终端键盘），它们保留自己的几何和配色；其中聊天那条按下态照抄上面那套数值。
+- **条里只放图标按钮**（外加标题/面包屑/计数这类不可点的固定文字项）。文字控件（上下文切换器：仓库徽标、账号/文件夹下拉、分支选择器）放在条**外面**、和条同一行。它们宽度由内容决定，塞进条里有两个后果：被「按钮 = 26/28 方块」的规则压成一个方块（集成面板的仓库名一度只剩一个字母），以及「折叠几个按钮」取决于这段文字今天有多长。既有先例：Git 提交历史的分支选择器、集成面板的仓库徽标、邮件栏的两个选择器，都是「外层一行 = 标题/选择器 + 内层 ActionBar」。
+
+守卫：`web/src/components/common/__tests__/ActionBar.test.ts`（判定、折叠、滚动、死区、内边距、行间距）、`actionBarVisualContract.test.ts`（形状、状态色、危险色、无按下缩放、条底色、行高 token，以及**扫全仓每个 `<ActionBar>` 块**的结构检查：出现下拉/输入框、可点的固定项、或把按钮包进别的元素，直接失败。唯一例外是终端键盘的按键分组，原因写在测试里）。
+
+已接入（15 处）：聊天输入区、终端工具条（这两处 `size="custom"`，保留自己的几何）、文件查看器头部、文件管理器工具条、代码预览工具条、代码集成头部、Git 提交历史工具条、会议列表、会议详情、邮件文件夹栏、邮件阅读器、通知中心头部、端口映射面板、会话列表头部、任务列表头部。其中 Git 的分支选择器、集成的仓库徽标、邮件的账号/文件夹选择器、任务的面包屑都在条**外面**（主控件/上下文切换器，永不折叠）。
+
+### 横向滚动的条：溢出必须有视觉提示
+
+**凡是「放不下就横向滚动、且隐藏了滚动条」的条，必须让用户看得出还有东西没露出来。** 隐藏滚动条是刻意的（紧凑行里一条经典滚动条就是噪音），但代价是溢出在视觉上完全不可见：桌面端只能靠抓取光标，触屏只能靠盲滑，用户根本不知道右边还有按钮。
+
+**做法是用 `mask-image` 让内容自己淡出，不是盖一层背景色渐变。**
+
+```css
+.strip.more-right {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
+  mask-image: linear-gradient(to left, transparent 0, #000 calc(20 * var(--dp)));
+}
+```
+
+- **不能用 `background: linear-gradient(… var(--bg-secondary) 25%, transparent)`**。这是最容易想到的写法（终端工具栏早期就是这么写的），但只有**底色不透明且已知**时才成立。聊天输入区在开壁纸时是**半透明的 dock 岛**、底色是 `--text-primary` 混色再乘 `--panel-alpha`，叠一层同色块会露出两块深浅不一的区域——看起来像渲染错误。遮罩只影响元素自身的绘制，任何背景、36 套主题下都成立。**判据：这个条的底色是不是「一个能写死的 token」**；不是就必须用遮罩。
+- **渐隐只在「那一侧真的还有内容」时出现**，滚到头就消失。否则「这头还有更多」一直指着空处，最后那个按钮读起来像是被裁掉了。因此需要两个独立的标志（`more-left` / `more-right`），由 `scrollLeft + clientWidth` 与 `scrollWidth` 比较得出，并在**每次 `scroll` 时重算**——只算一次的话，用户拖过之后错误的一侧还在淡。
+- **宽度取半个按钮左右**（20dp）：够看出「有东西」，又不至于把按钮文字吃掉。
+- **容差 1px**：亚像素舍入会让 `scrollLeft + clientWidth` 与 `scrollWidth` 差 0.5，不加容差会在正好滚到头时留一条假渐隐。
+- **两侧同时溢出**时用一条四段渐变（`transparent 0 → #000 20dp → #000 calc(100% - 20dp) → transparent 100%`），不要叠两个 `::before`/`::after`——那样遮罩会相乘，中间也变淡。
+
+当前实现：`ChatInputBar.vue` 的 `.chat-top-actions.more-left/right`（守卫在 `ChatInputBar.test.ts` 的 `action bar edge fade`，含「必须是遮罩、不能是不透明渐变」的源码断言）。同类场景（会话列表工具栏、任何 `overflow-x: auto` + `scrollbar-width: none` 的行）应照此办理，**不要**再各写一份背景色渐变。
+
+⚠️ **遮罩会引入一层绘制，聊天子树里要先过红线 6**：`mask-image` 在 Chromium 上会把元素提升为合成层，而 Android WebView 恰恰会画错「尺寸变化中的合成层」。判据不是「静态」，是**被遮的那条轴尺寸稳不稳**——回合结束时会变高的是高度轴；宽度轴随窗格变（侧栏折叠、拖分隔条、转屏），所以要在「回合进行中窗格不会变宽」这个前提下才算安全。新加一个遮罩条时：①确认被遮的轴在回合边界上不变；②把它加进 `chatCompositingBoundary.css.test.ts` 的 `ALLOWED` 白名单并写明理由（**不加等于没审查**，测试会红）；③真机上看一眼有没有残影。
+
 ### 设置面板控件（`.settings-item__switch` / `__slider*`）
 
 开关、滑块、滑块重置按钮的**形状只定义一次**，在全局 `web/css/components.css` 的
@@ -402,7 +463,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **`.context-menu`**（`components.css:188`）：`position:fixed`、`--z-context-menu`、`--radius-md`、`--shadow-md`、`min-width:140px`。
 - **`PopupMenu.vue`**：`Teleport to="body"` + `<Transition name="menu-fade">`，定位走 `@/utils/popupMenuPosition`。
 - **弹层里的固定标题用 `position: sticky`，且底色必须等于弹层表面**：`PopupMenu` 的根节点自己就是滚动容器（内联 `overflow-y: auto`），所以第一个子元素可以 `sticky; top: 0` 钉在顶部。三个必守：①`background` 必须是**不透明**且等于 `--bg-secondary`（PopupMenu 的底色）——透明或 `color-mix` 会让滚动中的行从标题下面透出来；②要 `z-index: 1`，因为菜单行常是 `position: relative`（快捷发送行的尾部注入按钮需要），否则行会盖住标题；③这类共享弹层样式放 `css/components.css`，不要放在某一个组件的非 scoped 块里——`.quick-send-title` 原先在 `ChatInputBar.vue` 的全局块，终端快捷指令弹层只是「因为聊天面板先挂载过」才拿到样式，正是上文「弹层容器样式在 `css/components.css`，不在 `AppHeader.vue` 的全局块里」那条陷阱的同型复发。当前实例：`.app-menu-title`（appSurface 列）与 `.quick-send-title`（快捷发送 / 快捷指令），守卫见 `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts`。
-- **`position: fixed` 不等于「视口就是包含块」——定位必须实测包含块**：全站浮层（PopupMenu 及其十余个消费方、表格复制菜单）都用 `fixed` 以免被祖先的 `overflow: hidden` 裁剪，但这笔便利换来一个错误假设。本仓有**两处**会打破它：`.chat-message` 在 App 模式下带 `contain: paint`（Android WebView 的 GPU 重影修复），而 paint containment **会为 fixed 后代建立包含块**并裁剪它——表格复制菜单打开时因此把 `contain` 降级为 `style` 并临时补 `will-change: transform` 顶上（实测：按 `top: rect.bottom + 4` 写入的菜单低了 60px，误差随祖先自身的偏移增大）；以及页面可能仍带着 CSS `zoom`——当前构建的界面缩放走根字号、坐标空间不变，但用户样式表、浏览器扩展、或升级前遗留的旧标签页都可能留下 zoom。两者都无法从 `getBoundingClientRect()` 单独看出来，因此统一由 `utils/fixedPosition.ts` 的 `measureFixedContainingBlock` **测量**：先写一个已知偏移、观察元素实际落在哪，再解出原点与缩放比（探针量程 100px，大到取整误差压不掉比例、小到同步布局期间不出屏）。**它解得的是缩放比而不是假定 1**，正因如此上面两种来源都不需要单独分支。`popupMenuPosition` 在调用方传入 `containingBlock` 时把每个坐标都经它换算，未传时退回「视口即包含块 + zoom 换算」的旧路径。**测量本身有三个坑**：①**必须用克隆**探测，不能挪动真实菜单（否则用户会看到菜单先跳到角落再回来）；②克隆必须**清空 `className` 与 transition**——菜单被 `<Transition>` 包裹，`*-enter-active` 声明的 `transform` 让元素自己成为 fixed 后代的包含块，克隆继承同一组类时量到的是菜单自身的 380×59 而不是视口（实测 `bottom: -596.6px`）；③盒子尚未布局（0×0）时测出的包含块是垃圾值，直接返回 `null` 让调用方回退。**最后一道兜底必须判双向**：算完若把菜单放到视口外就丢弃重算纯 zoom 版本——只拒绝「bottom 为负」（菜单掉到下方）会漏掉相反方向（实测群聊 `@` 菜单落在 `top: -542` / `bottom: 962`，视口只有 720），因此要求 `top`/`bottom`/`left`/`right` **全部**落在 `[0, 视口尺寸]` 内。**单一实现**：`fixedPosition.ts` 是唯一来源，导出文档（`buildCodeBlockJs` 的表格菜单）手工镜像同一套逻辑——重复实现正是两个浮层漂移的原因
+- **`position: fixed` 不等于「视口就是包含块」——定位必须实测包含块**：全站浮层（PopupMenu 及其十余个消费方、表格复制菜单）都用 `fixed` 以免被祖先的 `overflow: hidden` 裁剪，但这笔便利换来一个错误假设。本仓有**两处**会打破它：`.chat-message` 在 App 模式下带 `contain: paint`（Android WebView 的 GPU 重影修复），而 paint containment **会为 fixed 后代建立包含块**并裁剪它——表格复制菜单打开时因此把 `contain` 降级为 `style` 并临时补 `will-change: transform` 顶上（实测：按 `top: rect.bottom + 4` 写入的菜单低了 60px，误差随祖先自身的偏移增大）；以及页面可能仍带着 CSS `zoom`——当前构建的界面缩放走根字号、坐标空间不变，但用户样式表、浏览器扩展、或升级前遗留的旧标签页都可能留下 zoom。两者都无法从 `getBoundingClientRect()` 单独看出来，因此统一由 `utils/fixedPosition.ts` 的 `measureFixedContainingBlock` **测量**：先写一个已知偏移、观察元素实际落在哪，再解出原点与缩放比（探针量程 100px，大到取整误差压不掉比例、小到同步布局期间不出屏）。**它解得的是缩放比而不是假定 1**，正因如此上面两种来源都不需要单独分支。`popupMenuPosition` 在调用方传入 `containingBlock` 时把每个坐标都经它换算，未传时退回「视口即包含块 + zoom 换算」的旧路径。**测量本身有三个坑**：①**必须用克隆**探测，不能挪动真实菜单（否则用户会看到菜单先跳到角落再回来）；②克隆必须**清空 `className` 与 transition**——菜单被 `<Transition>` 包裹，`*-enter-active` 声明的 `transform` 让元素自己成为 fixed 后代的包含块，克隆继承同一组类时量到的是菜单自身的 380×59 而不是视口（实测 `bottom: -596.6px`）；③盒子尚未布局（0×0）时测出的包含块是垃圾值，直接返回 `null` 让调用方回退。**最后一道兜底必须判双向**：算完若把菜单放到视口外就丢弃重算纯 zoom 版本——只拒绝「bottom 为负」（菜单掉到下方）会漏掉相反方向（实测群聊 `@` 菜单落在 `top: -542` / `bottom: 962`，视口只有 720），因此要求 `top`/`bottom`/`left`/`right` **全部**落在 `[0, 视口尺寸]` 内。**单一实现**：`fixedPosition.ts` 是唯一来源，导出文档（`buildCodeBlockJs` 的表格菜单）手工镜像同一套逻辑——重复实现正是两个浮层漂移的原因。**另有一条独立的前置条件**：`position: fixed` 必须由 `.popup-menu` 类提供，不能只靠定位那一趟写的内联样式——首次打开时元素还没有内联 position，而包含块探针会**克隆**它，静态克隆是普通流里的盒子，探针于是把菜单自己的流位置当成包含块，误差恰好是菜单自身的高度。矮菜单（只有一个账号的邮箱选择器）偏上去仍落在视口内，兜底校验不拦，于是**第一次点菜单压在触发按钮上**，第二次打开时上一轮的内联样式还在、看起来又正常了。这类「首次坏、再次好」的缺陷，先问「上一次的什么状态被我当成了前提」
 - 弹窗外壳用 `ModalDialog.vue`（宽屏）/ `BottomSheet.vue`（窄屏），样式在 `modal-card.css` / `BottomSheet.vue` 的 keyframes 里。
 - **⚠️ `.modal-body` / `.bs-body` 没有内边距，调用方必须自己加**：外壳的 body 刻意留白为零，好让调用方渲染通栏列表、页签条或必须贴边的分隔线。除此之外**每个**调用方都要自己补内边距（惯例 `var(--space-6) var(--space-7)`，即 12/16dp），否则内容会贴着卡片左右边缘、紧贴标题下沿，看起来就是布局坏了——列统计面板第一版正是这么翻车的。窄屏抽屉与宽屏卡片**两种形态都没有**，不要以为只有一种要补。
 - **宽度只有两档，都写在 token 里、不给调用方留口子**：`css/variables.css` 定义 `--modal-width-narrow`（520）与 `--modal-width-wide`（960），`ModalDialog` / `BottomSheet` 各有一个 `size="narrow" | "wide"`（默认 `narrow`），渲染成修饰类 `.modal-dialog--narrow/--wide`、`.bs-panel--narrow/--wide`，`modal-card.css` 把修饰类映射到这两个 token。调用方**选档位，不选数字**：没有 `maxWidth` prop，也**不允许**在组件里覆盖 `--modal-max-width`（`assets/__tests__/modalWidth.css.test.ts` 全仓扫描拒绝）。历史包袱两笔：曾经每处调用传 380/420/480/520/560/720 六种值再统一乘一个 1.3 的魔法系数；后来又变成「弹窗 900 + 抽屉 624 + 四个抽屉在非 scoped 样式块里各自覆盖 900/960」——同一屏两种规则，`.tool-detail-sheet` / `.session-search-sheet` / `.team-member-sheet` / `.content-search-sheet` 这些覆盖已全部删除，改传 `size="wide"`。
@@ -688,6 +749,14 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 - [ ] 已有数据的刷新遮罩 / 「加载更多」页脚 / 按钮内联 spinner **不换**骨架屏，继续用 `LoadingIndicator`
 - [ ] 藏在页签或弹层里的首屏同样算首屏（如会议详情的「资源」页签、重新生成计划面板）
 
+### 加一条横向滚动、隐藏滚动条的条
+
+- [ ] 溢出时两侧按需 `mask-image` 淡出（`more-left` / `more-right` 两个独立标志）
+- [ ] **不**用背景色渐变伪造渐隐（半透明/壁纸底色下会露出两块）
+- [ ] `scroll` 时重算，滚到头该侧消失；比较带 1px 容差
+- [ ] 渐隐宽度 `calc(20 * var(--dp))`
+- [ ] 真机（Android）确认没有残影
+
 ### 加一个动效
 
 - [ ] 时长用 `--duration-*` token
@@ -726,6 +795,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
 | `components/chat/__tests__/chatContentMeasure.css.test.ts` | 聊天区阅读栏：度量与 container query 阈值换算（`60rem` = 900 设计 px）、三个 gutter 的 floor（消息列 `0px` / 输入区 `--space-4` / 卡片 `--space-5`）、消费点不得自己重算半宽公式、留白花在滚动容器的 **padding**（用 margin 会把滚动条从会话区边缘拽到消息列边上）、**滚动条宽度只能运行时测**（右侧内边距减去 lane、左侧不减、CSS 不得硬编码、`scrollbar-gutter: stable` 必须在）、`container-type: inline-size` 且不是 `size`、形状随留白翻转（通宽直角色带 + 扁平条 / 有留白圆角卡片 + 只圆上两角的 dock 岛）、岛底色必须是 text 混色且带 `--panel-alpha`、标题栏不收窄 |
 | `components/chat/__tests__/chatCompositingBoundary.css.test.ts` | 聊天树里只有一个合成分界（尺寸稳定的 `.chat-panel-content`），内部禁止 `will-change`/`backdrop-filter`（仅表格菜单例外） |
+| `components/chat/__tests__/ChatInputBar.test.ts`（`action bar edge fade`） | 动作栏溢出的边缘渐隐：两侧按滚动位置各自出现/消失、滚到头不淡、放得下时全无；且**必须是 `mask-image`**，不得改成不透明渐变 |
 | `components/chat/__tests__/chatRowLayerIsolation.css.test.ts` | 聊天行在 App 模式下只 `contain: paint`、**不**提升为合成层 |
 | `components/__tests__/bottomDockLayerIsolation.css.test.ts` | 底部 Dock 包装层在 App 模式下只裁剪、不提升，且只在 `[data-webview-mode]` 下 |
 | `composables/__tests__/useAppMode.test.ts` | `[data-webview-mode]` 只给 Android WebView，**Electron 桌面壳与网页模式都拿不到**（桌面壳也报 `isNativeApp()===true`，门控漏判会把 Android 的合成层/粗体补偿套到桌面引擎上） |

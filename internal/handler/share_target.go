@@ -59,8 +59,13 @@ func ShareTarget(w http.ResponseWriter, r *http.Request) {
 	// answers a JSON 401, and this URL is NAVIGATED to by the browser after the
 	// OS share sheet — the user would see a raw JSON body instead of the login
 	// page. Bouncing to "/" lands them in the app, which shows login itself.
+	//
+	// The bounce carries a reason so the app can say the files were NOT
+	// imported. Without it the user lands on the login screen (or the project
+	// picker) with the share silently discarded — indistinguishable from a
+	// share that did nothing.
 	if !middleware.IsAuthenticated(r) {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		redirectShareTarget(w, r, shareOutcome{reason: "unauthorized"})
 		return
 	}
 
@@ -70,7 +75,7 @@ func ShareTarget(w http.ResponseWriter, r *http.Request) {
 	// normal project picker instead.
 	projectPath := middleware.GetProjectFromCookie(r)
 	if projectPath == "" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		redirectShareTarget(w, r, shareOutcome{reason: "no_project"})
 		return
 	}
 
@@ -263,7 +268,7 @@ type shareOutcome struct {
 	// partial batch is not presented as full success.
 	failed int
 	// reason is the whole message when nothing was stored at all
-	// ("empty" / "save" / "invalid").
+	// ("empty" / "save" / "invalid" / "unauthorized" / "no_project").
 	reason string
 }
 
@@ -274,6 +279,10 @@ type shareOutcome struct {
 // `share_target_failed` count. On failure it is the bare reason, which the UI
 // turns into a toast — the files are gone at that point, and a silent return
 // would look like the share simply did nothing.
+//
+// The reason vocabulary is mirrored by `ShareTargetFailure` in
+// web/src/utils/shareTarget.ts; adding one here without adding it there turns
+// the message back into a generic "could not read the shared content".
 //
 // 303 (not 302) so the browser follows with GET: the POST body has been
 // consumed and replaying it would re-upload every file.

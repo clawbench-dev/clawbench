@@ -4,6 +4,7 @@ import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
 import { addQueued, getQueue, resetQueuesForTest } from '@/composables/useMessageQueue'
 import { useThinkingContent } from '@/composables/useThinkingContent'
+import { useRetryNotice, clearRetryNotice } from '@/composables/useRetryNotice'
 
 // ── Timer leak prevention ──
 
@@ -95,6 +96,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   reconcileModelSelection: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   updateUsageState: vi.fn(),
+  setConfigOptions: vi.fn(),
   currentAgentId: { value: 'test-agent-1' },
   currentModelId: { value: 'test-model-1' },
 }))
@@ -160,6 +162,7 @@ describe('useChatStream', () => {
     mockIsReplayingEvents = ref(false)
     mockAppLogW.mockClear()
     resetQueuesForTest()
+    clearRetryNotice()
   })
 
   afterEach(() => {
@@ -2335,6 +2338,54 @@ describe('useChatStream', () => {
       })
     })
 
+    describe('config_options_update', () => {
+      // Agent-declared generic options (codex fast-mode, issue #634) replace the
+      // whole list: it is per-model, so a merge would keep a toggle visible for
+      // a model that no longer offers it.
+      it('replaces the generic option list', async () => {
+        const { setConfigOptions } = await import('@/composables/useSessionIdentity')
+        ;(setConfigOptions as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('config_options_update', {
+          options: [{
+            configId: 'fast-mode',
+            name: 'Fast mode',
+            description: '1.5x speed, increased usage',
+            category: 'model_config',
+            currentValueId: 'on',
+            values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+          }],
+        })
+
+        expect(setConfigOptions).toHaveBeenCalledTimes(1)
+        expect(setConfigOptions).toHaveBeenCalledWith([{
+          configId: 'fast-mode',
+          name: 'Fast mode',
+          description: '1.5x speed, increased usage',
+          category: 'model_config',
+          currentValueId: 'on',
+          values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+        }])
+      })
+
+      it('ignores a malformed payload', async () => {
+        const { setConfigOptions } = await import('@/composables/useSessionIdentity')
+        ;(setConfigOptions as any).mockClear()
+
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        simulateWsEvent('config_options_update', { options: 'nope' })
+
+        expect(setConfigOptions).not.toHaveBeenCalled()
+      })
+    })
+
     describe('thinking_effort_update', () => {
       // A WS event carries the AGENT's own value, so it must go through
       // reconcileThinkingEffort with userPicked=false (issue #552): adopting it
@@ -4061,4 +4112,50 @@ describe('useChatStream', () => {
       expect(rIdx, 'the reply must sort BELOW the older reply').toBeGreaterThan(olderReplyIdx)
     })
   })
+
+// ── Transient upstream-retry notice ──
+//
+// A rate-limited agent retries silently for over a minute (opencode: 11
+// attempts / ~85s), which is indistinguishable from a hang. The notice is a
+// transient hint — it must appear on `retry_notice` and vanish as soon as the
+// turn progresses or ends, and it must never leak into the transcript.
+describe('retry_notice', () => {
+  it('shows the notice and retires it on the next content event', () => {
+    const options = createOptions()
+    const { connectStream } = useChatStream(options)
+    connectStream('test-session-1')
+
+    simulateWsEvent('retry_notice', { attempt: 2, message: 'Rate limit exceeded', http_status: 429 })
+    expect(useRetryNotice().notice.value).toMatchObject({
+      sessionId: 'test-session-1',
+      attempt: 2,
+      message: 'Rate limit exceeded',
+      httpStatus: 429,
+    })
+
+    simulateWsEvent('content', { content: 'hello' })
+    expect(useRetryNotice().notice.value).toBeNull()
+  })
+
+  it('retires the notice on the terminal event', () => {
+    const options = createOptions()
+    const { connectStream } = useChatStream(options)
+    connectStream('test-session-1')
+
+    simulateWsEvent('retry_notice', { attempt: 1 })
+    expect(useRetryNotice().notice.value).not.toBeNull()
+
+    simulateWsEvent('done', {})
+    expect(useRetryNotice().notice.value).toBeNull()
+  })
+
+  it('ignores a notice for another session', () => {
+    const options = createOptions()
+    const { connectStream } = useChatStream(options)
+    connectStream('test-session-1')
+
+    simulateWsEvent('retry_notice', { attempt: 1 }, 'other-session')
+    expect(useRetryNotice().notice.value).toBeNull()
+  })
+})
 })

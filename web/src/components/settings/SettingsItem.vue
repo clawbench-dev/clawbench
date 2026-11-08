@@ -269,6 +269,7 @@
           v-if="opt.modelName"
           :name="opt.label"
           :model-id="opt.modelId"
+          :price="opt.modelPrice"
           :active="modelValue === opt.value"
           :icon-size="14"
         >
@@ -362,6 +363,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import TerminalPreviewCard from '@/components/common/TerminalPreviewCard.vue'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
 import { applyThemeWithReveal, headerThemeOrigin } from '@/utils/themeReveal'
+import type { ModelPrice } from '@/utils/modelPrice'
 
 const { t } = useI18n()
 
@@ -496,6 +498,9 @@ export interface SelectOption {
   /** Raw model id shown as the ModelRow's second line (hidden when it equals
    *  the label). Only meaningful together with `modelName`. */
   modelId?: string
+  /** Per-million-token list price; absent when the catalog has no trustworthy
+   *  number for this model (the row then shows no tag). */
+  modelPrice?: ModelPrice
   groupKey?: string
   badgeKey?: string
   /** CSS font-family used to render this option's label in its own font. */

@@ -11,22 +11,52 @@
       </button>
     </div>
 
-    <div class="mail-reader__actions">
-      <button class="mail-chip" :disabled="busy" @click="emit('reply', 'reply')">{{ t('mail.reader.reply') }}</button>
-      <button class="mail-chip" :disabled="busy" @click="emit('reply', 'replyAll')">{{ t('mail.reader.replyAll') }}</button>
-      <button class="mail-chip" :disabled="busy" @click="emit('reply', 'forward')">{{ t('mail.reader.forward') }}</button>
+    <!-- One icon row, matching every other quote entry point. ActionBar shows the
+         labels when the pane can hold them and lets the row scroll (drag + edge
+         fades) when it cannot, so no action is ever unreachable. -->
+    <ActionBar
+      ref="actionsRef"
+      class="mail-reader__actions"
+      mode="scroll"
+      size="bar"
+    >
+      <button class="mail-icon-btn" :title="t('mail.reader.reply')" :aria-label="t('mail.reader.reply')"
+        :disabled="busy" @click="emit('reply', 'reply')">
+        <Reply />
+        <span class="action-label">{{ t('mail.reader.reply') }}</span>
+      </button>
+      <button class="mail-icon-btn" :title="t('mail.reader.replyAll')" :aria-label="t('mail.reader.replyAll')"
+        :disabled="busy" @click="emit('reply', 'replyAll')">
+        <ReplyAll />
+        <span class="action-label">{{ t('mail.reader.replyAll') }}</span>
+      </button>
+      <button class="mail-icon-btn" :title="t('mail.reader.forward')" :aria-label="t('mail.reader.forward')"
+        :disabled="busy" @click="emit('reply', 'forward')">
+        <Forward />
+        <span class="action-label">{{ t('mail.reader.forward') }}</span>
+      </button>
       <!-- Quote this email into a conversation. It goes through the SAME quote
            bar as a commit / task / issue, so it can carry an annotation and be
            sent to another session; the card jumps back here via `mailId`. -->
-      <button class="mail-chip" @click="quoteToChat">{{ t('mail.reader.quoteToChat') }}</button>
+      <button class="mail-icon-btn" :title="t('mail.reader.quoteToChat')" :aria-label="t('mail.reader.quoteToChat')"
+        @click="quoteToChat">
+        <MessageSquare />
+        <span class="action-label">{{ t('mail.reader.quoteToChat') }}</span>
+      </button>
       <span class="mail-reader__spacer" />
-      <button class="mail-chip" :disabled="busy" @click="toggleSeen">
-        {{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}
+      <button class="mail-icon-btn" :title="detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead')"
+        :aria-label="detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead')"
+        :disabled="busy" @click="toggleSeen">
+        <Mail v-if="detail?.seen" />
+        <MailOpen v-else />
+        <span class="action-label">{{ detail?.seen ? t('mail.reader.markUnread') : t('mail.reader.markRead') }}</span>
       </button>
-      <button class="mail-chip mail-chip--danger" :disabled="busy" @click="remove">
-        {{ t('mail.reader.delete') }}
+      <button class="mail-icon-btn is-danger" :title="t('mail.reader.delete')"
+        :aria-label="t('mail.reader.delete')" :disabled="busy" @click="remove">
+        <Trash2 />
+        <span class="action-label">{{ t('mail.reader.delete') }}</span>
       </button>
-    </div>
+    </ActionBar>
 
     <div class="mail-reader__meta">
       <div class="mail-reader__from">
@@ -100,7 +130,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, MailOpen, MessageSquarePlus, Paperclip, Star, TriangleAlert } from 'lucide-vue-next'
+import { ArrowLeft, Forward, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
 import MailEmpty from './MailEmpty.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { apiGet, apiPost } from '@/utils/api'
@@ -116,6 +146,7 @@ import {
   type MailMessageDetail,
 } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useToast } from '@/composables/useToast'
@@ -137,6 +168,14 @@ const busy = ref(false)
 const allowRemoteImages = ref(false)
 
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
+
+// ── Action-row labels ─────────────────────────────────────────
+// Same rule as the chat action bar (shared composable): labels are always in the
+// DOM and shown only when the row proves it can hold them. Falling back to
+// icons-only is better than overflowing a strip whose scrollbar is hidden.
+const actionsRef = ref<{ measure: () => void } | null>(null)
+
+defineExpose({ measureActionLabels: () => actionsRef.value?.measure() })
 
 // ── Handing this email to the chat ─────────────────────────────
 const quoteQuestion = useQuoteQuestion()
@@ -214,8 +253,11 @@ async function load(): Promise<void> {
     const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${props.messageId}`)
     if (gen !== generation) return
     detail.value = data.message
-    // Opening marks it read on the server; refresh the badge so the dock count
-    // drops without waiting for the next poll.
+    // Opening marks it read on the server. Tell the list as well: in the wide
+    // layout the row stays on screen next to the reader, and patching it is
+    // the only thing that drops its unread styling without a full reload.
+    emit('updated', data.message)
+    // Same for the dock badge and the folder counters.
     void refreshMailUnread()
   } catch (e) {
     if (gen !== generation) return
@@ -293,17 +335,10 @@ async function remove(): Promise<void> {
   color: var(--text-primary);
 }
 .mail-reader__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1, 2px);
-  padding: var(--space-1, 2px) var(--space-3, 6px);
+  height: var(--toolbar-row-height);
+  padding: 0 var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.mail-reader__actions::-webkit-scrollbar {
-  display: none;
 }
 .mail-reader__spacer {
   flex: 1;
@@ -325,9 +360,6 @@ async function remove(): Promise<void> {
 .mail-chip:disabled {
   opacity: 0.5;
   cursor: default;
-}
-.mail-chip--danger {
-  color: var(--color-red);
 }
 .mail-reader__meta {
   display: flex;
@@ -487,27 +519,25 @@ async function remove(): Promise<void> {
   cursor: default;
   opacity: var(--opacity-muted, 0.6);
 }
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"); this block keeps only what is specific to the mail reader. */
 .mail-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(26 * var(--dp));
-  height: calc(26 * var(--dp));
-  padding: 0;
   border: none;
-  border-radius: var(--radius-sm, 4px);
+  /* Needed by the back/star buttons in the head row, which are NOT inside an
+     ActionBar and so do not get the shared transparent background. */
   background: none;
-  color: var(--text-secondary);
   cursor: pointer;
   flex: none;
-}
-.mail-icon-btn:hover:not(:disabled) {
-  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
 }
 .mail-icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+
 .mail-icon-btn :deep(svg) {
   width: calc(15 * var(--dp));
   height: calc(15 * var(--dp));

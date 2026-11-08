@@ -134,6 +134,12 @@ const acpMockOmitPermRawInputMarker = "[mock:omit-perm-rawinput]"
 // global delay; it asks for a long turn explicitly instead.
 const acpMockSlowReplyPrefix = "[mock:slow-reply:"
 
+// acpMockLongReplyMarker makes that turn stream a long reply (several hundred
+// words) instead of the one-liner. Scroll specs need the transcript to keep
+// GROWING below the viewport while the user wheels: with the one-liner the
+// turn adds two lines and there is nothing to scroll away from.
+const acpMockLongReplyMarker = "[mock:long-reply]"
+
 // slowReplyDelayMs reports the per-turn reply delay requested by the prompt.
 func slowReplyDelayMs(prompt string) (int, bool) {
 	i := strings.Index(prompt, acpMockSlowReplyPrefix)
@@ -683,6 +689,9 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		}
 	}
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
+	if strings.Contains(userText, acpMockLongReplyMarker) {
+		response = strings.Repeat("The quick brown fox jumps over the lazy dog. ", 80)
+	}
 	// Auto-cruise confirmation round: the prompt carries the confirmation
 	// marker ("[自动巡航·完成确认]"). The mock always confirms so a cruising
 	// turn terminates deterministically in the E2E. Checked FIRST because the

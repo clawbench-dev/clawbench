@@ -553,35 +553,32 @@ describe('FileManagerContent — more menu and upload', () => {
     })
   }
 
-  it('renders the more (three-dot) toolbar button', () => {
+  // The overflow affordance moved into ActionBar: it measures the row and folds
+  // whatever does not fit into a menu it owns, so there is no `useToolbarOverflow`
+  // state (showMoreDropdown / toolbarCollapsedIds) left to inspect. These cases
+  // now pin the wiring instead of the retired internal state.
+  it('renders every toolbar action inline (ActionBar decides what folds)', () => {
     const wrapper = mountComponent()
-    const moreButton = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
-    expect(moreButton).toBeTruthy()
+    const titles = wrapper.findAll('.toolbar-btn').map(b => b.attributes('title'))
+    expect(titles).toContain('新建文件')
+    expect(titles).toContain('新建文件夹')
   })
 
-  it('clicking more button opens the dropdown menu', async () => {
+  it('hands the browse toolbar to ActionBar in menu mode', () => {
     const wrapper = mountComponent()
-
-    // Verify more menu infrastructure: the more button exists and
-    // the collapsed IDs are populated from useToolbarOverflow
-    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
-    expect(rawState.showMoreDropdown.value).toBe(true)
-    expect(rawState.moreMenuOpen.value).toBe(false)
-
-    // Setting moreMenuOpen to true should work (internal state)
-    rawState.moreMenuOpen.value = true
-    expect(rawState.moreMenuOpen.value).toBe(true)
+    const bar = wrapper.find('.dir-toolbar-btns')
+    expect(bar.exists(), 'the browse toolbar must be an ActionBar').toBe(true)
+    expect(bar.classes()).toContain('ab')
+    // menu mode = overflow is folded away, not scrolled
+    expect(bar.classes()).not.toContain('ab--scroll')
   })
 
-  it('more menu contains at least one item', async () => {
+  it('folds overflow into the menu instead of a hand-rolled dropdown', () => {
+    // A hand-rolled `.toolbar-dropdown` is only the sort picker; the overflow
+    // menu is ActionBar's own (`.ab-menu-item` items inside a PopupMenu).
     const wrapper = mountComponent()
-
-    // Verify the collapsed IDs are in the mock (which provides items for the dropdown)
-    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
-    expect(rawState.toolbarCollapsedIds.value.length).toBeGreaterThanOrEqual(1)
-    // The items are rendered conditionally based on toolbarCollapsedIds.includes()
-    expect(rawState.toolbarCollapsedIds.value).toContain('upload')
-    expect(rawState.toolbarCollapsedIds.value).toContain('newFolder')
+    expect(wrapper.findAll('.toolbar-dropdown-item.active').length).toBeLessThanOrEqual(1)
+    expect(wrapper.find('.ab-more').exists()).toBe(false) // nothing folded in jsdom
   })
 
   it('clicking upload item triggers file input click', async () => {

@@ -101,24 +101,6 @@
     gap: var(--space-3);
 }
 
-.drilldown-title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    font-size: var(--font-size-md);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-    overflow: hidden;
-    flex: 1;
-    min-width: 0;
-}
-
-/* The leading glyph. `flex-shrink: 0` keeps it at 14px when the count badge
-   beside it is long, and it inherits the title's colour (as forge's does). */
-.drilldown-title-icon {
-    flex-shrink: 0;
-}
-
 /* Colour only — shape and geometry belong to the shared .count-badge. */
 .drilldown-count {
     font-weight: var(--font-weight-bold);
@@ -129,6 +111,10 @@
 /* Icon button in the header toolbar. `border: none` is required: the class is
    used by both <button> and RefreshButton (which renders a <button>), and a
    bare button keeps the UA's default border. */
+/* Standalone usage (a drill-down header with no ActionBar). Inside a bar the
+   shared row rules win on specificity (`.ab--header > button:not(...)`), so the
+   button reads as part of the row instead of keeping a filled `--bg-secondary`
+   box while its neighbours are flat. */
 .drilldown-refresh-btn {
     display: flex;
     align-items: center;
@@ -160,6 +146,13 @@
 .drilldown-refresh-btn:disabled {
     opacity: var(--opacity-muted);
     cursor: not-allowed;
+}
+
+/* Sticky "this toggle is on" state. Same colour pair as :hover so an enabled
+   filter reads as the accent without inventing a second highlight. */
+.drilldown-refresh-btn.is-on {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
 }
 
 /* Stale-data hint: the refresh button pulses in the THEME accent. The glow was
@@ -484,10 +477,38 @@
 /* The timestamp is the last thing to give up space, so it never wraps. */
 .forge-row-time { white-space: nowrap; flex-shrink: 0; }
 
-.forge-row-chevron {
-    color: var(--text-hint);
+/* Row-level "quote into a conversation" action, matching the scheduled-task
+   list. It replaced the trailing chevron: the row itself already opens the
+   detail, so an arrow pointing right only repeated that, while the quote action
+   was previously reachable only by dragging the row. Hidden until hover to keep
+   the list dense, always visible on touch where there is no hover at all. */
+.forge-row-quote {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
     align-self: center;
+    width: calc(24 * var(--dp));
+    height: calc(24 * var(--dp));
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
+}
+.forge-row:hover .forge-row-quote,
+.forge-row-quote:focus-visible { opacity: 1; }
+@media (hover: none) {
+    .forge-row-quote { opacity: 1; }
+}
+@media (hover: hover) {
+    .forge-row-quote:hover {
+        color: var(--accent-color, #0066cc);
+        background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    }
 }
 
 /* Centred empty-state block: icon over a title, optionally a hint line. */
@@ -626,7 +647,10 @@
 }
 
 /* The "mark all read" button mirrors the task list's clear-unread affordance:
-   accent-tinted while there is something to clear, and inert when there is not. */
+   accent-coloured while there is something to clear, and inert when there is
+   not. The tint behind it comes from the shared `.ab button.active` rule; this
+   class is also used outside a bar (the forge chip), so only the colour is set
+   here. */
 .clear-unread-btn.active {
     color: var(--accent-color);
 }
@@ -1477,4 +1501,290 @@
     color: var(--text-muted);
     opacity: var(--opacity-muted);
     flex-shrink: 0;
+}
+
+/* ==========================================================================
+   Action-bar labels
+   Used by: every icon row that shows its labels when there is room (all of them
+            go through components/common/ActionBar.vue)
+
+   GLOBAL, not per component: the display toggle and the label typography must
+   be identical everywhere, and a scoped rule would have to be re-declared by
+   each adopter. Only the geometry of a labelled button (how wide it grows, how
+   much padding it gains) stays in the bar's own stylesheet, because that
+   depends on the button shape it already has.
+
+   Contract:
+     - the bar carries `.ab--labels` when the labels fit;
+     - the bar briefly carries `.ab-measuring` while being measured (same
+       visual rule, so the measurement sees the final layout);
+     - every label is `<span class="action-label">`.
+   See docs/spec/client/design-guide.md 「图标按钮：统一用 ActionBar」.
+   ========================================================================== */
+.action-label {
+    display: none;
+    font-size: var(--font-size-xs);
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.ab--labels .action-label,
+.ab-measuring .action-label {
+    display: inline;
+}
+
+/* CopyButton renders its own label span (it owns the glyph swap). Inside an
+   ActionBar it follows the same rule as `.action-label`. */
+.ab .copy-btn-label {
+    display: none;
+}
+.ab--labels .copy-btn-label,
+.ab-measuring .copy-btn-label {
+    display: inline;
+}
+
+/* ==========================================================================
+   ActionBar menu (the "more" popup)
+
+   GLOBAL on purpose: the menu's items are provided by the host component
+   through a slot, so they carry the HOST's scope id — a scoped rule inside
+   ActionBar.vue would never match them, and every host would have to restyle
+   its own entries. The container itself is PopupMenu, which is a column flex;
+   these rules give every item the same row layout.
+   ========================================================================== */
+.ab-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    width: 100%;
+    padding: var(--space-3) var(--space-5);
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+@media (hover: hover) {
+    .ab-menu-item:hover:not(:disabled) {
+        background: var(--bg-hover);
+    }
+}
+.ab-menu-item:disabled {
+    opacity: var(--opacity-disabled);
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.ab-menu-item.active {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    color: var(--accent-color);
+}
+.ab-menu-item.is-danger {
+    color: var(--color-red);
+}
+.ab-menu-item svg {
+    flex-shrink: 0;
+}
+.ab-menu-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+.ab-menu-icon svg {
+    width: calc(14 * var(--dp));
+    height: calc(14 * var(--dp));
+}
+
+/* ==========================================================================
+   ActionBar button language — TWO sizes, declared once
+
+   Every bar used to carry its own copy of "how a button looks and how it grows
+   when labelled": 5 heights (22/24/26/28/32), 5 radii, 3 icon sizes and 3
+   icon-to-text gaps. The same control read as a different control depending on
+   which panel it was in, and a new bar could silently pick a fourth size.
+
+   `size` on the component picks a row; these rules own the shape. BOTH rows
+   use the same radius: one shape everywhere. The header row used to be a pill
+   (999px), which made a toggled button read as a different control from the
+   identically-toggled button one tab over — a round dot in the task header, a
+   rounded square in the meeting header, for the same action.
+
+     header — panel/app headers (tasks, notifications, forge, git history,
+              file viewer): 28 tall, 6 radius, 10 padding, 5 gap, 14 icon
+     bar    — tool strips inside content (file manager, code preview, session
+              header, mail): 26 tall, 6 radius, 8 padding, 4 gap, 15 icon
+
+   Deliberately excluded: the chat composer row (22, follows the input's
+   rhythm) and the terminal key strip (32, square — it is a virtual keyboard,
+   not a toolbar). Both keep their own numbers.
+   ========================================================================== */
+.ab--header {
+    --ab-btn-size: calc(28 * var(--dp));
+    --ab-btn-radius: var(--radius-sm);
+    --ab-btn-pad: calc(10 * var(--dp));
+    --ab-btn-gap: calc(5 * var(--dp));
+    --ab-icon-size: calc(14 * var(--dp));
+    /* Never narrower than one button + the "more" button. Below that the row can
+       show nothing at all — the "more" button itself gets clipped, and the
+       buttons it would have listed are unreachable. Whatever sits beside the
+       bar (a title, a picker) has to give way instead. */
+    min-width: calc(2 * var(--ab-btn-size) + 8 * var(--dp));
+}
+.ab--bar {
+    --ab-btn-size: var(--toolbar-btn-size);
+    --ab-btn-radius: var(--radius-sm);
+    --ab-btn-pad: calc(8 * var(--dp));
+    --ab-btn-gap: calc(4 * var(--dp));
+    --ab-icon-size: calc(15 * var(--dp));
+    /* Same floor as the header row — see above. */
+    min-width: calc(2 * var(--ab-btn-size) + 8 * var(--dp));
+}
+
+/* One shape for icon-only and labelled alike: a rounded square. A labelled
+   button grows, it does not change silhouette.
+   Descendant rather than child: a host may put a button inside a container of
+   its own (the multi-select row, a popup anchor). Such a button must still get
+   the shared size and shape — but note that ActionBar's own folding logic only
+   sees DIRECT children, so wrapping buttons in a bar is a bug, not a layout
+   choice (the structural guard test enforces that).
+   Text controls (the forge repo badge, the mail bar's pickers) are NOT buttons
+   of this row — they live beside the bar, in the header row itself. */
+.ab--header button:not([data-ab-more]),
+.ab--bar button:not([data-ab-more]) {
+    width: var(--ab-btn-size);
+    height: var(--ab-btn-size);
+    border-radius: var(--ab-btn-radius);
+    flex-shrink: 0;
+}
+/* Icon size travels with the row: a 15px glyph in a 26px square and a 14px one
+   in a 28px pill are the same optical weight. */
+.ab--header button:not([data-ab-more]) svg,
+.ab--bar button:not([data-ab-more]) svg {
+    width: var(--ab-icon-size);
+    height: var(--ab-icon-size);
+}
+
+/* A labelled button must be allowed to grow. Bars style their buttons with a
+   fixed square size; leaving that in place would clip the label instead of
+   widening the button (the bug this control exists to prevent). The padding and
+   gap come with it: keeping the square button's `0` would push the text against
+   the icon (the notifications header shipped like that). */
+.ab--header.ab--labels button:not([data-ab-more]),
+.ab--header.ab-measuring button:not([data-ab-more]),
+.ab--bar.ab--labels button:not([data-ab-more]),
+.ab--bar.ab-measuring button:not([data-ab-more]) {
+    width: auto;
+    padding: 0 var(--ab-btn-pad);
+    gap: var(--ab-btn-gap);
+}
+
+/* The bar's own overflow button follows the same language, otherwise it reads
+   as a different kind of control sitting at the end of the row. */
+.ab--header .ab-more,
+.ab--bar .ab-more {
+    height: var(--ab-btn-size);
+    border-radius: var(--ab-btn-radius);
+}
+
+/* ==========================================================================
+   ActionBar button colour — THREE states, declared once
+
+   Measured over all 36 themes (WCAG contrast of the text against the surface it
+   sits on). The accent colour is NOT usable as text: 15 themes fall below 4.5
+   and the worst is 1.92, so it is reserved for icons and for "this is the one
+   primary action" — never for a whole row.
+
+     default  secondary text on the plain surface   worst 3.60
+     hover    primary text + a neutral 12% tint     worst 3.20
+     active   accent tint behind, text stays primary
+
+   `--bg-hover`/`--bg-secondary` cannot be the hover tint: 13 themes have a
+   hover/panel contrast of 1.09 (invisible), and 31 have a secondary/panel
+   contrast under 1.12. The tint is mixed from `--text-primary` instead, so its
+   DIRECTION is always right (dark text darkens a light surface and vice versa).
+   ========================================================================== */
+.ab--header button:not([data-ab-more]),
+.ab--bar button:not([data-ab-more]) {
+    color: var(--text-secondary);
+    background: transparent;
+}
+@media (hover: hover) {
+    .ab--header button:not([data-ab-more]):hover:not(:disabled),
+    .ab--bar button:not([data-ab-more]):hover:not(:disabled) {
+        color: var(--text-primary);
+        background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+    }
+}
+.ab--header button:not([data-ab-more]):active:not(:disabled),
+.ab--bar button:not([data-ab-more]):active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+}
+/* The one action a bar wants to stand out (create/new). */
+.ab--header button.is-primary:not(:disabled),
+.ab--bar button.is-primary:not(:disabled) {
+    color: var(--accent-color);
+}
+
+/* Toggled-on button inside a bar (a sort field, a preview toggle, a multi-select
+   switch, "mark all read" when it has something to clear). One recipe for the
+   whole row: accent text on a 14% accent tint, the button's own shape kept.
+   A solid accent block was the other common spelling and it fails contrast with
+   white text in 28 of 36 themes (worst 1.69).
+
+   Descendant (not `>`) on purpose: some buttons sit inside a wrapper (the file
+   manager's sort button lives in `.toolbar-dropdown-wrap`) and would otherwise
+   be the only one in the row that never lights up. The menu rows are excluded —
+   they are a popup list, not row buttons, and have their own selected state. */
+.ab button.active:not([data-ab-more]):not(.ab-menu-item),
+.ab button.active:not([data-ab-more]):not(.ab-menu-item):hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    color: var(--accent-color);
+}
+
+
+
+/* ==========================================================================
+   ActionBar danger button — ONE recipe for the red
+
+   Destructive actions (delete / clear) used to carry their own colours: a
+   hard-coded #ef4444 in two places, a #dc2626 + #fef2f2 pair with a second
+   dark-theme copy in a third, and a mail-reader rule that was out-ranked by the
+   row's resting colour and silently rendered grey. Red now comes from
+   `--color-red`, mixed the same way as every other bar state.
+
+   Declared after the hover/press rules on purpose: those selectors have the
+   same weight, so the later block is what wins for a danger button.
+
+   The bare `.is-danger` selector covers rows that are not ActionBars (the file
+   manager's multi-select strip); the `.ab`-prefixed ones out-rank the row's own
+   colour inside a bar.
+   ========================================================================== */
+.is-danger {
+    color: var(--color-red);
+}
+.ab button.is-danger:not([data-ab-more]) {
+    color: var(--color-red);
+}
+@media (hover: hover) {
+    /* `button.` on purpose: `.is-danger` is also a status-pill modifier, and a
+       span must not gain a hover tint. */
+    button.is-danger:hover:not(:disabled),
+    .ab button.is-danger:not([data-ab-more]):hover:not(:disabled) {
+        color: var(--color-red);
+        background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    }
+}
+.ab button.is-danger:not([data-ab-more]):active:not(:disabled) {
+    background: color-mix(in srgb, var(--color-red) 14%, transparent);
+}
+
+/* No transitions while measuring.
+   A width transition on the buttons makes the forced-on layout report the
+   PRE-animation width, so a bar that is actually too narrow looks like it fits;
+   the labels then turn on, the buttons finish growing, and the next measurement
+   turns them off again — the two states flicker. The class is only present for
+   one synchronous measurement, so nothing is seen. */
+.ab-measuring,
+.ab-measuring * {
+    transition: none !important;
 }

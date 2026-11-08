@@ -27,7 +27,7 @@
  * is converted through it instead.
  */
 
-import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { getZoomedViewport, toFixedCSS } from '@/utils/viewportCoords'
 import {
   toFixedLeft,
   toFixedTop,

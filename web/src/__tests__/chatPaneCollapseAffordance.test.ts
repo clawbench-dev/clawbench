@@ -151,8 +151,10 @@ describe('chat pane collapse affordance', () => {
     const header = readWebFile('src/components/file/FileHeader.vue')
     expect(header).toContain('data-action="toggle-maximize-pane"')
     expect(header).toContain("@click.stop=\"emit('toggleMaximizePane')\"")
-    // Wide screen only: narrow layout has no split to maximize.
-    expect(header).toContain('v-if="isWideScreen && toolbarInlineIds.includes(\'maximize\')"')
+    // Wide screen only: narrow layout has no split to maximize. Whether it fits
+    // inline, or gets folded into the More menu, is ActionBar's decision.
+    expect(header).toContain('v-if="isWideScreen"')
+    expect(header).toContain('data-toolbar-id="maximize"')
 
     // The event must be forwarded through both wrapper layers, or the click
     // dies at FileHeader and App.vue never sees it.

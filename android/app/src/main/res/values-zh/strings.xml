@@ -124,6 +124,7 @@
     <string name="share_in_success">已接收 %1$d 个文件，可通过聊天附件加入会话</string>
     <string name="share_in_failed">接收文件失败</string>
     <string name="share_in_no_server">未连接服务器，无法接收文件</string>
+    <string name="share_in_unsupported">分享的内容里没有可导入的文件或文字</string>
     <!-- Push event notifications (aligned with DingTalk templates) -->
     <string name="push_session_completed">会话已完成</string>
     <string name="push_session_cancelled">会话已取消</string>

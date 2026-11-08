@@ -19,6 +19,14 @@
  */
 import { appLog } from '@/utils/appLog'
 import { shotLabel } from '@/utils/meetingShots'
+import {
+  SENSITIVITY_RMS,
+  VOICE_TUNING_DEFAULTS,
+  type VoiceSensitivity,
+} from '@/utils/audioTuning'
+import { PcmStreamer } from '@/utils/pcmCapture'
+
+export type { VoiceSensitivity }
 
 const TAG = 'LiveNotes'
 
@@ -44,10 +52,12 @@ export const NOTES_MIN_SEGMENT_MS = 4_000
 export const NOTES_SILENCE_HOLD_MS = 450
 
 /**
- * RMS below which a 100ms window counts as silence (≈ -40 dBFS).
+ * The value 听记 originally used as its silence floor (≈ -40 dBFS).
  *
- * Speech in a normal microphone or system-audio capture sits well above this;
- * room tone and codec noise sit below it.
+ * No longer the live threshold: it now comes from the shared sensitivity
+ * setting (`SENSITIVITY_RMS`). The old number was lowered after measuring that
+ * it cut most of ordinary speech, so this constant is kept only as the
+ * historical reference the design notes quote.
  */
 export const NOTES_SILENCE_RMS = 0.01
 
@@ -127,6 +137,15 @@ export interface NoteBlock {
    */
   kind?: 'file' | 'screen' | 'shot'
   /**
+   * The sentence being spoken right now, not yet stored.
+   *
+   * The engine revises it while the person talks, so it must never merge into a
+   * committed block: doing so would let a revision rewrite text that is already
+   * in the database. It renders muted and is replaced by the real row the
+   * moment the line is committed.
+   */
+  pending?: boolean
+  /**
    * The same speaker still talking, split off only because the previous block
    * reached `BLOCK_MAX_SPAN_MS`.
    *
@@ -199,7 +218,7 @@ export function groupNoteSegments(list: NoteTimelineRow[]): NoteBlock[] {
     const last = out[out.length - 1]
     // File events are timeline markers, not speech: merging two consecutive
     // ones would produce "打开 a.md 关闭 a.md" as a single line.
-    const mergeable = last && !s.kind && !last.kind
+    const mergeable = last && !s.kind && !last.kind && !s.pending && !last.pending
     const sameTurn = mergeable && last.channel === s.channel && s.startedAt - lastEnd <= BLOCK_MERGE_GAP_MS
     // Only a block that would otherwise keep growing counts as a continuation:
     // after a real break (a pause, a speaker change, a file marker) the row is
@@ -212,13 +231,14 @@ export function groupNoteSegments(list: NoteTimelineRow[]): NoteBlock[] {
         // Frames and file events both carry negative ids (they are not cues),
         // so the kind is part of the key: two rows sharing a key would make Vue
         // reuse the wrong DOM node.
-        key: s.kind === 'shot' ? `s${s.id}` : `n${s.id}`,
+        key: s.pending ? `p${s.channel}` : s.kind === 'shot' ? `s${s.id}` : `n${s.id}`,
         channel: s.channel,
         speaker: s.speaker,
         startedAt: s.startedAt,
         text: s.text,
         ...(continuation ? { continuation: true } : {}),
         ...(s.kind ? { kind: s.kind } : {}),
+        ...(s.pending ? { pending: true } : {}),
         ...(s.fileAction ? { fileAction: s.fileAction } : {}),
         ...(s.shot ? { shot: s.shot } : {}),
       })
@@ -239,6 +259,8 @@ export type NoteTimelineRow = LiveNoteSegment & {
   kind?: 'file' | 'screen' | 'shot'
   fileAction?: 'open' | 'close'
   shot?: NoteBlock['shot']
+  /** See NoteBlock.pending. */
+  pending?: boolean
 }
 
 /** A stored key frame, placed on the same clock as the rows beside it. */
@@ -358,6 +380,19 @@ export interface NotesUploadArgs {
 /** Uploads one segment and resolves to the stored line (null when silent). */
 export type NotesUploader = (args: NotesUploadArgs) => Promise<LiveNoteSegment | null>
 
+/**
+ * One channel's live transcript socket.
+ *
+ * The audio goes up as it is captured, so text appears while the person is
+ * still talking instead of after a pause plus an upload plus a round trip.
+ * The channel's segment files keep being uploaded as well — they are the
+ * recording, and the thing a failed stream can be re-transcribed from.
+ */
+export interface NotesStreamHandle {
+  send(pcm: ArrayBuffer): void
+  close(): void
+}
+
 export interface LiveNotesCaptureOptions {
   /** Hard ceiling for one segment (a pause normally ends it earlier). */
   segmentMs?: number
@@ -365,6 +400,28 @@ export interface LiveNotesCaptureOptions {
   minSegmentMs?: number
   maxPending?: number
   mimeType?: string
+  /**
+   * Drop segments that carry no speech instead of uploading them.
+   *
+   * Shared with chat dictation (`stt.voice_gate`): the same judgement applies —
+   * a silent segment costs a round-trip and returns nothing.
+   */
+  voiceGate?: boolean
+  /**
+   * How loud a window must be to count as speech.
+   *
+   * Shared with chat dictation (`stt.voice_gate_sensitivity`). The default is
+   * the value 听记 has always used, so an unconfigured server behaves exactly
+   * as before.
+   */
+  sensitivity?: VoiceSensitivity
+  /**
+   * Opens a live transcript socket for a channel.
+   *
+   * Omitted → no streaming (the segment uploads carry the transcript, as
+   * before). Supplying it moves transcription onto the live socket.
+   */
+  openStream?: (channel: string, speaker: string) => NotesStreamHandle | null
   /**
    * Uploader for the archive-only mix track. Supplying it turns the mix on: the
    * capture then also records every channel mixed together into one file.
@@ -398,6 +455,14 @@ class ChannelRecorder {
   private readonly minSegmentMs: number
   private readonly maxPending: number
   private readonly mimeType: string
+  /** RMS above which a window counts as speech (shared sensitivity setting). */
+  private readonly silenceRms: number
+  /** Whether a segment with no speech is dropped instead of uploaded. */
+  private readonly voiceGate: boolean
+
+  /** Live transcript socket and its PCM capture, when streaming is on. */
+  private liveStream: NotesStreamHandle | null = null
+  private pcm: PcmStreamer | null = null
 
   private recorder: MediaRecorder | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
@@ -409,6 +474,8 @@ class ChannelRecorder {
   private pumping = false
   private waiters: Array<() => void> = []
   private readonly opts: LiveNotesCaptureOptions
+  /** Kept for the PCM tap: the live socket needs the same source. */
+  private readonly stream: MediaStream
 
   /**
    * When this channel last carried speech, in epoch ms (0 = never).
@@ -437,10 +504,13 @@ class ChannelRecorder {
     mixDest: MediaStreamAudioDestinationNode | null = null,
   ) {
     this.opts = opts
+    this.stream = stream
     this.segmentMs = opts.segmentMs ?? NOTES_SEGMENT_MS
     this.minSegmentMs = Math.min(opts.minSegmentMs ?? NOTES_MIN_SEGMENT_MS, this.segmentMs)
     this.maxPending = opts.maxPending ?? NOTES_MAX_PENDING
     this.mimeType = opts.mimeType ?? NOTES_MIME
+    this.silenceRms = SENSITIVITY_RMS[opts.sensitivity ?? 'standard']
+    this.voiceGate = opts.voiceGate ?? true
     // A per-channel destination is what makes the channel separation real: the
     // recorder only ever sees this one source.
     this.source = ctx.createMediaStreamSource(stream)
@@ -494,11 +564,48 @@ class ChannelRecorder {
   start(): void {
     if (this.stopped || this.recorder) return
     this.recordOnce()
+    this.startStreaming()
+  }
+
+  /**
+   * Taps the same source into the live transcript socket.
+   *
+   * The voice gate is OFF here on purpose: the server needs continuous audio to
+   * decide where a sentence ends, and a client-side gate that drops the quiet
+   * half of a sentence would make that judgement on a different signal than the
+   * audio it actually receives.
+   */
+  private startStreaming(): void {
+    if (!this.opts.openStream) return
+    // The mix bus is the whole meeting in one file. Transcribing it would
+    // produce a second copy of every line with the speaker labels lost.
+    if (this.channel === NOTES_MIX_CHANNEL) return
+    const handle = this.opts.openStream(this.channel, this.speaker())
+    if (!handle) return
+    this.liveStream = handle
+    const streamer = new PcmStreamer({
+      stream: this.stream,
+      tuning: { ...VOICE_TUNING_DEFAULTS, voiceGate: false },
+      onFrame: (frame) => handle.send(frame),
+    })
+    this.pcm = streamer
+    void streamer.start().catch((e) => {
+      appLog.w(TAG, 'live transcript stream failed, segments still record', this.channel, e)
+      this.stopStreaming()
+    })
+  }
+
+  private stopStreaming(): void {
+    this.pcm?.stop()
+    this.pcm = null
+    this.liveStream?.close()
+    this.liveStream = null
   }
 
   stop(): void {
     if (this.stopped) return
     this.stopped = true
+    this.stopStreaming()
     this.stopVad()
     if (this.timer !== null) {
       clearTimeout(this.timer)
@@ -597,7 +704,7 @@ class ChannelRecorder {
       // segment that does contain speech.
       // A segment that was never metered (shorter than one sample, or no
       // analyser at all) is kept: "unknown" must not mean "silent".
-      const silent = vadSamples > 0 && !speechSeen
+      const silent = this.voiceGate && vadSamples > 0 && !speechSeen
       if (chunks.length > 0 && !silent) {
         this.enqueue({
           blob: new Blob(chunks, { type: rec.mimeType || this.mimeType }),
@@ -619,7 +726,7 @@ class ChannelRecorder {
     this.vadTimer = this.startVad((rms) => {
       vadSamples += 1
       const now = Date.now()
-      if (rms >= NOTES_SILENCE_RMS) {
+      if (rms >= this.silenceRms) {
         speechSeen = true
         segmentVoiceAt = now
         this.lastVoiceAt = now

@@ -14,10 +14,16 @@
  * means a page that later calls `getDisplayMedia` on its own gets nothing rather
  * than a silent capture of whatever was chosen before.
  */
-import { desktopCapturer, ipcMain, session, type DesktopCapturerSource, type WebContents } from 'electron'
+import { desktopCapturer, ipcMain, session, type DesktopCapturerSource, type Streams, type WebContents } from 'electron'
 import { record } from './clientLog'
 
 const TAG = 'Capture'
+
+/** One line for a thrown value; Electron's errors stringify to "{}" otherwise. */
+function describe(e: unknown): string {
+  if (e instanceof Error) return `${e.name}: ${e.message}`
+  return String(e)
+}
 
 /** A source the renderer can pick, serialized for the bridge. */
 export interface CaptureSourceInfo {
@@ -35,6 +41,26 @@ interface PendingCapture {
 }
 
 let pending: PendingCapture | null = null
+
+/**
+ * The listing the picker last drew, and when it was taken.
+ *
+ * The handler used to re-enumerate in order to answer `getDisplayMedia`, and on
+ * Wayland enumerating screens IS the system's "what do you want to share"
+ * dialog — so choosing a screen and pressing start asked the user twice, and the
+ * second answer replaced the first. Remembering the listing the picker showed
+ * lets the handler answer from the source the user actually picked.
+ */
+let lastListing: { sources: DesktopCapturerSource[]; at: number } | null = null
+
+/**
+ * How long a remembered listing may answer a capture request.
+ *
+ * Long enough for a form the user left open while typing, short enough that a
+ * window closed in the meantime is far more likely to be re-listed than
+ * silently captured. Past this the handler falls back to a fresh enumeration.
+ */
+const LISTING_TTL_MS = 5 * 60 * 1000
 
 /**
  * Display the current capture is showing, as reported by desktopCapturer.
@@ -107,6 +133,9 @@ export async function listCaptureSources(): Promise<CaptureSourceInfo[]> {
     record('W', TAG, 'combined source query was empty; retrying with screens only')
     sources = await desktopCapturer.getSources({ ...query, types: ['screen'] })
   }
+  // Remember what the picker drew: the capture request that follows must answer
+  // with one of these, and re-enumerating would raise the system picker again.
+  lastListing = { sources, at: Date.now() }
   return sources.map((s: DesktopCapturerSource) => ({
     id: s.id,
     name: s.name,
@@ -221,6 +250,7 @@ export function _resetCaptureForTest(): void {
   pending = null
   capturedDisplayId = ''
   publishing = false
+  lastListing = null
 }
 
 /**
@@ -239,9 +269,64 @@ export function installDisplayMediaHandler(): void {
       // the same declaration.
       pending = null
 
+      /**
+       * Answer the request exactly once.
+       *
+       * `callback` throws when it is called a second time, and that throw used
+       * to land inside the promise chain below — where the catch answered AGAIN
+       * — so the only thing the log ever said was "one-time callback was called
+       * more than once". That sentence describes the retry, not the failure:
+       * whatever went wrong first (a conversion error, a missing source) was
+       * lost, and the renderer saw a refused request with no explanation.
+       */
+      let answered = false
+      const answer = (streams: Streams): void => {
+        if (answered) return
+        answered = true
+        try {
+          callback(streams)
+        } catch (e) {
+          // A conversion failure inside Electron is a real defect and must not
+          // be swallowed: record it, and leave it in the terminal too — the
+          // file log only exists while debug capture is switched on.
+          record('E', TAG, `answering getDisplayMedia failed: ${describe(e)}`)
+          console.error('[Capture] answering getDisplayMedia failed:', e)
+        }
+      }
+
       if (!choice) {
         record('W', TAG, 'getDisplayMedia without a declared source was refused')
-        callback({})
+        answer({})
+        return
+      }
+
+      const streamsFor = (match: DesktopCapturerSource, withAudio: boolean): Streams => {
+        // `audio` is only present when loopback was actually asked for. An
+        // explicit `audio: undefined` still creates the key, and this object is
+        // converted on Electron's side — a key with nothing in it is not the
+        // same thing as an absent key.
+        const streams: Streams = { video: match }
+        if (withAudio) streams.audio = 'loopback'
+        return streams
+      }
+
+      // Answer from the listing the picker just drew. Enumerating here instead
+      // asks the system a second time — on Wayland that is a second "what do you
+      // want to share" dialog, which is why choosing a screen and pressing start
+      // used to require choosing twice.
+      const remembered =
+        lastListing && Date.now() - lastListing.at <= LISTING_TTL_MS ? lastListing.sources : null
+      const picked = remembered?.find((s) => s.id === choice.sourceId)
+      if (picked) {
+        const decision = decideCapture(
+          choice,
+          request.audioRequested,
+          audioCaptureSupport().systemAudio,
+          [picked],
+          false,
+        )
+        capturedDisplayId = picked.display_id ?? ''
+        answer(streamsFor(picked, decision?.withAudio ?? false))
         return
       }
 
@@ -257,21 +342,22 @@ export function installDisplayMediaHandler(): void {
           )
           if (!decision) {
             record('W', TAG, `declared source ${choice.sourceId} is unavailable`)
-            callback({})
+            answer({})
             return
           }
-          const match = sources.find((s) => s.id === decision.sourceId)!
+          const match = sources.find((s) => s.id === decision.sourceId)
+          if (!match) {
+            record('W', TAG, `source ${decision.sourceId} vanished between listing and answer`)
+            answer({})
+            return
+          }
           capturedDisplayId = match.display_id ?? ''
-          callback({
-            video: match,
-            // Cast: the typings accept the literal, but the union also allows a
-            // WebFrameMain, so a bare string needs the narrower type.
-            audio: decision.withAudio ? ('loopback' as const) : undefined,
-          })
+          answer(streamsFor(match, decision.withAudio))
         })
         .catch((e) => {
-          record('E', TAG, `getSources failed: ${String(e)}`)
-          callback({})
+          record('E', TAG, `getSources failed: ${describe(e)}`)
+          console.error('[Capture] getSources failed:', e)
+          answer({})
         })
     },
     { useSystemPicker: false },

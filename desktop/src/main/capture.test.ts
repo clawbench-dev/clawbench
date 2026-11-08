@@ -25,6 +25,7 @@ const displayHandler = vi.hoisted(() => ({
 }))
 const recorded = vi.hoisted(() => ({ value: [] as string[] }))
 const failCombined = vi.hoisted(() => ({ value: false }))
+const getSourcesCalls = vi.hoisted(() => ({ value: 0 }))
 const ipcHandlers = vi.hoisted(() => ({ value: {} as Record<string, (...a: unknown[]) => unknown> }))
 
 vi.mock('electron', () => ({
@@ -42,6 +43,7 @@ vi.mock('electron', () => ({
   },
   desktopCapturer: {
     getSources: async (opts: { types: string[] }) => {
+      getSourcesCalls.value += 1
       // An X11 session without a window manager answers the combined query with
       // nothing, even though the screens are fine.
       if (failCombined.value && opts.types.includes('window')) return []
@@ -90,6 +92,7 @@ beforeEach(() => {
   displayHandler.value = null
   recorded.value = []
   ipcHandlers.value = {}
+  getSourcesCalls.value = 0
   _resetCaptureForTest()
   installDisplayMediaHandler()
 })
@@ -262,6 +265,38 @@ describe('display media handler', () => {
     expect(recorded.value.join()).toContain('unavailable')
   })
 
+  it('answers from the listing the picker drew instead of enumerating again', async () => {
+    // On Wayland enumerating screens IS the system picker, so re-listing here
+    // made the user choose twice: once for the grid, once to start.
+    const listed = await listCaptureSources()
+    expect(getSourcesCalls.value).toBe(1)
+    _setPendingCaptureForTest({ sourceId: listed[0].id, systemAudio: false })
+
+    const answer = await requestCapture()
+
+    expect(answer.video).toMatchObject({ id: listed[0].id })
+    // No second enumeration — that is the dialog the user used to see again.
+    expect(getSourcesCalls.value).toBe(1)
+  })
+
+  it('re-lists when the remembered listing is too old', async () => {
+    vi.useFakeTimers()
+    try {
+      const listed = await listCaptureSources()
+      // A window may have closed since; past the window the handler asks again
+      // rather than capturing something that is no longer there.
+      vi.advanceTimersByTime(6 * 60 * 1000)
+      _setPendingCaptureForTest({ sourceId: listed[0].id, systemAudio: false })
+
+      const answer = await requestCapture()
+
+      expect(answer.video).toMatchObject({ id: listed[0].id })
+      expect(getSourcesCalls.value).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('answers a Wayland placeholder listing even though its id changed', async () => {
     // The declaration was made from one listing; the handler re-enumerates and
     // gets a different index. Without the placeholder path this refused every
@@ -273,6 +308,38 @@ describe('display media handler', () => {
 
     expect(answer.video).toMatchObject({ id: 'window:2:0:s' })
     expect(recorded.value.join()).not.toContain('unavailable')
+  })
+
+  it('leaves the audio key out when loopback is not in play', async () => {
+    // Linux and macOS never ask for loopback. `audio: undefined` still creates
+    // the key, and this object is converted on Electron's side — an absent key
+    // is not the same thing as a key with nothing in it.
+    _setPendingCaptureForTest({ sourceId: 'screen:1:0', systemAudio: false })
+
+    const answer = await requestCapture()
+
+    expect(answer.video).toMatchObject({ id: 'screen:1:0' })
+    expect(Object.prototype.hasOwnProperty.call(answer, 'audio')).toBe(false)
+  })
+
+  it('answers exactly once even when Electron rejects the answer', async () => {
+    // `callback` throws when called twice. That throw used to land in the
+    // promise chain below, whose catch answered AGAIN — so the only thing
+    // recorded was "one-time callback was called more than once", which
+    // describes the retry and hides whatever failed first.
+    _setPendingCaptureForTest({ sourceId: 'screen:1:0', systemAudio: false })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const answers: unknown[] = []
+
+    displayHandler.value!({ audioRequested: false }, (streams: unknown) => {
+      answers.push(streams)
+      if (answers.length === 1) throw new Error('conversion failure')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(answers).toHaveLength(1)
+    expect(recorded.value.join()).toContain('answering getDisplayMedia failed')
+    errorSpy.mockRestore()
   })
 
   it('does not leak the pending declaration across installs', () => {

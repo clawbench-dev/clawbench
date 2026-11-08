@@ -468,6 +468,22 @@ describe('useLiveNotes — artifacts', () => {
     expect(form.get('title')).toBe('季度会')
   })
 
+  it('passes the shared voice gate and sensitivity into the capture', async () => {
+    const notes = useLiveNotes()
+    notes.start({
+      token: 'tok',
+      ctx,
+      micStream: null,
+      voiceGate: false,
+      sensitivity: 'aggressive',
+    })
+    // Shared with chat dictation, so one settings change covers both — the
+    // capture must receive the resolved values rather than reading settings
+    // itself (liveNotes.ts stays free of the settings module).
+    expect(lastCapture().opts.voiceGate).toBe(false)
+    expect(lastCapture().opts.sensitivity).toBe('aggressive')
+  })
+
   it('adopts the proofreading status and the files the meeting left behind', async () => {
     const notes = useLiveNotes()
     notes.start({ token: 'tok', ctx, micStream: null })

@@ -155,7 +155,13 @@ func (p *StreamJSONParser) ParseLine(line string, ch chan<- StreamEvent) {
 		// Emit as warning for severity="warning", error for "error"
 		if msg.Message != "" {
 			if msg.Severity == "error" {
-				emitStreamEvent(ch, "cli", StreamEvent{Type: "error", Error: msg.Message})
+				// Reason: see streamErrorReason — an unclassified error event is
+				// read as a clean finish by the turn classifier.
+				emitStreamEvent(ch, "cli", StreamEvent{
+					Type:   "error",
+					Error:  msg.Message,
+					Reason: streamErrorReason(msg.Message),
+				})
 			} else {
 				emitStreamEvent(ch, "cli", StreamEvent{Type: "warning", Content: msg.Message})
 			}

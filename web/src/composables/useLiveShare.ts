@@ -28,6 +28,8 @@ import { useInkBoard } from '@/share/useInkBoard'
 import { notesRecordingSupported } from './liveNotes'
 import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
+import { buildMicConstraints, readVoiceTuning } from '@/utils/audioTuning'
+import { serverConfig } from '@/composables/useSettingsConfig'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 import {
   CAMERA_BUDGET,
@@ -701,14 +703,12 @@ let lastCameraError: unknown = null
  * "the device I switched to sounds different" bugs.
  */
 function micConstraints(deviceId: string): MediaTrackConstraints {
-  return {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    // A chosen input wins; otherwise the OS default, which is what `audio:
-    // true` means. `{exact: ''}` would fail on every machine.
-    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-  }
+  // Shared with chat dictation (设置 → 语音识别 → 麦克风处理), so one switch
+  // covers both. The band filter is deliberately NOT applied here: it belongs
+  // to the recogniser, and band-limiting the published audio would make every
+  // voice sound like a phone call to the audience.
+  const tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
+  return buildMicConstraints(tuning, deviceId)
 }
 
 /**
@@ -963,9 +963,12 @@ async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
     fail('screen capture is unavailable on this host')
     return null
   }
+  // A native host answers getDisplayMedia itself, so a rejection there is never
+  // "a stray click closed the browser picker": the host refused or failed, and
+  // staying quiet leaves the button looking dead.
+  const declare = bridge?.setPendingCaptureSource
+  const declaresSource = Boolean(declare && bridge)
   try {
-    const declare = bridge?.setPendingCaptureSource
-    const declaresSource = Boolean(declare && bridge)
     if (declare && bridge) {
       await declare.call(bridge, sourceId, true)
     }
@@ -991,10 +994,17 @@ async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
     // pick has no id (its dialog chose), which the panel maps to its own tile.
     return { stream, kind, sourceId, android: null }
   } catch (e) {
-    appLog.w(TAG, 'screen capture unavailable', e)
+    // A DOMException has no enumerable properties, so logging the object alone
+    // printed "{}" and told nobody anything.
+    const err = e as { name?: string; message?: string } | null
+    appLog.w(
+      TAG,
+      `screen capture unavailable: name=${err?.name ?? 'unknown'} message=${err?.message ?? String(e)}`,
+    )
     // The declaration is one-shot; leaving it armed would let the NEXT
     // getDisplayMedia capture that source without a picker.
     void bridge?.setPendingCaptureSource?.('', false)
+    if (declaresSource) fail(i18n.global.t('liveShare.screenCaptureFailed'))
     return null
   }
 }
@@ -1809,6 +1819,7 @@ export function useLiveShare() {
       appLog.w(TAG, 'MediaRecorder unavailable: notes cannot be turned on')
       return false
     }
+    const tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
     useLiveNotes().start({
       token: token.value,
       ctx: audioCtx,
@@ -1816,6 +1827,8 @@ export function useLiveShare() {
       title: title.value,
       label: notesLabelFn,
       resume: notesStarted,
+      voiceGate: tuning.voiceGate,
+      sensitivity: tuning.sensitivity,
     })
     notesStarted = true
     publishNotes(true)

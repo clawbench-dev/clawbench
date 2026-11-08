@@ -16,14 +16,18 @@
       <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
       <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />
-      <RefreshButton
-        class="meeting-icon-btn meeting-refresh-btn"
-        :loading="loading"
-        :disabled="loading"
-        :title="t('meeting.list.refresh')"
-        data-action="meeting-refresh"
-        @click="reload"
-      />
+      <ActionBar class="meeting-actions" mode="menu" size="bar">
+        <RefreshButton
+          class="meeting-icon-btn meeting-refresh-btn"
+          :loading="loading"
+          :disabled="loading"
+          :title="t('meeting.list.refresh')"
+          data-action="meeting-refresh"
+          @click="reload"
+        >
+          <span class="action-label">{{ t('common.refresh') }}</span>
+        </RefreshButton>
+      </ActionBar>
     </div>
 
     <HttpsNotice v-if="showHttpsNotice" variant="banner" />
@@ -116,17 +120,35 @@
               <span v-if="r.showEmpty" class="meeting-pill is-empty">{{ t('meeting.list.noArtifacts') }}</span>
             </div>
           </div>
-          <!-- Always visible, never hover-only: a phone has no hover, so the
-               delete affordance used to be unreachable there. -->
-          <button
-            class="meeting-row__del"
-            type="button"
-            :title="t('meeting.list.delete')"
-            :data-action="`meeting-delete-${r.record.token}`"
-            @click.stop="askDelete(r.record)"
-          >
-            <Trash2 :size="13" />
-          </button>
+          <!-- Right rail: delete on top, quote in the bottom-right corner. The
+               rail stretches with the card so the two anchors sit on the card's
+               own edges instead of floating in the middle. -->
+          <div class="meeting-row__actions">
+            <!-- Always visible, never hover-only: a phone has no hover, so the
+                 delete affordance used to be unreachable there. -->
+            <button
+              class="meeting-row__del"
+              type="button"
+              :title="t('meeting.list.delete')"
+              :data-action="`meeting-delete-${r.record.token}`"
+              @click.stop="askDelete(r.record)"
+            >
+              <Trash2 :size="13" />
+            </button>
+            <!-- Same row action as the task, forge and mail lists. The token is
+                 handed to the host, which fetches the record and opens the quote
+                 bar — one implementation shared with the detail header. -->
+            <button
+              class="meeting-row__quote"
+              type="button"
+              :title="t('file.header.quoteInChat')"
+              :aria-label="t('file.header.quoteInChat')"
+              :data-action="`meeting-quote-${r.record.token}`"
+              @click.stop="emit('quote', r.record.token)"
+            >
+              <MessageSquare :size="14" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -223,6 +245,7 @@ import {
   ArrowLeft,
   Check,
   Link as LinkIcon,
+  MessageSquare,
   Plus,
   Trash2,
   Upload,
@@ -232,6 +255,7 @@ import { formatFullTimestamp, formatRelativeTime, startOfLocalDay } from '@/util
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import ActionBar from '@/components/common/ActionBar.vue'
 import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { getNative } from '@/utils/clawbenchNative'
@@ -256,6 +280,7 @@ const emit = defineEmits<{
   join: []
   joinLive: [token: string]
   open: [token: string]
+  quote: [token: string]
   resume: []
 }>()
 
@@ -705,10 +730,8 @@ onMounted(() => {
    .drilldown-refresh-btn / .forge-header-btn scale). The spin + green check
    come from RefreshButton itself. */
 .meeting-refresh-btn {
-  transition: transform var(--duration-slow) ease, background var(--duration-slow) ease,
-    color var(--duration-slow) ease;
+  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
 }
-.meeting-refresh-btn:active:not(:disabled) { transform: scale(0.9); }
 
 .meeting-body {
   flex: 1;
@@ -754,7 +777,7 @@ onMounted(() => {
   left: -1px;
   top: -1px;
   bottom: -1px;
-  width: 2px;
+  width: calc(2 * var(--dp));
   background: transparent;
 }
 .meeting-row[data-state="running"]::before { background: var(--accent-color); }
@@ -869,6 +892,52 @@ onMounted(() => {
   50% { opacity: 0.25; }
 }
 
+/* Right rail: delete at the top, quote at the bottom, both anchored to the
+   card's own edges. The rail stretches with the card instead of centring, which
+   is what puts the quote in the bottom-right corner. */
+.meeting-row__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2, 4px);
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+/* Row-level "quote into a conversation" action, matching the task, forge and
+   mail lists: hidden until hover so the list stays dense, always visible on
+   touch where there is no hover at all. */
+.meeting-row__quote {
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
+}
+.meeting-row:hover .meeting-row__quote,
+.meeting-row__quote:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .meeting-row__quote { opacity: 1; }
+}
+@media (hover: hover) {
+  .meeting-row__quote:hover {
+    color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  }
+}
+
 /* Always visible (a phone has no hover); only the colour waits for hover. */
 .meeting-row__del {
   width: calc(26 * var(--dp));
@@ -908,20 +977,16 @@ onMounted(() => {
   color: var(--color-red);
   font-size: var(--font-size-sm);
 }
+/* Size, radius, colour and hover come from the shared ActionBar row rules
+   (size="bar"). Only the disabled treatment is this panel's own. */
 .meeting-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(26 * var(--dp));
-  height: calc(26 * var(--dp));
   border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
-.meeting-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 .meeting-icon-btn:disabled { opacity: 0.5; cursor: default; }
 
 .meeting-footer {

@@ -141,8 +141,8 @@ const showRetry = computed(() => props.health === 'micDead' && !props.retrying)
 }
 
 .notes-status__dot {
-  width: 6px;
-  height: 6px;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--text-muted, #656d76);

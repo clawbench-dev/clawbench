@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/model"
 )
 
 func parseOpenCodeLine(line string) []StreamEvent {
@@ -724,5 +726,217 @@ func TestOpenCodeStream_ParseLine_StepFinishUnparseable(t *testing.T) {
 	close(ch)
 	if len(ch) != 0 {
 		t.Errorf("an unparseable part must emit nothing, got %d events", len(ch))
+	}
+}
+
+// ── error / retry frames ────────────────────────────────────────────────────
+//
+// Fixtures below are the exact frames captured from opencode 2.2.6 against a
+// mock provider: a 402 produces one step_start then one error frame and exit
+// code 1 with an EMPTY stderr; a persistent 429 produces a step_start, then a
+// `retry` frame per attempt (11 of them over ~85s), then a final error frame.
+
+func TestOpenCodeStream_ErrorFrame_QuotaIsClassifiedAndTerminal(t *testing.T) {
+	line := `{"type":"error","timestamp":1794063822858,"sessionID":"ses_q","error":{"type":"provider.quota","message":"Insufficient Balance","status":402,"response":{"body":"{\"error\":{\"type\":\"insufficient_quota\"}}"}}}`
+	events := parseOpenCodeLine(line)
+
+	if len(events) != 2 {
+		t.Fatalf("expected the error plus a terminal done, got %d events: %+v", len(events), events)
+	}
+	errEv := events[0]
+	if errEv.Type != "error" {
+		t.Fatalf("expected an error event first, got %q", errEv.Type)
+	}
+	if errEv.Reason != ReasonQuotaExhausted {
+		t.Errorf("a 402 must be classified as %q, got %q", ReasonQuotaExhausted, errEv.Reason)
+	}
+	if errEv.Error != "Insufficient Balance" {
+		t.Errorf("the provider's own message must reach the user, got %q", errEv.Error)
+	}
+	if errEv.HTTPStatus != 402 {
+		t.Errorf("expected HTTPStatus 402, got %d", errEv.HTTPStatus)
+	}
+	if events[1].Type != "done" {
+		t.Fatalf("expected a done event to close the turn, got %q", events[1].Type)
+	}
+}
+
+// A terminal error frame WITHOUT a quota signature stays a generic request
+// failure: mislabelling an unrelated upstream error as "out of credit" would
+// send the user to the billing page for nothing.
+func TestOpenCodeStream_ErrorFrame_NonQuotaStaysRequestFailed(t *testing.T) {
+	line := `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"type":"provider.api_error","message":"Internal server error","status":500}}`
+	events := parseOpenCodeLine(line)
+
+	if len(events) != 2 {
+		t.Fatalf("expected error + done, got %d events", len(events))
+	}
+	if events[0].Reason != ReasonRequestFailed {
+		t.Errorf("expected %q, got %q", ReasonRequestFailed, events[0].Reason)
+	}
+}
+
+// A malformed frame (no error object at all) must still terminate the turn
+// rather than leaving it hanging on a closed channel.
+func TestOpenCodeStream_ErrorFrame_WithoutPayloadStillTerminates(t *testing.T) {
+	events := parseOpenCodeLine(`{"type":"error","timestamp":1,"sessionID":"ses_q"}`)
+
+	if len(events) != 2 {
+		t.Fatalf("expected error + done, got %d events", len(events))
+	}
+	if events[0].Type != "error" || events[1].Type != "done" {
+		t.Fatalf("expected error then done, got %q then %q", events[0].Type, events[1].Type)
+	}
+}
+
+// A `retry` frame must produce a TRANSIENT notice and NOT a block.
+//
+// The notice is what stops an 85-second silent spinner (opencode retries a
+// persistent 429 eleven times before giving up). It must never become a block:
+// a warning is permanent, so a 429 that recovered on the next attempt left a
+// stale "rate limited" card on a turn that actually succeeded — and because
+// classification reads reasons off blocks, that stale card also made the turn
+// look failed (a scheduled task reported `failed` for completed work).
+func TestOpenCodeStream_RetryFrame_EmitsTransientNoticeOnly(t *testing.T) {
+	cases := map[string]struct {
+		line       string
+		wantMsg    string
+		wantStatus int
+		wantAttmpt int
+	}{
+		"quota/limit retry": {
+			line:       `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`,
+			wantMsg:    "Rate limit exceeded",
+			wantStatus: 429,
+			wantAttmpt: 2,
+		},
+		"transient retry": {
+			line:       `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.transport","message":"ECONNREFUSED: Unable to connect"}}`,
+			wantMsg:    "ECONNREFUSED: Unable to connect",
+			wantStatus: 0,
+			wantAttmpt: 2,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			events := parseOpenCodeLine(tc.line)
+			if len(events) != 1 {
+				t.Fatalf("expected exactly one retry_notice, got %+v", events)
+			}
+			ev := events[0]
+			if ev.Type != "retry_notice" {
+				t.Fatalf("type=%q want retry_notice", ev.Type)
+			}
+			if ev.RetryNotice == nil {
+				t.Fatal("retry_notice must carry a payload (Emit drops nil payloads)")
+			}
+			if ev.RetryNotice.Message != tc.wantMsg {
+				t.Errorf("message=%q want %q", ev.RetryNotice.Message, tc.wantMsg)
+			}
+			if ev.RetryNotice.HTTPStatus != tc.wantStatus {
+				t.Errorf("status=%d want %d", ev.RetryNotice.HTTPStatus, tc.wantStatus)
+			}
+			if ev.RetryNotice.Attempt != tc.wantAttmpt {
+				t.Errorf("attempt=%d want %d", ev.RetryNotice.Attempt, tc.wantAttmpt)
+			}
+			// The whole point: no block, no reason — a recovered retry must leave
+			// the transcript (and the turn's classification) untouched.
+			var blocks []model.ContentBlock
+			AccumulateBlock(&blocks, ev)
+			if len(blocks) != 0 {
+				t.Fatalf("a retry notice must not accumulate a block, got %+v", blocks)
+			}
+		})
+	}
+}
+
+// The terminal quota failure must still be reported — dropping the retry notice
+// must not make the real failure silent.
+func TestOpenCodeStream_RetryThenTerminalQuotaReportsOnlyTheTerminal(t *testing.T) {
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
+	ch := make(chan StreamEvent, 16)
+	parser.ParseLine(`{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`, ch)
+	parser.ParseLine(`{"type":"error","timestamp":2,"sessionID":"ses_q","error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`, ch)
+	close(ch)
+
+	var quotaBlocks int
+	var gotDone bool
+	for ev := range ch {
+		if ev.Reason == ReasonQuotaExhausted {
+			quotaBlocks++
+		}
+		if ev.Type == "done" {
+			gotDone = true
+		}
+	}
+	assert.Equal(t, 1, quotaBlocks, "exactly one visible card for one failure")
+	assert.True(t, gotDone, "the turn must terminate")
+}
+
+// A turn that hit a retry and then SUCCEEDED must not look failed. This is the
+// regression the retry notice caused: the warning block stayed in the
+// transcript and classification read it as the turn's outcome.
+func TestOpenCodeStream_RetryThenSuccessHasNoFailureBlock(t *testing.T) {
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
+	ch := make(chan StreamEvent, 32)
+	parser.ParseLine(`{"type":"step_start","timestamp":1,"sessionID":"ses_q","part":{}}`, ch)
+	parser.ParseLine(`{"type":"retry","timestamp":2,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`, ch)
+	parser.ParseLine(`{"type":"text","timestamp":3,"sessionID":"ses_q","part":{"type":"text","text":"the answer"}}`, ch)
+	parser.ParseLine(`{"type":"step_finish","timestamp":4,"sessionID":"ses_q","part":{"reason":"stop","tokens":{"total":10,"input":5,"output":5}}}`, ch)
+	close(ch)
+
+	for ev := range ch {
+		assert.NotEqual(t, "warning", ev.Type,
+			"a recovered retry must leave no warning block behind: %+v", ev)
+	}
+}
+
+// ReportedStreamError is what stops the CLI driver from appending a second,
+// retryable "backend exited abnormally" warning on top of the classified error.
+func TestOpenCodeStream_ReportedStreamError(t *testing.T) {
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
+	ch := make(chan StreamEvent, 16)
+
+	if parser.ReportedStreamError() {
+		t.Fatal("a fresh parser must not claim to have reported an error")
+	}
+	parser.ParseLine(`{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"type":"provider.quota","message":"Insufficient Balance","status":402}}`, ch)
+	if !parser.ReportedStreamError() {
+		t.Fatal("after an error frame the parser must report it")
+	}
+}
+
+func TestIsOpenCodeQuotaError(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   *OpenCodeError
+		quota bool
+	}{
+		{"402 status", &OpenCodeError{Type: "provider.x", Status: 402}, true},
+		{"provider.quota type", &OpenCodeError{Type: "provider.quota"}, true},
+		{"insufficient balance text", &OpenCodeError{Type: "provider.api_error", Message: "Insufficient Balance"}, true},
+		{"rate limit type", &OpenCodeError{Type: "provider.rate-limit", Message: "Rate limit exceeded"}, true},
+		{"credit exhausted", &OpenCodeError{Message: "credit limit exceeded"}, true},
+		{"quota in message only", &OpenCodeError{Message: "insufficient_quota reached"}, true},
+		// OpenCode's own limit types, whose messages contain none of the phrases
+		// above — these were classified as retryable request_failed before.
+		{"provider.free-limit", &OpenCodeError{Type: "provider.free-limit", Message: "Free usage limit"}, true},
+		{"provider.go-limit", &OpenCodeError{Type: "provider.go-limit", Message: "OpenCode Go usage limit reached."}, true},
+		{"provider.chatgpt-limit", &OpenCodeError{Type: "provider.chatgpt-limit", Message: "subscription sharing"}, true},
+		{"budget limit error", &OpenCodeError{Type: "BudgetLimitError", Message: "budget exhausted"}, true},
+		// False-positive guards. "balance" alone matches "load balancer" and
+		// "insufficient" alone matches "insufficient permissions"; either would
+		// send a user with a working account to the billing page AND disable the
+		// retry that would have fixed a transient failure.
+		{"load balancer", &OpenCodeError{Type: "provider.transport", Message: "connection reset by load balancer"}, false},
+		{"insufficient permissions", &OpenCodeError{Type: "provider.api_error", Message: "insufficient permissions for this tool"}, false},
+		{"plain 500", &OpenCodeError{Type: "provider.api_error", Message: "Internal server error", Status: 500}, false},
+		{"transport failure", &OpenCodeError{Type: "provider.transport", Message: "ECONNREFUSED"}, false},
+		{"nil error", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.quota, isOpenCodeQuotaError(c.err))
+		})
 	}
 }

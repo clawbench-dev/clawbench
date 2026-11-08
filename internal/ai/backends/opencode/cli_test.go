@@ -49,6 +49,29 @@ func TestOpenCodePlugin_NewBackendIsCLIBackend(t *testing.T) {
 	}
 }
 
+func TestOpenCodeParser_SubagentMapsToAgent(t *testing.T) {
+	// OpenCode 2.x names its delegation tool `subagent`; the frontend only has
+	// an Agent card (Bot icon, agent category) when the name is canonicalized.
+	entry := ai.LookupBackendFactoryForTest("opencode")
+	clib := entry.NewBackend().(*ai.CLIBackend)
+	parser := clib.NewParserFn()
+
+	ch := make(chan ai.StreamEvent, 8)
+	parser.ParseLine(`{"type":"tool_use","sessionID":"ses_x","part":{"type":"tool","tool":"subagent","callID":"call_1","state":{"status":"completed","input":{"agent":"general"},"output":"done"}}}`, ch)
+
+	select {
+	case evt := <-ch:
+		if evt.Type != "tool_use" || evt.Tool == nil {
+			t.Fatalf("expected a tool_use event, got %+v", evt)
+		}
+		if evt.Tool.Name != "Agent" {
+			t.Errorf("subagent tool must canonicalize to Agent, got %q", evt.Tool.Name)
+		}
+	default:
+		t.Fatal("parser emitted no event for the subagent tool")
+	}
+}
+
 func TestOpenCodePlugin_FilterLine(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("opencode")
 	clib := entry.NewBackend().(*ai.CLIBackend)

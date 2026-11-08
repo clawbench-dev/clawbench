@@ -63,6 +63,27 @@ const availableCommands = ref<Array<{ name: string; description: string; inputHi
 const modeState = createSelectState('mode', loadModePref)
 const thinkingEffortState = createSelectState('thought_level', loadThinkingPref)
 
+/**
+ * Agent-declared options ClawBench has no dedicated picker for (issue #634).
+ * The first real case is codex-acp's "Fast mode": a select with id
+ * "fast-mode", values on/off, advertised only for models that support the
+ * faster tier. Name/description/value labels all come from the agent, so the
+ * UI can render any such option without new copy.
+ *
+ * Session-scoped on purpose: the list itself changes with the model, so it is
+ * replaced wholesale on every load / config_options_update.
+ */
+export interface ExtraConfigOption {
+  configId: string
+  name?: string
+  description?: string
+  category: string
+  currentValueId?: string
+  values?: Array<{ id: string; name?: string }>
+}
+
+const configOptions = ref<ExtraConfigOption[]>([])
+
 // Direct ref aliases for backward compatibility — all existing consumers
 // read from AND write to these refs, so they must be the actual refs
 // (not computed, which is read-only).
@@ -456,6 +477,25 @@ export function updateAvailableThinkingEfforts(levels: Array<{ id: string; name:
  * clearThinkingEffortState only cleared available and currentName). */
 export function clearThinkingEffortState() {
   thinkingEffortState.clear()
+}
+
+/** Replace the agent-declared generic options (from GET /api/ai/chat or the
+ *  config_options_update WS event). An absent list clears them: the backend
+ *  only omits it when the agent offers none for the current model. */
+export function setConfigOptions(options: ExtraConfigOption[] | undefined | null) {
+  configOptions.value = Array.isArray(options) ? options : []
+}
+
+/** Clear the generic options (session switch away from ACP / to CLI). */
+export function clearConfigOptions() {
+  configOptions.value = []
+}
+
+/** Optimistically reflect a value the user just picked. The agent echoes its
+ *  own state back over WS, so this only bridges the gap until that arrives. */
+export function setConfigOptionValue(configId: string, value: string) {
+  const opt = configOptions.value.find(o => o.configId === configId)
+  if (opt) opt.currentValueId = value
 }
 
 /** Update context usage state for a session (from SSE or REST).
@@ -920,6 +960,15 @@ export async function initSessionFromAPI(preferredSessionId?: string | null) {
             updateAvailableThinkingEfforts(levels)
           }
         }
+        // Agent-declared generic options (codex fast-mode, issue #634).
+        // Session-scoped and model-dependent: an absent list is authoritative
+        // (the agent offers none for the current model), so replace rather
+        // than merge — otherwise the toggle would survive a model switch.
+        if (agentsApi.supportsACP(data.agentId || '')) {
+          setConfigOptions(data.configOptions)
+        } else {
+          clearConfigOptions()
+        }
         // Initialize usage state from server cached data.
         //
         // Every field is forwarded, not just the window: the persisted
@@ -1309,6 +1358,11 @@ export function useSessionIdentity() {
     clearCommandState,
     updateAvailableThinkingEfforts,
     clearThinkingEffortState,
+    // Agent-declared generic options (codex fast-mode etc.)
+    configOptions,
+    setConfigOptions,
+    clearConfigOptions,
+    setConfigOptionValue,
     clearSessionIdentity,
     updateUsageState,
     clearUsageState,

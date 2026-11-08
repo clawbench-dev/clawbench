@@ -336,3 +336,83 @@ func TestCLIBackend_ExecuteStream_CancelKillsProcessGroup(t *testing.T) {
 		}
 	}
 }
+
+// reportingParser is a LineParser that also implements streamErrorReporter, so
+// the driver's suppression path can be exercised without a real agent.
+type reportingParser struct {
+	reported bool
+	parse    func(line string, ch chan<- StreamEvent)
+}
+
+func (p *reportingParser) ParseLine(line string, ch chan<- StreamEvent) {
+	if p.parse != nil {
+		p.parse(line, ch)
+	}
+}
+func (p *reportingParser) GetCapturedSessionID() string { return "" }
+func (p *reportingParser) ReportedStreamError() bool    { return p.reported }
+
+// TestCLIBackend_SuppressesGenericExitWarningWhenParserReported is the
+// regression test for the double-warning defect: OpenCode reports a quota
+// failure on stdout AND exits non-zero, so the driver's generic
+// "AI backend exited abnormally" used to be appended on top of the classified
+// error. That second block carries ReasonBackendExit, which auto-continue
+// RETRIES — so a permanently-exhausted quota was re-sent over and over.
+func TestCLIBackend_SuppressesGenericExitWarningWhenParserReported(t *testing.T) {
+	parser := &reportingParser{
+		reported: true,
+		parse: func(_ string, ch chan<- StreamEvent) {
+			ch <- StreamEvent{Type: "error", Error: "Insufficient Balance", Reason: ReasonQuotaExhausted, HTTPStatus: 402}
+			ch <- StreamEvent{Type: "done"}
+		},
+	}
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		// Prints one line, then exits non-zero — the exact shape opencode has.
+		BuildArgsFn: func(req ChatRequest) []string { return []string{"-c", `echo '{"x":1}'; exit 1`} },
+		NewParserFn: func() LineParser { return parser },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{Prompt: "test", SessionID: "suppress-generic", WorkDir: t.TempDir()})
+	assert.NoError(t, err)
+
+	var reasons []string
+	for ev := range ch {
+		if ev.Type == "warning" {
+			reasons = append(reasons, ev.Reason)
+		}
+	}
+	assert.Empty(t, reasons,
+		"the driver must not add a generic backend_exit warning when the parser already classified the failure")
+}
+
+// The suppression is opt-in per parser: a backend that says nothing about its
+// own failures must still get the generic warning, or a crashed CLI would end
+// the turn silently.
+func TestCLIBackend_KeepsGenericExitWarningWithoutParserReport(t *testing.T) {
+	b := &CLIBackend{
+		BackendName: "test",
+		Cmd:         "sh",
+		BuildArgsFn: func(req ChatRequest) []string { return []string{"-c", `echo '{"x":1}'; exit 1`} },
+		NewParserFn: func() LineParser { return &StreamParser{} },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := b.ExecuteStream(ctx, ChatRequest{Prompt: "test", SessionID: "keep-generic", WorkDir: t.TempDir()})
+	assert.NoError(t, err)
+
+	var reasons []string
+	for ev := range ch {
+		if ev.Type == "warning" {
+			reasons = append(reasons, ev.Reason)
+		}
+	}
+	assert.Contains(t, reasons, ReasonBackendExit,
+		"a plain parser must still produce the abnormal-exit warning")
+}

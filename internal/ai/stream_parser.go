@@ -15,6 +15,24 @@ type LineParser interface {
 	GetCapturedSessionID() string
 }
 
+// streamErrorReporter is an OPTIONAL interface a LineParser may implement to
+// tell the stream driver that it already emitted the turn's terminal error.
+//
+// It exists because the driver independently reports an abnormal exit
+// ("AI backend exited abnormally") whenever the process exits non-zero. For a
+// parser that already classified the failure from the agent's own output — e.g.
+// OpenCode's `{"type":"error"}` frame, which carries the provider's 402/quota
+// message — that second warning is not just redundant: it is tagged
+// ReasonBackendExit, which is RETRYABLE, so auto-continue would re-send a
+// request that can only fail again.
+//
+// Optional rather than a required method: only backends whose CLI reports
+// failures in-band need it, and forcing the other seven parsers to grow a
+// no-op method would be noise.
+type streamErrorReporter interface {
+	ReportedStreamError() bool
+}
+
 // ClaudeContentBlock represents a content block within a Claude stream message
 type ClaudeContentBlock struct {
 	Type      string          `json:"type"`

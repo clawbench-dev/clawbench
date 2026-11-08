@@ -1469,18 +1469,34 @@ function baseName(p: string): string {
 }
 
 /**
- * Read user-selected font stacks from the live <html> inline style. fontConfig
- * sets --font-ui / --font-mono on documentElement.style, so the chosen fonts are
- * not present in any stylesheet rule and would otherwise be lost in the export.
- * Returns a CSS `:root { … }` block (empty when neither variable is set).
+ * Read user-selected font stacks and the interface scale from the live <html>
+ * inline style. fontConfig sets --font-ui / --font-mono on
+ * documentElement.style and applyUIScale writes --ui-scale there, so none of
+ * them are present in any stylesheet rule and would otherwise be lost in the
+ * export.
+ *
+ * The scale matters for the same reason the fonts do: every length in the
+ * exported document is expressed through `--dp` (= `1rem / 15`) and the root
+ * font size is `calc(15px * var(--ui-scale))`, so without carrying the value
+ * the export silently renders at 100% while the app the reader copied it from
+ * was at 133%/150%. The stylesheet's own `--ui-scale: 1` default would win.
+ *
+ * Returns a CSS `:root { … }` block (empty when nothing is set).
  */
-function readInlineFontVars(): string {
+function readInlineRootVars(): string {
     const root = document.documentElement
     let css = ''
     for (const prop of ['--font-ui', '--font-mono']) {
         const value = (root.style?.getPropertyValue(prop) || '').trim()
         if (!value) continue
         css += `${prop}: ${value};\n`
+    }
+    // Only when it differs from the default: at 100% the stylesheet already
+    // says 1, and emitting it would add noise to every export.
+    const scale = (root.style?.getPropertyValue('--ui-scale') || '').trim()
+    const scaleNum = Number(scale)
+    if (Number.isFinite(scaleNum) && scaleNum > 0 && scaleNum !== 1) {
+        css += `--ui-scale: ${scale};\n`
     }
     return css ? `:root {\n${css}}` : ''
 }
@@ -1597,10 +1613,12 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         bodyEl.appendChild(contentEl)
 
         const css = serializeCss(bodyEl, currentThemeId)
-        // User-selected fonts live as inline <html> CSS variables (set by fontConfig),
-        // so they never appear in any stylesheet rule. Carry the current values into
-        // the exported :root so prose/code use the same fonts as the in-app preview.
-        const fontVarsCss = readInlineFontVars()
+        // The reader's own root overrides live as inline <html> CSS variables
+        // (fontConfig writes the fonts, applyUIScale writes the interface
+        // scale), so they never appear in any stylesheet rule. Carry them into
+        // the exported :root so the document matches the app it was exported
+        // from — same fonts, same size.
+        const inlineRootCss = readInlineRootVars()
         const katexFontCss = await buildKatexFontCss(contentEl)
 
         // 9. Build TOC (share-page shell fragments; empty when no headings).
@@ -1638,8 +1656,11 @@ ${scrollbarCss}
 /* ─── Theme variables + content styles (rules hitting the exported DOM) ─── */
 ${css}
 
-/* ─── User-selected font stacks carried from the app (--font-ui/--font-mono) ─── */
-${fontVarsCss}
+/* ─── Reader's own root overrides carried from the app (--font-ui/--font-mono
+   plus --ui-scale when it is not 100%). Every length here is derived from --dp,
+   so without the scale the document would render smaller than the app it came
+   from. ─── */
+${inlineRootCss}
 
 /* ─── KaTeX fonts used by this document (data-URI embedded) ─── */
 ${katexFontCss}

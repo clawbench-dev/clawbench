@@ -125,7 +125,7 @@
  */
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import MenuSelect from '@/components/common/MenuSelect.vue'
+import MenuSelect, { type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import { appLog } from '@/utils/appLog'
 import {
   mailErrorMessage,
@@ -195,7 +195,7 @@ function guessPreset(email: string, presets: MailPreset[]): string {
 }
 
 /** Picking a provider fills the server fields; the user can still edit them. */
-function onPresetChange(value: string | number): void {
+function onPresetChange(value: MenuSelectValue): void {
   presetId.value = String(value)
   applyPreset()
 }

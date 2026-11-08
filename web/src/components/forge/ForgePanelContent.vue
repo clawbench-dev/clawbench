@@ -66,6 +66,14 @@
              badge is clickable — same "context badge + dropdown" affordance as
              the app header's project/branch switchers — and is the only place
              to change or clear the binding once one exists. -->
+        <!-- The header row is NOT the ActionBar. The repo badge is a text
+             control (a context switcher), and ActionBar's three behaviours —
+             showing labels, folding into "more", scrolling — are all built
+             around icon buttons. A text control inside it was measured as a
+             fixed item and then squashed by the icon-button box; it also made
+             the folding decision depend on how long the repo name happens to
+             be. Same split as the git history toolbar, whose branch picker
+             sits outside its ActionBar. -->
         <div class="forge-header">
           <span class="forge-header-title">
             <Github :size="14" />
@@ -81,22 +89,27 @@
             </button>
             <span v-else>{{ t('nav.forge') }}</span>
           </span>
-          <button
-            class="forge-header-btn clear-unread-btn"
-            :class="{ active: forgeUnreadCount > 0 }"
-            :disabled="forgeUnreadCount === 0"
-            :title="t('forge.markAllRead')"
-            :aria-label="t('forge.markAllRead')"
-            @click="markAllRead"
-          >
-            <CheckCheck :size="14" />
-          </button>
-          <RefreshButton
-            class="forge-header-btn"
-            :loading="refreshing"
-            :title="t('nav.refresh')"
-            @click="onRefreshClick"
-          />
+          <ActionBar class="forge-header-actions" mode="menu" align="end" size="header">
+            <button
+              class="forge-header-btn clear-unread-btn"
+              :class="{ active: forgeUnreadCount > 0 }"
+              :disabled="forgeUnreadCount === 0"
+              :title="t('forge.markAllRead')"
+              :aria-label="t('forge.markAllRead')"
+              @click="markAllRead"
+            >
+              <CheckCheck :size="14" />
+              <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
+            </button>
+            <RefreshButton
+              class="forge-header-btn"
+              :loading="refreshing"
+              :title="t('nav.refresh')"
+              @click="onRefreshClick"
+            >
+              <span class="action-label">{{ t('nav.refresh') }}</span>
+            </RefreshButton>
+          </ActionBar>
         </div>
 
         <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="3">
@@ -221,7 +234,14 @@
                   <span class="forge-row-time">{{ formatTime(run.updatedAt) }}</span>
                 </div>
               </div>
-              <ChevronRight :size="16" class="forge-row-chevron" />
+              <button
+                class="forge-row-quote"
+                :title="t('file.header.quoteInChat')"
+                :aria-label="t('file.header.quoteInChat')"
+                @click.stop="quotePipeline(run)"
+              >
+                <MessageSquare :size="14" />
+              </button>
             </div>
             <div v-if="pipelines.loadingMore.value" class="forge-loading-more">
               <LoadingIndicator size="sm" />
@@ -316,7 +336,14 @@
                 </span>
               </div>
             </div>
-            <ChevronRight :size="16" class="forge-row-chevron" />
+            <button
+              class="forge-row-quote"
+              :title="t('file.header.quoteInChat')"
+              :aria-label="t('file.header.quoteInChat')"
+              @click.stop="quoteItem(it)"
+            >
+              <MessageSquare :size="14" />
+            </button>
           </div>
           <div v-if="items.loadingMore.value" class="forge-loading-more">
             <LoadingIndicator size="sm" />
@@ -420,6 +447,8 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
+import ActionBar from '@/components/common/ActionBar.vue'
 import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 import { startQuoteDrag, forgeItemDragPayload, pipelineDragPayload } from '@/utils/quoteDrag'
@@ -433,7 +462,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'request-project'): void
-  (e: 'quote', payload: { item: { type: 'issue' | 'pr' | 'pipeline'; number: number; title: string; url: string; slug: string; label?: string } }): void
 }>()
 
 const { t } = useI18n()
@@ -444,6 +472,7 @@ const pipelines = useForgePipelines(() => props.projectPath)
 // The same count the dock badge shows, so the "mark all read" button reflects
 // the badge rather than a separately-tracked number that could disagree.
 const { forgeUnreadCount } = useForgeUnread()
+const quoteQuestion = useQuoteQuestion()
 
 /**
  * The three peer tabs of the forge panel. Declared as data rather than three
@@ -874,8 +903,17 @@ async function submitBinding(input: {
   }
 }
 
+/**
+ * Quote from the issue/PR detail header.
+ *
+ * Deliberately the same payload builder as the list row: a generic `{url}` chip
+ * rendered the same issue as a plain link, so quoting it from the detail and
+ * from the row produced two different cards.
+ */
 function onQuote(payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }) {
-  emit('quote', payload)
+  const quote = forgeItemDragPayload(payload.item)
+  if (!quote) return
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
 }
 
 /**
@@ -888,6 +926,24 @@ function onForgeItemDragStart(it: ForgeItem, e: DragEvent) {
 }
 
 /**
+ * Quote a list row from its button: the same payload the drag produces, but
+ * through the shared quote bar so the user can annotate it or send it to another
+ * conversation. The bar is a global singleton, so nothing is plumbed through the
+ * host — exactly how the scheduled-task list does it.
+ */
+function quoteItem(it: ForgeItem) {
+  const payload = forgeItemDragPayload(it)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
+}
+
+function quotePipeline(run: ForgePipelineRun) {
+  const payload = pipelineDragPayload(run)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
+}
+
+/**
  * Start dragging a CI run row into the chat. The payload carries both the run's
  * address and the commit it built, which is what distinguishes it from a plain
  * commit quote.
@@ -897,23 +953,14 @@ function onPipelineDragStart(run: ForgePipelineRun, e: DragEvent) {
 }
 
 /**
- * Quote a whole CI run into the chat.
- *
- * The payload carries an explicit `label`, because the generic fallback
- * (`slug#number`) renders a run as `owner/repo#42` — indistinguishable from a
- * pull request number. The label names the run instead.
+ * Quote a whole CI run from its detail header — the same payload builder the
+ * row uses, so the card carries the pipeline marker and the commit it built in
+ * both places.
  */
 function onPipelineQuote(run: ForgePipelineRun) {
-  emit('quote', {
-    item: {
-      type: 'pipeline',
-      number: run.number,
-      title: run.name,
-      url: run.url,
-      slug: run.slug,
-      label: `${run.slug} ${t('forge.type.pipelines')} #${run.number}`,
-    },
-  })
+  const quote = pipelineDragPayload(run)
+  if (!quote) return
+  quoteQuestion.openComposer({ quote, label: quote.filePath })
 }
 
 function errorTitle(code: string): string {
@@ -958,15 +1005,24 @@ function formatTime(iso: string): string {
   border-bottom: 1px solid var(--border-color);
   gap: var(--space-3);
 }
+
+
+/* Takes its natural width and shrinks only when the row runs out of room; the
+   icon row beside it takes whatever is left (it needs a real width to decide
+   how many buttons fit before folding the rest into "more"). */
 .forge-header-title {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+
+.forge-header-actions {
+  flex: 1 1 auto;
 }
 
 /* Clickable repository badge — the context switcher for the bound remote,
@@ -1027,26 +1083,15 @@ function formatTime(iso: string): string {
 .forge-repo-menu-item.danger {
   color: var(--color-red);
 }
-/* Header icon button — same 28px round treatment as .header-btn elsewhere */
+/* Header buttons take their size, radius, colour and hover from the shared
+   ActionBar rules (size="header"); only what is genuinely theirs lives here. */
 .forge-header-btn {
-  width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
   border: none;
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
-}
-@media (hover: hover) {
-  .forge-header-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
 }
 
 /* ── Empty / unbound state cards ── */

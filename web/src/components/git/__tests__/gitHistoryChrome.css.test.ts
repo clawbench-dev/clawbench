@@ -46,8 +46,6 @@ const componentsCss = readWebFile('css/components.css')
 const SHARED_CHROME = [
   'drilldown-page',
   'drilldown-header',
-  'drilldown-title',
-  'drilldown-title-icon',
   'drilldown-count',
   'drilldown-refresh-btn',
   'drilldown-body',
@@ -117,7 +115,7 @@ describe('git history chrome is declared globally', () => {
     for (const rel of COMPONENTS) {
       expect(() => readWebFile(rel), `${rel} must exist`).not.toThrow()
     }
-    expect(readWebFile(COMPONENTS[0])).toContain('class="drilldown-header"')
+    expect(readWebFile(COMPONENTS[0])).toMatch(/class="drilldown-header\b/)
   })
 })
 
@@ -159,22 +157,45 @@ describe('git history header matches the forge panel header', () => {
     expect(decls).toMatch(/border:\s*none/)
   })
 
-  it('keeps the hover treatment in step with the forge header button', () => {
+  it('leaves the hover treatment to the shared ActionBar rules', () => {
     // The forge header's own rules are scoped to ForgePanelContent, so the
     // reference values are read from there rather than from the global sheet.
-    const forgePanel = readWebFile('src/components/forge/ForgePanelContent.vue')
-    const forgeBase = forgePanel.match(/\.forge-header-btn\s*\{([^}]*)\}/)
-    expect(forgeBase, '.forge-header-btn must exist in ForgePanelContent').not.toBeNull()
-    expect(forgeBase![1]).toMatch(/background:\s*var\(--bg-secondary\)/)
-    expect(forgeBase![1]).toMatch(/color:\s*var\(--text-secondary\)/)
-
-    const gitCss = stripComments(componentsCss)
-    const hover = gitCss.match(
-      /\.drilldown-refresh-btn:hover:not\(:disabled\)\s*\{([^}]*)\}/,
+    //
+    // Anchor the selector: an unanchored /\.forge-header-btn\s*\{/ matches the
+    // `.forge-header.show-labels .forge-header-btn` variant first and compares
+    // the wrong declaration block. The base FILL is deliberately not compared —
+    // forge sits on a transparent header and the git bar on bg-secondary (see
+    // the "transparent bar" case above), so only the hover pair is common.
+    // Comments are stripped first: the anchor needs `}` (or start of file)
+    // immediately before the selector, and a comment sitting between the
+    // previous rule and this one would otherwise break the match.
+    const forgePanel = stripComments(readWebFile('src/components/forge/ForgePanelContent.vue'))
+    const forgeBase = forgePanel.match(
+      /(?:^|[},])\s*\.forge-header-btn\s*\{([^}]*)\}/,
     )
-    expect(hover, 'a hover rule must exist').not.toBeNull()
-    expect(hover![1]).toMatch(/background:\s*var\(--bg-tertiary\)/)
-    expect(hover![1]).toMatch(/color:\s*var\(--accent-color\)/)
+    expect(forgeBase, '.forge-header-btn must exist in ForgePanelContent').not.toBeNull()
+
+    // The contract is now "both defer to the shared row rules", so neither may
+    // paint its own resting colour — that is what made the refresh button read
+    // as a different control from the buttons beside it. The hover pair lives
+    // once, in the ActionBar block, and is checked here rather than per class.
+    expect(forgeBase![1], 'forge must not declare its own resting colour').not.toMatch(
+      /(^|;)\s*color:/,
+    )
+    // The git bar's own rule keeps the standalone fallback (a drill-down header
+    // with no ActionBar still needs a colour); inside a bar the shared rule wins
+    // on specificity, which is what the assertion above pins for forge.
+    expect(baseRule(componentsCss, 'drilldown-refresh-btn')).not.toBeNull()
+
+    // Descendant, not a child combinator: dfaaa70f5 relaxed it so a row button
+    // wrapped in a container (the file manager's sort button) still lights up.
+    // This assertion kept the old `>` and had been failing since.
+    const shared = stripComments(componentsCss).match(
+      /\.ab--header button:not\(\[data-ab-more\]\):hover:not\(:disabled\)[^{]*\{([^}]*)\}/,
+    )
+    expect(shared, 'the shared ActionBar hover rule must exist').not.toBeNull()
+    expect(shared![1]).toMatch(/color:\s*var\(--text-primary\)/)
+    expect(shared![1]).toMatch(/color-mix\(in srgb, var\(--text-primary\) 12%/)
   })
 })
 
@@ -205,19 +226,40 @@ describe('stale-data pulse follows the theme', () => {
   })
 })
 
-describe('the header title carries its glyph', () => {
-  it('renders a GitBranch icon in the title, like the forge header does', () => {
-    // The title area used to be a bare count badge. The glyph is what makes it
-    // read as the same "icon + title" header as the forge panel.
-    const src = readWebFile('src/components/git/GitCommitList.vue')
-    const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
-    expect(title, 'the title block must exist').not.toBeNull()
-    expect(title![1]).toContain('<GitBranch')
-    expect(title![1]).toContain('class="drilldown-title-icon"')
+describe('the toolbar has exactly one branch glyph', () => {
+  // The header used to be "⑂ + count" with a second row below carrying another
+  // ⑂ on the branch picker: the same glyph twice, meaning two different things
+  // ("this is commit history" / "this is the branch you are reading"). The
+  // toolbar now leads with the picker, so the glyph lives there and nowhere
+  // else, and the title block is gone.
+  const src = readWebFile('src/components/git/GitCommitList.vue')
+
+  it('puts the glyph on the branch picker', () => {
+    const picker = src.match(/<div v-if="showBranchBar" class="branch-picker">([\s\S]*?)<\/button>/)
+    expect(picker, 'the branch picker must exist').not.toBeNull()
+    expect(picker![1]).toContain('<GitBranch')
+    expect(picker![1]).toContain('class="branch-chip-name"')
   })
 
-  it('keeps the glyph from being squeezed by a long count', () => {
-    expect(baseRule(componentsCss, 'drilldown-title-icon')).toMatch(/flex-shrink:\s*0/)
+  it('leaves no second title block behind', () => {
+    expect(src).not.toContain('class="drilldown-title"')
+    expect(src).not.toContain('drilldown-title-icon')
+  })
+})
+
+describe('every toolbar button can become a menu item', () => {
+  it('gives each button an .action-label', () => {
+    // ActionBar builds the overflow menu from the buttons' `.action-label` (or
+    // their title). A button without one folds into the menu as an empty row,
+    // which is invisible until the bar actually gets narrow.
+    const src = readWebFile('src/components/git/GitCommitList.vue')
+    const bar = src.match(/<ActionBar[\s\S]*?<\/ActionBar>/)
+    expect(bar, 'the toolbar must use ActionBar').not.toBeNull()
+    const buttons = bar![0].match(/<(?:button|RefreshButton)\b[\s\S]*?<\/(?:button|RefreshButton)>/g) || []
+    expect(buttons.length, 'the bar is expected to hold search/refresh/merge/manage').toBeGreaterThanOrEqual(4)
+    for (const b of buttons) {
+      expect(b, 'a toolbar button is missing its .action-label').toContain('class="action-label"')
+    }
   })
 })
 
@@ -260,10 +302,6 @@ describe('the header search field is borderless and fills the free space', () =>
     expect(wrapper, 'the .commit-search rule must exist').not.toBeNull()
     expect(wrapper![1]).toMatch(/flex:\s*1/)
     expect(wrapper![1], 'a max-width would cap the fill').not.toMatch(/max-width/)
-
-    const title = src.match(/:deep\(\.drilldown-title\)\s*\{([^}]*)\}/)
-    expect(title, 'the title override must exist').not.toBeNull()
-    expect(title![1]).toMatch(/flex:\s*0 1 auto/)
   })
 
   it('tints the fill from --text-primary, not by jumping a background step', () => {
@@ -278,42 +316,27 @@ describe('the header search field is borderless and fills the free space', () =>
   })
 })
 
-describe('the manage button does not repeat the title glyph', () => {
-  it('uses a different icon from the title', () => {
-    // The title carries GitBranch. The manage button opens the branch/worktree/
-    // tag panel, so it originally reused GitBranch too — which, once the title
-    // gained the same glyph, put two identical icons in one bar. It moved to
-    // GitFork for that reason, and then to MoreVertical: the panel is a
-    // container for three lists rather than a branch itself, so a "more
-    // actions" glyph describes it better. This pins that the two stay
-    // distinct — a future "tidy up the icons" pass could otherwise silently
-    // collapse them again.
+describe('the toolbar has exactly one entry to the manage panel', () => {
+  it('keeps it in the branch menu and out of the action bar', () => {
+    // The bar used to end with a manage button while the branch picker's menu
+    // carried the same action — two doors to one panel. The menu is the one
+    // that survived: it sits next to the thing being managed.
     const src = readWebFile('src/components/git/GitCommitList.vue')
-    const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
-    expect(title, 'the title block must exist').not.toBeNull()
-    const titleIcon = title![1].match(/<([A-Z][A-Za-z0-9]*)\s[^>]*drilldown-title-icon/)
-    expect(titleIcon, 'the title must render an icon').not.toBeNull()
-
-    const manageBtn = src.match(
-      /<button[\s\S]*?@click\.stop="\$emit\('manage'\)"[\s\S]*?<\/button>/,
+    expect(src, 'the branch menu must still offer manage').toContain(
+      'git.branchView.manage',
     )
-    expect(manageBtn, 'the manage button must exist').not.toBeNull()
-    const manageIcon = manageBtn![0].match(/<([A-Z][A-Za-z0-9]*)\s+:/)
-    expect(manageIcon, 'the manage button must render an icon').not.toBeNull()
-
     expect(
-      manageIcon![1],
-      'the manage button must not reuse the title icon',
-    ).not.toBe(titleIcon![1])
-    expect(manageIcon![1]).toBe('MoreVertical')
+      src,
+      'the action bar must not carry a second manage button',
+    ).not.toMatch(/data-action="manage"/)
   })
 
-  it('imports the manage icon so the button is not empty', () => {
-    // A missing import renders an empty <svg>-less button that no existence
-    // assertion would catch — see concurrent_git_safety §9.
+  it('does not keep the now-unused panel glyph imported', () => {
+    // A leftover import is dead weight; worse, it invites re-adding the button
+    // without anyone noticing there are two.
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
     expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('MoreVertical')
+    expect(imports![1]).not.toContain('ListTree')
   })
 })

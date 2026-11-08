@@ -42,7 +42,8 @@ describe('group settings entry in the session info bar', () => {
     expect(infoBlock).toContain('<Users')
 
     // And the old action-bar button is gone.
-    const actionsOpen = src.indexOf('<div class="chat-top-actions"')
+    // Anchored on the class, not the tag: the row is an ActionBar component now.
+    const actionsOpen = src.search(/<[A-Za-z][\w-]*\s+class="chat-top-actions"/)
     expect(actionsOpen, '.chat-top-actions must exist').toBeGreaterThan(-1)
     const actionsBlock = src.slice(actionsOpen, src.indexOf('</div>', src.indexOf('auto-speech-btn', actionsOpen)))
     expect(actionsBlock).not.toContain('data-action="group-settings"')

@@ -32,7 +32,7 @@ var injectMidTurn = ai.InjectMidTurn
 // SetInjectMidTurnForTest swaps the mid-turn seam and returns the previous one,
 // so tests (including those in the external service_test package) can drive the
 // core-flow decision without a live agent. Pass nil to restore the default.
-func SetInjectMidTurnForTest(fn func(context.Context, string, string, string, string, []model.FileEntry, string) ai.MidTurnInjectResult) func(context.Context, string, string, string, string, []model.FileEntry, string) ai.MidTurnInjectResult {
+func SetInjectMidTurnForTest(fn func(context.Context, string, string, string, string, string) ai.MidTurnInjectResult) func(context.Context, string, string, string, string, string) ai.MidTurnInjectResult {
 	prev := injectMidTurn
 	if fn == nil {
 		injectMidTurn = ai.InjectMidTurn
@@ -94,8 +94,15 @@ func InjectQueuedMessage(sessionID, queueID string) (bool, int64, error) {
 		return false, 0, nil
 	}
 
+	// Attachments travel as the same prompt prefix a normal turn gets. They are
+	// not bytes on the wire: every transport only ever sends text, and the
+	// agent opens the referenced path with its own read tool. Skipping this
+	// step is why an attachment-bearing message used to be refused outright —
+	// the model would have received the text with no hint that a file existed.
+	content := userTextWithAttachments(row.Content, row.Files)
+
 	res := injectMidTurn(context.Background(), row.Backend, sessionID,
-		GetSessionAgentID(sessionID), row.Content, row.Files, queueID)
+		GetSessionAgentID(sessionID), content, queueID)
 	if !res.Injected {
 		// Put it back so the drain loop still delivers it. Restoring (rather
 		// than leaving it materialized-but-unanswered) is what keeps a decline

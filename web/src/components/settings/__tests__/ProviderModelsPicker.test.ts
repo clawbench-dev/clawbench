@@ -99,6 +99,38 @@ describe('ProviderModelsPicker', () => {
     expect(ids).toContain('legacy-model')
   })
 
+  it('renders a price tag for ids the catalog knows (issue #643)', async () => {
+    mockGet.mockResolvedValue({
+      models: ['glm-5.2', 'unknown-model'],
+      prices: { 'glm-5.2': { input: 1.4, output: 4.4 } },
+      source: 'live',
+    })
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const tags = wrapper.findAll('.models-price')
+    expect(tags).toHaveLength(1)
+    expect(tags[0].text()).toBe('$1.4 / $4.4')
+  })
+
+  it('marks a reseller consensus price with a tilde', async () => {
+    mockGet.mockResolvedValue({
+      models: ['qmodel'],
+      prices: { qmodel: { input: 0.4, output: 1.6, approx: true } },
+      source: 'live',
+    })
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    expect(wrapper.find('.models-price').text()).toBe('~$0.4 / $1.6')
+  })
+
+  it('shows no tag when the response carries no prices', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.findAll('.models-price')).toHaveLength(0)
+  })
+
   it('adds a typed model id', async () => {
     const wrapper = mountPicker()
     await flushPromises()

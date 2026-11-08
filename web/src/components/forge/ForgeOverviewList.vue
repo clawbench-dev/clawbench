@@ -67,7 +67,14 @@
           <span class="forge-row-time">{{ formatTime(row.updatedAt) }}</span>
         </div>
       </div>
-      <ChevronRight :size="16" class="forge-row-chevron" />
+      <button
+        class="forge-row-quote"
+        :title="t('file.header.quoteInChat')"
+        :aria-label="t('file.header.quoteInChat')"
+        @click.stop="quoteRow(row)"
+      >
+        <MessageSquare :size="14" />
+      </button>
     </div>
   </div>
 </template>
@@ -75,12 +82,13 @@
 <script setup lang="ts">
 import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, ChevronRight, Rss } from 'lucide-vue-next'
+import { AlertCircle, MessageSquare, Rss } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useForge'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
 import type { ForgeUnreadItem } from '@/utils/forgeApi'
 import { startQuoteDrag, forgeUnreadDragPayload } from '@/utils/quoteDrag'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 
@@ -158,6 +166,19 @@ function dotClass(row: ForgeUnreadItem): string {
  */
 function onRowDragStart(row: ForgeUnreadItem, e: DragEvent) {
   if (!startQuoteDrag(e, forgeUnreadDragPayload(row))) e.preventDefault()
+}
+
+/**
+ * Quote an activity row from its button: the same payload the drag produces,
+ * through the shared quote bar so the user can annotate it or send it to another
+ * conversation. Mirrors the scheduled-task list's row action.
+ */
+const quoteQuestion = useQuoteQuestion()
+
+function quoteRow(row: ForgeUnreadItem) {
+  const payload = forgeUnreadDragPayload(row)
+  if (!payload) return
+  quoteQuestion.openComposer({ quote: payload, label: payload.filePath })
 }
 
 function onRowClick(row: ForgeUnreadItem) {

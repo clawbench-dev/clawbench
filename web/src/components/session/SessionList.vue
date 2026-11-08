@@ -2,18 +2,19 @@
   <div class="session-list">
     <!-- Tag filter bar. Sits above the scroll area (not inside the pane) so it
          stays visible while the list scrolls, and is shared by both hosts
-         (pinned sidebar and mobile drawer) since they both render SessionList.
-         Only meaningful on the project pane — the cross pane lists other
-         projects' sessions, which this project's tags do not describe. -->
+         (pinned sidebar and mobile drawer) since they both render SessionList. -->
     <SessionTagFilterBar
-      v-if="activeTab === 'project'"
       :tags="filterTags"
       :active-tag="activeTag"
       @toggle="toggleTagFilter"
     />
 
+    <!-- One scroll area. The other projects' cards are NOT a separate region:
+         they sit after the project's own rows and scroll with them, so there is
+         no height budget to negotiate and nothing can be squeezed. -->
+    <div class="session-list-body">
     <!-- ── Project pane: one list, with derived sessions folded into groups ── -->
-    <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
+    <div ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen skeleton on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
            swapped seamlessly to the new data (see loadSessions). -->
@@ -201,79 +202,93 @@
           </template>
         </VueDraggable>
       </template>
-    </div>
 
-    <!-- ── Cross-project pane: active sessions in OTHER projects ── -->
-    <div v-show="activeTab === 'cross'" class="session-list-pane session-list-pane--cross">
-      <PanelSkeleton v-if="crossLoading && !crossLoaded" class="session-list-skeleton" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
-      <div v-else-if="crossGroups.length === 0" class="session-empty">{{ t('session.crossEmpty') }}</div>
-      <template v-else>
-        <div v-for="group in crossGroups" :key="group.name" class="cross-group">
-          <SessionGroupHeader
-            :title="group.displayName"
-            :count="group.sessions.length"
-            :subtitle="group.displayPath"
-            :subtitle-title="group.name"
-            :collapsed="isCrossCollapsed(group.name)"
-            @toggle="toggleCrossCollapsed(group.name)"
-          />
-          <div v-show="!isCrossCollapsed(group.name)" class="cross-group-rows">
-            <div
-              v-for="session in group.sessions"
-              :key="group.name + '/' + session.id"
-              class="cross-session-row"
-              :data-session-id="session.id"
-              :class="{ running: session.running }"
+      <!-- ── Other projects: active sessions elsewhere, as cards ──
+           One card per project, sitting directly under the project's own rows
+           and scrolling with them. Clicking a header expands THAT card in
+           place: it grows to show the project's full session list and pushes
+           everything below it down — nothing is covered or taken over. -->
+      <div v-if="crossGroups.length > 0" class="other-cards" data-other-zone>
+        <div
+          v-for="group in crossGroups"
+          :key="group.name"
+          class="pcard"
+          :class="{ 'is-expanded': expandedProject === group.name }"
+          :style="{ '--pc': projectTintVar(group.name) }"
+          :data-project="group.name"
+        >
+          <button
+            class="pcard-head"
+            :title="expandedProject === group.name ? t('session.collapseProject') : t('session.expandProject')"
+            :aria-label="`${expandedProject === group.name ? t('session.collapseProject') : t('session.expandProject')} · ${group.displayName}`"
+            :aria-expanded="expandedProject === group.name"
+            @click.stop="toggleProject(group)"
+          >
+            <span class="pcard-name">{{ group.displayName }}</span>
+            <span class="pcard-count">{{ cardCount(group) }}</span>
+            <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
+            <!-- Same slot in all three states, so nothing shifts while loading. -->
+            <LoadingIndicator
+              v-if="loadingProject === group.name"
+              class="pcard-chev pcard-chev--busy"
+              size="sm"
+              inline
+              aria-hidden="true"
+            />
+            <ChevronUp v-else-if="expandedProject === group.name" :size="14" class="pcard-chev" />
+            <ChevronDown v-else :size="14" class="pcard-chev" />
+          </button>
+
+          <div v-if="expandedProject === group.name && expandedError" class="pcard-state">{{ expandedError }}</div>
+          <div v-else-if="expandedProject === group.name && expandedSessions.length === 0" class="pcard-state">
+            {{ t('session.noSessions') }}
+          </div>
+
+          <div
+            v-for="session in cardRows(group)"
+            :key="group.name + '/' + session.id"
+            class="pcard-row"
+            :data-session-id="session.id"
+            @click="selectCrossSession(session, group.name)"
+          >
+            <!-- One fixed slot for every state, so the titles of a running,
+                 blocked and unread row all start on the same x. Pending still
+                 outranks everything: the user is the blocker there. Running is
+                 a ring (not the project rows' bottom-edge comet) — these cards
+                 are compact and a travelling light along a 36dp row reads as
+                 noise. Unread keeps its dot, centred in the same slot. -->
+            <span
+              v-if="rowStatus(session) || session.running"
+              class="pcard-row-status"
             >
-              <span v-if="session.running" class="session-running-line" :class="{ 'is-blocked': rowStatus(session) === 'pending' }">
-                <i v-if="rowStatus(session) === 'pending'" class="session-running-band"></i>
-                <i v-else v-running-sweep class="session-running-band"></i>
-              </span>
-              <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
-                <div class="session-item-info">
-                  <div class="session-item-header">
-                    <span class="session-item-title">{{ session.title }}</span>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span v-if="session.sessionType === 'group'" class="session-item-group">
-                      <Users :size="12" />
-                      <GroupMemberStack :members="session.groupMembers || []" />
-                    </span>
-                    <span v-else class="session-item-agent"><AgentIcon :backend="sessionAgentBackend(session)" :name="sessionAgentName(session)" :avatar="sessionAgentAvatar(session)" size="sm" /> {{ sessionAgentName(session) }}</span>
-                    <!-- Same badge as the project pane; groups excluded for the
-                         same reason (a group changes host, not hands). -->
-                    <span
-                      v-if="session.sessionType !== 'group' && session.agentTakeoverFrom"
-                      class="session-item-takeover"
-                      :title="t('session.takeoverBadgeTip', { name: session.agentTakeoverFrom })"
-                    >{{ t('session.takeoverBadge') }}</span>
-                    <!-- Group mode tag: same independent tag as the project pane. -->
-                    <span v-if="session.sessionType === 'group' && groupModeLabel(session)" class="session-item-group-mode">
-                      <component :is="groupModeIcon(session)" :size="10" />
-                      {{ groupModeLabel(session) }}
-                    </span>
-                    <!-- Same rule as the project pane: a group's model is the
-                         host's, not the group's, so it is not shown. -->
-                    <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ sessionModelLabel(session) }}</span>
-                  </div>
-                </div>
-                <span
-                  v-if="rowStatus(session)"
-                  class="session-status"
-                  :class="`is-${rowStatus(session)}`"
-                  :title="statusLabel(rowStatus(session))"
-                  :aria-label="statusLabel(rowStatus(session))"
-                  role="img"
-                >
-                  <ShieldAlert v-if="rowStatus(session) === 'pending'" :size="14" />
-                </span>
-              </div>
-            </div>
+              <span
+                v-if="rowStatus(session) === 'pending'"
+                class="pcard-row-pending"
+                :title="statusLabel('pending')"
+                :aria-label="statusLabel('pending')"
+                role="img"
+              ><ShieldAlert :size="14" /></span>
+              <LoadingIndicator
+                v-else-if="session.running"
+                class="pcard-row-ring"
+                size="sm"
+                inline
+                aria-hidden="true"
+              />
+              <span
+                v-else
+                class="pcard-row-dot"
+                :title="statusLabel('unread')"
+                :aria-label="statusLabel('unread')"
+                role="img"
+              />
+            </span>
+            <span class="pcard-row-title">{{ session.title }}</span>
           </div>
         </div>
-      </template>
-    </div>
+      </div>
+    </div><!-- /session-list-pane -->
+    </div><!-- /session-list-body -->
 
     <!-- Session menu (pin/rename/tags/archive/remove), opened from the row's ⋮
          button or a right-click on the row. Reuses the shared file-manager
@@ -339,9 +354,9 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronUp, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
-import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
@@ -364,6 +379,7 @@ import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
+import { projectTintVar } from '@/utils/projectTint'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -373,10 +389,9 @@ const props = defineProps({
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
-  activeTab: { type: String, default: 'project' },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
+const emit = defineEmits(['select', 'archive', 'destroy'])
 
 /**
  * How far the pointer may travel before Sortable turns a press on the ⋮ button
@@ -405,7 +420,7 @@ const { isSessionShared, setSharedSessionIds } = useSessionShare()
 const dialog = useDialog()
 const toast = useToast()
 const { runningSessionsVersion } = useSessionIdentity()
-const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
+const { groups: crossGroups } = useCrossProjectSessions()
 
 // ── Dropping a quote onto a row ─────────────────────────────────────────────
 // A quote dragged from a commit / task / issue / meeting can be dropped on the
@@ -706,16 +721,116 @@ function findSession(sessionId) {
   return sessionsById.value.get(sessionId)
 }
 
-// Cross-project group collapse state, keyed by absolute project path. In-memory
-// only: the pane is v-show'd (never unmounted) while the app runs, so the state
-// survives tab switches and list reloads, and resets on page reload.
-const crossCollapsed = reactive(new Set())
-function isCrossCollapsed(name) {
-  return crossCollapsed.has(name)
+// ── Expanding a project card in place ──────────────────────────────────────
+//
+// Clicking a card's header grows THAT card to show the project's full session
+// list, in place, pushing the rows below it down. Nothing is covered and no
+// separate view is opened, so the list keeps its scroll position and the other
+// cards stay where they were.
+//
+// The project is passed explicitly to the API because the ordinary list
+// endpoint resolves it from the cookie — using that one would mean switching
+// chat, files and terminal just to read a list.
+const expandedProject = ref('')
+const expandedSessions = ref([])
+const expandedError = ref('')
+// Project whose list is being fetched. The card must NOT change size while
+// this is set: showing a placeholder would push the rows around, then the real
+// content would push them again (the flash). The header swaps its chevron for a
+// ring in the same slot, and the card grows only once the data is here.
+const loadingProject = ref('')
+// Stale-response guard: the user can collapse (or expand another project) while
+// a request is still in flight.
+let expandGeneration = 0
+
+/** Rows to render for a card: the full list when expanded, active ones otherwise. */
+function cardRows(group) {
+  return expandedProject.value === group.name ? expandedSessions.value : group.sessions
 }
-function toggleCrossCollapsed(name) {
-  if (crossCollapsed.has(name)) crossCollapsed.delete(name)
-  else crossCollapsed.add(name)
+
+/** Header count: the full list once it is loaded, otherwise the active count. */
+function cardCount(group) {
+  const isOpen = expandedProject.value === group.name
+  if (!isOpen || expandedError.value) return group.sessions.length
+  return expandedSessions.value.length
+}
+
+function cardElementFor(projectPath) {
+  const cards = listRef.value?.querySelectorAll('.pcard') || []
+  for (const el of cards) {
+    if (el.dataset && el.dataset.project === projectPath) return el
+  }
+  return null
+}
+
+/**
+ * Animate a card between its previous and current height.
+ *
+ * The card clips its content (`overflow: hidden`), so animating `height` from
+ * the old value reads as the card unfolding rather than the page jumping. The
+ * animation has no fill, so the element returns to its natural (auto) height
+ * when it ends. Skipped where there is nothing to animate — no element, no
+ * measurable heights (jsdom), or a host without the Web Animations API.
+ */
+function animateCardHeight(el, fromHeight) {
+  if (!el || typeof el.animate !== 'function' || fromHeight <= 0) return
+  const toHeight = el.getBoundingClientRect().height
+  if (toHeight <= 0 || Math.abs(toHeight - fromHeight) < 1) return
+  el.animate(
+    [{ height: `${fromHeight}px` }, { height: `${toHeight}px` }],
+    { duration: 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+  )
+}
+
+function toggleProject(group) {
+  if (loadingProject.value === group.name) return
+  if (expandedProject.value === group.name) {
+    collapseProject()
+    return
+  }
+  void expandProject(group)
+}
+
+async function expandProject(group) {
+  const el = cardElementFor(group.name)
+  // Measured BEFORE anything changes: the card keeps exactly this height while
+  // the request is in flight, so nothing moves under the pointer.
+  const fromHeight = el ? el.getBoundingClientRect().height : 0
+  loadingProject.value = group.name
+  const generation = ++expandGeneration
+  try {
+    const resp = await fetch(`/api/ai/sessions/by-project?path=${encodeURIComponent(group.name)}`)
+    if (generation !== expandGeneration) return
+    if (!resp.ok) throw new Error(`by-project HTTP ${resp.status}`)
+    const data = await resp.json()
+    expandedSessions.value = Array.isArray(data.sessions) ? data.sessions : []
+    expandedError.value = ''
+  } catch (err) {
+    if (generation === expandGeneration) {
+      expandedSessions.value = []
+      expandedError.value = t('session.browseFailed')
+    }
+    appLog.e('SessionList', 'failed to load project sessions', err)
+  } finally {
+    if (generation === expandGeneration) loadingProject.value = ''
+  }
+  if (generation !== expandGeneration) return
+  // Swap in the loaded rows and unfold to the new height in one frame.
+  expandedProject.value = group.name
+  await nextTick()
+  animateCardHeight(el, fromHeight)
+}
+
+function collapseProject() {
+  const el = cardElementFor(expandedProject.value)
+  const fromHeight = el ? el.getBoundingClientRect().height : 0
+  // Bump the generation so a late response cannot repopulate the closed card.
+  expandGeneration++
+  loadingProject.value = ''
+  expandedProject.value = ''
+  expandedSessions.value = []
+  expandedError.value = ''
+  void nextTick(() => animateCardHeight(el, fromHeight))
 }
 
 async function loadSessions() {
@@ -803,12 +918,12 @@ function selectSession(sessionId, backend) {
 }
 
 /**
- * Cross-project row click. Emits the owning project path as a third argument so
+ * Other-project row click. Emits the owning project path as a third argument so
  * App.vue can hot-switch projects before opening the session. The row's class is
- * deliberately `.cross-session-item` (NOT `.session-item`): scrollActiveIntoView
- * maps useListNav's index onto `querySelectorAll('.session-item')`, and the nav
- * count only covers project rows — sharing the class would silently corrupt
- * keyboard navigation.
+ * deliberately `.pcard-row` (NOT `.session-item`): scrollActiveIntoView maps
+ * useListNav's index onto `querySelectorAll('.session-item')`, and the nav count
+ * only covers project rows — sharing the class would silently corrupt keyboard
+ * navigation.
  */
 function selectCrossSession(session, projectPath) {
   emit('select', session.id, session.backend, projectPath)
@@ -1094,10 +1209,11 @@ const listNav = useListNav({
   },
   onActiveChange: scrollActiveIntoView,
 })
-// Keyboard navigation is scoped to the project tab: cross-project rows are
-// deliberately outside useListNav (click/tap only), so leaving the nav active
-// while the cross pane is shown would let arrow keys scroll invisible rows.
-useListKeys({ isOpen: () => props.isActive && props.activeTab === 'project', nav: listNav })
+// Keyboard navigation covers the project rows only. The other-project strip is
+// deliberately outside useListNav (click/tap only) — its rows are not part of
+// the project's order, and mixing them in would make arrow keys jump between
+// projects mid-list.
+useListKeys({ isOpen: () => props.isActive, nav: listNav })
 
 function scrollActiveIntoView(index) {
   const items = listRef.value?.querySelectorAll('.session-item') || []
@@ -1107,11 +1223,13 @@ function scrollActiveIntoView(index) {
 
 watch(visibleRows, () => listNav.reset())
 
-// Reset to the project tab whenever the current project changes: the session we
-// just opened belongs to the (new) current project and must be visible in the
-// project list, not hidden behind the cross tab.
+// Reset the project-scoped state whenever the current project changes: the
+// session we just opened belongs to the (new) current project, and a tag filter
+// or a share badge carried across the switch would describe the old one.
 watch(() => store.state.projectRoot, () => {
-  if (props.activeTab !== 'project') emit('update:activeTab', 'project')
+  // An expanded card describes the project we just left; it must not survive
+  // the switch (the list now belongs to the new project).
+  collapseProject()
   // Tags are per-project: a filter carried across a project switch would hide
   // the new project's sessions behind a tag it may not even have.
   activeTag.value = ''
@@ -1188,6 +1306,7 @@ onMounted(() => {
   // deep link) may be a group member whose anchor was never expanded — there is
   // no currentSessionId *change* to observe, so expand once here too.
   expandGroupOf(props.currentSessionId)
+
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.
@@ -1205,9 +1324,9 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* Root is a flex column hosting the two mutually-exclusive panes. The tab bar
-   itself is rendered by the wrapper (sidebar bottom / BottomSheet #footer) so
-   it can stay pinned outside the scroll area. */
+/* Root is a flex column: tag filter bar (fixed) + list area (fills the rest).
+   The tab bar that used to live at the bottom of the host is gone — the other
+   projects' sessions are now a strip inside the list area, always on screen. */
 .session-list {
   display: flex;
   flex-direction: column;
@@ -1215,7 +1334,15 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* Each pane owns its own scrolling so tab switches preserve scroll position. */
+/* The list area: the scrollable project pane (its rows and the other-project
+   cards share that one scroll) plus, when open, the read-only browse view. */
+.session-list-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .session-list-pane {
   flex: 1;
   min-height: 0;
@@ -1954,48 +2081,205 @@ onUnmounted(() => {
 /* The context menu itself uses the shared .context-menu / .context-menu-item
    styles from css/components.css (same as the file manager). */
 
-/* ── Cross-project pane ── */
-
-.cross-group + .cross-group {
-  border-top: 1px solid var(--border-color, #dee2e6);
-}
-
-/* The group header (shared SessionGroupHeader) is the primary visual distinction
-   from project rows: it names the owning project so a row can never be mistaken
-   for a local one. */
-.cross-session-row {
+/* ── Other-project cards ──
+   They live INSIDE the project's scroll container and simply follow its rows:
+   no fixed height, no split, no heading of their own. The card edge is what
+   separates "another project" from the user's own list; the tinted header says
+   which project it is. */
+.other-cards {
   display: flex;
-  align-items: stretch;
-  position: relative;
+  flex-direction: column;
+  /* Flush stack: no padding, no gap. Cards are separated by a single hairline
+     (the next card's top border), so a column of projects reads as one block
+     rather than a pile of floating boxes. */
+  gap: 0;
 }
 
-.cross-session-row.running {
+/* One card per project, in a seamless stack: no outer border, only the top
+   hairline, so two adjacent cards share one divider instead of showing a
+   double line. Everything inside a card is derived from the SAME project
+   colour (`--pc`) — the header band is that colour mixed into the surface
+   (opaque, so scrolling content never shows through it), the chips, row
+   separators and hovers are the same colour at low alpha. Status keeps its own
+   meaning: pending stays amber. */
+.pcard {
+  border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
+  background: var(--bg-primary, #fff);
   overflow: hidden;
 }
 
-.cross-session-item {
-  position: relative;
+/* Cards are flush, so their facing borders would show as a 2px double line.
+   Pulling the next card up by one pixel makes the two edges share a single
+   line instead. */
+.pcard + .pcard {
+  margin-top: calc(-1 * var(--dp));
+}
+
+/* The whole header is the entry point, so it is a button — no nested control.
+   `border: 0` plus an explicit bottom border keeps it from inheriting the
+   browser's default button frame. */
+.pcard-head {
   display: flex;
   align-items: center;
-  flex: 1;
-  min-width: 0;
-  min-height: calc(44 * var(--dp));
-  /* Right inset matched to .session-item so the status slot sits at the same
-     distance from the text on both panes — the cross pane has no ⋮ cell, so
-     without this the dot would land in a different place here. */
-  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
-  border-top: 1px solid var(--border-color, #dee2e6);
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  /* Subtle left rail marks rows as belonging to another project. */
-  box-shadow: inset calc(2 * var(--dp)) 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
+  /* Opaque: mixed into the SURFACE, not into `transparent`, so the band keeps
+     its colour while content scrolls underneath. */
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 15%, var(--bg-primary, #fff));
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 30%, var(--border-color));
 }
 
 @media (hover: hover) {
-  .cross-session-item:hover {
-    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  .pcard-head:hover {
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 22%, var(--bg-primary, #fff));
   }
-  .cross-session-row.running .cross-session-item:hover {
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.pcard-name {
+  flex: 0 0 auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1a1a1a);
+}
+
+.pcard-count {
+  flex: 0 0 auto;
+  /* Round badge, fixed size: the count is a single number (the session cap is
+     two digits), so a circle keeps the header rhythm even and reads as a
+     marker rather than a label. */
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  /* Semi-transparent version of the same project colour — it sits on the
+     opaque header, so alpha reads as a tint rather than a separate colour. */
+  background: color-mix(in srgb, var(--pc, var(--text-primary)) 16%, transparent);
+  color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The card expands downward, so the hint points down; the expanded header
+   collapses back up, so it points up. The direction is the state. */
+.pcard-chev {
+  flex: 0 0 auto;
+  color: var(--text-muted, #656d76);
+}
+
+.pcard-head:hover .pcard-chev {
+  color: var(--pc, var(--accent-color, #0066cc));
+}
+
+/* The busy ring occupies the chevron's slot, so the header does not move while
+   the project's list is being fetched. Same colour rules as the row ring: the
+   shared spinner reads these two variables, and the card is monochrome. */
+.pcard-chev--busy {
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
+  --li-color: var(--pc, var(--accent-color, #0066cc));
+  --li-track-color: color-mix(in srgb, var(--pc, var(--border-color)) 22%, transparent);
+}
+
+.pcard-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-hint, #8c959f);
+  font-size: var(--font-size-2xs);
+}
+
+.pcard-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: calc(36 * var(--dp));
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5);
+  border-top: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 14%, transparent);
+  cursor: pointer;
+}
+
+.pcard-row:first-of-type {
+  border-top: 0;
+}
+
+@media (hover: hover) {
+  .pcard-row:hover {
+    background: color-mix(in srgb, var(--pc, var(--text-primary)) 9%, transparent);
   }
+}
+
+.pcard-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary, #495057);
+}
+
+.pcard-row-ring {
+  flex: 0 0 auto;
+  /* The shared ring reads its colour from these two variables; pointing them at
+     the project colour keeps the card monochrome. */
+  --li-color: var(--pc, var(--accent-color, #0066cc));
+  --li-track-color: color-mix(in srgb, var(--pc, var(--border-color)) 22%, transparent);
+}
+
+.pcard-row-status {
+  flex: 0 0 auto;
+  /* One slot width for the ring, the shield and the dot: without it the title
+     would start 8dp further left on unread rows than on running ones. */
+  width: calc(14 * var(--dp));
+  height: calc(14 * var(--dp));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pcard-row-dot {
+  flex: 0 0 auto;
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
+  border-radius: 50%;
+  /* Same colour as the card: unread is read from the dot's presence, not from
+     a second hue competing with the project's. */
+  background: var(--pc, var(--accent-color, #0066cc));
+}
+
+.pcard-row-pending {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--color-yellow, #a16207);
+}
+
+/* A card that is expanded in place: its rows replace the active-only list and
+   the card simply gets taller, pushing the rows below it down. */
+.pcard.is-expanded {
+  background: var(--bg-primary, #fff);
+}
+
+.pcard-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5) var(--space-4);
+  color: var(--text-hint, #8c959f);
+  font-size: var(--font-size-2xs);
 }
 </style>

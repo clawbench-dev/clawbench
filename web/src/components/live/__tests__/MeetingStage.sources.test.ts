@@ -124,6 +124,7 @@ vi.mock('@/composables/useLiveNotes', async (importOriginal) => {
   Object.assign(notesApi, {
     phase: r('idle'),
     segments: r([]),
+    liveLines: r({}),
     minutes: r(''),
     minutesPhase: r('idle'),
     revisePhase: r('idle'),
@@ -168,9 +169,13 @@ function mountPanel() {
 }
 
 async function openPicker() {
-  // The grid IS the picker now — the create page's control, always on screen —
-  // so there is no button to press before the tiles exist.
+  // Nothing is enumerated until the host asks to share: the grid opens with the
+  // "选择共享画面" tile, and clicking it is what raises the OS picker. The panel
+  // is mounted for the whole meeting, so asking at mount time would raise that
+  // dialog on every visit to the tab.
   const wrapper = mountPanel()
+  await flushPromises()
+  await wrapper.find('[data-source="__pick__"]').trigger('click')
   await flushPromises()
   return wrapper
 }
@@ -187,6 +192,20 @@ beforeEach(() => {
 })
 
 describe('MeetingStage source picker', () => {
+  // The stage stays mounted for as long as the meeting panel is open (it is a
+  // v-show sibling of the record list), so enumerating screens here would make
+  // the OS raise its screen-share dialog merely because the tab was opened —
+  // on Wayland that request IS the dialog.
+  it('does not enumerate screens just because the panel is mounted', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(listSources).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-source="__pick__"]').exists()).toBe(true)
+    // Nothing was asked, so "there is nothing to share" would be a guess.
+    expect(wrapper.find('[data-role="stage-sources"]').exists()).toBe(false)
+  })
+
   it('draws the shared source grid and swaps to the tile that was clicked', async () => {
     listSources.mockResolvedValueOnce([
       { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: 'data:image/png;base64,AAA' },

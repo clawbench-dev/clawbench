@@ -8,6 +8,7 @@
       @join="view = 'join'"
       @join-live="joinRunning"
       @open="openDetail"
+      @quote="(token: string) => emit('quote', token)"
       @resume="view = 'meeting'"
     />
     <MeetingCreate

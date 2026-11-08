@@ -198,6 +198,7 @@ const i18n = createI18n({
           uploading: 'Uploading...',
           deleteRecent: 'Delete this file',
           clearAll: 'Clear',
+          selectedCount: '{n} selected',
           clearSharesHint: '{n} recent share(s)',
           clearSharesConfirm: 'Clear all recent shares?',
           clearSharesDone: 'Cleared {n} recent share file(s)',
@@ -227,6 +228,22 @@ function mountDrawer(props: Record<string, any> = {}) {
 /** Get the raw setup state (actual refs) from the component instance. */
 function getRawState(wrapper: ReturnType<typeof mountDrawer>) {
   return (wrapper.vm as any).$.devtoolsRawSetupState
+}
+
+/**
+ * Stand-in for the real `handleFileSelect`.
+ *
+ * The real one reports every file through its per-file callback the moment that
+ * file lands, and only then resolves with the whole batch. The drawer depends on
+ * that order to grow the footer list as files arrive, so the mock has to
+ * reproduce it — a plain `mockResolvedValue` would let a batch-level
+ * implementation pass.
+ */
+function mockPickedFiles(paths: string[]) {
+  mockHandleFileSelect.mockImplementation(async (_e: Event, onUploaded?: (p: string) => void) => {
+    for (const path of paths) onUploaded?.(path)
+    return paths
+  })
 }
 
 describe('AttachDrawer', () => {
@@ -527,7 +544,7 @@ describe('AttachDrawer', () => {
   })
 
   it('onFileSelect resets filePickerOpen and switches to uploads tab on success', async () => {
-    mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
+    mockPickedFiles(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer()
     const state = getRawState(wrapper)
     state.filePickerOpen.value = true
@@ -548,16 +565,190 @@ describe('AttachDrawer', () => {
     expect(state.activeTab.value).toBe('current')
   })
 
-  it('onFileSelect keeps the sheet open and puts the upload in the draft', async () => {
-    // Selection is local now: a pick joins the draft and the sheet stays up
-    // until OK. Uploading is not a reason to bypass the commit step.
-    mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
+  it('onFileSelect keeps the sheet open and puts the upload in the draft, not the composer', async () => {
+    // The sheet is a picker: nothing reaches the message until OK. That is what
+    // makes "leave without OK" mean "I changed my mind" — and the input bar
+    // hides in-flight cards while the sheet is open, so there is no flash in
+    // either direction (#629).
+    mockPickedFiles(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer()
     await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
     expect(wrapper.emitted('close')).toBeFalsy()
     expect(wrapper.emitted('add-attached')).toBeFalsy()
     expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
       .toEqual(['a.png'])
+  })
+
+  it('shows each file in the draft as it lands, not once the whole batch is done', async () => {
+    // The footer is the only feedback that a file made it (the input bar is
+    // deliberately silent while the sheet is open), so it has to grow per file.
+    // A batch-level update would leave a long batch looking stalled.
+    let finishFirst: (p: string) => void = () => {}
+    mockHandleFileSelect.mockImplementation(async (_e: Event, onUploaded?: (p: string) => void) => {
+      onUploaded?.('.clawbench/uploads/a.png')
+      // Second file still in flight: nothing else has been reported yet.
+      await new Promise<void>((r) => { finishFirst = () => r() })
+      onUploaded?.('.clawbench/uploads/b.png')
+      return ['.clawbench/uploads/a.png', '.clawbench/uploads/b.png']
+    })
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const pending = getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    await nextTick()
+
+    // Only the first file has landed, and it is in the draft BEFORE the batch
+    // resolves — that is the whole point.
+    expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
+      .toEqual(['a.png'])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+
+    finishFirst()
+    await pending
+    expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
+      .toEqual(['a.png', 'b.png'])
+  })
+
+  it('OK hands the uploaded files to the composer exactly once', async () => {
+    // Nothing is attached before OK, so the delta has to include every upload —
+    // and only once. If the snapshot advanced with each upload, OK would see
+    // them as "already there" and the message would go out without the image.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+    expect(wrapper.emitted('add-attached')).toEqual([['.clawbench/uploads/a.png', false]])
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('cancel drops the draft without touching the composer', async () => {
+    // Nothing was handed over before OK, so cancelling has nothing to undo — it
+    // just leaves the message alone.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('cancel leaves attachments that were already there before it opened', async () => {
+    // The caller's existing attachments are not the sheet's to remove.
+    mockPickedFiles(['.clawbench/uploads/new.png'])
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/existing.ts' }] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('cancel aborts a batch that is still in flight', async () => {
+    // The sheet stays open while the transfer runs, so pressing Cancel mid-
+    // upload is the most natural "stop, wrong photo" gesture. The commit is
+    // per file as each one lands, so without aborting, the transfer finishes a
+    // few seconds later and puts the image back into the input bar — after the
+    // panel closed, with nothing left to cancel it.
+    let resolveUpload: (v: string[]) => void = () => {}
+    mockHandleFileSelect.mockReturnValue(new Promise<string[]>((r) => { resolveUpload = r }))
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    void getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await nextTick()
+
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+
+    // Same primitive the input strip's terminate pill uses — one implementation
+    // of "stop the batch and abort the transfer in flight".
+    expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toBeTruthy()
+    resolveUpload([])
+  })
+
+  it('cancel leaves an upload this sheet did not start alone', async () => {
+    // A drag-drop or paste upload can be running in the input bar while the
+    // sheet is open. `cancelChatUpload` acts on the module-level batch, so
+    // calling it unconditionally here silently killed a transfer the user never
+    // asked to stop.
+    mockHandleFileSelect.mockResolvedValue([])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+    expect(mockCancelChatUpload).not.toHaveBeenCalled()
+  })
+
+  it('cancel still stops the batch when a second pick superseded the first', async () => {
+    // Two picks can overlap. The superseded one settles first, so a plain
+    // boolean "is my batch running" flag reads false while the second batch is
+    // still uploading — and Cancel would leave it running, which is exactly the
+    // "image reappears after the panel closed" symptom.
+    const resolvers: Array<(v: string[]) => void> = []
+    mockHandleFileSelect.mockImplementation(() => new Promise<string[]>((r) => { resolvers.push(r) }))
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    const state = getRawState(wrapper)
+
+    void state.onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await nextTick()
+    void state.onFileSelect({ target: { files: [{ name: 'b.png' }] } })
+    await nextTick()
+
+    // The superseded pick settles while the second one is still in flight.
+    resolvers[0]([])
+    await nextTick()
+
+    await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+
+    expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+    resolvers[1]([])
+  })
+
+  it('a terminate after OK leaves the accepted draft alone', async () => {
+    // OK accepts the batch, so it is no longer "in progress". A terminate aimed
+    // at a later batch (the sheet can be reopened while one runs) must not empty
+    // a draft the user already confirmed.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+    expect(wrapper.emitted('add-attached')).toEqual([['.clawbench/uploads/a.png', false]])
+
+    await getRawState(wrapper).handleTerminateUpload()
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+  })
+
+  it('dismissing the sheet leaves the composer untouched', async () => {
+    // Swipe / back / overlay tap / header × are all "I am leaving this picker".
+    // Nothing was handed over, so there is nothing to remove — the message must
+    // stay exactly as it was.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    await getRawState(wrapper).onDrawerClose()
+
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('a dismiss gesture and the Cancel button do the same thing', async () => {
+    // Pins the two entry points together, so a future edit cannot make one of
+    // them behave differently from the other.
+    const run = async (how: 'cancel' | 'dismiss') => {
+      mockPickedFiles(['.clawbench/uploads/a.png'])
+      const wrapper = mountDrawer({ attachedFiles: [] })
+      await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+      if (how === 'cancel') await wrapper.find('[data-action="attach-cancel"]').trigger('click')
+      else await getRawState(wrapper).onDrawerClose()
+      return {
+        close: wrapper.emitted('close')?.length ?? 0,
+        added: wrapper.emitted('add-attached')?.length ?? 0,
+        removed: wrapper.emitted('remove-attached')?.length ?? 0,
+      }
+    }
+
+    expect(await run('dismiss')).toEqual(await run('cancel'))
+    expect(await run('cancel')).toEqual({ close: 1, added: 0, removed: 0 })
   })
 
   it('onFileSelect shows the uploads tab while the transfer is still running', async () => {
@@ -618,16 +809,15 @@ describe('AttachDrawer', () => {
     expect(state.activeTab.value).toBe('uploads')
   })
 
-  it('onFileSelect auto-selects each freshly uploaded file in the draft', async () => {
-    mockHandleFileSelect.mockResolvedValue([
-      '.clawbench/uploads/a.png',
-      '.clawbench/uploads/b.png',
-    ])
+  it('onFileSelect puts every freshly uploaded file in the draft, and OK attaches them', async () => {
+    // Multi-select: every file that finished uploads gets its own footer card,
+    // and OK hands all of them over at once.
+    mockPickedFiles(['.clawbench/uploads/a.png', '.clawbench/uploads/b.png'])
     const wrapper = mountDrawer({ attachedFiles: [] })
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
-    expect(wrapper.emitted('add-attached')).toBeFalsy()
     expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
       .toEqual(['a.png', 'b.png'])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
 
     await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')).toEqual([
@@ -637,28 +827,85 @@ describe('AttachDrawer', () => {
   })
 
   it('onFileSelect does not duplicate an upload that is already selected', async () => {
-    mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
+    mockPickedFiles(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/a.png' }] })
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
     expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+    // The composer already had it, so no second attach is emitted…
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
 
-    // …and OK has nothing to add, because it was already there.
+    // …and OK has nothing to add either.
     await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')).toBeFalsy()
   })
 
-  it('onFileSelect attaches nothing when the batch was terminated mid-flight', async () => {
+  it('onFileSelect adds nothing when the batch was terminated mid-flight', async () => {
     // The terminate button sets the flag while handleFileSelect is still
-    // awaiting; the files that finished before the abort must NOT be attached
-    // (terminate = clear everything).
+    // awaiting. A file whose transfer is aborted never reaches the per-file
+    // callback (the composable classifies it as cancelled), so the sheet must
+    // end up with an empty draft and stay on its current tab.
     mockHandleFileSelect.mockImplementation(async () => {
       sharedChatUploadCancelled.value = true
-      return ['.clawbench/uploads/a.png']
+      return []
     })
     const wrapper = mountDrawer({ attachedFiles: [] })
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
     expect(wrapper.emitted('add-attached')).toBeFalsy()
     expect(getRawState(wrapper).activeTab.value).toBe('current')
+  })
+
+  it('terminate drops the cards of the uploads it just aborted', async () => {
+    // A file that landed in the draft before the terminate must be forgotten
+    // here, or OK would still attach a file the user just cancelled.
+    mockPickedFiles(['.clawbench/uploads/done.png'])
+    mockCancelChatUpload.mockReturnValue(['.clawbench/uploads/done.png'])
+    sharedPendingFiles.value = [
+      { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+    ]
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    await getRawState(wrapper).handleTerminateUpload()
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+    // Nothing left to hand over.
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('terminate clears the draft even when the shared helper reports nothing', async () => {
+    // `terminateChatUploadBatch` reports only what it detached from the GLOBAL
+    // composer list, which this sheet never touches — so its return value
+    // cannot be used to decide what to forget.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    mockCancelChatUpload.mockReturnValue([])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    await getRawState(wrapper).handleTerminateUpload()
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+
+  it('a cancelled picker does not forget the previous batch’s uploads', async () => {
+    // Re-opening the picker and backing out starts no new batch, so the one
+    // still running must keep its paths — otherwise "terminate" has nothing to
+    // clear and the finished images stay in the draft.
+    mockPickedFiles(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [{ name: 'a.png' }] } })
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(1)
+
+    mockHandleFileSelect.mockResolvedValue([])
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+
+    await getRawState(wrapper).handleTerminateUpload()
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
   })
 
   describe('batch terminate button', () => {
@@ -1431,6 +1678,37 @@ describe('AttachDrawer footer actions', () => {
 
     expect(wrapper.findAll('.ad-footer .attachment-filename').map(w => w.text()))
       .toEqual(['picked.ts'])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('shows how many are selected and clears them in one tap', async () => {
+    // A bare strip of chips read as decoration: no count, no way out. The head
+    // line answers both, and the count has to track the draft rather than the
+    // composer (the sheet is a picker — a pick is not applied until OK).
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    const state = getRawState(wrapper)
+    expect(wrapper.find('[data-role="attach-selected-count"]').text()).toBe('1 selected')
+
+    state.toggleAttached('src/b.ts')
+    await nextTick()
+    expect(wrapper.find('[data-role="attach-selected-count"]').text()).toBe('2 selected')
+
+    await wrapper.find('[data-action="attach-clear-selection"]').trigger('click')
+
+    expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
+    // Nothing selected → no head line at all (no "0 selected" noise).
+    expect(wrapper.find('[data-role="attach-selected-count"]').exists()).toBe(false)
+  })
+
+  it('clearing the selection leaves OK with nothing to hand over', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/a.ts' }] })
+    const state = getRawState(wrapper)
+    state.toggleAttached('src/b.ts')
+    await nextTick()
+
+    await wrapper.find('[data-action="attach-clear-selection"]').trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+
     expect(wrapper.emitted('add-attached')).toBeFalsy()
   })
 

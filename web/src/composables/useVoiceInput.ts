@@ -16,6 +16,16 @@ import { useToast } from './useToast'
 import { useDialog } from './useDialog'
 import { appLog } from '@/utils/appLog'
 import { acquireMic, classifyMicError, describeMicError, logMicEnv } from '@/utils/micCapture'
+import {
+  VOICE_TUNING_DEFAULTS,
+  buildMicConstraints,
+  readSttField,
+  readVoiceTuning,
+  rmsFromByteTimeDomain,
+  rmsThreshold,
+  type VoiceTuning,
+} from '@/utils/audioTuning'
+import { PCM_SAMPLE_RATE, PcmStreamer } from '@/utils/pcmCapture'
 import i18n from '@/i18n'
 
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
@@ -34,10 +44,24 @@ let voicePrefix = ''
 // Set by stop() so a socket that is still connecting does not start capturing
 // after the user has already released the button. Reset on every start().
 let stopRequested = false
-// PCM capture for the streaming engine (AudioWorklet).
-let audioCtx: AudioContext | null = null
-let pcmNode: AudioWorkletNode | null = null
-let pcmSource: MediaStreamAudioSourceNode | null = null
+// PCM capture for the streaming engine (band filter + worklet + voice gate).
+let pcm: PcmStreamer | null = null
+// Level metering for the buffered (whole-file) path: whether any window of the
+// recording rose above the speech threshold.
+let sawSpeech = false
+let bufferedCtx: AudioContext | null = null
+let bufferedGateTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Tuning in effect for the NEXT capture.
+ *
+ * Read from the server config at `start()` rather than held as reactive state:
+ * the microphone constraints and the gate threshold are baked into the audio
+ * graph when it is built, so a change mid-recording could not take effect
+ * anyway. A module-level value keeps every entry point (button, F9, free-dialog
+ * mode) using the same numbers.
+ */
+let tuning: VoiceTuning = { ...VOICE_TUNING_DEFAULTS }
 
 /**
  * CJK ideographs, kana, hangul and CJK/fullwidth punctuation.
@@ -70,56 +94,6 @@ function needsJunctionSpace(prev: string, next: string): boolean {
   return true
 }
 
-/** PCM rate the streaming engine is told to expect. */
-const PCM_SAMPLE_RATE = 16000
-
-/**
- * AudioWorklet processor: mixes to mono, resamples to `targetRate` with a box
- * filter and posts 100 ms Int16 frames — the streaming ASR wants raw PCM, and
- * MediaRecorder can only produce WebM/Opus.
- *
- * Kept as source text rather than a separate module so no bundler asset wiring
- * (and no CSP surprise) is involved: it is loaded from a Blob URL.
- */
-const PCM_WORKLET_SOURCE = `
-class ClawbenchPcm extends AudioWorkletProcessor {
-  constructor(options) {
-    super()
-    const target = (options.processorOptions && options.processorOptions.targetRate) || 16000
-    this.ratio = sampleRate / target
-    this.acc = 0
-    this.count = 0
-    this.pos = 0
-    this.out = []
-    this.frameSize = Math.round(target / 10)
-  }
-  process(inputs) {
-    const input = inputs[0]
-    if (!input || !input[0]) return true
-    const ch = input[0]
-    for (let i = 0; i < ch.length; i++) {
-      this.acc += ch[i]
-      this.count++
-      this.pos += 1
-      if (this.pos >= this.ratio) {
-        const v = this.acc / this.count
-        this.out.push(Math.max(-32768, Math.min(32767, Math.round(v < 0 ? v * 0x8000 : v * 0x7fff))))
-        this.acc = 0
-        this.count = 0
-        this.pos -= this.ratio
-      }
-    }
-    if (this.out.length >= this.frameSize) {
-      const pcm = Int16Array.from(this.out)
-      this.out = []
-      this.port.postMessage(pcm.buffer, [pcm.buffer])
-    }
-    return true
-  }
-}
-registerProcessor('clawbench-pcm', ClawbenchPcm)
-`
-
 function stopMediaStream() {
   if (mediaStream) {
     mediaStream.getTracks().forEach((t) => t.stop())
@@ -150,14 +124,20 @@ export function useVoiceInput() {
     toast.show(msg, { icon: 'warning', type: 'error', duration: 6000 })
   }
 
-  const shortcutKey = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.shortcut_key'] as string | undefined ?? 'F9'
-  const streaming = () =>
-    Boolean((settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.streaming'] ?? false)
-  const provider = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.provider'] as string | undefined ?? 'vllm'
-  const language = () =>
-    (settings.serverConfig.value as Record<string, unknown> | undefined)?.['stt.language'] as string | undefined
+  // `/api/config` is NESTED (`{"stt": {...}}`), not a flat map of dotted keys —
+  // see `readSttField`. These used to index `['stt.streaming']`, which is
+  // always undefined, so every engine setting silently kept its default: the
+  // 流式识别 switch never turned streaming on and 识别语言 was never sent.
+  const sttField = (key: string) =>
+    readSttField(settings.serverConfig.value as Record<string, unknown> | undefined, key)
+
+  const shortcutKey = () => (sttField('shortcut_key') as string | undefined) ?? 'F9'
+  const streaming = () => Boolean(sttField('streaming') ?? false)
+  const provider = () => (sttField('provider') as string | undefined) ?? 'vllm'
+  const language = () => sttField('language') as string | undefined
+
+  /** The tuning currently in effect (read by free-dialog mode as well). */
+  const currentTuning = () => tuning
 
   /**
    * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
@@ -192,7 +172,11 @@ export function useVoiceInput() {
       return
     }
     try {
-      mediaStream = await acquireMic()
+      // Re-read the tuning on every start: the microphone constraints are baked
+      // into the stream at open time, so a setting changed while nothing was
+      // recording must be picked up here rather than at page load.
+      tuning = readVoiceTuning(settings.serverConfig.value as Record<string, unknown> | undefined)
+      mediaStream = await acquireMic({ audio: buildMicConstraints(tuning) })
     } catch (e) {
       // "Permission refused" and "the device did not start" need different
       // advice, so they get different messages.
@@ -230,6 +214,14 @@ export function useVoiceInput() {
       // go off while the upload runs — without cutting the final chunk.
       stopMediaStream()
       const blob = new Blob(chunks, { type: 'audio/webm' })
+      // The buffered path cannot skip silence frame-by-frame (there is no frame
+      // boundary to decide on) — the whole recording is one upload. A clip that
+      // never rose above the speech threshold is pure cost and returns an empty
+      // transcript anyway, so it is dropped here instead of being uploaded.
+      if (tuning.voiceGate && !sawSpeech) {
+        finishRecording('')
+        return
+      }
       try {
         const form = new FormData()
         form.append('file', blob, 'recording.webm')
@@ -242,58 +234,80 @@ export function useVoiceInput() {
         fail(i18n.global.t('chat.voice.transcribeFailed'))
         appLog.e('VoiceInput', 'non-streaming transcribe failed', e)
       } finally {
-        state.value = 'done'
-        isRecording.value = false
-        stopMediaStream()
-        // Complete the documented 'done' → 'idle' transition so a new recording can start.
-        state.value = 'idle'
+        finishRecording()
       }
     }
     mediaRecorder.start()
+    startBufferedGate()
+  }
+
+  /** Completes the non-streaming state machine (shared by the silent-skip path). */
+  function finishRecording(transcript?: string) {
+    if (transcript) appendText(transcript)
+    stopBufferedGate()
+    state.value = 'done'
+    isRecording.value = false
+    stopMediaStream()
+    // Complete the documented 'done' → 'idle' transition so a new recording can start.
+    state.value = 'idle'
+  }
+
+  /**
+   * Level metering for the buffered (whole-file) capture path.
+   *
+   * `sawSpeech` is what lets a recording with no speech skip the upload. The
+   * meter is best-effort: without an analyser the flag starts true, because
+   * "cannot tell" must not mean "silent".
+   */
+  function startBufferedGate() {
+    sawSpeech = !tuning.voiceGate || !mediaStream || typeof AudioContext === 'undefined'
+    if (sawSpeech) return
+    try {
+      bufferedCtx = new AudioContext()
+      const source = bufferedCtx.createMediaStreamSource(mediaStream!)
+      const analyser = bufferedCtx.createAnalyser()
+      analyser.fftSize = 512
+      source.connect(analyser)
+      const buf = new Uint8Array(analyser.fftSize)
+      const threshold = rmsThreshold(tuning)
+      bufferedGateTimer = setInterval(() => {
+        if (sawSpeech) return
+        analyser.getByteTimeDomainData(buf)
+        if (rmsFromByteTimeDomain(buf) >= threshold) sawSpeech = true
+      }, 100)
+    } catch (e) {
+      appLog.w('VoiceInput', 'level meter unavailable, keeping the recording', e)
+      sawSpeech = true
+    }
+  }
+
+  function stopBufferedGate() {
+    if (bufferedGateTimer !== null) {
+      clearInterval(bufferedGateTimer)
+      bufferedGateTimer = null
+    }
+    if (bufferedCtx) {
+      void bufferedCtx.close().catch(() => { /* already closed */ })
+      bufferedCtx = null
+    }
   }
 
   async function startPcmCapture(): Promise<void> {
     if (!mediaStream) throw new Error('no media stream')
-    audioCtx = new AudioContext({ sampleRate: PCM_SAMPLE_RATE })
-    // A context created outside a user gesture starts suspended and would feed
-    // nothing to the worklet.
-    if (audioCtx.state === 'suspended') await audioCtx.resume()
-    const url = URL.createObjectURL(new Blob([PCM_WORKLET_SOURCE], { type: 'application/javascript' }))
-    try {
-      await audioCtx.audioWorklet.addModule(url)
-    } finally {
-      URL.revokeObjectURL(url)
-    }
-    pcmSource = audioCtx.createMediaStreamSource(mediaStream)
-    pcmNode = new AudioWorkletNode(audioCtx, 'clawbench-pcm', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 1,
-      processorOptions: { targetRate: PCM_SAMPLE_RATE },
+    const streamer = new PcmStreamer({
+      stream: mediaStream,
+      tuning,
+      onFrame: (frame) => {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame)
+      },
     })
-    pcmNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(e.data)
-    }
-    pcmSource.connect(pcmNode)
-    // The worklet emits silence, but the graph only runs while it reaches the
-    // destination.
-    pcmNode.connect(audioCtx.destination)
+    pcm = streamer
+    await streamer.start()
   }
 
   function stopPcmCapture(): void {
-    if (pcmNode) {
-      pcmNode.port.onmessage = null
-      pcmNode.disconnect()
-      pcmNode = null
-    }
-    if (pcmSource) {
-      pcmSource.disconnect()
-      pcmSource = null
-    }
-    if (audioCtx) {
-      void audioCtx.close().catch(() => { /* already closed */ })
-      audioCtx = null
-    }
+    pcm?.stop()
+    pcm = null
   }
 
   function startStreaming() {
@@ -407,6 +421,7 @@ export function useVoiceInput() {
 
   function cancel() {
     stopPcmCapture()
+    stopBufferedGate()
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       try { mediaRecorder.stop() } catch { /* noop */ }
     }
@@ -472,5 +487,6 @@ export function useVoiceInput() {
     setInputText,
     setStartText,
     shortcutKey,
+    currentTuning,
   }
 }

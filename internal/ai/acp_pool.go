@@ -712,6 +712,7 @@ type ACPCachedState struct {
 	Mode          *ModeState
 	Config        *ConfigOptionState
 	Effort        *ThinkingEffortState
+	ConfigOptions []ExtraConfigOption
 	Commands      []AvailableCommandInfo
 	ModelList     *ModelListState
 	Plan          *PlanState
@@ -753,8 +754,11 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 
 	reg := GetAgentCapabilityRegistry()
 	return ACPCachedState{
-		Mode:          reg.GetModeState(agentID, currentModeID),
-		Effort:        reg.GetThinkingEffortState(agentID, currentThinkingEffortID),
+		Mode: reg.GetModeState(agentID, currentModeID),
+		// Thinking levels are per MODEL (issue #637): resolve against the model
+		// this session is actually running, not the agent's last-written list.
+		Effort:        reg.GetThinkingEffortStateForModel(agentID, currentModelID, currentThinkingEffortID),
+		ConfigOptions: conn.GetExtraConfigOptions(),
 		ModelList:     reg.GetModelListState(agentID, currentModelID),
 		Commands:      reg.GetCommands(agentID),
 		Config:        conn.SessionConfigState(),
@@ -1003,6 +1007,13 @@ type ACPConn struct {
 	// legitimate tools (e.g. `sleep`, builds) are never killed.
 	toolInFlight atomic.Bool
 
+	// pendingElicitations counts `elicitation/create` requests blocking on a
+	// user answer. Like an in-flight tool, that is legitimate waiting, not a
+	// stall — without this the watchdog would kill a connection whose only
+	// "inactivity" is the user reading a question. Atomic so the watchdog can
+	// read it without taking any lock.
+	pendingElicitations atomic.Int64
+
 	// turnOutputEvents counts the model-output notifications observed during
 	// the current turn (agent text, thinking, tool calls). Reset at prompt
 	// start. A turn that ends with stopReason=end_turn and zero output events
@@ -1085,6 +1096,19 @@ type ACPConn struct {
 	// for those well-known categories. This map is used for any additional
 	// categories and as a unified access pattern. Guarded by stateMu.
 	currentSelections map[string]string
+
+	// extraConfigOptions are the agent-advertised select options ClawBench has
+	// no dedicated plumbing for (see ExtraConfigOption). Kept on the connection
+	// rather than the agent-level registry because the list itself is
+	// session-scoped: codex-acp only advertises "Fast mode" for models that
+	// support the faster tier, so an agent-wide cache would show the toggle in
+	// sessions running a model that cannot honor it. Guarded by stateMu.
+	extraConfigOptions []ExtraConfigOption
+	// extraConfigOptionsKnown records that the agent has actually reported its
+	// generic options. It distinguishes "never advertised any" (nothing to
+	// emit) from "advertised, and the list is now empty" (the model no longer
+	// supports the option — clients must be told to drop the toggle).
+	extraConfigOptionsKnown bool
 
 	// lastSetConfig tracks the last values successfully sent to the agent via
 	// setSessionConfigOption. Used to avoid re-sending unchanged values.
@@ -1203,6 +1227,23 @@ type ACPConn struct {
 	// snapshotted into lastCompletedRequestIDs and reset, so the baseline
 	// always describes exactly one turn and never becomes a rolling value.
 	turnRequestIDs map[string]struct{}
+
+	// adoptedTurnRequestID is the requestId of a turn the AGENT started on its
+	// own (CodeBuddy background_drain — see acp_background_turn.go), or "" when
+	// no such turn is in flight. Guarded by metaMu.
+	//
+	// It exists because CodeBuddy REUSES the session's conversationRequestId for
+	// that turn. Measured on a production session (2026-11-08): the drain turn's
+	// announcement carried the exact requestId the user's previous turn had just
+	// finished with, so the replay filter above classified the whole NEW turn as
+	// a replay of the previous one and dropped every agent_message_chunk. The
+	// user saw a lone TaskOutput tool card with no text at all — tool calls are
+	// not filtered, which is why only they survived.
+	//
+	// While this id is set, frames carrying it bypass the replay filter: they
+	// provably belong to the turn currently being consumed, not to the one that
+	// completed before it.
+	adoptedTurnRequestID string
 
 	// compactReported is set once this connection has emitted its
 	// compact_detected signal for the current compaction. CodeBuddy stamps the
@@ -1434,6 +1475,12 @@ func (c *ACPConn) isStalled(timeout time.Duration) bool {
 		return false
 	}
 	if c.toolInFlight.Load() {
+		return false
+	}
+	// A question waiting on the user is legitimate waiting too (see
+	// pendingElicitations). Same reasoning as an in-flight tool: no model
+	// progress is expected until the user answers.
+	if c.pendingElicitations.Load() > 0 {
 		return false
 	}
 	last := c.lastModelProgress.Load()
@@ -1818,6 +1865,116 @@ func (c *ACPConn) GetCurrentSelection(category string) string {
 	}
 }
 
+// SetExtraConfigOptions replaces the session's generic config options (see
+// ExtraConfigOption). Called when a session is created/resumed/loaded, i.e.
+// whenever the agent re-states what it offers.
+//
+// The agent-reported current value is adopted ONLY when this session has no pick
+// of its own yet: on a resume the agent reports what IT thinks the value is, and
+// that must not overwrite a toggle the user flipped in this process (the same
+// rule the mode/effort caches follow).
+func (c *ACPConn) SetExtraConfigOptions(extras []ExtraConfigOption) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.extraConfigOptions = extras
+	c.extraConfigOptionsKnown = true
+	if c.currentSelections == nil {
+		c.currentSelections = make(map[string]string)
+	}
+	live := make(map[string]bool, len(extras))
+	for _, e := range extras {
+		live[e.ConfigID] = true
+		if e.CurrentID != "" && c.currentSelections[e.ConfigID] == "" {
+			c.currentSelections[e.ConfigID] = e.CurrentID
+		}
+	}
+	// A pick for an option the agent no longer offers is meaningless. Keeping it
+	// would make the toggle come back "on" for a model that never had it (the
+	// agent would report its own "off" and the stale pick would win).
+	for id := range c.currentSelections {
+		if !live[id] {
+			delete(c.currentSelections, id)
+		}
+	}
+}
+
+// UpsertExtraConfigOption merges ONE agent-reported option into the session's
+// generic list (the config_option_update notification path).
+//
+// Unlike SetExtraConfigOptions this ADOPTS the agent's current value even when
+// the user picked something else: the notification is the agent stating what it
+// is actually running now (after accepting, rewriting, or refusing a pick), so
+// it is the correction path for an optimistic UI update.
+func (c *ACPConn) UpsertExtraConfigOption(extra ExtraConfigOption) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.extraConfigOptionsKnown = true
+	if c.currentSelections == nil {
+		c.currentSelections = make(map[string]string)
+	}
+	for i := range c.extraConfigOptions {
+		if c.extraConfigOptions[i].ConfigID != extra.ConfigID {
+			continue
+		}
+		// An update usually carries only id + current value; keep the labels
+		// and value list learned earlier rather than blanking the picker.
+		if extra.Name == "" {
+			extra.Name = c.extraConfigOptions[i].Name
+		}
+		if extra.Description == "" {
+			extra.Description = c.extraConfigOptions[i].Description
+		}
+		if len(extra.Values) == 0 {
+			extra.Values = c.extraConfigOptions[i].Values
+		}
+		c.extraConfigOptions[i] = extra
+		if extra.CurrentID != "" {
+			c.currentSelections[extra.ConfigID] = extra.CurrentID
+		}
+		return
+	}
+	// The agent started offering an option it had not advertised before.
+	c.extraConfigOptions = append(c.extraConfigOptions, extra)
+	if extra.CurrentID != "" {
+		c.currentSelections[extra.ConfigID] = extra.CurrentID
+	}
+}
+
+// HasExtraConfigOptions reports whether the agent has ever advertised generic
+// options for this session. A true result with an EMPTY list means "it used to
+// offer one and no longer does" — clients must still be told, so the toggle
+// disappears instead of offering a choice the agent would reject.
+func (c *ACPConn) HasExtraConfigOptions() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.extraConfigOptionsKnown
+}
+
+// GetExtraConfigOptions returns the session's generic config options with the
+// CURRENT value resolved from this session. Returns nil when the agent
+// advertised none (e.g. a model that does not support the option).
+func (c *ACPConn) GetExtraConfigOptions() []ExtraConfigOption {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if len(c.extraConfigOptions) == 0 {
+		if c.extraConfigOptionsKnown {
+			// Non-nil so "the list became empty" survives serialization as []
+			// rather than null (a null payload is indistinguishable from "no
+			// data" and would be dropped by the hub).
+			return []ExtraConfigOption{}
+		}
+		return nil
+	}
+	out := make([]ExtraConfigOption, len(c.extraConfigOptions))
+	copy(out, c.extraConfigOptions)
+	for i := range out {
+		if cur := c.currentSelections[out[i].ConfigID]; cur != "" {
+			out[i].CurrentID = cur
+		}
+	}
+	return out
+}
+
 // HasCurrentChanged checks if the given value differs from the session's current
 // selection for the specified category.
 // Called from the SDK notification goroutine — uses stateMu, never c.mu.
@@ -2061,8 +2218,37 @@ func (c *ACPConn) isCompletedTurnRequestID(rid string) bool {
 	}
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
+	if rid == c.adoptedTurnRequestID {
+		// An agent-initiated turn reuses the previous turn's requestId, so
+		// membership in the baseline says nothing about it being stale. It is
+		// the turn we are consuming right now — let it through.
+		return false
+	}
 	_, ok := c.lastCompletedRequestIDs[rid]
 	return ok
+}
+
+// noteAdoptedTurnRequestID marks rid as belonging to a turn the agent started on
+// its own, so the replay filter lets its frames through (see
+// adoptedTurnRequestID).
+func (c *ACPConn) noteAdoptedTurnRequestID(rid string) {
+	if rid == "" {
+		return
+	}
+	c.metaMu.Lock()
+	c.adoptedTurnRequestID = rid
+	c.metaMu.Unlock()
+}
+
+// clearAdoptedTurnRequestID drops the marker once that turn is over. Only the
+// matching id is cleared, so a newer turn's marker cannot be wiped by an older
+// turn's cleanup.
+func (c *ACPConn) clearAdoptedTurnRequestID(rid string) {
+	c.metaMu.Lock()
+	if c.adoptedTurnRequestID == rid {
+		c.adoptedTurnRequestID = ""
+	}
+	c.metaMu.Unlock()
 }
 
 // resetTurnRequestIDs drops the current turn's observed-id set. Called at the

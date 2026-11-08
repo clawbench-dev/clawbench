@@ -327,6 +327,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     if (id && (userPicked || !mockIdentity.currentThinkingEffort)) mockIdentity.currentThinkingEffort = id
   }),
   updateAvailableThinkingEfforts: vi.fn(),
+  setConfigOptions: vi.fn(),
   clearThinkingEffortState: vi.fn(),
   clearSessionIdentity: vi.fn((upcomingSessionId?: string) => {
     // Simulate clearing identity refs and setting currentSessionId

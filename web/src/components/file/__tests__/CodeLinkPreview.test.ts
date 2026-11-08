@@ -8,6 +8,7 @@ import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { cancelTarget, usePendingTarget } from '@/composables/useConversationTarget.ts'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { applyUIScale } from '@/utils/uiScale'
 import { readFileSync } from 'node:fs'
@@ -87,6 +88,7 @@ const i18n = createI18n({
   locale: 'en',
   messages: {
     en: {
+      actionLabels: { viewDetails: 'Details' },
       file: {
         codePreview: {
           title: 'Code Preview',
@@ -696,9 +698,11 @@ describe('CodeLinkPreview.vue', () => {
 
     const detailsBtn = floating?.querySelector('button[title="View details / Download"]')
     expect(detailsBtn).not.toBeNull()
-    // It is an icon button, and it does not dump its label into the tool row.
+    // Still one icon button: the only text it can carry is the shared
+    // `.action-label` (shown when the row is wide enough), never a bespoke wide
+    // text button of its own.
     expect(detailsBtn?.querySelector('svg')).not.toBeNull()
-    expect(detailsBtn?.textContent?.trim()).toBe('')
+    expect(detailsBtn?.querySelector('.action-label')?.textContent?.trim()).toBe('Details')
     // No second, plain "Open file" button appears alongside it.
     expect(floating?.querySelector('button[title="Open file"]')).toBeNull()
   })
@@ -1021,7 +1025,7 @@ describe('CodeLinkPreview.vue', () => {
       global: { plugins: [i18n] },
     })
 
-    const firstBtn = document.querySelector('.code-preview-actions button') as HTMLButtonElement
+    const firstBtn = document.querySelector('.code-preview-meta button') as HTMLButtonElement
     expect(firstBtn).not.toBeNull()
     firstBtn.focus = vi.fn()
 
@@ -1213,9 +1217,11 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('routes quoteToChat to the active conversation without a dialog', async () => {
-    // Issue #560: the card is opened FROM the conversation being worked in, so
-    // quoting it back into that same conversation must not ask again.
+  it('opens the shared quote bar with the code instead of staging it directly', async () => {
+    // Every other quote entry point (file header, issue, task, mail, meeting)
+    // opens the bar so the user can add a note. This surface used to put the
+    // card straight into the input, so the same-looking button behaved
+    // differently here than anywhere else.
     const identity = useSessionIdentity()
     const prev = identity.currentSessionId.value
     identity.currentSessionId.value = 's-active'
@@ -1237,21 +1243,24 @@ describe('CodeLinkPreview.vue', () => {
       await flushPromises()
 
       expect(preview.close).toHaveBeenCalled()
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value, 'the quote bar must open').toBe(true)
+      expect(qq.composerAttachment.value).toEqual({ kind: 'quote', label: 'src/main.ts' })
+      // Nothing is staged until the user commits, and no destination is asked
+      // for up front (issue #560).
       expect(usePendingTarget().pickerOpen.value).toBe(false)
       expect(switchTabMock).not.toHaveBeenCalled()
       const chatContext = useChatContext()
-      expect(chatContext.stagedQuotes.value).toHaveLength(1)
-      expect(chatContext.stagedQuotes.value[0].filePath).toBe('src/main.ts')
-      // A quote carries the path + range itself; a second attachment chip would
-      // duplicate it.
+      expect(chatContext.stagedQuotes.value).toHaveLength(0)
       expect(chatContext.attachedFiles.value).toHaveLength(0)
+      qq.hideComposer()
     } finally {
       identity.currentSessionId.value = prev
       useChatContext().clearAll()
     }
   })
 
-  it('falls back to the picker when no session is active', async () => {
+  it('delivers to the active conversation on commit, falling back to the picker only with no session', async () => {
     const switchTabMock = vi.fn()
     const preview = createMockPreviewController()
     mount(CodeLinkPreview, {
@@ -1264,6 +1273,14 @@ describe('CodeLinkPreview.vue', () => {
 
     const quoteBtn = document.querySelector('button[title="Quote to chat"]') as HTMLButtonElement
     quoteBtn.click()
+    await nextTick()
+
+    const qq = useQuoteQuestion()
+    expect(qq.visible.value).toBe(true)
+    expect(usePendingTarget().pickerOpen.value).toBe(false)
+
+    // Committing with no active session is what falls back to the picker.
+    qq.addToConversation('')
     await nextTick()
 
     const { pickerOpen, pending } = usePendingTarget()
@@ -1346,7 +1363,7 @@ describe('CodeLinkPreview.vue', () => {
 
     // Copy path now lives in the shared tool row (the same row the floating
     // card and the docked pane render — there is no sheet-specific toolbar).
-    const copyBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn') as HTMLButtonElement
+    const copyBtn = document.querySelector('.code-preview-meta .copy-path-btn') as HTMLButtonElement
     expect(copyBtn).not.toBeNull()
 
     // Clicking the copy button copies the full path
@@ -1413,7 +1430,7 @@ describe('CodeLinkPreview.vue', () => {
     // one shared with the floating card and the docked pane.
     expect(document.querySelector('.code-preview-sheet-footer')).toBeNull()
 
-    const actions = document.querySelector('.code-preview-meta .code-preview-actions') as HTMLElement
+    const actions = document.querySelector('.code-preview-meta') as HTMLElement
     expect(actions).not.toBeNull()
 
     // Refresh is an icon button in the tool row (no `.refresh-btn` pill class).
@@ -1430,22 +1447,25 @@ describe('CodeLinkPreview.vue', () => {
     openFullBtn.click()
     expect(preview.openFull).toHaveBeenCalled()
 
-    // Quote to Chat closes the sheet and hands the payload to the session
-    // picker (no tab switch, no local staging — see the quoteToChat test).
+    // Quote to Chat closes the sheet and opens the shared quote bar — the same
+    // interaction as every other entry point. The destination is not asked for
+    // until the user commits.
     const quoteBtn = Array.from(actions.querySelectorAll('button'))
       .find(b => (b.getAttribute('title') || '') === 'Quote to chat') as HTMLButtonElement
     expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
     expect(preview.close).toHaveBeenCalled()
-    expect(usePendingTarget().pickerOpen.value).toBe(true)
+    const qq = useQuoteQuestion()
+    expect(qq.visible.value).toBe(true)
+    expect(usePendingTarget().pickerOpen.value).toBe(false)
     expect(switchTabMock).not.toHaveBeenCalled()
-    cancelTarget()
+    qq.hideComposer()
 
     // Reveal in tree lives in the same row. Re-open the sheet first (quote closed it).
     preview.visible.value = true
     await nextTick()
-    const revealBtn = Array.from(document.querySelectorAll('.code-preview-meta .code-preview-actions button'))
+    const revealBtn = Array.from(document.querySelectorAll('.code-preview-meta button'))
       .find(b => (b.getAttribute('title') || '') === 'Open Directory') as HTMLButtonElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
@@ -2045,10 +2065,10 @@ describe('CodeLinkPreview.vue', () => {
     const metaInfo = document.querySelector('.code-preview-meta-info')
     expect(metaInfo?.textContent).toContain('3525')
 
-    const copyPathBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')
+    const copyPathBtn = document.querySelector('.code-preview-meta .copy-path-btn')
     expect(copyPathBtn).not.toBeNull()
 
-    const actionBtns = document.querySelectorAll('.code-preview-meta .code-preview-actions button')
+    const actionBtns = document.querySelectorAll('.code-preview-meta button')
     expect(actionBtns.length).toBeGreaterThanOrEqual(8)
 
     wrapper.unmount()
@@ -2088,7 +2108,7 @@ describe('CodeLinkPreview.vue', () => {
 
     // Copy path now lives in the shared tool row (header has no buttons)
     expect(document.querySelector('.bs-header-actions')).toBeNull()
-    const copyBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')
+    const copyBtn = document.querySelector('.code-preview-meta .copy-path-btn')
     expect(copyBtn).not.toBeNull()
 
     // Body toolbar: the SAME `.code-preview-meta` row the floating card and the
@@ -2101,7 +2121,7 @@ describe('CodeLinkPreview.vue', () => {
     // The sheet shows the same tool set as the floating card, so the count is
     // the full row (search/wrap/line-numbers/refresh/quote/copy/copy-path/
     // reveal/open-full), not the old sheet-only four.
-    const tools = toolbar?.querySelectorAll('.code-preview-actions button')
+    const tools = toolbar?.querySelectorAll('.code-preview-meta button')
     expect(tools?.length).toBeGreaterThanOrEqual(8)
     const titles = Array.from(tools || []).map(b => b.getAttribute('aria-label') || b.getAttribute('title') || '')
     expect(titles.some(t => /wrap/i.test(t))).toBe(true)
@@ -2186,7 +2206,7 @@ describe('CodeLinkPreview.vue', () => {
 
     // 1. Header has no action buttons; copy-path lives in the shared tool row.
     expect(document.querySelector('.bs-header-actions')).toBeNull()
-    const copyPathBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn') as HTMLElement
+    const copyPathBtn = document.querySelector('.code-preview-meta .copy-path-btn') as HTMLElement
     expect(copyPathBtn).not.toBeNull()
     copyPathBtn.click()
     await nextTick()
@@ -2195,7 +2215,7 @@ describe('CodeLinkPreview.vue', () => {
     // 2. Body toolbar = the shared `.code-preview-meta` row (same as floating).
     const toolbar = document.querySelector('.code-preview-sheet-body .code-preview-meta')
     expect(toolbar).not.toBeNull()
-    const toolBtns = toolbar?.querySelectorAll('.code-preview-actions button')
+    const toolBtns = toolbar?.querySelectorAll('.code-preview-meta button')
     expect(toolBtns?.length).toBeGreaterThanOrEqual(8)
 
     const titleOf = (b: Element) => b.getAttribute('aria-label') || b.getAttribute('title') || ''
@@ -2331,7 +2351,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // No render toggle for a non-renderable file (ts) — the eye must be absent,
     // not merely inert. It is the only button labeled Rendered preview / Source
     // code, so its absence is unambiguous.
-    const renderToggle = Array.from(document.querySelectorAll('.code-preview-actions button'))
+    const renderToggle = Array.from(document.querySelectorAll('.code-preview-meta button'))
       .find(b => /Rendered preview|Source code/.test(b.getAttribute('aria-label') || ''))
     expect(renderToggle).toBeUndefined()
     wrapperTs.unmount()
@@ -2362,7 +2382,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await nextTick()
 
     // Rendered view active + toggle present (first action button is the eye)
-    let eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    let eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn).not.toBeNull()
     expect(eyeBtn.getAttribute('aria-label')).toContain('Source')
     expect(document.querySelector('.md-preview-body')).not.toBeNull()
@@ -2370,7 +2390,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // Toggle to source -> code rows appear
     eyeBtn.click()
     await nextTick()
-    eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
     expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
     expect(document.querySelector('.md-preview-body')).toBeNull()
@@ -2414,7 +2434,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
 
     // …but the eye toggle is present (renderable Markdown), labeled for the
     // view it would switch to ('Rendered preview').
-    const eyeBtn = document.querySelector('.code-preview-actions button[aria-pressed]') as HTMLElement
+    const eyeBtn = document.querySelector('.code-preview-meta button[aria-pressed]') as HTMLElement
     expect(eyeBtn).not.toBeNull()
     expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
 
@@ -2450,7 +2470,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await flushPromises()
 
     expect(document.querySelector('.md-preview-body')).not.toBeNull()
-    expect(document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')).not.toBeNull()
+    expect(document.querySelector('.code-preview-meta .copy-path-btn')).not.toBeNull()
 
     wrapper.unmount()
   })
@@ -2671,7 +2691,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await nextTick()
 
     // Rendered view active + eye toggle present.
-    let eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    let eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn).not.toBeNull()
     expect(eyeBtn.getAttribute('aria-label')).toContain('Source')
     expect(document.querySelector('iframe.html-preview-iframe')).not.toBeNull()
@@ -2679,7 +2699,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     // Toggle to source -> the line-slice view (which keeps its own slicing).
     eyeBtn.click()
     await nextTick()
-    eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    eyeBtn = document.querySelector('.code-preview-meta .code-preview-btn') as HTMLElement
     expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
     expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
     expect(document.querySelector('iframe.html-preview-iframe')).toBeNull()
@@ -3314,7 +3334,7 @@ describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => 
       // where a long tool set could crowd it.
       const close = wrapper.find('.code-preview-header-actions .close')
       expect(close.exists()).toBe(true)
-      expect(wrapper.find('.code-preview-actions').element.contains(close.element)).toBe(false)
+      expect(wrapper.find('.code-preview-meta').element.contains(close.element)).toBe(false)
 
       wrapper.unmount()
     } finally {

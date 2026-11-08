@@ -261,3 +261,23 @@ describe('TaskListPage — trigger-type distinction', () => {
     expect(wrapper.find('.task-item-events').exists()).toBe(true)
   })
 })
+
+describe('TaskListPage — header labels', () => {
+  beforeEach(() => {
+    mockStore.state.tasks = []
+    mockStore.state.taskUnreadCount = 0
+    vi.clearAllMocks()
+  })
+
+  it('shows the action labels when the header can hold them', async () => {
+    // jsdom has no layout, so the header measures 0 wide and assumes there is
+    // room — the wide-pane case. The width decisions live in ActionBar; this
+    // pins the wiring (label spans + the class that reveals them).
+    const wrapper = await mountWith([])
+    // The row itself is not the ActionBar any more: the breadcrumb sits beside
+    // it, and only the icon buttons live inside.
+    const header = wrapper.find('.list-header-actions')
+    expect(header.classes()).toContain('ab--labels')
+    expect(header.findAll('.action-label').length).toBeGreaterThanOrEqual(2)
+  })
+})

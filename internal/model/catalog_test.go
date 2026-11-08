@@ -288,6 +288,19 @@ func TestRefreshCatalog_SharesInFlightDownload(t *testing.T) {
 		cat, err := RefreshCatalog(context.Background())
 		secondCh <- result{cat, err}
 	}()
+
+	// Wait until the second caller has actually JOINED the in-flight download.
+	// Releasing the server immediately after starting the goroutine races its
+	// first instruction: if the download finishes first, the joiner finds no
+	// flight and starts a second download of its own — which is exactly what
+	// this test is meant to rule out, so the failure would be spurious.
+	deadline := time.Now().Add(5 * time.Second)
+	for CatalogFlightWaitersForTest() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the second caller never joined the in-flight download")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(release)
 
 	first := <-firstCh
@@ -516,5 +529,30 @@ func TestLoadCatalogFromDisk_MissingFileIsNotAnError(t *testing.T) {
 	}
 	if CatalogSnapshot() != nil {
 		t.Fatal("a missing snapshot must not install one")
+	}
+}
+
+// A snapshot written before prices were parsed has none at all; without this
+// the picker would stay price-less for a full TTL after the upgrade.
+func TestCatalogStale_PrePriceSnapshotIsRefetched(t *testing.T) {
+	fresh := &Catalog{
+		FetchedAt: time.Now().UTC(),
+		Providers: map[string]CatalogProvider{
+			"zai": {ID: "zai", Models: []CatalogModel{{ID: "glm-5.2", InputPrice: 1.4}}},
+		},
+		PriceSchema: CatalogPriceSchema,
+	}
+	ReplaceCatalog(fresh)
+	t.Cleanup(func() { ReplaceCatalog(nil) })
+	if CatalogStale() {
+		t.Fatal("a fresh, price-bearing snapshot must not be stale")
+	}
+
+	// Same timestamp, but produced by the old parser: no schema marker.
+	legacy := *fresh
+	legacy.PriceSchema = 0
+	ReplaceCatalog(&legacy)
+	if !CatalogStale() {
+		t.Fatal("a snapshot predating price parsing must be refetched once")
 	}
 }

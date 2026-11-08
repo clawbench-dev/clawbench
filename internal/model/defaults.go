@@ -469,6 +469,49 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.ShortcutKey == "" {
 		cfg.STT.ShortcutKey = "F9"
 	}
+	// Microphone preprocessing defaults to ON, so the zero value in an existing
+	// config.yaml would otherwise silently turn every switch off. Only an
+	// explicit `false` may disable one.
+	if _, ok := presence["stt.mic_echo_cancel"]; !ok {
+		cfg.STT.MicEchoCancel = true
+	}
+	if _, ok := presence["stt.mic_noise_suppress"]; !ok {
+		cfg.STT.MicNoiseSuppress = true
+	}
+	if _, ok := presence["stt.mic_auto_gain"]; !ok {
+		cfg.STT.MicAutoGain = true
+	}
+	if _, ok := presence["stt.mic_band_filter"]; !ok {
+		cfg.STT.MicBandFilter = true
+	}
+	if _, ok := presence["stt.voice_gate"]; !ok {
+		cfg.STT.VoiceGate = true
+	}
+	if cfg.STT.VoiceGateSensitivity == "" {
+		cfg.STT.VoiceGateSensitivity = "standard"
+	}
+	// An EMPTY word list is a real choice ("no trigger words, use the pause"),
+	// so the default applies on absence only — the same presence-map trap as the
+	// bool switches above.
+	if _, ok := presence["stt.trigger_words"]; !ok {
+		cfg.STT.TriggerWords = "发送,好了,就这样"
+	}
+	// Zero is a legitimate value ("a pause never sends"), so the default has to
+	// be applied on ABSENCE, not on the zero value — the same trap the bool
+	// switches above have.
+	if _, ok := presence["stt.silence_send_seconds"]; !ok {
+		cfg.STT.SilenceSendSeconds = 3
+	}
+	// Same trap: 0 means "never leave", which is a real choice.
+	if _, ok := presence["stt.idle_exit_seconds"]; !ok {
+		cfg.STT.IdleExitSeconds = 60
+	}
+	if cfg.STT.BargeIn == "" {
+		cfg.STT.BargeIn = "any"
+	}
+	if _, ok := presence["stt.barge_in_words"]; !ok {
+		cfg.STT.BargeInWords = "等等,停一下"
+	}
 
 	// --- RAG ---
 	// Bool zero-value trap: default to true when absent from config.

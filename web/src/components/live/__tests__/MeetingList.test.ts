@@ -23,6 +23,7 @@ vi.mock('lucide-vue-next', () => {
     Check: stub,
     CheckCircle2: stub,
     Link: stub,
+    MessageSquare: stub,
     Mic: stub,
     Plus: stub,
     Video: stub,
@@ -737,5 +738,30 @@ describe('MeetingList import', () => {
 
     expect(importMock).not.toHaveBeenCalled()
     expect(w.emitted('open')).toBeUndefined()
+  })
+})
+
+describe('MeetingList quote action', () => {
+  it('gives every row the same quote button as the other lists', () => {
+    sessions.value = [record(), record({ token: 'tok-2' })]
+    const w = mountList()
+
+    const rows = w.findAll('.meeting-row')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.find('.meeting-row__quote').exists(), 'each row must expose a quote action').toBe(true)
+    }
+  })
+
+  it('hands the token to the host without opening the record', async () => {
+    // The host owns the fetch + composer (the same handler as the detail
+    // header), so the row only forwards the token.
+    sessions.value = [record({ token: 'tok-9' })]
+    const w = mountList()
+
+    await w.find('.meeting-row__quote').trigger('click')
+
+    expect(w.emitted('quote')).toEqual([['tok-9']])
+    expect(w.emitted('open'), 'quoting must not open the record').toBeUndefined()
   })
 })

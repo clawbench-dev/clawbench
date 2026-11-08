@@ -29,16 +29,19 @@
            than squeezing the title to nothing. -->
       <span v-if="metaLabel" class="meeting-header__meta" data-role="meeting-meta">{{ metaLabel }}</span>
       <span class="meeting-header__spacer" />
-      <button
-        v-if="record"
-        class="meeting-icon-btn"
-        type="button"
-        :title="t('meeting.detail.quote')"
-        data-action="meeting-quote"
-        @click="onQuote"
-      >
-        <MessageSquare :size="14" />
-      </button>
+      <ActionBar class="meeting-actions" mode="menu" size="bar">
+        <button
+          v-if="record"
+          class="meeting-icon-btn"
+          type="button"
+          :title="t('meeting.detail.quote')"
+          data-action="meeting-quote"
+          @click="onQuote"
+        >
+          <MessageSquare :size="14" />
+          <span class="action-label">{{ t('actionLabels.quote') }}</span>
+        </button>
+      </ActionBar>
     </div>
 
     <!-- First load: the pane below the header is an article (minutes /
@@ -359,6 +362,7 @@ import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTrans
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
+import ActionBar from '@/components/common/ActionBar.vue'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ token: string; initialTab?: MeetingDetailTab }>()
@@ -1140,11 +1144,12 @@ onMounted(() => {
 .meeting-header__spacer { flex: 1; }
 .meeting-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: calc(26 * var(--dp)); height: calc(26 * var(--dp));
-  border: none; border-radius: var(--radius-sm); background: transparent;
-  color: var(--text-muted); cursor: pointer; flex-shrink: 0;
+  border: none;
+  /* Needed by the back/rename buttons, which sit in the header row OUTSIDE the
+     ActionBar and so do not get the shared transparent background. */
+  background: transparent;
+  cursor: pointer; flex-shrink: 0;
 }
-.meeting-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 .meeting-tabs {
   display: flex; flex-shrink: 0;

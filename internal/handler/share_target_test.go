@@ -109,9 +109,11 @@ func TestShareTarget_NoProjectRedirectsToApp(t *testing.T) {
 	w := callHandler(ShareTarget, req)
 
 	// The browser navigated here, so a JSON 403 would be an unreachable error
-	// page. Send the user into the app instead.
-	assert.Equal(t, http.StatusSeeOther, w.Code)
-	assert.Equal(t, "/", w.Header().Get("Location"))
+	// page. Send the user into the app instead — and say the files were not
+	// imported, otherwise the project picker looks like the share succeeded.
+	params := shareTargetRedirectParams(t, w)
+	assert.Equal(t, "no_project", params.Get("share_target"))
+	assert.Empty(t, params.Get("share_target_failed"))
 }
 
 func TestShareTarget_NoFilesReportsEmpty(t *testing.T) {
@@ -374,8 +376,8 @@ func TestShareTarget_UnauthenticatedDoesNotWrite(t *testing.T) {
 
 	w := callHandler(ShareTarget, req)
 
-	assert.Equal(t, http.StatusSeeOther, w.Code)
-	assert.Equal(t, "/", w.Header().Get("Location"))
+	params := shareTargetRedirectParams(t, w)
+	assert.Equal(t, "unauthorized", params.Get("share_target"))
 
 	_, err := os.Stat(filepath.Join(env.ProjectDir, ".clawbench", "uploads", "a.png"))
 	assert.True(t, os.IsNotExist(err), "an unauthenticated share must not write files")

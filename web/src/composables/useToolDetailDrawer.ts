@@ -129,7 +129,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     drawer.open()
     toolDetailData.value = {
       name: block.name || '',
-      subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
+      subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || (block.input as Record<string, unknown>)?.agent as string || '',
       summary: block.summary || toolCallSummary(block),
       inputHtml: hasInput ? formatToolInput(block.input!, block.name || '', { done: block.done, status: block.status, output: block.output, askKey: askKeyForToolBlock(block) }) : '',
       outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '', { annotate: !!block.done, input: block.input }) : '',

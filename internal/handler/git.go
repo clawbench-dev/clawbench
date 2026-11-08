@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -214,12 +215,42 @@ func projectHistoryHeadSHA(projectPath string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// resolveRefCommit resolves a local branch name to the commit it points at.
+// An empty ref resolves HEAD. The caller passes the returned SHA to git log, so
+// the history of a branch can be read without checking it out.
+//
+// The name is prefixed with refs/heads/ before being handed to git: that
+// restricts the parameter to local branches (tags and SHAs are rejected, which
+// is what the branch picker offers) and makes a name that starts with "-"
+// impossible to be parsed as an option.
+func resolveRefCommit(projectPath, ref string) (string, error) {
+	if ref == "" {
+		sha := projectHistoryHeadSHA(projectPath)
+		if sha == "" {
+			return "", fmt.Errorf("cannot resolve HEAD")
+		}
+		return sha, nil
+	}
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/heads/"+ref+"^{commit}")
+	cmd.Dir = projectPath
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	sha := strings.TrimSpace(string(output))
+	if sha == "" {
+		return "", fmt.Errorf("git rev-parse returned no commit for %q", ref)
+	}
+	return sha, nil
+}
+
 // getProjectHistory returns the project commit history (optionally skipping N
-// commits), using a TTL cache keyed by (projectPath, skip, HEAD). A new HEAD
-// (new commit or branch switch) naturally misses the cache and recomputes.
-func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
-	headSHA := projectHistoryHeadSHA(projectPath)
-	key := fmt.Sprintf("%s|%d|%s", projectPath, skip, headSHA)
+// commits), using a TTL cache keyed by (projectPath, skip, resolved commit).
+// The key holds the resolved commit rather than a branch name, so two branches
+// pointing at the same commit share one entry and a branch that moved misses
+// the cache automatically.
+func getProjectHistory(projectPath string, skip int, refSHA string) ([]commitInfo, bool) {
+	key := fmt.Sprintf("%s|%d|%s", projectPath, skip, refSHA)
 
 	projectHistoryCache.Lock()
 	if e, ok := projectHistoryCache.entries[key]; ok && time.Since(e.loadedAt) < projectHistoryCacheTTL {
@@ -235,6 +266,13 @@ func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
 	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
 	if skip > 0 {
 		logArgs = append(logArgs, "--skip", fmt.Sprintf("%d", skip))
+	}
+	// Walk from the resolved commit instead of the implicit HEAD so a branch
+	// other than the checked-out one can be browsed. An empty repo resolves to
+	// no commit at all, in which case the implicit HEAD (which also fails) keeps
+	// the previous empty-result behavior.
+	if refSHA != "" {
+		logArgs = append(logArgs, refSHA)
 	}
 	cmd := exec.Command("git", logArgs...)
 	cmd.Dir = projectPath
@@ -273,6 +311,10 @@ func getProjectHistory(projectPath string, skip int) ([]commitInfo, bool) {
 
 // ServeGitProjectHistory returns commit history for the entire project.
 // Supports pagination via ?skip=N (skips N commits).
+//
+// ?ref=<branch> reads the history of that local branch instead of the checked
+// out one. It is a read-only view: nothing is checked out, the working tree is
+// untouched, and the branch does not even have to be the current one.
 func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -296,7 +338,21 @@ func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Sscanf(s, "%d", &skip)
 	}
 
-	commits, hasMore := getProjectHistory(projectPath, skip)
+	ref := r.URL.Query().Get("ref")
+	if ref != "" && !isValidGitRefName(ref) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return
+	}
+	refSHA, err := resolveRefCommit(projectPath, ref)
+	if err != nil && ref != "" {
+		// A branch that disappeared between listing and loading is a stale
+		// client view, not a server failure — say so instead of returning an
+		// empty history that looks like "this branch has no commits".
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return
+	}
+
+	commits, hasMore := getProjectHistory(projectPath, skip, refSHA)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"isGit":   true,
@@ -381,46 +437,11 @@ func ServeGitBranch(w http.ResponseWriter, r *http.Request) {
 // users see the complete picture of uncommitted modifications.
 func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 	if commit == "" || commit == "HEAD" {
-		// Check if the file is untracked first
-		lsCmd := exec.Command("git", "ls-files", "--error-unmatch", relPath)
-		lsCmd.Dir = projectPath
-		if _, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
-			// File is untracked: diff against /dev/null to show full content as added
-			cmd := exec.Command("git", "diff", "--no-index", "/dev/null", relPath)
-			cmd.Dir = projectPath
-			out, err := cmd.CombinedOutput()
-			// git diff --no-index exits with code 1 when there are differences, which is not an error
-			if err != nil && len(out) == 0 {
-				return nil, err
-			}
-			return out, nil
-		}
+		return workingTreeDiff(projectPath, relPath)
+	}
 
-		// Staged changes (diff between HEAD and index)
-		cmdCached := exec.Command("git", "diff", "--cached", "--", relPath)
-		cmdCached.Dir = projectPath
-		cached, cachedErr := cmdCached.CombinedOutput()
-
-		// Unstaged changes (diff between index and working tree)
-		cmdUnstaged := exec.Command("git", "diff", "--", relPath)
-		cmdUnstaged.Dir = projectPath
-		unstaged, unstagedErr := cmdUnstaged.CombinedOutput()
-
-		var combined []byte
-		if cachedErr == nil && len(cached) > 0 {
-			combined = append(combined, cached...)
-		}
-		if unstagedErr == nil && len(unstaged) > 0 {
-			if len(combined) > 0 {
-				combined = append(combined, '\n')
-			}
-			combined = append(combined, unstaged...)
-		}
-
-		if cachedErr != nil && unstagedErr != nil {
-			return nil, cachedErr
-		}
-		return combined, nil
+	if parents := getCommitParents(projectPath, commit); len(parents) >= 2 {
+		return mergeCommitDiff(projectPath, relPath, commit, parents)
 	}
 
 	// Use git show --format="" to get unified diff output. The bare "git show <commit>"
@@ -430,6 +451,75 @@ func gitDiff(projectPath, relPath, commit string) ([]byte, error) {
 	cmd := exec.Command("git", "show", "--format=", commit, "--", relPath)
 	cmd.Dir = projectPath
 	return cmd.CombinedOutput()
+}
+
+// workingTreeDiff returns the diff of one path against HEAD, covering both
+// staged and unstaged changes so users see the complete picture of their
+// uncommitted modifications. Untracked files diff against /dev/null.
+func workingTreeDiff(projectPath, relPath string) ([]byte, error) {
+	lsCmd := exec.Command("git", "ls-files", "--error-unmatch", relPath)
+	lsCmd.Dir = projectPath
+	if _, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
+		// File is untracked: diff against /dev/null to show full content as added
+		cmd := exec.Command("git", "diff", "--no-index", "/dev/null", relPath)
+		cmd.Dir = projectPath
+		out, err := cmd.CombinedOutput()
+		// git diff --no-index exits with code 1 when there are differences, which is not an error
+		if err != nil && len(out) == 0 {
+			return nil, err
+		}
+		return out, nil
+	}
+
+	// Staged changes (diff between HEAD and index)
+	cmdCached := exec.Command("git", "diff", "--cached", "--", relPath)
+	cmdCached.Dir = projectPath
+	cached, cachedErr := cmdCached.CombinedOutput()
+
+	// Unstaged changes (diff between index and working tree)
+	cmdUnstaged := exec.Command("git", "diff", "--", relPath)
+	cmdUnstaged.Dir = projectPath
+	unstaged, unstagedErr := cmdUnstaged.CombinedOutput()
+
+	var combined []byte
+	if cachedErr == nil && len(cached) > 0 {
+		combined = append(combined, cached...)
+	}
+	if unstagedErr == nil && len(unstaged) > 0 {
+		if len(combined) > 0 {
+			combined = append(combined, '\n')
+		}
+		combined = append(combined, unstaged...)
+	}
+
+	if cachedErr != nil && unstagedErr != nil {
+		return nil, cachedErr
+	}
+	return combined, nil
+}
+
+// mergeCommitDiff renders the diff of a merge commit against its parents.
+//
+// `git show` gives a combined diff for merges, which only renders the lines the
+// merge itself decided (conflict resolutions). Every file the merge took
+// verbatim from one side produces no output at all — and the commit file list
+// still lists those files, so each one would open to an empty diff. Compare
+// against each parent instead and keep the first non-empty result: for a clean
+// merge exactly one parent differs, and for a real conflict resolution the first
+// parent wins (same convention as `git show -m`).
+func mergeCommitDiff(projectPath, relPath, commit string, parents []string) ([]byte, error) {
+	for _, parent := range parents {
+		parentCmd := exec.Command("git", "diff", parent, commit, "--", relPath)
+		parentCmd.Dir = projectPath
+		out, err := parentCmd.CombinedOutput()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			return out, nil
+		}
+	}
+	return []byte{}, nil
 }
 
 // writeDiffResponse writes the diff response as JSON.
@@ -1330,6 +1420,11 @@ func ServeGitBranches(w http.ResponseWriter, r *http.Request) {
 		"defaultBranch": defaultBranch,
 		"currentBranch": currentBranch,
 		"stashCount":    stashCount,
+		// Advertises that /api/git/project-history understands ?ref=. The web
+		// bundle can be newer than the running binary (disk mode serves whatever
+		// was last built), and a picker talking to an older server would show one
+		// branch's name over another branch's commits — worse than no picker.
+		"refView": true,
 	})
 }
 
@@ -1550,6 +1645,270 @@ func ServeGitCheckout(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo
 		"stashed":    stashed,
 		"stashCount": stashCount,
 	})
+}
+
+// fetchTimeout bounds a fetch. The request may wait on a remote that never
+// answers, and the UI must get an answer instead of an endless spinner.
+const fetchTimeout = 60 * time.Second
+
+// fetchMu serializes fetches: two `git fetch` runs on one repo fight over the
+// same ref locks. It is deliberately NOT checkoutMu — a fetch only updates
+// remote-tracking refs, so it must not block (or be blocked by) a branch switch.
+var fetchMu sync.Mutex
+
+// ServeGitFetch downloads new commits from every remote without touching the
+// working tree or the current branch.
+//
+// POST /api/git/fetch
+//
+// Fetch, not pull, on purpose: the history panel is a place to *look* at what
+// the remote has. Moving the branch (and with it the user's files) belongs to a
+// deliberate pull elsewhere. After a fetch the ahead/behind numbers next to the
+// branch are current, and nothing on disk has changed.
+func ServeGitFetch(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	if !isGitRepo(projectPath) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAGitRepoShort")
+		return
+	}
+
+	if !fetchMu.TryLock() {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"success": false,
+			"error":   "git_busy",
+		})
+		return
+	}
+	defer fetchMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(r.Context(), fetchTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "fetch", "--all")
+	cmd.Dir = projectPath
+	out, err := cmd.CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+
+	if ctx.Err() == context.DeadlineExceeded {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "fetch_timeout",
+		})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success":     false,
+			"error":       "fetch_failed",
+			"errorDetail": msg,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		// Empty when nothing new arrived: `git fetch` prints nothing in that case,
+		// and the UI falls back to its own "fetched" wording.
+		"summary": lastNonEmptyLine(msg),
+	})
+}
+
+// divergenceAheadLimit / divergenceBehindLimit bound one response. The toolbar
+// counter already carries the total; these only cap how much of the detail is
+// shipped, so a branch that is thousands of commits from its upstream cannot
+// turn the history panel into a multi-megabyte download.
+const (
+	divergenceAheadLimit  = 500
+	divergenceBehindLimit = 50
+)
+
+// divergenceCommit is one commit that exists only on the upstream.
+type divergenceCommit struct {
+	SHA    string `json:"sha"`
+	Msg    string `json:"msg"`
+	Date   string `json:"date"`
+	Author string `json:"author"`
+}
+
+// divergenceInfo answers "which commits are the difference from the upstream".
+// The toolbar's ahead/behind counters only say how many.
+type divergenceInfo struct {
+	HasUpstream bool   `json:"hasUpstream"`
+	Upstream    string `json:"upstream"`
+	// Ahead: SHAs of commits on the branch but not on the upstream, newest
+	// first. The history list already holds these rows; it only needs the set to
+	// mark them "unpushed".
+	Ahead []string `json:"ahead"`
+	// Behind: commits on the upstream but not on the branch, newest first, with
+	// metadata so the panel can list them without a second request.
+	Behind      []divergenceCommit `json:"behind"`
+	AheadCount  int                `json:"aheadCount"`
+	BehindCount int                `json:"behindCount"`
+}
+
+// gitUpstreamOf resolves the remote-tracking branch a local ref tracks.
+// Returns an error when there is none (detached HEAD, or never pushed).
+func gitUpstreamOf(projectPath, target string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", target+"@{upstream}")
+	cmd.Dir = projectPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" {
+		return "", fmt.Errorf("no upstream for %s", target)
+	}
+	return name, nil
+}
+
+// gitOutput runs a read-only git command and returns its stdout.
+func gitOutput(projectPath string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = projectPath
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// ServeGitDivergence returns the commits that differ between a branch and its
+// upstream: the local-only SHAs (to mark rows already on screen) and the
+// remote-only commits (to list above the history).
+//
+// GET /api/git/divergence?ref=<branch>
+//
+// Deliberately a separate endpoint rather than more fields on
+// /api/git/project-history: that response is cached by (path, skip, HEAD sha),
+// so remote refs moving after a fetch would never invalidate it. This one is
+// computed fresh every time and reads only local refs — no network.
+func ServeGitDivergence(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	if !isGitRepo(projectPath) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAGitRepoShort")
+		return
+	}
+
+	target, lookup, ok := resolveDivergenceTarget(w, r, projectPath)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, http.StatusOK, collectDivergence(projectPath, target, lookup))
+}
+
+// resolveDivergenceTarget maps ?ref= to the two spellings git needs: the full
+// ref for rev-list/log, and the short name for @{upstream} (a full
+// refs/heads/... path is not accepted there).
+//
+// Only local branches are addressable — same restriction as resolveRefCommit,
+// which also makes a name starting with "-" impossible to read as an option.
+func resolveDivergenceTarget(w http.ResponseWriter, r *http.Request, projectPath string) (target, lookup string, ok bool) {
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	if ref == "" {
+		return "HEAD", "HEAD", true
+	}
+	if !isValidGitRefName(ref) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return "", "", false
+	}
+	// Distinguish "this branch does not exist" from "this branch has no
+	// upstream": both would otherwise look like an empty comparison.
+	if _, err := resolveRefCommit(projectPath, ref); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return "", "", false
+	}
+	return "refs/heads/" + ref, ref, true
+}
+
+// collectDivergence reads the comparison from local refs only — no network.
+func collectDivergence(projectPath, target, lookup string) divergenceInfo {
+	info := divergenceInfo{Ahead: []string{}, Behind: []divergenceCommit{}}
+	upstream, err := gitUpstreamOf(projectPath, lookup)
+	if err != nil {
+		// No upstream: the caller hides the whole comparison instead of drawing
+		// "↑0 ↓0", which would read as "in sync".
+		return info
+	}
+	info.HasUpstream = true
+	info.Upstream = upstream
+
+	info.AheadCount = gitRevCount(projectPath, upstream+".."+target)
+	info.BehindCount = gitRevCount(projectPath, target+".."+upstream)
+	info.Ahead = gitRevList(projectPath, upstream+".."+target, divergenceAheadLimit)
+	info.Behind = gitLogCommits(projectPath, target+".."+upstream, divergenceBehindLimit)
+	return info
+}
+
+// gitRevCount returns the number of commits in a revision range, or 0 when git
+// cannot answer (the caller treats that as "nothing known").
+func gitRevCount(projectPath, revRange string) int {
+	out, err := gitOutput(projectPath, "rev-list", "--count", revRange)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// gitRevList returns up to limit commit SHAs in a revision range.
+func gitRevList(projectPath, revRange string, limit int) []string {
+	out, err := gitOutput(projectPath, "rev-list", "--max-count", strconv.Itoa(limit), revRange)
+	shas := []string{}
+	if err != nil {
+		return shas
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
+			shas = append(shas, sha)
+		}
+	}
+	return shas
+}
+
+// gitLogCommits returns up to limit commits in a revision range, newest first.
+//
+// \x1f separates the fields: a commit subject may contain "|", and a stray pipe
+// would shift date and author into the wrong columns.
+func gitLogCommits(projectPath, revRange string, limit int) []divergenceCommit {
+	commits := []divergenceCommit{}
+	out, err := gitOutput(projectPath, "log",
+		"--max-count", strconv.Itoa(limit),
+		"--format=%H%x1f%s%x1f%ad%x1f%an", "--date=iso-strict", revRange)
+	if err != nil {
+		return commits
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.Split(line, "\x1f")
+		if len(parts) < 4 {
+			continue
+		}
+		commits = append(commits, divergenceCommit{
+			SHA: parts[0], Msg: parts[1], Date: parts[2], Author: parts[3],
+		})
+	}
+	return commits
+}
+
+// lastNonEmptyLine returns the last line with content in s.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // tagInfo represents a git tag in API responses.

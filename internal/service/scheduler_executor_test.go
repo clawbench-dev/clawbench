@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	-- Mirrors the production columns (database.go); the gate-failure streak
 	-- query reads these, so the fixture must carry them.
 	script_exit_code INTEGER,
-	script_outcome TEXT NOT NULL DEFAULT ''
+	script_outcome TEXT NOT NULL DEFAULT '',
+	restart_interrupted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);

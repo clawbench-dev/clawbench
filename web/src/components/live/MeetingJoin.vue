@@ -121,9 +121,11 @@ async function join(): Promise<void> {
   display: inline-flex; align-items: center; justify-content: center;
   width: calc(26 * var(--dp)); height: calc(26 * var(--dp));
   border: none; border-radius: var(--radius-sm); background: transparent;
-  color: var(--text-muted); cursor: pointer;
+  color: var(--text-secondary); cursor: pointer;
 }
-.meeting-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+@media (hover: hover) {
+  .meeting-icon-btn:hover { background: color-mix(in srgb, var(--text-primary) 12%, transparent); color: var(--text-primary); }
+}
 
 .meeting-body {
   flex: 1; min-height: 0; overflow-y: auto;

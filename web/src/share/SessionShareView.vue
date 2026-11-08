@@ -32,9 +32,10 @@
         >
           <Download :size="16" />
         </button>
-        <!-- Theme picker last: it is the only action available in every state
-             (loading / error / empty snapshot), so it must not shift position
-             when the others appear. -->
+        <!-- These two are the only actions available in every state (loading /
+             error / empty snapshot), so they come last and keep a fixed order:
+             they must not shift position when the others appear. -->
+        <ShareFitButton />
         <ShareThemeButton />
       </div>
     </div>
@@ -244,7 +245,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import AvatarStack, { type StackMember } from '@/components/common/AvatarStack.vue'
 import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
-import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, type MentionSpeaker } from '@/utils/groupRouting'
+import { resolveMentionDisplayName, GROUP_USER_TARGET_NAME, matchSpeakerName, normalizeSpeakerTarget, type MentionSpeaker } from '@/utils/groupRouting'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -258,6 +259,9 @@ import { getBackendDisplayName } from '@/utils/backendNames'
 import { flashElement } from '@/utils/domFlash'
 import { setShareSessionData, shareApiUrl, type ShareToolCallData } from './shareMode'
 import ShareThemeButton from './ShareThemeButton.vue'
+import ShareFitButton from './ShareFitButton.vue'
+import { shareNarrowQuery } from './shareScale'
+import { UI_SCALE_EVENT } from '@/utils/uiScale'
 import { downloadBlob } from '@/utils/download.ts'
 import { formatDuration } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
@@ -313,12 +317,43 @@ const snapshot = ref<Record<string, unknown> | null>(null)
 // the in-app conversation index uses. Entries ARE the parsed messages: the row
 // component derives its own preview text, so no separate projection is needed.
 const tocOpen = ref(true)
-/** Narrow layout (<900px): the TOC moves to a slide-in drawer over the content. */
+/**
+ * Narrow layout: the TOC moves to a slide-in drawer over the content.
+ *
+ * The threshold is a DESIGN width (900), so it is scaled by the applied factor
+ * — the share page sizes itself to the screen, and a bigger UI needs more
+ * window before a side rail leaves the conversation readable. See
+ * shareNarrowQuery.
+ */
 const isNarrow = ref(false)
 let tocMq: MediaQueryList | null = null
 function syncNarrow() {
   if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
-  isNarrow.value = window.matchMedia('(max-width: 899px)').matches
+  isNarrow.value = window.matchMedia(shareNarrowQuery()).matches
+}
+/**
+ * Re-create the media query after the interface scale changed.
+ *
+ * `shareNarrowQuery()` bakes the scale into the px threshold, so the query
+ * string is stale the moment the reader flips the fit switch — and the cached
+ * MediaQueryList only fires `change` when the WINDOW crosses its own (old)
+ * threshold, which may never happen. Without this the outline rail stays on a
+ * window that is now too narrow for it, squeezing the conversation, until the
+ * reader happens to resize the window.
+ */
+function rebuildNarrowQuery() {
+  if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
+  tocMq?.removeEventListener('change', syncNarrow)
+  tocMq = window.matchMedia(shareNarrowQuery())
+  tocMq.addEventListener('change', syncNarrow)
+  const wasNarrow = isNarrow.value
+  syncNarrow()
+  // Crossing the breakpoint resets the outline to its mode's default, the same
+  // way opening a conversation does (see `tocOpen = !isNarrow` in the loader).
+  // Without it, turning the switch on leaves the reader staring at a drawer
+  // that appeared unrequested and covers the page — including the switch that
+  // opened it.
+  if (isNarrow.value !== wasNarrow) tocOpen.value = !isNarrow.value
 }
 const contentRef = ref<HTMLElement | null>(null)
 /** Row shape consumed by MessageIndexRow (a structural subset of a parsed
@@ -390,13 +425,18 @@ const stackMembers = computed<StackMember[]>(() =>
 // it every group message reads as a plain member and the card never appears.
 const hostMemberId = ref('')
 // The routing @-chips name their targets by DISPLAY NAME, not row id; resolve
-// against the same frozen roster.
+// against the same frozen roster. Tolerates leading @/＠ and trailing parentheses.
+// Exact names are matched first so a bare `agy` cannot shadow `agy(zhu)`.
 const resolveSpeakerByName = computed(() => (name: string) => {
-  const target = (name || '').trim()
+  const target = normalizeSpeakerTarget(name)
   if (!target || !speakers.value) return null
   for (const id of Object.keys(speakers.value)) {
     const s = speakers.value[id]
     if (s && (s.name || '').trim() === target) return s
+  }
+  for (const id of Object.keys(speakers.value)) {
+    const s = speakers.value[id]
+    if (s && matchSpeakerName(target, s.name)) return s
   }
   return null
 })
@@ -827,16 +867,17 @@ async function loadSnapshot() {
 }
 
 onMounted(() => {
-  syncNarrow()
-  if (typeof window.matchMedia === 'function') {
-    tocMq = window.matchMedia('(max-width: 899px)')
-    tocMq.addEventListener('change', syncNarrow)
-  }
+  rebuildNarrowQuery()
+  // The scale is part of the query string, so flipping the fit switch needs a
+  // fresh MediaQueryList — see rebuildNarrowQuery. UI_SCALE_EVENT (not `resize`)
+  // is the only signal, because scaling does not change the viewport.
+  window.addEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
   void loadSnapshot()
 })
 
 onBeforeUnmount(() => {
   teardownTocObserver()
+  window.removeEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
   tocMq?.removeEventListener('change', syncNarrow)
   tocMq = null
 })

@@ -18,6 +18,7 @@
                  nothing shared, so hiding the entry point only stranded it. -->
             <button class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
               <MessageSquareShare :size="16" />
+              <span class="action-label">{{ t('actionLabels.sharedSessions') }}</span>
             </button>
           </template>
           <!-- Unpin sits in the trailing slot so it is the right-most control in
@@ -25,13 +26,13 @@
           <template #actions-end>
             <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
               <PanelRight :size="16" />
+              <span class="action-label">{{ t('session.unpinToSidebar') }}</span>
             </button>
           </template>
         </SessionListHeader>
       </div>
       <SessionList
         ref="listRef"
-        v-model:active-tab="activeTab"
         :current-session-id="currentSessionId"
         :running-session-ids="runningSessionIds"
         :is-active="isActive"
@@ -39,7 +40,6 @@
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"
       />
-      <SessionListTabs v-model:active-tab="activeTab" />
     </div>
     <!-- MUST stay inside the root element. SharedSessionsDrawer renders through
          BottomSheet, which Teleports to <body>, so its DOM position here is
@@ -61,7 +61,6 @@ import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
-import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
@@ -78,10 +77,6 @@ const { t } = useI18n()
 const listRef = ref(null)
 const sharedSessionsRef = ref(null)
 const rootRef = ref(null)
-// Which pane the list shows. Owned here (not in SessionList) because the tab bar
-// is rendered outside the scroll area, and intentionally not persisted: the list
-// always opens on the current project.
-const activeTab = ref('project')
 // Tracks a manual refresh so the sidebar refresh button can spin for the real
 // load duration (SessionList keeps its list visible during background reloads,
 // so `loading` alone can't drive the button).
@@ -152,8 +147,11 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
   flex-shrink: 0;
   cursor: default;
 }
+/* Pinned is a toggled-on state, not a primary action: same tint as the shared
+   ActionBar "active" treatment instead of a hard-coded blue that ignores the
+   theme. */
 .header-action-btn.sidebar-pin-btn.is-active {
-  background: rgba(0, 102, 204, 0.15);
-  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  color: var(--accent-color);
 }
 </style>

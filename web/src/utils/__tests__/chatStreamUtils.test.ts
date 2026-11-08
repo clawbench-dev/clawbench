@@ -23,7 +23,24 @@ import {
   untrackInFlightSend,
   isInFlightSend,
   resetInFlightSendsForTest,
+  isSubagentToolName,
 } from '@/utils/chatStreamUtils.ts'
+
+describe('isSubagentToolName', () => {
+  it('recognizes every backend spelling of the delegation tool', () => {
+    expect(isSubagentToolName('task')).toBe(true)
+    expect(isSubagentToolName('Agent')).toBe(true)
+    expect(isSubagentToolName('subagent')).toBe(true)
+    expect(isSubagentToolName('Sub Agent')).toBe(true)
+    expect(isSubagentToolName('sub-agent')).toBe(true)
+  })
+
+  it('rejects ordinary tools', () => {
+    expect(isSubagentToolName('Bash')).toBe(false)
+    expect(isSubagentToolName('')).toBe(false)
+    expect(isSubagentToolName(undefined)).toBe(false)
+  })
+})
 
 describe('FILE_MODIFYING_TOOLS', () => {
   it('contains Write', () => {

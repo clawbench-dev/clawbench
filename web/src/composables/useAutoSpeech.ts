@@ -46,6 +46,16 @@ const enabled = ref(false)
 const state = ref<SpeechState>('idle')
 const activeId = ref<string>('')
 const playingSummary = ref<string>('')
+/**
+ * The text currently being read out, as handed to `_speak`.
+ *
+ * Exposed for free-dialog mode: while the assistant talks, the microphone keeps
+ * hearing it, and "did the user say something, or is this the assistant's own
+ * voice coming back" can only be answered by comparing against this string.
+ * The summary is not enough — it is a compressed retelling, so it does not
+ * contain the words actually spoken.
+ */
+const speakingText = ref<string>('')
 const lastError = ref<string>('')
 let abortController: AbortController | null = null
 let currentEventSource: EventSource | null = null
@@ -162,11 +172,23 @@ let screenLockSuppressed = false
 
 const TAG = 'AutoSpeech'
 
+/**
+ * Suppresses the change-listener's toast while `setEnabled` is the one writing.
+ *
+ * `saveState()` dispatches `clawbench-autospeech-change`, whose listener shows a
+ * confirmation. That is right for the Settings page (where the event is the only
+ * notification) and wrong here, where `setEnabled` already decides whether to
+ * speak up — otherwise every toggle would queue two identical messages and only
+ * the second would ever be visible.
+ */
+let suppressChangeToast = false
+
 // Sync from Settings page changes
 if (typeof window !== 'undefined') {
   window.addEventListener('clawbench-autospeech-change', (e: Event) => {
     const val = (e as CustomEvent).detail as boolean
     enabled.value = val
+    if (suppressChangeToast) return
     toast.show(gt(val ? 'autoSpeech.enabled' : 'autoSpeech.disabled'), { icon: val ? 'sound' : 'mute', type: 'info', duration: 2000 })
   })
 }
@@ -177,15 +199,31 @@ export function useAutoSpeech() {
     setLocalConfig('autoSpeech', enabled.value)
   }
 
-  function toggle() {
-    enabled.value = !enabled.value
-    saveState()
-    if (!enabled.value) {
-      stopAudio()
-      toast.show(gt('autoSpeech.disabled'), { icon: 'mute', type: 'info', duration: 2000 })
-    } else {
-      toast.show(gt('autoSpeech.enabled'), { icon: 'sound', type: 'info', duration: 2000 })
+  /**
+   * Sets read-aloud on or off.
+   *
+   * `silent` suppresses the confirmation toast. Free-dialog mode uses it
+   * because it shows one combined message instead: the toast is a single
+   * slot, so two calls in the same tick overwrite each other and the user only
+   * ever sees the last one.
+   */
+  function setEnabled(next: boolean, options: { silent?: boolean } = {}) {
+    if (enabled.value === next) return
+    enabled.value = next
+    if (!next) stopAudio()
+    // The change listener fires from inside saveState; it must not also toast.
+    suppressChangeToast = true
+    try {
+      saveState()
+    } finally {
+      suppressChangeToast = false
     }
+    if (options.silent) return
+    toast.show(gt(next ? 'autoSpeech.enabled' : 'autoSpeech.disabled'), { icon: next ? 'sound' : 'mute', type: 'info', duration: 2000 })
+  }
+
+  function toggle(options: { silent?: boolean } = {}) {
+    setEnabled(!enabled.value, options)
   }
 
   // --- Audio Playback ---
@@ -268,6 +306,7 @@ export function useAutoSpeech() {
     clearPlaybackEndTimer()
     activeId.value = ''
     playingSummary.value = ''
+    speakingText.value = ''
     state.value = 'idle'
     // Release screen lock if suppressed for this output cycle
     if (releaseScreenLock && screenLockSuppressed) {
@@ -503,6 +542,7 @@ export function useAutoSpeech() {
 
     stopPlayback(false)
     lastError.value = ''
+    speakingText.value = text
 
     const controller = new AbortController()
     abortController = controller
@@ -655,10 +695,13 @@ export function useAutoSpeech() {
   return {
     enabled,
     state,
+    speakingText,
     lastError,
     toggle,
+    setEnabled,
     speakMessage,
     speakText,
+    isBusy,
     stopAudio,
     isActive,
     getSummary,

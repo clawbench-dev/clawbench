@@ -7,13 +7,15 @@ import type { MailAccount, MailFolder } from '@/utils/mailTypes'
 import MailFolderBar from '../MailFolderBar.vue'
 
 /**
- * The folder picker replaced the chip strip: one dropdown next to the account
- * picker. Two things matter — the unread counts stay visible (they used to be
- * badges on the chips) and picking a folder still switches the list.
+ * Two pickers with two different weights: the account is an avatar (switched
+ * rarely), the folder carries the name and its unread badge (switched all the
+ * time). What must hold: the unread count is visible without opening the menu,
+ * and picking either still reaches the parent.
  */
 
 const accounts = [
   { id: 1, name: '工作', email: 'me@example.com' },
+  { id: 2, name: '个人', email: 'other@example.com' },
 ] as MailAccount[]
 
 const folders: MailFolder[] = [
@@ -32,26 +34,53 @@ function mountBar(overrides: Record<string, unknown> = {}) {
 }
 
 describe('MailFolderBar', () => {
-  it('shows the current folder with its unread count in the picker', () => {
+  it('shows the current folder with its unread count as a badge', () => {
     const wrapper = mountBar()
     const trigger = wrapper.find('.mail-bar__folder .menu-select')
     expect(trigger.text()).toContain('Inbox')
-    expect(trigger.text()).toContain('(3)')
+    expect(trigger.find('.mail-loc__count').text()).toBe('3')
+    wrapper.unmount()
+
+    // Nothing unread: no badge at all, rather than an empty pill that still
+    // takes up room next to the folder name.
+    const quiet = mountBar({ folderId: 2 })
+    expect(quiet.find('.mail-bar__folder .mail-loc__count').exists()).toBe(false)
+    quiet.unmount()
+  })
+
+  it('collapses the account to an avatar and keeps the address in the menu', async () => {
+    const wrapper = mountBar()
+    const trigger = wrapper.find('.mail-bar__account .menu-select')
+    // First character of the account name, not the 20-character address.
+    expect(trigger.find('.mail-acct__avatar').text()).toBe('工')
+    expect(trigger.text()).not.toContain('me@example.com')
+
+    await trigger.trigger('click')
+    const rows = wrapper.findAll('.mail-bar__account .mail-menu__row')
+    expect(rows.map((el) => el.find('.mail-menu__name').text())).toEqual([
+      'me@example.com',
+      'other@example.com',
+    ])
+    // The user-given account name is the secondary line, the address the title.
+    expect(rows[0].find('.mail-menu__meta').text()).toBe('工作')
+    expect(rows[0].classes()).toContain('is-current')
+
+    await rows[1].trigger('click')
+    expect(wrapper.emitted('update:accountId')).toEqual([[2]])
     wrapper.unmount()
   })
 
-  it('lists every folder and switches on pick', async () => {
+  it('lists every folder with its count and switches on pick', async () => {
     const wrapper = mountBar()
     await wrapper.find('.mail-bar__folder .menu-select').trigger('click')
 
-    const items = wrapper.findAll('.menu-select-item')
-    const labels = items.map((el) => el.text())
-    expect(labels).toContain('Inbox (3)')
-    expect(labels).toContain('Sent')
+    const rows = wrapper.findAll('.mail-bar__folder .mail-menu__row')
+    expect(rows.map((el) => el.find('.mail-menu__name').text())).toEqual(['Inbox', 'Sent'])
+    // The count is its own element at the right edge, not part of the label.
+    expect(rows[0].find('.mail-menu__count').text()).toBe('3')
+    expect(rows[1].find('.mail-menu__count').exists()).toBe(false)
 
-    const sent = items.find((el) => el.text() === 'Sent')!
-    await sent.trigger('click')
-
+    await rows[1].trigger('click')
     expect(wrapper.emitted('select-folder')).toEqual([[2]])
     wrapper.unmount()
   })
@@ -99,5 +128,21 @@ describe('MailFolderBar', () => {
     await busyBtn.trigger('click')
     expect(busy.emitted('refresh')).toBeUndefined()
     busy.unmount()
+  })
+})
+
+describe('MailFolderBar — action labels', () => {
+  it('shows its action labels when the row can hold them', async () => {
+    // jsdom has no layout: the row measures 0 wide and assumes room. The
+    // overflow maths lives in ActionBar.test.ts.
+    const wrapper = mountBar()
+    await nextTick()
+    // The row is not the ActionBar any more: the account/folder pickers sit
+    // beside it, and only the icon buttons live inside.
+    const row = wrapper.find('.mail-bar__actions')
+    expect(row.classes()).toContain('ab--labels')
+    expect(row.findAll('.action-label').length).toBe(3)
+    expect(wrapper.find('.mail-bar__top .menu-select').exists()).toBe(true)
+    wrapper.unmount()
   })
 })

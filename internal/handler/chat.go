@@ -170,6 +170,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// both surfaces resolve state the same way.
 		st := sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport)
 		modeState, thinkingEffortState, modelListState := st.Mode, st.Effort, st.ModelList
+		configOptions := st.ConfigOptions
 		planState, usageState := st.Plan, st.Usage
 		commands, replayPending := st.Commands, st.ReplayPending
 		teamState := st.Team
@@ -183,10 +184,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "configOptions": configOptions, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "queue": queue, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, jsonBackend: sessionBackend, jsonAgentID: sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "sessionType": sessionType, "autoApprove": sessionAutoApprove, "cruise": sessionCruise, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "configOptions": configOptions, "commands": commands, "modelListState": modelListState, "planState": planState, "teamState": teamState, "usageState": usageState, "replayPending": replayPending})
 		return
 	}
 
@@ -765,11 +766,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
 					confirmResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, confirmReq, fileDir)
 					return service.DrainResult{
-						CancelReason:  confirmResult.cancelReason,
-						Err:           confirmResult.err,
-						Empty:         confirmResult.empty,
-						MsgID:         confirmResult.msgID,
-						GoalSatisfied: confirmResult.goalSatisfied,
+						CancelReason: confirmResult.cancelReason,
+						Err:          confirmResult.err,
+						Empty:        confirmResult.empty,
+						// A confirmation round can fail too (quota exhausted
+						// mid-cruise). Without this the loop sees a clean finish
+						// and keeps starting rounds against an account that
+						// cannot answer, up to the speech cap.
+						AbnormalReason: confirmResult.abnormalReason,
+						MsgID:          confirmResult.msgID,
+						GoalSatisfied:  confirmResult.goalSatisfied,
 					}
 				},
 			}),
@@ -798,6 +804,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 type sessionState struct {
 	Mode          any
 	Effort        any
+	ConfigOptions any
 	ModelList     any
 	Plan          any
 	Usage         any
@@ -825,9 +832,12 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// settings drawer. Only an explicit "cli" opts out; empty falls through to
 	// the agent-level lookups below, which is where the real transport is
 	// resolved.
-	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.Team != nil || s.ReplayPending {
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || s.ConfigOptions != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.Team != nil || s.ReplayPending {
 		st.Mode = s.Mode
 		st.Effort = s.Effort
+		// Assigned even when empty: a non-nil empty list means "the agent used
+		// to offer an option and no longer does", which the drawer must act on.
+		st.ConfigOptions = s.ConfigOptions
 		st.Commands = s.Commands
 		st.ModelList = s.ModelList
 		st.Plan = s.Plan
@@ -847,7 +857,22 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			if ms := reg.GetModeState(sessionAgentID, ""); ms != nil {
 				st.Mode = ms
 			}
-			if es := reg.GetThinkingEffortState(sessionAgentID, ""); es != nil {
+			// Levels are per MODEL (issue #637): use the model this session
+			// will run, not whichever model last refreshed the agent-level
+			// list. The session row survives a restart, so this is also what
+			// makes the drawer correct before the first message after a restart.
+			//
+			// A session created without a model (and every group-member row)
+			// stores "", which would find nothing — resolve the agent's default,
+			// the model its first turn will actually run. Same rule as
+			// sessionOffersThinkingEffort.
+			effortModel := service.GetSessionModel(sessionID)
+			if effortModel == "" {
+				if a := model.GetAgent(sessionAgentID); a != nil {
+					effortModel = a.DefaultModelID()
+				}
+			}
+			if es := reg.GetThinkingEffortStateForModel(sessionAgentID, effortModel, ""); es != nil {
 				st.Effort = es
 			}
 			if cmds := reg.GetCommands(sessionAgentID); len(cmds) > 0 {
@@ -949,7 +974,7 @@ type streamRunResult struct {
 	cancelReason   string // "", "user"
 	err            string // error message if execution failed
 	empty          bool   // true if AI returned no content
-	abnormalReason string // non-empty when the turn may be auto-resumed
+	abnormalReason string // non-empty when the turn did NOT finish cleanly (may be a permanent, non-resumable failure)
 	msgID          int64  // finalized assistant row id (0 if none) — see DrainResult.MsgID
 	goalSatisfied  bool   // true when the reply declared <clawbench-goal-satisfied/>
 }

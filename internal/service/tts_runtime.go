@@ -158,8 +158,8 @@ func EvictTTSCache(projectPath string, maxFiles int) {
 	}
 
 	// Collect audio files only (.mp3, .wav, .pcm), skip .summary.txt and other
-	// files. .pcm is the raw stream served to firmware clients; without it the
-	// device cache would grow without bound.
+	// files. .pcm is legacy: the endpoint that produced it is gone, but old
+	// caches on disk still need to age out instead of growing without bound.
 	var files []cachedTTSFile
 	for _, e := range entries {
 		if e.IsDir() {
