@@ -76,8 +76,22 @@ const HI_DPI_SCREEN = { width: 2560, height: 1440 }
 /** The design reference: the fit is exactly 1, so nothing may change. */
 const REFERENCE_SCREEN = { width: 1920, height: 1080 }
 
+/**
+ * `newContext({ screen })` is a CHROMIUM-ONLY option.
+ *
+ * Playwright's Firefox and WebKit ignore it and report `screen` as the viewport
+ * (measured: a 1200x800 viewport with `screen: 2560x1440` reports 1200x800), so
+ * the fit factor computes to 1 and the switch — correctly — does not render.
+ * "A large panel gets offered the switch" therefore cannot be staged on those
+ * engines at all; asserting it there pins a harness limitation, not the product.
+ */
+function screenOverrideSupported(browserName: string): boolean {
+  return browserName === 'chromium'
+}
+
 test.describe('Share page fit-to-screen switch', () => {
-  test('opens at the design size until the reader asks', async ({ page }) => {
+  test('opens at the design size until the reader asks', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     // The default matters: a share link is opened by strangers, and silently
     // enlarging their page would be a surprise.
     const path = await shareConversation(page)
@@ -99,7 +113,8 @@ test.describe('Share page fit-to-screen switch', () => {
     }
   })
 
-  test('one click enlarges the page, a second click restores it', async ({ page }) => {
+  test('one click enlarges the page, a second click restores it', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     const path = await shareConversation(page)
     const ctx = await page.context().browser()!.newContext({
       viewport: { width: 1200, height: 800 },
@@ -129,7 +144,8 @@ test.describe('Share page fit-to-screen switch', () => {
     }
   })
 
-  test('the choice survives a reload', async ({ page }) => {
+  test('the choice survives a reload', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     // A reader who fitted the page expects it to stay fitted when they come
     // back — the switch is a preference, not a one-off action.
     const path = await shareConversation(page)
@@ -178,7 +194,8 @@ test.describe('Share page fit-to-screen switch', () => {
     }
   })
 
-  test('a page loaded with the switch already on can be turned back off', async ({ page }) => {
+  test('a page loaded with the switch already on can be turned back off', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     // The other direction of the same state: the document loads while fitted
     // (so the outline starts as a closed drawer), then the reader turns fitting
     // off. The rail has to come back — it used to stay hidden because the
@@ -216,7 +233,8 @@ test.describe('Share page fit-to-screen switch', () => {
     }
   })
 
-  test('the fitted page still fits the window', async ({ page }) => {
+  test('the fitted page still fits the window', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     // Scaling grows every element without widening the window, so the failure
     // mode is a horizontal overflow: content pushed past the right edge.
     const path = await shareConversation(page)
@@ -257,7 +275,8 @@ test.describe('Share page fit-to-screen switch', () => {
     }
   })
 
-  test('flipping the switch re-decides the outline layout', async ({ page }) => {
+  test('flipping the switch re-decides the outline layout', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     // The rail/drawer threshold is a DESIGN width multiplied by the factor
     // (see shareNarrowQuery), so turning the switch on moves the threshold
     // ABOVE a window that used to be wide. That decision is cached in a
@@ -444,7 +463,8 @@ test.describe('Meeting pages carry the switch', () => {
     }, token)
   }
 
-  test('the nickname gate has a topbar and grows on click', async ({ page }) => {
+  test('the nickname gate has a topbar and grows on click', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     const room = await createRoom(page)
     try {
       const ctx = await page.context().browser()!.newContext({
@@ -488,7 +508,8 @@ test.describe('Meeting pages carry the switch', () => {
     }
   })
 
-  test('the live shell has a topbar, and dock labels follow the measured width', async ({ page }) => {
+  test('the live shell has a topbar, and dock labels follow the measured width', async ({ page, browserName }) => {
+    test.skip(!screenOverrideSupported(browserName), 'newContext({screen}) is chromium-only')
     // 600px is wide enough for labels at 100% (threshold 520) and too narrow
     // once the page is fitted (600 / 1.33 ≈ 451 design px). Same window, same
     // dock — only the scale moved. A media query cannot see that.
