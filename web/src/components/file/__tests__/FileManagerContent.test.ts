@@ -1489,8 +1489,10 @@ describe('FileManagerContent — resident search', () => {
 
   it('swaps the browse toolbar for the multi-select toolbar in place', async () => {
     const wrapper = mountContent({ currentDir: 'src' })
-    // Browse toolbar: the sort dropdown is present, the multi-select bar is not.
-    expect(wrapper.find('.toolbar-dropdown-wrap').exists()).toBe(true)
+    // Browse toolbar: the sort button is present, the multi-select bar is not.
+    // It lives in `.toolbar-dropdown-wrap` (which anchors its popup), so the
+    // shared ActionBar rules reach it as a descendant, not a direct child.
+    expect(wrapper.find('.dir-toolbar-btns .toolbar-btn').exists()).toBe(true)
     expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(false)
 
     wrapper.vm.multiSelectState.active = true
