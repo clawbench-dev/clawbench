@@ -2386,7 +2386,10 @@ defineExpose({
   padding: var(--space-2) var(--space-4) 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
-  color: var(--text-secondary);
+  /* Metadata under the composer, not body copy: the chips are one tier below
+     the text you type. The "off" states of the mode chips read as muted (see
+     .session-info-cruise-on), which only holds while this stays muted. */
+  color: var(--text-muted, #999);
   overflow: hidden;
   white-space: nowrap;
   min-width: 0;
@@ -2892,7 +2895,7 @@ defineExpose({
 /* Nothing recognised yet: this is a hint, not content — muted so it is not
    mistaken for what the microphone heard. */
 .free-dialog-text.is-hint {
-  color: var(--text-secondary);
+  color: var(--text-muted, #999);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3103,7 +3106,7 @@ defineExpose({
 
 .attachment-filesize {
   font-size: var(--font-size-2xs);
-  color: var(--text-secondary);
+  color: var(--text-muted, #999);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3224,7 +3227,11 @@ defineExpose({
 }
 
 .chat-textarea::placeholder {
-  color: var(--text-secondary);
+  /* The muted tier, not --text-secondary: a placeholder is a hint, not content.
+     It was swept up by a bulk --text-muted → --text-secondary replacement during
+     the toolbar-colour refactor and became the only placeholder in the app one
+     step brighter than the rest, reading like already-typed text. */
+  color: var(--text-muted, #999);
 }
 
 .chat-textarea:disabled {
