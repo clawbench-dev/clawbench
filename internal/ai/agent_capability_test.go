@@ -352,6 +352,63 @@ func TestRegistry_GetModelListState(t *testing.T) {
 	})
 }
 
+// Every model_list_update emit path funnels through GetModelListState — the
+// per-turn re-emit, the reconnect replay, and the HTTP endpoints. Attaching
+// prices here is what keeps the tag on screen mid-session; attaching them at
+// the emitters instead left the paths that were missed shipping an unpriced
+// list, and the client rebuilds its picker from whatever arrives.
+func TestRegistry_GetModelListState_CarriesPrices(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	model.ReplaceCatalog(&model.Catalog{
+		Providers: map[string]model.CatalogProvider{
+			"zai": {
+				ID: "zai", Protocol: model.ProviderProtocolOpenAI,
+				Models: []model.CatalogModel{
+					{ID: "glm-5.2", Name: "GLM-5.2", InputPrice: 1.4, OutputPrice: 4.4},
+				},
+			},
+		},
+	})
+	t.Cleanup(func() { model.ReplaceCatalog(nil) })
+
+	reg.Update("priced", &AgentCapability{
+		AvailableModels: []model.AgentModel{{ID: "glm-5.2", Name: "GLM-5.2"}},
+	})
+	ml := reg.GetModelListState("priced", "glm-5.2")
+	require.NotNil(t, ml)
+	require.Len(t, ml.Models, 1)
+	require.NotNil(t, ml.Models[0].Price, "the emitted list must carry prices")
+	assert.Equal(t, 1.4, ml.Models[0].Price.Input)
+}
+
+// The registry's own slice is persisted to agents.acp_available_models, so the
+// price must be attached to a COPY. If GetModelListState wrote into the
+// registry, a derived price would land in the database.
+func TestRegistry_GetModelListState_DoesNotMutateStoredModels(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	model.ReplaceCatalog(&model.Catalog{
+		Providers: map[string]model.CatalogProvider{
+			"zai": {
+				ID: "zai", Protocol: model.ProviderProtocolOpenAI,
+				Models: []model.CatalogModel{
+					{ID: "glm-5.2", Name: "GLM-5.2", InputPrice: 1.4, OutputPrice: 4.4},
+				},
+			},
+		},
+	})
+	t.Cleanup(func() { model.ReplaceCatalog(nil) })
+
+	reg.Update("stored", &AgentCapability{
+		AvailableModels: []model.AgentModel{{ID: "glm-5.2", Name: "GLM-5.2"}},
+	})
+	require.NotNil(t, reg.GetModelListState("stored", ""))
+
+	cap := reg.Get("stored")
+	require.NotNil(t, cap)
+	require.Len(t, cap.AvailableModels, 1)
+	assert.Nil(t, cap.AvailableModels[0].Price, "the stored list must stay price-free")
+}
+
 func TestRegistry_GetCommands(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
 	t.Run("NoCapability", func(t *testing.T) {

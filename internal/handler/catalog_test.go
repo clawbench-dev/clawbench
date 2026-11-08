@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,13 @@ import (
 	"clawbench/internal/store"
 )
 
-const catalogSnapshotFixture = `{
-  "fetched_at": "2026-10-31T00:00:00Z",
+// catalogSnapshotTemplate is a snapshot with `fetched_at` substituted at write
+// time. A hard-coded date would silently become older than model.CatalogTTL
+// (7 days) and flip `stale` to true — the test would start failing on a
+// calendar date with no code change.
+const catalogSnapshotTemplate = `{
+  "fetched_at": "__FETCHED_AT__",
+  "price_schema": __PRICE_SCHEMA__,
   "source": "https://models.dev/api.json",
   "providers": {
     "anthropic": {
@@ -35,21 +41,29 @@ const catalogSnapshotFixture = `{
   }
 }`
 
+// catalogSnapshotFixture renders the template as if it had just been fetched.
+func catalogSnapshotFixture() string {
+	// The schema marker is substituted, not hard-coded: a fixture claiming to be
+	// freshly fetched must carry the CURRENT schema, or model.CatalogStale would
+	// age it out and every test using it would see stale=true. Substituting
+	// keeps the fixture honest across a schema bump instead of pinning it to a
+	// literal that silently goes out of date.
+	withDate := strings.Replace(
+		catalogSnapshotTemplate,
+		"__FETCHED_AT__",
+		time.Now().UTC().Format(time.RFC3339),
+		1,
+	)
+	return strings.Replace(withDate, "__PRICE_SCHEMA__", strconv.Itoa(model.CatalogPriceSchema), 1)
+}
+
 // installCatalog writes a snapshot and loads it, so handler tests exercise the
 // same file → memory path the server uses at boot.
 func installCatalog(t *testing.T) {
 	t.Helper()
 	path := model.CatalogPath()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	// The fixture's own timestamp is a placeholder: writing it verbatim made the
-	// snapshot age past CatalogTTL on a fixed calendar day, after which the
-	// "is it stale?" assertions flipped without a single code change. Stamp it
-	// with the current time so the fixture means "a snapshot fetched just now".
-	snapshot := strings.Replace(
-		catalogSnapshotFixture, "2026-10-31T00:00:00Z",
-		time.Now().UTC().Format(time.RFC3339), 1,
-	)
-	require.NoError(t, os.WriteFile(path, []byte(snapshot), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte(catalogSnapshotFixture()), 0o600))
 	require.NoError(t, model.LoadCatalogFromDisk())
 }
 

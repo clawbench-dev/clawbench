@@ -942,6 +942,8 @@ export default {
       notAvailable: 'Not available in current mode',
       noUsage: 'This session has not reported any context usage yet. Agents on the CLI transport do not report a context window.',
       noSearchResults: 'No matching models',
+      priceHint: 'USD per million tokens (input / output)',
+      priceApproxHint: 'Reference price from third-party providers, not this agent\'s own list price',
     },
     thinkingEffortSwitcher: {
       title: 'Thinking',

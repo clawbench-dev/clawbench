@@ -518,3 +518,28 @@ func TestLoadCatalogFromDisk_MissingFileIsNotAnError(t *testing.T) {
 		t.Fatal("a missing snapshot must not install one")
 	}
 }
+
+// A snapshot written before prices were parsed has none at all; without this
+// the picker would stay price-less for a full TTL after the upgrade.
+func TestCatalogStale_PrePriceSnapshotIsRefetched(t *testing.T) {
+	fresh := &Catalog{
+		FetchedAt: time.Now().UTC(),
+		Providers: map[string]CatalogProvider{
+			"zai": {ID: "zai", Models: []CatalogModel{{ID: "glm-5.2", InputPrice: 1.4}}},
+		},
+		PriceSchema: CatalogPriceSchema,
+	}
+	ReplaceCatalog(fresh)
+	t.Cleanup(func() { ReplaceCatalog(nil) })
+	if CatalogStale() {
+		t.Fatal("a fresh, price-bearing snapshot must not be stale")
+	}
+
+	// Same timestamp, but produced by the old parser: no schema marker.
+	legacy := *fresh
+	legacy.PriceSchema = 0
+	ReplaceCatalog(&legacy)
+	if !CatalogStale() {
+		t.Fatal("a snapshot predating price parsing must be refetched once")
+	}
+}

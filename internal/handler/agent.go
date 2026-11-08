@@ -408,6 +408,32 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		agents[i] = gateUnconfirmedACPModels(&clone)
 	}
 
+	// Attach per-model prices (issue #643). Done here, on copies, rather than
+	// inside ResolveModels: prices come from a different source (the weekly
+	// catalog snapshot) and must never be written back into the agent's stored
+	// model list. Every list the picker can render is priced — the resolved
+	// list, the CLI baseline behind the transport switch, and the unconfirmed
+	// catalog fallback.
+	for i, a := range agents {
+		priced := *a
+		priced.Models = model.WithPrices(a.Models)
+		priced.CLIModels = model.WithPrices(a.CLIModels)
+		priced.CatalogModels = model.WithPrices(a.CatalogModels)
+		agents[i] = &priced
+	}
+	for _, s := range states {
+		if s.ModelList == nil {
+			continue
+		}
+		// The client renders modelListState directly after creating a session,
+		// so it needs the same prices the agent list carries. Models is already
+		// priced by GetModelListState; the two derived lists are built here.
+		ml := *s.ModelList
+		ml.ResolvedModels = model.WithPrices(s.ModelList.ResolvedModels)
+		ml.CLIModels = model.WithPrices(s.ModelList.CLIModels)
+		s.ModelList = &ml
+	}
+
 	// Attach usage counts (interactive sessions / tasks / group memberships) so
 	// the config panel can display them and gate the delete button without a
 	// second round trip. These are DERIVED values, not persisted columns, so
@@ -1569,8 +1595,11 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	resolved := resolveRefreshedModels(agent, models)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"models":    resolved,
-		"cliModels": models,
+		// Prices must be attached on BOTH refresh paths: the client writes these
+		// lists straight onto the agent, so a refresh that omitted them would
+		// wipe every price tag until the next /api/agents fetch.
+		"models":    model.WithPrices(resolved),
+		"cliModels": model.WithPrices(models),
 	})
 }
 
@@ -1673,8 +1702,8 @@ func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Age
 		"elapsed", time.Since(start))
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"models":    resolved,
-		"cliModels": cliModels,
+		"models":    model.WithPrices(resolved),
+		"cliModels": model.WithPrices(cliModels),
 		"acpState":  state,
 	})
 }

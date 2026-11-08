@@ -474,6 +474,15 @@ func (r *AgentCapabilityRegistry) GetThinkingEffortState(agentID, currentID stri
 
 // GetModelListState returns a ModelListState combining agent-level available
 // models with the session-level current model ID.
+//
+// Prices are attached here (issue #643) because this is the one place every
+// model_list_update emit path funnels through — the per-turn re-emit, the
+// reconnect replay and the HTTP endpoints. Attaching them at the emitters
+// instead left whichever path was missed shipping an unpriced list, and the
+// client rebuilds its picker from it, so the tags vanished mid-session.
+//
+// WithPrices returns a COPY, which is required: AvailableModels is persisted to
+// agents.acp_available_models, and a price must never reach the database.
 func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID string) *ModelListState {
 	r.mu.RLock()
 	agentCap, ok := r.caps[agentID]
@@ -483,7 +492,7 @@ func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID stri
 	}
 	return &ModelListState{
 		CurrentModelID: currentModelID,
-		Models:         agentCap.AvailableModels,
+		Models:         model.WithPrices(agentCap.AvailableModels),
 	}
 }
 

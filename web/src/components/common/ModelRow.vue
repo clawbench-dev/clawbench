@@ -5,6 +5,10 @@
       <span class="model-row__name">{{ name }}</span>
       <span v-if="showId" class="model-row__id">{{ displayId }}</span>
     </span>
+    <!-- Price tag (issue #643). Sits after the labels so it never pushes the
+         name off its ellipsis budget; the "~" marks a price that did not come
+         from the model's own vendor. -->
+    <span v-if="priceLabel" class="model-row__price" :title="priceTitle">{{ priceLabel }}</span>
     <slot />
   </div>
 </template>
@@ -14,9 +18,12 @@ import { computed } from 'vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { getModelProvider } from '@/utils/providerIcons'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
+import { useI18n } from 'vue-i18n'
+import type { ModelPrice } from '@/utils/modelPrice'
 
 /**
- * Shared model row: provider icon + a two-line name/id label + a trailing slot.
+ * Shared model row: provider icon + a two-line name/id label + an optional
+ * price tag + a trailing slot.
  *
  * Both the session model picker (chat/SessionDrawer.vue) and the agent config's
  * preferred-model select (settings/SettingsItem.vue) render the same row, so the
@@ -33,11 +40,16 @@ const props = withDefaults(defineProps<{
   active?: boolean
   /** Provider icon size in px. */
   iconSize?: number
+  /** Per-million-token list price, when the catalog knows one. */
+  price?: ModelPrice | null
 }>(), {
   modelId: '',
   active: false,
   iconSize: 16,
+  price: null,
 })
+
+const { t } = useI18n()
 
 /**
  * The string handed to ProviderIcon for provider detection.
@@ -60,6 +72,31 @@ const providerName = computed(() => {
  */
 const showId = computed(() => !!props.modelId && props.modelId !== props.name)
 const displayId = computed(() => formatModelIdForDisplay(props.modelId))
+
+/**
+ * Compact price tag: "$3 / $15" for a price published by the model's own
+ * vendor, "~$3 / $15" when it is a consensus across resellers (see
+ * model.LookupModelPrice). Rendered only when a trustworthy price exists —
+ * an agent whose ids the catalog does not know shows nothing rather than a
+ * guess.
+ */
+const priceLabel = computed(() => {
+  const p = props.price
+  if (!p) return ''
+  // Two decimals for dollar-and-up, three below that, and significant digits
+  // for the sub-cent prices some models carry — a plain round would print
+  // "$0", which reads as free rather than cheap.
+  const fmt = (v: number) => {
+    if (v >= 1) return String(Math.round(v * 100) / 100)
+    if (v >= 0.01) return String(Math.round(v * 1000) / 1000)
+    return String(Number(v.toPrecision(2)))
+  }
+  return `${p.approx ? '~' : ''}$${fmt(p.input)} / $${fmt(p.output)}`
+})
+
+const priceTitle = computed(() =>
+  t(props.price?.approx ? 'chat.sessionSetting.priceApproxHint' : 'chat.sessionSetting.priceHint'),
+)
 </script>
 
 <style scoped>
@@ -105,5 +142,16 @@ const displayId = computed(() => formatModelIdForDisplay(props.modelId))
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   opacity: var(--opacity-soft);
+}
+
+/* Price tag. Never shrinks and never wraps: the name above it already
+   ellipsizes, so this is the one element that must stay legible. */
+.model-row__price {
+  flex: none;
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  opacity: var(--opacity-muted, 0.75);
+  white-space: nowrap;
 }
 </style>

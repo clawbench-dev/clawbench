@@ -446,7 +446,9 @@ func StartModelDiscoveryAsync(db dbutil.Writer, withAgentsLock func(func()), onC
 
 // saveAgentToDB inserts a minimal agent record.
 func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
-	modelsJSON, err := json.Marshal(agent.Models)
+	// Prices are derived from the weekly catalog snapshot and must not outlive
+	// it; see model.WithPrices.
+	modelsJSON, err := json.Marshal(WithoutPrices(agent.Models))
 	if err != nil {
 		return err
 	}
