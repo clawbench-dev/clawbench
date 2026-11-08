@@ -78,6 +78,23 @@ type catalogFlight struct {
 	done chan struct{}
 	cat  *Catalog
 	err  error
+	// waiters counts the callers that joined this flight. It is only read by
+	// tests (see CatalogFlightWaitersForTest) so they can wait for a second
+	// caller to actually attach before letting the download finish — without
+	// it, releasing the server races the joiner's first instruction and the
+	// "both callers share one download" assertion becomes flaky.
+	waiters atomic.Int32
+}
+
+// CatalogFlightWaitersForTest reports how many callers have joined the
+// in-flight refresh (0 when none is in flight). Test-only.
+func CatalogFlightWaitersForTest() int32 {
+	catalogMu.Lock()
+	defer catalogMu.Unlock()
+	if catalogRefresh == nil {
+		return 0
+	}
+	return catalogRefresh.waiters.Load()
 }
 
 // ReplaceCatalog swaps the in-memory snapshot. Production loads it from disk or
@@ -175,6 +192,7 @@ func RefreshCatalog(ctx context.Context) (*Catalog, error) {
 	catalogMu.Lock()
 	if catalogRefresh != nil {
 		flight := catalogRefresh
+		flight.waiters.Add(1)
 		catalogMu.Unlock()
 		select {
 		case <-flight.done:

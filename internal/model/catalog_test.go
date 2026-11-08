@@ -288,6 +288,19 @@ func TestRefreshCatalog_SharesInFlightDownload(t *testing.T) {
 		cat, err := RefreshCatalog(context.Background())
 		secondCh <- result{cat, err}
 	}()
+
+	// Wait until the second caller has actually JOINED the in-flight download.
+	// Releasing the server immediately after starting the goroutine races its
+	// first instruction: if the download finishes first, the joiner finds no
+	// flight and starts a second download of its own — which is exactly what
+	// this test is meant to rule out, so the failure would be spurious.
+	deadline := time.Now().Add(5 * time.Second)
+	for CatalogFlightWaitersForTest() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the second caller never joined the in-flight download")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(release)
 
 	first := <-firstCh
