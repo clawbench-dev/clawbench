@@ -325,3 +325,33 @@ describe('one toolbar row height', () => {
     ).toEqual([])
   })
 })
+
+describe('text controls inside a bar keep their own box', () => {
+  it('excludes .ab-auto from the icon-button box and icon sizing', () => {
+    // Regression: the shared "icon button" box applied to every <button> in a
+    // row, so the forge panel's repo badge was fixed at 28x28 and the repo name
+    // rendered as a single character plus an ellipsis.
+    expect(bare).toMatch(
+      /\.ab--header button:not\(\[data-ab-more\]\):not\(\.ab-auto\),\s*\n\.ab--bar button:not\(\[data-ab-more\]\):not\(\.ab-auto\)\s*\{[^}]*width:\s*var\(--ab-btn-size\)/,
+    )
+    expect(bare).toMatch(/\.ab--bar button:not\(\[data-ab-more\]\):not\(\.ab-auto\) svg/)
+  })
+
+  it('marks every text control that lives in a bar', () => {
+    expect(readWebFile('src/components/forge/ForgePanelContent.vue')).toContain(
+      'forge-repo-badge ab-auto',
+    )
+    const mail = readWebFile('src/components/mail/MailFolderBar.vue')
+    expect(mail.match(/<MenuSelect\s+class="ab-auto"/g) ?? []).toHaveLength(2)
+  })
+})
+
+describe('MenuSelect can be marked as a text control', () => {
+  it('forwards attributes to its trigger button', () => {
+    // Two root nodes, so the class only reaches the button with this binding;
+    // without it the mail bar's `ab-auto` is silently dropped.
+    const src = readWebFile('src/components/common/MenuSelect.vue')
+    expect(src).toContain('inheritAttrs: false')
+    expect(src).toContain('v-bind="$attrs"')
+  })
+})

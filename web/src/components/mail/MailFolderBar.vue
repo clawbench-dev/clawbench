@@ -8,6 +8,7 @@
            from reading as one form field. -->
       <div class="mail-bar__account" :title="t('mail.bar.account')">
         <MenuSelect
+          class="ab-auto"
           :model-value="accountId"
           :options="accountOptions"
           :menu-width="280"
@@ -47,6 +48,7 @@
 
       <div class="mail-bar__folder" :title="t('mail.bar.folder')">
         <MenuSelect
+          class="ab-auto"
           :model-value="folderId"
           :options="folderOptions"
           :placeholder="t('mail.bar.folder')"

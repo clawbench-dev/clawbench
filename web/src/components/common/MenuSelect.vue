@@ -5,6 +5,7 @@
        clamping and outside-click handling match every other in-app dropdown. -->
   <button
     ref="anchorRef"
+    v-bind="$attrs"
     type="button"
     class="menu-select"
     :class="{ 'is-open': show, 'is-disabled': disabled, 'is-block': block }"
@@ -65,6 +66,12 @@ import { computed, ref, onBeforeUnmount } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import { claimOpenMenu, releaseOpenMenu } from '@/utils/exclusiveMenu'
+
+/* Two root nodes (the trigger + the popup), so Vue cannot fall attributes
+   through on its own. Callers style the trigger (the mail bar's `ab-auto` is
+   what keeps it out of the ActionBar's fixed icon-button box), so the attrs go
+   to the button explicitly. */
+defineOptions({ inheritAttrs: false })
 
 export interface MenuSelectOption {
   value: string | number

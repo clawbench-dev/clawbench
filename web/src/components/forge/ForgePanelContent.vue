@@ -72,7 +72,7 @@
             <button
               v-if="items.binding.value"
               ref="repoBadgeRef"
-              class="forge-repo-badge"
+              class="forge-repo-badge ab-auto"
               :title="items.binding.value.slug"
               @click.stop="repoMenuOpen = !repoMenuOpen"
             >
