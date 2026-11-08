@@ -165,14 +165,19 @@ const sessionBarColor = computed(() => {
    applies to buttons injected into the #actions slot by parents (e.g. the
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
-/* Size, radius, colour and hover come from the shared ActionBar row rules
-   (size="bar"). Every button in this row uses the same resting colour: it is a
-   utility row (search / shared / create / refresh / pin), and the accent used
-   to make one or two of them read as a different kind of control. The accent
-   still marks a TOGGLED-ON state (the sidebar pin), which is a state rather
-   than emphasis. */
+/* Size, radius, colour, hover AND the gap between buttons come from the shared
+   ActionBar row rules (size="bar"). Every button in this row uses the same
+   resting colour: it is a utility row (search / shared / create / refresh /
+   pin), and the accent used to make one or two of them read as a different kind
+   of control. The accent still marks a TOGGLED-ON state (the sidebar pin), which
+   is a state rather than emphasis.
+
+   This block used to add `margin-left: var(--space-3)` as well, which stacked on
+   top of the bar's own 8px gap: the row measured 14px between buttons, and it
+   got worse when the labels appeared (each button also gained 8px of side
+   padding, so the visual gap read as even wider). The bar owns the spacing —
+   nothing here should repeat it. */
 .header-action-btn {
-  margin-left: var(--space-3);
   border: none;
   cursor: pointer;
   display: flex;
