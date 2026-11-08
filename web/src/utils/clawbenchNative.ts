@@ -280,6 +280,15 @@ export interface ClawBenchNative {
   /** Write the Android local h2 tunnel toggle (SharedPreferences). */
   setTunnelTransportH2Enabled?(enabled: boolean): Promise<void> | void
   getPendingNavigation(): Promise<string>
+  /**
+   * Take a share the shell imported before this page could accept it (cold
+   * start), clearing it on the native side.
+   *
+   * Optional: only Android implements it. HarmonyOS delivers the result in the
+   * `clawbench-share-imported` event instead, and a host without the method
+   * simply has nothing pending to pull.
+   */
+  getPendingShareImport?(): Promise<string> | string
   /** HarmonyOS reports permission/delivery state separately from the server's push preference. */
   getNativePushStatus?(): Promise<string>
   readClipboardText?(): Promise<string> | string

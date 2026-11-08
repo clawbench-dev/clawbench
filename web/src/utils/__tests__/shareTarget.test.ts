@@ -33,7 +33,7 @@ describe('consumeShareTargetResult', () => {
   })
 
   it('maps the known failure reasons', () => {
-    for (const reason of ['empty', 'save', 'invalid'] as const) {
+    for (const reason of ['empty', 'save', 'invalid', 'unauthorized', 'no_project'] as const) {
       setSearch(`?${SHARE_TARGET_PARAM}=${reason}`)
       expect(consumeShareTargetResult()).toEqual({ paths: [], failure: reason, failed: 0 })
     }
@@ -108,6 +108,11 @@ describe('stageShareTargetResult', () => {
       empty: 'chat.attach.shareTargetEmpty',
       save: 'chat.attach.shareTargetSaveFailed',
       invalid: 'chat.attach.shareTargetInvalid',
+      // Logged out / no project are shares that were dropped by the server
+      // before it ever looked at the files. Reporting them as "could not read
+      // the shared content" would send the user chasing the wrong problem.
+      unauthorized: 'chat.attach.shareTargetUnauthorized',
+      no_project: 'chat.attach.shareTargetNoProject',
     } as const
     for (const [reason, key] of Object.entries(cases)) {
       const { attach, attached } = makeAttach()

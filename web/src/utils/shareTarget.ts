@@ -9,7 +9,7 @@ export const SHARE_TARGET_PARAM = 'share_target'
 export const SHARE_TARGET_FAILED_PARAM = 'share_target_failed'
 
 /** Failure reasons the backend can report. Anything else is treated as generic. */
-export type ShareTargetFailure = 'empty' | 'save' | 'invalid'
+export type ShareTargetFailure = 'empty' | 'save' | 'invalid' | 'unauthorized' | 'no_project'
 
 export interface ShareTargetResult {
   /** Project-relative paths of the files the server stored. */
@@ -20,24 +20,62 @@ export interface ShareTargetResult {
   failed: number
 }
 
-/** Native imports must stay in the project explicitly confirmed in the system dialog. */
+/**
+ * Validate a native import against the project it claims to belong to.
+ *
+ * The shell names the project the files were actually written to (HarmonyOS
+ * asks the user to confirm it; Android reads it from the session cookie), so a
+ * mismatch means the app is showing a different project — attaching there
+ * would reference a path that does not exist.
+ */
 export function nativeShareTargetResult(detail: unknown, currentProject: string): ShareTargetResult | null {
   if (!detail || typeof detail !== 'object') return null
   const value = detail as Record<string, unknown>
   if (value.cancelled === true || value.projectPath !== currentProject ||
       !Array.isArray(value.paths) || value.paths.length > 20 ||
       !Number.isInteger(value.failed) || (value.failed as number) < 0 || (value.failed as number) > 20) return null
+  const paths = validShareInPaths(value.paths)
+  if (!paths) return null
+  return {
+    paths, failed: value.failed as number,
+    ...(paths.length === 0 ? { failure: 'save' as const } : {}),
+  }
+}
+
+/**
+ * True when the native shell stored files for a project that is not the one on
+ * screen.
+ *
+ * The upload runs against the session cookie, so this only happens when the
+ * project changed between the share and the app becoming ready. The files are
+ * safely on disk either way; the caller must say where they went instead of
+ * dropping the event, which would look like the share failed.
+ */
+export function nativeShareTargetSavedElsewhere(detail: unknown, currentProject: string): boolean {
+  if (!detail || typeof detail !== 'object') return false
+  const value = detail as Record<string, unknown>
+  if (typeof value.projectPath !== 'string' || value.projectPath === '' ||
+      value.projectPath === currentProject) return false
+  if (!Array.isArray(value.paths) || value.paths.length === 0) return false
+  return validShareInPaths(value.paths) !== null
+}
+
+/**
+ * Validate the path list a native shell sends back.
+ *
+ * Every path must be a plain file name inside the share-in directory: the app
+ * attaches these as-is, so anything with a separator, a parent segment or a
+ * control character could point outside the directory the shell actually wrote.
+ */
+function validShareInPaths(raw: unknown[]): string[] | null {
   const paths: string[] = []
-  for (const path of value.paths) {
+  for (const path of raw) {
     if (typeof path !== 'string' || !path.startsWith('.clawbench/share-in/') ||
         path.length > 4096 || path.includes('\\') || Array.from(path).some(c => c.charCodeAt(0) < 32) ||
         path.split('/').some(p => p === '..' || p === '.')) return null
     paths.push(path)
   }
-  return {
-    paths, failed: value.failed as number,
-    ...(paths.length === 0 ? { failure: 'save' as const } : {}),
-  }
+  return paths
 }
 
 /**
@@ -88,7 +126,8 @@ export function consumeShareTargetResult(): ShareTargetResult | null {
     }
   }
 
-  if (trimmed === 'empty' || trimmed === 'save' || trimmed === 'invalid') {
+  if (trimmed === 'empty' || trimmed === 'save' || trimmed === 'invalid' ||
+      trimmed === 'unauthorized' || trimmed === 'no_project') {
     return { paths: [], failure: trimmed, failed: 0 }
   }
   return { paths: [], failure: 'invalid', failed: 0 }
@@ -147,7 +186,11 @@ export function stageShareTargetResult(
       ? 'chat.attach.shareTargetInvalid'
       : result.failure === 'save'
         ? 'chat.attach.shareTargetSaveFailed'
-        : 'chat.attach.shareTargetEmpty'
+        : result.failure === 'unauthorized'
+          ? 'chat.attach.shareTargetUnauthorized'
+          : result.failure === 'no_project'
+            ? 'chat.attach.shareTargetNoProject'
+            : 'chat.attach.shareTargetEmpty'
     return { toastKey, toastParams: {}, variant: { icon: 'warning', type: 'error', duration: 3000 } }
   }
 

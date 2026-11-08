@@ -460,6 +460,12 @@ public class MainActivity extends AppCompatActivity {
     // was loaded (cold start). Consumed by WebAppInterface.getPendingNavigation().
     public org.json.JSONObject pendingNavigation = null;
 
+    // Share that was imported before the page could accept it (cold start):
+    // the WebView is still on the login page or the splash, where nobody is
+    // listening. Consumed by WebAppInterface.getPendingShareImport() once the
+    // app has a project, then cleared — one share must be attached once.
+    public String pendingShareImport = null;
+
     // Fullscreen video state: managed by WebChromeClient.onShowCustomView/onHideCustomView
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
@@ -2870,9 +2876,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Handle Share In: files shared from other apps via ACTION_SEND / ACTION_SEND_MULTIPLE.
-     * Uploads each file to .clawbench/share-in/ directory on the backend server.
-     * No WebView interaction needed — direct OkHttp upload using existing auth cookie.
+     * Handle Share In: files or text shared from other apps via ACTION_SEND /
+     * ACTION_SEND_MULTIPLE.
+     *
+     * Everything is uploaded to .clawbench/share-in/ on the backend server and
+     * then handed to the page, which attaches the files to the composer. A
+     * share that cannot be imported must always say so: the gesture happened in
+     * another app, so a silent return is indistinguishable from a broken app.
      */
     void handleShareIntent(Intent intent) {
         if (intent == null) return;
@@ -2896,12 +2906,23 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        if (uris.isEmpty()) {
-            AppLog.w(TAG, "ShareIn: no URIs in intent");
+        // A link or a snippet is an ordinary text share with no file attached.
+        String text = Intent.ACTION_SEND.equals(action)
+                ? ShareInPolicy.textPayload(intent.getCharSequenceExtra(Intent.EXTRA_TEXT)) : null;
+
+        if (uris.isEmpty() && text == null) {
+            // Nothing we can import: some apps put their payload somewhere we
+            // do not read, and a share with neither a file URI nor text has
+            // nothing to save. Returning silently here is what made "share to
+            // ClawBench" look like it opened the app and did nothing.
+            AppLog.w(TAG, "ShareIn: intent carries neither a file URI nor text");
+            Toast.makeText(this, userLangString(R.string.share_in_unsupported), Toast.LENGTH_SHORT).show();
             return;
         }
 
-        AppLog.i(TAG, "ShareIn: " + uris.size() + " file(s) to upload");
+        final CharSequence subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT);
+        final String sharedText = text;
+        AppLog.i(TAG, "ShareIn: " + uris.size() + " file(s), text=" + (text != null));
 
         // Upload in background thread
         new Thread(() -> {
@@ -2922,74 +2943,160 @@ public class MainActivity extends AppCompatActivity {
 
             OkHttpClient client = buildTrustingOkHttpClient();
             String uploadUrl = serverUrl + "/api/upload/file";
-            int successCount = 0;
+            java.util.List<String> uploaded = new java.util.ArrayList<>();
+            int failed = 0;
 
             for (Uri uri : uris) {
-                try {
-                    // Resolve filename from content URI
-                    String fileName = null;
-                    try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
-                        if (cursor != null && cursor.moveToFirst()) {
-                            int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
-                            if (nameIndex >= 0) fileName = cursor.getString(nameIndex);
-                        }
-                    }
-                    if (fileName == null || fileName.isEmpty()) {
-                        fileName = "shared_file_" + System.currentTimeMillis();
-                    }
+                String path = uploadSharedUri(client, uploadUrl, cookie, uri);
+                if (path != null) uploaded.add(path);
+                else failed++;
+            }
+            if (sharedText != null) {
+                String path = uploadSharedText(client, uploadUrl, cookie, sharedText, subject);
+                if (path != null) uploaded.add(path);
+                else failed++;
+            }
 
-                    // Read content into temp file (needed for OkHttp multipart)
-                    File tempFile = new File(getCacheDir(), "share_in_" + System.currentTimeMillis() + "_" + fileName);
-                    try (InputStream is = getContentResolver().openInputStream(uri);
-                         FileOutputStream fos = new FileOutputStream(tempFile)) {
-                        byte[] buffer = new byte[8192];
-                        int len;
-                        while ((len = is.read(buffer)) != -1) {
-                            fos.write(buffer, 0, len);
-                        }
-                    }
+            final java.util.List<String> paths = uploaded;
+            final int failures = failed;
+            final String projectPath = ShareInPolicy.projectPathFromCookie(cookie);
+            final String detail = paths.isEmpty() || projectPath == null ? null
+                    : ShareInPolicy.resultJson(paths, failures, projectPath);
 
-                    // Build multipart upload request with dir=.clawbench/share-in
-                    String mimeType = getContentResolver().getType(uri);
-                    if (mimeType == null || mimeType.isEmpty()) mimeType = "application/octet-stream";
-                    okhttp3.MultipartBody multipartBody = new okhttp3.MultipartBody.Builder()
-                            .setType(okhttp3.MultipartBody.FORM)
-                            .addFormDataPart("file", fileName,
-                                    RequestBody.create(tempFile, MediaType.parse(mimeType)))
-                            .addFormDataPart("dir", ".clawbench/share-in")
-                            .build();
+            runOnUiThread(() -> {
+                if (paths.isEmpty()) {
+                    Toast.makeText(this, R.string.share_in_failed, Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (detail == null) {
+                    // Uploaded, but the shell cannot name the project (cookie
+                    // gone or ambiguous). Fall back to the old "go find it"
+                    // message rather than handing the page a payload it would
+                    // reject as coming from another project.
+                    Toast.makeText(this, userLangString(R.string.share_in_success, paths.size()),
+                            Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                pendingShareImport = detail;
+                notifyShareImportReady();
+            });
+        }).start();
+    }
 
-                    Request request = new Request.Builder()
-                            .url(uploadUrl)
-                            .addHeader("Cookie", cookie)
-                            .post(multipartBody)
-                            .build();
+    /** Copy one shared content URI to the cache, upload it, return the stored path. */
+    private String uploadSharedUri(OkHttpClient client, String uploadUrl, String cookie, Uri uri) {
+        File tempFile = null;
+        try {
+            // Resolve filename from content URI
+            String fileName = null;
+            try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex >= 0) fileName = cursor.getString(nameIndex);
+                }
+            }
+            if (fileName == null || fileName.isEmpty()) {
+                fileName = "shared_file_" + System.currentTimeMillis();
+            }
 
-                    try (Response response = client.newCall(request).execute()) {
-                        if (response.isSuccessful()) {
-                            successCount++;
-                            AppLog.i(TAG, "ShareIn: uploaded " + fileName);
-                        } else {
-                            AppLog.w(TAG, "ShareIn: upload failed for " + fileName + ", code=" + response.code());
-                        }
-                    }
-
-                    // Clean up temp file
-                    tempFile.delete();
-                } catch (Exception e) {
-                    AppLog.e(TAG, "ShareIn: error uploading URI=" + uri, e);
+            // Read content into temp file (needed for OkHttp multipart)
+            tempFile = new File(getCacheDir(), "share_in_" + System.currentTimeMillis() + "_" + fileName);
+            try (InputStream is = getContentResolver().openInputStream(uri);
+                 FileOutputStream fos = new FileOutputStream(tempFile)) {
+                if (is == null) throw new java.io.FileNotFoundException("cannot open " + uri);
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = is.read(buffer)) != -1) {
+                    fos.write(buffer, 0, len);
                 }
             }
 
-            final int count = successCount;
-            runOnUiThread(() -> {
-                if (count > 0) {
-                    Toast.makeText(this, userLangString(R.string.share_in_success, count), Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, R.string.share_in_failed, Toast.LENGTH_SHORT).show();
-                }
-            });
-        }).start();
+            String mimeType = getContentResolver().getType(uri);
+            if (mimeType == null || mimeType.isEmpty()) mimeType = "application/octet-stream";
+            return postSharedFile(client, uploadUrl, cookie, tempFile, fileName, mimeType);
+        } catch (Exception e) {
+            AppLog.e(TAG, "ShareIn: error uploading URI=" + uri, e);
+            return null;
+        } finally {
+            if (tempFile != null) tempFile.delete();
+        }
+    }
+
+    /** Write a text/link share to a .txt file, upload it, return the stored path. */
+    private String uploadSharedText(OkHttpClient client, String uploadUrl, String cookie,
+                                    String text, CharSequence subject) {
+        File tempFile = null;
+        try {
+            String fileName = ShareInPolicy.textFileName(subject, System.currentTimeMillis());
+            tempFile = new File(getCacheDir(), "share_in_" + System.currentTimeMillis() + "_" + fileName);
+            try (FileOutputStream fos = new FileOutputStream(tempFile)) {
+                fos.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return postSharedFile(client, uploadUrl, cookie, tempFile, fileName, "text/plain");
+        } catch (Exception e) {
+            AppLog.e(TAG, "ShareIn: error uploading shared text", e);
+            return null;
+        } finally {
+            if (tempFile != null) tempFile.delete();
+        }
+    }
+
+    /**
+     * POST one file into the share-in directory.
+     *
+     * Returns the project-relative path the server stored it at, or null on
+     * any failure. The path comes from the response rather than being derived
+     * locally: the server renames collisions and sanitizes names, so a locally
+     * guessed path would point at a different file (or at nothing).
+     */
+    private String postSharedFile(OkHttpClient client, String uploadUrl, String cookie,
+                                  File file, String fileName, String mimeType) {
+        okhttp3.MultipartBody multipartBody = new okhttp3.MultipartBody.Builder()
+                .setType(okhttp3.MultipartBody.FORM)
+                .addFormDataPart("file", fileName,
+                        RequestBody.create(file, MediaType.parse(mimeType)))
+                .addFormDataPart("dir", ShareInPolicy.SHARE_DIR)
+                .build();
+
+        Request request = new Request.Builder()
+                .url(uploadUrl)
+                .addHeader("Cookie", cookie)
+                .post(multipartBody)
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                AppLog.w(TAG, "ShareIn: upload failed for " + fileName + ", code=" + response.code());
+                return null;
+            }
+            okhttp3.ResponseBody responseBody = response.body();
+            String raw = responseBody == null ? "" : responseBody.string();
+            try {
+                String path = new org.json.JSONObject(raw).optString("path", "");
+                if (path.startsWith(ShareInPolicy.SHARE_DIR + "/")) return path;
+            } catch (Exception ignored) {
+                // Reported below: a 2xx without a usable path is not a success.
+            }
+            AppLog.w(TAG, "ShareIn: unexpected upload response for " + fileName);
+            return null;
+        } catch (Exception e) {
+            AppLog.e(TAG, "ShareIn: upload error for " + fileName, e);
+            return null;
+        }
+    }
+
+    /**
+     * Tell the page that a share is waiting behind the bridge.
+     *
+     * The event deliberately carries no payload: the page pulls the result
+     * through getPendingShareImport() once it has a project, which also covers
+     * a share that arrived before the page was ready (cold start). Must run on
+     * the UI thread.
+     */
+    private void notifyShareImportReady() {
+        if (webView == null) return;
+        webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('clawbench-share-imported'))", null);
     }
 
     /**
@@ -3262,6 +3369,13 @@ public class MainActivity extends AppCompatActivity {
                 cancelConnectionTimeout();
                 startSplashFailSafe();
                 view.setVisibility(View.VISIBLE);
+                // A share may have finished uploading while this page was still
+                // loading, in which case its nudge went to the previous
+                // document. Re-send it now that the app can hear it; the page
+                // pulls the payload and clears it, so this is not a duplicate.
+                if (pendingShareImport != null) {
+                    notifyShareImportReady();
+                }
             }
         }
 
@@ -4310,6 +4424,23 @@ public class MainActivity extends AppCompatActivity {
             activity.pendingNavigation = null;
             String result = nav != null ? nav.toString() : null;
             AppLog.i(TAG, "MainActivity: getPendingNavigation called, returning=" + result);
+            return result;
+        }
+
+        /**
+         * Returns a share that was imported before the page could take it
+         * (cold start), then clears it. Returns null when there is nothing
+         * pending.
+         *
+         * The payload is only valid once the app knows its project — the
+         * frontend validates it against that — which is why it is pulled here
+         * instead of pushed with the event.
+         */
+        @JavascriptInterface
+        public String getPendingShareImport() {
+            String result = activity.pendingShareImport;
+            activity.pendingShareImport = null;
+            AppLog.i(TAG, "MainActivity: getPendingShareImport called, hasValue=" + (result != null));
             return result;
         }
 
