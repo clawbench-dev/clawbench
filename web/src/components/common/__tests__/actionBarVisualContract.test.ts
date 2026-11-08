@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readdirSync, existsSync } from 'node:fs'
 
 /**
  * Visual contract for every ActionBar (the one icon-row control).
@@ -249,5 +250,78 @@ describe('one toolbar row height', () => {
     const src = stripComments(readWebFile('src/components/file/FileManagerContent.vue'))
     expect(src).toMatch(/\.ms-toolbar-btns \.toolbar-btn \{[^}]*height:\s*var\(--toolbar-btn-size\)/)
     expect(baseRule(src, 'ms-select-all-btn')).toMatch(/height:\s*var\(--toolbar-btn-size\)/)
+  })
+
+  /**
+   * The bar owns the space BETWEEN its buttons (`gap`), so no button inside one
+   * may also carry a left/right margin — the two stack.
+   *
+   * This is not hypothetical: the session-list header kept a
+   * `margin-left: var(--space-3)` from before the bar took over spacing, and the
+   * row measured 14px between buttons instead of 8. It read as WORSE once the
+   * labels appeared, because a labelled button also gains 8px of side padding,
+   * so the gap between two words was 14 + 16 = 30px.
+   *
+   * `margin-left: auto` is allowed and means something different (push to an
+   * edge); so is a negative margin, which is an optical nudge, not spacing.
+   */
+  it('never lets a button inside a bar add its own horizontal margin', () => {
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') continue
+          walk(full)
+          continue
+        }
+        if (!entry.name.endsWith('.vue')) continue
+        const src = stripComments(readFileSync(full, 'utf8'))
+        if (!/<ActionBar\b/.test(src)) continue
+
+        // Classes that appear on a tag INSIDE an <ActionBar>…</ActionBar> block.
+        // Scoping to the bar is the whole point: this file's other buttons (a
+        // search-hit row, a commit's quote button, the terminal key strip) sit
+        // outside it and own their own spacing legitimately.
+        const inBar = new Set<string>()
+        for (const bar of src.matchAll(/<ActionBar\b[\s\S]*?<\/ActionBar>/g)) {
+          for (const tag of bar[0].matchAll(/class="([^"]*)"/g)) {
+            for (const cls of tag[1].split(/\s+/)) if (cls) inBar.add(cls)
+          }
+        }
+        if (inBar.size === 0) continue
+
+        for (const m of src.matchAll(/(?:^|\n)\s*([.\w][^{}]*?)\{([^}]*)\}/g)) {
+          const selector = m[1].trim()
+          const body = m[2]
+          // Every class named in the selector must be one that lives in the bar.
+          const classes = [...selector.matchAll(/\.([\w-]+)/g)].map((c) => c[1])
+          if (classes.length === 0 || !classes.every((c) => inBar.has(c))) continue
+          const decl = body.match(/margin-(left|right)\s*:\s*([^;]+)/)
+          if (!decl) continue
+          const value = decl[2].trim()
+          // auto = alignment; a negative value = optical correction.
+          if (/^auto$/i.test(value) || /^-|calc\(\s*-/.test(value)) continue
+          // A margin that reserves room for a divider the rule draws itself is
+          // separation, not spacing: the terminal key strip uses it to place a
+          // 1px `::before` line between key groups.
+          if (src.includes(`${selector}::before`)) continue
+          offenders.push(`${entry.name}  ${selector}  -> margin-${decl[1]}: ${value}`)
+        }
+      }
+    }
+    // Same two candidate roots as readWebFile: cwd is `web/` for a bare vitest
+    // run and the repo root under scripts/vitest-run.sh.
+    const root = [process.cwd(), join(process.cwd(), 'web')]
+      .map((base) => join(base, 'src', 'components'))
+      .find((dir) => existsSync(dir))
+    expect(root, 'web/src/components not found from cwd: ' + process.cwd()).toBeTruthy()
+    walk(root!)
+    expect(
+      offenders,
+      'The ActionBar already spaces its buttons with `gap`. A button that adds its own ' +
+      'left/right margin doubles that space (14px instead of 8px) and looks worse once ' +
+      'labels widen the buttons. Remove the margin; use `auto` only to push to an edge.',
+    ).toEqual([])
   })
 })
