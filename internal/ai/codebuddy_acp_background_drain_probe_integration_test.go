@@ -37,11 +37,13 @@ import (
 //	go test -v -run 'TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn' -tags integration \
 //	    -timeout 900s ./internal/ai/
 //
-// 两个与 Agent Teams 探针不同的前置条件（缺任一条都不会有 drain 轮）：
-//   - **不广告 terminal 能力**：广告了，CodeBuddy 会把 run_in_background 的命令
-//     交给宿主终端执行，它自己就没有后台任务，自然也不会回来通知；
-//   - 声明 clientCapabilities._meta["codebuddy.ai"].mainAgentSupport = true，并在
-//     会话广告了 multitask 开关时打开它 —— drain 轮属于 multitask 协调器。
+// 唯一的特殊前置条件：**不广告 terminal 能力**。
+// 广告了，CodeBuddy 会把 run_in_background 的命令交给宿主终端执行，它自己就没有
+// 后台任务，自然也不会回来通知 —— 实测如此，这也解释了既有那个只观察公告的探针
+// 为什么一直写着「本次未触发」。
+//
+// 不需要客户端 opt-in：对照实验（不声明 mainAgentSupport、不打开 multitask 开关）
+// 同样观察到了 drain 轮。生产环境正是这个配置，所以本探针刻意与生产一致。
 //
 // 与既有探针的分工：
 //   - codebuddy_acp_team_probe_integration_test.go 的
@@ -143,39 +145,6 @@ func findUnsolicitedTurnIndex(notifs []acp.SessionNotification) int {
 	return -1
 }
 
-// enableMultitaskIfAdvertised turns the session's multitask switch on when the
-// agent offers it. The background drain turn belongs to the multitask
-// coordinator, so without it the CLI never comes back on its own.
-func enableMultitaskIfAdvertised(t *testing.T, setup *teamProbeSetup) {
-	t.Helper()
-	for _, opt := range setup.configOptions {
-		if opt.Boolean == nil || string(opt.Boolean.Id) != "multitask" {
-			continue
-		}
-		t.Logf("multitask option advertised (current=%v), enabling", opt.Boolean.CurrentValue)
-		if opt.Boolean.CurrentValue {
-			return
-		}
-		ctx, cancel := contextWithTimeout(t, 30*time.Second)
-		defer cancel()
-		_, err := setup.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
-			Boolean: &acp.SetSessionConfigOptionBoolean{
-				SessionId: acp.SessionId(setup.session),
-				ConfigId:  opt.Boolean.Id,
-				Type:      "boolean",
-				Value:     true,
-			},
-		})
-		if err != nil {
-			t.Logf("NOTE: enabling multitask failed (%v); the drain turn may not run", err)
-			return
-		}
-		t.Log("multitask enabled")
-		return
-	}
-	t.Log("NOTE: agent did not advertise a multitask option; relying on the default background-task notifier")
-}
-
 // TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn is the end-to-end probe for
 // issue #644: an agent-initiated turn must be adopted and fully delivered.
 func TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn(t *testing.T) {
@@ -189,17 +158,12 @@ func TestCodebuddyACP_BackgroundDrain_AdoptedAsTurn(t *testing.T) {
 		// background commands to the host, so it never has a background task of
 		// its own to notify about.
 		advertiseTerminal: false,
-		clientMeta: map[string]any{
-			"codebuddy.ai": map[string]any{"mainAgentSupport": true},
-		},
 	})
 	defer setup.stopEventPump()
 
 	// The harness client is not bound to an ACPConn (no clawbench session id),
 	// and adoption is keyed on it. Bind a stand-in so the production path runs.
 	setup.client.connRef = &ACPConn{clawbenchSID: "probe-bg-drain"}
-
-	enableMultitaskIfAdvertised(t, setup)
 
 	// Install the PRODUCTION consumer. The probe records instead of persisting,
 	// but everything up to the callback (announcement parsing, route opening,
