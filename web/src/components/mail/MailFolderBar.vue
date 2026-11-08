@@ -92,7 +92,10 @@
         <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')">
           <span class="action-label">{{ t('mail.bar.refresh') }}</span>
         </RefreshButton>
-        <button class="mail-icon-btn" :title="t('mail.bar.compose')" @click="emit('compose')">
+        <!-- `is-primary`: composing is this row's one stand-out action, the same
+             marking the task / session / proxy headers give their create entry.
+             Everything else here (refresh, settings) stays neutral. -->
+        <button class="mail-icon-btn is-primary" :title="t('mail.bar.compose')" @click="emit('compose')">
           <PenLine />
           <span class="action-label">{{ t('mail.bar.compose') }}</span>
         </button>

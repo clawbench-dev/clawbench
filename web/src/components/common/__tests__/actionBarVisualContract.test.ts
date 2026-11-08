@@ -519,3 +519,60 @@ describe('a bar that sits beside a title can still grow', () => {
     expect(baseRule(src, 'mail-bar__actions')).toMatch(/flex:\s*1 1 auto/)
   })
 })
+
+/* --------------------------------------------------------------------------
+   One primary action per row.
+
+   The create/new entry is the one button a header may paint in the accent
+   colour. It used to exist in exactly one panel (the task list), so the same
+   action read as "the main thing to do here" in one tab and as an ordinary
+   utility one tab over. The marking is now applied to every row that has a
+   single create entry, and to nothing else — two accents in one row would put
+   us back where we started, only in the other direction.
+   -------------------------------------------------------------------------- */
+describe('one primary action per row', () => {
+  it('declares the primary recipe once, off --accent-color', () => {
+    const rule = bare.match(
+      /\.ab--header button\.is-primary:not\(:disabled\),\s*\.ab--bar button\.is-primary:not\(:disabled\)\s*\{([^}]*)\}/,
+    )
+    expect(rule, 'the shared primary rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/color:\s*var\(--accent-color\)/)
+  })
+
+  it('marks the create entry of every header row that has one', () => {
+    // Source checks: jsdom has no CSS engine, and the marking is what these
+    // assertions can actually see. The colour itself is pinned by the rule
+    // above, so a row that carries the class is a row that renders it.
+    const MARKED: Array<[string, string, string]> = [
+      ['src/components/task/TaskListPage.vue', 'class="create-btn is-primary"', '新建任务'],
+      ['src/components/proxy/ProxyPanelContent.vue', 'class="create-btn is-primary"', '添加端口'],
+      ['src/components/session/SessionListHeader.vue', 'class="header-action-btn is-primary"', '新会话'],
+      ['src/components/mail/MailFolderBar.vue', 'class="mail-icon-btn is-primary"', '写邮件'],
+    ]
+    for (const [file, marker, what] of MARKED) {
+      expect(readWebFile(file), `${file}: the ${what} entry must be the primary action`).toContain(marker)
+    }
+  })
+
+  it('never puts two of them in the same bar', () => {
+    const offenders: string[] = []
+    for (const file of vueFilesWithBars()) {
+      // Comments must not count: a bar's own explanation of why the marking
+      // exists names it more than once.
+      const src = readWebFile(file).replace(/<!--[\s\S]*?-->/g, '')
+      for (const block of src.match(/<(?:ActionBar|action-bar)\b[\s\S]*?<\/(?:ActionBar|action-bar)>/g) ?? []) {
+        const count = (block.match(/\bis-primary\b/g) ?? []).length
+        if (count > 1) offenders.push(`${file}: ${count} primary buttons in one bar`)
+      }
+    }
+    expect(offenders, 'a row has ONE stand-out action; two accents cancel out').toEqual([])
+  })
+
+  it('leaves the utility buttons of a marked row neutral', () => {
+    // The session header's search / refresh / pin must stay plain: the accent
+    // is what makes the "+" readable as "start here".
+    const src = readWebFile('src/components/session/SessionListHeader.vue')
+    expect(src).not.toMatch(/class="header-action-btn is-primary"[^>]*data-action="search"/)
+    expect(src).not.toMatch(/class="header-action-btn is-primary"[^>]*data-action="refresh"/)
+  })
+})

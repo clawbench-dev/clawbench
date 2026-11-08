@@ -24,7 +24,7 @@
         <Search :size="16" />
         <span class="action-label">{{ t('sessionSearch.title') }}</span>
       </button>
-      <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
+      <button class="header-action-btn is-primary" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
         <span class="action-label">{{ t('session.newSession') }}</span>
       </button>
@@ -166,11 +166,16 @@ const sessionBarColor = computed(() => {
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
 /* Size, radius, colour, hover AND the gap between buttons come from the shared
-   ActionBar row rules (size="bar"). Every button in this row uses the same
-   resting colour: it is a utility row (search / shared / create / refresh /
-   pin), and the accent used to make one or two of them read as a different kind
-   of control. The accent still marks a TOGGLED-ON state (the sidebar pin), which
-   is a state rather than emphasis.
+   ActionBar row rules (size="bar"). The row is a utility row (search / shared /
+   create / refresh / pin) and stays neutral, with two exceptions that are
+   DELIBERATE and mean something different from each other:
+     - `is-primary` marks the single create entry (the "+"), the one action the
+       row wants to stand out — the same marking the task and proxy headers use;
+     - `.active` marks a TOGGLED-ON state (the sidebar pin), which is a state,
+       not emphasis.
+   Painting any other button of the row in the accent is what this rule forbids:
+   the accent used to make one or two utilities read as a different kind of
+   control.
 
    This block used to add `margin-left: var(--space-3)` as well, which stacked on
    top of the bar's own 8px gap: the row measured 14px between buttons, and it
