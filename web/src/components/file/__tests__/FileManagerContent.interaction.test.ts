@@ -2722,6 +2722,24 @@ describe('FileManagerContent — dropdowns', () => {
     expect(wrapper.vm.sortMenuOpen).toBe(false)
   })
 
+  it('does not close on the click that opens it', async () => {
+    // Regression: the outside-click handler used to look for a wrapper element
+    // around the trigger. Once the trigger became a direct child of the toolbar
+    // its own click counted as "outside" too — the menu opened and closed in
+    // the same click, so it could never be opened.
+    const wrapper = mountContent()
+    const trigger = wrapper.find('.dir-toolbar-btns > .toolbar-btn')
+    expect(trigger.exists()).toBe(true)
+    // The handler runs on `document`, and this mount is not attached to it, so
+    // the event is handed over directly — the point is the target, not the
+    // plumbing. A click on the trigger must be ignored; anything else closes.
+    wrapper.vm.sortMenuOpen = true
+    wrapper.vm.closeDropdowns({ target: trigger.element })
+    expect(wrapper.vm.sortMenuOpen).toBe(true)
+    wrapper.vm.closeDropdowns({ target: document.body })
+    expect(wrapper.vm.sortMenuOpen).toBe(false)
+  })
+
   it('onSortSelect emits toggleSort and closes the menu', async () => {
     const wrapper = mountContent()
     wrapper.vm.sortMenuOpen = true
