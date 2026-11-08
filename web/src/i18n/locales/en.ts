@@ -2600,6 +2600,7 @@ export default {
       failed: 'Fetch failed',
       timeout: 'Fetch timed out — check the network and try again',
       busy: 'Another fetch is already running — try again in a moment',
+      changed: 'Fetched · {ahead} ahead, {behind} behind',
     },
     branchView: {
       branches: 'Local branches',
@@ -2611,6 +2612,17 @@ export default {
       manage: 'Manage branches / worktrees…',
       fileActionsDisabled: 'This version belongs to another branch and is not in the workspace',
       trackTitle: 'vs {upstream}: {ahead} ahead, {behind} behind',
+    },
+    divergence: {
+      unpushed: 'Unpushed',
+      unpushedHint: 'This commit has not been pushed to the remote branch yet',
+      remoteTitle: '{count} new commit(s) on {upstream}',
+      remoteTag: 'Remote',
+      moreRemote: '{count} more not listed',
+      notInPage: 'No unpushed commits in the current list (they may be further back, or filtered out by the search)',
+      detailUnavailable: 'Could not read the remote commits — refresh and try again',
+      jumpHint: 'Jump to the unpushed commits ({count})',
+      revealHint: 'Show the new remote commits ({count})',
     },
     diffView: {
       noChanges: 'No changes',

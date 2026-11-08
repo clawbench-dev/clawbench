@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1704,6 +1705,187 @@ func ServeGitFetch(w http.ResponseWriter, r *http.Request) {
 		// and the UI falls back to its own "fetched" wording.
 		"summary": lastNonEmptyLine(msg),
 	})
+}
+
+// divergenceAheadLimit / divergenceBehindLimit bound one response. The toolbar
+// counter already carries the total; these only cap how much of the detail is
+// shipped, so a branch that is thousands of commits from its upstream cannot
+// turn the history panel into a multi-megabyte download.
+const (
+	divergenceAheadLimit  = 500
+	divergenceBehindLimit = 50
+)
+
+// divergenceCommit is one commit that exists only on the upstream.
+type divergenceCommit struct {
+	SHA    string `json:"sha"`
+	Msg    string `json:"msg"`
+	Date   string `json:"date"`
+	Author string `json:"author"`
+}
+
+// divergenceInfo answers "which commits are the difference from the upstream".
+// The toolbar's ahead/behind counters only say how many.
+type divergenceInfo struct {
+	HasUpstream bool   `json:"hasUpstream"`
+	Upstream    string `json:"upstream"`
+	// Ahead: SHAs of commits on the branch but not on the upstream, newest
+	// first. The history list already holds these rows; it only needs the set to
+	// mark them "unpushed".
+	Ahead []string `json:"ahead"`
+	// Behind: commits on the upstream but not on the branch, newest first, with
+	// metadata so the panel can list them without a second request.
+	Behind      []divergenceCommit `json:"behind"`
+	AheadCount  int                `json:"aheadCount"`
+	BehindCount int                `json:"behindCount"`
+}
+
+// gitUpstreamOf resolves the remote-tracking branch a local ref tracks.
+// Returns an error when there is none (detached HEAD, or never pushed).
+func gitUpstreamOf(projectPath, target string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", target+"@{upstream}")
+	cmd.Dir = projectPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" {
+		return "", fmt.Errorf("no upstream for %s", target)
+	}
+	return name, nil
+}
+
+// gitOutput runs a read-only git command and returns its stdout.
+func gitOutput(projectPath string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = projectPath
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// ServeGitDivergence returns the commits that differ between a branch and its
+// upstream: the local-only SHAs (to mark rows already on screen) and the
+// remote-only commits (to list above the history).
+//
+// GET /api/git/divergence?ref=<branch>
+//
+// Deliberately a separate endpoint rather than more fields on
+// /api/git/project-history: that response is cached by (path, skip, HEAD sha),
+// so remote refs moving after a fetch would never invalidate it. This one is
+// computed fresh every time and reads only local refs — no network.
+func ServeGitDivergence(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	if !isGitRepo(projectPath) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAGitRepoShort")
+		return
+	}
+
+	target, lookup, ok := resolveDivergenceTarget(w, r, projectPath)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, http.StatusOK, collectDivergence(projectPath, target, lookup))
+}
+
+// resolveDivergenceTarget maps ?ref= to the two spellings git needs: the full
+// ref for rev-list/log, and the short name for @{upstream} (a full
+// refs/heads/... path is not accepted there).
+//
+// Only local branches are addressable — same restriction as resolveRefCommit,
+// which also makes a name starting with "-" impossible to read as an option.
+func resolveDivergenceTarget(w http.ResponseWriter, r *http.Request, projectPath string) (target, lookup string, ok bool) {
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	if ref == "" {
+		return "HEAD", "HEAD", true
+	}
+	if !isValidGitRefName(ref) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return "", "", false
+	}
+	// Distinguish "this branch does not exist" from "this branch has no
+	// upstream": both would otherwise look like an empty comparison.
+	if _, err := resolveRefCommit(projectPath, ref); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "UnknownBranch")
+		return "", "", false
+	}
+	return "refs/heads/" + ref, ref, true
+}
+
+// collectDivergence reads the comparison from local refs only — no network.
+func collectDivergence(projectPath, target, lookup string) divergenceInfo {
+	info := divergenceInfo{Ahead: []string{}, Behind: []divergenceCommit{}}
+	upstream, err := gitUpstreamOf(projectPath, lookup)
+	if err != nil {
+		// No upstream: the caller hides the whole comparison instead of drawing
+		// "↑0 ↓0", which would read as "in sync".
+		return info
+	}
+	info.HasUpstream = true
+	info.Upstream = upstream
+
+	info.AheadCount = gitRevCount(projectPath, upstream+".."+target)
+	info.BehindCount = gitRevCount(projectPath, target+".."+upstream)
+	info.Ahead = gitRevList(projectPath, upstream+".."+target, divergenceAheadLimit)
+	info.Behind = gitLogCommits(projectPath, target+".."+upstream, divergenceBehindLimit)
+	return info
+}
+
+// gitRevCount returns the number of commits in a revision range, or 0 when git
+// cannot answer (the caller treats that as "nothing known").
+func gitRevCount(projectPath, revRange string) int {
+	out, err := gitOutput(projectPath, "rev-list", "--count", revRange)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// gitRevList returns up to limit commit SHAs in a revision range.
+func gitRevList(projectPath, revRange string, limit int) []string {
+	out, err := gitOutput(projectPath, "rev-list", "--max-count", strconv.Itoa(limit), revRange)
+	shas := []string{}
+	if err != nil {
+		return shas
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
+			shas = append(shas, sha)
+		}
+	}
+	return shas
+}
+
+// gitLogCommits returns up to limit commits in a revision range, newest first.
+//
+// \x1f separates the fields: a commit subject may contain "|", and a stray pipe
+// would shift date and author into the wrong columns.
+func gitLogCommits(projectPath, revRange string, limit int) []divergenceCommit {
+	commits := []divergenceCommit{}
+	out, err := gitOutput(projectPath, "log",
+		"--max-count", strconv.Itoa(limit),
+		"--format=%H%x1f%s%x1f%ad%x1f%an", "--date=iso-strict", revRange)
+	if err != nil {
+		return commits
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		parts := strings.Split(line, "\x1f")
+		if len(parts) < 4 {
+			continue
+		}
+		commits = append(commits, divergenceCommit{
+			SHA: parts[0], Msg: parts[1], Date: parts[2], Author: parts[3],
+		})
+	}
+	return commits
 }
 
 // lastNonEmptyLine returns the last line with content in s.

@@ -144,6 +144,28 @@ describe('useGitHistoryView — computed', () => {
     expect(v.selectedCommit.value).toBeNull()
   })
 
+  it('selectedCommit resolves commits the host lists outside the history', () => {
+    // Remote-only commits are rendered above the history, not in it — but
+    // drilling into one must still find it, or the drill-down header renders
+    // an empty commit.
+    const v = useGitHistoryView({
+      t,
+      mode: () => 'project',
+      extraCommits: () => [{ sha: 'remote', msg: 'R', date: '', author: '' }],
+    })
+    v.commits.value = [{ sha: 'local', msg: 'L', date: '', author: '' }]
+
+    v.selectedSHA.value = 'remote'
+    expect(v.selectedCommit.value).toEqual({ sha: 'remote', msg: 'R', date: '', author: '' })
+
+    // A local commit still wins the normal path.
+    v.selectedSHA.value = 'local'
+    expect(v.selectedCommit.value).toEqual({ sha: 'local', msg: 'L', date: '', author: '' })
+
+    v.selectedSHA.value = 'nowhere'
+    expect(v.selectedCommit.value).toBeNull()
+  })
+
   it('isWorkingTree is true only for HEAD', () => {
     const v = setup()
     v.selectedSHA.value = 'HEAD'
@@ -657,6 +679,27 @@ describe('useGitHistoryView — working tree view stays fresh', () => {
 
     expect(v.currentView.value).toBe('commits')
     expect(v.selectedSHA.value).toBeNull()
+  })
+
+  it('reloadPreservingDrillDown keeps a drill-down into a remote-only commit', async () => {
+    // That commit is not in `commits` (it is listed above the history), so the
+    // "is it still there" check has to consult the host's extra commits too —
+    // otherwise every reload silently kicks the user back to the list.
+    route({ files: [] })
+    const v = useGitHistoryView({
+      t,
+      mode: () => 'project',
+      extraCommits: () => [{ sha: 'remote', msg: 'R', date: '', author: '' }],
+    })
+    await v.loadProjectHistory()
+
+    v.onCommitSelect({ sha: 'remote', msg: 'R', date: '', author: '' })
+    expect(v.currentView.value).toBe('files')
+
+    await v.reloadPreservingDrillDown()
+
+    expect(v.currentView.value).toBe('files')
+    expect(v.selectedSHA.value).toBe('remote')
   })
 
   it('reloadPreservingDrillDown leaves the commit-list view alone', async () => {

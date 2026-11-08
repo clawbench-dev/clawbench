@@ -60,6 +60,11 @@ vi.mock('@/utils/format', () => ({
   formatDateTime: (d: string) => d,
 }))
 
+// The two "number" buttons report through a toast when there is nothing to
+// jump to; asserting on it is what makes those branches testable at all.
+const { mockToastShow } = vi.hoisted(() => ({ mockToastShow: vi.fn() }))
+vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: mockToastShow }) }))
+
 function createCommits(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     sha: `sha${i}`.padEnd(40, '0'),
@@ -103,6 +108,7 @@ describe('GitCommitList', () => {
     mockObserve.mockClear()
     mockDisconnect.mockClear()
     mockUnobserve.mockClear()
+    mockToastShow.mockClear()
     lastObserverCallback = null
   })
 
@@ -824,7 +830,114 @@ describe('upstream divergence', () => {
   })
 
   it('explains the numbers on hover', () => {
+    // The numbers are buttons now (each one jumps to what it counts), so the
+    // tooltip lives on them rather than on the wrapper.
     const wrapper = mountList(branch(2, 3))
-    expect(wrapper.find('.branch-track').attributes('title')).toBe('git.branchView.trackTitle')
+    expect(wrapper.find('.branch-track-ahead').attributes('title')).toBe('git.branchView.trackTitle')
+    expect(wrapper.find('.branch-track-behind').attributes('title')).toBe('git.branchView.trackTitle')
+  })
+})
+
+// ── Which commits differ from the upstream ───────────────────
+// The counters say how many; the divergence payload says which. The list marks
+// the unpushed rows and names the remote-only ones.
+describe('divergence detail', () => {
+  const commits = createCommits(3)
+  const remoteCommit = { sha: 'b'.repeat(40), msg: 'Remote work', date: '2025-01-02', author: 'Other' }
+
+  const divergence = (over: Record<string, unknown> = {}) => ({
+    hasUpstream: true,
+    upstream: 'origin/main',
+    ahead: [commits[0].sha],
+    behind: [remoteCommit],
+    aheadCount: 1,
+    behindCount: 1,
+    ...over,
+  })
+
+  const mountWith = (over: Record<string, unknown> = {}) => mountList({ commits, divergence: divergence(over) })
+
+  it('marks the unpushed rows', () => {
+    const wrapper = mountWith()
+    const rows = wrapper.findAll('.drilldown-item')
+    expect(rows[0].classes()).toContain('is-unpushed')
+    expect(rows[0].find('.git-ref-tag--unpushed').text()).toBe('git.divergence.unpushed')
+    // A pushed commit is not marked.
+    expect(rows[1].classes()).not.toContain('is-unpushed')
+    expect(rows[1].find('.git-ref-tag--unpushed').exists()).toBe(false)
+  })
+
+  it('shows the remote strip collapsed, then lists the commits', async () => {
+    const wrapper = mountWith()
+    expect(wrapper.find('.remote-commits').exists()).toBe(true)
+    expect(wrapper.find('.remote-commits-list').exists()).toBe(false)
+
+    await wrapper.find('[data-action="toggle-remote-commits"]').trigger('click')
+    const listed = wrapper.findAll('.remote-commit')
+    expect(listed).toHaveLength(1)
+    expect(listed[0].text()).toContain('Remote work')
+    expect(listed[0].find('.git-ref-tag--remote').text()).toBe('git.divergence.remoteTag')
+  })
+
+  it('opens the strip from the ↓ number', async () => {
+    const wrapper = mountWith()
+    await wrapper.find('[data-action="track-behind"]').trigger('click')
+    expect(wrapper.find('.remote-commits-list').exists()).toBe(true)
+  })
+
+  it('selects a remote-only commit when it is clicked', async () => {
+    const wrapper = mountWith()
+    await wrapper.find('[data-action="toggle-remote-commits"]').trigger('click')
+    await wrapper.find('.remote-commit').trigger('click')
+    const emitted = wrapper.emitted('select')
+    expect(emitted).toBeTruthy()
+    expect((emitted![0][0] as { sha: string }).sha).toBe(remoteCommit.sha)
+  })
+
+  it('jumps to the first unpushed row from the ↑ number', async () => {
+    const wrapper = mountWith()
+    await wrapper.find('[data-action="track-ahead"]').trigger('click')
+    const first = wrapper.findAll('.drilldown-item')[0]
+    expect(first.classes()).toContain('is-flash')
+  })
+
+  it('shows nothing when the branch has no upstream', () => {
+    const wrapper = mountWith({ hasUpstream: false, ahead: [], behind: [], aheadCount: 0, behindCount: 0 })
+    expect(wrapper.find('.branch-track').exists()).toBe(false)
+    expect(wrapper.find('.remote-commits').exists()).toBe(false)
+    expect(wrapper.find('.git-ref-tag--unpushed').exists()).toBe(false)
+  })
+
+  it('says so when the unpushed commits are not in the list', async () => {
+    // The marked commit is not among the rows on screen (filtered by a search,
+    // or further back than the loaded page).
+    const wrapper = mountWith({ ahead: ['f'.repeat(40)] })
+    await wrapper.find('[data-action="track-ahead"]').trigger('click')
+    // Nothing to scroll to: no row may be flashed…
+    expect(wrapper.findAll('.drilldown-item.is-flash')).toHaveLength(0)
+    // …and the user must be told why nothing happened.
+    expect(mockToastShow).toHaveBeenCalledWith('git.divergence.notInPage', expect.anything())
+  })
+
+  it('reports a missing remote list instead of opening an empty strip', async () => {
+    // The count is known but the commits are not (git log failed): opening a
+    // blank strip would look like a broken button.
+    const wrapper = mountWith({ behind: [], behindCount: 2 })
+    await wrapper.find('[data-action="track-behind"]').trigger('click')
+    expect(mockToastShow).toHaveBeenCalledWith('git.divergence.detailUnavailable', expect.anything())
+    expect(wrapper.find('.remote-commits').exists()).toBe(false)
+  })
+
+  it('keeps the numbers as plain text when only the counts are known', () => {
+    // New web bundle + old server (no /api/git/divergence): the branch listing
+    // still has the numbers, but there is no detail to jump to. A button that
+    // silently does nothing is worse than no button.
+    const wrapper = mountList({
+      branches: [{ name: 'main', remoteTracking: 'origin/main', ahead: 2, behind: 1 }],
+      currentBranch: 'main',
+    })
+    expect(wrapper.find('.branch-track-ahead').text()).toBe('↑2')
+    expect(wrapper.find('[data-action="track-ahead"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="track-behind"]').exists()).toBe(false)
   })
 })

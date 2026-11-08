@@ -2599,6 +2599,7 @@ export default {
       failed: '获取失败',
       timeout: '获取超时，请检查网络后重试',
       busy: '已有另一次获取正在进行，请稍后再试',
+      changed: '已获取 · 领先 {ahead}，落后 {behind}',
     },
     branchView: {
       branches: '本地分支',
@@ -2610,6 +2611,17 @@ export default {
       manage: '管理分支 / 工作树…',
       fileActionsDisabled: '这是其他分支的版本，工作区里没有这份文件',
       trackTitle: '与 {upstream} 相比：领先 {ahead} 个提交，落后 {behind} 个提交',
+    },
+    divergence: {
+      unpushed: '未推送',
+      unpushedHint: '这个提交还没有推到远程分支',
+      remoteTitle: '远程 {upstream} 有 {count} 个新提交',
+      remoteTag: '远程',
+      moreRemote: '还有 {count} 个未列出',
+      notInPage: '当前列表里没有未推送的提交（可能在更早的记录里，或被搜索条件筛掉）',
+      detailUnavailable: '读取远程提交详情失败，请刷新后重试',
+      jumpHint: '跳到未推送的提交（共 {count} 个）',
+      revealHint: '展开远程的新提交（共 {count} 个）',
     },
     diffView: {
       noChanges: '无变更',

@@ -758,6 +758,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/worktrees", ServeGitWorktrees)
 	register("/api/git/checkout", ServeGitCheckout)
 	register("/api/git/fetch", ServeGitFetch)
+	register("/api/git/divergence", ServeGitDivergence)
 	register("/api/git/tags", ServeGitTags)
 	register("/api/file/rename", ServeFileRename)
 	register("/api/file/write", ServeFileWrite)

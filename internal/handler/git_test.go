@@ -3640,3 +3640,174 @@ func TestServeGitFetch_RejectsGet(t *testing.T) {
 	w := callHandler(ServeGitFetch, req)
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
+
+// ── Divergence: which commits, not just how many ───────────────────────────
+
+type divergenceResponse struct {
+	HasUpstream bool     `json:"hasUpstream"`
+	Upstream    string   `json:"upstream"`
+	Ahead       []string `json:"ahead"`
+	Behind      []struct {
+		SHA    string `json:"sha"`
+		Msg    string `json:"msg"`
+		Date   string `json:"date"`
+		Author string `json:"author"`
+	} `json:"behind"`
+	AheadCount  int `json:"aheadCount"`
+	BehindCount int `json:"behindCount"`
+}
+
+func divergenceRequest(t *testing.T, projectDir, ref string) *httptest.ResponseRecorder {
+	t.Helper()
+	url := "/api/git/divergence"
+	if ref != "" {
+		url += "?ref=" + ref
+	}
+	req := newRequest(t, http.MethodGet, url, nil)
+	withProjectCookie(req, projectDir)
+	return callHandler(ServeGitDivergence, req)
+}
+
+func decodeDivergence(t *testing.T, w *httptest.ResponseRecorder) divergenceResponse {
+	t.Helper()
+	assertOK(t, w)
+	var body divergenceResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), "body: %s", w.Body.String())
+	return body
+}
+
+// The counters say "1 ahead, 1 behind"; this endpoint has to say which commits
+// those are, or the list cannot mark rows or name the remote ones.
+func TestServeGitDivergence_ListsBothDirections(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	// One commit only the remote has…
+	createTestFile(t, other, "remote.txt", "from remote\n")
+	gitCommitAll(t, other, "remote commit")
+	runGitIn(t, other, "push")
+	remoteHead := getHeadSHA(t, other)
+
+	// …and one only the local branch has.
+	createTestFile(t, env.ProjectDir, "local.txt", "from local\n")
+	gitCommitAll(t, env.ProjectDir, "local commit")
+	localHead := getHeadSHA(t, env.ProjectDir)
+
+	// The comparison reads local remote-tracking refs, so it is blind until a
+	// fetch (which is the point: no network from a GET).
+	runGitIn(t, env.ProjectDir, "fetch", "--all")
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+
+	assert.True(t, body.HasUpstream)
+	assert.Equal(t, "origin/"+currentBranchOf(t, env.ProjectDir), body.Upstream)
+	assert.Equal(t, 1, body.AheadCount)
+	assert.Equal(t, 1, body.BehindCount)
+	require.Len(t, body.Ahead, 1)
+	assert.Equal(t, localHead, body.Ahead[0], "the unpushed SHA must match HEAD")
+	require.Len(t, body.Behind, 1)
+	assert.Equal(t, remoteHead, body.Behind[0].SHA)
+	assert.Equal(t, "remote commit", body.Behind[0].Msg)
+	assert.NotEmpty(t, body.Behind[0].Author)
+	assert.NotEmpty(t, body.Behind[0].Date)
+}
+
+// Before a fetch the endpoint must report what the local refs know (nothing),
+// not silently reach the network.
+func TestServeGitDivergence_ReflectsLastFetchOnly(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	other := repoWithRemote(t, env.ProjectDir)
+
+	createTestFile(t, other, "remote.txt", "x\n")
+	gitCommitAll(t, other, "remote commit")
+	runGitIn(t, other, "push")
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.True(t, body.HasUpstream, "the branch is tracked even before fetching")
+	assert.Equal(t, 0, body.BehindCount, "unfetched remote commits are unknown, not invented")
+	assert.Empty(t, body.Behind)
+
+	runGitIn(t, env.ProjectDir, "fetch", "--all")
+	body = decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.Equal(t, 1, body.BehindCount, "after fetching the same request sees it")
+}
+
+// A branch with no upstream has nothing to compare against. Reporting 0/0 would
+// read as "in sync".
+func TestServeGitDivergence_NoUpstream(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.False(t, body.HasUpstream)
+	assert.Empty(t, body.Upstream)
+	assert.Empty(t, body.Ahead)
+	assert.Empty(t, body.Behind)
+}
+
+// ?ref= compares the named branch, not HEAD — the history panel can be showing
+// another branch read-only.
+func TestServeGitDivergence_RefSelectsBranch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	repoWithRemote(t, env.ProjectDir)
+	branch := currentBranchOf(t, env.ProjectDir)
+
+	// topic: pushed, so it matches its upstream.
+	runGitIn(t, env.ProjectDir, "checkout", "-b", "topic")
+	createTestFile(t, env.ProjectDir, "topic.txt", "x\n")
+	gitCommitAll(t, env.ProjectDir, "topic commit")
+	runGitIn(t, env.ProjectDir, "push", "-u", "origin", "topic")
+	// main: one unpushed commit.
+	runGitIn(t, env.ProjectDir, "checkout", branch)
+	createTestFile(t, env.ProjectDir, "main.txt", "y\n")
+	gitCommitAll(t, env.ProjectDir, "main commit")
+
+	topic := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, "topic"))
+	assert.Equal(t, 0, topic.AheadCount, "topic is fully pushed")
+	assert.Equal(t, "origin/topic", topic.Upstream)
+
+	main := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, branch))
+	assert.Equal(t, 1, main.AheadCount, "main has one unpushed commit")
+}
+
+func TestServeGitDivergence_RejectsUnknownRef(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	w := divergenceRequest(t, env.ProjectDir, "no-such-branch")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// The branch is still configured to track a remote branch, but that ref no
+// longer exists (deleted on the server and pruned locally). There is nothing to
+// compare against, and reporting 0/0 would read as "in sync".
+func TestServeGitDivergence_UpstreamRefGone(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	repoWithRemote(t, env.ProjectDir)
+	branch := currentBranchOf(t, env.ProjectDir)
+
+	// The remote branch was deleted on the server and pruned locally, so the
+	// remote-tracking ref is gone while the branch still says it tracks it.
+	runGitIn(t, env.ProjectDir, "update-ref", "-d", "refs/remotes/origin/"+branch)
+
+	body := decodeDivergence(t, divergenceRequest(t, env.ProjectDir, ""))
+	assert.False(t, body.HasUpstream)
+	assert.Empty(t, body.Ahead)
+	assert.Empty(t, body.Behind)
+}
