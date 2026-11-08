@@ -266,6 +266,27 @@ describe('ActionBar — scrolling (scroll mode)', () => {
   })
 })
 
+describe('ActionBar — wrapped buttons', () => {
+  it('still reports overflow when the buttons sit in a wrapper', async () => {
+    // The code preview groups its tools in a wrapper (it needs the group to
+    // stop pointerdown from starting a card drag). No direct button means the
+    // fold maths has nothing to do, but scroll mode must still know the row
+    // overflows — otherwise the fades and drag never turn on and the row just
+    // clips its last buttons.
+    const wrapper = mount(ActionBar, {
+      props: { mode: 'scroll' },
+      global: { plugins: [i18n] },
+      slots: { default: () => h('div', { class: 'wrap' }, [h('button', 'A'), h('button', 'B')]) },
+    })
+    const bar = wrapper.element as HTMLElement
+    Object.defineProperty(bar, 'clientWidth', { configurable: true, value: 100 })
+    Object.defineProperty(bar, 'scrollWidth', { configurable: true, value: 300 })
+    ;(wrapper.vm as unknown as { measure: () => void }).measure()
+    await nextTick()
+    expect(bar.classList.contains('ab--overflowing')).toBe(true)
+  })
+})
+
 describe('ActionBar — row gap', () => {
   const mountWith = (props: Record<string, unknown>) =>
     mount(ActionBar, {

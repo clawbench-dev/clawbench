@@ -137,9 +137,12 @@ describe('MailFolderBar — action labels', () => {
     // overflow maths lives in ActionBar.test.ts.
     const wrapper = mountBar()
     await nextTick()
-    const row = wrapper.find('.mail-bar__top')
+    // The row is not the ActionBar any more: the account/folder pickers sit
+    // beside it, and only the icon buttons live inside.
+    const row = wrapper.find('.mail-bar__actions')
     expect(row.classes()).toContain('ab--labels')
     expect(row.findAll('.action-label').length).toBe(3)
+    expect(wrapper.find('.mail-bar__top .menu-select').exists()).toBe(true)
     wrapper.unmount()
   })
 })

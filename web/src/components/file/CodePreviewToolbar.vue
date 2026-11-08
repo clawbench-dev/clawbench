@@ -9,7 +9,7 @@
        Keep the surfaces on this markup: any divergence here is the bug. -->
   <ActionBar
     class="code-preview-meta"
-    mode="menu"
+    mode="scroll"
     align="end"
     size="bar"
     @pointerdown="onRowPointerDown"

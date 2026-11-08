@@ -1,6 +1,11 @@
 <template>
   <div class="mail-bar">
-    <ActionBar class="mail-bar__top" mode="menu" align="end" size="bar">
+    <!-- The row is NOT the ActionBar: the account and folder pickers are text
+         controls (context switchers), and ActionBar only manages icon buttons —
+         it would measure them as fixed items and then squash them with the
+         icon-button box, and their length would decide how many buttons fold.
+         Same split as the git history toolbar's branch picker. -->
+    <div class="mail-bar__top">
       <!-- Two pickers, deliberately not drawn as two equal boxes. The account
            is switched rarely, so it collapses to a small avatar; the folder is
            where the user is, so it gets the name, its unread count and the
@@ -8,7 +13,6 @@
            from reading as one form field. -->
       <div class="mail-bar__account" :title="t('mail.bar.account')">
         <MenuSelect
-          class="ab-auto"
           :model-value="accountId"
           :options="accountOptions"
           :menu-width="280"
@@ -48,7 +52,6 @@
 
       <div class="mail-bar__folder" :title="t('mail.bar.folder')">
         <MenuSelect
-          class="ab-auto"
           :model-value="folderId"
           :options="folderOptions"
           :placeholder="t('mail.bar.folder')"
@@ -85,19 +88,20 @@
         </MenuSelect>
       </div>
 
-      <span class="mail-bar__spacer" />
-      <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')">
-        <span class="action-label">{{ t('mail.bar.refresh') }}</span>
-      </RefreshButton>
-      <button class="mail-icon-btn" :title="t('mail.bar.compose')" @click="emit('compose')">
-        <PenLine />
-        <span class="action-label">{{ t('mail.bar.compose') }}</span>
-      </button>
-      <button class="mail-icon-btn" :title="t('mail.bar.manage')" @click="emit('setup')">
-        <Settings />
-        <span class="action-label">{{ t('mail.bar.manage') }}</span>
-      </button>
-    </ActionBar>
+      <ActionBar class="mail-bar__actions" mode="menu" align="end" size="bar">
+        <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')">
+          <span class="action-label">{{ t('mail.bar.refresh') }}</span>
+        </RefreshButton>
+        <button class="mail-icon-btn" :title="t('mail.bar.compose')" @click="emit('compose')">
+          <PenLine />
+          <span class="action-label">{{ t('mail.bar.compose') }}</span>
+        </button>
+        <button class="mail-icon-btn" :title="t('mail.bar.manage')" @click="emit('setup')">
+          <Settings />
+          <span class="action-label">{{ t('mail.bar.manage') }}</span>
+        </button>
+      </ActionBar>
+    </div>
 
     <div class="mail-bar__search-row">
       <div class="mail-bar__search">
@@ -283,6 +287,14 @@ function onSearchInput(e: Event): void {
 .mail-bar__top {
   display: flex;
   align-items: center;
+  /* The ActionBar used to supply this gap between its children; the pickers are
+     outside it now, so the row states it. */
+  gap: var(--space-4);
+}
+
+.mail-bar__actions {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* ── Account: a 22dp avatar, not a field ─────────────────────────────── */
@@ -496,9 +508,6 @@ function onSearchInput(e: Event): void {
   flex: 1;
 }
 
-.mail-bar__spacer {
-  flex: 1;
-}
 
 .mail-bar__search-row {
   display: flex;

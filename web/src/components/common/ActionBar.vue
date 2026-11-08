@@ -200,6 +200,10 @@ function measure(): void {
   if (kids.length === 0) {
     hiddenItems.value = []
     showLabels.value = false
+    // A row may legitimately hold no direct buttons — the code preview groups
+    // them in a wrapper. Scroll mode still has to report its overflow, or the
+    // fade hints and drag-to-scroll never turn on and the row just clips.
+    updateScrollState()
     return
   }
 

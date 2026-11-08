@@ -1638,12 +1638,10 @@
    Descendant rather than child: the file manager's sort button sits inside
    `.toolbar-dropdown-wrap` (which anchors its popup) and would otherwise be the
    only button in the row without the shared size and shape.
-   `.ab-auto` opts a TEXT control out of the icon-button box: the forge panel's
-   repo badge and the mail bar's account/folder pickers are buttons too, and the
-   fixed square squeezed their label down to a single character. They keep the
-   colour, radius and press states — only the box is theirs. */
-.ab--header button:not([data-ab-more]):not(.ab-auto),
-.ab--bar button:not([data-ab-more]):not(.ab-auto) {
+   Text controls (the forge repo badge, the mail bar's pickers) are NOT buttons
+   of this row — they live beside the bar, in the header row itself. */
+.ab--header button:not([data-ab-more]),
+.ab--bar button:not([data-ab-more]) {
     width: var(--ab-btn-size);
     height: var(--ab-btn-size);
     border-radius: var(--ab-btn-radius);
@@ -1651,8 +1649,8 @@
 }
 /* Icon size travels with the row: a 15px glyph in a 26px square and a 14px one
    in a 28px pill are the same optical weight. */
-.ab--header button:not([data-ab-more]):not(.ab-auto) svg,
-.ab--bar button:not([data-ab-more]):not(.ab-auto) svg {
+.ab--header button:not([data-ab-more]) svg,
+.ab--bar button:not([data-ab-more]) svg {
     width: var(--ab-icon-size);
     height: var(--ab-icon-size);
 }
@@ -1662,10 +1660,10 @@
    widening the button (the bug this control exists to prevent). The padding and
    gap come with it: keeping the square button's `0` would push the text against
    the icon (the notifications header shipped like that). */
-.ab--header.ab--labels button:not([data-ab-more]):not(.ab-auto),
-.ab--header.ab-measuring button:not([data-ab-more]):not(.ab-auto),
-.ab--bar.ab--labels button:not([data-ab-more]):not(.ab-auto),
-.ab--bar.ab-measuring button:not([data-ab-more]):not(.ab-auto) {
+.ab--header.ab--labels button:not([data-ab-more]),
+.ab--header.ab-measuring button:not([data-ab-more]),
+.ab--bar.ab--labels button:not([data-ab-more]),
+.ab--bar.ab-measuring button:not([data-ab-more]) {
     width: auto;
     padding: 0 var(--ab-btn-pad);
     gap: var(--ab-btn-gap);

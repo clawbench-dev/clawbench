@@ -66,13 +66,21 @@
              badge is clickable — same "context badge + dropdown" affordance as
              the app header's project/branch switchers — and is the only place
              to change or clear the binding once one exists. -->
-        <ActionBar class="forge-header" mode="menu" align="end" size="header">
+        <!-- The header row is NOT the ActionBar. The repo badge is a text
+             control (a context switcher), and ActionBar's three behaviours —
+             showing labels, folding into "more", scrolling — are all built
+             around icon buttons. A text control inside it was measured as a
+             fixed item and then squashed by the icon-button box; it also made
+             the folding decision depend on how long the repo name happens to
+             be. Same split as the git history toolbar, whose branch picker
+             sits outside its ActionBar. -->
+        <div class="forge-header">
           <span class="forge-header-title">
             <Github :size="14" />
             <button
               v-if="items.binding.value"
               ref="repoBadgeRef"
-              class="forge-repo-badge ab-auto"
+              class="forge-repo-badge"
               :title="items.binding.value.slug"
               @click.stop="repoMenuOpen = !repoMenuOpen"
             >
@@ -81,26 +89,28 @@
             </button>
             <span v-else>{{ t('nav.forge') }}</span>
           </span>
-          <button
-            class="forge-header-btn clear-unread-btn"
-            :class="{ active: forgeUnreadCount > 0 }"
-            :disabled="forgeUnreadCount === 0"
-            :title="t('forge.markAllRead')"
-            :aria-label="t('forge.markAllRead')"
-            @click="markAllRead"
-          >
-            <CheckCheck :size="14" />
-            <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
-          </button>
-          <RefreshButton
-            class="forge-header-btn"
-            :loading="refreshing"
-            :title="t('nav.refresh')"
-            @click="onRefreshClick"
-          >
-            <span class="action-label">{{ t('nav.refresh') }}</span>
-          </RefreshButton>
-        </ActionBar>
+          <ActionBar class="forge-header-actions" mode="menu" align="end" size="header">
+            <button
+              class="forge-header-btn clear-unread-btn"
+              :class="{ active: forgeUnreadCount > 0 }"
+              :disabled="forgeUnreadCount === 0"
+              :title="t('forge.markAllRead')"
+              :aria-label="t('forge.markAllRead')"
+              @click="markAllRead"
+            >
+              <CheckCheck :size="14" />
+              <span class="action-label">{{ t('actionLabels.markAllRead') }}</span>
+            </button>
+            <RefreshButton
+              class="forge-header-btn"
+              :loading="refreshing"
+              :title="t('nav.refresh')"
+              @click="onRefreshClick"
+            >
+              <span class="action-label">{{ t('nav.refresh') }}</span>
+            </RefreshButton>
+          </ActionBar>
+        </div>
 
         <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="3">
           <button class="forge-repo-menu-item" @click="openRebindDialog">
@@ -997,15 +1007,23 @@ function formatTime(iso: string): string {
 }
 
 
+/* Takes its natural width and shrinks only when the row runs out of room; the
+   icon row beside it takes whatever is left (it needs a real width to decide
+   how many buttons fit before folding the rest into "more"). */
 .forge-header-title {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+
+.forge-header-actions {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* Clickable repository badge — the context switcher for the bound remote,
