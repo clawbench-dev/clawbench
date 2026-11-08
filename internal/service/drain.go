@@ -38,6 +38,17 @@ type DrainResult struct {
 	GoalSatisfied bool
 }
 
+// clean reports whether this turn produced an answer worth acting on: not
+// cancelled, not errored, and not classified as abnormal.
+//
+// Empty is deliberately not tested separately: a turn that produced nothing is
+// classified as abnormalEmpty by classifyTurnAbnormality, so AbnormalReason
+// already covers it. Callers that predate that classification still test Empty
+// on its own.
+func (r DrainResult) clean() bool {
+	return r.CancelReason == "" && r.Err == "" && r.AbnormalReason == ""
+}
+
 // DrainConfig holds the parameters for the drain loop.
 type DrainConfig struct {
 	SessionID   string

@@ -1835,3 +1835,82 @@ func TestGroupOrchestrator_NewHostDrivesNextTurn(t *testing.T) {
 		t.Fatalf("new host's mention must dispatch B: order=%v", *order)
 	}
 }
+
+// A member turn that ends ABNORMALLY — a backend failure persisted as a warning
+// block, which leaves Err empty — is not a clean speech. The cursor must not
+// advance (the member never consumed the context it was handed), and the turn
+// must not treat the warning text as a relay route.
+func TestGroupOrchestrator_AbnormalMemberTurnIsNotClean(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-abnormal-member"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "seed question", nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	SetMemberCursor(mA, 0)
+	before := GetMemberCursor(mA)
+
+	script := map[string][]string{
+		hostID: {`<clawbench-mention targets="A">请表态</clawbench-mention>`},
+	}
+	baseRunner, _ := newScriptedRunner(t, groupID, project, script)
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			// Quota exhaustion: the real runTurn persists a warning block and
+			// reports the abnormal reason; Err stays empty.
+			return groupMemberResult{AbnormalReason: abnormalTerminalFailure}
+		}
+		return baseRunner(ctx, gid, turn)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if got := GetMemberCursor(mA); got != before {
+		t.Fatalf("an abnormal member turn must not advance the cursor: before=%d after=%d", before, got)
+	}
+}
+
+// A group turn in which NO speaker answered cleanly did not produce an answer:
+// it must not be reported as clean, must not announce "your turn", and must not
+// light the unread badge. This is the group-level mirror of
+// abnormalTerminalFailure: a quota error used to look like a completed turn.
+func TestGroupOrchestrator_TurnWithNoCleanSpeechIsAbnormal(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-all-abnormal"
+	groupID, _ := createFreeGroup(t, project, "A", "B")
+
+	// Every member turn fails the same way: a warning block (Err stays empty),
+	// classified as a permanent failure.
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		return groupMemberResult{AbnormalReason: abnormalTerminalFailure}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if res.clean() {
+		t.Fatalf("a turn with no clean speech must not be clean, got %+v", res)
+	}
+	if res.AbnormalReason == "" {
+		t.Fatalf("expected the turn to carry the abnormal reason, got %+v", res)
+	}
+	if n := countSystemLine(t, groupID, i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")); n != 0 {
+		t.Fatalf("an abnormal turn must not announce the user's turn, count=%d", n)
+	}
+	if awaitingOf(t, groupID) {
+		t.Fatal("an abnormal turn must not light the unread badge")
+	}
+}

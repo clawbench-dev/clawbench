@@ -11,8 +11,9 @@ type OpenCodeStreamMessage struct {
 	Type      string          `json:"type"` // "step_start", "text", "reasoning", "tool_use", "step_finish", "retry", "error"
 	Timestamp float64         `json:"timestamp"`
 	SessionID string          `json:"sessionID"`
-	Part      json.RawMessage `json:"part"`  // Varies by type — parse separately
-	Error     *OpenCodeError  `json:"error"` // type="error"/"retry" only
+	Attempt   int             `json:"attempt"` // type="retry": which retry attempt this is
+	Part      json.RawMessage `json:"part"`    // Varies by type — parse separately
+	Error     *OpenCodeError  `json:"error"`   // type="error"/"retry" only
 }
 
 // OpenCodeError is the failure payload of type="error" and type="retry" frames.
@@ -190,20 +191,29 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	case "retry":
 		// OpenCode retries transient upstream failures on its own (measured: 11
 		// attempts over ~85s for a persistent 429, then a terminal "error"
-		// frame). Nothing is emitted here, deliberately.
+		// frame). It emits nothing else meanwhile, so without this the UI shows
+		// a bare spinner for over a minute — indistinguishable from a hang.
 		//
-		// Announcing the retry was tried and reverted: a warning becomes a
-		// PERMANENT block in the transcript, so a 429 that recovered on the next
-		// attempt left a stale "rate limited" card on a turn that actually
-		// succeeded — and because classification reads reasons off blocks, that
+		// The notice is TRANSIENT (no block is accumulated): a retry that
+		// recovers must leave no trace in the transcript. A warning block was
+		// tried and reverted — it is permanent, so a 429 that recovered on the
+		// next attempt left a stale "rate limited" card on a turn that actually
+		// succeeded, and because classification reads reasons off blocks that
 		// stale card also made the turn look failed (a scheduled task reported
 		// `failed` for work that had completed). The terminal frame below is the
-		// only place the turn's real outcome is known, and for the case this
-		// issue is about — an exhausted account, HTTP 402 — it arrives in ~0.2s
-		// anyway.
+		// only place the turn's real outcome is known, and for an exhausted
+		// account (HTTP 402) it arrives in ~0.2s anyway.
 		slog.Debug("opencode stream: retrying upstream failure",
 			"error_type", errorTypeOf(msg.Error),
 			"status", errorStatusOf(msg.Error))
+		emitStreamEvent(ch, "opencode", StreamEvent{
+			Type: "retry_notice",
+			RetryNotice: &RetryNoticeData{
+				Attempt:    msg.Attempt,
+				Message:    errorMessageOf(msg.Error),
+				HTTPStatus: errorStatusOf(msg.Error),
+			},
+		})
 
 	default:
 		slog.Debug("opencode stream: skipping unknown message type", "type", msg.Type)
@@ -306,6 +316,14 @@ func errorStatusOf(e *OpenCodeError) int {
 	return e.Status
 }
 
+// errorMessageOf returns the upstream error text ("" when absent).
+func errorMessageOf(e *OpenCodeError) string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
 // openCodeLimitTypes are OpenCode's own error-type identifiers for "the account
 // cannot make this call right now". Matched on the TYPE before any message text
 // is inspected, because these are stable machine-readable values while the
@@ -328,40 +346,16 @@ var openCodeLimitTypes = map[string]bool{
 	"creditlimitexceeded":    true,
 }
 
-// openCodeLimitPhrases are the message substrings that identify the same
-// condition when the error TYPE is missing or generic. Deliberately PHRASES,
-// not bare words: "balance" alone matches "load balancer" and "insufficient"
-// alone matches "insufficient permissions", and either false positive would
-// tell a user with a working account to go top up — while also disabling the
-// retry that would have fixed a transient failure.
-var openCodeLimitPhrases = []string{
-	"insufficient balance",
-	"insufficient_quota",
-	"insufficient quota",
-	"insufficient credit",
-	"account balance",
-	"credit limit",
-	"creditlimit",
-	"payment required",
-	"usage limit reached",
-	"usage_not_included",
-	"quota exceeded",
-	"quota_exceeded",
-	"exceeded your current quota", // OpenAI's wording
-	"credit balance",              // Anthropic's "Your credit balance is too low"
-	"budget limit",
-	"too many requests",
-	"rate limit",
-	"rate-limit",
-	"throttl",
-}
-
 // isOpenCodeQuotaError reports whether an error frame means the account is out
 // of credit or over its limit, i.e. retrying the same request cannot help.
 //
 // Only ever called for `type:"error"` frames — the agent's own terminal
 // verdict for the turn. Assistant text is never scanned, so a model that merely
 // talks about quotas cannot trip this.
+//
+// The message fallback uses the shared phrase list (stream_error_reason.go) so
+// every backend agrees on what "out of credit" looks like; OpenCode additionally
+// gets the structured fast paths (HTTP 402, its own limit error types).
 func isOpenCodeQuotaError(e *OpenCodeError) bool {
 	if e == nil {
 		return false
@@ -372,13 +366,7 @@ func isOpenCodeQuotaError(e *OpenCodeError) bool {
 	if openCodeLimitTypes[strings.ToLower(e.Type)] {
 		return true
 	}
-	haystack := strings.ToLower(e.Message)
-	for _, phrase := range openCodeLimitPhrases {
-		if strings.Contains(haystack, phrase) {
-			return true
-		}
-	}
-	return false
+	return isLimitErrorText(e.Message)
 }
 
 // parseStepFinish handles a step_finish part, emitting the turn's terminal

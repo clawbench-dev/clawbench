@@ -388,6 +388,29 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		return queueAddedPayload(event)
 	case "team_update":
 		return event.Team
+	case "retry_notice":
+		// Transient "the agent is retrying upstream" notice. It has no block and
+		// no DB row: the frontend shows it as a hint and drops it on the next
+		// content or terminal event. Without a payload here StreamEventToPayload
+		// returns nil and Emit skips the event, leaving the user with a bare
+		// spinner for the ~85s an agent spends retrying a 429.
+		//
+		// Built as a map rather than returning the pointer: a nil
+		// *RetryNoticeData boxed in `any` is NOT nil, so Emit would happily send
+		// `null` to clients.
+		payload := map[string]any{}
+		if event.RetryNotice != nil {
+			if event.RetryNotice.Attempt > 0 {
+				payload["attempt"] = event.RetryNotice.Attempt
+			}
+			if event.RetryNotice.Message != "" {
+				payload["message"] = event.RetryNotice.Message
+			}
+			if event.RetryNotice.HTTPStatus != 0 {
+				payload["http_status"] = event.RetryNotice.HTTPStatus
+			}
+		}
+		return payload
 	default:
 		return acpStatePayload(event)
 	}

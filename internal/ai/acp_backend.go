@@ -515,13 +515,8 @@ func isACPQuotaError(err error) bool {
 	if name, ok := data["errorName"].(string); ok && openCodeLimitTypes[strings.ToLower(name)] {
 		return true
 	}
-	haystack := strings.ToLower(reqErr.Message + " " + fmt.Sprint(reqErr.Data))
-	for _, phrase := range openCodeLimitPhrases {
-		if strings.Contains(haystack, phrase) {
-			return true
-		}
-	}
-	return false
+	haystack := reqErr.Message + " " + fmt.Sprint(reqErr.Data)
+	return isLimitErrorText(haystack)
 }
 
 // acpErrorDataMap normalizes a RequestError's Data into a map, accepting both

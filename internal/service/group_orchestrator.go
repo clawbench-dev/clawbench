@@ -40,12 +40,29 @@ type groupMemberTurn struct {
 type groupMemberResult struct {
 	Err          string
 	CancelReason string
+	// AbnormalReason mirrors TurnResult.AbnormalReason: non-empty when the turn
+	// did not finish cleanly (a backend error / quota exhaustion / crash). It is
+	// separate from Err because a backend failure lands as a persisted warning
+	// BLOCK, not in Err — so a quota error left Err empty and every "clean turn"
+	// check below read it as a successful speech: the cursor advanced past
+	// context the member never consumed, its pending notes were marked
+	// delivered, and the group turn reported a clean finish (auto-cruise kept
+	// running confirmation rounds against an account that cannot answer).
+	AbnormalReason string
 	// AskedQuestion is set when this turn's output carried an AskUserQuestion
 	// card (the converted tool_use form, or a raw <clawbench-ask-question> text
 	// block). A member asking the user a question is addressing the human, so
 	// the relay stops and the floor returns to the user — exactly like an
 	// explicit @User hand-back. Only ever set on a clean turn.
 	AskedQuestion bool
+}
+
+// clean reports whether this turn actually produced an answer: no error, not
+// cancelled, and not classified as abnormal. Every group bookkeeping rule that
+// used to test `Err == ""` must test this instead — a warning block leaves Err
+// empty.
+func (r groupMemberResult) clean() bool {
+	return r.Err == "" && r.CancelReason == "" && r.AbnormalReason == ""
 }
 
 // groupTurnRunner runs one member's turn. Production wires it to runTurn with a
@@ -104,6 +121,58 @@ type GroupOrchestrator struct {
 	// so the wrap-up (summary + "cruise complete" line) is written exactly once
 	// and the loop exits.
 	cruiseSatisfied bool
+
+	// outcomeMu guards the two counters below: member turns run CONCURRENTLY
+	// inside a parallel group (runParallelGroup), and both counters are updated
+	// from executeTurn.
+	outcomeMu sync.Mutex
+	// cleanSpeeches counts member turns that actually answered (see
+	// groupMemberResult.clean). Used by runLoop to tell "the discussion went on"
+	// from "nobody could answer".
+	cleanSpeeches int
+	// abnormalSpeeches counts turns that ended abnormally, and
+	// terminalFailureSpeeches the subset that no retry can fix (quota exhausted,
+	// auth required, …). A cruise confirmation round that produced no clean
+	// speech and at least one permanent failure must stop instead of looping to
+	// the speech cap.
+	abnormalSpeeches        int
+	terminalFailureSpeeches int
+}
+
+// speechTally is a snapshot of the orchestrator's outcome counters. Cruise
+// rounds take one before and after a round to answer "did this round produce
+// anything usable" without looking at any single member's result.
+type speechTally struct {
+	clean    int
+	abnormal int
+	terminal int
+}
+
+func (o *GroupOrchestrator) speechTally() speechTally {
+	o.outcomeMu.Lock()
+	defer o.outcomeMu.Unlock()
+	return speechTally{
+		clean:    o.cleanSpeeches,
+		abnormal: o.abnormalSpeeches,
+		terminal: o.terminalFailureSpeeches,
+	}
+}
+
+// noteMemberOutcome records one speaker turn's outcome. Safe for the parallel
+// path: executeTurn is called from member goroutines.
+func (o *GroupOrchestrator) noteMemberOutcome(r groupMemberResult) {
+	o.outcomeMu.Lock()
+	defer o.outcomeMu.Unlock()
+	if r.clean() {
+		o.cleanSpeeches++
+		return
+	}
+	if r.AbnormalReason != "" {
+		o.abnormalSpeeches++
+		if r.AbnormalReason == abnormalTerminalFailure {
+			o.terminalFailureSpeeches++
+		}
+	}
 }
 
 // maxConsecutiveParseFailures is how many unparseable host routings in a row
@@ -397,13 +466,31 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	} else {
 		res = o.runRounds(groupCtx, groupID)
 	}
+	// A turn in which NO speaker answered cleanly did not produce an answer: every
+	// speech ended abnormally (quota exhausted, agent crashed). Each member's
+	// warning block is already on the timeline, but the TURN-level result must
+	// not read as clean — that is what made a quota error look like an answered
+	// turn (no "your turn" line, no unread badge, and the run reported a clean
+	// finish to the drain loop). A turn with at least one clean speech is a real
+	// discussion even if a member failed, so it stays clean.
+	if res.clean() && o.memberSpeeches > 0 {
+		tally := o.speechTally()
+		if tally.clean == 0 && tally.abnormal > 0 {
+			res.AbnormalReason = abnormalTerminalFailure
+			if tally.terminal == 0 {
+				// Only resumable failures: name the last one so logs/consumers can
+				// tell "the agents crashed" from "the account is out of credit".
+				res.AbnormalReason = abnormalNoTerminal
+			}
+		}
+	}
 	// In cruise mode the floor is never handed back to the human — the turn
 	// only ends on a confirmed completion or the speech cap. A completion gets
 	// the "cruise complete" line instead of "your turn"; the cap keeps its own
 	// line (written by checkSpeechCap). A cancel/error keeps its own visible
 	// signal and writes neither.
 	if o.cruiseOn() {
-		if o.cruiseSatisfied && res.CancelReason == "" && res.Err == "" {
+		if o.cruiseSatisfied && res.clean() {
 			writeGroupSystemMessage(o.project, groupID, i18n.T(
 				i18n.LocalizerForLocale(model.Language), "GroupCruiseSatisfied",
 				map[string]any{"Rounds": o.memberSpeeches},
@@ -431,7 +518,7 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	//     badge there would tell the user to speak in a group that cannot answer.
 	//     The speech cap is not an exclusion — a capped turn did speak, and the
 	//     floor does go back.
-	if res.CancelReason == "" && res.Err == "" &&
+	if res.CancelReason == "" && res.Err == "" && res.AbnormalReason == "" &&
 		GetQueuedCount(groupID) == 0 && o.memberSpeeches > 0 {
 		markGroupUserTurn(groupID)
 	}
@@ -478,7 +565,7 @@ func markGroupUserTurn(groupID string) {
 // for every clean ending, including the cruise/cap paths that write a different
 // line instead of this one.
 func (o *GroupOrchestrator) announceUserTurn(groupID string, res DrainResult) {
-	if res.CancelReason != "" || res.Err != "" {
+	if !res.clean() {
 		return
 	}
 	if GetQueuedCount(groupID) > 0 {
@@ -663,13 +750,14 @@ func (o *GroupOrchestrator) snapshotTurn(s groupTurnSetup, t speakerTurn, highWa
 // (decision #69): a failed/cancelled turn advances nothing and keeps its notes.
 func (o *GroupOrchestrator) executeTurn(ctx context.Context, s groupTurnSetup, p preparedTurn) groupMemberResult {
 	res := s.runner(ctx, o.groupID, groupMemberTurn{MemberRowID: p.turn.member.ID, Prompt: p.prompt})
+	o.noteMemberOutcome(res)
 	if res.CancelReason != "" {
 		// The user stopped the turn mid-speech. Delivered notes are NOT cleared
 		// (the turn consumed nothing) — they re-send (decision #69).
 		return res
 	}
 	advanceCursorOnSuccess(p.turn.member.ID, p.highWater, res)
-	if res.Err == "" {
+	if res.clean() {
 		ids := make([]int64, 0, len(p.pending))
 		for _, pb := range p.pending {
 			ids = append(ids, pb.ID)
@@ -859,11 +947,11 @@ func (o *GroupOrchestrator) runSequentialGroup(
 		// In cruise mode the floor never returns to the human, so the question is
 		// NOT a stop (the member's own prompt tells it not to ask; if it did, the
 		// card still renders but the discussion continues).
-		if r.Err == "" && r.AskedQuestion && !o.cruiseOn() {
+		if r.clean() && r.AskedQuestion && !o.cruiseOn() {
 			o.handUserBack(o.groupID)
 			return DrainResult{}, appended, true
 		}
-		if r.Err == "" && onSpoke != nil {
+		if r.clean() && onSpoke != nil {
 			// Pass this group's NOT-YET-SPOKEN turns as `pending`: a member still
 			// waiting later in the SAME group must not be re-queued (it would
 			// speak twice). The OUTER queue is passed too — a member waiting in a
@@ -998,7 +1086,9 @@ func (o *GroupOrchestrator) appendParallelRelay(
 	}
 	var appended []speakerGroup
 	for i, t := range g.turns {
-		if results[i].Err != "" {
+		if !results[i].clean() {
+			// A failed speaker produced no @-mentions to relay (its "output" is
+			// a warning block, which must not be parsed as a route).
 			continue
 		}
 		pending := make([]speakerTurn, 0, len(g.turns)-1)
@@ -1041,7 +1131,7 @@ func (o *GroupOrchestrator) handbackIfQuestionAsked(results []groupMemberResult)
 		return false
 	}
 	for i := range results {
-		if results[i].Err == "" && results[i].AskedQuestion {
+		if results[i].clean() && results[i].AskedQuestion {
 			o.handUserBack(o.groupID)
 			return true
 		}
@@ -1133,6 +1223,14 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 		if hostRes.Err != "" {
 			return o.hostFailureFallback(ctx, s, hostMemberID, hostRes.Err)
 		}
+		if hostRes.AbnormalReason != "" {
+			// A host turn that ended abnormally wrote a warning block, not a
+			// route. Treat it as a host FAILURE (the warning text would only fail
+			// the route parse anyway, and a permanent failure — quota exhausted —
+			// must count toward the "host is down" streak instead of burning
+			// round-robin turns against a dead account).
+			return o.hostFailureFallback(ctx, s, hostMemberID, hostRes.AbnormalReason)
+		}
 		// A successful host turn clears the failure streak.
 		o.hostFailures = 0
 
@@ -1163,8 +1261,10 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 
 	res := o.drainSpeakers(ctx, s, nil, refill, nil)
 	// Member-speech cap reached: run the host once more purely for the summary
-	// (kept from the old round-cap behavior), unless the turn was cancelled.
-	if o.capReached && res.CancelReason == "" && res.Err == "" {
+	// (kept from the old round-cap behavior), unless the turn was cancelled or
+	// ended abnormally (a summary turn against a dead account only adds another
+	// failure card).
+	if o.capReached && res.clean() {
 		o.summarize(ctx, s, hostMemberID)
 	}
 	return res
@@ -1413,6 +1513,19 @@ func (o *GroupOrchestrator) runCruiseConfirmHost(ctx context.Context, s groupTur
 		// round-robin member (the failure is already visible on the timeline).
 		return o.cruiseFallbackGroup(s, hostMemberID)
 	}
+	if res.AbnormalReason == abnormalTerminalFailure {
+		// A permanent failure (quota exhausted, auth required) will fail the same
+		// way for every fallback member, so continuing only burns the speech cap
+		// while the timeline fills with identical warning cards. End the turn:
+		// the warning block already tells the user what to fix, and the abnormal
+		// result keeps runLoop from announcing "your turn" / the cruise summary.
+		return nil, false, DrainResult{AbnormalReason: res.AbnormalReason}
+	}
+	if res.AbnormalReason != "" {
+		// A resumable failure produced no verdict and no route; keep the
+		// discussion moving with a fallback member, exactly like Err above.
+		return o.cruiseFallbackGroup(s, hostMemberID)
+	}
 	route := grouprouting.Parse(o.lastMemberOutput(o.groupID, hostMemberID))
 	if route.GoalSatisfied {
 		return o.confirmCruiseDone()
@@ -1605,7 +1718,7 @@ func (o *GroupOrchestrator) cruiseFreeRound(ctx context.Context, s groupTurnSetu
 			return res
 		}
 		confirmed, r := o.runFreeConfirmRound(ctx, s)
-		if r.CancelReason != "" || r.Err != "" {
+		if r.CancelReason != "" || r.Err != "" || r.AbnormalReason != "" {
 			return r
 		}
 		// The cap may have been hit MID-confirmation-round: a partial round must
@@ -1658,11 +1771,21 @@ func (o *GroupOrchestrator) runFreeConfirmRound(ctx context.Context, s groupTurn
 	// onSpoke is nil: the confirmation round is self-contained (its @-mentions
 	// are discarded, design §15.5).
 	floor := GroupTimelineHighWater(o.groupID)
+	before := o.speechTally()
 	res := o.drainSpeakers(ctx, s, []speakerGroup{g}, func(context.Context) ([]speakerGroup, bool, DrainResult) {
 		return nil, false, DrainResult{}
 	}, nil)
 	if res.CancelReason != "" || res.Err != "" {
 		return false, res
+	}
+	// A round in which NOBODY answered cleanly has no verdict to read. If any of
+	// those failures is permanent (quota exhausted, auth required), every further
+	// round fails identically — stop instead of looping to the speech cap. A
+	// round with at least one clean speech is a real (possibly negative) verdict
+	// and continues normally.
+	after := o.speechTally()
+	if after.clean == before.clean && after.terminal > before.terminal {
+		return false, DrainResult{AbnormalReason: abnormalTerminalFailure}
 	}
 	return o.countGoalSatisfied(active, floor), DrainResult{}
 }
@@ -2199,6 +2322,13 @@ func advanceCursorOnSuccess(memberID string, preH int64, res groupMemberResult) 
 			"member", memberID, "err", res.Err)
 		return
 	}
+	if res.AbnormalReason != "" {
+		// A backend failure persists a warning block and leaves Err empty, so
+		// without this check the member "consumed" context it never saw.
+		slog.Warn("group: turn ended abnormally, cursor not advanced",
+			"member", memberID, "reason", res.AbnormalReason)
+		return
+	}
 	if res.CancelReason != "" {
 		// The user stopped this turn. It processed nothing, so the context it
 		// was handed must be re-injected next round (decision #69).
@@ -2266,7 +2396,7 @@ func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, t
 	// CancelReason is carried through separately from Err: runTurn reports a
 	// user cancel there (leaving Err empty), and the orchestrator must NOT treat
 	// a cancelled turn as "processed successfully" (decision #69).
-	return groupMemberResult{Err: res.Err, CancelReason: res.CancelReason}
+	return groupMemberResult{Err: res.Err, CancelReason: res.CancelReason, AbnormalReason: res.AbnormalReason}
 }
 
 // emitGroupMemberFinalize tells the group's subscribers that one member turn

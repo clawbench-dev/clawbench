@@ -1250,6 +1250,11 @@ export default {
       // as "sent but ignored".
       mergedIntoPrev: 'Reply merged into the previous turn',
     },
+    retryNotice: {
+      retrying: 'Upstream unavailable — retrying automatically…',
+      retryingAttempt: 'Upstream unavailable — retrying (attempt {attempt})…',
+      hint: 'This can take over a minute; nothing is required from you',
+    },
     contentBlocks: {
       scheduledTaskCreated: 'Task created',
       taskDeleted: 'Task deleted',

@@ -4,6 +4,7 @@ import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
 import { addQueued, getQueue, resetQueuesForTest } from '@/composables/useMessageQueue'
 import { useThinkingContent } from '@/composables/useThinkingContent'
+import { useRetryNotice, clearRetryNotice } from '@/composables/useRetryNotice'
 
 // ── Timer leak prevention ──
 
@@ -161,6 +162,7 @@ describe('useChatStream', () => {
     mockIsReplayingEvents = ref(false)
     mockAppLogW.mockClear()
     resetQueuesForTest()
+    clearRetryNotice()
   })
 
   afterEach(() => {
@@ -4110,4 +4112,50 @@ describe('useChatStream', () => {
       expect(rIdx, 'the reply must sort BELOW the older reply').toBeGreaterThan(olderReplyIdx)
     })
   })
+
+// ── Transient upstream-retry notice ──
+//
+// A rate-limited agent retries silently for over a minute (opencode: 11
+// attempts / ~85s), which is indistinguishable from a hang. The notice is a
+// transient hint — it must appear on `retry_notice` and vanish as soon as the
+// turn progresses or ends, and it must never leak into the transcript.
+describe('retry_notice', () => {
+  it('shows the notice and retires it on the next content event', () => {
+    const options = createOptions()
+    const { connectStream } = useChatStream(options)
+    connectStream('test-session-1')
+
+    simulateWsEvent('retry_notice', { attempt: 2, message: 'Rate limit exceeded', http_status: 429 })
+    expect(useRetryNotice().notice.value).toMatchObject({
+      sessionId: 'test-session-1',
+      attempt: 2,
+      message: 'Rate limit exceeded',
+      httpStatus: 429,
+    })
+
+    simulateWsEvent('content', { content: 'hello' })
+    expect(useRetryNotice().notice.value).toBeNull()
+  })
+
+  it('retires the notice on the terminal event', () => {
+    const options = createOptions()
+    const { connectStream } = useChatStream(options)
+    connectStream('test-session-1')
+
+    simulateWsEvent('retry_notice', { attempt: 1 })
+    expect(useRetryNotice().notice.value).not.toBeNull()
+
+    simulateWsEvent('done', {})
+    expect(useRetryNotice().notice.value).toBeNull()
+  })
+
+  it('ignores a notice for another session', () => {
+    const options = createOptions()
+    const { connectStream } = useChatStream(options)
+    connectStream('test-session-1')
+
+    simulateWsEvent('retry_notice', { attempt: 1 }, 'other-session')
+    expect(useRetryNotice().notice.value).toBeNull()
+  })
+})
 })

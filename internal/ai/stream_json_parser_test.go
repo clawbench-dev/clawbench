@@ -201,6 +201,10 @@ func TestStreamJSON_ParseLine_ErrorError(t *testing.T) {
 	if events[0].Error != "Maximum session turns exceeded" {
 		t.Errorf("unexpected error: %q", events[0].Error)
 	}
+	// A missing reason made the turn classify as a clean finish.
+	if events[0].Reason != ReasonRequestFailed {
+		t.Errorf("expected reason %q, got %q", ReasonRequestFailed, events[0].Reason)
+	}
 }
 
 func TestStreamJSON_ParseLine_ResultSuccess(t *testing.T) {

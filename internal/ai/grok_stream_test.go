@@ -82,6 +82,9 @@ func TestGrokStream_ParseLine_Error(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Equal(t, "error", events[0].Type)
 	assert.Contains(t, events[0].Error, "auth required")
+	// An unclassified error event is read as a clean finish by the turn
+	// classifier, so the reason is part of the contract.
+	assert.Equal(t, ReasonRequestFailed, events[0].Reason)
 }
 
 func TestGrokStream_ParseLine_UnknownAndInvalid(t *testing.T) {

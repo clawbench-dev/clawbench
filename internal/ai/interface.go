@@ -539,6 +539,10 @@ type StreamEvent struct {
 	// Team is the full team snapshot (Type=team_update). Session-level state:
 	// the latest snapshot replaces the previous one.
 	Team *TeamState `json:"team,omitempty"`
+	// RetryNotice is set on a "retry_notice" event: the agent is retrying an
+	// upstream failure on its own, so the turn is neither over nor progressing.
+	// See RetryNoticeData.
+	RetryNotice *RetryNoticeData `json:"retryNotice,omitempty"`
 	// MemberName is the Agent Team member that produced this event (Type=content,
 	// thinking, tool_use, tool_result). Empty for top-level content and for
 	// ordinary sub-agents. Extracted from _meta["codebuddy.ai/memberEvent"];
@@ -602,6 +606,30 @@ type SteerBoundaryData struct {
 type StreamSplitData struct {
 	// MessageID is the DB id of the new "after" streaming assistant row.
 	MessageID int64 `json:"message_id"`
+}
+
+// RetryNoticeData describes an in-flight upstream retry.
+//
+// It exists because a retrying CLI emits NOTHING for the duration: measured
+// against opencode 2.2.6 with a persistent 429, the agent retried eleven times
+// over ~85 seconds and then reported the terminal error. The user saw a spinner
+// with no explanation for well over a minute, which is indistinguishable from a
+// hang.
+//
+// Deliberately NOT a warning block: a retry that SUCCEEDS must leave no trace in
+// the transcript (a permanent "rate limited" card on a turn that actually
+// worked is misleading, and — because classification reads reasons off blocks —
+// it also made the turn look failed). The frontend shows this as a transient
+// notice and drops it on the next content event or the terminal one.
+type RetryNoticeData struct {
+	// Attempt is the retry number the agent is starting, when it reports one.
+	// 0 means "unknown".
+	Attempt int `json:"attempt,omitempty"`
+	// Message is the upstream error text (e.g. "Rate limit exceeded"). Shown as
+	// a detail so the user can tell a transient limit from an outage.
+	Message string `json:"message,omitempty"`
+	// HTTPStatus is the upstream status when known (429, 503, …).
+	HTTPStatus int `json:"http_status,omitempty"`
 }
 
 // ToolCall represents a tool invocation by the AI.

@@ -1253,6 +1253,14 @@ export default {
       // as "sent but ignored".
       mergedIntoPrev: '回复已并入上一轮',
     },
+    retryNotice: {
+      // Shown while the agent is retrying an upstream failure on its own
+      // (opencode retries a 429 up to 11 times over ~85s and emits nothing
+      // else meanwhile). Transient: gone as soon as content arrives.
+      retrying: '上游暂时不可用，正在自动重试…',
+      retryingAttempt: '上游暂时不可用，正在自动重试（第 {attempt} 次）…',
+      hint: '这次重试可能持续一分钟以上，不需要你操作',
+    },
     contentBlocks: {
       scheduledTaskCreated: '任务已创建',
       taskDeleted: '任务已删除',

@@ -15,8 +15,27 @@ import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 import { markCancelRequested, reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 import { addQueued, removeQueued, removeQueuedMany, getQueue } from '@/composables/useMessageQueue.ts'
 import { clearThinkingCache } from '@/composables/useThinkingContent.ts'
+import { showRetryNotice, clearRetryNotice } from '@/composables/useRetryNotice'
 
 const TAG = 'ChatStream'
+
+/**
+ * Event types that mean "the turn is progressing or over", i.e. the transient
+ * retry notice no longer applies. Kept as one set so a new terminal type cannot
+ * silently leave the notice on screen forever.
+ */
+const RETRY_NOTICE_END_TYPES = new Set([
+  'stream_start',
+  'content',
+  'thinking',
+  'tool_use',
+  'tool_result',
+  'done',
+  'replay_done',
+  'cancelled',
+  'error',
+  'warning',
+])
 
 export interface UseChatStreamOptions {
   messages: Ref<ChatMessage[]>
@@ -665,6 +684,13 @@ export function useChatStream(options: UseChatStreamOptions) {
       noteStreamProgress()
     }
 
+    // A retry notice only lives while the agent is silently retrying: any real
+    // progress or the end of the turn retires it. Without this it would sit
+    // above the composer for the rest of the session.
+    if (RETRY_NOTICE_END_TYPES.has(csData.event_type)) {
+      clearRetryNotice(sessionId)
+    }
+
     switch (csData.event_type) {
       case 'stream_start': {
         if (sessionChanged()) return
@@ -1164,6 +1190,17 @@ export function useChatStream(options: UseChatStreamOptions) {
         // offered, move the chip to the new default instead of leaving a dead
         // id on screen (and on the next request).
         reconcileModelSelection(aid)
+        break
+      }
+
+      case 'retry_notice': {
+        if (sessionChanged()) return
+        const retryData = payload as { attempt?: number; message?: string; http_status?: number }
+        showRetryNotice(sessionId, {
+          attempt: retryData.attempt ?? 0,
+          message: retryData.message ?? '',
+          httpStatus: retryData.http_status ?? 0,
+        })
         break
       }
 

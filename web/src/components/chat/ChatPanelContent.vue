@@ -84,6 +84,10 @@
     <!-- Agent Team roster (CodeBuddy teams) -->
     <TeamPanel />
 
+    <!-- Upstream retry notice — transient, never part of the transcript. Sits
+         above the queue so a long silent retry explains itself. -->
+    <RetryNotice :sessionId="identity.currentSessionId.value" :active="loading" />
+
     <!-- Queued messages — kept OUT of the conversation list; shown and managed
          here, directly above the input. -->
     <QueuedMessageBar
@@ -309,6 +313,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import ChatMessageRail from './ChatMessageRail.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
+import RetryNotice from './RetryNotice.vue'
 import QueuedMessageEditSheet from './QueuedMessageEditSheet.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'

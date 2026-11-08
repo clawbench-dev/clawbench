@@ -109,7 +109,14 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 
 	case "error":
 		if msg.Error != "" {
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "error", Error: msg.Error})
+			// The reason is what tells the turn this is a FAILURE rather than a
+			// clean finish (classification reads warning blocks); without it a
+			// quota error was reported as a completed turn.
+			emitStreamEvent(ch, "deepseek", StreamEvent{
+				Type:   "error",
+				Error:  msg.Error,
+				Reason: streamErrorReason(msg.Error),
+			})
 		}
 
 	default:

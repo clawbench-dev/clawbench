@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/model"
 )
 
 func parseOpenCodeLine(line string) []StreamEvent {
@@ -787,21 +789,62 @@ func TestOpenCodeStream_ErrorFrame_WithoutPayloadStillTerminates(t *testing.T) {
 	}
 }
 
-// A `retry` frame must produce NOTHING. Announcing it was tried and reverted:
-// a warning becomes a permanent block, so a 429 that recovered on the next
-// attempt left a stale "rate limited" card on a turn that actually succeeded —
-// and because classification reads reasons off blocks, that stale card also made
-// the turn look failed (a scheduled task reported `failed` for completed work).
-func TestOpenCodeStream_RetryFrame_IsSilent(t *testing.T) {
-	cases := map[string]string{
-		"quota/limit retry": `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`,
-		"transient retry":   `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.transport","message":"ECONNREFUSED: Unable to connect"}}`,
+// A `retry` frame must produce a TRANSIENT notice and NOT a block.
+//
+// The notice is what stops an 85-second silent spinner (opencode retries a
+// persistent 429 eleven times before giving up). It must never become a block:
+// a warning is permanent, so a 429 that recovered on the next attempt left a
+// stale "rate limited" card on a turn that actually succeeded — and because
+// classification reads reasons off blocks, that stale card also made the turn
+// look failed (a scheduled task reported `failed` for completed work).
+func TestOpenCodeStream_RetryFrame_EmitsTransientNoticeOnly(t *testing.T) {
+	cases := map[string]struct {
+		line       string
+		wantMsg    string
+		wantStatus int
+		wantAttmpt int
+	}{
+		"quota/limit retry": {
+			line:       `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`,
+			wantMsg:    "Rate limit exceeded",
+			wantStatus: 429,
+			wantAttmpt: 2,
+		},
+		"transient retry": {
+			line:       `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.transport","message":"ECONNREFUSED: Unable to connect"}}`,
+			wantMsg:    "ECONNREFUSED: Unable to connect",
+			wantStatus: 0,
+			wantAttmpt: 2,
+		},
 	}
-	for name, line := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			events := parseOpenCodeLine(line)
-			if len(events) != 0 {
-				t.Fatalf("a retry frame must not emit anything, got %+v", events)
+			events := parseOpenCodeLine(tc.line)
+			if len(events) != 1 {
+				t.Fatalf("expected exactly one retry_notice, got %+v", events)
+			}
+			ev := events[0]
+			if ev.Type != "retry_notice" {
+				t.Fatalf("type=%q want retry_notice", ev.Type)
+			}
+			if ev.RetryNotice == nil {
+				t.Fatal("retry_notice must carry a payload (Emit drops nil payloads)")
+			}
+			if ev.RetryNotice.Message != tc.wantMsg {
+				t.Errorf("message=%q want %q", ev.RetryNotice.Message, tc.wantMsg)
+			}
+			if ev.RetryNotice.HTTPStatus != tc.wantStatus {
+				t.Errorf("status=%d want %d", ev.RetryNotice.HTTPStatus, tc.wantStatus)
+			}
+			if ev.RetryNotice.Attempt != tc.wantAttmpt {
+				t.Errorf("attempt=%d want %d", ev.RetryNotice.Attempt, tc.wantAttmpt)
+			}
+			// The whole point: no block, no reason — a recovered retry must leave
+			// the transcript (and the turn's classification) untouched.
+			var blocks []model.ContentBlock
+			AccumulateBlock(&blocks, ev)
+			if len(blocks) != 0 {
+				t.Fatalf("a retry notice must not accumulate a block, got %+v", blocks)
 			}
 		})
 	}

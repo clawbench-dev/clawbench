@@ -1600,3 +1600,31 @@ func TestStreamEventToPayload_OmitsEmptyMemberAttribution(t *testing.T) {
 	assert.NotContains(t, tm, "member_name")
 	assert.NotContains(t, tm, "member_color")
 }
+
+// A retry_notice must reach clients: StreamEventToPayload returning nil makes
+// Emit drop the event silently, which is exactly the 85-second blank spinner
+// this notice exists to remove.
+func TestStreamEventToPayload_RetryNotice(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type: "retry_notice",
+		RetryNotice: &ai.RetryNoticeData{
+			Attempt:    3,
+			Message:    "Rate limit exceeded",
+			HTTPStatus: 429,
+		},
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok, "payload must be a map, got %T", payload)
+	assert.Equal(t, 3, m["attempt"])
+	assert.Equal(t, "Rate limit exceeded", m["message"])
+	assert.Equal(t, 429, m["http_status"])
+}
+
+// The payload must exist even when the backend reports no detail — a nil pointer
+// boxed in `any` would make Emit send `null` instead of skipping.
+func TestStreamEventToPayload_RetryNoticeWithoutDetail(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "retry_notice", RetryNotice: &ai.RetryNoticeData{}})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok, "payload must be a map, got %T", payload)
+	assert.Empty(t, m)
+}

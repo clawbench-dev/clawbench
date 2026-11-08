@@ -656,6 +656,10 @@ ERROR: Missing environment variable: MINIMAX_API_KEY`
 	if !strings.Contains(errorEvents[0].Error, "Missing environment variable") {
 		t.Errorf("expected error to mention env var, got %q", errorEvents[0].Error)
 	}
+	// Without a reason the warning block this becomes is read as a clean finish.
+	if errorEvents[0].Reason != ReasonRequestFailed {
+		t.Errorf("expected reason %q, got %q", ReasonRequestFailed, errorEvents[0].Reason)
+	}
 	// ISS-079: ERROR must emit a done event so the SSE stream doesn't hang
 	if len(doneEvents) == 0 {
 		t.Fatal("expected a done event after ERROR line, got none")
