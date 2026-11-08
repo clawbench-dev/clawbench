@@ -810,10 +810,16 @@ func TestVoiceTurnWS_ReplayOwnProjectSession(t *testing.T) {
 
 	sendText(t, conn, `{"type":"replay","sessionId":"`+sessionID+`","messageId":`+strconv.FormatInt(msgID, 10)+`}`)
 
-	frame := readFrame(t, conn)
-	if frame[ttsWSType] != ttsWSSummary {
-		t.Fatalf("frame = %v, want the summary of the replayed message", frame)
+	// Drain to the terminal frame: the speech stream keeps writing the MP3 into
+	// the project's .clawbench/generated/tts while it runs, and returning early
+	// leaves the test's TempDir cleanup racing that write (Windows reports
+	// "The directory is not empty").
+	frames, _ := drainFrames(t, conn)
+	require.NotEmpty(t, frames)
+	if frames[0][ttsWSType] != ttsWSSummary {
+		t.Fatalf("first frame = %v, want the summary of the replayed message", frames[0])
 	}
+	assert.Equal(t, ttsWSDone, frames[len(frames)-1][ttsWSType])
 }
 
 // silentProvider reports a successful synthesis but writes no file, which is
