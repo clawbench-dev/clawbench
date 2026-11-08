@@ -75,3 +75,33 @@ test('cookie store failures discard diagnostics without an unhandled timer rejec
   assert.equal(s.instance.queue.length, 0);
   s.instance.dispose();
 });
+
+test('a rotated password is redacted immediately from subsequent local and uploaded diagnostics', async () => {
+  const s = service();
+  s.instance.start();
+  s.instance.addSecret('rotated-fixture-secret');
+  s.instance.addSecret('rotated-fixture-secret');
+  s.instance.addSecret('');
+  s.instance.log('I', 'rotated-fixture-secret', 'old fixture-password and new rotated-fixture-secret');
+  assert.equal(s.local.length, 1);
+  assert.doesNotMatch(JSON.stringify(s.local), /fixture-password|rotated-fixture-secret/);
+  assert.match(JSON.stringify(s.local), /\[redacted\]/);
+  for (const timer of s.timers) await timer();
+  assert.equal(s.requests.length, 1);
+  assert.doesNotMatch(s.requests[0].options.extraData, /fixture-password|rotated-fixture-secret/);
+  s.instance.dispose();
+});
+
+test('registering a password also scrubs queued diagnostics before their next upload', async () => {
+  const s = service();
+  s.instance.start();
+  s.instance.log('I', 'new-fixture-secret', 'queued new-fixture-secret');
+  assert.equal(s.requests.length, 0);
+  s.instance.addSecret('new-fixture-secret');
+  for (const timer of s.timers) await timer();
+  assert.equal(s.requests.length, 1);
+  const entries = JSON.parse(s.requests[0].options.extraData).entries;
+  assert.equal(entries[0].tag, '[redacted]');
+  assert.equal(entries[0].msg, 'queued [redacted]');
+  s.instance.dispose();
+});

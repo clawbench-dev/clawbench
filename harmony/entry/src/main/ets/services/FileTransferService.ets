@@ -7,6 +7,7 @@ import { http } from '@kit.NetworkKit';
 import { systemShare } from '@kit.ShareKit';
 import { parseServerAddress } from '../models/ServerAddress';
 import { nativeCookieHeader } from '../models/NativeCookies';
+import { NativeFailure, nativeMessage } from '../models/NativeMessages';
 import {
   MAX_DOWNLOAD_BYTES, MAX_SHARE_BYTES, MAX_SHARED_CACHE_BYTES, MAX_SHARE_FILES, MAX_SHARE_TEXT_LENGTH,
   TransferProgress, TransferProgressState, projectDownloadUrl, resolveDownloadAddress,
@@ -30,6 +31,16 @@ class TransferJob {
   }
 }
 
+class WebDownloadRecord {
+  path: string;
+  item: webview.WebDownloadItem;
+
+  constructor(path: string, item: webview.WebDownloadItem) {
+    this.path = path;
+    this.item = item;
+  }
+}
+
 export class FileTransferService {
   private context: common.UIAbilityContext;
   private origin: string;
@@ -39,21 +50,30 @@ export class FileTransferService {
   private epoch: number = 0;
   private internalId: number = -1;
   private disposed: boolean = false;
-  private pickerBusy: boolean = false;
   private reservedShareBytes: number = 0;
+  private reservedDownloadPaths: Set<string> = new Set();
+  private webDownloads: Map<string, WebDownloadRecord> = new Map();
+  private downloadDirectoryUri: string = '';
+  private downloadDirectoryRequest?: Promise<string>;
   private cachePath: string;
+  private language: string;
 
   constructor(context: common.UIAbilityContext, origin: string, emit: (progress: TransferProgress) => void,
-    onLegacyFailure: () => void = () => {}) {
+    onLegacyFailure: () => void = () => {}, language: string = 'zh') {
     this.context = context;
     this.origin = parseServerAddress(origin).url;
     this.emit = emit;
     this.onLegacyFailure = onLegacyFailure;
+    this.language = language;
     this.cachePath = context.cacheDir + '/clawbench-transfers';
     if (!fs.accessSync(this.cachePath)) {
       fs.mkdirSync(this.cachePath);
     }
     this.pruneCache();
+  }
+
+  setLanguage(language: string): void {
+    this.language = language === 'en' ? 'en' : 'zh';
   }
 
   startDownload(path: string, fileName: string, id: number): void {
@@ -90,8 +110,50 @@ export class FileTransferService {
     }
   }
 
+  async startWebDownload(item: webview.WebDownloadItem): Promise<void> {
+    let destination = '';
+    try {
+      if (this.disposed || this.webDownloads.has(item.getGuid())) {
+        throw new Error('Download is no longer available');
+      }
+      const directory = await this.getDownloadDirectory();
+      if (this.disposed) {
+        throw new Error('Download is no longer available');
+      }
+      if (!directory) {
+        item.cancel();
+        return;
+      }
+      destination = this.reserveDownloadPath(directory, safeFileName(item.getSuggestedFileName()));
+      this.webDownloads.set(item.getGuid(), new WebDownloadRecord(destination, item));
+      item.start(destination);
+    } catch (_) {
+      if (destination) {
+        this.webDownloads.delete(item.getGuid());
+        this.releaseDownloadPath(destination);
+      }
+      try { item.cancel(); } catch (_) {}
+      throw new Error('Unable to start web download');
+    }
+  }
+
+  finishWebDownload(id: string): boolean {
+    const download = this.webDownloads.get(id);
+    if (!download) {
+      return false;
+    }
+    this.webDownloads.delete(id);
+    this.releaseDownloadPath(download.path);
+    return true;
+  }
+
   dispose(): void {
     this.jobs.forEach((job: TransferJob) => this.cancel(job, false));
+    this.webDownloads.forEach((download: WebDownloadRecord) => {
+      try { download.item.cancel(); } catch (_) {}
+      this.releaseDownloadPath(download.path);
+    });
+    this.webDownloads.clear();
     this.disposed = true;
     this.epoch++;
     this.jobs.clear();
@@ -102,8 +164,9 @@ export class FileTransferService {
     const name = safeFileName(fileName);
     const job = this.createJob(this.internalId--, MAX_DOWNLOAD_BYTES);
     const temp = this.temporaryPath(name);
+    let destination = '';
     try {
-      const destination = await this.selectDestination(job, name);
+      destination = await this.selectDestination(job, name);
       const bytes = new util.Base64Helper().decodeSync(base64);
       const file = await fs.open(temp, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       try {
@@ -117,17 +180,18 @@ export class FileTransferService {
     } catch (_) {
       this.fail(job);
       if (!job.state.cancelled) {
-        throw new Error('无法保存文件，请重试');
+        throw new NativeFailure('file_save_failed', this.language);
       }
     } finally {
       this.removeTemporary(temp);
+      this.releaseDownloadPath(destination);
       this.release(job);
     }
   }
 
   async shareText(text: string): Promise<void> {
     if (this.disposed || typeof text !== 'string' || !text || text.length > MAX_SHARE_TEXT_LENGTH) {
-      throw new Error('分享文本为空或超过长度限制');
+      throw new NativeFailure('share_text_invalid', this.language);
     }
     const data = new systemShare.SharedData({
       utd: uniformTypeDescriptor.UniformDataType.PLAIN_TEXT, content: text
@@ -160,7 +224,7 @@ export class FileTransferService {
       job = this.createJob(this.internalId--, budget);
     } catch (_) {
       this.reservedShareBytes -= budget;
-      throw new Error('已有文件操作正在进行，请稍后重试');
+      throw new NativeFailure('file_busy', this.language);
     }
     const temporary: string[] = [];
     let handedOver = false;
@@ -196,7 +260,7 @@ export class FileTransferService {
     } catch (_) {
       this.fail(job);
       if (!job.state.cancelled) {
-        throw new Error('无法分享文件，请检查网络后重试');
+        throw new NativeFailure('file_share_failed', this.language);
       }
     } finally {
       this.reservedShareBytes -= budget;
@@ -209,7 +273,7 @@ export class FileTransferService {
 
   private createJob(id: number, limit: number): TransferJob {
     if (this.disposed || this.jobs.has(id) || this.jobs.size >= 3) {
-      throw new Error('已有文件操作正在进行，请稍后重试');
+      throw new NativeFailure('file_busy', this.language);
     }
     const job = new TransferJob(id, this.epoch, limit);
     this.jobs.set(id, job);
@@ -219,8 +283,9 @@ export class FileTransferService {
   private async saveDownload(job: TransferJob, url: string, cookie: string, name: string,
     legacy: boolean): Promise<void> {
     const temp = this.temporaryPath(name);
+    let destination = '';
     try {
-      const destination = await this.selectDestination(job, name);
+      destination = await this.selectDestination(job, name);
       await this.stream(job, url, cookie, temp);
       await this.copyToDestination(job, temp, destination);
       this.complete(job);
@@ -232,28 +297,74 @@ export class FileTransferService {
       }
     } finally {
       this.removeTemporary(temp);
+      this.releaseDownloadPath(destination);
       this.release(job);
     }
   }
 
   private async selectDestination(job: TransferJob, name: string): Promise<string> {
     this.assertActive(job);
-    if (this.pickerBusy) {
-      throw new Error('A save dialog is already open');
+    const directory = await this.getDownloadDirectory();
+    this.assertActive(job);
+    if (!directory) {
+      this.cancel(job, true);
+      throw new Error('Download was cancelled');
     }
-    this.pickerBusy = true;
-    try {
+    return this.reserveDownloadPath(directory, name);
+  }
+
+  private async getDownloadDirectory(): Promise<string> {
+    if (this.downloadDirectoryUri) {
+      return this.downloadDirectoryUri;
+    }
+    let request = this.downloadDirectoryRequest;
+    if (!request) {
       const options = new picker.DocumentSaveOptions();
-      options.newFileNames = [name];
-      const choices = await new picker.DocumentViewPicker(this.context).save(options);
-      this.assertActive(job);
-      if (choices.length !== 1) {
-        this.cancel(job, true);
-        throw new Error('Cancelled');
-      }
-      return choices[0];
+      options.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+      request = new picker.DocumentViewPicker(this.context).save(options).then((choices: string[]) => {
+        if (choices.length !== 1 || !choices[0]) {
+          return '';
+        }
+        this.downloadDirectoryUri = choices[0];
+        return choices[0];
+      });
+      this.downloadDirectoryRequest = request;
+    }
+    try {
+      return await request;
     } finally {
-      this.pickerBusy = false;
+      if (this.downloadDirectoryRequest === request) {
+        this.downloadDirectoryRequest = undefined;
+      }
+    }
+  }
+
+  private reserveDownloadPath(directory: string, name: string): string {
+    const trimmedDirectory = directory.replace(/\/+$/, '');
+    const extensionIndex = name.lastIndexOf('.');
+    const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name;
+    const extension = extensionIndex > 0 ? name.slice(extensionIndex) : '';
+    for (let suffix = 0; suffix < 10000; suffix++) {
+      const candidate = suffix === 0 ? name : `${stem} (${suffix})${extension}`;
+      const uri = `${trimmedDirectory}/${encodeURIComponent(candidate)}`;
+      const path = new fileUri.FileUri(uri).path;
+      if (this.reservedDownloadPaths.has(path)) {
+        continue;
+      }
+      try {
+        if (fs.accessSync(path)) {
+          continue;
+        }
+      } catch (_) {}
+      this.reservedDownloadPaths.add(path);
+      return path;
+    }
+    throw new Error('No available download filename');
+  }
+
+  private releaseDownloadPath(path: string): void {
+    if (path) {
+      this.reservedDownloadPaths.delete(path);
     }
   }
 
@@ -286,7 +397,7 @@ export class FileTransferService {
               job.state.setTotal(job.state.received + length);
             }
           } catch (_) {
-            fail('文件超过传输大小限制');
+            fail(nativeMessage('file_too_large', this.language));
           }
         });
         activeRequest.on('dataReceive', (buffer: ArrayBuffer) => {
@@ -297,11 +408,11 @@ export class FileTransferService {
             job.state.receive(buffer.byteLength);
             queuedBytes += buffer.byteLength;
             if (queuedBytes > MAX_QUEUED_BYTES) {
-              fail('存储写入过慢，请重试');
+              fail(nativeMessage('storage_slow', this.language));
               return;
             }
           } catch (_) {
-            fail('文件超过传输大小限制');
+            fail(nativeMessage('file_too_large', this.language));
             return;
           }
           // Bound queued buffers while native async writes run off the UI thread.
@@ -313,7 +424,7 @@ export class FileTransferService {
             await this.writeAll(job, file.fd, buffer);
           }).catch(() => {
             if (this.active(job)) {
-              fail('文件写入失败，请检查剩余存储空间');
+              fail(nativeMessage('file_write_failed', this.language));
             }
           }).finally(() => {
             queuedBytes -= buffer.byteLength;
@@ -336,7 +447,7 @@ export class FileTransferService {
         }).then((response: number) => {
           status = response;
           if (status < 200 || status >= 300) {
-            fail('服务器拒绝下载或要求重新登录');
+            fail(nativeMessage('download_rejected', this.language));
           } else if (ended) {
             resolve(status);
           }
@@ -375,7 +486,7 @@ export class FileTransferService {
     let output: fs.File | undefined;
     try {
       this.assertActive(job);
-      output = await fs.open(destination, fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      output = await fs.open(destination, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
       const buffer = new ArrayBuffer(256 * 1024);
       while (true) {
         this.assertActive(job);
@@ -424,7 +535,7 @@ export class FileTransferService {
   }
 
   private fail(job: TransferJob): void {
-    if (job.state.finish(job.failure || '文件操作失败，请重试')) {
+    if (job.state.finish(job.failure || nativeMessage('file_operation_failed', this.language))) {
       this.progress(job, true);
     }
   }
@@ -464,7 +575,7 @@ export class FileTransferService {
     });
     const available = MAX_SHARED_CACHE_BYTES - used - this.reservedShareBytes;
     if (available <= 0) {
-      throw new Error('分享缓存已满，请稍后重试');
+      throw new NativeFailure('share_cache_full', this.language);
     }
     const budget = Math.min(MAX_SHARE_BYTES, available);
     this.reservedShareBytes += budget;

@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import * as transferPolicy from '../entry/src/main/ets/models/FileTransferPolicy.ts';
 import { parseServerAddress } from '../entry/src/main/ets/models/ServerAddress.ts';
+import { NativeFailure, nativeMessage } from '../entry/src/main/ets/models/NativeMessages.ts';
 
 const bootstrap = readFileSync(new URL(
   '../entry/src/main/resources/rawfile/harmony-bootstrap.js', import.meta.url
@@ -164,20 +165,22 @@ test('changing documents disposes a real file service and late transfer events c
     requestInStream() { requestStarted = true; return new Promise(() => {}); }
   };
   const context = {
-    ...transferPolicy, parseServerAddress,
+    ...transferPolicy, parseServerAddress, NativeFailure, nativeMessage,
     nativeCookieHeader: (_origin, header) => header,
     webview: { WebCookieManager: { fetchCookieSync: () => 'clawbench_session=fixture; clawbench_project=fixture' } },
     util: { generateRandomUUID: () => 'fixture' },
     fs: {
       OpenMode: { CREATE: 1, WRITE_ONLY: 2, TRUNC: 4 },
-      accessSync: () => true, listFileSync: () => [],
+      accessSync: () => false, mkdirSync() {}, listFileSync: () => [],
       async open(path) { temporary.add(path); openDescriptors.add(7); return { fd: 7 }; },
       async close(file) { openDescriptors.delete(file.fd); },
       unlinkSync(path) { temporary.delete(path); }
     },
+    fileUri: { FileUri: class { constructor(uri) { this.path = decodeURIComponent(uri); } } },
     picker: {
+      DocumentPickerMode: { DOWNLOAD: 1 },
       DocumentSaveOptions: class {},
-      DocumentViewPicker: class { async save() { return ['file://docs/Downloads/result.txt']; } }
+      DocumentViewPicker: class { async save() { return ['file://docs/Download/com.clawbench.harmony']; } }
     },
     http: { RequestMethod: { GET: 'GET' }, createHttp: () => request }
   };
