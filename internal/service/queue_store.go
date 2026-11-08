@@ -142,9 +142,10 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 			slog.String("session", sessionID), slog.String("error", err.Error()))
 	}
 	// The queued message is not in chat_history yet, so the AI rename must be
-	// handed the text explicitly; CollectSessionUserMessages appends it.
+	// handed the message (and its attachments) explicitly;
+	// CollectSessionUserMessages appends it.
 	if titled {
-		ScheduleAutoRename(sessionID, ExtractPlainText(content))
+		ScheduleAutoRename(sessionID, content, files)
 	}
 
 	return rowID, nil

@@ -35,9 +35,10 @@ import (
 // the manual generate-title endpoint applies (and the recommendation pass).
 const titleGenerateTimeout = 60 * time.Second
 
-// CollectSessionUserMessages returns the plain text of every user message in a
+// CollectSessionUserMessages returns the text of every user message in a
 // session, oldest first, with extraText appended when it adds something the DB
-// does not already have.
+// does not already have. Each entry is the message plus the content of the
+// quotes it carries (see userMessageTitleText).
 //
 // The whole history is returned on purpose: a fork or a continued task session
 // copies the source history in, so "all user messages at this moment" is
@@ -71,7 +72,7 @@ func CollectSessionUserMessages(sessionID, extraText string) []string {
 		if m.Role != roleUser {
 			continue
 		}
-		text := strings.TrimSpace(clean(ExtractPlainText(m.Content)))
+		text := strings.TrimSpace(clean(userMessageTitleText(m.Content, m.Files)))
 		if text == "" {
 			continue
 		}
@@ -82,6 +83,54 @@ func CollectSessionUserMessages(sessionID, extraText string) []string {
 		out = append(out, extra)
 	}
 	return out
+}
+
+// userMessageTitleText is what ONE user message contributes to AI titling: the
+// message itself, followed by the content of any quotes it carries.
+//
+// The quote has to be included because it is often the only thing that says
+// what the user is talking about. "修了" plus a quote of a defect list titled a
+// real session "简短对话片段" — the model was handed two characters and nothing
+// else. Quote text is the user's own selection, so it belongs to the same
+// "what did the user mean" signal as the typed words.
+func userMessageTitleText(content string, files []model.FileEntry) string {
+	text := strings.TrimSpace(ExtractPlainText(content))
+	quoted := quoteTitleBlocks(files)
+	switch {
+	case quoted == "":
+		return text
+	case text == "":
+		return quoted
+	default:
+		return text + "\n\n" + quoted
+	}
+}
+
+// quoteTitleBlocks renders every quote entry of one message as a labelled
+// block. The label (Path) is the quote's human-readable name — for a quote
+// taken from another chat it is that session's title, which is frequently the
+// best topic hint available; for a whole-file quote it is the only content
+// there is (Text is empty by design when the AI is meant to read the source
+// itself). Non-quote attachments (files, directories, URLs) are skipped: their
+// names say nothing about the topic.
+func quoteTitleBlocks(files []model.FileEntry) string {
+	var parts []string
+	for _, f := range files {
+		if !f.IsQuote() {
+			continue
+		}
+		label := strings.TrimSpace(f.Path)
+		body := strings.TrimSpace(f.Text)
+		switch {
+		case label != "" && body != "":
+			parts = append(parts, "[Quote] "+label+"\n"+body)
+		case body != "":
+			parts = append(parts, "[Quote]\n"+body)
+		case label != "":
+			parts = append(parts, "[Quote] "+label)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // ErrSummaryModelNotConfigured / ErrNoUserMessages are the expected "nothing to
@@ -140,16 +189,19 @@ func AutoRenameEnabled() bool {
 // title was just written. It is a no-op unless the feature is enabled and
 // usable, so callers can invoke it unconditionally after titling.
 //
-// triggerText is the message that caused the title write; it is appended to the
-// collected history so a queued (not-yet-persisted) message is included.
-func ScheduleAutoRename(sessionID, triggerText string) {
+// triggerContent/triggerFiles are the message that caused the title write; they
+// are appended to the collected history so a queued (not-yet-persisted) message
+// is included. Files are part of the payload, not an afterthought: a message
+// that is only "修了" plus a quote carries its whole topic in the quote, and the
+// titling model must see it (userMessageTitleText).
+func ScheduleAutoRename(sessionID, triggerContent string, triggerFiles []model.FileEntry) {
 	if !AutoRenameEnabled() {
 		return
 	}
 	// Detached from any request/session context: the AI call legitimately
 	// outlives the turn that triggered it, and a session cancel must not abort
 	// a rename the user explicitly opted into.
-	go autoRenameSession(context.Background(), sessionID, triggerText)
+	go autoRenameSession(context.Background(), sessionID, userMessageTitleText(triggerContent, triggerFiles))
 }
 
 // autoRenameSession generates a title and, if the session has not been renamed

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -77,6 +78,16 @@ func insertAutoRenameUserMessage(t *testing.T, id int64, sessionID, content stri
 	_, err := store.WriteExec(
 		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, ?, 'user', ?, ?, 0)",
 		id, testProjectID, content, sessionID,
+	)
+	require.NoError(t, err)
+}
+
+func insertAutoRenameUserMessageWithFiles(t *testing.T, id int64, sessionID, content, filesJSON string) {
+	t.Helper()
+	ensureTestProject(t)
+	_, err := store.WriteExec(
+		"INSERT INTO chat_history (id, project_id, role, content, files, session_id, streaming) VALUES (?, ?, 'user', ?, ?, ?, 0)",
+		id, testProjectID, content, filesJSON, sessionID,
 	)
 	require.NoError(t, err)
 }
@@ -185,6 +196,85 @@ func TestCollectSessionUserMessages_SingleChatKeepsText(t *testing.T) {
 
 	got := CollectSessionUserMessages("sess-collect-chat", "")
 	assert.Equal(t, []string{`看 <clawbench-mention targets="A" private>字面</clawbench-mention> 语法`}, got)
+}
+
+// A message can be nothing but "修了" plus a quote, with the entire topic inside
+// the quote. Feeding only the typed text to the titling model produced a real
+// useless title ("简短对话片段") on a session whose subject was spelled out in
+// the quoted defect list.
+func TestCollectSessionUserMessages_IncludesQuoteContent(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-collect-quote", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessageWithFiles(t, 301, "sess-collect-quote", "修了",
+		`[{"path":"OpenCode 额度耗尽卡死修复","kind":"quote","text":"未修的既有缺陷：\n5 处后端发 error 不带 Reason"}]`)
+
+	got := CollectSessionUserMessages("sess-collect-quote", "")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "修了")
+	assert.Contains(t, got[0], "OpenCode 额度耗尽卡死修复", "the quote label names the source session")
+	assert.Contains(t, got[0], "5 处后端发 error 不带 Reason", "the quoted body carries the topic")
+}
+
+// A whole-file / whole-issue quote has no inline text by design (the AI is meant
+// to open the source itself), so the label is all the title model gets. Plain
+// file attachments must NOT leak in — a filename says nothing about the topic.
+func TestCollectSessionUserMessages_QuoteLabelFallbackAndNonQuoteSkipped(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-collect-quote-label", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessageWithFiles(t, 302, "sess-collect-quote-label", "看看这个",
+		`[{"path":"src/a.go","isDir":false},`+
+			`{"path":"产品评审会 · 纪要","kind":"quote","text":""}]`)
+
+	got := CollectSessionUserMessages("sess-collect-quote-label", "")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "产品评审会 · 纪要")
+	assert.NotContains(t, got[0], "src/a.go", "a plain file attachment is not a topic")
+}
+
+// The queued-first-message path hands the message over as trigger content
+// instead of reading it from the DB, so the quote has to be composed there too —
+// otherwise a queued quote-only message titles as badly as the stored one did.
+func TestUserMessageTitleText_ComposesQuoteForTrigger(t *testing.T) {
+	files := []model.FileEntry{{Path: "缺陷清单", Kind: "quote", Text: "5 处 error 不带 Reason"}}
+
+	got := userMessageTitleText("修了", files)
+	assert.Contains(t, got, "修了")
+	assert.Contains(t, got, "缺陷清单")
+	assert.Contains(t, got, "5 处 error 不带 Reason")
+
+	assert.Equal(t, "只有正文", userMessageTitleText("只有正文", nil))
+	assert.Equal(t, "[Quote] 缺陷清单\n5 处 error 不带 Reason", userMessageTitleText("  ", files))
+}
+
+// End to end over the real request body: the payload the titling model receives
+// must contain the quoted text. This is the assertion the "自动摘要看不到引用
+// 内容" report maps to — the collection tests above would still pass if the
+// payload builder dropped it downstream.
+func TestGenerateSessionTitleFromMessages_PayloadCarriesQuote(t *testing.T) {
+	payloads := make(chan string, 1)
+	srv, cleanup := setupAutoRenameTest(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		payloads <- string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"额度耗尽缺陷修复"}}]}`))
+	})
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-payload-quote", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessageWithFiles(t, 303, "sess-payload-quote", "修了",
+		`[{"path":"OpenCode 额度耗尽卡死修复","kind":"quote","text":"未修的既有缺陷"}]`)
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.AISummary.API.BaseURL = srv.URL
+	model.ConfigInstance.AISummary.Format = "openai"
+
+	title, err := GenerateSessionTitleFromMessages(context.Background(), "sess-payload-quote", "")
+	require.NoError(t, err)
+	assert.Equal(t, "额度耗尽缺陷修复", title)
+	assert.Contains(t, <-payloads, "未修的既有缺陷")
 }
 
 // ── GenerateSessionTitleFromMessages ──
@@ -389,7 +479,7 @@ func TestScheduleAutoRename_DisabledIsNoop(t *testing.T) {
 	model.ChatAutoRenameEnabled = false
 	t.Cleanup(func() { model.ChatAutoRenameEnabled = false })
 
-	ScheduleAutoRename("sess-sched-off", "问题")
+	ScheduleAutoRename("sess-sched-off", "问题", nil)
 	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-sched-off"))
 }
 
@@ -410,7 +500,7 @@ func TestScheduleAutoRename_UnconfiguredModelKeepsLocalTitle(t *testing.T) {
 
 	assert.False(t, AutoRenameEnabled(), "toggle on but no model must be unusable")
 
-	ScheduleAutoRename("sess-sched-nomodel", "问题")
+	ScheduleAutoRename("sess-sched-nomodel", "问题", nil)
 	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-sched-nomodel"))
 }
 

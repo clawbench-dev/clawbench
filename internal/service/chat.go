@@ -875,7 +875,7 @@ func AddChatMessageWithAgent(projectPath, backend, sessionID, role, content stri
 	// there cannot roll back the user's message. Only the message that earned
 	// the local title triggers it.
 	if titled {
-		ScheduleAutoRename(sessionID, ExtractPlainText(content))
+		ScheduleAutoRename(sessionID, content, files)
 	}
 
 	slog.Info("chat: persisted message",
