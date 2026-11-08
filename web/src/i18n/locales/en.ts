@@ -2765,6 +2765,17 @@ export default {
       owner: 'Owner',
       activeForm: 'In progress',
       noDetails: '(No details)',
+      // Card titles for the task-tool family. Their inputs carry no descriptive
+      // text (a bare task id / a status), so the tool name alone told the user
+      // nothing; the title states the action and the id stays as the summary.
+      action: {
+        create: 'Create task',
+        update: 'Update task',
+        list: 'List tasks',
+        get: 'Get task',
+        stop: 'Stop background task',
+        output: 'View background task output',
+      },
     },
     sendMessage: {
       to: 'To',

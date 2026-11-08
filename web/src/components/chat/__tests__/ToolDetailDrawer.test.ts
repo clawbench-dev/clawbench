@@ -18,6 +18,9 @@ vi.mock('@/utils/renderToolDetail.ts', async (importOriginal) => {
 })
 
 vi.mock('@/utils/icons', async (importOriginal) => {
+  // Spread the real module: the drawer titles its header with
+  // toolDisplayName, so a hand-written whitelist would silently turn every
+  // export it does not list into `undefined`.
   const actual = await importOriginal<typeof import('@/utils/icons')>()
   return {
     ...actual,
@@ -30,6 +33,7 @@ vi.mock('@/stores/app.ts', () => ({ store: { state: {}, setProject: mockSetProje
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import { restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 import { readWebFile } from '@/testUtils/readWebFile'
+import i18nGlobal from '@/i18n'
 
 const i18n = createI18n({
   legacy: false,
@@ -191,6 +195,40 @@ describe('ToolDetailDrawer — worktree button routes through hotSwitchProject',
 // The drawer is mounted fresh each time it is opened, and onUpdated does not
 // fire on initial mount — so the restore must also run on mount, exactly as in
 // the chat list (see the list-remount note in ContentBlocks.test.ts).
+describe('ToolDetailDrawer — header title', () => {
+  // The drawer must title itself the SAME way the chat card strip does. It
+  // used to echo `props.toolName` verbatim, so opening a task tool's drawer
+  // showed the bare wire name ("TaskOutput") even once the strip was fixed.
+  //
+  // Note: toolDisplayName resolves through the GLOBAL i18n singleton (not the
+  // `createI18n` instance mounted below), so the expectation is derived from
+  // that same singleton rather than hard-coding a translated string — that
+  // keeps the assertion meaningful in either UI language.
+  it('uses the localized tool title for a task tool', () => {
+    const wrapper = mountDrawer({ toolName: 'TaskOutput' })
+    const title = wrapper.find('.tool-detail-header-name').text()
+    expect(title).not.toBe('TaskOutput')
+    expect(title).toBe(i18nGlobal.global.t('tool.task.action.output'))
+  })
+
+  it('keeps the subagent type when the drawer was opened from an Agent call', () => {
+    // The subagent branch sits BEFORE the task-tool lookup; a regression there
+    // would title every sub-agent card with the generic tool name.
+    const wrapper = mountDrawer({ toolName: 'Agent', toolSubagentType: 'explore' })
+    expect(wrapper.find('.tool-detail-header-name').text()).toBe('Explore')
+  })
+
+  it('keeps an explicit display-name override', () => {
+    const wrapper = mountDrawer({ toolName: 'TaskOutput', displayNameOverride: 'Custom' })
+    expect(wrapper.find('.tool-detail-header-name').text()).toBe('Custom')
+  })
+
+  it('leaves ordinary tools on their own name', () => {
+    const wrapper = mountDrawer({ toolName: 'Bash' })
+    expect(wrapper.find('.tool-detail-header-name').text()).toBe('Bash')
+  })
+})
+
 describe('ToolDetailDrawer — restore on mount', () => {
   beforeEach(() => {
     vi.mocked(restoreAskStatesInContainer).mockClear()

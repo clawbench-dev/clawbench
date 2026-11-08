@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import {
   // Tool icons
   Eye, PenLine, FilePenLine, SquareTerminal, Terminal, Search, Folder,
@@ -117,6 +118,33 @@ export function getToolIcon(name: string) {
 }
 
 /**
+ * Readable card titles for the task-management tool family.
+ *
+ * Their inputs carry no descriptive text — TaskOutput/TaskStop take a bare
+ * `task_id` (e.g. "cyqjeL") and TaskUpdate takes `{taskId, status}` — so the
+ * generic summary chain degrades to an opaque identifier and the card strip
+ * reads "TaskOutput  cyqjeL", which says nothing about what happened. The pill
+ * title states the ACTION instead, leaving the id as the secondary summary
+ * (see toolCallSummary, which already derives it from the input).
+ *
+ * Keyed by the lowercased canonical tool name.
+ *
+ * Exported so the key-parity test can iterate THIS table instead of a
+ * hand-copied list — a hand-copied list silently stops guarding the moment a
+ * seventh tool is added here, which is the same blind spot that made the
+ * literal-key scan miss this map in the first place (it only sees a quoted key
+ * written directly at a translate call site).
+ */
+export const TASK_TOOL_TITLE_KEYS: Readonly<Record<string, string>> = Object.freeze({
+  taskcreate: 'tool.task.action.create',
+  taskupdate: 'tool.task.action.update',
+  tasklist: 'tool.task.action.list',
+  taskget: 'tool.task.action.get',
+  taskstop: 'tool.task.action.stop',
+  taskoutput: 'tool.task.action.output',
+})
+
+/**
  * Return the display name for a tool call block.
  * For Agent/Task calls with a subagent_type, show the sub-agent name
  * (PascalCased) instead of the generic "Agent".
@@ -137,5 +165,11 @@ export function toolDisplayName(name: string, input?: Record<string, unknown>, d
     }
     if (lower !== 'agent' && lower !== 'task') return 'Agent'
   }
+  // `Object.hasOwn` rather than a truthiness check: the tool name comes from the
+  // agent (custom ACP / MCP servers may report anything), and a plain object
+  // lookup would resolve inherited keys — "constructor" would return the Object
+  // constructor's source text, "__proto__" an object, both rendered into the
+  // pill instead of the tool's own name.
+  if (Object.hasOwn(TASK_TOOL_TITLE_KEYS, lower)) return i18n.global.t(TASK_TOOL_TITLE_KEYS[lower])
   return safeName
 }

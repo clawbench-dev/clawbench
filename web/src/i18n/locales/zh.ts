@@ -2759,6 +2759,16 @@ export default {
       owner: '负责人',
       activeForm: '进行中',
       noDetails: '（无详情）',
+      // 任务类工具卡片的标题。这类工具的输入里没有任何可读描述（只有任务 id
+      // 或状态），所以标题直接说明「在做什么」，id 作为次要信息留在摘要里。
+      action: {
+        create: '创建任务',
+        update: '更新任务',
+        list: '列出任务',
+        get: '查看任务',
+        stop: '停止后台任务',
+        output: '查看后台任务输出',
+      },
     },
     sendMessage: {
       to: '发送给',

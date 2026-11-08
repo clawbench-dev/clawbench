@@ -44,7 +44,7 @@ import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
-import { getToolIcon, isAgentFamilyToolName } from '@/utils/icons'
+import { getToolIcon, isAgentFamilyToolName, toolDisplayName } from '@/utils/icons'
 import { formatDuration } from '@/utils/format.ts'
 import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState, restoreAskStatesInContainer, handleAskSupplementaryInput, handleAskSubmitShortcut } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -78,7 +78,9 @@ const displayName = computed(() => {
   // OpenCode 2.x stores the delegation tool as "subagent"; show the Agent
   // label instead of the raw wire name when no sub-agent type is available.
   if (isAgentFamilyToolName(props.toolName)) return 'Agent'
-  return props.toolName
+  // Same title the card strip shows, so opening a task tool's drawer does not
+  // fall back to the bare wire name ("TaskOutput").
+  return toolDisplayName(props.toolName)
 })
 
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
