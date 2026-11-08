@@ -222,12 +222,17 @@
           class="remote-commit"
           @click="$emit('select', c)"
         >
-          <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
-          <span class="remote-commit-msg">{{ c.msg }}</span>
-          <span class="remote-commit-sha">{{ c.sha.slice(0, 7) }}</span>
-          <span class="remote-commit-meta">
-            {{ formatDate(c.date) }}<template v-if="c.author"> · {{ c.author }}</template>
-          </span>
+          <!-- Two lines: the subject needs the width, and cramming the hash,
+               date and author onto the same line left it clipped to a stub. -->
+          <div class="remote-commit-head">
+            <span class="git-ref-tag git-ref-tag--remote">{{ t('git.divergence.remoteTag') }}</span>
+            <span class="remote-commit-msg">{{ c.msg }}</span>
+          </div>
+          <div class="remote-commit-meta">
+            <span class="remote-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+            <span>{{ formatDate(c.date) }}</span>
+            <span v-if="c.author">· {{ c.author }}</span>
+          </div>
         </div>
         <div v-if="behindCount > behindCommits.length" class="remote-commits-more">
           {{ t('git.divergence.moreRemote', { count: behindCount - behindCommits.length }) }}
@@ -1014,16 +1019,18 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .remote-commits-list {
-  max-height: calc(220 * var(--dp));
+  /* Taller than before: each entry is now two lines. Roughly five entries stay
+     visible before the list scrolls. */
+  max-height: calc(260 * var(--dp));
   overflow-y: auto;
   border-top: 1px solid var(--border-color);
 }
 
 .remote-commit {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: calc(5 * var(--dp)) calc(14 * var(--dp));
+  flex-direction: column;
+  gap: calc(3 * var(--dp));
+  padding: calc(7 * var(--dp)) calc(14 * var(--dp));
   font-size: var(--font-size-xs);
   cursor: pointer;
 }
@@ -1032,12 +1039,28 @@ defineExpose({ observeList, unobserveList, commitSearch })
   background: var(--bg-tertiary);
 }
 
+.remote-commit-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+/* The tag is fixed-width furniture; only the subject may shrink. */
+.remote-commit-head .git-ref-tag {
+  flex: none;
+}
+
+/* Up to two lines: commit subjects are prose, and a single clipped line made
+   every entry look identical. */
 .remote-commit-msg {
   flex: 1;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .remote-commit-sha {
@@ -1048,6 +1071,9 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .remote-commit-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: none;
   color: var(--text-muted);
   font-size: var(--font-size-2xs);
