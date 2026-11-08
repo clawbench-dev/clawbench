@@ -40,6 +40,10 @@
             <Check v-if="isSelected(id)" :size="12" />
           </button>
           <button type="button" class="models-id" @click="toggle(id)">{{ id }}</button>
+          <!-- Price tag (issue #643). These rows are bare ids with no display
+               name, so only exact-id matches produce a number; the "~" marks a
+               consensus across resellers rather than the vendor's own quote. -->
+          <span v-if="prices[id]" class="models-price">{{ priceLabel(prices[id]) }}</span>
           <!-- The default model lives on the row it belongs to (a separate
                <select> duplicated the whole list one screen below it). A star
                is one tap and self-explanatory; disabled until picked. -->
@@ -104,6 +108,7 @@ import { AlertCircle, Check, CheckCircle2, Loader2, Play, Star } from 'lucide-vu
 import SearchInput from '@/components/common/SearchInput.vue'
 import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
+import type { ModelPrice } from '@/utils/modelPrice'
 
 const props = defineProps<{
   /** Whether this panel is the visible view of the form dialog. Loading and
@@ -130,6 +135,9 @@ const loading = ref(false)
 const source = ref<'' | 'live' | 'catalog'>('')
 const loadError = ref('')
 const available = ref<string[]>([])
+/** Per-million-token prices keyed by model id (issue #643). Ids the catalog does
+ *  not know are absent, and their row shows no tag. */
+const prices = ref<Record<string, ModelPrice>>({})
 
 /** Bumped on every load. The dialog stays mounted while hidden, so a probe
  *  started for the previous provider can land after the next open and
@@ -170,17 +178,22 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await apiGet<{ models?: string[]; source?: 'live' | 'catalog'; error?: string }>(
-      `/api/providers/${props.providerId}/models`,
-    )
+    const data = await apiGet<{
+      models?: string[]
+      prices?: Record<string, ModelPrice>
+      source?: 'live' | 'catalog'
+      error?: string
+    }>(`/api/providers/${props.providerId}/models`)
     if (generation !== loadGeneration) return
     available.value = data.models ?? []
+    prices.value = data.prices ?? {}
     source.value = data.source ?? ''
     loadError.value = clipError(data.error ?? '')
   } catch (err) {
     if (generation !== loadGeneration) return
     appLog.w('ProviderModelsPicker', 'load models failed', err)
     available.value = []
+    prices.value = {}
     source.value = ''
     loadError.value = clipError(err instanceof Error ? err.message : String(err))
   } finally {
@@ -225,6 +238,17 @@ const visible = computed(() => {
 
 function isSelected(id: string) {
   return props.selected.includes(id)
+}
+
+/** Compact price tag: "$3 / $15", or "~$3 / $15" for a reseller consensus.
+ *  Matches the shared ModelRow's formatting so the two pickers read alike. */
+function priceLabel(p: ModelPrice): string {
+  const fmt = (v: number) => {
+    if (v >= 1) return String(Math.round(v * 100) / 100)
+    if (v >= 0.01) return String(Math.round(v * 1000) / 1000)
+    return String(Number(v.toPrecision(2)))
+  }
+  return `${p.approx ? '~' : ''}$${fmt(p.input)} / $${fmt(p.output)}`
 }
 
 function toggle(id: string) {
@@ -449,6 +473,14 @@ watch(
   white-space: nowrap;
   cursor: pointer;
   padding: 0;
+}
+.models-price {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  opacity: var(--opacity-muted, 0.75);
+  white-space: nowrap;
 }
 .models-star,
 .models-test {

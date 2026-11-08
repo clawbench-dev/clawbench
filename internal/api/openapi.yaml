@@ -6565,7 +6565,10 @@ paths:
       description: |
         返回该提供商可用的模型。始终以端点实测为准（必要时补 `/v1`），失败再用权威目录兜底
         （`source: "live" | "catalog"`）；同时返回用户已保存的清单 `curated`。
-        返回 `{models:[...], curated:[...], source, status?, error?}`。
+        返回 `{models:[...], curated:[...], prices:{id:{input,output,approx?}}, source, status?, error?}`。
+        `prices` 是每个模型每百万 token 的美元单价（输入/输出），由权威目录快照在响应时计算、不落库；
+        只包含能可靠匹配到的 id，取不到价格的模型不会出现在该 map 里（前端据此不显示标签）。
+        `approx: true` 表示价格来自多个第三方渠道的共识而非模型厂商自己的报价。
         已保存清单不覆盖实测列表——它只表示「用户选了哪些」，选择器要靠实测列表才能继续添加模型；
         网关不暴露列表时返回空数组与原因，前端退化为手动输入，不阻塞配置。
       operationId: providersModels

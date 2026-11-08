@@ -1364,3 +1364,82 @@ func TestProvidersAPI_TestModelUnreachable(t *testing.T) {
 	assert.NotEmpty(t, out.Error)
 	assert.Zero(t, out.Status, "no response means no status")
 }
+
+// The provider model picker renders a price tag per row (issue #643). It deals
+// in bare ids with no display names, so only exact-id matches can apply; ids the
+// catalog does not know must be absent from the map rather than zero-valued,
+// otherwise every unknown model would render "$0 / $0".
+func TestProvidersAPI_ModelListCarriesPrices(t *testing.T) {
+	setupProvidersHandlerTest(t)
+	model.ReplaceCatalog(&model.Catalog{
+		Providers: map[string]model.CatalogProvider{
+			"zai": {
+				ID: "zai", Protocol: model.ProviderProtocolOpenAI,
+				Models: []model.CatalogModel{
+					{ID: "glm-5.2", Name: "GLM-5.2", InputPrice: 1.4, OutputPrice: 4.4},
+				},
+			},
+		},
+	})
+	t.Cleanup(func() { model.ReplaceCatalog(nil) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.2"},{"id":"model-b"}]}`))
+	}))
+	defer srv.Close()
+
+	_, err := service.CreateProvider(model.Provider{
+		Name: "Priced", Protocol: model.ProviderProtocolOpenAI, BaseURL: srv.URL + "/v1", APIKey: "k",
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, "/api/providers/1/models", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Models []string                    `json:"models"`
+		Prices map[string]model.ModelPrice `json:"prices"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	priced, ok := body.Prices["glm-5.2"]
+	require.True(t, ok, "glm-5.2 must carry a price")
+	assert.Equal(t, 1.4, priced.Input)
+	assert.Equal(t, 4.4, priced.Output)
+
+	_, ok = body.Prices["model-b"]
+	assert.False(t, ok, "an unknown model must be absent, not zero-valued")
+}
+
+// A provider with no endpoint still lists its curated ids, so those need prices
+// too — the picker shows them.
+func TestProvidersAPI_ModelListPricesCuratedWithoutEndpoint(t *testing.T) {
+	setupProvidersHandlerTest(t)
+	model.ReplaceCatalog(&model.Catalog{
+		Providers: map[string]model.CatalogProvider{
+			"zai": {
+				ID: "zai", Protocol: model.ProviderProtocolOpenAI,
+				Models: []model.CatalogModel{
+					{ID: "glm-5.2", Name: "GLM-5.2", InputPrice: 3, OutputPrice: 15},
+				},
+			},
+		},
+	})
+	t.Cleanup(func() { model.ReplaceCatalog(nil) })
+
+	_, err := service.CreateProvider(model.Provider{
+		Name: "NoEndpoint", Protocol: model.ProviderProtocolOpenAI, Models: []string{"glm-5.2"},
+	})
+	require.NoError(t, err)
+
+	rec := doProviderRequest(t, ServeProviderSubRoutes, http.MethodGet, "/api/providers/1/models", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Prices map[string]model.ModelPrice `json:"prices"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Contains(t, body.Prices, "glm-5.2")
+	assert.Equal(t, 3.0, body.Prices["glm-5.2"].Input)
+}

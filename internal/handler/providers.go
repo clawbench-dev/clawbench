@@ -725,6 +725,8 @@ func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	result := map[string]any{jsonKeyModels: []string{}, "curated": curated, "source": "", jsonKeyStatus: http.StatusOK}
 	if p.BaseURL == "" {
+		// Nothing to probe, but the saved ids are still listed by the picker.
+		result["prices"] = model.PricesForIDs(curated)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -749,6 +751,12 @@ func serveProviderModels(w http.ResponseWriter, r *http.Request, id int64) {
 	result[jsonKeyModels] = models
 	result[jsonKeyStatus] = status
 	result["source"] = source
+	// Prices for the same ids, keyed by id (issue #643). The picker lists the
+	// advertised set UNION the curated one (a saved id the probe no longer
+	// returns stays visible), so both are priced. Only exact-id matches apply
+	// here — there are no display names — and ids the catalog does not know are
+	// absent from the map, which the row renders as no tag.
+	result["prices"] = model.PricesForIDs(append(append([]string{}, models...), curated...))
 	if probeErr != nil && len(models) == 0 {
 		result[watchMsgError] = probeErr.Error()
 	}

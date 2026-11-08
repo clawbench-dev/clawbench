@@ -235,6 +235,25 @@ func choosePrice(modelID string, entries []pricedEntry) (ModelPrice, bool) {
 	return ModelPrice{Input: best.in, Output: best.out, Approx: true}, true
 }
 
+// PricesForIDs prices a bare list of model ids, keyed by id.
+//
+// Used by the provider model picker, which deals in ids only — it has no
+// display names, so only the exact-id path of LookupModelPrice can match. Ids
+// with no trustworthy price are simply absent from the map, and the caller
+// renders no tag for them.
+func PricesForIDs(ids []string) map[string]ModelPrice {
+	out := make(map[string]ModelPrice, len(ids))
+	for _, id := range ids {
+		if _, done := out[id]; done {
+			continue
+		}
+		if p, ok := LookupModelPrice(id, ""); ok {
+			out[id] = p
+		}
+	}
+	return out
+}
+
 // WithPrices returns a copy of models with Price filled in from the catalog.
 //
 // It never mutates its input: callers hand it slices they do not own (the
