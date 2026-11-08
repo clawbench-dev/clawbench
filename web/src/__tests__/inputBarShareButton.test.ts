@@ -23,9 +23,13 @@ describe('conversation share in the input action bar', () => {
 
   /** Slice the `.chat-top-actions` block (the action bar) out of the template so
    *  assertions cannot match a button elsewhere in the file. Bounded by the
-   *  recommendation banner that follows it. */
+   *  recommendation banner that follows it.
+   *
+   *  Anchored on the class, not on `<div>`: the row became an `ActionBar`
+   *  component (`<ActionBar class="chat-top-actions">`), and pinning the tag
+   *  made this slice stop matching entirely. */
   function actionBarBlock(src: string): string {
-    const open = src.indexOf('<div class="chat-top-actions"')
+    const open = src.search(/<[A-Za-z][\w-]*\s+class="chat-top-actions"/)
     expect(open, '.chat-top-actions must exist').toBeGreaterThan(-1)
     const close = src.indexOf('recommendation-chip', open)
     expect(close, 'action bar must be followed by the recommendation banner').toBeGreaterThan(open)

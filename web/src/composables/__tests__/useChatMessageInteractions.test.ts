@@ -20,11 +20,15 @@ vi.mock('@/composables/useLocale', () => ({ gt: (key: string) => key }))
 const platform = vi.hoisted(() => ({
   isTouchPrimary: { value: true },
   isAndroidApp: { value: false },
+  // Harmony is a separate host identity, not "an Android": the double-tap path
+  // asks both, so the mock has to answer both or the composable reads undefined.
+  isHarmonyApp: { value: false },
 }))
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({
     isTouchPrimary: platform.isTouchPrimary,
     isAndroidApp: platform.isAndroidApp,
+    isHarmonyApp: platform.isHarmonyApp,
   }),
 }))
 
@@ -131,6 +135,7 @@ beforeEach(() => {
   copyText.mockClear()
   platform.isTouchPrimary.value = true
   platform.isAndroidApp.value = false
+  platform.isHarmonyApp.value = false
 })
 
 afterEach(() => {

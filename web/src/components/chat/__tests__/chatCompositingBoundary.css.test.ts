@@ -140,6 +140,7 @@ describe('chat compositing boundary (Android WebView GPU ghost)', () => {
     const ALLOWED: Record<string, string> = {
       'ChatMessageRail.vue': 'vertical rail: height is the pane height, stable across turns',
       'ChatInputBar.vue': 'action bar: fixed height; width follows the pane, which does not resize on turn end',
+      'AttachDrawer.vue': 'selected-chip strip: horizontal fade inside the attach sheet, height is the chip row (fixed), width only changes while the user scrolls the strip',
     }
     const offenders: string[] = []
     for (const file of readdirSync(chatDir).filter((f) => f.endsWith('.vue'))) {

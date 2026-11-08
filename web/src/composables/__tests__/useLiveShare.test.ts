@@ -499,6 +499,20 @@ function lastWS(): FakeWS {
 }
 
 /**
+ * The publisher's control socket.
+ *
+ * `lastWS()` used to be enough, but 听记 now dials its own per-channel
+ * transcript socket during `start()`, so the newest connection is usually the
+ * recorder's — and it never carries room-level frames like `set-notes`.
+ * Anything asserting on what the ROOM was told must target the publish socket.
+ */
+function publisherWS(): FakeWS {
+  const hits = FakeWS.instances.filter((w) => w.url.includes('/api/live-share/publish/ws'))
+  expect(hits.length, 'the publisher socket must have been dialled').toBeGreaterThan(0)
+  return hits[hits.length - 1]
+}
+
+/**
  * Attach a viewer and drive its offer.
  *
  * The publisher ANSWERS, so the m-lines only exist once the offer is applied —
@@ -2290,15 +2304,15 @@ describe('听记 lifecycle across the end of a meeting', () => {
     const { share } = await startSharing()
 
     expect(share.startNotes()).toBe(true)
-    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: true })
+    expect(publisherWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: true })
 
     await share.stopNotes()
-    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: false })
+    expect(publisherWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: false })
 
     // Switching it back on says so again — a viewer that arrived during the
     // pause only ever hears the frames sent after it joined.
     expect(share.startNotes()).toBe(true)
-    const frames = lastWS().sentJSON().filter((m) => m.type === 'set-notes')
+    const frames = publisherWS().sentJSON().filter((m) => m.type === 'set-notes')
     expect(frames).toEqual([
       { type: 'set-notes', enabled: true },
       { type: 'set-notes', enabled: false },
@@ -2321,15 +2335,17 @@ describe('听记 lifecycle across the end of a meeting', () => {
     const share = useLiveShare()
     const started = share.start({ sourceId: '', microphone: true })
 
-    // Wait for the socket to exist (still handshaking) and switch 听记 on then.
-    await vi.waitFor(() => expect(FakeWS.instances).toHaveLength(1))
+    // Wait for the publisher socket to exist (still handshaking) and switch
+    // 听记 on then. Waiting on the instance COUNT is not enough any more: the
+    // recorder dials its own transcript socket here too.
+    await vi.waitFor(() => expect(publisherWS().readyState).toBe(0))
     expect(share.startNotes()).toBe(true)
-    expect(lastWS().sentJSON()).toHaveLength(0)
+    expect(publisherWS().sentJSON()).toHaveLength(0)
 
-    lastWS().open()
+    publisherWS().open()
     expect(await started).toBe(true)
 
-    expect(lastWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: true })
+    expect(publisherWS().sentJSON()).toContainEqual({ type: 'set-notes', enabled: true })
     await share.stop()
   })
 
@@ -2339,16 +2355,16 @@ describe('听记 lifecycle across the end of a meeting', () => {
     const share = useLiveShare()
     const started = share.start({ sourceId: '', microphone: true })
 
-    await vi.waitFor(() => expect(FakeWS.instances).toHaveLength(1))
+    await vi.waitFor(() => expect(publisherWS().readyState).toBe(0))
     expect(share.startNotes()).toBe(true)
     await share.stopNotes()
 
-    lastWS().open()
+    publisherWS().open()
     expect(await started).toBe(true)
 
     // The room must learn the CURRENT state. Re-stating "on" here would leave
     // every viewer polling a transcript that will never grow again.
-    expect(lastWS().sentJSON().some((m) => m.type === 'set-notes')).toBe(false)
+    expect(publisherWS().sentJSON().some((m) => m.type === 'set-notes')).toBe(false)
     await share.stop()
   })
 
