@@ -92,8 +92,12 @@ if [ "$SKIP_TEST" = false ]; then
     echo "WARNING: vitest timed out (pool cleanup hang), checking if coverage data was written..."
   fi
   if [ $result -eq 1 ] || [ $result -eq 124 ]; then
-    if [ ! -f "$ROOT_DIR/coverage/coverage-summary.json" ]; then
-      echo "ERROR: vitest exited with code $result and no coverage data was written."
+    # $COVERAGE_DIR, not a hardcoded coverage/: a shard run writes to
+    # coverage-shards/<i>/, and checking the wrong directory reported "no
+    # coverage data was written" even though the shard had just produced a
+    # 4.3 MB report that uploaded fine (CI job 128970870673).
+    if [ ! -f "$COVERAGE_DIR/coverage-summary.json" ]; then
+      echo "ERROR: vitest exited with code $result and no coverage data was written to $COVERAGE_DIR."
       exit 1
     fi
     # Distinguish "clean run whose pool failed to close" from "tests failed".

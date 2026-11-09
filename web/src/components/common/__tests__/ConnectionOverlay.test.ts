@@ -44,7 +44,17 @@ function mountOverlay() {
         attachTo: container,
         global: {
             plugins: [i18n],
-            stubs: { 'lucide-vue-next': LucideStub },
+            stubs: {
+                'lucide-vue-next': LucideStub,
+                // Stub the fade so removal is synchronous. In jsdom no
+                // `transitionend` ever fires, so Vue keeps the leaving element
+                // in the DOM until its CSS-duration timer elapses — and under
+                // load that timer landed after the assertion window, failing
+                // "the mask is gone once the dialog opens" on CI while passing
+                // locally (job 128970870731). The animation is not what this
+                // test is about; the v-if is.
+                transition: false,
+            },
         },
     })
     return { wrapper, container }
@@ -52,12 +62,20 @@ function mountOverlay() {
 
 describe('ConnectionOverlay', () => {
     let activeContainer: HTMLDivElement | null = null
+    let activeWrapper: ReturnType<typeof mountOverlay>['wrapper'] | null = null
 
     beforeEach(() => {
         mockMode.value = null
     })
 
     afterEach(() => {
+        // `unmount()` first, not just DOM removal. The component teleports to
+        // <body>; removing the elements by hand left the Vue instance alive and
+        // its queued renders pending, so a later case could observe an overlay
+        // that its own state says should be gone. Unmounting tears down the
+        // teleport and the reactive watchers with it.
+        activeWrapper?.unmount()
+        activeWrapper = null
         document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
         document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
         if (activeContainer?.parentNode) {
@@ -69,6 +87,7 @@ describe('ConnectionOverlay', () => {
     async function mountAndWait() {
         const mounted = mountOverlay()
         activeContainer = mounted.container
+        activeWrapper = mounted.wrapper
         await nextTick()
         return mounted.wrapper
     }
