@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { DOMWrapper, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, type Ref } from 'vue'
 import ConnectionOverlay from '@/components/common/ConnectionOverlay.vue'
@@ -44,9 +44,7 @@ function mountOverlay() {
         attachTo: container,
         global: {
             plugins: [i18n],
-            stubs: {
-                'lucide-vue-next': LucideStub,
-            },
+            stubs: { 'lucide-vue-next': LucideStub },
         },
     })
     return { wrapper, container }
@@ -125,10 +123,8 @@ describe('ConnectionOverlay', () => {
     // without this escape hatch a reconnect that never succeeds leaves the user
     // with no way to reach another server.
     // 20 s budget: the default 5 s is not enough on a CI runner running three
-    // vitest workers. Measured there: the case needs >5 s and died at 5041 ms
-    // with a "test timed out" that says nothing about which assertion was
-    // waiting. The work itself is a mount, a native click and one render flush
-    // — nothing here is slow by design, so the budget is the only knob.
+    // vitest workers — the case died there at 5041 ms with a bare "test timed
+    // out", which says nothing about which assertion was waiting.
     it('offers a switch-server escape hatch while reconnecting', { timeout: 20_000 }, async () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
@@ -137,7 +133,12 @@ describe('ConnectionOverlay', () => {
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
-        btn?.click()
+        // Wrap the element in VTU's DOMWrapper instead of calling the native
+        // `el.click()`: `trigger` awaits the render flush, so the assertions
+        // below see the post-click state instead of racing it. (The element
+        // cannot be reached via `wrapper.find` — the component teleports to
+        // <body>, outside the wrapper's root.)
+        await new DOMWrapper(btn!).trigger('click')
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
