@@ -124,7 +124,12 @@ describe('ConnectionOverlay', () => {
     // The mask covers the whole screen including the header's server button, so
     // without this escape hatch a reconnect that never succeeds leaves the user
     // with no way to reach another server.
-    it('offers a switch-server escape hatch while reconnecting', async () => {
+    // 20 s budget: the default 5 s is not enough on a CI runner running three
+    // vitest workers. Measured there: the case needs >5 s and died at 5041 ms
+    // with a "test timed out" that says nothing about which assertion was
+    // waiting. The work itself is a mount, a native click and one render flush
+    // — nothing here is slow by design, so the budget is the only knob.
+    it('offers a switch-server escape hatch while reconnecting', { timeout: 20_000 }, async () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
 
@@ -143,10 +148,15 @@ describe('ConnectionOverlay', () => {
         // 128956975616, "expected <div .connection-overlay> to be null") while
         // passing on an idle machine. Waiting for the condition is the point —
         // the overlay disappearing IS the behaviour under test.
-        // Explicit timeout: vitest's `expect.poll` defaults to 1000 ms, and on
-        // a loaded runner the render flush after a native click can take longer
-        // than that (CI measured 1142 ms for this whole case). The default
-        // silently turns "slow machine" into "behaviour is broken".
+        // Polled instead of asserted after one `nextTick()`: a native `click()`
+        // schedules a Vue update that a loaded runner can flush later than one
+        // tick, and the bare assertion failed on CI while passing locally.
+        //
+        // Explicit 10 s: vitest's `expect.poll` defaults to 1 s, which a loaded
+        // runner exceeds (CI measured 1142 ms for this case's work). The case
+        // itself is given a 20 s budget above, so this stays inside it and a
+        // genuine failure still reports the ASSERTION rather than an opaque
+        // "test timed out".
         await expect.poll(() => $('.connection-overlay'), { timeout: 10_000 }).toBeNull()
         const modal = $('.modal-overlay')
         expect(modal).not.toBeNull()
