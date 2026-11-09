@@ -193,7 +193,7 @@ func ServeLiveNotesImport(w http.ResponseWriter, r *http.Request) {
 	if recErr != nil {
 		slog.Warn("live notes: import record read failed", "err", recErr)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, shareSessionSegment: record})
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, liveNoteSessionKey: record})
 }
 
 // receiveLiveNoteImport streams the multipart body to a scratch file.

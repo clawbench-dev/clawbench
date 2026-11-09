@@ -614,3 +614,19 @@ func TestSTTTranscribeWS_AbortOnWriteError(t *testing.T) {
 	time.Sleep(5200 * time.Millisecond)
 	_ = conn.CloseNow()
 }
+
+// A malformed control frame must not kill the audio path: the client's next
+// binary frame still has to land. Dropping the connection here would end a
+// recording over one bad text frame.
+func TestHandleSTTWSMessage_MalformedControlIsIgnored(t *testing.T) {
+	state := &sttStreamState{}
+	conn := newTestWSConn(t)
+
+	require.NoError(t, handleSTTWSMessage(state, conn, websocket.MessageText, []byte("{not json")))
+
+	require.NoError(t, handleSTTWSMessage(state, conn, websocket.MessageBinary, loudPCM(1)[:200]))
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	assert.Len(t, state.buffer.Bytes(), 200, "audio after a bad control frame must still be recorded")
+	assert.False(t, state.done)
+}

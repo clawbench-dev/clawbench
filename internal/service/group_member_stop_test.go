@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"clawbench/internal/ai"
@@ -303,5 +304,44 @@ func TestSessionExecutor_BuildResult_ReadsMemberStopReason(t *testing.T) {
 	}
 	if result.Empty {
 		t.Fatal("a stopped turn is not an empty turn")
+	}
+}
+
+// Registration is a no-op without both a member id and a cancel func: an empty
+// id would key the map on "" and a nil cancel would panic on interrupt.
+func TestGroupMemberTurn_RegisterRequiresMemberAndCancel(t *testing.T) {
+	if id := RegisterGroupMemberTurnCancel("g", "", func() {}); id != 0 {
+		t.Errorf("id = %d for an empty member, want 0", id)
+	}
+	if id := RegisterGroupMemberTurnCancel("g", "member-nil-cancel", nil); id != 0 {
+		t.Errorf("id = %d for a nil cancel, want 0", id)
+	}
+	if InterruptGroupMemberTurn("g", "member-nil-cancel") {
+		t.Error("a nil-cancel registration must not be interruptible")
+	}
+}
+
+// The FIRST cancel reason wins. A member stop that lands after the user already
+// cancelled the turn must not relabel it: the badge would claim "stopped" for a
+// reply the user cancelled, and the cursor advance is keyed on the reason.
+func TestGroupMemberTurn_KeepsAnEarlierCancelReason(t *testing.T) {
+	const memberID = "member-first-reason"
+	const groupID = "group-first-reason"
+	sessionCancelReasons.Store(memberID, cancelReasonUser)
+	t.Cleanup(func() { sessionCancelReasons.Delete(memberID) })
+
+	var cancelled atomic.Int32
+	id := RegisterGroupMemberTurnCancel(groupID, memberID, func() { cancelled.Add(1) })
+	t.Cleanup(func() { UnregisterGroupMemberTurnCancel(memberID, id) })
+
+	if !InterruptGroupMemberTurn(groupID, memberID) {
+		t.Fatal("InterruptGroupMemberTurn = false, want true")
+	}
+	if got := cancelled.Load(); got != 1 {
+		t.Errorf("cancel called %d times, want 1", got)
+	}
+	reason, ok := sessionCancelReasons.Load(memberID)
+	if !ok || reason != cancelReasonUser {
+		t.Errorf("reason = %v, want the earlier %q", reason, cancelReasonUser)
 	}
 }

@@ -249,3 +249,154 @@ describe('wide dock tooltip wiring', () => {
     expect(main).toContain("import '@/assets/dock-tooltip.css'")
   })
 })
+
+describe('DockTipDirective — touch and chip edge cases', () => {
+  let els: HTMLElement[] = []
+
+  function mountTip(text = 'File manager'): HTMLElement {
+    const el = document.createElement('button')
+    document.body.appendChild(el)
+    DockTipDirective.mounted(el, { value: text } as never)
+    els.push(el)
+    return el
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }))
+  })
+
+  afterEach(() => {
+    for (const el of els) DockTipDirective.unmounted(el)
+    els = []
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    document.body.innerHTML = ''
+  })
+
+  it('touchcancel drops a pending hold and hides the chip', () => {
+    const el = mountTip('Settings')
+
+    el.dispatchEvent(makeTouch('touchstart', 10, 10))
+    vi.advanceTimersByTime(500)
+    expect(chipVisible()).toBe(true)
+
+    el.dispatchEvent(makeTouch('touchcancel', 10, 10))
+    expect(chipVisible()).toBe(false)
+
+    // The cancelled gesture must not leave a live press timer behind: a later
+    // release is just a tap, not a swallowed click.
+    const end = makeTouch('touchend', 10, 10)
+    el.dispatchEvent(end)
+    expect(end.defaultPrevented).toBe(false)
+  })
+
+  it('ignores touchmove without a pending hold (a scroll before the press)', () => {
+    const el = mountTip()
+
+    el.dispatchEvent(makeTouch('touchmove', 10, 90))
+    vi.advanceTimersByTime(500)
+    expect(chipVisible()).toBe(false)
+  })
+
+  it('swallows the contextmenu a hold synthesises, but not a real right-click', () => {
+    const el = mountTip()
+
+    const idle = new Event('contextmenu', { bubbles: true, cancelable: true })
+    el.dispatchEvent(idle)
+    expect(idle.defaultPrevented, 'a right-click without a hold keeps the native menu').toBe(false)
+
+    el.dispatchEvent(makeTouch('touchstart', 10, 10))
+    vi.advanceTimersByTime(500)
+    const synthesised = new Event('contextmenu', { bubbles: true, cancelable: true })
+    el.dispatchEvent(synthesised)
+    expect(synthesised.defaultPrevented, 'the chip is the only product of the gesture').toBe(true)
+  })
+
+  it('ignores updated on an element the directive never mounted', () => {
+    const stranger = document.createElement('button')
+    document.body.appendChild(stranger)
+    // Must not throw: `updated` fires for every v-for button, including ones
+    // that were not mounted by this directive (a sibling component's button).
+    expect(() => DockTipDirective.updated!(stranger, { value: 'x' } as never)).not.toThrow()
+  })
+
+  it('reuses the chip instead of stacking a second one', () => {
+    const first = mountTip('File manager')
+    const second = mountTip('Settings')
+
+    first.dispatchEvent(new FocusEvent('focus'))
+    const chip = chipEl()
+    second.dispatchEvent(new FocusEvent('focus'))
+
+    expect(chipEl()).toBe(chip)
+    expect(document.body.querySelectorAll('.dock-tip')).toHaveLength(1)
+  })
+
+  it('mirrors the chip to the inside when the dock is against the right edge', () => {
+    const el = mountTip()
+    el.getBoundingClientRect = () => ({
+      x: 300, y: 100, left: 300, top: 100, right: 340, bottom: 134, width: 40, height: 34,
+      toJSON: () => ({}),
+    }) as DOMRect
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 350 })
+
+    el.dispatchEvent(new FocusEvent('focus'))
+
+    // The chip has no width in jsdom, so the flip branch is what decides the
+    // side: the left edge minus the gap, never the right edge plus it.
+    expect(chipEl()!.style.left).toBe('292px')
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  })
+
+  it('ignores touch frames that carry no touch point', () => {
+    const el = mountTip()
+    const noPoint = (type: string) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'touches', { value: [] })
+      return ev
+    }
+
+    // Some browsers emit a frame with an empty list (the finger left between
+    // events). Reading touches[0] blindly would throw inside the listener.
+    expect(() => el.dispatchEvent(noPoint('touchstart'))).not.toThrow()
+    vi.advanceTimersByTime(500)
+    expect(chipVisible()).toBe(false)
+
+    // A hold in progress must survive a point-less move frame: the timer is
+    // still running, so the label appears on schedule.
+    el.dispatchEvent(makeTouch('touchstart', 10, 10))
+    expect(() => el.dispatchEvent(noPoint('touchmove'))).not.toThrow()
+    vi.advanceTimersByTime(500)
+    expect(chipVisible()).toBe(true)
+  })
+
+  it('does not open a chip on hover for touch-only hosts', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }))
+    const el = mountTip()
+
+    el.dispatchEvent(new MouseEvent('mouseenter'))
+    vi.advanceTimersByTime(500)
+    expect(chipVisible(), 'a touch host has no hover').toBe(false)
+  })
+})

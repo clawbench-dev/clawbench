@@ -1649,6 +1649,43 @@ func TestServeLiveNotesShare_RejectsForeignRecord(t *testing.T) {
 	assert.False(t, enabled, "a rejected request must not have changed the flag")
 }
 
+// Without a project cookie there is no scope to authorize against, and a
+// body that does not parse must not be read as "enabled: false" (that would
+// silently unpublish a meeting on a typo).
+func TestServeLiveNotesShare_RejectsMissingProjectAndBadBody(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
+
+	t.Run("missing project", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/live-share/notes/sessions/share?token="+token, http.NoBody)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		ServeLiveNotesShare(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/share?token="+token, project)
+		req.Method = http.MethodPatch
+		req.Header.Set("Content-Type", "application/json")
+		req.Body = io.NopCloser(strings.NewReader(`{"enabled":`))
+		rec := httptest.NewRecorder()
+		ServeLiveNotesShare(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	enabled, err := service.MeetingShareEnabled(token)
+	require.NoError(t, err)
+	assert.True(t, enabled, "a rejected request must not change the flag")
+}
+
 func TestServeLiveNotesShare_RejectsWrongMethod(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ServeLiveNotesShare(rec, httptest.NewRequest(http.MethodGet, "/api/live-share/notes/sessions/share", http.NoBody))

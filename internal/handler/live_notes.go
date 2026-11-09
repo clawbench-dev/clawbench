@@ -79,6 +79,10 @@ const (
 	liveNoteShotMaxDimension = 8192
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
+	// liveNoteSessionKey is the JSON key wrapping a meeting record. It is a
+	// response field name, deliberately NOT shareSessionSegment (that one is a
+	// URL path segment that happens to spell the same word).
+	liveNoteSessionKey = "session"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
 	// across all rooms. The STT backend is a shared HTTP service; a long meeting
 	// with eight speaking viewers would otherwise burst it.
@@ -273,7 +277,7 @@ func ServeLiveNotesShare(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": record})
+	writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: record})
 }
 
 func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
@@ -296,7 +300,7 @@ func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"session": record})
+		writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: record})
 		return
 	}
 	sessions, err := service.ListMeetingRecords(projectPath, projectID, 200)
@@ -480,7 +484,7 @@ func serveLiveNotesRename(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": record})
+	writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: record})
 }
 
 // serveLiveNotesDelete handles DELETE /api/live-share/notes/sessions?token=
@@ -2022,6 +2026,33 @@ func liveNotesStartTime(segments []service.LiveNoteSegment) time.Time {
 	return time.UnixMilli(earliest)
 }
 
+// loadPublicLiveNoteChat returns the archived chat for a share link. Chat is
+// not an official artifact of the meeting: losing it must not cost the reader
+// the minutes and the transcript, so a failure is a warning, not an error.
+func loadPublicLiveNoteChat(token string) []liveNotePublicChat {
+	messages, err := service.ListLiveNoteChat(token, 0)
+	if err != nil {
+		slog.Warn("live notes: public chat failed", "err", err)
+		return nil
+	}
+	var chat []liveNotePublicChat
+	for _, m := range messages {
+		chat = append(chat, liveNotePublicChat{Speaker: m.Speaker, Text: m.Text, At: m.At})
+	}
+	return chat
+}
+
+// loadPublicLiveNoteShots returns the redacted key frames for a share link.
+// Like chat, a failure must not cost the reader the minutes and transcript.
+func loadPublicLiveNoteShots(token string) []service.LiveNoteShot {
+	listed, err := service.ListLiveNoteShots(token)
+	if err != nil {
+		slog.Warn("live notes: public shots failed", "err", err)
+		return nil
+	}
+	return redactLiveNoteShots(listed)
+}
+
 // ServeShareLiveNotes handles GET /api/share/{token}/notes (PUBLIC: the share
 // token is the sole credential, exactly like the signaling socket).
 //
@@ -2090,15 +2121,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	}
 	var chat []liveNotePublicChat
 	if full {
-		messages, chatErr := service.ListLiveNoteChat(token, 0)
-		if chatErr != nil {
-			// Chat is not an official artifact of the meeting: losing it must
-			// not cost the reader the minutes and the transcript.
-			slog.Warn("live notes: public chat failed", "err", chatErr)
-		}
-		for _, m := range messages {
-			chat = append(chat, liveNotePublicChat{Speaker: m.Speaker, Text: m.Text, At: m.At})
-		}
+		chat = loadPublicLiveNoteChat(token)
 	}
 	revise := liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError}
 	if full {
@@ -2110,13 +2133,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	// viewer already watches the picture itself.
 	var shots []service.LiveNoteShot
 	if full {
-		listed, shotErr := service.ListLiveNoteShots(token)
-		if shotErr != nil {
-			// Like chat: losing the frames must not cost the reader the minutes
-			// and the transcript.
-			slog.Warn("live notes: public shots failed", "err", shotErr)
-		}
-		shots = redactLiveNoteShots(listed)
+		shots = loadPublicLiveNoteShots(token)
 	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:     note.Title,

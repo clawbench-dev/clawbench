@@ -175,7 +175,7 @@ func TestAppendLiveNoteAudio_FoldsALiveSizedFirefoxSegment(t *testing.T) {
 
 func TestMergeLiveNoteAudio_FoldsLiveSizedSegments(t *testing.T) {
 	paths := audioPaths(t)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		at := int64(1_700_000_000_000) + int64(i)*3000
 		writeSegment(t, paths, at, "mic",
 			testLiveSizedSegment(t, testCluster{timecode: 0, blocks: [][]byte{{0x01}}}))

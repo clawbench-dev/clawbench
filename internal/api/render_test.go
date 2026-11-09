@@ -384,7 +384,7 @@ func TestRenderCommand_NoRepeatHintWithoutArrayParams(t *testing.T) {
 // pushed the task / agent / mcp budgets over their limits. The spec therefore
 // carries `x-prompt-note` for the prompt fragment.
 //
-// This test asserts the behaviour from BOTH sides, because either half alone
+// This test asserts the behavior from BOTH sides, because either half alone
 // would pass with the feature broken: the short note must appear, and the long
 // description it replaces must not.
 func TestRenderCommand_PromptNoteOverridesDescription(t *testing.T) {

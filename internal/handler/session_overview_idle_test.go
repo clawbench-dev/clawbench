@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -147,4 +148,22 @@ func TestServeSessionsOverview_ignoresSessionsOutsideTheWindow(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, getOverview(t, env.ProjectDir))
+}
+
+// A cap of 0 (or a negative value from a hand-edited config) must not empty the
+// section: the fallback keeps the list bounded at ten cards. Without it the
+// `len(groups) >= limit` test is true from the start and every card disappears.
+func TestServeSessionsOverview_zeroCapFallsBackToTen(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	setCardCap(t, 0)
+
+	for i := range 12 {
+		p := canonPath(filepath.Join(env.WatchDir, fmt.Sprintf("idle-%02d", i)))
+		_, err := service.CreateSession(p, "codebuddy", fmt.Sprintf("idle %d", i), "", "", "default", "chat")
+		require.NoError(t, err)
+	}
+
+	projects := getOverview(t, env.ProjectDir)
+	assert.Len(t, projects, 10, "an unset cap falls back to ten cards")
 }

@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -111,4 +113,34 @@ func TestServeGroupMemberStop_RejectsForeignProject(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	assert.Equal(t, int32(0), cancelled.Load(), "a refused request must not cancel anything")
+}
+
+// The stop endpoint is called from a button that can fire in odd states (a
+// stale tab, a request whose cookie expired). Each of those must answer with a
+// clear status instead of a 500 or a silent 200.
+func TestServeGroupMemberStop_RejectsBadRequests(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	t.Run("wrong method", func(t *testing.T) {
+		req := withProjectCookie(newRequest(t, http.MethodGet, "/api/group/member-stop", nil), env.ProjectDir)
+		w := callHandlerWithAuth(ServeGroupMemberStop, req)
+		assertStatus(t, w, http.StatusMethodNotAllowed)
+	})
+
+	t.Run("missing project cookie", func(t *testing.T) {
+		req := newRequest(t, http.MethodPost, "/api/group/member-stop",
+			map[string]any{"groupId": "g", "memberId": "m"})
+		w := callHandlerWithAuth(ServeGroupMemberStop, req)
+		assertStatus(t, w, http.StatusForbidden)
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/group/member-stop",
+			strings.NewReader("{not json"))
+		req.Header.Set("Content-Type", "application/json")
+		req = withProjectCookie(req, env.ProjectDir)
+		w := callHandlerWithAuth(ServeGroupMemberStop, req)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
 }

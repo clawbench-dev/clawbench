@@ -432,7 +432,7 @@ func TestServeConfig_Patch_GroupMaxSpeeches(t *testing.T) {
 }
 
 // recent_project_cards_max_count round-trips through PATCH /api/config and is
-// synced into the model global so the overview endpoint honours it without a
+// synced into the model global so the overview endpoint honors it without a
 // restart. 0 is rejected rather than read as "hide the section": an empty active
 // set already hides it, so 0 has no distinct meaning.
 func TestServeConfig_Patch_RecentProjectCardsMaxCount(t *testing.T) {
@@ -504,7 +504,7 @@ func TestServeConfig_Patch_RecentProjectCardsWindowHours(t *testing.T) {
 }
 
 // The window must reach the client, otherwise the settings row renders empty
-// even though the server honours it.
+// even though the server honors it.
 func TestServeConfig_Get_ExposesRecentProjectCardsWindow(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
