@@ -219,7 +219,7 @@
           :key="group.name"
           class="pcard"
           :class="{ 'is-expanded': expandedProject === group.name, 'is-idle': group.sessions.length === 0 }"
-          :style="{ '--pc': projectTintVar(group.name) }"
+          :style="projectTintStyle(group.name)"
           :data-project="group.name"
         >
           <button
@@ -393,7 +393,7 @@ import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
-import { projectTintVar } from '@/utils/projectTint'
+import { projectTintStyle } from '@/utils/projectTint'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -2117,9 +2117,18 @@ onUnmounted(() => {
    separators and hovers are the same colour at low alpha. Status keeps its own
    meaning: pending stays amber. */
 .pcard {
+  /* One colour drives the whole card. Both theme values arrive inline; the
+     attribute selector below picks one, so switching themes needs no JS. */
+  --pc: var(--pc-light);
   border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
   background: var(--bg-primary, #fff);
   overflow: hidden;
+}
+
+/* Dark themes get the re-lit palette: the light values are darkened for text
+   use and read as mud on a dark surface. */
+:root[data-theme-base="dark"] .pcard {
+  --pc: var(--pc-dark);
 }
 
 /* Cards are flush, so their facing borders would show as a 2px double line.
