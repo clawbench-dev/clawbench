@@ -131,21 +131,6 @@
             <div class="live-voice-stage__desc">{{ t('share.live.noPictureDesc') }}</div>
           </div>
 
-          <!-- Connection health. Only shown once there is a reading, and it never
-               covers the picture: a corner chip is enough to answer "is it me or
-               them" when the video stutters. -->
-          <div
-            v-if="stats && state === 'playing'"
-            class="live-quality"
-            :class="`live-quality--${quality.level}`"
-            :title="quality.detail"
-            data-role="quality"
-            data-local-ui
-          >
-            <span class="live-quality__dot" />
-            {{ quality.label }}
-          </div>
-
           <!-- Remote control state. Loud on purpose: while it is on, this viewer's
                pointer is moving someone else's mouse. `data-local-ui` keeps the
                release button pressable: without it the stage forwards (and
@@ -201,28 +186,55 @@
           </div>
         </div>
 
-        <!-- Browser-only hint: the link works, but the desktop client is what
-             unlocks capture and remote control. Shown only when the host actually
-             allows screen sharing, so it is not noise on every share. -->
-        <div
-          v-if="!clientMode && screenEnabled && !canShareScreen && !clientHintClosed"
-          class="live-client-hint"
-          data-role="client-hint"
-        >
-          <span>{{ t('share.live.clientHint') }}</span>
-          <button
-            class="live-client-hint__close"
-            type="button"
-            :aria-label="t('common.close')"
-            @click="clientHintClosed = true"
+        <!-- Top-right corner, shared by the two ambient notices: connection
+             health and the browser-only capture hint. They stack in this one
+             column because they would otherwise sit on top of each other — and
+             neither belongs in the top-left corner, which answers a different
+             question (who is speaking) and changes constantly.
+
+             Connection health: only shown once there is a reading, and it never
+             covers the picture — a corner chip is enough to answer "is it me or
+             them" when the video stutters. -->
+        <div class="live-top-right">
+          <div
+            v-if="stats && state === 'playing'"
+            class="live-quality"
+            :class="`live-quality--${quality.level}`"
+            :title="quality.detail"
+            data-role="quality"
+            data-local-ui
           >
-            ×
-          </button>
+            <span class="live-quality__dot" />
+            {{ quality.label }}
+          </div>
+
+          <!-- Browser-only hint: the link works, but the desktop client is what
+               unlocks capture and remote control. Shown only when the host actually
+               allows screen sharing, so it is not noise on every share. -->
+          <div
+            v-if="!clientMode && screenEnabled && !canShareScreen && !clientHintClosed"
+            class="live-client-hint"
+            data-role="client-hint"
+          >
+            <span>{{ t('share.live.clientHint') }}</span>
+            <button
+              class="live-client-hint__close"
+              type="button"
+              :aria-label="t('common.close')"
+              @click="clientHintClosed = true"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <!-- Who is speaking. The publisher measures every microphone (it is the
              only place all of them meet) and broadcasts a level; without this chip
-             a viewer hears a voice with no idea whose it is. -->
+             a viewer hears a voice with no idea whose it is.
+
+             Owns the top-left corner on its own: it appears and disappears every
+             few seconds, so anything parked under it (connection health used to
+             be) is covered exactly while somebody talks. -->
         <div v-if="speaking" class="live-speaker" data-role="speaker">
           <span class="live-speaker__dot" />
           {{ t('share.live.speaking', { name: speakerLabel }) }}
@@ -2110,10 +2122,26 @@ onBeforeUnmount(() => {
 
 /* ── Connection quality chip ────────────────────────────────────────────── */
 
-.live-quality {
+/*
+ * Top-right corner column: connection health above, the capture hint below.
+ *
+ * One column rather than two absolutely-positioned chips: both live in this
+ * corner, and on a narrow phone the hint is several lines tall — anchored
+ * independently they would draw over each other. The column is the anchor;
+ * its children are ordinary flex items.
+ */
+.live-top-right {
   position: absolute;
   top: calc(var(--space-5, 10px) + env(safe-area-inset-top, 0px));
-  left: calc(var(--space-5, 10px) + env(safe-area-inset-left, 0px));
+  right: calc(var(--space-5, 10px) + env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2, 4px);
+  z-index: 7;
+}
+
+.live-quality {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2, 4px);
@@ -2123,7 +2151,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color, #30363d);
   font-size: var(--font-size-xs, 11px);
   color: var(--text-secondary, #8b949e);
-  z-index: 7;
 }
 
 .live-quality__dot {
@@ -2159,10 +2186,9 @@ onBeforeUnmount(() => {
 
 /* ── Client-mode hint + source picker ───────────────────────────────────── */
 
+/* A flex item of `.live-top-right`, not positioned on its own: the column
+   already sits in the corner and stacks the quality chip above this hint. */
 .live-client-hint {
-  position: absolute;
-  top: calc(var(--space-5, 10px) + env(safe-area-inset-top, 0px));
-  right: calc(var(--space-5, 10px) + env(safe-area-inset-right, 0px));
   display: flex;
   align-items: center;
   gap: var(--space-3, 6px);
@@ -2174,7 +2200,6 @@ onBeforeUnmount(() => {
   color: var(--text-secondary, #8b949e);
   font-size: var(--font-size-xs, 11px);
   line-height: 1.5;
-  z-index: 7;
 }
 
 .live-client-hint__close {
