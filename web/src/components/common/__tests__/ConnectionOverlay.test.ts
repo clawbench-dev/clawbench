@@ -140,7 +140,11 @@ describe('ConnectionOverlay', () => {
         expect(modal!.style.display).not.toBe('none')
         // DIAG2
         // eslint-disable-next-line no-console
-        console.log('[DIAG2] overlays=', document.body.querySelectorAll('.connection-overlay').length, ' bodyChildren=', document.body.children.length, ' bodyHtmlHasOverlay=', (document.body.innerHTML.match(/connection-overlay/g)||[]).length)
+        console.log('[DIAG3] overlays=', document.body.querySelectorAll('.connection-overlay').length,
+            ' bodyChildren=', Array.from(document.body.children).map(e => e.tagName + '.' + e.className).join('|'),
+            ' modalExists=', !!document.body.querySelector('.modal-overlay'),
+            ' modalDisplay=', document.body.querySelector('.modal-overlay')?.style.display,
+            ' connected=', btn?.isConnected)
         expect($('.connection-overlay')).toBeNull()
 
         // Closing the dialog brings the mask back while still disconnected.
