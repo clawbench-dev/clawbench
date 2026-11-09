@@ -11,11 +11,15 @@ import '@/assets/self-hosted-fonts.css'
 // pickers are teleported to <body>; see the file header for the design.
 import '@/assets/theme-picker.css'
 
+// Wide-dock icon labels. Global because the chip is teleported to <body>.
+import '@/assets/dock-tooltip.css'
+
 import { createApp } from 'vue'
 import App from './App.vue'
 import i18n from './i18n'
 import { LongPressDirective } from './directives/longPress.ts'
 import { RunningSweepDirective } from './directives/runningSweep.ts'
+import { DockTipDirective } from './directives/dockTooltip.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
 import { appLog } from './utils/appLog.ts'
 import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
@@ -141,6 +145,7 @@ async function bootstrap() {
   app.use(i18n)
   app.directive('long-press', LongPressDirective)
   app.directive('running-sweep', RunningSweepDirective)
+  app.directive('dock-tip', DockTipDirective)
 
   // Capture Vue component errors (render, lifecycle, event handlers)
   app.config.errorHandler = (err, _instance, info) => {

@@ -1,0 +1,39 @@
+/*
+ * Icon label for the wide-screen dock — rendered by directives/dockTooltip.ts.
+ *
+ * Global (not scoped) because the chip is teleported to <body>: a scoped rule
+ * would never match it, exactly like the other body-level surfaces in this
+ * folder (design-guide red line 1 — teleported/injected DOM carries no data-v).
+ *
+ * It sits to the RIGHT of the button, centred on it: the dock is a 48dp rail on
+ * the left edge, so the only free space is to its right, and a chip under the
+ * icon would cover the next tab.
+ */
+.dock-tip {
+    position: fixed;
+    z-index: var(--z-popover);
+    padding: calc(3 * var(--dp)) calc(8 * var(--dp));
+    max-width: calc(240 * var(--dp));
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-snug);
+    box-shadow: 0 calc(2 * var(--dp)) calc(8 * var(--dp)) rgba(0, 0, 0, 0.18);
+    /* Never steal the hover that produced it. */
+    pointer-events: none;
+    /* `visibility` (not `display`) so the chip can be measured while hidden —
+       the position is computed from its own size before it fades in. */
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--duration-fast) ease;
+}
+
+.dock-tip.is-visible {
+    opacity: 1;
+    visibility: visible;
+}

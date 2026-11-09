@@ -70,14 +70,14 @@
             <div class="dock-active-indicator wide-dock-active-indicator" v-show="!leftCollapsed" :style="wideDockIndicatorStyle"></div>
             <!-- Primary tabs (always visible) -->
             <div v-for="tab in WIDE_SCREEN_PRIMARY_TABS" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="dockTabTitle(tab)">
+              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" v-dock-tip="dockTabTitle(tab)" :aria-label="dockTabTitle(tab)" @click.stop="handleWideDockTabClick(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
               <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
             <!-- Secondary tabs (always shown inline; the dock scrolls if too short) -->
             <div v-for="tab in overflowTabs" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="dockTabTitle(tab)">
+              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" v-dock-tip="dockTabTitle(tab)" :aria-label="dockTabTitle(tab)" @click.stop="handleWideDockTabClick(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
               <span v-if="liveDotVisible(tab, leftTab === tab)" class="dock-badge dock-badge--live" />

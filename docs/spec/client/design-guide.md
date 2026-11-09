@@ -303,6 +303,10 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **配色不能假设 `--bg-tertiary` 与面板底色有差**（红线 4）：把手与竖条都把 `--text-primary` 混进面板色（`--text-primary` 26% 实测 36 套主题填充中位 1.87:1、描边 9.83:1）。尺寸随界面缩放但**封顶**（把手 20dp→28px，触屏揭示时放大到 26dp→34px，竖条 24dp→30px）——它们是点击目标而非内容，2 倍缩放下不该吃掉半个编辑器。
 - 未读角标叠在图标上方居中，不挂到图标右侧：竖条仅 24px 且贴窗口右缘，Dock 那种 `right: -6dp` 会被裁掉，向左生长又会压到面板内容上。
 
+### 宽屏竖排 Dock 的图标名称
+
+竖排 Dock 只有图标（48dp 宽的条），名称靠 `v-dock-tip` 指令（`web/src/directives/dockTooltip.ts`）显示：悬停 300ms、键盘聚焦立现、触屏长按 450ms。**不用原生 `title`**——它要等约 1 秒、样式由系统决定，Android WebView 里根本不显示（平板横屏正是这个 Dock 出现的场合）。长按释放时必须 `preventDefault`，否则松手还会触发一次点击，而点击在 Dock 上是「切换页签 / 收起面板」，一个只为看名字的手势不该导航。气泡 teleport 到 `<body>`（Dock 列 `overflow-y: auto` 会两个方向都裁掉），样式在 `src/assets/dock-tooltip.css` 全局声明。原生 `title` 已去掉，可访问名改由 `aria-label` 提供。
+
 ### 安全区
 
 全仓只有两处消费 `env(safe-area-inset-*)`，都在 `variables.css`：`--header-safe-area-top`（顶）与 `--dock-height`（底，`47px + 安全区`）。不要在别处另起一套。
@@ -800,6 +804,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/__tests__/bottomDockLayerIsolation.css.test.ts` | 底部 Dock 包装层在 App 模式下只裁剪、不提升，且只在 `[data-webview-mode]` 下 |
 | `composables/__tests__/useAppMode.test.ts` | `[data-webview-mode]` 只给 Android WebView，**Electron 桌面壳与网页模式都拿不到**（桌面壳也报 `isNativeApp()===true`，门控漏判会把 Android 的合成层/粗体补偿套到桌面引擎上） |
 | `__tests__/forgeDockTabTitleWiring.test.ts` | forge 页签标题按绑定平台取值、三条标题路径（溢出菜单项 / 内联 tooltip / 宽屏 Dock tooltip）都接线、标签与图标永不矛盾 |
+| `directives/__tests__/dockTooltip.test.ts` | 宽屏竖排 Dock 的图标名称：悬停延迟、键盘聚焦立现、触屏长按 450ms 后**吞掉释放时的点击**（发现名称的手势不得切换面板）、短按/滑动不弹、跟随语言切换、两个按钮循环都挂了 `v-dock-tip` 且保留 `aria-label`、指令与全局样式已注册 |
 | `testUtils/__tests__/designLength.test.ts` | `designPx()` / `normalizeDp()` 本身：`calc(N * var(--dp))` 与裸 `Npx` 等价、属性名边界不被 `min-width` 满足 |
 | `components/file/__tests__/flashReducedMotion.css.test.ts` | 闪烁动效遵守 `prefers-reduced-motion` |
 | `components/common/__tests__/BusyBar.test.ts` | 长动作进度条存在且动画在、**无** reduced-motion opt-out（扫过即信息）、不吞指针事件 |
