@@ -17,6 +17,7 @@
       :agents="agentsList"
       :currentAgent="currentAgent"
       :isGroupSession="isGroupSession"
+      :stopTargets="stopTargets"
       :groupMembers="props.groupMembers"
       :groupMode="props.groupMode"
       :resolveSpeaker="props.resolveGroupSpeaker"
@@ -139,6 +140,7 @@
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"
+      @stop-member="handleStopMember"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
       @remove-attached-by-path="handleRemoveAttachedEntry"
@@ -332,6 +334,8 @@ import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, getQueue,
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
+import { stopGroupMember } from '@/composables/useGroupChat'
+import { collectStopTargets } from '@/utils/chatStopTargets'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary, isLastAssistantMessage, normalizeDisplayMode, resolveMidTurnSupported } from '@/utils/chatSessionUtils.ts'
@@ -462,6 +466,40 @@ const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || n
  *  is only used to render members. Drives the suppression of single-agent-only
  *  controls in the message list and input bar. */
 const isGroupSession = computed(() => identity.currentSessionType.value === 'group')
+
+/**
+ * Who is speaking RIGHT NOW — the stop menu's list. The derivation (streaming
+ * messages only, host excluded, roster name first) lives in a pure helper so it
+ * is unit tested; see utils/chatStopTargets.
+ */
+const stopTargets = computed(() => collectStopTargets(messages.value, {
+  isGroupSession: isGroupSession.value,
+  hostMemberId: props.groupHostMemberId,
+  roster: props.groupMembers,
+  resolveSpeaker: props.resolveGroupSpeaker,
+  fallbackName: t('chat.input.stopUnknownMember'),
+}))
+
+/** Stop ONE member's speech: the round, the other members and the queue all
+ *  continue. `stopped: false` means it had already finished — say nothing rather
+ *  than claim a stop that did not happen. */
+async function handleStopMember(memberId) {
+  const groupId = identity.currentSessionId.value
+  if (!groupId || !memberId) return
+  const name = stopTargets.value.find((x) => x.id === memberId)?.name || ''
+  try {
+    if (!(await stopGroupMember(groupId, memberId))) return
+    // Optimistic badge: the DB row only carries `stopped` once the backend has
+    // finalized that member's message, and a group turn reloads history at the
+    // very END of the round — without this the cut-short bubble would look like a
+    // normal (half) reply for the rest of the discussion.
+    const stopped = messages.value.find((m) => m.role === 'assistant' && m.streaming && String(m.agentId) === memberId)
+    if (stopped) stopped.stopped = true
+    toast.show(t('chat.input.stoppedMemberToast', { name }), { type: 'info', icon: 'stop' })
+  } catch {
+    toast.show(t('chat.input.stopMemberFailed'), { type: 'error', icon: 'error' })
+  }
+}
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({

@@ -30,7 +30,7 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
     const parsed = JSON.parse(content)
     if ('blocks' in parsed && !Array.isArray(parsed.blocks)) {
       // {"blocks":null} — treat as empty blocks instead of rendering as text
-      return { blocks: [], metadata: parsed.metadata || null, cancelled: parsed.cancelled || false }
+      return { blocks: [], metadata: parsed.metadata || null, cancelled: parsed.cancelled || false, stopped: parsed.stopped || false }
     }
     if (parsed.blocks && Array.isArray(parsed.blocks)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,7 +106,11 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
       return {
         blocks: result,
         metadata: parsed.metadata || null,
-        cancelled: parsed.cancelled || false
+        cancelled: parsed.cancelled || false,
+        // A group member the user stopped on purpose ("stop this one"). It is a
+        // different badge from `cancelled` (the whole turn was abandoned), so it
+        // must survive parsing as its own flag.
+        stopped: parsed.stopped || false,
       }
     }
   } catch {}

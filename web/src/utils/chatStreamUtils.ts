@@ -82,6 +82,9 @@ export interface ChatMessage {
   blocks?: ContentBlock[]
   metadata?: Record<string, unknown>
   cancelled?: boolean
+  /** One group member's speech the user stopped on purpose (「停止该成员发言」).
+   *  Rendered as its own badge, never as `cancelled`. */
+  stopped?: boolean
   streaming?: boolean
   backend?: string
   /**
@@ -1557,6 +1560,19 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       // rebuilt the array from the DB. A still-streaming row is never
       // cancelled (the turn is running), so it must not stamp one.
       if (db.cancelled === true && db.streaming !== true) live.cancelled = true
+      // Same reasoning as `cancelled`: a stopped member's badge is DB-only state,
+      // and the live placeholder is the object this branch keeps.
+      //
+      // Unlike `cancelled`, the client ALSO sets this flag optimistically right
+      // after the stop request succeeds (the DB row only carries it once that
+      // member finalized, and a group turn reloads history at the very end of the
+      // round). So a finalized row that does NOT say `stopped` is authoritative
+      // evidence the speech ended on its own — clear the optimistic flag, or the
+      // bubble would claim a stop that never happened until a session switch.
+      if (db.streaming !== true) {
+        if (db.stopped === true) live.stopped = true
+        else delete live.stopped
+      }
       // The cancelled badge is DB-only state on this path. The terminal
       // `cancelled` stream event carries no flag (its payload is just
       // `{reason:"cancelled"}`), and it is routinely NOT delivered: the client

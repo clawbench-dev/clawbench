@@ -624,6 +624,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/group/host", ServeGroupHost)
 	register("/api/group/member-avatars", ServeGroupMemberAvatars)
 	register("/api/group/member-compact", ServeGroupMemberCompact)
+	register("/api/group/member-stop", ServeGroupMemberStop)
 	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)

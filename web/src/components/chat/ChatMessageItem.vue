@@ -127,6 +127,12 @@
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
 
+    <!-- Stopped-on-purpose marker (group chats): the user stopped THIS member's
+         speech while the round went on. Deliberately a different label from
+         「已取消」— cancelling means the whole turn was abandoned, this means one
+         voice was cut short. -->
+    <div v-if="msg.stopped && !msg.cancelled && !isLastBlockThinking" class="chat-stopped-mark">{{ t('chat.contentBlocks.stopped') }}</div>
+
     <!-- Host's private notes (密送), at the BOTTOM of the bubble.
          Two forms, deliberately different:
            - a note addressed to the USER is expanded by default, labelled
@@ -848,7 +854,8 @@ const copyPayload = quotableText
 }
 
 /* ── Cancelled marker (shown after file changes banner) ── */
-.chat-cancelled-mark {
+.chat-cancelled-mark,
+.chat-stopped-mark {
   display: inline-block;
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);

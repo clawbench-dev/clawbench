@@ -8647,6 +8647,58 @@ paths:
         "500":
           $ref: "#/components/responses/Error"
 
+  /api/group/member-stop:
+    post:
+      tags: [Group]
+      summary: 停止某个群成员当前的发言
+      description: |
+        只停**一个成员**这一次输出：本轮讨论继续（其他成员照常说完，排队消息不受影响），
+        被停的成员之后仍可被主持人/其他成员再次点名。
+
+        与相邻端点区分：
+        - `POST /api/ai/chat/cancel` = 停整轮（并清空队列）；
+        - `POST /api/ai/queue/interrupt` = 停当前回复、下一条排队消息继续跑；
+        - 本端点 = 只让这一个成员闭嘴。
+
+        落库：该成员的助手消息保留已产出的内容，标记 `stopped: true`（**不是**
+        `cancelled`），前端据此显示「已停止发言」而不是「已取消」。
+
+        该成员当前没有在发言（已经说完或还没开始）不是错误：返回 `stopped: false`、
+        `reason: idle`，与 `queue/interrupt` 的「无回合可停」同形，避免过期点击误杀。
+      operationId: groupMemberStop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 成员行 id（`GET /api/group/members` 的 `id`，不是智能体 id）
+      responses:
+        "200":
+          description: 已处理；`stopped` 表示这次是否真的停掉了一个正在发言的成员
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stopped: {type: boolean}
+                  reason:
+                    type: string
+                    description: '仅当 stopped 为 false 时出现，固定为 idle'
+        "400":
+          description: 参数缺失（`InvalidRequest`）
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
   /api/group/settings:
     patch:
       tags: [Group]

@@ -452,6 +452,54 @@ func serveGroupMembersRemove(w http.ResponseWriter, r *http.Request, projectPath
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// stopReasonIdle is the "nothing was speaking" answer of the member-stop
+// endpoint — the same shape the queue-interrupt endpoint uses, so a stale click
+// reads as a no-op rather than an error.
+const stopReasonIdle = "idle"
+
+// ServeGroupMemberStop stops ONE group member's current speech.
+//
+//	POST /api/group/member-stop {groupId, memberId} -> {stopped, reason?}
+//
+// The group round keeps running: the other members keep speaking, the queue is
+// untouched and the stopped member may be named again later (the user asked for
+// "stop this output", not "mute this member"). That is why this is NOT
+// /api/ai/chat/cancel — that one stops the whole turn and drops the queue.
+//
+// A member that is not speaking right now (already finished, or never started)
+// is not an error: the caller gets stopped=false / reason=idle, the same shape
+// the queue-interrupt endpoint uses, so a stale click cannot kill an unrelated
+// turn.
+func ServeGroupMemberStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		GroupID  string `json:"groupId"`
+		MemberID string `json:"memberId"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.GroupID == "" || req.MemberID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+		return
+	}
+	if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
+		return
+	}
+	if !service.InterruptGroupMemberTurn(req.GroupID, req.MemberID) {
+		writeJSON(w, http.StatusOK, map[string]any{"stopped": false, detailKey: stopReasonIdle})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stopped": true})
+}
+
 // ServeGroupMemberCompact asks ONE group member's agent to compact its own
 // context.
 //

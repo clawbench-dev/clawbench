@@ -90,6 +90,24 @@ describe('parseAssistantContent', () => {
     expect(parseAssistantContent(content).cancelled).toBe(false)
   })
 
+  // A group member the user stopped on purpose ("stop this member") is a
+  // DIFFERENT state from a cancelled turn: the bubble must be able to say
+  // 「已停止发言」 rather than 「已取消」, so the flag has to survive parsing.
+  it('parses the stopped flag', () => {
+    const content = JSON.stringify({
+      blocks: [{ type: 'text', text: '说了一半' }],
+      stopped: true,
+    })
+    const result = parseAssistantContent(content)
+    expect(result.stopped).toBe(true)
+    expect(result.cancelled).toBe(false)
+  })
+
+  it('defaults stopped to false', () => {
+    const content = JSON.stringify({ blocks: [{ type: 'text', text: 'done' }] })
+    expect(parseAssistantContent(content).stopped).toBe(false)
+  })
+
   // A text block with empty content is persisted WITHOUT a `text` key:
   // ContentBlock.Text is `omitempty` in Go. The parser must normalize it to a
   // string so no downstream consumer (render cache key, mention-chip rewrite,

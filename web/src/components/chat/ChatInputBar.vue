@@ -188,10 +188,19 @@
           <!-- Normal mode: paper plane (send) -->
           <Send v-else :size="15" />
         </button>
-        <button v-if="loading" class="chat-stop-btn" :class="{ primed: stopPrimed, cancelling: cancelling }" @click="handleStopClick" :title="stopPrimed ? t('chat.input.confirmStop') : t('chat.input.stopGenerating')" :disabled="cancelling">
+        <button v-if="loading" ref="stopBtnRef" class="chat-stop-btn" :class="{ primed: stopPrimed, cancelling: cancelling }" @click="handleStopClick" :title="stopTitle" :disabled="cancelling">
           <LoadingIndicator v-if="cancelling" class="stop-spinner" size="sm" inline />
           <Square v-else :size="15" fill="currentColor" />
         </button>
+        <!-- Group chat: one click opens the "who is speaking" menu instead of the
+             old two-click confirm. Choosing a member stops only that speech. -->
+        <ChatStopMenu
+          v-model:show="stopMenuOpen"
+          :target-element="stopBtnRef"
+          :targets="stopTargets"
+          @stop-member="(id) => emit('stop-member', id)"
+          @stop-all="handleStopAll"
+        />
       </div>
       <!-- Attach drawer (BottomSheet) -->
       <AttachDrawer
@@ -372,6 +381,7 @@ import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
+import ChatStopMenu from '@/components/chat/ChatStopMenu.vue'
 import MentionCard from '@/components/chat/MentionCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
@@ -678,6 +688,11 @@ const props = defineProps({
   /** Group member roster ({ id, name, disabled }). Feeds the @ completion menu so a
    *  user can name a speaker in a group chat (design §13.4). */
   groupMembers: { type: Array, default: () => [] },
+  /** Group members speaking RIGHT NOW ({ id, name, backend, avatar, startedAt }).
+   *  Non-empty turns the stop button into a "who to stop" menu: one click opens
+   *  it, choosing a member stops only that speech (the round goes on). Empty
+   *  keeps the original two-click whole-turn cancel. */
+  stopTargets: { type: Array, default: () => [] },
   /** The group's auto-cruise switch value (server-authoritative, owned by the
    *  group roster in useGroupMembers). Shown as a chip in the session-info bar
    *  for a group session; toggling emits `toggle-group-cruise` up to App, which
@@ -710,6 +725,7 @@ const emit = defineEmits([
   'send',
   'btw',
   'cancel',
+  'stop-member',
   'add-attached',
   'remove-attached',
   'remove-attached-by-path',
@@ -1723,9 +1739,24 @@ function dispatchSend(text) {
 // when textarea is focused so App.vue can compensate the layout.
 const chatKeyboard = useChatKeyboard()
 
-// Stop button two-click confirmation state
+// Stop button state.
+//
+// Two behaviours, chosen per click:
+//   - group chat WITH somebody speaking right now → the click opens the "who to
+//     stop" menu (ChatStopMenu). Opening the menu IS the deliberate first step,
+//     so picking a member needs no second confirm;
+//   - everything else (single chat, or a group turn where nobody is streaming —
+//     e.g. the host is routing between rounds) → the original two-click confirm,
+//     because that one stops the WHOLE turn and drops the queue.
 const stopPrimed = ref(false)
 const cancelling = ref(false)
+const stopMenuOpen = ref(false)
+const stopBtnRef = ref(null)
+const hasStopTargets = computed(() => props.isGroupSession && props.stopTargets.length > 0)
+const stopTitle = computed(() => {
+  if (hasStopTargets.value) return t('chat.input.stopMenuOpen')
+  return stopPrimed.value ? t('chat.input.confirmStop') : t('chat.input.stopGenerating')
+})
 const stopMachine = createStopButtonMachine({
   onConfirm: () => {
     cancelling.value = true
@@ -1735,12 +1766,32 @@ const stopMachine = createStopButtonMachine({
 })
 
 function handleStopClick() {
+  if (hasStopTargets.value) {
+    // Drop any armed whole-turn confirm: the send button is hidden while
+    // `stopPrimed` is set, so a leftover prime would keep it hidden behind the
+    // menu for no reason.
+    stopPrimed.value = false
+    stopMachine.reset()
+    stopMenuOpen.value = !stopMenuOpen.value
+    return
+  }
   const result = stopMachine.click()
   stopPrimed.value = result.primed
   if (result.confirmed) {
     stopPrimed.value = false
   }
 }
+
+/** "Stop all" inside the menu = the original whole-turn cancel. */
+function handleStopAll() {
+  cancelling.value = true
+  emit('cancel')
+}
+
+// The menu must not outlive what it lists: a turn that ended, or a roster of
+// speakers that all finished, would leave clickable rows for nothing.
+watch(() => props.loading, (running) => { if (!running) stopMenuOpen.value = false })
+watch(() => props.stopTargets.length, (n) => { if (n === 0) stopMenuOpen.value = false })
 
 // Per-session draft cache: save input text when switching away, restore when
 // switching back. Backed by a module-level store (not component state) so the

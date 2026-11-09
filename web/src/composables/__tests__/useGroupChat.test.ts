@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, compactGroupMember } from '@/composables/useGroupChat'
+import { createGroup, listGroupMembers, generateMemberAvatars, addGroupMembers, setGroupMemberDisabled, setGroupParallelDefault, setGroupCruise, compactGroupMember, stopGroupMember } from '@/composables/useGroupChat'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -153,6 +153,27 @@ describe('useGroupChat API', () => {
     // rather than a 0% bar, so the null must survive the round trip.
     vi.stubGlobal('fetch', mockFetch(200, { ok: true, usage: null }))
     expect(await compactGroupMember('g1', 'm2')).toBeNull()
+  })
+
+  it('stopGroupMember POSTs groupId + memberId and reports whether it stopped', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { stopped: true }))
+    expect(await stopGroupMember('g1', 'm2')).toBe(true)
+    const [url, opts] = (fetch as any).mock.calls[0]
+    expect(url).toBe('/api/group/member-stop')
+    expect(opts.method).toBe('POST')
+    expect(JSON.parse(opts.body)).toEqual({ groupId: 'g1', memberId: 'm2' })
+  })
+
+  it('stopGroupMember reports false when the member already finished', async () => {
+    // The menu was open while the speech ended: the caller must not claim it
+    // stopped something (no toast, no fake feedback).
+    vi.stubGlobal('fetch', mockFetch(200, { stopped: false, reason: 'idle' }))
+    expect(await stopGroupMember('g1', 'm2')).toBe(false)
+  })
+
+  it('stopGroupMember surfaces the server error message', async () => {
+    vi.stubGlobal('fetch', mockFetch(403, { error: 'access denied' }))
+    await expect(stopGroupMember('g1', 'm2')).rejects.toThrow('access denied')
   })
 
   it('compactGroupMember surfaces the server error message', async () => {

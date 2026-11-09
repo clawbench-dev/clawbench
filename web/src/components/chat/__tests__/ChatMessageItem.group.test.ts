@@ -50,7 +50,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', goalSatisfied: 'Done', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: { listSeparator: ', ' } } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled', stopped: 'Speech stopped' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', realAgent: 'Agent', you: 'you', goalSatisfied: 'Done', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, session: { configAgent: 'Agent settings' }, common: { listSeparator: ', ' } } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -678,5 +678,43 @@ describe('ChatMessageItem single-chat auto-cruise badge (removed)', () => {
     })
     expect(w.find('.msg-goal-satisfied').exists()).toBe(false)
     expect(w.find('.msg-goal-satisfied-standalone').exists()).toBe(false)
+  })
+})
+
+// ── "Stopped this member" marker ──────────────────────────────────────────────
+// A group member the user stopped on purpose keeps what it already said and
+// gets its own marker. It must be distinguishable from a cancelled turn: the
+// two mean different things (one voice cut short vs. the whole turn abandoned).
+describe('stopped-speech marker', () => {
+  it('renders for a stopped member speech', () => {
+    const wrapper = mountItem({
+      id: 11,
+      role: 'assistant',
+      agentId: 'member-1',
+      blocks: [{ type: 'text', text: '说了一半' }],
+      stopped: true,
+    })
+    expect(wrapper.find('.chat-stopped-mark').exists()).toBe(true)
+    expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(false)
+  })
+
+  it('does not render for a cancelled turn', () => {
+    const wrapper = mountItem({
+      id: 12,
+      role: 'assistant',
+      blocks: [{ type: 'text', text: '被取消' }],
+      cancelled: true,
+    })
+    expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(true)
+    expect(wrapper.find('.chat-stopped-mark').exists()).toBe(false)
+  })
+
+  it('renders nothing when neither flag is set', () => {
+    const wrapper = mountItem({
+      id: 13,
+      role: 'assistant',
+      blocks: [{ type: 'text', text: '正常' }],
+    })
+    expect(wrapper.find('.chat-stopped-mark').exists()).toBe(false)
   })
 })
