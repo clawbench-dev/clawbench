@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
 )
 
@@ -20,16 +21,86 @@ type OpenCodeStreamMessage struct {
 //
 // OpenCode reports upstream failures as ordinary stdout frames rather than as a
 // non-zero exit with stderr text, so this is the ONLY place the real cause of a
-// failed turn appears (verified against opencode 2.2.6: a 402 produces
-// {"type":"error","error":{"type":"provider.quota","message":"Insufficient
-// Balance","status":402}} and exit code 1, with an empty stderr). Dropping
-// these frames — the previous behavior — left the user with the generic
-// "AI backend exited abnormally" banner and no idea the account was out of
-// credit.
+// failed turn appears. Dropping these frames — the previous behavior — left the
+// user with the generic "AI backend exited abnormally" banner and no idea the
+// account was out of credit.
+//
+// TWO SHAPES ARE IN THE WILD and both must be decoded; they come from the two
+// opencode distributions users actually run (verified by driving each binary
+// against a 402 mock provider):
+//
+//	opencode 2.x  {"type":"error","error":{"type":"provider.quota",
+//	                "message":"Insufficient Balance","status":402}}
+//	opencode 1.x  {"type":"error","error":{"name":"APIError","data":{
+//	                "message":"Insufficient Balance","statusCode":402,
+//	                "isRetryable":false,...}}}
+//
+// Reading only the 2.x fields left every 1.x failure with an empty type,
+// message and status, so a genuine quota error degraded to a generic
+// "AI request failed" tagged request_failed — which auto-continue then retried
+// against an account that cannot pay, and the user never saw the real cause
+// (issue #656). The accessors below hide the difference; do not read the raw
+// fields outside this type.
 type OpenCodeError struct {
+	// 2.x shape.
 	Type    string `json:"type"` // "provider.quota", "provider.rate-limit", "provider.transport", ...
 	Message string `json:"message"`
 	Status  int    `json:"status"` // upstream HTTP status when known (402, 429, ...)
+
+	// 1.x shape: a tagged union {"name": "...", "data": {...}}. `name` is the
+	// SDK error class ("APIError", "ProviderAuthError", ...), not a
+	// provider-level limit type, so it is only a last-resort type signal.
+	Name string             `json:"name"`
+	Data *OpenCodeErrorData `json:"data"`
+}
+
+// OpenCodeErrorData is the payload of the 1.x tagged-union error.
+type OpenCodeErrorData struct {
+	Message    string `json:"message"`
+	StatusCode int    `json:"statusCode"` // upstream HTTP status when known
+}
+
+// UnmarshalJSON decodes both shapes and NEVER fails on the shape of `data`.
+//
+// The error frame is the turn's only terminal signal: if json.Unmarshal rejects
+// the line, ParseLine drops it entirely, the turn ends without a classified
+// reason and the CLI driver falls back to the retryable "backend exited
+// abnormally" warning — the exact defect this type exists to prevent. A `data`
+// that is not an object (a string, an array, ...) is therefore treated as
+// absent, and a quoted statusCode is still read, instead of failing the frame.
+func (e *OpenCodeError) UnmarshalJSON(b []byte) error {
+	// Mirrors the fields above — a field added to the struct but not here would
+	// silently stay zero, so the two lists must move together.
+	var raw struct {
+		Type    string          `json:"type"`
+		Message string          `json:"message"`
+		Status  int             `json:"status"`
+		Name    string          `json:"name"`
+		Data    json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	e.Type, e.Message, e.Status, e.Name = raw.Type, raw.Message, raw.Status, raw.Name
+	// `data` that is not an object (a string, an array, ...) carries no 1.x
+	// payload: leave Data nil instead of rejecting the frame.
+	var fields map[string]any
+	if len(raw.Data) > 0 && json.Unmarshal(raw.Data, &fields) == nil && fields != nil {
+		data := &OpenCodeErrorData{}
+		if s, ok := fields["message"].(string); ok {
+			data.Message = s
+		}
+		switch v := fields["statusCode"].(type) {
+		case float64:
+			data.StatusCode = int(v)
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				data.StatusCode = n
+			}
+		}
+		e.Data = data
+	}
+	return nil
 }
 
 // OpenCodeTextPart is the part for type="text" and type="reasoning" messages
@@ -264,11 +335,11 @@ func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch ch
 	httpStatus := 0
 	detail := ""
 	if msg.Error != nil {
-		if msg.Error.Message != "" {
-			errText = msg.Error.Message
+		if m := errorMessageOf(msg.Error); m != "" {
+			errText = m
+			detail = m
 		}
-		detail = msg.Error.Message
-		httpStatus = msg.Error.Status
+		httpStatus = errorStatusOf(msg.Error)
 		if isOpenCodeQuotaError(msg.Error) {
 			reason = ReasonQuotaExhausted
 		}
@@ -301,11 +372,18 @@ func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch ch
 }
 
 // errorTypeOf returns the provider error type for logging ("" when absent).
+//
+// Falls back to the 1.x `name` field so a 1.x failure is not logged as an empty
+// type — "APIError" is generic, but it is still better than nothing when
+// triaging a user's report.
 func errorTypeOf(e *OpenCodeError) string {
 	if e == nil {
 		return ""
 	}
-	return e.Type
+	if e.Type != "" {
+		return e.Type
+	}
+	return e.Name
 }
 
 // errorStatusOf returns the upstream HTTP status of an error (0 when absent).
@@ -313,7 +391,13 @@ func errorStatusOf(e *OpenCodeError) int {
 	if e == nil {
 		return 0
 	}
-	return e.Status
+	if e.Status != 0 {
+		return e.Status
+	}
+	if e.Data != nil {
+		return e.Data.StatusCode
+	}
+	return 0
 }
 
 // errorMessageOf returns the upstream error text ("" when absent).
@@ -321,7 +405,13 @@ func errorMessageOf(e *OpenCodeError) string {
 	if e == nil {
 		return ""
 	}
-	return e.Message
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Data != nil {
+		return e.Data.Message
+	}
+	return ""
 }
 
 // openCodeLimitTypes are OpenCode's own error-type identifiers for "the account
@@ -356,17 +446,21 @@ var openCodeLimitTypes = map[string]bool{
 // The message fallback uses the shared phrase list (stream_error_reason.go) so
 // every backend agrees on what "out of credit" looks like; OpenCode additionally
 // gets the structured fast paths (HTTP 402, its own limit error types).
+//
+// Both error shapes are read through the accessors: 1.x reports the status as
+// data.statusCode and the text as data.message, and its `name` is the generic
+// SDK class, so the phrase fallback is what classifies a 1.x quota failure.
 func isOpenCodeQuotaError(e *OpenCodeError) bool {
 	if e == nil {
 		return false
 	}
-	if e.Status == 402 {
+	if errorStatusOf(e) == 402 {
 		return true
 	}
-	if openCodeLimitTypes[strings.ToLower(e.Type)] {
+	if openCodeLimitTypes[strings.ToLower(errorTypeOf(e))] {
 		return true
 	}
-	return isLimitErrorText(e.Message)
+	return isLimitErrorText(errorMessageOf(e))
 }
 
 // parseStepFinish handles a step_finish part, emitting the turn's terminal
