@@ -101,6 +101,93 @@ func TestAppendLiveNoteAudio_NeverTruncatesAnExistingRecording(t *testing.T) {
 	assert.Equal(t, []uint64{0}, clusterTimecodes(t, channel))
 }
 
+// A member's channel is `viewer:<id>` on the wire but `<slug>.webm` on disk.
+// Using the raw channel here produced `viewer:2.webm`, which the merge never
+// looks for and which Windows cannot even create — so every segment of every
+// member's microphone stayed on disk as its own fragment.
+func TestAppendLiveNoteAudio_NamesAViewerChannelByItsSlug(t *testing.T) {
+	paths := audioPaths(t)
+	seg := writeSegment(t, paths, 1_700_000_000_000, "viewer:2",
+		testSegment(t, testCluster{timecode: 0}))
+
+	consumed, err := AppendLiveNoteAudio(paths, "viewer:2", 1_700_000_000_000, seg)
+	require.NoError(t, err)
+	assert.True(t, consumed)
+
+	require.FileExists(t, filepath.Join(paths.Audio, "viewer-2.webm"))
+	require.FileExists(t, filepath.Join(paths.Audio, "viewer-2.append.json"))
+	_, err = os.Stat(filepath.Join(paths.Audio, "viewer:2.webm"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "a colon is not a legal file name on Windows")
+
+	// The name the merge derives for that channel must be the one on disk, or a
+	// second pass would report a channel it cannot find.
+	assert.Equal(t, "viewer-2.webm", liveNoteAudioFileName("viewer-2"))
+}
+
+// A segment can be left next to a channel that is already assembled — the
+// process died between the clusters and the bookkeeping, or the delete failed.
+// The merge used to skip such a channel entirely, so the fragment lived on
+// forever. It now belongs in that file.
+func TestMergeLiveNoteAudio_FoldsLeftoversIntoAnAssembledChannel(t *testing.T) {
+	paths := audioPaths(t)
+	first := writeSegment(t, paths, 1_700_000_000_000, "mic",
+		testSegment(t, testCluster{timecode: 0, blocks: [][]byte{{0x01}}}))
+	_, err := AppendLiveNoteAudio(paths, "mic", 1_700_000_000_000, first)
+	require.NoError(t, err)
+
+	// A segment that never made it into the file (its append was lost).
+	leftover := writeSegment(t, paths, 1_700_000_009_000, "mic",
+		testSegment(t, testCluster{timecode: 0, blocks: [][]byte{{0x02}}}))
+
+	merged, err := MergeLiveNoteAudio(paths)
+	require.NoError(t, err)
+	assert.Equal(t, 1, merged.Segments)
+	assert.Equal(t, []uint64{0, 9000}, clusterTimecodes(t, filepath.Join(paths.Audio, "mic.webm")))
+	_, err = os.Stat(leftover)
+	assert.ErrorIs(t, err, os.ErrNotExist, "the fragment must not survive the merge")
+}
+
+// Firefox's MediaRecorder leaves the Segment and every Cluster unbounded. The
+// parser used to reject the file outright, so every segment of such a meeting
+// stayed on disk as its own fragment and no recording was ever assembled.
+func TestAppendLiveNoteAudio_FoldsALiveSizedFirefoxSegment(t *testing.T) {
+	paths := audioPaths(t)
+	seg := writeSegment(t, paths, 1_700_000_000_000, "mic",
+		testLiveSizedSegment(t,
+			testCluster{timecode: 0, blocks: [][]byte{{0x01}}},
+			testCluster{timecode: 1000, blocks: [][]byte{{0x02}}}))
+	next := writeSegment(t, paths, 1_700_000_004_000, "mic",
+		testLiveSizedSegment(t, testCluster{timecode: 0, blocks: [][]byte{{0x03}}}))
+
+	consumed, err := AppendLiveNoteAudio(paths, "mic", 1_700_000_000_000, seg)
+	require.NoError(t, err)
+	assert.True(t, consumed, "an unbounded Segment is a normal MediaRecorder file, not a corrupt one")
+
+	consumed, err = AppendLiveNoteAudio(paths, "mic", 1_700_000_004_000, next)
+	require.NoError(t, err)
+	assert.True(t, consumed)
+
+	channel := filepath.Join(paths.Audio, "mic.webm")
+	// Both clusters of the first segment survive (the second one must not be
+	// swallowed into the first), and the next segment lands 4 s in.
+	assert.Equal(t, []uint64{0, 1000, 4000}, clusterTimecodes(t, channel))
+}
+
+func TestMergeLiveNoteAudio_FoldsLiveSizedSegments(t *testing.T) {
+	paths := audioPaths(t)
+	for i := 0; i < 2; i++ {
+		at := int64(1_700_000_000_000) + int64(i)*3000
+		writeSegment(t, paths, at, "mic",
+			testLiveSizedSegment(t, testCluster{timecode: 0, blocks: [][]byte{{0x01}}}))
+	}
+
+	merged, err := MergeLiveNoteAudio(paths)
+	require.NoError(t, err)
+	require.Len(t, merged.Channels, 1)
+	assert.Equal(t, 2, merged.Segments)
+	assert.Equal(t, []uint64{0, 3000}, clusterTimecodes(t, merged.Channels[0]))
+}
+
 func TestMergeLiveNoteAudio_DropsTheDuplicateSoloFileAssembledLive(t *testing.T) {
 	// One participant: the mix and their channel are the same audio. With the
 	// recording assembled as the meeting went, the duplicate is a whole FILE —

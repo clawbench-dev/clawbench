@@ -144,7 +144,7 @@ func buildLiveNoteAudioChunk(file *liveNoteWebM, clusters [][]byte, windowStart,
 // The existing shiftLiveNoteCluster only adds (it is used to place segments on
 // the meeting timeline); cutting a window needs the opposite direction.
 func shiftLiveNoteClusterBy(cluster []byte, deltaMS int64) ([]byte, error) {
-	el, err := decodeLiveNoteElement(cluster)
+	el, err := decodeLiveNoteContainerElement(cluster)
 	if err != nil {
 		return nil, err
 	}

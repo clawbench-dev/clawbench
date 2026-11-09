@@ -40,6 +40,32 @@ func testSegment(t *testing.T, clusters ...testCluster) []byte {
 	return append(out, elem(t, ebmlIDSegment, segment)...)
 }
 
+// testLiveSizedSegment builds what Firefox's MediaRecorder writes: the Segment
+// and every Cluster carry the all-ones "unknown size", because a live muxer
+// cannot measure them when it starts writing. Chrome writes real sizes.
+func testLiveSizedSegment(t *testing.T, clusters ...testCluster) []byte {
+	t.Helper()
+	unknown := []byte{0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+	info := append(elem(t, ebmlIDTimecodeScale, []byte{0x0F, 0x42, 0x40}), elem(t, ebmlIDDuration, []byte{0x40, 0x59, 0, 0, 0, 0, 0, 0})...)
+	info = append(info, elem(t, ebmlIDMuxingApp, []byte("Firefox"))...)
+
+	segment := append(elem(t, ebmlIDInfo, info), elem(t, ebmlIDTracks, []byte{0xAE, 0x80})...)
+	for _, c := range clusters {
+		var body []byte
+		body = append(body, elem(t, ebmlIDTimecode, encodeLiveNoteUint(c.timecode))...)
+		for _, b := range c.blocks {
+			body = append(body, elem(t, ebmlIDSimpleBlock, b)...)
+		}
+		segment = append(segment, encodeEBMLID(ebmlIDCluster)...)
+		segment = append(segment, unknown...)
+		segment = append(segment, body...)
+	}
+	out := elem(t, ebmlIDHeader, []byte{0x42, 0x86, 0x81, 0x01})
+	out = append(out, encodeEBMLID(ebmlIDSegment)...)
+	out = append(out, unknown...)
+	return append(out, segment...)
+}
+
 // elem encodes one element with its minimal size field.
 func elem(t *testing.T, id uint32, payload []byte) []byte {
 	t.Helper()

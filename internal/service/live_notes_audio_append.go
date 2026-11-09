@@ -75,8 +75,13 @@ func AppendLiveNoteAudio(paths LiveNotesPaths, channel string, startedAt int64, 
 	if segPath == "" {
 		return false, nil
 	}
-	target := filepath.Join(paths.Audio, liveNoteAudioFileName(channel))
-	sidecar := filepath.Join(paths.Audio, liveNoteAppendSidecarName(channel))
+	// The channel is a protocol name (`viewer:2`), the file name is its slug
+	// (`viewer-2`). Slugs are what SaveLiveNoteAudio writes and what the merge
+	// reads, and a colon is not a legal file name on Windows — using the raw
+	// channel here made every member's append fail there, leaving one segment
+	// file per 10–20 s of speech on disk for the whole meeting.
+	target := filepath.Join(paths.Audio, liveNoteAudioFileName(liveNotesChannelSlug(channel)))
+	sidecar := filepath.Join(paths.Audio, liveNoteAppendSidecarName(liveNotesChannelSlug(channel)))
 
 	mu := appendLockFor(target)
 	mu.Lock()
@@ -249,7 +254,8 @@ func saveLiveNoteAppendState(sidecar string, state *liveNoteAppendState) error {
 }
 
 // liveNoteAppendSidecarName keeps the bookkeeping next to the file it describes
-// without ever matching a channel or segment name.
+// without ever matching a channel or segment name. Takes a channel slug, like
+// liveNoteAudioFileName.
 func liveNoteAppendSidecarName(channel string) string {
 	return strings.TrimSuffix(liveNoteAudioFileName(channel), ".webm") + ".append.json"
 }

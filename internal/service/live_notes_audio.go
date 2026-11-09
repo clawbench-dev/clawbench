@@ -99,7 +99,7 @@ func MergeLiveNoteAudio(paths LiveNotesPaths) (LiveNoteAudioMerge, error) {
 	// segments are dropped once the mix is safely on disk.
 	solo := liveNoteSoloChannel(channels, groups, done)
 
-	out, err := mergeLiveNoteChannels(paths.Audio, channels, groups, done, solo)
+	out, err := mergeLiveNoteChannels(paths, channels, groups, done, solo)
 	if err != nil {
 		return out, err
 	}
@@ -176,10 +176,13 @@ func liveNoteAudioChannels(groups map[string][]audioSegment, done map[string]str
 //
 // An existing output means a previous pass already folded that channel:
 // rewriting it would drop whatever that pass had that this one does not (a
-// retry sees fewer segments, never more), so it is only recorded.
+// retry sees fewer segments, never more), so it is only recorded — but any
+// segments still lying next to it are folded into that file instead of being
+// left there forever (see foldLiveNoteLeftovers).
 func mergeLiveNoteChannels(
-	dir string, channels []string, groups map[string][]audioSegment, done map[string]string, solo string,
+	paths LiveNotesPaths, channels []string, groups map[string][]audioSegment, done map[string]string, solo string,
 ) (LiveNoteAudioMerge, error) {
+	dir := paths.Audio
 	out := LiveNoteAudioMerge{
 		Origins:   make(map[string]int64),
 		Durations: make(map[string]int64),
@@ -190,16 +193,11 @@ func mergeLiveNoteChannels(
 			continue
 		}
 		if target, ok := done[ch]; ok {
-			out.record(ch, target, 0)
+			out.record(ch, target, foldLiveNoteLeftovers(paths, ch, groups[ch]))
 			continue
 		}
 		segs := groups[ch]
-		sort.Slice(segs, func(i, j int) bool {
-			if segs[i].startedAt != segs[j].startedAt {
-				return segs[i].startedAt < segs[j].startedAt
-			}
-			return segs[i].path < segs[j].path
-		})
+		sortLiveNoteSegments(segs)
 		target := filepath.Join(dir, liveNoteAudioFileName(ch))
 		merged, durationMS, err := mergeLiveNoteAudioGroup(dir, target, segs)
 		if err != nil {
@@ -211,6 +209,43 @@ func mergeLiveNoteChannels(
 		out.Files[ch] = filepath.Base(target)
 	}
 	return out, nil
+}
+
+// foldLiveNoteLeftovers appends segments that were recorded into a channel whose
+// file is already assembled, and removes them. Returns how many were folded in.
+//
+// They are the tail of a live append that could not finish — the process died
+// between writing the clusters and its bookkeeping, or the segment could not be
+// deleted. Merging them into a SECOND file would split the channel in two, so
+// they go through the same append path that wrote the file. When even that is
+// impossible (the bookkeeping is gone) the segment is left on disk: a fragment
+// is a nuisance, a hole in the recording is not.
+func foldLiveNoteLeftovers(paths LiveNotesPaths, slug string, segs []audioSegment) int {
+	if len(segs) == 0 {
+		return 0
+	}
+	sortLiveNoteSegments(segs)
+	folded := 0
+	for _, seg := range segs {
+		// `slug` is already a file-name slug, and slugging is idempotent, so
+		// this names the same file the merge just found.
+		consumed, err := AppendLiveNoteAudio(paths, slug, seg.startedAt, seg.path)
+		if err != nil || !consumed {
+			continue
+		}
+		folded++
+	}
+	return folded
+}
+
+// sortLiveNoteSegments puts a channel's segments back on the meeting timeline.
+func sortLiveNoteSegments(segs []audioSegment) {
+	sort.Slice(segs, func(i, j int) bool {
+		if segs[i].startedAt != segs[j].startedAt {
+			return segs[i].startedAt < segs[j].startedAt
+		}
+		return segs[i].path < segs[j].path
+	})
 }
 
 // dropLiveNoteAudioSegments removes a duplicate channel's segments. A segment
@@ -634,7 +669,7 @@ func readLiveNoteWebMWithCap(path string, maxBytes int64) (*liveNoteWebM, error)
 	out := &liveNoteWebM{}
 	sawSegment := false
 	for pos := 0; pos < len(data); {
-		el, err := decodeLiveNoteElement(data[pos:])
+		el, err := decodeLiveNoteContainerElement(data[pos:])
 		if err != nil {
 			return nil, fmt.Errorf("live notes: %s: %w", filepath.Base(path), err)
 		}
@@ -659,11 +694,24 @@ func readLiveNoteWebMWithCap(path string, maxBytes int64) (*liveNoteWebM, error)
 // readLiveNoteSegmentChildren keeps the first Info/Tracks and every Cluster.
 func readLiveNoteSegmentChildren(b []byte, out *liveNoteWebM) error {
 	for pos := 0; pos < len(b); {
-		el, err := decodeLiveNoteElement(b[pos:])
+		el, unknown, err := decodeLiveNoteElementHeader(b[pos:])
 		if err != nil {
 			return err
 		}
 		end := pos + el.header + el.size
+		if unknown {
+			// Only the elements a live muxer cannot measure yet are allowed to
+			// be unbounded. A Segment runs to the end of the file; a Cluster
+			// runs to the next element that is not part of it.
+			switch el.id {
+			case ebmlIDSegment:
+				end = len(b)
+			case ebmlIDCluster:
+				end = pos + el.header + liveNoteClusterEnd(b[pos+el.header:])
+			default:
+				return fmt.Errorf("element %#x has an unknown size", el.id)
+			}
+		}
 		switch el.id {
 		case ebmlIDInfo:
 			if out.info == nil {
@@ -685,6 +733,53 @@ func readLiveNoteSegmentChildren(b []byte, out *liveNoteWebM) error {
 		pos = end
 	}
 	return nil
+}
+
+// liveNoteClusterChild reports whether id is an element a Cluster may contain.
+//
+// This is what turns an unbounded Cluster into a bounded one: EBML says an
+// element with an unknown size ends where the next element of the same or a
+// shallower level begins, and at the Cluster level that is the first element
+// which is NOT one of these.
+func liveNoteClusterChild(id uint32) bool {
+	switch id {
+	case ebmlIDTimecode, ebmlIDSimpleBlock,
+		0xA0, // BlockGroup
+		0xA7, // Position
+		0xAB, // PrevSize
+		0xBF, // CRC-32
+		0xEC: // Void
+		return true
+	}
+	return false
+}
+
+// liveNoteClusterEnd finds where an unbounded Cluster's payload ends, given the
+// bytes that start at its first child.
+//
+// The alternative — searching for the next raw Cluster ID — would be wrong:
+// those four bytes occur inside Opus payloads, and cutting there would corrupt
+// the audio.
+func liveNoteClusterEnd(b []byte) int {
+	pos := 0
+	for pos < len(b) {
+		el, unknown, err := decodeLiveNoteElementHeader(b[pos:])
+		if err != nil {
+			return len(b)
+		}
+		// The next Cluster (or Cues/Tags) is where this one ends — and it is
+		// usually unbounded itself, so the ID has to be tested BEFORE the size.
+		if !liveNoteClusterChild(el.id) {
+			return pos
+		}
+		if unknown {
+			// A child that is itself unbounded: nothing further can be walked,
+			// and the rest of the buffer is the best bound there is.
+			return len(b)
+		}
+		pos += el.header + el.size
+	}
+	return len(b)
 }
 
 // liveNoteInfoDuration reads the Duration element of an Info element, in
@@ -763,7 +858,7 @@ func liveNoteInfoWithDuration(info []byte) ([]byte, error) {
 // Only the cluster's own Timecode changes: the blocks inside are relative to it,
 // so their offsets stay correct and no audio data is touched.
 func shiftLiveNoteCluster(cluster []byte, shiftMS uint64) ([]byte, error) {
-	el, err := decodeLiveNoteElement(cluster)
+	el, err := decodeLiveNoteContainerElement(cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -822,7 +917,7 @@ func liveNoteSegmentEndMS(file *liveNoteWebM) float64 {
 // liveNoteClusterTimecode returns the Timecode of one Cluster element (0 when
 // the element is malformed; the caller only uses it as an estimate).
 func liveNoteClusterTimecode(cluster []byte) uint64 {
-	el, err := decodeLiveNoteElement(cluster)
+	el, err := decodeLiveNoteContainerElement(cluster)
 	if err != nil {
 		return 0
 	}
@@ -875,23 +970,57 @@ type ebmlElement struct {
 // every size this package handles is a file offset; a value that does not fit
 // (or a live muxer's all-ones "unknown") is refused.
 func decodeLiveNoteElement(b []byte) (ebmlElement, error) {
-	id, idLen, err := readLiveNoteID(b)
-	if err != nil {
-		return ebmlElement{}, err
-	}
-	size, sizeLen, unknown, err := readLiveNoteSize(b[idLen:])
+	el, unknown, err := decodeLiveNoteElementHeader(b)
 	if err != nil {
 		return ebmlElement{}, err
 	}
 	if unknown {
-		// All-ones means "unknown size" for a live muxer. Nothing this package
-		// writes uses it, so it is a corrupt file rather than a case to guess at.
-		return ebmlElement{}, fmt.Errorf("element %#x has an unknown size", id)
+		// All-ones means "unknown size". Nothing this package WRITES uses it,
+		// but MediaRecorder output may (see decodeLiveNoteContainerElement).
+		return ebmlElement{}, fmt.Errorf("element %#x has an unknown size", el.id)
+	}
+	return el, nil
+}
+
+// decodeLiveNoteContainerElement is decodeLiveNoteElement for the two levels a
+// muxer may leave unbounded: the Segment and the last Cluster.
+//
+// Firefox's MediaRecorder writes BOTH with the all-ones "unknown" size (Chrome
+// writes real sizes). Such an element runs to the end of the buffer it lives in,
+// which is exactly what the caller has: the rest of the file for a Segment, the
+// rest of the Segment for a Cluster. Rejecting them made every Firefox-hosted
+// meeting leave one segment file per 10–20 s of speech on disk and never
+// produce a merged recording — the transcript was fine, the audio was not.
+func decodeLiveNoteContainerElement(b []byte) (ebmlElement, error) {
+	el, unknown, err := decodeLiveNoteElementHeader(b)
+	if err != nil {
+		return ebmlElement{}, err
+	}
+	if unknown {
+		el.size = len(b) - el.header
+	}
+	return el, nil
+}
+
+// decodeLiveNoteElementHeader reads an element header and its size field,
+// reporting an unknown size instead of deciding what it means.
+func decodeLiveNoteElementHeader(b []byte) (ebmlElement, bool, error) {
+	id, idLen, err := readLiveNoteID(b)
+	if err != nil {
+		return ebmlElement{}, false, err
+	}
+	size, sizeLen, unknown, err := readLiveNoteSize(b[idLen:])
+	if err != nil {
+		return ebmlElement{}, false, err
+	}
+	el := ebmlElement{id: id, idLen: idLen, size: size, header: idLen + sizeLen}
+	if unknown {
+		return el, true, nil
 	}
 	if available := len(b) - idLen - sizeLen; size < 0 || size > available {
-		return ebmlElement{}, fmt.Errorf("element %#x claims %d bytes, %d available", id, size, available)
+		return ebmlElement{}, false, fmt.Errorf("element %#x claims %d bytes, %d available", id, size, available)
 	}
-	return ebmlElement{id: id, idLen: idLen, size: size, header: idLen + sizeLen}, nil
+	return el, false, nil
 }
 
 // readLiveNoteID decodes an element ID, marker bits included.
