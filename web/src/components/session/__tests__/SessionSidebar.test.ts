@@ -105,9 +105,9 @@ describe('SessionSidebar', () => {
     host.unmount()
   })
 
-  it('emits close when the pinned pin button clicked', async () => {
+  it('emits close when the sidebar close button clicked', async () => {
     const wrapper = mountSidebar()
-    await wrapper.find('.sidebar-pin-btn').trigger('click')
+    await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 

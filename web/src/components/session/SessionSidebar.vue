@@ -12,12 +12,14 @@
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
         >
-          <!-- Unpin sits in the trailing slot so it is the right-most control in
-               the header, after search/create/refresh. -->
+          <!-- Close sits in the trailing slot so it is the right-most control in
+               the header, after search/create/refresh. It is a plain utility
+               action like refresh — no accent tint — and uses the close (X)
+               glyph so it reads as "collapse this panel". -->
           <template #actions-end>
-            <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
-              <PanelRight :size="16" />
-              <span class="action-label">{{ t('session.unpinToSidebar') }}</span>
+            <button class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
+              <X :size="16" />
+              <span class="action-label">{{ t('session.closeSidebar') }}</span>
             </button>
           </template>
         </SessionListHeader>
@@ -42,7 +44,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelRight } from 'lucide-vue-next'
+import { X } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
@@ -130,12 +132,5 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
 .session-sidebar-header {
   flex-shrink: 0;
   cursor: default;
-}
-/* Pinned is a toggled-on state, not a primary action: same tint as the shared
-   ActionBar "active" treatment instead of a hard-coded blue that ignores the
-   theme. */
-.header-action-btn.sidebar-pin-btn.is-active {
-  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-  color: var(--accent-color);
 }
 </style>
