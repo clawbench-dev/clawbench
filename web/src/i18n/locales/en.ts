@@ -3528,7 +3528,7 @@ export default {
       ttsSpeed: 'Speed',
       ttsSpeedDesc: 'Speech playback rate, 1.0 is normal speed',
       ttsVoice: 'Voice',
-      ttsVoiceDesc: 'Voice name for speech synthesis',
+      ttsVoiceDesc: 'Voice for the Edge engine. Switching engines leaves it untouched, so it is still here when you switch back',
       ttsMaxCacheFiles: 'Max Cache Files',
       ttsMaxCacheFilesDesc: 'Maximum TTS audio cache files, oldest auto-evicted when exceeded',
       sttSection: 'Speech Recognition',

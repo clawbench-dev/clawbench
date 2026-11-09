@@ -180,8 +180,6 @@ export interface GroupPanelConfig {
   afterSave?: (changedKeys: string[], values?: Record<string, unknown>) => void
   /** Side effect: called on panel mount */
   onInit?: () => void
-  /** Whether this panel needs voice reset on engine change (TTS only) */
-  needsVoiceReset?: boolean
 }
 
 /** A category entry is either a flat item or a group panel. */
@@ -650,9 +648,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
       ]},
       commonFields: [
-        // The shared voice row is a fixed dropdown per engine, so it is hidden
-        // for "openai": that engine takes a free-text voice name (or a custom
-        // voice id) in its own tts.openai.voice row below.
+        // tts.voice belongs to the Edge engine. It is hidden for "openai" (that
+        // engine has its own tts.openai.voice row below) and is NOT reset when
+        // the engine changes — resetting it overwrote the Edge voice the moment
+        // the user tried the other engine.
         { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', value: 'edge' } },
         { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
         { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
@@ -682,7 +681,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       requiredFields: ['tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
-      needsVoiceReset: true,
     }},
   ],
   stt: [

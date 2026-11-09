@@ -280,7 +280,6 @@ function makeTtsConfig(): GroupPanelConfig {
         ],
       },
     ],
-    needsVoiceReset: true,
     hasConnectivityTest: true,
     getTestCategories: (values) => [{ category: 'tts', values }],
   }
@@ -591,7 +590,10 @@ describe('SettingsGroupPanel', () => {
       expect(mockDrawerClose).toHaveBeenCalled()
     })
 
-    it('auto-resets TTS voice when engine changes', async () => {
+    // The regression this guards: switching the engine used to rewrite
+    // tts.voice with the new engine's first voice, so trying the other engine
+    // destroyed the Edge voice the user had chosen.
+    it('leaves the Edge voice alone when the engine changes', async () => {
       localValues['tts.engine'] = 'edge'
       localValues['tts.voice'] = 'zh-CN-XiaoxiaoNeural'
       const wrapper = mountPanel(makeTtsConfig())
@@ -599,7 +601,7 @@ describe('SettingsGroupPanel', () => {
       await vm.$.setupState.handleEntrySelect('alt')
 
       expect(localValues['tts.engine']).toBe('alt')
-      expect(localValues['tts.voice']).toBe('alt-voice')
+      expect(localValues['tts.voice']).toBe('zh-CN-XiaoxiaoNeural')
     })
 
     it('does not reset voice when same engine is selected', async () => {

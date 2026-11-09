@@ -449,7 +449,9 @@ describe('settingsFieldMap', () => {
       'tts.openai.model',
       'tts.openai.voice',
     ])
-    expect(cfg.needsVoiceReset).toBe(true)
+    // There is no engine-switch voice reset: tts.voice belongs to Edge, so
+    // switching engines must leave it alone.
+    expect(cfg.needsVoiceReset).toBeUndefined()
     expect(cfg.hasConnectivityTest).toBe(true)
   })
 

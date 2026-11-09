@@ -2944,10 +2944,13 @@ func applyHotReloadGlobals() {
 	// mutations redundant. Kept for test compatibility.
 	curProvider := GetSpeechProvider()
 	if cfg.TTS.Voice != "" {
+		// tts.voice belongs to the Edge engine; the OpenAI engine has its own
+		// tts.openai.voice, applied below. They are deliberately separate: a
+		// shared field meant picking an Edge voice rewrote the OpenAI voice (and
+		// the settings page reset it again on every engine switch).
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
 			p.Voice = cfg.TTS.Voice
 		}
-		// OpenAI: uses its own tts.openai.voice, applied below
 	}
 	if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
 		p.BaseURL = cfg.TTS.OpenAI.BaseURL

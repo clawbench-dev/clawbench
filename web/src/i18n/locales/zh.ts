@@ -3524,7 +3524,7 @@ export default {
       ttsSpeed: '语速',
       ttsSpeedDesc: '语音播放速率，1.0 为正常速度',
       ttsVoice: '语音',
-      ttsVoiceDesc: '语音合成的音色名称',
+      ttsVoiceDesc: 'Edge 引擎的音色。切到别的引擎不会改动它，切回来还是这个',
       ttsMaxCacheFiles: '最大缓存文件数',
       ttsMaxCacheFilesDesc: 'TTS 音频缓存的最大文件数量，超限自动清理最早文件',
       sttSection: '语音识别',

@@ -452,15 +452,11 @@ const entryDisplayLabel = computed(() => {
 function handleEntrySelect(value: unknown) {
   const es = props.config.entrySelector
   if (!es) return
-  const prevValue = localValues[es.key]
+  // Only the selected value changes. Each engine owns its own settings, so
+  // switching must not touch another engine's saved voice / credentials —
+  // resetting them here overwrote the Edge voice whenever the user tried the
+  // OpenAI engine.
   localValues[es.key] = value
-
-  // Auto-reset TTS voice when engine changes
-  if (props.config.needsVoiceReset && es.key === 'tts.engine' && value !== prevValue) {
-    const voiceOpts = engineVoiceOptions[value as string] ?? []
-    localValues['tts.voice'] = voiceOpts.length > 0 ? voiceOpts[0].value : ''
-  }
-
   entryPicker.close()
 }
 

@@ -194,11 +194,16 @@ type Config struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)
 	} `yaml:"recent_projects"`
 	TTS struct {
-		Engine            string          `yaml:"engine"`              // TTS engine: "edge" (default) or "openai"
-		TTSModel          string          `yaml:"tts_model"`           // TTS model for speech synthesis (default: "Speech-2.8-Turbo")
-		Voice             string          `yaml:"voice"`               // Voice ID for TTS (default: "female-chengshu")
-		Speed             float64         `yaml:"speed"`               // Speech speed multiplier (default: 1.0)
-		Format            string          `yaml:"format"`              // Audio output format (default: "mp3")
+		Engine string `yaml:"engine"` // TTS engine: "edge" (default) or "openai"
+		// Voice is the Edge engine's voice. It used to be shared by both
+		// engines, and the settings page actively reset it on every engine
+		// switch — so picking a voice for Edge and then trying the OpenAI
+		// engine silently overwrote it with that engine's first voice. The
+		// OpenAI engine has its own tts.openai.voice.
+		Voice             string          `yaml:"voice"`               // Edge voice (default: "zh-CN-XiaoxiaoNeural")
+		TTSModel          string          `yaml:"tts_model"`           // forward-compatible: MiniMax TTS model name (no-op until that provider is wired)
+		Speed             float64         `yaml:"speed"`               // Speech speed multiplier (default: 1.0) — shared: "how fast I want to hear it" is one preference
+		Format            string          `yaml:"format"`              // forward-compatible: audio format override (no-op, inferred from engine)
 		InlineCodeMaxLen  int             `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
 		MaxSummarizeRunes int             `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
 		MaxCacheFiles     int             `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
