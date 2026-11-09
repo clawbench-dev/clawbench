@@ -1753,40 +1753,58 @@ const cancelling = ref(false)
 const stopMenuOpen = ref(false)
 const stopBtnRef = ref(null)
 const hasStopTargets = computed(() => props.isGroupSession && props.stopTargets.length > 0)
-/** Only one voice → no menu: the click stops that member straight away. A
- *  one-row menu would be a pointless extra tap (and the row's only action is
- *  the same one the button would perform). */
+/** Only one voice → no menu: the button stops that member itself. A one-row
+ *  menu would be an extra tap for the same outcome. The two-click confirm is
+ *  KEPT on this path: without the menu there is no deliberate "I picked
+ *  someone" step left, and a single stray tap must not cut a reply. */
 const soleStopTarget = computed(() => (props.stopTargets.length === 1 ? props.stopTargets[0] : null))
+/** The member captured when the button was armed. Confirming must stop THAT
+ *  member: by the second click the speaker may have changed, and stopping
+ *  whoever happens to be talking now is not what the user aimed at. */
+const primedSoleTargetId = ref('')
 const stopTitle = computed(() => {
-  if (soleStopTarget.value) return t('chat.input.stopThisMember', { name: soleStopTarget.value.name })
+  const sole = soleStopTarget.value
+  if (sole) {
+    return stopPrimed.value
+      ? t('chat.input.confirmStopMember', { name: sole.name })
+      : t('chat.input.stopThisMember', { name: sole.name })
+  }
   if (hasStopTargets.value) return t('chat.input.stopMenuOpen')
   return stopPrimed.value ? t('chat.input.confirmStop') : t('chat.input.stopGenerating')
 })
 const stopMachine = createStopButtonMachine({
   onConfirm: () => {
+    const memberId = primedSoleTargetId.value
+    primedSoleTargetId.value = ''
+    if (memberId) {
+      // The member finished while the button was armed: say nothing rather than
+      // stopping the next speaker or the whole turn.
+      if (props.stopTargets.some((target) => target.id === memberId)) emit('stop-member', memberId)
+      return
+    }
     cancelling.value = true
     emit('cancel')
   },
-  onPrimeReset: () => { stopPrimed.value = false },
+  onPrimeReset: () => {
+    stopPrimed.value = false
+    primedSoleTargetId.value = ''
+  },
 })
 
 function handleStopClick() {
-  // One speaker: stop it directly, no menu.
   if (soleStopTarget.value) {
-    stopPrimed.value = false
-    stopMachine.reset()
-    stopMenuOpen.value = false
-    emit('stop-member', soleStopTarget.value.id)
-    return
-  }
-  if (hasStopTargets.value) {
-    // Drop any armed whole-turn confirm: the send button is hidden while
-    // `stopPrimed` is set, so a leftover prime would keep it hidden behind the
-    // menu for no reason.
+    // Arm (and remember WHO), or confirm that same member on the second click.
+    if (!stopPrimed.value) primedSoleTargetId.value = soleStopTarget.value.id
+  } else if (hasStopTargets.value) {
+    // Drop any armed confirm: the send button is hidden while `stopPrimed` is
+    // set, so a leftover prime would keep it hidden behind the menu.
     stopPrimed.value = false
     stopMachine.reset()
     stopMenuOpen.value = !stopMenuOpen.value
     return
+  } else {
+    // Nobody is speaking: the whole-turn cancel.
+    primedSoleTargetId.value = ''
   }
   const result = stopMachine.click()
   stopPrimed.value = result.primed

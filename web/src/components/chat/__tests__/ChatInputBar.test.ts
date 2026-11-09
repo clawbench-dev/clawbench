@@ -65,6 +65,7 @@ const i18n = createI18n({
           stopGenerating: 'Stop',
           stopMenuOpen: 'Choose who to stop',
           stopThisMember: 'Stop {name}',
+          confirmStopMember: 'Tap again to stop {name}',
           stopMenuTitle: 'Speaking now ({count})',
           stopMenuHint: 'Tap to stop',
           stopMember: 'Stop',
@@ -1615,9 +1616,10 @@ describe('ChatInputBar', () => {
     expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
   })
 
-  // One voice needs no menu: the click stops that member straight away. A
-  // one-row menu would be an extra tap for the same outcome.
-  it('group chat with exactly one speaker stops it directly', async () => {
+  // One voice needs no menu — but it KEEPS the two-click confirm: with no menu
+  // there is no "I picked someone" step left, and one stray tap must not cut a
+  // reply.
+  it('group chat with exactly one speaker stops it on the SECOND click', async () => {
     const wrapper = mountBar({
       loading: true,
       isGroupSession: true,
@@ -1626,9 +1628,32 @@ describe('ChatInputBar', () => {
     await nextTick()
 
     await wrapper.find('.chat-stop-btn').trigger('click')
+    expect(wrapper.emitted('stop-member')).toBeFalsy()
+    expect(wrapper.emitted('cancel')).toBeFalsy()
 
+    await wrapper.find('.chat-stop-btn').trigger('click')
     expect(wrapper.emitted('stop-member')?.[0]).toEqual(['m-1'])
     expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+  })
+
+  // The confirmed click must stop the member the button was armed for, even if
+  // the speaker changed in between — and must never fall through to "cancel the
+  // whole turn" because the list now looks different.
+  it('group chat: a confirm aimed at a finished speaker does nothing', async () => {
+    const wrapper = mountBar({
+      loading: true,
+      isGroupSession: true,
+      stopTargets: [{ id: 'm-1', name: '小北', backend: 'claude' }],
+    })
+    await nextTick()
+    await wrapper.find('.chat-stop-btn').trigger('click') // arm for m-1
+
+    await wrapper.setProps({ stopTargets: [{ id: 'm-2', name: '阿岚', backend: 'claude' }] })
+    await nextTick()
+    await wrapper.find('.chat-stop-btn').trigger('click') // confirm
+
+    expect(wrapper.emitted('stop-member')).toBeFalsy()
     expect(wrapper.emitted('cancel')).toBeFalsy()
   })
 

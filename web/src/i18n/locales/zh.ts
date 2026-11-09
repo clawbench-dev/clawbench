@@ -727,6 +727,7 @@ export default {
       confirmStop: '确认停止',
       stopMenuOpen: '选择要停止的成员',
       stopThisMember: '停止 {name} 的发言',
+      confirmStopMember: '再点一次停止 {name}',
       stopMenuTitle: '{count} 人正在发言',
       stopMenuHint: '点谁停谁',
       stopMember: '停止',
