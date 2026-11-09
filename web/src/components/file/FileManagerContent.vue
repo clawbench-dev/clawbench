@@ -111,7 +111,7 @@
             <FolderSearch :size="16" />
             <span class="action-label">{{ t('jump.button') }}</span>
           </button>
-          <button class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
+          <button class="toolbar-btn" @click="$emit('openShareCenter')" :title="t('shareCenter.title')">
             <ScreenShare :size="16" />
             <span class="action-label">{{ t('actionLabels.sharedFiles') }}</span>
           </button>
@@ -489,7 +489,8 @@
       :current-dir="currentDir"
       @open-file="onContentSearchOpenFile"
     />
-    <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
+    <!-- Shared-file management lives in the 分享 tab now, so this component no
+         longer mounts a drawer; the toolbar button asks the host to switch. -->
     <!-- Public share link for the context-menu entry. Mounted here rather than
          in App.vue because the dialog is owned by the file manager's own menu:
          the target file is the menu entry, not necessarily the open file. -->
@@ -547,7 +548,6 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import ContentSearchDialog from './ContentSearchDialog.vue'
-import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import ShareLinkDialog from './ShareLinkDialog.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
@@ -795,10 +795,6 @@ async function handleJumpConfirm(path) {
   // navToFileInManager handles normalization and the existence check.
   await navToFileInManager(path)
 }
-const sharedDrawerRef = ref(null)
-function onSharedFileOpen(path) {
-  emit('selectFile', path)
-}
 // Public share-link dialog, driven from the entry context menu.
 const shareDialogOpen = ref(false)
 const shareTarget = ref(null)
@@ -819,7 +815,7 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
 })
 
-const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete', 'openShareCenter'])
 
 
 const sortMenuOpen = ref(false)

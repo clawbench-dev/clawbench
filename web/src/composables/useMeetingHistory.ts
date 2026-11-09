@@ -105,6 +105,12 @@ export interface MeetingRecord {
   /** Distinct speakers the transcript heard; 0 when there is no transcript. */
   speakerCount?: number
   updatedAt: number
+  /**
+   * Whether this record's public link stays readable after the meeting ends.
+   * Off by default: the token is minted automatically so viewers can join,
+   * which is not the same as publishing the minutes.
+   */
+  shareEnabled: boolean
 }
 
 /** One stored key frame. */

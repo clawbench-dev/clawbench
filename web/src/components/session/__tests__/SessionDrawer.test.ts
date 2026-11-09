@@ -117,61 +117,6 @@ describe('SessionDrawer', () => {
     wideScreen.isWideScreen.value = true
   })
 
-  describe('shared-sessions entry button', () => {
-    // The button is the only entry to the share-management drawer, which now
-    // shows its own empty state — so it must be present even with nothing
-    // shared, rather than being hidden behind a "has any share" gate.
-    it('is present when the project has no shared conversation', async () => {
-      const { useSessionShare } = await import('@/composables/useSessionShare')
-      const { resetSessionShareState } = useSessionShare()
-      resetSessionShareState()
-
-      const wrapper = mountDrawer()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
-    })
-
-    it('stays present after one conversation is shared', async () => {
-      const { useSessionShare } = await import('@/composables/useSessionShare')
-      const { resetSessionShareState, markShared } = useSessionShare()
-      resetSessionShareState()
-
-      const wrapper = mountDrawer()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
-
-      markShared('s1')
-      await nextTick()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
-
-      resetSessionShareState()
-    })
-
-    it('stays present when the last share is revoked', async () => {
-      const { useSessionShare } = await import('@/composables/useSessionShare')
-      const { resetSessionShareState, markShared, markUnshared } = useSessionShare()
-      resetSessionShareState()
-      markShared('s1')
-
-      const wrapper = mountDrawer()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
-
-      markUnshared('s1')
-      await nextTick()
-      expect(wrapper.find('[data-action="shared-sessions"]').exists()).toBe(true)
-
-      resetSessionShareState()
-    })
-
-    // The glyph must be the conversation+share mark, not a plain conversation.
-    it('uses the share glyph, not a plain conversation glyph', () => {
-      const src = readFileSync(
-        join(__dirname, '..', 'SessionDrawer.vue'),
-        'utf8',
-      )
-      expect(src).toContain('MessageSquareShare')
-      expect(src).not.toContain('MessagesSquare')
-    })
-  })
-
   describe('rendering shell', () => {
     it('renders SessionList and SessionListHeader stubs', () => {
       const wrapper = mountDrawer()
@@ -180,7 +125,7 @@ describe('SessionDrawer', () => {
     })
 
     // Regression guard: this component renders three teleporting overlays
-    // (BottomSheet, AgentSelectorDrawer, SharedSessionsDrawer). Left as three
+    // (BottomSheet, AgentSelectorDrawer). Left as several
     // top-level nodes it is a FRAGMENT, and a fragment root cannot inherit
     // fallthrough attributes — a host binding v-show (a `style` fallthrough)
     // gets "Extraneous non-props attributes (style)" and silently keeps the

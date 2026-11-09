@@ -224,6 +224,54 @@ func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ServeLiveNotesShare toggles whether a meeting record's public link keeps
+// working after the meeting ends (PATCH /api/live-share/notes/sessions/share).
+//
+// Deliberately its own endpoint rather than another field on the PATCH that
+// renames a record: renaming is a pure label edit, while this decides whether
+// strangers can read the meeting at all. Two different intentions behind one
+// endpoint would mean a rename request could silently flip publication.
+func ServeLiveNotesShare(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPatch) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if err := service.SetMeetingShareEnabled(projectID, token, body.Enabled); err != nil {
+		if errors.Is(err, service.ErrMeetingNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("live notes: set share flag failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	record, exists, err := service.GetMeetingRecord(projectPath, projectID, token)
+	if err != nil {
+		slog.Error("live notes: share flag read-back failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": record})
+}
+
 func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
 	projectPath, projectID, ok := liveNotesProject(w, r)
 	if !ok {
@@ -1921,9 +1969,22 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 	// A live room is the fast path, but it is NOT the only valid state: after
-	// the room is gone the record still owns the token.
+	// the room is gone the record may still be published.
+	//
+	// The two states use DIFFERENT gates on purpose. Joining a running meeting
+	// must keep working (that is what the link is handed out for), so the live
+	// room ignores the owner's share switch. The archived record is a stranger
+	// reading what was said in a meeting they were not in, so it requires the
+	// explicit opt-in — see PublicMeetingByTokenShared.
 	live := liveRegistry.Get(token) != nil
-	note, exists, err := service.PublicMeetingByToken(token)
+	var note service.LiveNote
+	var exists bool
+	var err error
+	if live {
+		note, exists, err = service.PublicMeetingByToken(token)
+	} else {
+		note, exists, err = service.PublicMeetingByTokenShared(token)
+	}
 	if err != nil {
 		slog.Error("live notes: public get failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -2060,6 +2121,21 @@ func ServeShareLiveNoteShotImage(w http.ResponseWriter, r *http.Request, token s
 	if err != nil || id <= 0 || !validShareToken(token) {
 		http.NotFound(w, r)
 		return
+	}
+	// Key frames are part of the archived record, so they follow the record's
+	// publication gate. During the meeting the viewer sees the picture live and
+	// the timeline needs its frames, so a running room is always allowed.
+	if liveRegistry.Get(token) == nil {
+		shared, shareErr := service.MeetingShareEnabled(token)
+		if shareErr != nil {
+			slog.Error("live notes: shot share flag failed", "err", shareErr)
+			model.WriteError(w, model.Internal(shareErr))
+			return
+		}
+		if !shared {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	absPath, found, lookupErr := service.LiveNoteShotFile(token, id)
 	if lookupErr != nil {

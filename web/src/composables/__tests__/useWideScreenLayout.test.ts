@@ -446,9 +446,12 @@ describe('dock tab registry (single source of truth)', () => {
 
   it('renders the sharing tab immediately before port mapping', () => {
     // The user asked for that exact slot: both tabs are "connections this
-    // machine offers", and port mapping must stay the last of the pair.
+    // machine offers", and port mapping must stay the last of the pair. The
+    // share centre sits on the other side of 会议, keeping the outgoing-access
+    // trio together: 会议 → 分享 → 端口映射.
     const rendered = secondaryDockTabs()
-    expect(rendered.indexOf('live')).toBe(rendered.indexOf('proxy') - 1)
+    expect(rendered.indexOf('live')).toBe(rendered.indexOf('share') - 1)
+    expect(rendered.indexOf('share')).toBe(rendered.indexOf('proxy') - 1)
   })
 
   it('keeps the meeting tab visible on every host', () => {

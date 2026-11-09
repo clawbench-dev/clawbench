@@ -323,8 +323,6 @@ const DEFAULT_INSET_SURFACES: Array<{ name: string; file: string; row: string }>
   { name: 'table of contents', file: 'src/components/TocPanel.vue', row: '.toc-item' },
   { name: 'directory preview', file: 'src/components/file/DirPreviewBody.vue', row: '.dir-preview-item' },
   { name: 'project dialog', file: 'src/components/ProjectDialog.vue', row: '.dialog-item' },
-  { name: 'shared sessions', file: 'src/components/session/SharedSessionsDrawer.vue', row: '.shared-session-row' },
-  { name: 'shared files', file: 'src/components/file/SharedFilesDrawer.vue', row: '.shared-file-row' },
   { name: 'agent selector', file: 'src/components/common/AgentSelectorDrawer.vue', row: '.agent-option' },
 ]
 

@@ -1014,6 +1014,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		// model writes stays visible. A column (rather than a delete) keeps the
 		// transcript recoverable — see the note on the one-time pass.
 		"hidden": "ALTER TABLE live_notes ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+		// The owner's opt-in for keeping the meeting link readable after the
+		// meeting ends. Existing rows default to 0 (off), which is the honest
+		// reading: those meetings were never explicitly shared by their owner,
+		// and their links only worked because nothing checked.
+		"share_enabled": "ALTER TABLE live_notes ADD COLUMN share_enabled INTEGER NOT NULL DEFAULT 0",
 	} {
 		var present int
 		_ = store.ReadDB().QueryRow(

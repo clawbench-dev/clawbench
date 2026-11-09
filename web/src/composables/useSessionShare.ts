@@ -7,11 +7,13 @@
  * so it lives in a module-level reactive Set that any component can read
  * (isSessionShared) or mutate (markShared / markUnshared) without prop drilling.
  *
- * The authoritative list is fetched once by SharedSessionsDrawer, which seeds
- * the whole Set in a single request. There is deliberately no per-session
- * refresh helper: unlike a file path (resolved on demand when a preview opens),
- * a session row has no single-session status endpoint, so one list call is the
- * only way to learn the state — asking per row would be N requests.
+ * The authoritative list is fetched by SessionList on mount, which seeds the
+ * whole Set in a single request (the 分享 tab lists shares too, but it is
+ * mounted lazily and must not be the thing that keeps row badges correct).
+ * There is deliberately no per-session refresh helper: unlike a file path
+ * (resolved on demand when a preview opens), a session row has no
+ * single-session status endpoint, so one list call is the only way to learn the
+ * state — asking per row would be N requests.
  */
 
 import { reactive } from 'vue'

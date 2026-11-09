@@ -123,6 +123,7 @@
                       @rename="handleRename"
                       @delete="handleDelete"
                       @batch-delete="handleBatchDelete"
+                      @open-share-center="switchTab('share')"
                       @refresh="handleRefresh"
                       @open-terminal="handleOpenTerminal"
                     />
@@ -238,6 +239,11 @@
                 <!-- 邮件 Tab: folders, message list, reading pane and compose. -->
                 <TabPanel tabId="mail" :activeTab="leftPanelActive" :noHeader="true">
                   <MailPanel :active="panelIsActive('mail')" @open-settings="openMailSettings" />
+                </TabPanel>
+
+                <!-- 分享 Tab: every public link this project has handed out. -->
+                <TabPanel tabId="share" :activeTab="leftPanelActive" :noHeader="true">
+                  <ShareCenterPanel :active="panelIsActive('share')" />
                 </TabPanel>
 
                 <!-- Proxy Tab -->
@@ -661,6 +667,13 @@ const MeetingPanel = defineAsyncComponent(
 // which is needed until the tab is opened.
 const MailPanel = defineAsyncComponent(
   buildAsyncComponentOptions({ loader: () => import('./components/mail/MailPanel.vue') }),
+)
+// 分享: one list of every public link this project has handed out (files,
+// conversations, meetings) plus the "send it somewhere" actions. Async like the
+// other heavyweight panels — it pulls in the address list and the mail
+// composer plumbing, none of which is needed until the tab is opened.
+const ShareCenterPanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/share/ShareCenterPanel.vue') }),
 )
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
@@ -1667,6 +1680,21 @@ function handleOpenMail(e: Event) {
     appLog.w(TAG, 'clawbench-open-mail: no messageId in detail, ignoring')
     return
   }
+  if (mailTabBlocked()) return
+  switchTab('mail')
+}
+
+/**
+ * Handle clawbench-compose-mail: another panel asked for a new message with the
+ * body already filled in (分享中心's 「用邮件发送」).
+ *
+ * The parked request itself is consumed by the mail panel — it owns the account
+ * list and the composer. This handler only does what that panel cannot: switch
+ * to the 邮件 tab. Refused when the feature is off, exactly like the open-mail
+ * jump, so a link never strands the user on a panel with no entry pointing at
+ * it.
+ */
+function handleComposeMail() {
   if (mailTabBlocked()) return
   switchTab('mail')
 }
@@ -2915,6 +2943,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
   window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
   window.addEventListener('clawbench-open-mail', handleOpenMail)
+  window.addEventListener('clawbench-compose-mail', handleComposeMail)
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -4982,6 +5011,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
     window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
     window.removeEventListener('clawbench-open-mail', handleOpenMail)
+    window.removeEventListener('clawbench-compose-mail', handleComposeMail)
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     window.removeEventListener('clawbench-native-error', handleNativeError)
     window.removeEventListener('clawbench-share-imported', handleNativeShareImport)

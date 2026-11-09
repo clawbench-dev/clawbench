@@ -46,18 +46,6 @@ const MIGRATED = [
     why: 'reconnecting warning is yellow',
   },
   {
-    file: '@/components/file/SharedFilesDrawer.vue',
-    cls: 'shared-files-clear-spin',
-    color: '--li-color: currentColor',
-    why: 'clear button is destructive red',
-  },
-  {
-    file: '@/components/session/SharedSessionsDrawer.vue',
-    cls: 'shared-sessions-clear-spin',
-    color: '--li-color: currentColor',
-    why: 'clear button is destructive red',
-  },
-  {
     file: '@/assets/share-dialog.css',
     cls: 'share-dialog-spin',
     color: '--li-color: currentColor',
@@ -99,8 +87,6 @@ describe('spinner unification — migrated sites', () => {
       '@/components/settings/ForgeCredentialsRow.vue',
       '@/components/common/DialogOverlay.vue',
       '@/components/common/SystemResourcesPanel.vue',
-      '@/components/file/SharedFilesDrawer.vue',
-      '@/components/session/SharedSessionsDrawer.vue',
       '@/components/session/SessionShareDialog.vue',
       '@/components/file/ShareLinkDialog.vue',
     ]
@@ -120,8 +106,6 @@ describe('spinner unification — migrated sites', () => {
       '@/components/settings/ForgeCredentialsRow.vue',
       '@/components/common/DialogOverlay.vue',
       '@/components/common/SystemResourcesPanel.vue',
-      '@/components/file/SharedFilesDrawer.vue',
-      '@/components/session/SharedSessionsDrawer.vue',
       '@/components/session/SessionShareDialog.vue',
       '@/components/file/ShareLinkDialog.vue',
     ]

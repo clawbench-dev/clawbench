@@ -4935,6 +4935,52 @@ paths:
         "409":
           description: 会议仍在进行，或纪要正在生成
 
+  /api/live-share/notes/sessions/share:
+    patch:
+      tags: [LiveShare]
+      summary: 设置会议记录是否对外公开
+      description: |
+        **只控制会议结束之后**这条记录的链接还能不能被外人打开，不影响开会期间加入会议：
+        会议一开始就自动分配 token（观众靠它加入），这与「把纪要、转写公开出去」是两件事。
+
+        默认关闭。关闭时会议一结束，`/share/{token}` 就变成 404（记录本身仍在，
+        主人自己照常能在会议列表里看）。打开后链接长期有效，直到记录被删除。
+
+        与重命名分成两个接口：改名是纯标签操作，这个是「要不要给外人看」，
+        混在一个 PATCH 里会让改名请求意外改变公开状态。
+      operationId: liveShareNotesShare
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                  description: true = 会议结束后链接仍可访问；false = 会议结束即失效
+      responses:
+        "200":
+          description: 已更新，返回更新后的记录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: "#/components/schemas/MeetingRecord"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/import:
     post:
       tags: [LiveShare]
@@ -6209,6 +6255,14 @@ paths:
         项目中可见（依据请求的 `clawbench_project` cookie）。`defaultAgent` 同样
         受此约束：若配置的默认 agent 不在当前项目可见，则回退为列表中第一个未
         禁用的 agent。
+      # 斜杠命令的提示词只取这一句：AI 用这个端点是为了拿到 agent 的 id / 名称，
+      # 上面那整段（模型列表合并规则、档位别名对齐、ACP 未确认时的占位、目录
+      # 校验后端的 ID 形态）是给前端模型选择器读的响应契约，它一个字都用不上。
+      # 整段塞进 task / agent / mcp 三个命令会让它们的体积预算全部超出。
+      x-prompt-note: |
+        列出当前项目可见的 agent（含 id、名称、后端、`disabled`、`project_id`、
+        `models`、`providerModels`），以及 `acpStates`（各 agent 的模式、思考深度、
+        斜杠命令、模型列表）。创建任务 / 修改 agent 策略前用它拿 id。
       operationId: agentsList
       responses:
         "200":
@@ -9322,7 +9376,12 @@ components:
             - $ref: "#/components/schemas/MeetingGeneration"
           nullable: true
         updatedAt: { type: integer, format: int64, description: 记录最后写入时间，Unix 毫秒 }
-      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, hasSegments, hasAudio, artifacts, updatedAt]
+        shareEnabled:
+          type: boolean
+          description: |
+            会议结束后这条记录的公开链接是否仍可访问。默认 false：token 是开会时
+            自动分配的（观众靠它加入），不等于把纪要公开出去。开会期间不受它影响。
+      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, hasSegments, hasAudio, artifacts, updatedAt, shareEnabled]
 
     LiveNoteChatMessage:
       type: object

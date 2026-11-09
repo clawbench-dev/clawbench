@@ -256,7 +256,10 @@
               :folder-path="resourceDir"
               :links="shareLinks"
               :share-token="record?.token || ''"
+              :share-enabled="record?.shareEnabled === true"
+              :share-saving="shareSaving"
               @reload="reloadResources"
+              @update:share-enabled="setShareEnabled"
             />
           </template>
         </div>
@@ -982,8 +985,44 @@ async function confirmRegenerate(): Promise<void> {
   pollRecord()
 }
 
-async function cancelRegenerate(): Promise<void> {
-  if (!record.value) return
+/**
+ * Publish / unpublish the record's link.
+ *
+ * The server answers with the updated record, so the switch reflects the stored
+ * value rather than the click — a rejected write leaves the checkbox where it
+ * was instead of showing a state that did not persist.
+ */
+const shareSaving = ref(false)
+
+async function setShareEnabled(enabled: boolean): Promise<void> {
+  const current = record.value
+  if (!current) return
+  shareSaving.value = true
+  try {
+    const resp = await fetch(
+      `/api/live-share/notes/sessions/share?token=${encodeURIComponent(current.token)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      },
+    )
+    if (!resp.ok) throw new Error(resp.statusText)
+    const data = (await resp.json()) as { session?: MeetingRecord }
+    if (data.session) record.value = data.session
+    toast.show(
+      t(enabled ? 'shareCenter.meetingSwitchOn' : 'shareCenter.revokedMeeting'),
+      { icon: 'link', type: 'success', duration: 2000 },
+    )
+  } catch (e) {
+    appLog.w('MeetingDetail', 'set share flag failed', e)
+    toast.show(t('meeting.detail.shareFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  } finally {
+    shareSaving.value = false
+  }
+}
+
+async function cancelRegenerate(): Promise<void> {  if (!record.value) return
   const ok = await history.cancelRegeneration(record.value.token)
   if (!ok) {
     toast.show(t('meeting.detail.regen.cancelFailed'), { type: 'error', icon: 'warning' })
