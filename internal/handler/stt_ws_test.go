@@ -69,9 +69,9 @@ func TestSTTTranscribeWS_ChunkMsZero(t *testing.T) {
 	defer SetSTTProvider(old)
 	SetSTTProvider(&sttTestProvider{text: "识别"})
 
-	origChunk := model.ConfigInstance.STT.ChunkMs
-	model.ConfigInstance.STT.ChunkMs = 0
-	defer func() { model.ConfigInstance.STT.ChunkMs = origChunk }()
+	origChunk := model.ConfigInstance.STT.VLLM.ChunkMs
+	model.ConfigInstance.STT.VLLM.ChunkMs = 0
+	defer func() { model.ConfigInstance.STT.VLLM.ChunkMs = origChunk }()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
 	defer server.Close()
@@ -325,13 +325,13 @@ func TestSTTTranscribeWS_FinalTextIsWholeRecording(t *testing.T) {
 	provider := &sttTestProvider{text: "整段"}
 	SetSTTProvider(provider)
 
-	origChunk := model.ConfigInstance.STT.ChunkMs
-	origRecheck := model.ConfigInstance.STT.FinalRecheck
-	model.ConfigInstance.STT.ChunkMs = 200
-	model.ConfigInstance.STT.FinalRecheck = true
+	origChunk := model.ConfigInstance.STT.VLLM.ChunkMs
+	origRecheck := model.ConfigInstance.STT.VLLM.FinalRecheck
+	model.ConfigInstance.STT.VLLM.ChunkMs = 200
+	model.ConfigInstance.STT.VLLM.FinalRecheck = true
 	defer func() {
-		model.ConfigInstance.STT.ChunkMs = origChunk
-		model.ConfigInstance.STT.FinalRecheck = origRecheck
+		model.ConfigInstance.STT.VLLM.ChunkMs = origChunk
+		model.ConfigInstance.STT.VLLM.FinalRecheck = origRecheck
 	}()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
@@ -374,13 +374,13 @@ func TestSTTTranscribeWS_FinalRecheckOffByDefault(t *testing.T) {
 	provider := &sttTestProvider{text: "分段"}
 	SetSTTProvider(provider)
 
-	origChunk := model.ConfigInstance.STT.ChunkMs
-	origRecheck := model.ConfigInstance.STT.FinalRecheck
-	model.ConfigInstance.STT.ChunkMs = 200
-	model.ConfigInstance.STT.FinalRecheck = false
+	origChunk := model.ConfigInstance.STT.VLLM.ChunkMs
+	origRecheck := model.ConfigInstance.STT.VLLM.FinalRecheck
+	model.ConfigInstance.STT.VLLM.ChunkMs = 200
+	model.ConfigInstance.STT.VLLM.FinalRecheck = false
 	defer func() {
-		model.ConfigInstance.STT.ChunkMs = origChunk
-		model.ConfigInstance.STT.FinalRecheck = origRecheck
+		model.ConfigInstance.STT.VLLM.ChunkMs = origChunk
+		model.ConfigInstance.STT.VLLM.FinalRecheck = origRecheck
 	}()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
@@ -562,9 +562,9 @@ func TestSTTTranscribeWS_SurvivesIdleTicks(t *testing.T) {
 	defer SetSTTProvider(old)
 	SetSTTProvider(&sttTestProvider{text: "增量"})
 
-	origChunk := model.ConfigInstance.STT.ChunkMs
-	model.ConfigInstance.STT.ChunkMs = 50
-	defer func() { model.ConfigInstance.STT.ChunkMs = origChunk }()
+	origChunk := model.ConfigInstance.STT.VLLM.ChunkMs
+	model.ConfigInstance.STT.VLLM.ChunkMs = 50
+	defer func() { model.ConfigInstance.STT.VLLM.ChunkMs = origChunk }()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
 	defer server.Close()
@@ -595,9 +595,9 @@ func TestSTTTranscribeWS_AbortOnWriteError(t *testing.T) {
 	// and eventually fails, triggering the abort path.
 	SetSTTProvider(&sttTestProvider{text: strings.Repeat("x", 64<<20)})
 
-	origChunk := model.ConfigInstance.STT.ChunkMs
-	model.ConfigInstance.STT.ChunkMs = 50
-	defer func() { model.ConfigInstance.STT.ChunkMs = origChunk }()
+	origChunk := model.ConfigInstance.STT.VLLM.ChunkMs
+	model.ConfigInstance.STT.VLLM.ChunkMs = 50
+	defer func() { model.ConfigInstance.STT.VLLM.ChunkMs = origChunk }()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
 	defer server.Close()

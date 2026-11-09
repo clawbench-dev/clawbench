@@ -440,37 +440,54 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.Provider == "" {
 		cfg.STT.Provider = "vllm"
 	}
-	if cfg.STT.BaseURL == "" {
-		cfg.STT.BaseURL = "http://localhost:8000/v1"
+	// Each engine's own defaults. They are applied unconditionally (not only for
+	// the selected engine) so switching the engine in the settings UI starts
+	// from a usable configuration instead of an empty endpoint.
+	if cfg.STT.VLLM.BaseURL == "" {
+		cfg.STT.VLLM.BaseURL = "http://localhost:8000/v1"
 	}
-	if cfg.STT.Model == "" {
-		cfg.STT.Model = "openai/whisper-large-v3"
+	if cfg.STT.VLLM.Model == "" {
+		cfg.STT.VLLM.Model = "openai/whisper-large-v3"
 	}
-	if cfg.STT.ResourceID == "" {
-		cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
+	if cfg.STT.VLLM.Language == "" {
+		cfg.STT.VLLM.Language = "zh"
 	}
-	if cfg.STT.AlibabaBaseURL == "" {
-		cfg.STT.AlibabaBaseURL = "https://dashscope.aliyuncs.com"
+	if cfg.STT.VLLM.ChunkMs <= 0 {
+		cfg.STT.VLLM.ChunkMs = 1000
 	}
-	if cfg.STT.AlibabaModel == "" {
-		cfg.STT.AlibabaModel = "paraformer-realtime-v2"
+	if cfg.STT.Doubao.ResourceID == "" {
+		cfg.STT.Doubao.ResourceID = "volc.seedasr.sauc.duration"
+	}
+	if cfg.STT.Alibaba.BaseURL == "" {
+		cfg.STT.Alibaba.BaseURL = "https://dashscope.aliyuncs.com"
+	}
+	if cfg.STT.Alibaba.Model == "" {
+		cfg.STT.Alibaba.Model = "paraformer-realtime-v2"
+	}
+	if cfg.STT.Alibaba.Language == "" {
+		cfg.STT.Alibaba.Language = "zh"
 	}
 	// Bool zero-value trap: ITN and punctuation default to ON, so only an
-	// explicit value in config.yaml may turn them off.
-	if _, ok := presence["stt.enable_itn"]; !ok {
-		cfg.STT.EnableITN = true
+	// explicit value in config.yaml may turn them off. The presence map uses the
+	// per-engine paths — a shared path would let one engine's explicit false
+	// silently switch the other engine's default off too.
+	if _, ok := presence["stt.doubao.enable_itn"]; !ok {
+		cfg.STT.Doubao.EnableITN = true
 	}
-	if _, ok := presence["stt.enable_punc"]; !ok {
-		cfg.STT.EnablePunc = true
+	if _, ok := presence["stt.doubao.enable_punc"]; !ok {
+		cfg.STT.Doubao.EnablePunc = true
 	}
-	if cfg.STT.EndWindowSize <= 0 {
-		cfg.STT.EndWindowSize = 800
+	if _, ok := presence["stt.alibaba.enable_itn"]; !ok {
+		cfg.STT.Alibaba.EnableITN = true
 	}
-	if cfg.STT.Language == "" {
-		cfg.STT.Language = "zh"
+	if _, ok := presence["stt.alibaba.enable_punc"]; !ok {
+		cfg.STT.Alibaba.EnablePunc = true
 	}
-	if cfg.STT.ChunkMs <= 0 {
-		cfg.STT.ChunkMs = 1000
+	if cfg.STT.Doubao.EndWindowSize <= 0 {
+		cfg.STT.Doubao.EndWindowSize = 800
+	}
+	if cfg.STT.Alibaba.EndWindowSize <= 0 {
+		cfg.STT.Alibaba.EndWindowSize = 800
 	}
 	if cfg.STT.ShortcutKey == "" {
 		cfg.STT.ShortcutKey = "F9"

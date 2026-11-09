@@ -65,8 +65,8 @@ func TestSTTConnectivity(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "Qwen3-ASR-1.7B",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 	})
 	if !res.Success {
 		t.Fatalf("expected success, got %+v", res)
@@ -87,8 +87,8 @@ func TestSTTConnectivity_EmptyTranscriptFails(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "empty transcription")
@@ -104,8 +104,8 @@ func TestSTTConnectivity_ServerErrorFails(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "500")
@@ -133,10 +133,10 @@ func TestSTTConnectivity_UploadsEmbeddedClip(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "Qwen3-ASR-1.7B",
-		"stt.api_key":  "k-1",
-		"stt.language": "zh",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "Qwen3-ASR-1.7B",
+		"stt.vllm.api_key":  "k-1",
+		"stt.vllm.language": "zh",
 	})
 	assert.True(t, res.Success, res.Message)
 	assert.Equal(t, sttProbeAudio, gotAudio, "probe must upload the real speech clip")
@@ -154,8 +154,8 @@ func TestSTTConnectivity_AuthFailure(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "m",
 	})
 	if res.Success {
 		t.Fatalf("expected failure for auth, got %+v", res)
@@ -170,8 +170,8 @@ func TestSTTConnectivity_ModelNotFound(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "Qwen3-ASR-1.7B",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 	})
 	if res.Success {
 		t.Fatalf("expected failure for unknown model, got %+v", res)
@@ -185,8 +185,8 @@ func TestSTTConnectivity_Endpoint404(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "m",
 	})
 	if res.Success {
 		t.Fatalf("expected failure for 404, got %+v", res)

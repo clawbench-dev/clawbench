@@ -531,6 +531,37 @@ describe('settingsFieldMap', () => {
 
   // ── RAG panel ──
 
+  it('stt panel keeps each engine\'s fields separate', () => {
+    const cfg = getCategoryPanels('stt')[0]
+    const keys = cfg.commonFields.map(f => f.key)
+
+    // No credential or engine option is shared: a shared key would be
+    // overwritten the moment the user switched engines.
+    for (const shared of ['stt.api_key', 'stt.base_url', 'stt.model', 'stt.language', 'stt.streaming',
+      'stt.chunk_ms', 'stt.enable_itn', 'stt.enable_punc', 'stt.enable_ddc', 'stt.end_window_size',
+      'stt.resource_id', 'stt.final_recheck', 'stt.output_zh_variant']) {
+      expect(keys).not.toContain(shared)
+    }
+
+    // Each engine has its own api_key, and only that engine's row shows it.
+    for (const [engine, key] of [['vllm', 'stt.vllm.api_key'], ['doubao', 'stt.doubao.api_key'], ['alibaba', 'stt.alibaba.api_key']]) {
+      const field = cfg.commonFields.find(f => f.key === key)
+      expect(field, key).toBeDefined()
+      expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
+    }
+
+    // The streaming switch exists once per engine, each gated on its own engine.
+    for (const engine of ['vllm', 'doubao', 'alibaba']) {
+      const field = cfg.commonFields.find(f => f.key === `stt.${engine}.streaming`)
+      expect(field, engine).toBeDefined()
+      expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
+    }
+
+    // Global choices stay at the top level.
+    expect(keys).toContain('stt.provider')
+    expect(keys).toContain('stt.shortcut_key')
+  })
+
   it('rag panel has 13 commonFields and requiredFields', () => {
     const panels = getCategoryPanels('rag')
     expect(panels.length).toBe(1)

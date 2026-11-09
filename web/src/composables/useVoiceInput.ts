@@ -132,9 +132,17 @@ export function useVoiceInput() {
     readSttField(settings.serverConfig.value as Record<string, unknown> | undefined, key)
 
   const shortcutKey = () => (sttField('shortcut_key') as string | undefined) ?? 'F9'
-  const streaming = () => Boolean(sttField('streaming') ?? false)
   const provider = () => (sttField('provider') as string | undefined) ?? 'vllm'
-  const language = () => sttField('language') as string | undefined
+
+  // Each engine keeps its own streaming switch and language: they used to be
+  // shared, so turning streaming on for Doubao also switched it on for the
+  // self-hosted engine, and its language was overwritten by the other engine's.
+  const engineField = (key: string): unknown => {
+    const engine = sttField(provider())
+    return engine && typeof engine === 'object' ? (engine as Record<string, unknown>)[key] : undefined
+  }
+  const streaming = () => Boolean(engineField('streaming') ?? false)
+  const language = () => engineField('language') as string | undefined
 
   /** The tuning currently in effect (read by free-dialog mode as well). */
   const currentTuning = () => tuning

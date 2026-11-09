@@ -694,26 +694,42 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           { labelKey: 'settings.items.sttProviderDoubao', value: 'doubao' },
           { labelKey: 'settings.items.sttProviderAlibaba', value: 'alibaba' },
         ] },
-        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.api_key', type: 'password', source: 'server' },
-        { labelKey: 'settings.items.sttResourceId', descriptionKey: 'settings.items.sttResourceIdDesc', key: 'stt.resource_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
-        { labelKey: 'settings.items.sttAlibabaBaseUrl', descriptionKey: 'settings.items.sttAlibabaBaseUrlDesc', key: 'stt.alibaba_base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
-        { labelKey: 'settings.items.sttAlibabaModel', descriptionKey: 'settings.items.sttAlibabaModelDesc', key: 'stt.alibaba_model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
-        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.language', type: 'text', source: 'server', dependsOn: [{ key: 'stt.provider', value: 'vllm' }, { key: 'stt.provider', value: 'alibaba' }] },
-        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server', dependsOn: [{ key: 'stt.provider', value: 'doubao' }, { key: 'stt.provider', value: 'alibaba' }] },
-        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttFinalRecheck', descriptionKey: 'settings.items.sttFinalRecheckDesc', key: 'stt.final_recheck', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.enable_itn', type: 'switch', source: 'server', dependsOn: [{ key: 'stt.provider', value: 'doubao' }, { key: 'stt.provider', value: 'alibaba' }] },
-        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.enable_punc', type: 'switch', source: 'server', dependsOn: [{ key: 'stt.provider', value: 'doubao' }, { key: 'stt.provider', value: 'alibaba' }] },
-        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.enable_ddc', type: 'switch', source: 'server', dependsOn: [{ key: 'stt.provider', value: 'doubao' }, { key: 'stt.provider', value: 'alibaba' }] },
-        { labelKey: 'settings.items.sttZhVariant', descriptionKey: 'settings.items.sttZhVariantDesc', key: 'stt.output_zh_variant', type: 'select', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' }, options: [
+        // Each engine's credentials and options live in its own section. They
+        // are NOT shared: a single set of fields meant switching the engine
+        // overwrote the previous one's key and endpoint, so the engine you were
+        // not using lost its configuration.
+        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.vllm.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.vllm.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.vllm.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.vllm.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.vllm.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.vllm.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttFinalRecheck', descriptionKey: 'settings.items.sttFinalRecheckDesc', key: 'stt.vllm.final_recheck', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+
+        { labelKey: 'settings.items.sttDoubaoApiKey', descriptionKey: 'settings.items.sttDoubaoApiKeyDesc', key: 'stt.doubao.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttResourceId', descriptionKey: 'settings.items.sttResourceIdDesc', key: 'stt.doubao.resource_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.doubao.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.doubao.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.doubao.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.doubao.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttZhVariant', descriptionKey: 'settings.items.sttZhVariantDesc', key: 'stt.doubao.output_zh_variant', type: 'select', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' }, options: [
           { labelKey: 'settings.items.sttZhVariantNone', value: '' },
           { labelKey: 'settings.items.sttZhVariantTraditional', value: 'traditional' },
           { labelKey: 'settings.items.sttZhVariantTw', value: 'tw' },
           { labelKey: 'settings.items.sttZhVariantHk', value: 'hk' },
         ] },
-        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: [{ key: 'stt.provider', value: 'doubao' }, { key: 'stt.provider', value: 'alibaba' }] },
+        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.doubao.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'doubao' } },
+
+        { labelKey: 'settings.items.sttAlibabaApiKey', descriptionKey: 'settings.items.sttAlibabaApiKeyDesc', key: 'stt.alibaba.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaBaseUrl', descriptionKey: 'settings.items.sttAlibabaBaseUrlDesc', key: 'stt.alibaba.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaModel', descriptionKey: 'settings.items.sttAlibabaModelDesc', key: 'stt.alibaba.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaLanguage', descriptionKey: 'settings.items.sttAlibabaLanguageDesc', key: 'stt.alibaba.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.alibaba.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.alibaba.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.alibaba.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.alibaba.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.alibaba.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+
         { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
 
         // Microphone processing. Shared with meetings (the echo/noise/gain trio
@@ -745,7 +761,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         ] },
         { labelKey: 'settings.items.sttBargeInWords', descriptionKey: 'settings.items.sttBargeInWordsDesc', key: 'stt.barge_in_words', type: 'text', source: 'server', dependsOn: { key: 'stt.barge_in', value: 'keyword' } },
       ],
-      requiredFields: ['stt.base_url', 'stt.model'],
+      requiredFields: ['stt.vllm.base_url', 'stt.vllm.model'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'stt', values }],
     }},

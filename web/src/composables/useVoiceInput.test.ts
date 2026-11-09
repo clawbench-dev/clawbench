@@ -272,7 +272,7 @@ describe('useVoiceInput', () => {
   // leave the sent text in front of every partial.
   it('setStartText("") also drops the PCM prefix that partials are built on', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -358,7 +358,7 @@ describe('useVoiceInput', () => {
 
   it('streaming start sends a start frame with the PCM format and typed text as context', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -379,7 +379,7 @@ describe('useVoiceInput', () => {
 
   it('streaming forwards PCM frames as binary and ends with an end control', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -404,7 +404,7 @@ describe('useVoiceInput', () => {
 
   it('stop() while the socket is still connecting releases the mic and never starts capture', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv(0) // CONNECTING
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -425,7 +425,7 @@ describe('useVoiceInput', () => {
 
   it('drops a silent PCM frame instead of sending it to the engine', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao', voice_gate: true } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true }, voice_gate: true } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -443,7 +443,7 @@ describe('useVoiceInput', () => {
 
   it('forwards a silent frame when the voice gate is switched off', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao', voice_gate: false } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true }, voice_gate: false } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -462,8 +462,8 @@ describe('useVoiceInput', () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = {
       stt: {
-        streaming: true,
         provider: 'doubao',
+        doubao: { streaming: true },
         mic_echo_cancel: true,
         mic_noise_suppress: false,
         mic_auto_gain: true,
@@ -482,9 +482,58 @@ describe('useVoiceInput', () => {
     void env
   })
 
+  // Each engine keeps its own streaming switch: turning it on for one must not
+  // switch the other on. Doubao can decode PCM, so a shared flag would open a
+  // recogniser socket here; reading doubao.streaming (false) must not.
+  it('reads the streaming flag of the selected engine, not a shared one', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = {
+      stt: {
+        provider: 'doubao',
+        // A stale shared switch left behind by the old layout: the engine's own
+        // section says off, and that is what must win.
+        streaming: true,
+        doubao: { streaming: false },
+        vllm: { streaming: true },
+      },
+    }
+
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    const wsCtor = vi.fn()
+    vi.stubGlobal('WebSocket', class {
+      static CONNECTING = 0
+      static OPEN = 1
+      constructor() { wsCtor() }
+    })
+    vi.stubGlobal('AudioContext', class {
+      createMediaStreamSource() { return { connect: vi.fn() } }
+      createAnalyser() { return { fftSize: 0, frequencyBinCount: 0, getByteTimeDomainData: vi.fn(), connect: vi.fn() } }
+      close() { return Promise.resolve() }
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      static isTypeSupported = () => false
+      ondataavailable: unknown = null
+      onstop: unknown = null
+      constructor() {}
+      start() {}
+      stop() {}
+    })
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(wsCtor).not.toHaveBeenCalled()
+    v.cancel()
+  })
+
   it('uses MediaRecorder when the provider cannot decode PCM, even with streaming on', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'vllm' } }
+    serverConfig.value = { stt: { provider: 'vllm', vllm: { streaming: true } } }
 
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
@@ -532,7 +581,7 @@ describe('useVoiceInput', () => {
 
   it('uses the PCM stream when the provider is doubao and streaming is on', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -547,7 +596,7 @@ describe('useVoiceInput', () => {
 
   it('uses the PCM stream when the provider is alibaba and streaming is on', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'alibaba' } }
+    serverConfig.value = { stt: { provider: 'alibaba', alibaba: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
@@ -562,7 +611,7 @@ describe('useVoiceInput', () => {
 
   it('partial messages replace the transcript while keeping the typed prefix', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')

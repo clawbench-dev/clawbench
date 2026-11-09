@@ -438,33 +438,20 @@ type BingWallpaperConfig struct {
 }
 
 // STTConfig holds configuration for speech-to-text (voice input).
+//
+// Credentials and engine-specific knobs live in PER-ENGINE sub-sections, not in
+// shared top-level fields. Sharing them means switching the engine overwrites
+// the previous engine's key, endpoint and options: point the recogniser at
+// Doubao once and the self-hosted Whisper endpoint you had configured is gone
+// when you switch back. Only the things that are genuinely one choice for the
+// user — which engine, the recording shortcut, microphone processing, the voice
+// gate and free-dialog behavior — stay at this level.
 type STTConfig struct {
-	Provider   string `yaml:"provider"`    // "vllm" (default), "doubao" (Volcano Engine Seed-ASR) or "alibaba" (Model Studio / DashScope)
-	BaseURL    string `yaml:"base_url"`    // vLLM OpenAI-compatible base URL (default: "http://localhost:8000/v1"); unused by doubao/alibaba
-	APIKey     string `yaml:"api_key"`     // API key: vLLM bearer token, doubao X-Api-Key, or the DashScope key
-	Model      string `yaml:"model"`       // vLLM recognition model (default: "openai/whisper-large-v3"); unused by doubao/alibaba
-	ResourceID string `yaml:"resource_id"` // doubao purchased resource (default: "volc.seedasr.sauc.duration"); unused by vllm/alibaba
-	Language   string `yaml:"language"`    // Language code (default: "zh"); doubao auto-detects and ignores it
-	// Alibaba Cloud Model Studio. Its base is separate from stt.base_url on
-	// purpose: the vLLM default (localhost) would otherwise be inherited by a
-	// provider switch and silently point the recogniser at nothing.
-	AlibabaBaseURL string `yaml:"alibaba_base_url"` // default "https://dashscope.aliyuncs.com" (intl: dashscope-intl.aliyuncs.com)
-	AlibabaModel   string `yaml:"alibaba_model"`    // real-time model (default: "paraformer-realtime-v2"); file transcription always uses qwen3-asr-flash
-	// doubao/alibaba recognition options (ignored by vllm)
-	EnableITN       bool   `yaml:"enable_itn"`        // Normalize numbers/dates to written form (default: true)
-	EnablePunc      bool   `yaml:"enable_punc"`       // Add punctuation (default: true)
-	EnableDDC       bool   `yaml:"enable_ddc"`        // Semantic smoothing: drop filler words and repeats (default: false)
-	OutputZHVariant string `yaml:"output_zh_variant"` // "" | traditional | tw | hk (default: "") — doubao only
-	EndWindowSize   int    `yaml:"end_window_size"`   // Streaming VAD silence threshold in ms (default: 800)
-	Streaming       bool   `yaml:"streaming"`         // true=streaming incremental, false=non-streaming full (default: false)
-	ChunkMs         int    `yaml:"chunk_ms"`          // Streaming slice interval in ms (default: 1000)
-	// FinalRecheck re-transcribes the whole recording once the client sends
-	// "end", replacing the text it accumulated from the chunks. It is the only
-	// way a buffered engine's final answer can span chunk boundaries, but it
-	// costs a second pass over the entire clip, so it is off by default and the
-	// client keeps what the chunks produced.
-	FinalRecheck bool   `yaml:"final_recheck"` // Re-transcribe everything at the end (default: false)
-	ShortcutKey  string `yaml:"shortcut_key"`  // Recording shortcut (default: "F9")
+	Provider    string           `yaml:"provider"` // "vllm" (default), "doubao" (Volcano Engine Seed-ASR) or "alibaba" (Model Studio / DashScope)
+	VLLM        STTEngineConfig  `yaml:"vllm"`
+	Doubao      STTDoubaoConfig  `yaml:"doubao"`
+	Alibaba     STTAlibabaConfig `yaml:"alibaba"`
+	ShortcutKey string           `yaml:"shortcut_key"` // Recording shortcut (default: "F9")
 
 	// Microphone preprocessing. Applied where the microphone is opened, so the
 	// echo/noise/gain trio also reaches a meeting audience; the band filter is
@@ -487,6 +474,66 @@ type STTConfig struct {
 	IdleExitSeconds    int    `yaml:"idle_exit_seconds"`    // Leave the mode after this long with no recognized words, 0 = never (default: 60)
 	BargeIn            string `yaml:"barge_in"`             // off | any | keyword (default: any)
 	BargeInWords       string `yaml:"barge_in_words"`       // Comma-separated interrupt words (default: 等等,停一下)
+}
+
+// STTEngineConfig is the OpenAI-compatible (vLLM Whisper, or any server that
+// speaks /v1/audio/transcriptions) engine's own configuration.
+type STTEngineConfig struct {
+	BaseURL string `yaml:"base_url"` // OpenAI-compatible base URL (default: "http://localhost:8000/v1")
+	APIKey  string `yaml:"api_key"`  // Bearer token (may be empty for a local server)
+	Model   string `yaml:"model"`    // Recognition model (default: "openai/whisper-large-v3")
+	// Language is passed to the engine per request. Empty means "let the server
+	// decide", which is what a multilingual Whisper deployment usually wants.
+	Language string `yaml:"language"` // default "zh"
+	// Streaming is the client-facing switch: the browser sends PCM frames
+	// instead of uploading one file. This engine cannot stream natively, so the
+	// server cuts the PCM into chunks on pauses.
+	Streaming bool `yaml:"streaming"` // true=streaming incremental, false=non-streaming full (default: false)
+	ChunkMs   int  `yaml:"chunk_ms"`  // Streaming slice interval in ms (default: 1000)
+	// FinalRecheck re-transcribes the whole recording once the client sends
+	// "end", replacing the text it accumulated from the chunks. It is the only
+	// way a buffered engine's final answer can span chunk boundaries, but it
+	// costs a second pass over the entire clip, so it is off by default and the
+	// client keeps what the chunks produced.
+	FinalRecheck bool `yaml:"final_recheck"` // Re-transcribe everything at the end (default: false)
+}
+
+// STTDoubaoConfig is the Volcano Engine (豆包 Seed-ASR) engine's own config.
+//
+// Auth is not a bearer token: the key goes in X-Api-Key together with the
+// purchased resource id. Language is auto-detected, so there is no language
+// field here.
+type STTDoubaoConfig struct {
+	APIKey     string `yaml:"api_key"`     // Console-issued key
+	ResourceID string `yaml:"resource_id"` // Purchased resource (default: "volc.seedasr.sauc.duration")
+	// Recognition options.
+	EnableITN       bool   `yaml:"enable_itn"`        // Normalize numbers/dates to written form (default: true)
+	EnablePunc      bool   `yaml:"enable_punc"`       // Add punctuation (default: true)
+	EnableDDC       bool   `yaml:"enable_ddc"`        // Semantic smoothing: drop filler words and repeats (default: false)
+	OutputZHVariant string `yaml:"output_zh_variant"` // "" | traditional | tw | hk (default: "")
+	EndWindowSize   int    `yaml:"end_window_size"`   // Streaming VAD silence threshold in ms (default: 800)
+	// Streaming is the client-facing switch; this engine streams natively.
+	Streaming bool `yaml:"streaming"` // true=streaming incremental, false=non-streaming full (default: false)
+}
+
+// STTAlibabaConfig is the Alibaba Cloud Model Studio engine's own config.
+//
+// Two APIs sit behind one key: whole-file transcription always uses
+// qwen3-asr-flash, while live streaming uses a Paraformer real-time model that
+// the user picks here.
+type STTAlibabaConfig struct {
+	APIKey  string `yaml:"api_key"`  // DashScope key
+	BaseURL string `yaml:"base_url"` // default "https://dashscope.aliyuncs.com" (intl: dashscope-intl.aliyuncs.com)
+	Model   string `yaml:"model"`    // real-time model (default: "paraformer-realtime-v2")
+	// Language is a hint; empty means "detect it".
+	Language string `yaml:"language"` // default "zh"
+	// Recognition options.
+	EnableITN     bool `yaml:"enable_itn"`      // Normalize numbers/dates to written form (default: true)
+	EnablePunc    bool `yaml:"enable_punc"`     // Add punctuation (default: true)
+	EnableDDC     bool `yaml:"enable_ddc"`      // Semantic smoothing (default: false)
+	EndWindowSize int  `yaml:"end_window_size"` // Streaming VAD silence threshold in ms (default: 800)
+	// Streaming is the client-facing switch; this engine streams natively.
+	Streaming bool `yaml:"streaming"` // true=streaming incremental, false=non-streaming full (default: false)
 }
 
 // FileSearchConfig holds configuration for the file search feature.
@@ -594,7 +641,7 @@ type MeetingConfig struct {
 	Proofread bool `yaml:"proofread"`
 	// Language is the minutes output language: "" follows the transcript,
 	// "zh" forces Simplified Chinese, "en" forces English. It does not affect
-	// the transcript itself (that is stt.language).
+	// the transcript itself (that is each engine's own language setting).
 	Language string `yaml:"language"`
 	// FileExcerpts sends short excerpts of the files opened during the meeting
 	// to the minutes model. This is the only setting that sends project file

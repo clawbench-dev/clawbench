@@ -232,7 +232,7 @@ func (s *sttStreamState) rateLocked() int {
 //
 // The server accumulates audio and, whenever a chunk has ended (a pause, or the
 // configured interval), transcribes that chunk and appends the text. After
-// "end" it re-transcribes the full buffer only when stt.final_recheck is on;
+// "end" it re-transcribes the full buffer only when stt.vllm.final_recheck is on;
 // otherwise "done" carries no final and the accumulated text stands.
 func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: wsOriginPatterns(r)})
@@ -257,7 +257,7 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 // OpenAI-compatible engine, so this is the path continuous-conversation mode
 // uses there.
 func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.STTProvider, cfg model.Config) {
-	chunkMs := cfg.STT.ChunkMs
+	chunkMs := cfg.STT.VLLM.ChunkMs
 	if chunkMs <= 0 {
 		chunkMs = 1000
 	}
@@ -287,7 +287,7 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 				return
 			case <-ticker.C:
 			}
-			if transcribeBufferedChunkIfDue(ctx, state, provider, conn, cfg.STT.Language, forceMs) {
+			if transcribeBufferedChunkIfDue(ctx, state, provider, conn, cfg.STT.ActiveLanguage(), forceMs) {
 				cancel()
 				return
 			}
@@ -328,10 +328,10 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 	// Final answer. Only a whole-buffer re-transcription can span the chunk
 	// boundaries, so it is what makes the final text more coherent than the
 	// chunks the client accumulated — but it is a second pass over the entire
-	// clip, so it is opt-in (stt.final_recheck, default off). When off, "done"
+	// clip, so it is opt-in (stt.vllm.final_recheck, default off). When off, "done"
 	// carries no final and the client keeps what the chunks produced.
 	finalText := ""
-	if cfg.STT.FinalRecheck {
+	if cfg.STT.VLLM.FinalRecheck {
 		state.mu.Lock()
 		full := append([]byte(nil), state.buffer.Bytes()...)
 		rate := state.rateLocked()
@@ -339,7 +339,7 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 		state.mu.Unlock()
 
 		if len(full) > 0 && heard {
-			text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(wavFromPCM(full, rate)), cfg.STT.Language)
+			text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(wavFromPCM(full, rate)), cfg.STT.ActiveLanguage())
 			if terr == nil {
 				finalText = text
 			}

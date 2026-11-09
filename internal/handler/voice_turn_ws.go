@@ -305,7 +305,7 @@ func voiceTurnTranscribe(ctx context.Context, audio []byte) string {
 	if provider == nil {
 		return ""
 	}
-	text, err := provider.Transcribe(ctx, bytes.NewReader(audio), model.ConfigInstance.STT.Language)
+	text, err := provider.Transcribe(ctx, bytes.NewReader(audio), model.ConfigInstance.STT.ActiveLanguage())
 	if err != nil {
 		slog.Error("voice turn ws: transcribe failed", slog.String("error", err.Error()))
 		return ""

@@ -607,25 +607,34 @@ const serverDefaults: Record<string, unknown> = {
   'tts.speed': 1.0,
   'tts.max_cache_files': 100,
   'stt.provider': 'vllm',
-  'stt.base_url': 'http://localhost:8000/v1',
-  'stt.api_key': '',
-  'stt.model': 'openai/whisper-large-v3',
-  'stt.resource_id': 'volc.seedasr.sauc.duration',
-  // Mirrors model.ApplyDefaults. The Alibaba base is separate from
-  // stt.base_url: switching providers must not inherit the vLLM localhost
-  // default and silently point the recogniser at nothing.
-  'stt.alibaba_base_url': 'https://dashscope.aliyuncs.com',
-  'stt.alibaba_model': 'paraformer-realtime-v2',
-  'stt.language': 'zh',
-  'stt.streaming': false,
-  'stt.chunk_ms': 1000,
-  'stt.final_recheck': false,
+  // Per-engine defaults, mirroring model.ApplyDefaults. Every engine keeps its
+  // own credentials and options, so switching the engine never inherits (or
+  // overwrites) another engine's values.
+  'stt.vllm.base_url': 'http://localhost:8000/v1',
+  'stt.vllm.api_key': '',
+  'stt.vllm.model': 'openai/whisper-large-v3',
+  'stt.vllm.language': 'zh',
+  'stt.vllm.streaming': false,
+  'stt.vllm.chunk_ms': 1000,
+  'stt.vllm.final_recheck': false,
+  'stt.doubao.api_key': '',
+  'stt.doubao.resource_id': 'volc.seedasr.sauc.duration',
+  'stt.doubao.enable_itn': true,
+  'stt.doubao.enable_punc': true,
+  'stt.doubao.enable_ddc': false,
+  'stt.doubao.output_zh_variant': '',
+  'stt.doubao.end_window_size': 800,
+  'stt.doubao.streaming': false,
+  'stt.alibaba.api_key': '',
+  'stt.alibaba.base_url': 'https://dashscope.aliyuncs.com',
+  'stt.alibaba.model': 'paraformer-realtime-v2',
+  'stt.alibaba.language': 'zh',
+  'stt.alibaba.enable_itn': true,
+  'stt.alibaba.enable_punc': true,
+  'stt.alibaba.enable_ddc': false,
+  'stt.alibaba.end_window_size': 800,
+  'stt.alibaba.streaming': false,
   'stt.shortcut_key': 'F9',
-  'stt.enable_itn': true,
-  'stt.enable_punc': true,
-  'stt.enable_ddc': false,
-  'stt.output_zh_variant': '',
-  'stt.end_window_size': 800,
   // Mirrors model.ApplyDefaults: the preprocessing and gate switches default ON
   // (only an explicit false turns them off), and the free-dialog defaults are
   // the ones documented in the settings descriptions.

@@ -198,9 +198,9 @@ func TestSTTTranscribeWS_IncrementalAndFinal(t *testing.T) {
 	// The final pass is opt-in (stt.final_recheck); this test covers it being
 	// on. The default — no second pass, "done" carries no final — is pinned by
 	// TestSTTTranscribeWS_FinalRecheckOffByDefault.
-	origRecheck := model.ConfigInstance.STT.FinalRecheck
-	model.ConfigInstance.STT.FinalRecheck = true
-	defer func() { model.ConfigInstance.STT.FinalRecheck = origRecheck }()
+	origRecheck := model.ConfigInstance.STT.VLLM.FinalRecheck
+	model.ConfigInstance.STT.VLLM.FinalRecheck = true
+	defer func() { model.ConfigInstance.STT.VLLM.FinalRecheck = origRecheck }()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
 	defer server.Close()

@@ -364,10 +364,10 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return testAlibabaSTT(ctx, values)
 	}
 
-	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
-	sttModel := resolveStringValue(values, "stt.model", model.ConfigInstance.STT.Model)
-	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
-	language := resolveStringValue(values, "stt.language", model.ConfigInstance.STT.Language)
+	baseURL := resolveStringValue(values, "stt.vllm.base_url", model.ConfigInstance.STT.VLLM.BaseURL)
+	sttModel := resolveStringValue(values, "stt.vllm.model", model.ConfigInstance.STT.VLLM.Model)
+	apiKey := resolveStringValue(values, "stt.vllm.api_key", model.ConfigInstance.STT.VLLM.APIKey)
+	language := resolveStringValue(values, "stt.vllm.language", model.ConfigInstance.STT.VLLM.Language)
 
 	if baseURL == "" {
 		return ConnectivityTestResult{Success: false, Message: "STT base URL is required"}
@@ -441,8 +441,8 @@ var doubaoSTTBaseURL = stt.DoubaoBaseURL
 // the response body carries the real status code — a reachable host with a
 // revoked key still answers HTTP 200, so the body is authoritative.
 func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
-	resourceID := resolveStringValue(values, "stt.resource_id", model.ConfigInstance.STT.ResourceID)
+	apiKey := resolveStringValue(values, "stt.doubao.api_key", model.ConfigInstance.STT.Doubao.APIKey)
+	resourceID := resolveStringValue(values, "stt.doubao.resource_id", model.ConfigInstance.STT.Doubao.ResourceID)
 
 	if apiKey == "" {
 		return ConnectivityTestResult{Success: false, Message: "Doubao API key is required"}
@@ -467,12 +467,12 @@ func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestR
 // key from the wrong region, a missing model or a revoked key all surface as
 // the actual HTTP answer instead of "the host is reachable".
 func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
+	apiKey := resolveStringValue(values, "stt.alibaba.api_key", model.ConfigInstance.STT.Alibaba.APIKey)
 	if apiKey == "" {
 		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud API key is required"}
 	}
-	baseURL := resolveStringValue(values, "stt.alibaba_base_url", model.ConfigInstance.STT.AlibabaBaseURL)
-	language := resolveStringValue(values, "stt.language", model.ConfigInstance.STT.Language)
+	baseURL := resolveStringValue(values, "stt.alibaba.base_url", model.ConfigInstance.STT.Alibaba.BaseURL)
+	language := resolveStringValue(values, "stt.alibaba.language", model.ConfigInstance.STT.Alibaba.Language)
 
 	provider := stt.NewAlibabaProvider(apiKey)
 	if baseURL != "" {

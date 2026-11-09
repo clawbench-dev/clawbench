@@ -102,35 +102,46 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.model":       true,
 	"tts.openai.voice":       true,
 	"tts.openai.stream_mode": true,
-	// STT — speech-to-text config, hot-reloadable
-	"stt.provider":               true,
-	"stt.base_url":               true,
-	"stt.api_key":                true,
-	"stt.model":                  true,
-	"stt.resource_id":            true,
-	"stt.alibaba_base_url":       true,
-	"stt.alibaba_model":          true,
-	"stt.language":               true,
-	"stt.streaming":              true,
-	"stt.chunk_ms":               true,
-	"stt.final_recheck":          true,
-	"stt.shortcut_key":           true,
-	"stt.enable_itn":             true,
-	"stt.enable_punc":            true,
-	"stt.enable_ddc":             true,
-	"stt.output_zh_variant":      true,
-	"stt.end_window_size":        true,
-	"stt.mic_echo_cancel":        true,
-	"stt.mic_noise_suppress":     true,
-	"stt.mic_auto_gain":          true,
-	"stt.mic_band_filter":        true,
-	"stt.voice_gate":             true,
-	"stt.voice_gate_sensitivity": true,
-	"stt.trigger_words":          true,
-	"stt.silence_send_seconds":   true,
-	"stt.idle_exit_seconds":      true,
-	"stt.barge_in":               true,
-	"stt.barge_in_words":         true,
+	// STT — speech-to-text config, hot-reloadable. Credentials and engine
+	// options live under the engine's own section so editing one engine cannot
+	// overwrite another's.
+	"stt.provider":                 true,
+	"stt.shortcut_key":             true,
+	"stt.vllm.base_url":            true,
+	"stt.vllm.api_key":             true,
+	"stt.vllm.model":               true,
+	"stt.vllm.language":            true,
+	"stt.vllm.streaming":           true,
+	"stt.vllm.chunk_ms":            true,
+	"stt.vllm.final_recheck":       true,
+	"stt.doubao.api_key":           true,
+	"stt.doubao.resource_id":       true,
+	"stt.doubao.enable_itn":        true,
+	"stt.doubao.enable_punc":       true,
+	"stt.doubao.enable_ddc":        true,
+	"stt.doubao.output_zh_variant": true,
+	"stt.doubao.end_window_size":   true,
+	"stt.doubao.streaming":         true,
+	"stt.alibaba.api_key":          true,
+	"stt.alibaba.base_url":         true,
+	"stt.alibaba.model":            true,
+	"stt.alibaba.language":         true,
+	"stt.alibaba.enable_itn":       true,
+	"stt.alibaba.enable_punc":      true,
+	"stt.alibaba.enable_ddc":       true,
+	"stt.alibaba.end_window_size":  true,
+	"stt.alibaba.streaming":        true,
+	"stt.mic_echo_cancel":          true,
+	"stt.mic_noise_suppress":       true,
+	"stt.mic_auto_gain":            true,
+	"stt.mic_band_filter":          true,
+	"stt.voice_gate":               true,
+	"stt.voice_gate_sensitivity":   true,
+	"stt.trigger_words":            true,
+	"stt.silence_send_seconds":     true,
+	"stt.idle_exit_seconds":        true,
+	"stt.barge_in":                 true,
+	"stt.barge_in_words":           true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
 	"summarize.tts_backend":     true,
 	"summarize.auto_junk_ratio": true,
@@ -495,23 +506,11 @@ type configOpenAITTS struct {
 }
 
 type configSTT struct {
-	Provider        string `json:"provider"`
-	BaseURL         string `json:"base_url"`
-	APIKey          string `json:"api_key"`
-	Model           string `json:"model"`
-	ResourceID      string `json:"resource_id"`
-	AlibabaBaseURL  string `json:"alibaba_base_url"`
-	AlibabaModel    string `json:"alibaba_model"`
-	Language        string `json:"language"`
-	Streaming       bool   `json:"streaming"`
-	ChunkMs         int    `json:"chunk_ms"`
-	FinalRecheck    bool   `json:"final_recheck"`
-	ShortcutKey     string `json:"shortcut_key"`
-	EnableITN       bool   `json:"enable_itn"`
-	EnablePunc      bool   `json:"enable_punc"`
-	EnableDDC       bool   `json:"enable_ddc"`
-	OutputZHVariant string `json:"output_zh_variant"`
-	EndWindowSize   int    `json:"end_window_size"`
+	Provider    string           `json:"provider"`
+	VLLM        configSTTVLLM    `json:"vllm"`
+	Doubao      configSTTDoubao  `json:"doubao"`
+	Alibaba     configSTTAlibaba `json:"alibaba"`
+	ShortcutKey string           `json:"shortcut_key"`
 
 	MicEchoCancel        bool   `json:"mic_echo_cancel"`
 	MicNoiseSuppress     bool   `json:"mic_noise_suppress"`
@@ -524,6 +523,42 @@ type configSTT struct {
 	IdleExitSeconds      int    `json:"idle_exit_seconds"`
 	BargeIn              string `json:"barge_in"`
 	BargeInWords         string `json:"barge_in_words"`
+}
+
+// The three engine sections of GET /api/config. Each carries only its own
+// engine's credentials and options: they used to be flat stt.* fields, so
+// switching engines overwrote the previous engine's configuration.
+type configSTTVLLM struct {
+	BaseURL      string `json:"base_url"`
+	APIKey       string `json:"api_key"`
+	Model        string `json:"model"`
+	Language     string `json:"language"`
+	Streaming    bool   `json:"streaming"`
+	ChunkMs      int    `json:"chunk_ms"`
+	FinalRecheck bool   `json:"final_recheck"`
+}
+
+type configSTTDoubao struct {
+	APIKey          string `json:"api_key"`
+	ResourceID      string `json:"resource_id"`
+	EnableITN       bool   `json:"enable_itn"`
+	EnablePunc      bool   `json:"enable_punc"`
+	EnableDDC       bool   `json:"enable_ddc"`
+	OutputZHVariant string `json:"output_zh_variant"`
+	EndWindowSize   int    `json:"end_window_size"`
+	Streaming       bool   `json:"streaming"`
+}
+
+type configSTTAlibaba struct {
+	APIKey        string `json:"api_key"`
+	BaseURL       string `json:"base_url"`
+	Model         string `json:"model"`
+	Language      string `json:"language"`
+	EnableITN     bool   `json:"enable_itn"`
+	EnablePunc    bool   `json:"enable_punc"`
+	EnableDDC     bool   `json:"enable_ddc"`
+	EndWindowSize int    `json:"end_window_size"`
+	Streaming     bool   `json:"streaming"`
 }
 
 type configRAG struct {
@@ -925,22 +960,31 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.openai.voice":                   true,
 	"tts.openai.stream_mode":             true,
 	"stt.provider":                       true,
-	"stt.base_url":                       true,
-	"stt.api_key":                        true,
-	"stt.model":                          true,
-	"stt.resource_id":                    true,
-	"stt.alibaba_base_url":               true,
-	"stt.alibaba_model":                  true,
-	"stt.language":                       true,
-	"stt.streaming":                      true,
-	"stt.chunk_ms":                       true,
-	"stt.final_recheck":                  true,
 	"stt.shortcut_key":                   true,
-	"stt.enable_itn":                     true,
-	"stt.enable_punc":                    true,
-	"stt.enable_ddc":                     true,
-	"stt.output_zh_variant":              true,
-	"stt.end_window_size":                true,
+	"stt.vllm.base_url":                  true,
+	"stt.vllm.api_key":                   true,
+	"stt.vllm.model":                     true,
+	"stt.vllm.language":                  true,
+	"stt.vllm.streaming":                 true,
+	"stt.vllm.chunk_ms":                  true,
+	"stt.vllm.final_recheck":             true,
+	"stt.doubao.api_key":                 true,
+	"stt.doubao.resource_id":             true,
+	"stt.doubao.enable_itn":              true,
+	"stt.doubao.enable_punc":             true,
+	"stt.doubao.enable_ddc":              true,
+	"stt.doubao.output_zh_variant":       true,
+	"stt.doubao.end_window_size":         true,
+	"stt.doubao.streaming":               true,
+	"stt.alibaba.api_key":                true,
+	"stt.alibaba.base_url":               true,
+	"stt.alibaba.model":                  true,
+	"stt.alibaba.language":               true,
+	"stt.alibaba.enable_itn":             true,
+	"stt.alibaba.enable_punc":            true,
+	"stt.alibaba.enable_ddc":             true,
+	"stt.alibaba.end_window_size":        true,
+	"stt.alibaba.streaming":              true,
 	"stt.mic_echo_cancel":                true,
 	"stt.mic_noise_suppress":             true,
 	"stt.mic_auto_gain":                  true,
@@ -1138,23 +1182,38 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
 		},
 		STT: configSTT{
-			Provider:        cfg.STT.Provider,
-			BaseURL:         cfg.STT.BaseURL,
-			APIKey:          cfg.STT.APIKey,
-			Model:           cfg.STT.Model,
-			ResourceID:      cfg.STT.ResourceID,
-			AlibabaBaseURL:  cfg.STT.AlibabaBaseURL,
-			AlibabaModel:    cfg.STT.AlibabaModel,
-			Language:        cfg.STT.Language,
-			Streaming:       cfg.STT.Streaming,
-			ChunkMs:         cfg.STT.ChunkMs,
-			FinalRecheck:    cfg.STT.FinalRecheck,
-			ShortcutKey:     cfg.STT.ShortcutKey,
-			EnableITN:       cfg.STT.EnableITN,
-			EnablePunc:      cfg.STT.EnablePunc,
-			EnableDDC:       cfg.STT.EnableDDC,
-			OutputZHVariant: cfg.STT.OutputZHVariant,
-			EndWindowSize:   cfg.STT.EndWindowSize,
+			Provider:    cfg.STT.Provider,
+			ShortcutKey: cfg.STT.ShortcutKey,
+			VLLM: configSTTVLLM{
+				BaseURL:      cfg.STT.VLLM.BaseURL,
+				APIKey:       cfg.STT.VLLM.APIKey,
+				Model:        cfg.STT.VLLM.Model,
+				Language:     cfg.STT.VLLM.Language,
+				Streaming:    cfg.STT.VLLM.Streaming,
+				ChunkMs:      cfg.STT.VLLM.ChunkMs,
+				FinalRecheck: cfg.STT.VLLM.FinalRecheck,
+			},
+			Doubao: configSTTDoubao{
+				APIKey:          cfg.STT.Doubao.APIKey,
+				ResourceID:      cfg.STT.Doubao.ResourceID,
+				EnableITN:       cfg.STT.Doubao.EnableITN,
+				EnablePunc:      cfg.STT.Doubao.EnablePunc,
+				EnableDDC:       cfg.STT.Doubao.EnableDDC,
+				OutputZHVariant: cfg.STT.Doubao.OutputZHVariant,
+				EndWindowSize:   cfg.STT.Doubao.EndWindowSize,
+				Streaming:       cfg.STT.Doubao.Streaming,
+			},
+			Alibaba: configSTTAlibaba{
+				APIKey:        cfg.STT.Alibaba.APIKey,
+				BaseURL:       cfg.STT.Alibaba.BaseURL,
+				Model:         cfg.STT.Alibaba.Model,
+				Language:      cfg.STT.Alibaba.Language,
+				EnableITN:     cfg.STT.Alibaba.EnableITN,
+				EnablePunc:    cfg.STT.Alibaba.EnablePunc,
+				EnableDDC:     cfg.STT.Alibaba.EnableDDC,
+				EndWindowSize: cfg.STT.Alibaba.EndWindowSize,
+				Streaming:     cfg.STT.Alibaba.Streaming,
+			},
 
 			MicEchoCancel:        cfg.STT.MicEchoCancel,
 			MicNoiseSuppress:     cfg.STT.MicNoiseSuppress,
@@ -1650,6 +1709,90 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	return nil
 }
 
+// applySTTVLLMPatch writes the OpenAI-compatible engine's own fields.
+func applySTTVLLMPatch(cfg *model.STTEngineConfig, patch map[string]any) {
+	if v, ok := patch["base_url"].(string); ok {
+		cfg.BaseURL = v
+	}
+	if v, ok := patch["api_key"].(string); ok {
+		cfg.APIKey = v
+	}
+	if v, ok := patch["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := patch["language"].(string); ok {
+		cfg.Language = v
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+	if v, ok := patch["chunk_ms"].(float64); ok {
+		cfg.ChunkMs = int(v)
+	}
+	if v, ok := patch["final_recheck"].(bool); ok {
+		cfg.FinalRecheck = v
+	}
+}
+
+// applySTTDoubaoPatch writes the Volcano Engine engine's own fields.
+func applySTTDoubaoPatch(cfg *model.STTDoubaoConfig, patch map[string]any) {
+	if v, ok := patch["api_key"].(string); ok {
+		cfg.APIKey = v
+	}
+	if v, ok := patch["resource_id"].(string); ok {
+		cfg.ResourceID = v
+	}
+	if v, ok := patch["enable_itn"].(bool); ok {
+		cfg.EnableITN = v
+	}
+	if v, ok := patch["enable_punc"].(bool); ok {
+		cfg.EnablePunc = v
+	}
+	if v, ok := patch["enable_ddc"].(bool); ok {
+		cfg.EnableDDC = v
+	}
+	if v, ok := patch["output_zh_variant"].(string); ok {
+		cfg.OutputZHVariant = v
+	}
+	if v, ok := patch["end_window_size"].(float64); ok {
+		cfg.EndWindowSize = int(v)
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+}
+
+// applySTTAlibabaPatch writes the Alibaba Cloud engine's own fields.
+func applySTTAlibabaPatch(cfg *model.STTAlibabaConfig, patch map[string]any) {
+	if v, ok := patch["api_key"].(string); ok {
+		cfg.APIKey = v
+	}
+	if v, ok := patch["base_url"].(string); ok {
+		cfg.BaseURL = v
+	}
+	if v, ok := patch["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := patch["language"].(string); ok {
+		cfg.Language = v
+	}
+	if v, ok := patch["enable_itn"].(bool); ok {
+		cfg.EnableITN = v
+	}
+	if v, ok := patch["enable_punc"].(bool); ok {
+		cfg.EnablePunc = v
+	}
+	if v, ok := patch["enable_ddc"].(bool); ok {
+		cfg.EnableDDC = v
+	}
+	if v, ok := patch["end_window_size"].(float64); ok {
+		cfg.EndWindowSize = int(v)
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+}
+
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
 	// language: only locales the bundled translation tables actually carry.
 	// An unknown value would make every background-localized string fall back
@@ -1745,19 +1888,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba")
 			}
 		}
-		if v, ok := sttVal["base_url"].(string); ok && v != "" {
-			if _, err := url.ParseRequestURI(v); err != nil {
-				return fmt.Errorf("stt.base_url must be a valid URL")
-			}
-		}
-		if v, ok := sttVal["alibaba_base_url"].(string); ok && v != "" {
-			if _, err := url.ParseRequestURI(v); err != nil {
-				return fmt.Errorf("stt.alibaba_base_url must be a valid URL")
-			}
-		}
-		if v, ok := sttVal["chunk_ms"].(float64); ok && v <= 0 {
-			return fmt.Errorf("stt.chunk_ms must be positive")
-		}
 		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
 			return fmt.Errorf("stt.shortcut_key must not be empty")
 		}
@@ -1776,6 +1906,23 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := sttVal["idle_exit_seconds"].(float64); ok && v < 0 {
 			return fmt.Errorf("stt.idle_exit_seconds must not be negative")
+		}
+		if vllm, ok := sttVal["vllm"].(map[string]any); ok {
+			if v, ok := vllm["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("stt.vllm.base_url must be a valid URL")
+				}
+			}
+			if v, ok := vllm["chunk_ms"].(float64); ok && v <= 0 {
+				return fmt.Errorf("stt.vllm.chunk_ms must be positive")
+			}
+		}
+		if alibaba, ok := sttVal["alibaba"].(map[string]any); ok {
+			if v, ok := alibaba["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("stt.alibaba.base_url must be a valid URL")
+				}
+			}
 		}
 	}
 
@@ -2435,53 +2582,19 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := sttVal["provider"].(string); ok {
 			cfg.STT.Provider = v
 		}
-		if v, ok := sttVal["base_url"].(string); ok {
-			cfg.STT.BaseURL = v
-		}
-		if v, ok := sttVal["api_key"].(string); ok {
-			cfg.STT.APIKey = v
-		}
-		if v, ok := sttVal["model"].(string); ok {
-			cfg.STT.Model = v
-		}
-		if v, ok := sttVal["resource_id"].(string); ok {
-			cfg.STT.ResourceID = v
-		}
-		if v, ok := sttVal["alibaba_base_url"].(string); ok {
-			cfg.STT.AlibabaBaseURL = v
-		}
-		if v, ok := sttVal["alibaba_model"].(string); ok {
-			cfg.STT.AlibabaModel = v
-		}
-		if v, ok := sttVal["language"].(string); ok {
-			cfg.STT.Language = v
-		}
-		if v, ok := sttVal["streaming"].(bool); ok {
-			cfg.STT.Streaming = v
-		}
-		if v, ok := sttVal["chunk_ms"].(float64); ok {
-			cfg.STT.ChunkMs = int(v)
-		}
-		if v, ok := sttVal["final_recheck"].(bool); ok {
-			cfg.STT.FinalRecheck = v
-		}
 		if v, ok := sttVal["shortcut_key"].(string); ok {
 			cfg.STT.ShortcutKey = v
 		}
-		if v, ok := sttVal["enable_itn"].(bool); ok {
-			cfg.STT.EnableITN = v
+		// Each engine writes only its own section, so editing one engine never
+		// touches another's saved credentials.
+		if v, ok := sttVal["vllm"].(map[string]any); ok {
+			applySTTVLLMPatch(&cfg.STT.VLLM, v)
 		}
-		if v, ok := sttVal["enable_punc"].(bool); ok {
-			cfg.STT.EnablePunc = v
+		if v, ok := sttVal["doubao"].(map[string]any); ok {
+			applySTTDoubaoPatch(&cfg.STT.Doubao, v)
 		}
-		if v, ok := sttVal["enable_ddc"].(bool); ok {
-			cfg.STT.EnableDDC = v
-		}
-		if v, ok := sttVal["output_zh_variant"].(string); ok {
-			cfg.STT.OutputZHVariant = v
-		}
-		if v, ok := sttVal["end_window_size"].(float64); ok {
-			cfg.STT.EndWindowSize = int(v)
+		if v, ok := sttVal["alibaba"].(map[string]any); ok {
+			applySTTAlibabaPatch(&cfg.STT.Alibaba, v)
 		}
 		if v, ok := sttVal["mic_echo_cancel"].(bool); ok {
 			cfg.STT.MicEchoCancel = v
@@ -2927,6 +3040,9 @@ func writeConfigYAML(patch map[string]any) error {
 	// One-time cleanup of the legacy chat.user_nickname key (see
 	// dropLegacyChatNickname).
 	dropLegacyChatNickname(raw)
+	// The pre-per-engine flat stt.* keys: leaving them in the file would make a
+	// hand-edit of one look effective while nothing reads it.
+	model.DropLegacySTTKeys(raw)
 
 	data, err := yaml.Marshal(raw)
 	if err != nil {

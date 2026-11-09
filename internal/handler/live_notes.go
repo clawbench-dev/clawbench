@@ -2289,7 +2289,7 @@ func transcribeLiveNoteSegment(ctx context.Context, audio []byte) (string, error
 	if provider == nil {
 		return "", errors.New("stt provider not configured")
 	}
-	return provider.Transcribe(ctx, bytes.NewReader(audio), model.ConfigInstance.STT.Language)
+	return provider.Transcribe(ctx, bytes.NewReader(audio), model.ConfigInstance.STT.ActiveLanguage())
 }
 
 // parseLiveNoteMillis parses a millisecond timestamp, returning 0 for garbage.
