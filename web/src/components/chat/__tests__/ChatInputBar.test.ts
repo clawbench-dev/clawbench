@@ -736,6 +736,19 @@ describe('ChatInputBar', () => {
     expect(strip.find('.free-dialog-text').classes()).toContain('is-hint')
   })
 
+  it('says the reply can be interrupted while it is being generated', () => {
+    // Generation is interruptible too; a plain "thinking…" hint would leave
+    // the user waiting for the answer to finish before speaking.
+    const quiet = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogCanInterrupt: false })
+    const quietText = quiet.find('[data-role="free-dialog-strip"]').text()
+    expect(quietText).toContain('chat.actions.freeDialogThinking')
+    expect(quietText).not.toContain('Interruptible')
+
+    const armed = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogCanInterrupt: true })
+    expect(armed.find('[data-role="free-dialog-strip"]').text())
+      .toContain('chat.actions.freeDialogThinkingInterruptible')
+  })
+
   it('renders no strip when the mode is off', () => {
     const wrapper = mountBar({ currentSessionId: 's1', freeDialogPhase: 'idle' })
     expect(wrapper.find('[data-role="free-dialog-strip"]').exists()).toBe(false)

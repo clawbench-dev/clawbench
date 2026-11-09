@@ -406,6 +406,138 @@ describe('useFreeDialog', () => {
     expect(mod.useFreeDialog().phase.value).toBe('listening')
   })
 
+  // ── interrupting the generation, not only the read-aloud ──
+  //
+  // The reply is produced long before it is spoken, and that is exactly when
+  // "等等，不是这个意思" needs to land.
+
+  it('arms the interrupt listener while the reply is still being generated', async () => {
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt })
+    await flush()
+    speak('做点事 发送')
+    expect(mod.useFreeDialog().phase.value).toBe('thinking')
+    vi.advanceTimersByTime(500)
+    await flush()
+    // Two sockets: the dictation one (closed when the turn was sent) and the
+    // interrupt one armed for the generation window.
+    expect(sockets.length).toBe(2)
+    speak('等等', 'partial')
+    // Nothing is playing yet, so the turn itself is what has to be cancelled.
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not arm the listener while the "took it" cue is still ringing', async () => {
+    // Under the default "any speech" setting the cue would be transcribed as
+    // the user talking, cancelling the turn that was just sent.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(300)
+    await flush()
+    expect(sockets.length).toBe(1)
+  })
+
+  it('opens no generation-phase listener when interrupting is switched off', async () => {
+    vi.doMock('@/composables/useSettingsConfig', async () => {
+      const { ref } = await vi.importActual<typeof import('vue')>('vue')
+      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_seconds: 3 } }) }
+    })
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(sockets.length).toBe(1)
+    expect(mod.useFreeDialog().phase.value).toBe('thinking')
+  })
+
+  it('does not arm a listener for a turn that has already ended', async () => {
+    // The reply can finish inside the arming delay (an instant failure, a
+    // cancel). Opening a recogniser then would transcribe whatever plays next
+    // as the user's speech.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    mod.setFreeDialogThinking(false)
+    // Still inside the settle window, so the phase is still 'thinking' when
+    // the arming delay elapses: nothing may be opened at that point.
+    vi.advanceTimersByTime(400)
+    await flush()
+    expect(sockets.length).toBe(1)
+  })
+
+  it('gives the read-aloud a fresh listener instead of reusing the generation one', async () => {
+    // Partials are cumulative within a recogniser session: carrying the
+    // generation-phase transcript over would let an already-heard phrase fire
+    // again the moment playback starts.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(500)
+    await flush()
+    const generation = sockets[sockets.length - 1]
+    mod.setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    expect(generation.readyState).toBe(3)
+    expect(sockets.length).toBe(3)
+  })
+
+  it('does not read out a reply the user just cancelled', async () => {
+    // The truncated answer was never handed to TTS, so the panel's
+    // "already spoken" set knows nothing about it. Without this the loop would
+    // read the half-answer out right after the user asked it to stop.
+    const onSpeakPendingReply = vi.fn(() => true)
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt, onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(500)
+    await flush()
+    speak('等等', 'partial')
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+    // The owner cancels the turn; `loading` goes false.
+    mod.setFreeDialogThinking(false)
+    vi.advanceTimersByTime(600)
+    await flush()
+    expect(onSpeakPendingReply).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(250)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+  })
+
+  it('reports whether speaking can interrupt, for the status strip', async () => {
+    // The strip says "AI 正在思考…" unless the user can cut in; a hint nobody
+    // can act on would be worse than none.
+    const mod = await import('../useFreeDialog')
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(false)
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(true)
+    mod.stop()
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(false)
+  })
+
+  it('reports no interruption when the setting is off', async () => {
+    vi.doMock('@/composables/useSettingsConfig', async () => {
+      const { ref } = await vi.importActual<typeof import('vue')>('vue')
+      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_seconds: 3 } }) }
+    })
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(false)
+  })
+
   it('releases the interrupt microphone before listening starts', async () => {
     // The interrupt recogniser must be gone before dictation starts, or two
     // sockets each apply a transcript to the same utterance.

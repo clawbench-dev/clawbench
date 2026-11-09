@@ -443,7 +443,11 @@ const acpSyncTitle = computed(() => {
 const freeDialogHint = computed(() => {
   switch (props.freeDialogPhase) {
     case 'listening': return t('chat.actions.freeDialogListening')
-    case 'thinking': return t('chat.actions.freeDialogThinking')
+    // The generation window is interruptible too, and "AI 正在思考…" would
+    // leave the user believing they have to wait for it.
+    case 'thinking': return t(props.freeDialogCanInterrupt
+      ? 'chat.actions.freeDialogThinkingInterruptible'
+      : 'chat.actions.freeDialogThinking')
     case 'speaking': return t('chat.actions.freeDialogSpeaking')
     default: return ''
   }
@@ -698,6 +702,8 @@ const props = defineProps({
   freeDialogPhase: { type: String, default: 'idle' },
   /** What the microphone has recognised so far in this utterance. */
   freeDialogTranscript: { type: String, default: '' },
+  /** Whether speaking cuts the reply short (`stt.barge_in` is not 'off'). */
+  freeDialogCanInterrupt: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([

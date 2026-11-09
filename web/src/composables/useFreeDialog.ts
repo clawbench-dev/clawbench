@@ -2,8 +2,8 @@
  * Free-dialog mode (shown as 连续对话 in the UI): the microphone stays open,
  * the user talks, and a turn is sent to the assistant when they say a trigger
  * word or simply stop talking. Once the reply has been read out, listening
- * resumes — and if the user starts speaking while it is still talking, the
- * playback is cut short.
+ * resumes — and if the user starts speaking while it is still being generated
+ * or read aloud, the turn is cut short.
  *
  * State machine:
  *
@@ -13,10 +13,18 @@
  *   thinking   a turn was sent, waiting for the reply to finish
  *   speaking   the reply is being read aloud (auto-speech)
  *
+ * "Cut in" covers the whole reply, not only the read-aloud: the interrupt
+ * listener runs in BOTH thinking and speaking, because a long generation is
+ * exactly when a user most wants to say "等等，不是这个意思" and the text is not
+ * even on screen yet. What the interrupt does depends on what exists at that
+ * moment — stop the playback if something is being read, otherwise cancel the
+ * turn itself (`onInterrupt`).
+ *
  * ONE microphone for the whole session: the capture graph is opened when the
  * mode starts and released when it stops. A phase change only swaps who reads
  * its frames — the dictation recogniser while listening, the interrupt
- * recogniser while speaking, nobody in between.
+ * recogniser while the reply is in flight (generating or being read out),
+ * nobody in between.
  *
  * Two reasons, both observed on a phone:
  *
@@ -83,6 +91,20 @@ export type FreeDialogPhase = 'idle' | 'listening' | 'thinking' | 'speaking'
  */
 const REOPEN_DELAY_MS = 250
 
+/**
+ * How long to wait before arming the interrupt listener for a turn this loop
+ * just sent.
+ *
+ * The "took it" cue is still ringing when the turn starts and the microphone
+ * hears it through the speaker. Arming immediately lets that cue be
+ * transcribed: harmless in keyword mode, but under the default "any speech"
+ * setting it would cancel the turn that was just sent — every single time.
+ *
+ * Short enough to stay well inside a normal generation, long enough for the
+ * cue (≈160 ms) plus the recogniser's own chunking to be over.
+ */
+const BARGE_ARM_DELAY_MS = 500
+
 // ── Module-level singleton ───────────────────────────────────────────────
 // One loop per app instance, like useAutoSpeech: the mode is a property of the
 // session being talked to, not of a component that may unmount.
@@ -91,6 +113,13 @@ const phase = ref<FreeDialogPhase>('idle')
 const liveTranscript = ref('')
 /** Set when the mode stopped itself because of a failure, so the UI can say why. */
 const lastError = ref('')
+/**
+ * Whether speaking cuts the reply short (`stt.barge_in` is not 'off').
+ *
+ * Exposed for the status strip: "AI 正在思考…" and "…你可以开口打断" describe
+ * very different affordances, and the user cannot see which one applies.
+ */
+const canInterrupt = ref(false)
 
 let tuning: VoiceTuning = { ...VOICE_TUNING_DEFAULTS }
 /** The session's capture graph — see "ONE microphone" in the header. */
@@ -137,9 +166,20 @@ let silenceTimer: ReturnType<typeof setTimeout> | null = null
 /** Fires when the microphone has produced no recognised words for too long. */
 let idleExitTimer: ReturnType<typeof setTimeout> | null = null
 let reopenTimer: ReturnType<typeof setTimeout> | null = null
-/** Recogniser socket of the interrupt (speaking) phase. */
+/** Recogniser socket that watches for an interruption (thinking/speaking). */
 let bargeWs: WebSocket | null = null
 let bargeTriggered = false
+/** Pending "arm the interrupt listener" timer — see `armBargeIn`. */
+let bargeArmTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Set when the user cut the running turn short instead of muting a playback.
+ *
+ * The truncated reply is never handed to TTS, so the panel's `spokenReplyIds`
+ * knows nothing about it and the "the `done` was lost, read the pending reply"
+ * fallback would read the abandoned half-answer out loud — immediately after
+ * the user asked it to stop.
+ */
+let turnCancelledByUser = false
 /**
  * Invalidation counter for the interrupt listener.
  *
@@ -257,6 +297,13 @@ function clearSettleTimer() {
   }
 }
 
+function clearBargeArmTimer() {
+  if (bargeArmTimer !== null) {
+    clearTimeout(bargeArmTimer)
+    bargeArmTimer = null
+  }
+}
+
 /** Closes the dictation recogniser, leaving the microphone alone. */
 function closeDictationSocket() {
   listenGen += 1
@@ -273,6 +320,9 @@ function closeDictationSocket() {
 
 /** Closes the interrupt recogniser, leaving the microphone alone. */
 function closeBargeSocket() {
+  // A pending arm belongs to the listener being torn down: nothing should
+  // reopen it behind the caller's back.
+  clearBargeArmTimer()
   bargeGen += 1
   if (bargeWs) {
     bargeWs.onmessage = null
@@ -341,6 +391,8 @@ export function stop(options: { notify?: boolean; silent?: boolean } = {}): void
   utterance = ''
   liveTranscript.value = ''
   turnInFlight = false
+  turnCancelledByUser = false
+  canInterrupt.value = false
   phase.value = 'idle'
   autoSpeechTurnedOnByUs = false
   onInterrupt = null
@@ -432,6 +484,10 @@ function sendTurn(text: string) {
   closeDictationSocket()
   phase.value = 'thinking'
   turnInFlight = true
+  turnCancelledByUser = false
+  // Interrupting is not limited to the read-aloud: arm the listener for the
+  // generation window as well (after the "took it" cue has rung out).
+  armBargeIn()
   // Audible "took it": in this mode the user is not looking at the screen, so
   // whether the sentence was actually sent needs a non-visual answer. Played
   // after the recogniser socket is closed, so the cue itself can never be
@@ -611,10 +667,37 @@ function checkTrigger() {
 }
 
 /**
+ * Arms the interrupt listener for a turn that has just started generating.
+ *
+ * Delayed rather than immediate: see `BARGE_ARM_DELAY_MS` for the cue that
+ * would otherwise be transcribed as the user's speech. The timer re-checks the
+ * phase because the turn can finish inside the window (an instant failure, a
+ * cancelled turn, or playback taking over) — opening a recogniser then would
+ * transcribe the reply as the user's next message.
+ */
+function armBargeIn() {
+  clearBargeArmTimer()
+  if (tuning.bargeIn === 'off') return
+  const myGen = gen
+  bargeArmTimer = setTimeout(() => {
+    bargeArmTimer = null
+    if (myGen !== gen) return
+    if (phase.value !== 'thinking' || !turnInFlight) return
+    void openBargeListener()
+  }, BARGE_ARM_DELAY_MS)
+}
+
+/**
  * Points the capture at a recogniser that watches for an interruption.
  *
  * Recognition runs on the same socket protocol, but only the trigger decision
  * matters here — the transcript is discarded.
+ *
+ * Runs in BOTH phases of a reply: 'thinking' (generating, nothing to hear yet)
+ * and 'speaking' (reading out). Playback starting re-opens it, which is what
+ * gives the new window a fresh recogniser session — a transcript left over
+ * from the generation phase would otherwise be able to fire again the instant
+ * the read-aloud begins.
  */
 async function openBargeListener(): Promise<void> {
   if (tuning.bargeIn === 'off') return
@@ -630,7 +713,8 @@ async function openBargeListener(): Promise<void> {
   bargeTriggered = false
   frameSink = null
   if (!(await ensureCapture())) return
-  if (myGen !== gen || myBargeGen !== bargeGen || phase.value !== 'speaking') return
+  if (myGen !== gen || myBargeGen !== bargeGen) return
+  if (phase.value !== 'speaking' && phase.value !== 'thinking') return
   const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
   // Tracked at module scope: a local would leave the socket (and the engine
   // session behind it) open forever once playback ends.
@@ -653,6 +737,10 @@ async function openBargeListener(): Promise<void> {
       // false positive; anything that matches what is being read out is ignored.
       if (looksLikeOwnSpeech(heard, autoSpeech.speakingText.value)) return
       if (!matchesBargeInWord(heard, tuning)) return
+      // Nothing is playing yet (the reply is still being generated) and there
+      // is nobody to ask: leave the latch clear instead of going deaf for the
+      // rest of the turn.
+      if (!autoSpeech.isBusy() && !onInterrupt) return
       bargeTriggered = true
       appLog.i(TAG, `barge-in by "${heard}"`)
       if (autoSpeech.isBusy()) {
@@ -661,6 +749,7 @@ async function openBargeListener(): Promise<void> {
       } else {
         // The turn is still running and has produced no speech yet, so there is
         // nothing to mute — the turn itself has to be cancelled.
+        turnCancelledByUser = true
         onInterrupt?.()
       }
     } catch { /* ignore malformed */ }
@@ -696,10 +785,11 @@ export async function startFreeDialog(opts: {
   onSpeakPendingReply = opts.onSpeakPendingReply ?? null
   lastError.value = ''
   tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
+  canInterrupt.value = tuning.bargeIn !== 'off'
   // The loop is built around the reply being read out: it waits for playback
-  // before reopening the microphone, and interrupting only means anything while
-  // something is being spoken. Starting with read-aloud off leaves a mode that
-  // sends and listens with no voice in between — not what "对话" means.
+  // before reopening the microphone, and a spoken reply is what the user is
+  // waiting on. Starting with read-aloud off leaves a mode that sends and
+  // listens with no voice in between — not what "对话" means.
   //
   // Opened SILENTLY: the toast slot is a single one, so the "read-aloud on"
   // message and the "dialog on" message would overwrite each other and the user
@@ -750,8 +840,14 @@ export function setFreeDialogThinking(thinking: boolean): void {
       closeDictationSocket()
       phase.value = 'thinking'
     }
+    // A turn the loop did not send itself (started from the composer, or
+    // already running when the mode opened) still gets the interrupt window.
+    if (phase.value === 'thinking') armBargeIn()
     return
   }
+  // The turn is over: a pending arm would open a listener for a reply that is
+  // no longer being generated.
+  clearBargeArmTimer()
   // Turn finished. Two ways out, and BOTH are needed:
   //   - playback starts (the watcher below flips the phase to 'speaking' and
   //     cancels this window), or
@@ -775,6 +871,14 @@ export function setFreeDialogThinking(thinking: boolean): void {
     if (myGen !== gen) return
     if (phase.value !== 'thinking' && phase.value !== 'speaking') return
     if (autoSpeech.isBusy()) return
+    // The user cut this turn short: the half-written reply is exactly what they
+    // wanted to stop, so it must not be read out now.
+    if (turnCancelledByUser) {
+      turnCancelledByUser = false
+      appLog.i(TAG, 'turn was interrupted; not reading its truncated reply')
+      resumeListening()
+      return
+    }
     // Nothing is being read out. Ask the owner whether this turn's reply still
     // needs speaking before going back to listening: the terminal `done` is the
     // only thing that normally starts TTS, and it is dropped whenever the
@@ -884,6 +988,7 @@ export function useFreeDialog() {
     enabled,
     liveTranscript,
     lastError,
+    canInterrupt,
     start: startFreeDialog,
     stop,
     setThinking: setFreeDialogThinking,
