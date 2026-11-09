@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
@@ -1442,4 +1443,127 @@ func TestProvidersAPI_ModelListPricesCuratedWithoutEndpoint(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Contains(t, body.Prices, "glm-5.2")
 	assert.Equal(t, 3.0, body.Prices["glm-5.2"].Input)
+}
+
+// opencode addresses a model as "<provider>/<model>". A provider's curated list
+// stores bare ids (that is what the endpoint serves), so the picker entries must
+// be namespaced — offering the bare id lets the user pick something opencode
+// refuses to resolve (issue #651).
+func TestAgents_ProviderModelsAreNamespacedForOpenCode(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"glm-5.3-flash"}, DefaultModel: "glm-5.3-flash",
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{
+		ID: "oc-bound", Name: "OC", Backend: "opencode", ProviderID: &provider.ID,
+		Models: []model.AgentModel{{ID: "openai/gpt-6", Default: true}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodGet, "/api/agents", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Agents []struct {
+			Models []struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				Default bool   `json:"default"`
+			} `json:"models"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Agents, 1)
+	require.Len(t, body.Agents[0].Models, 1)
+	assert.Equal(t, "clawbench-openai/glm-5.3-flash", body.Agents[0].Models[0].ID,
+		"the picker value must be the form opencode accepts")
+	assert.Equal(t, "glm-5.3-flash", body.Agents[0].Models[0].Name,
+		"the display name stays the model id the endpoint serves")
+	assert.True(t, body.Agents[0].Models[0].Default)
+}
+
+// A bound provider's models must survive an ACP model report. The ACP list is
+// authoritative for what the agent advertises, but a provider endpoint is
+// user-chosen: its models are exactly what the user configured the agent to
+// run, so replacing the list with the agent's own report made the binding
+// unusable (issue #651, "provider models never appear in the picker").
+func TestAgents_ProviderModelsSurviveACPReport(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"glm-5.3-flash"}, DefaultModel: "glm-5.3-flash",
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{
+		ID: "oc-acp", Name: "OC", Backend: "opencode", Transport: "acp-stdio",
+		AcpCommand: "opencode acp", ProviderID: &provider.ID,
+		Models: []model.AgentModel{{ID: "openai/gpt-6", Default: true}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels(agent.ID, []model.AgentModel{{ID: "openai/gpt-6", Name: "GPT-6"}})
+	t.Cleanup(func() { reg.UpdateModels(agent.ID, nil) })
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodGet, "/api/agents", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Agents []struct {
+			Models         []model.AgentModel `json:"models"`
+			ProviderModels []model.AgentModel `json:"providerModels"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Agents, 1)
+
+	ids := make([]string, 0, len(body.Agents[0].Models))
+	for _, m := range body.Agents[0].Models {
+		ids = append(ids, m.ID)
+	}
+	assert.Contains(t, ids, "clawbench-openai/glm-5.3-flash", "the provider model must be selectable")
+	assert.Contains(t, ids, "openai/gpt-6", "the ACP-reported model must stay")
+
+	// The picker groups by source, so the provider subset must be identifiable.
+	require.Len(t, body.Agents[0].ProviderModels, 1)
+	assert.Equal(t, "clawbench-openai/glm-5.3-flash", body.Agents[0].ProviderModels[0].ID)
+}
+
+// A gateway that namespaces its own ids ("openai/gpt-4o") must keep them: the
+// picker value is what gets sent to the endpoint, so re-prefixing or stripping
+// would produce an id the endpoint rejects (issue #651 review).
+func TestAgents_ProviderModelsKeepForeignNamespace(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"openai/gpt-4o"},
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{
+		ID: "oc-foreign", Name: "OC", Backend: "opencode", ProviderID: &provider.ID,
+		Models: []model.AgentModel{{ID: "openai/gpt-6", Default: true}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodGet, "/api/agents", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Agents []struct {
+			ProviderModels []model.AgentModel `json:"providerModels"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Agents, 1)
+	require.Len(t, body.Agents[0].ProviderModels, 1)
+	assert.Equal(t, "clawbench-openai/openai/gpt-4o", body.Agents[0].ProviderModels[0].ID,
+		"an id the endpoint namespaces itself must not be re-prefixed")
 }

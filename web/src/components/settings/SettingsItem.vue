@@ -228,36 +228,25 @@
       <ChevronsUpDown :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ label }}</span>
     </template>
-    <template v-if="selectGroups">
-      <template v-for="(group, gi) in selectGroups" :key="group.groupKey ?? gi">
-        <div v-if="group.groupKey" class="settings-item__option-group">
-          {{ t(group.groupKey) }}
-        </div>
-        <div
-          v-for="opt in group.options"
-          :key="opt.value as PropertyKey"
-          class="settings-item__option"
-          :class="{ 'settings-item__option--active': modelValue === opt.value }"
-          @click="selectOption(opt.value)"
-        >
-          <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
-          <span v-if="opt.badgeKey" class="settings-item__option-badge">{{ t(opt.badgeKey) }}</span>
-          <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
-        </div>
-      </template>
-    </template>
-    <template v-else>
-      <!-- Search (model pickers only): filters by display name and raw id, the
-           same fields the chat model drawer matches on. Sticky so it stays put
-           while the (possibly very long) model list scrolls underneath. -->
-      <div v-if="isModelSelect" class="settings-item__search-row">
-        <SearchInput
-          v-model="searchQuery"
-          :placeholder="t('chat.sessionSetting.searchPlaceholder')"
-        />
+    <!-- Search (model pickers only): filters by display name and raw id, the
+         same fields the chat model drawer matches on. Sticky so it stays put
+         while the (possibly very long) model list scrolls underneath. -->
+    <div v-if="isModelSelect" class="settings-item__search-row">
+      <SearchInput
+        v-model="searchQuery"
+        :placeholder="t('chat.sessionSetting.searchPlaceholder')"
+      />
+    </div>
+    <!-- One render path for both shapes: a grouped list (groupKey present) and a
+         flat one differ only by the optional heading, and duplicating the row
+         markup made the grouped variant silently lose the two-line model row
+         and the search box. -->
+    <template v-for="(group, gi) in renderGroups" :key="group.groupKey ?? gi">
+      <div v-if="group.groupKey" class="settings-item__option-group">
+        {{ t(group.groupKey) }}
       </div>
       <div
-        v-for="opt in filteredRenderOptions"
+        v-for="opt in group.options"
         :key="opt.value as PropertyKey"
         class="settings-item__option"
         :class="{ 'settings-item__option--active': modelValue === opt.value }"
@@ -278,14 +267,15 @@
         <template v-else>
           <span class="settings-item__option-labels">
             <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
+            <span v-if="opt.badgeKey" class="settings-item__option-badge">{{ t(opt.badgeKey) }}</span>
           </span>
           <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
         </template>
       </div>
-      <div v-if="isModelSelect && filteredRenderOptions && filteredRenderOptions.length === 0" class="settings-item__option-empty">
-        {{ t('chat.sessionSetting.noSearchResults') }}
-      </div>
     </template>
+    <div v-if="isModelSelect && filteredRenderOptions && filteredRenderOptions.length === 0" class="settings-item__option-empty">
+      {{ t('chat.sessionSetting.noSearchResults') }}
+    </div>
   </BottomSheet>
   <!-- Theme picker BottomSheet with color preview swatches. Wide tier: it is a
        swatch GRID, so extra width turns rows into more columns instead of
@@ -559,11 +549,14 @@ function closeSelectPicker() {
   searchQuery.value = ''
 }
 
-/** Group the plain select options by groupKey (when present). Options without a
- *  groupKey render as a single flat list — unchanged legacy behavior. */
-const selectGroups = computed<SelectGroup[] | null>(() => {
-  const opts = renderOptions.value
-  if (!opts?.some(o => o.groupKey)) return null
+/** Group the visible options by groupKey (when present). Options without a
+ *  groupKey render as a single flat list — unchanged legacy behavior.
+ *
+ *  Grouping is applied to the SEARCH-FILTERED list: grouping the unfiltered one
+ *  would keep headings whose options the query just hid. */
+const renderGroups = computed<SelectGroup[]>(() => {
+  const opts = filteredRenderOptions.value ?? []
+  if (!opts.some(o => o.groupKey)) return [{ options: opts }]
   const groups: SelectGroup[] = []
   for (const opt of opts) {
     const last = groups[groups.length - 1]

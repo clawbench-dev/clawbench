@@ -1387,7 +1387,14 @@ func EnrichModelList(agentID string, modelList *ModelListState) *ModelListState 
 // Exported so callers that hold an agent pointer (the ACP connection path) avoid
 // a second map lookup.
 func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelListState {
-	if agent == nil || modelList == nil || len(agent.Models) == 0 {
+	if agent == nil || modelList == nil {
+		return nil
+	}
+	// A bound provider supplies models even when the agent's own discovery found
+	// nothing (a freshly added ACP backend, or a CLI probe that failed). Bailing
+	// out on an empty CLI list would ship no provider models over exactly the
+	// channel the chat drawer reads.
+	if len(agent.Models) == 0 && len(agent.ProviderPickerModels()) == 0 {
 		return nil
 	}
 	enriched := *modelList
@@ -1395,7 +1402,13 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 	// (model_list_update, session bootstrap) carries them; see model.WithPrices.
 	enriched.Models = model.WithPrices(modelList.Models)
 	enriched.CLIModels = model.WithPrices(agent.Models)
-	enriched.ResolvedModels = model.WithPrices(model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID))
+	// The provider's models ride along on the resolved list. This state is what
+	// GET /api/ai/chat and WS model_list_update ship, and the client writes
+	// `resolvedModels` straight onto the agent — building it from the agent's own
+	// discovery alone made a bound provider's models disappear from the chat
+	// model drawer and could retire the session's model (issue #651).
+	enriched.ResolvedModels = model.WithPrices(agent.MergeProviderModels(
+		model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID)))
 	return &enriched
 }
 

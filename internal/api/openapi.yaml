@@ -6170,13 +6170,24 @@ paths:
 
         **模型列表由服务端合并**：`agents[].models` 是已解析的最终列表——CLI 发现的
         列表提供顺序与名称，ACP 上报的**具体**模型列表在存在时对成员资格有权威性
-        （ACP 未上报的 CLI 模型会被剔除）。ACP 若上报的是 `opus`/`sonnet`/`haiku`
-        这类**档位别名**，则不参与成员资格判定，而是对齐到对应的 CLI 条目并只取其
-        显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels` 是未经合并的纯 CLI
-        列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留基线并重新合并。
+        （ACP 未上报的 CLI 模型会被剔除）。绑定了模型提供商的 agent，其提供商编目的
+        模型**并入**该列表（不会被 ACP 的列表挤掉），并单独放在
+        `agents[].providerModels` 里供选择器按来源分组。ACP 若上报的是
+        `opus`/`sonnet`/`haiku` 这类**档位别名**，则不参与成员资格判定，而是对齐到
+        对应的 CLI 条目并只取其显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels`
+        是未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留
+        基线并重新合并。
 
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
+
+        **目录校验型后端的模型 ID 形态**：opencode 会在发请求前用自己的静态目录
+        解析模型 ID，目录外的 ID 直接被拒。ClawBench 因此把提供商编目**声明进它的
+        配置内容**（`OPENCODE_CONFIG_CONTENT`），声明后这些模型以
+        `<我们的 provider id>/<编目 ID 原样>` 的形式出现（目前是
+        `clawbench-openai/` / `clawbench-anthropic/`）。所以对这些后端，
+        `preferred_model` 存的是带前缀的形态；其他后端仍是编目原值。客户端只需
+        回传服务端给的 ID，不要自行拼接或裁剪前缀。
 
         **ACP 未确认时不展示 CLI 猜测列表**：agent 的 `transport` 为 `acp-stdio`
         且其 ACP 运行时**从未上报过**模型列表时，`agents[].models` 返回**空数组**

@@ -467,7 +467,10 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	// Model list has a different structure (AgentModel with Default field), kept separate
 	if modelListState := reg.GetModelListState(agentID, c.GetCurrentModelID()); modelListState != nil {
 		slog.Debug("acp: emitting model_list_update for new session", "current", modelListState.CurrentModelID, "available", len(modelListState.Models))
-		forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelListState})
+		// Enriched so this channel ships the same resolved/CLI lists the other
+		// model-state channels do — otherwise a bound provider's models would be
+		// missing here while present everywhere else (issue #651).
+		forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: enrichModelList(c, modelListState)})
 	}
 
 	// Generic agent options (e.g. codex-acp's Fast mode) ride their own event:

@@ -212,3 +212,44 @@ func idsOf(list []*Provider) []int64 {
 	}
 	return out
 }
+
+// The curated model list and the pinned model are rendered into the inline
+// config content for backends that validate ids against their own catalog
+// (issue #651), so changing either must force a respawn — otherwise the live
+// process keeps the old declared set until the user restarts the server.
+func TestProviderEnvVersion_ChangesWithDeclaredModels(t *testing.T) {
+	ReplaceProviders([]*Provider{{
+		ID: 1, Name: "A", Protocol: ProviderProtocolOpenAI,
+		BaseURL: "https://a", APIKey: "k1", AuthMode: ProviderAuthAuto,
+		Models: []string{"m1"},
+	}})
+	pid := int64(1)
+	agent := &Agent{ID: "declared-models-agent", Backend: "opencode", ProviderID: &pid}
+	ReplaceAgents(map[string]*Agent{agent.ID: agent}, []*Agent{agent})
+	t.Cleanup(func() {
+		ReplaceProviders(nil)
+		ReplaceAgents(nil, nil)
+	})
+
+	first := ProviderEnvVersion(agent.ID)
+	if first == "" {
+		t.Fatal("expected a fingerprint")
+	}
+
+	ReplaceProviders([]*Provider{{
+		ID: 1, Name: "A", Protocol: ProviderProtocolOpenAI,
+		BaseURL: "https://a", APIKey: "k1", AuthMode: ProviderAuthAuto,
+		Models: []string{"m1", "m2"},
+	}})
+	if ProviderEnvVersion(agent.ID) == first {
+		t.Fatal("adding a curated model must change the fingerprint")
+	}
+
+	// The pin is declared even when it is outside the curated list, so it is
+	// part of what the process is allowed to resolve.
+	before := ProviderEnvVersion(agent.ID)
+	UpdateAgent(agent.ID, func(a *Agent) { a.PreferredModel = "m-custom" })
+	if ProviderEnvVersion(agent.ID) == before {
+		t.Fatal("pinning a custom model must change the fingerprint")
+	}
+}

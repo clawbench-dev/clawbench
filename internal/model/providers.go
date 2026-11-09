@@ -203,15 +203,36 @@ func AgentProvider(agentID string) *Provider {
 // into codex's config file, which the process reads once at startup, so
 // changing it without changing the fingerprint left a live connection talking
 // the old wire API while the file already said otherwise.
+//
+// The curated model list and the agent's pinned model belong here only for
+// backends that render them into the inline config content — that is the only
+// way either value reaches the spawned process. Adding them unconditionally
+// would respawn every ACP connection on a model-pick change for backends where
+// the value has no effect on the environment at all.
 func ProviderEnvVersion(agentID string) string {
 	p := AgentProvider(agentID)
 	if p == nil {
 		return ""
 	}
+	declared := ""
+	if spec, ok := providerEnvTable[backendOf(agentID)]; ok && spec.InlineConfigEnv != "" {
+		declared = strings.Join(p.Models, ",")
+		if agent := GetAgent(agentID); agent != nil {
+			declared += "\x00" + agent.PreferredModel
+		}
+	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI,
+		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI, declared,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:8])
+}
+
+// backendOf returns the backend id of an agent, or "" when it is unknown.
+func backendOf(agentID string) string {
+	if agent := GetAgent(agentID); agent != nil {
+		return agent.Backend
+	}
+	return ""
 }
 
 // normalizeModelIDs trims, drops empties and removes duplicates while keeping

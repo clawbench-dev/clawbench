@@ -3154,6 +3154,8 @@ export default {
       agentModel: 'Preferred Model',
       agentThinking: 'Thinking Effort',
       agentPreferredModel: 'Preferred Model',
+      agentModelsGroupProvider: 'Model provider',
+      agentModelsGroupAgent: 'Agent defaults',
       agentPreferredThinkingEffort: 'Thinking Effort',
       agentPreferredMode: 'Preferred Mode',
       agentTransport: 'Protocol',

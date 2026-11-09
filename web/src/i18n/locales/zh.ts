@@ -3149,6 +3149,8 @@ export default {
       agentModel: '首选模型',
       agentThinking: '思考强度',
       agentPreferredModel: '首选模型',
+      agentModelsGroupProvider: '模型提供商',
+      agentModelsGroupAgent: '该智能体自带',
       agentPreferredThinkingEffort: '思考强度',
       agentPreferredMode: '首选模式',
       agentTransport: '协议',

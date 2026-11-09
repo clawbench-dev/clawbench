@@ -2083,3 +2083,75 @@ func TestEnrichModelList_ConnectionWithoutAgent(t *testing.T) {
 	raw := &ModelListState{Models: []model.AgentModel{{ID: "acp-a", Name: "ACP A"}}}
 	assert.Equal(t, raw, enrichModelList(conn, raw))
 }
+
+// The enriched state is what GET /api/ai/chat and WS model_list_update ship, and
+// the client writes resolvedModels straight onto the agent. Building it from the
+// agent's own discovery alone made a bound provider's models disappear from the
+// chat model drawer — and could retire the session's model — even though the
+// settings page listed them (issue #651).
+func TestEnrichModelList_IncludesProviderModels(t *testing.T) {
+	const agentID = "enrich-provider-agent"
+	pid := int64(651)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: pid, Name: "GW", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"glm-5.3-flash"}, DefaultModel: "glm-5.3-flash",
+	}})
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{
+		agentID: {
+			ID: agentID, Backend: "opencode", ProviderID: &pid,
+			Models: []model.AgentModel{{ID: "openai/gpt-6", Name: "GPT-6", Default: true}},
+		},
+	}
+	t.Cleanup(func() {
+		model.Agents = orig
+		model.ReplaceProviders(nil)
+	})
+
+	raw := &ModelListState{
+		CurrentModelID: "openai/gpt-6",
+		Models:         []model.AgentModel{{ID: "openai/gpt-6", Name: "GPT-6"}},
+	}
+
+	got := EnrichModelList(agentID, raw)
+	require.NotNil(t, got)
+
+	ids := make([]string, 0, len(got.ResolvedModels))
+	for _, m := range got.ResolvedModels {
+		ids = append(ids, m.ID)
+	}
+	assert.Contains(t, ids, "clawbench-openai/glm-5.3-flash",
+		"the provider's model must reach the chat drawer, not only the settings page")
+	assert.Contains(t, ids, "openai/gpt-6", "the ACP-reported model must stay")
+}
+
+// A bound provider supplies models even when the agent's CLI discovery produced
+// nothing: this is the channel the chat drawer reads, so returning nil here
+// would leave the binding invisible exactly where it matters (issue #651).
+func TestEnrichModelList_ProviderModelsWithoutCLIList(t *testing.T) {
+	const agentID = "enrich-provider-no-cli"
+	pid := int64(654)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: pid, Name: "GW", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example/v1", APIKey: "k", Models: []string{"glm-5.3-flash"},
+	}})
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: "opencode", ProviderID: &pid},
+	}
+	t.Cleanup(func() {
+		model.Agents = orig
+		model.ReplaceProviders(nil)
+	})
+
+	got := EnrichModelList(agentID, &ModelListState{Models: []model.AgentModel{{ID: "openai/gpt-6"}}})
+	if got == nil {
+		t.Fatal("a bound provider must still enrich the list when the CLI list is empty")
+	}
+	ids := make([]string, 0, len(got.ResolvedModels))
+	for _, m := range got.ResolvedModels {
+		ids = append(ids, m.ID)
+	}
+	assert.Contains(t, ids, "clawbench-openai/glm-5.3-flash")
+}
