@@ -10,7 +10,7 @@ import (
 // dropped at all, so every shape a shared file can produce has to be answered
 // correctly: a false positive deletes another tool's provider, a false negative
 // leaves the key pointing at a table the strip already removed.
-func TestTomlValueIs(t *testing.T) {
+func TestTomlValueIsManagedProvider(t *testing.T) {
 	cases := []struct {
 		raw  string
 		want bool
@@ -29,6 +29,6 @@ func TestTomlValueIs(t *testing.T) {
 		{``, false},
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, tomlValueIs(c.raw, "clawbench"), "raw=%q", c.raw)
+		assert.Equal(t, c.want, tomlValueIsManagedProvider(c.raw), "raw=%q", c.raw)
 	}
 }

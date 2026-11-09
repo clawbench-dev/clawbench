@@ -514,6 +514,75 @@ func TestCodexProviderConfig_RestoreHandlesTrailingComment(t *testing.T) {
 	assert.Contains(t, content, `model_provider = "deepseek"`, "the original value must be put back")
 }
 
+// Re-binding must re-read the file instead of replaying the record made by the
+// first apply. Otherwise "bind, edit model_provider by hand, bind again,
+// unbind" puts back the value recorded the FIRST time, discarding the edit.
+func TestCodexProviderConfig_RebindRecordsTheCurrentValue(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	// The user repoints the key while our block is still there.
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	edited := strings.Replace(string(data),
+		`model_provider = "clawbench"`, `model_provider = "custom"`, 1)
+	require.NoError(t, os.WriteFile(path, []byte(edited), 0o600))
+
+	// Bind again, then unbind.
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `model_provider = "custom"`,
+		"the value that was in the file at re-bind time is the one to restore")
+	assert.NotContains(t, string(data), `model_provider = "deepseek"`,
+		"the first apply's record is stale once the user has edited the key")
+}
+
+// The same rule for a key the user deleted between two binds: unbinding must
+// leave it deleted rather than resurrect the first apply's original.
+func TestCodexProviderConfig_RebindRemembersADeletedKey(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	removed := strings.Replace(string(data), "model_provider = \"clawbench\"\n", "", 1)
+	require.NoError(t, os.WriteFile(path, []byte(removed), 0o600))
+
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "model_provider =", "the key was gone before the re-bind, so it stays gone")
+}
+
+// A plain re-bind with no edit in between must still restore the value the
+// first apply recorded — the fix must not lose that.
+//
+// The second provider differs on purpose: re-applying the same one produces an
+// identical file, so apply returns early and never records anything, which
+// would make this case pass no matter what the switch decides.
+func TestCodexProviderConfig_RebindWithoutEditKeepsOriginal(t *testing.T) {
+	path := setupCodexHome(t)
+
+	first := &model.Provider{ID: 1, Name: "One", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://one.example/v1", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", first))
+	second := &model.Provider{ID: 2, Name: "Two", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://two.example/v1", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", second))
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `model_provider = "deepseek"`)
+}
+
 // The managed block is still ours: it declares a provider table that is about
 // to disappear, so it is stripped even when the top-level key is foreign.
 func TestCodexProviderConfig_RestoreStripsBlockButKeepsForeignKey(t *testing.T) {
