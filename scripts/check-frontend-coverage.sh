@@ -188,10 +188,16 @@ PY
     fi
   fi
 else
-  # --skip-test: just verify coverage data exists
-  if [ ! -f "$COVERAGE_DIR/coverage-summary.json" ] || [ ! -f "$COVERAGE_DIR/coverage-final.json" ]; then
-    echo "ERROR: coverage data not found in $COVERAGE_DIR. Run without --skip-test first."
-    exit 1
+  # --skip-test: verify the report exists — but only when nothing is going to
+  # produce it later in this same run. With --merge-shards the report is
+  # created by the merge step BELOW, so checking here failed every merge job
+  # with "coverage data not found" (CI job 129071809219) even though all three
+  # shards had uploaded fine.
+  if [ -z "$MERGE_SHARDS" ]; then
+    if [ ! -f "$COVERAGE_DIR/coverage-summary.json" ] || [ ! -f "$COVERAGE_DIR/coverage-final.json" ]; then
+      echo "ERROR: coverage data not found in $COVERAGE_DIR. Run without --skip-test first."
+      exit 1
+    fi
   fi
 fi
 
