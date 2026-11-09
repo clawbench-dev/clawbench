@@ -14,6 +14,28 @@ import { test, expect } from '../fixtures'
  * from page.evaluate runs as a logged-in client on the active project.
  */
 test.describe('AI group chat', () => {
+  // Every group this file creates, so afterAll can destroy them.
+  //
+  // These specs share one server and one database with every other spec in the
+  // shard, and nothing else removes what they create. Leftover groups are
+  // sessions: they show up in `/api/ai/sessions` and in session search, which
+  // is what later specs in the same shard assert against.
+  const createdGroups: string[] = []
+
+  test.afterAll(async ({ page }) => {
+    // Destroyed through `page.evaluate`, not the `request` fixture: these
+    // endpoints are session-authenticated, and `request` does not carry the
+    // page's cookies — every delete would have come back 401 and the cleanup
+    // would look like it ran while leaving every group behind.
+    for (const id of createdGroups.splice(0)) {
+      await page
+        .evaluate(async (sid) => {
+          await fetch(`/api/ai/session/destroy?session_id=${encodeURIComponent(sid)}`, { method: 'DELETE' })
+        }, id)
+        .catch(() => {})
+    }
+  })
+
   test('create, add member, list, settings, disable and enable', async ({ page }) => {
     const result = await page.evaluate(async () => {
       const post = async (url: string, body: unknown) =>
@@ -64,6 +86,8 @@ test.describe('AI group chat', () => {
       return { ok: true, created, added, listed, settings, disabled, afterDisable, enabled, afterEnable, ids, memberId, groupRow }
     })
 
+    if (result.ok && result.created?.groupId) createdGroups.push(result.created.groupId)
+
     expect(result.ok).toBe(true)
     expect(result.created.groupId).toBeTruthy()
     expect(result.created.hostMemberId).toBeTruthy()
@@ -103,14 +127,30 @@ test.describe('AI group chat', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hostAgentId: 'acp-mock' }),
       })).json()
+
+      // Bail out with the reason instead of sending to `undefined`. Without
+      // this the chat request below goes to a session that does not exist, the
+      // handler takes its "already running" path, and the assertion fails with
+      // a bare `group === undefined` that says nothing about the real cause
+      // (observed on firefox: /api/group/create returned a non-ok body, so
+      // `created.groupId` was undefined).
+      if (!created.ok || !created.groupId) {
+        return { status: 0, body: { createFailed: created } }
+      }
+
       const r = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: 'hello group', sessionId: created.groupId }),
       })
-      return { status: r.status, body: await r.json() }
+      return { status: r.status, body: await r.json(), groupId: created.groupId }
     })
-    expect(resp.status).toBe(200)
-    expect(resp.body.group).toBe(true)
+    if (resp.groupId) createdGroups.push(resp.groupId)
+    expect(resp.body, 'group creation must succeed before sending').not.toHaveProperty('createFailed')
+    // Include the response body in the message: a bare `group === undefined`
+    // does not say whether the server answered `{running:true, queued:true}`
+    // (the session was already busy) or something else entirely.
+    expect(resp.status, `chat responded: ${JSON.stringify(resp.body)}`).toBe(200)
+    expect(resp.body.group, `chat responded: ${JSON.stringify(resp.body)}`).toBe(true)
   })
 })
