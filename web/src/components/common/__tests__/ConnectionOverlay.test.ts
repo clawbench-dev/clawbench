@@ -122,7 +122,12 @@ describe('ConnectionOverlay', () => {
     // The mask covers the whole screen including the header's server button, so
     // without this escape hatch a reconnect that never succeeds leaves the user
     // with no way to reach another server.
-    it('offers a switch-server escape hatch while reconnecting', async () => {
+    // 20 s budget: the default 5 s is not enough on a CI runner running three
+    // vitest workers (measured: this case died at 5239 ms with a bare "test
+    // timed out", which says nothing about which assertion was waiting). The
+    // work is one mount, one click and two render flushes — nothing is slow by
+    // design, so the budget is the only knob.
+    it('offers a switch-server escape hatch while reconnecting', { timeout: 20_000 }, async () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
 
