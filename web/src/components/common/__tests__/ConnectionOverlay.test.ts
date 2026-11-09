@@ -150,11 +150,17 @@ describe('ConnectionOverlay', () => {
         expect(document.body.querySelectorAll('.connection-overlay').length).toBe(before - 1)
 
         // Closing the dialog brings the mask back while still disconnected.
+        //
+        // Asserted as "the mask count returns" rather than by reading the
+        // dialog's `style.display`: ModalDialog hides itself with
+        // `v-show="open || leaving"`, so during the leave transition `display`
+        // is still '' — asserting 'none' there is asserting on animation
+        // timing, which is exactly what differed between CI and a local run.
         const dialog = wrapper.findComponent(ServerSwitchDialog)
         dialog.vm.$emit('close')
-        await nextTick()
-        expect($('.modal-overlay')!.style.display).toBe('none')
-        expect($('.connection-overlay')).not.toBeNull()
+        await expect
+            .poll(() => document.body.querySelectorAll('.connection-overlay').length, { timeout: 10_000 })
+            .toBe(before)
     })
 
     it('does not offer the switch-server escape hatch while restarting', async () => {
