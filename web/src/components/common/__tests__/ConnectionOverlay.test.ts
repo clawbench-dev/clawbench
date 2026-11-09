@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { DOMWrapper, mount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, type Ref } from 'vue'
 import ConnectionOverlay from '@/components/common/ConnectionOverlay.vue'
@@ -52,28 +52,12 @@ function mountOverlay() {
 
 describe('ConnectionOverlay', () => {
     let activeContainer: HTMLDivElement | null = null
-    let activeWrapper: ReturnType<typeof mountOverlay>['wrapper'] | null = null
 
     beforeEach(() => {
         mockMode.value = null
-        // Clear anything a previous case left behind BEFORE this one mounts.
-        // `$()` queries document.body, and the component teleports there, so a
-        // leftover overlay would be the FIRST match — the assertions below would
-        // then be looking at a dead instance's DOM while the live one behaves
-        // correctly. afterEach already unmounts; this is the belt to that
-        // braces, because a case that throws skips part of its cleanup.
-        document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
-        document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
     })
 
     afterEach(() => {
-        // `unmount()` first, not just DOM removal. The component teleports to
-        // <body>; removing the elements by hand left the Vue instance alive and
-        // its queued renders pending, so a later case could observe an overlay
-        // that its own state says should be gone. Unmounting tears down the
-        // teleport and the reactive watchers with it.
-        activeWrapper?.unmount()
-        activeWrapper = null
         document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
         document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
         if (activeContainer?.parentNode) {
@@ -85,7 +69,6 @@ describe('ConnectionOverlay', () => {
     async function mountAndWait() {
         const mounted = mountOverlay()
         activeContainer = mounted.container
-        activeWrapper = mounted.wrapper
         await nextTick()
         return mounted.wrapper
     }
@@ -130,46 +113,35 @@ describe('ConnectionOverlay', () => {
     // The mask covers the whole screen including the header's server button, so
     // without this escape hatch a reconnect that never succeeds leaves the user
     // with no way to reach another server.
-    // 20 s budget: the default 5 s is not enough on a CI runner running three
-    // vitest workers — the case died there at 5041 ms with a bare "test timed
-    // out", which says nothing about which assertion was waiting.
-    it('offers a switch-server escape hatch while reconnecting', { timeout: 20_000 }, async () => {
+    it('offers a switch-server escape hatch while reconnecting', async () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
+
+        // DIAG
+        // eslint-disable-next-line no-console
+        console.log('[DIAG-PRE] overlays=', document.body.querySelectorAll('.connection-overlay').length,
+            ' btns=', document.body.querySelectorAll('.connection-overlay__switch').length)
 
         const btn = $('.connection-overlay__switch')
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
-        // Wrap the element in VTU's DOMWrapper instead of calling the native
-        // `el.click()`: `trigger` awaits the render flush, so the assertions
-        // below see the post-click state instead of racing it. (The element
-        // cannot be reached via `wrapper.find` — the component teleports to
-        // <body>, outside the wrapper's root.)
-        await new DOMWrapper(btn!).trigger('click')
+        btn?.click()
+        await nextTick()
+
+        // DIAG
+        // eslint-disable-next-line no-console
+        console.log('[DIAG] overlays=', document.body.querySelectorAll('.connection-overlay').length,
+            ' modals=', document.body.querySelectorAll('.modal-overlay').length,
+            ' modalDisplay=', document.body.querySelector('.modal-overlay')?.style.display,
+            ' btnCount=', document.body.querySelectorAll('.connection-overlay__switch').length)
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
-        //
-        // Polled rather than asserted after a single `nextTick()`: a native
-        // `click()` schedules a Vue update that a busy runner can flush later
-        // than one tick, and the bare assertion then failed on CI (job
-        // 128956975616, "expected <div .connection-overlay> to be null") while
-        // passing on an idle machine. Waiting for the condition is the point —
-        // the overlay disappearing IS the behaviour under test.
-        // Polled instead of asserted after one `nextTick()`: a native `click()`
-        // schedules a Vue update that a loaded runner can flush later than one
-        // tick, and the bare assertion failed on CI while passing locally.
-        //
-        // Explicit 10 s: vitest's `expect.poll` defaults to 1 s, which a loaded
-        // runner exceeds (CI measured 1142 ms for this case's work). The case
-        // itself is given a 20 s budget above, so this stays inside it and a
-        // genuine failure still reports the ASSERTION rather than an opaque
-        // "test timed out".
-        await expect.poll(() => $('.connection-overlay'), { timeout: 10_000 }).toBeNull()
         const modal = $('.modal-overlay')
         expect(modal).not.toBeNull()
         expect(modal!.style.display).not.toBe('none')
+        expect($('.connection-overlay')).toBeNull()
 
         // Closing the dialog brings the mask back while still disconnected.
         const dialog = wrapper.findComponent(ServerSwitchDialog)
