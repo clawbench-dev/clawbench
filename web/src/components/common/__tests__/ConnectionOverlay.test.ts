@@ -51,26 +51,35 @@ function mountOverlay() {
 }
 
 describe('ConnectionOverlay', () => {
-    let activeContainer: HTMLDivElement | null = null
+    // Every mounted instance, so cleanup can UNMOUNT them.
+    //
+    // Removing the teleported elements from <body> is not enough: the Vue
+    // instance stays alive and keeps its teleport target registered, so each
+    // later mount leaves another live copy behind. CI showed SIX
+    // `.connection-overlay` nodes by the time this case ran (measured with a
+    // temporary log), and `$()` returns the first — a dead instance's DOM — so
+    // clicking the live one looked like it had no effect.
+    const mounted: { wrapper: ReturnType<typeof mountOverlay>['wrapper']; container: HTMLDivElement }[] = []
 
     beforeEach(() => {
         mockMode.value = null
     })
 
     afterEach(() => {
+        for (const { wrapper, container } of mounted.splice(0)) {
+            wrapper.unmount()
+            container.remove()
+        }
+        // Belt and braces: drop anything a failed case left teleported.
         document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
         document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
-        if (activeContainer?.parentNode) {
-            document.body.removeChild(activeContainer)
-            activeContainer = null
-        }
     })
 
     async function mountAndWait() {
-        const mounted = mountOverlay()
-        activeContainer = mounted.container
+        const m = mountOverlay()
+        mounted.push(m)
         await nextTick()
-        return mounted.wrapper
+        return m.wrapper
     }
 
     it('renders nothing when mode is null', async () => {
@@ -117,24 +126,12 @@ describe('ConnectionOverlay', () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
 
-        // DIAG
-        // eslint-disable-next-line no-console
-        console.log('[DIAG-PRE] overlays=', document.body.querySelectorAll('.connection-overlay').length,
-            ' btns=', document.body.querySelectorAll('.connection-overlay__switch').length)
-
         const btn = $('.connection-overlay__switch')
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
         btn?.click()
         await nextTick()
-
-        // DIAG
-        // eslint-disable-next-line no-console
-        console.log('[DIAG] overlays=', document.body.querySelectorAll('.connection-overlay').length,
-            ' modals=', document.body.querySelectorAll('.modal-overlay').length,
-            ' modalDisplay=', document.body.querySelector('.modal-overlay')?.style.display,
-            ' btnCount=', document.body.querySelectorAll('.connection-overlay__switch').length)
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
