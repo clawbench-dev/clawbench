@@ -24,24 +24,25 @@
  *
  * Everything here is defensive: jsdom, Safari and older Chromium all lack parts
  * of the API surface, and a missing optional call must never break a share.
+ *
+ * The numbers behind levers 1 and 3 are the user's 设置 → 会议 → 画面质量
+ * choices (`utils/liveQualityPrefs`), not constants. This module owns how a
+ * choice turns into constraints and budgets; the panel owns what the choices
+ * are. A capture reads them when it starts, so a change applies to the next
+ * share or the next viewer rather than retroactively to a running encoder.
  */
 import { appLog } from '@/utils/appLog'
+import { readLiveQuality } from '@/utils/liveQualityPrefs'
 
 const TAG = 'LiveMedia'
 
 /**
- * Capture caps for a shared screen.
+ * One sender's encode budget, before the governor scales it down.
  *
- * 1920×1200 keeps a 4K display inside what four software encoders can carry
- * while leaving text legible; 30 fps is the ceiling for scrolling and video,
- * which is all the frame rate buys on a screen (a static desktop is already
- * frame-dropped by the browser).
+ * Built from the user's 画面质量 choices (`utils/liveQualityPrefs`) rather than
+ * from constants: how much detail a machine can carry is a property of the
+ * machine and its link, which is exactly what the settings panel asks about.
  */
-export const SCREEN_CAPTURE_MAX_WIDTH = 1920
-export const SCREEN_CAPTURE_MAX_HEIGHT = 1200
-export const SCREEN_CAPTURE_MAX_FPS = 30
-
-/** One sender's encode budget, before the governor scales it down. */
 export interface VideoEncodeBudget {
   /** Ceiling for this sender, in bits per second. */
   maxBitrate: number
@@ -50,17 +51,14 @@ export interface VideoEncodeBudget {
   scaleResolutionDownBy: number
 }
 
-/**
- * Screen content on a LAN.
- *
- * The room has no STUN server (`iceServers: []`), so paths are local and
- * bandwidth is not the constraint — the bitrate ceiling exists to stop the
- * encoder chasing quality it does not need, not to fit a pipe.
- */
-export const SCREEN_BUDGET: VideoEncodeBudget = {
-  maxBitrate: 4_000_000,
-  maxFramerate: 30,
-  scaleResolutionDownBy: 1,
+/** The publisher's own screen: the main picture, encoded once per viewer. */
+export function screenBudget(): VideoEncodeBudget {
+  const q = readLiveQuality()
+  return {
+    maxBitrate: Math.round(q.screenBitrate * 1_000_000),
+    maxFramerate: q.screenFps,
+    scaleResolutionDownBy: 1,
+  }
 }
 
 /**
@@ -68,19 +66,27 @@ export const SCREEN_BUDGET: VideoEncodeBudget = {
  *
  * This path is already decode-then-re-encode, so it starts a step below the
  * host's own capture: the picture has been through one encoder already and the
- * extra fidelity would be spent re-encoding artifacts.
+ * extra fidelity would be spent re-encoding artifacts. Three quarters of the
+ * screen bitrate is that step, and it follows the user's choice instead of
+ * being pinned, so raising 画面质量 lifts this path too.
  */
-export const RELAY_BUDGET: VideoEncodeBudget = {
-  maxBitrate: 2_500_000,
-  maxFramerate: 24,
-  scaleResolutionDownBy: 1,
+export function relayBudget(): VideoEncodeBudget {
+  const q = readLiveQuality()
+  return {
+    maxBitrate: Math.round(q.screenBitrate * 750_000),
+    maxFramerate: Math.min(q.screenFps, 30),
+    scaleResolutionDownBy: 1,
+  }
 }
 
-/** The camera tile: small, motion-heavy, and never the main event. */
-export const CAMERA_BUDGET: VideoEncodeBudget = {
-  maxBitrate: 1_500_000,
-  maxFramerate: 20,
-  scaleResolutionDownBy: 1,
+/** The camera tile, or the whole picture in a camera-only meeting. */
+export function cameraBudget(): VideoEncodeBudget {
+  const q = readLiveQuality()
+  return {
+    maxBitrate: Math.round(q.cameraBitrate * 1_000_000),
+    maxFramerate: q.cameraFps,
+    scaleResolutionDownBy: 1,
+  }
 }
 
 /**
@@ -88,12 +94,16 @@ export const CAMERA_BUDGET: VideoEncodeBudget = {
  *
  * The host decodes this and re-encodes it for everyone else, so every extra bit
  * and frame here is paid twice. The host cannot bound this from its side — the
- * encoder that needs bounding is on the member's machine.
+ * encoder that needs bounding is on the member's machine — so it sits at half
+ * the host's screen budget and never above 20 fps.
  */
-export const GUEST_SCREEN_BUDGET: VideoEncodeBudget = {
-  maxBitrate: 2_500_000,
-  maxFramerate: 15,
-  scaleResolutionDownBy: 1,
+export function guestScreenBudget(): VideoEncodeBudget {
+  const q = readLiveQuality()
+  return {
+    maxBitrate: Math.round(q.screenBitrate * 500_000),
+    maxFramerate: Math.min(q.screenFps, 20),
+    scaleResolutionDownBy: 1,
+  }
 }
 
 /**
@@ -104,10 +114,26 @@ export const GUEST_SCREEN_BUDGET: VideoEncodeBudget = {
  * exists to prevent.
  */
 export function screenCaptureConstraints(): MediaTrackConstraints {
+  const q = readLiveQuality()
   return {
-    width: { max: SCREEN_CAPTURE_MAX_WIDTH },
-    height: { max: SCREEN_CAPTURE_MAX_HEIGHT },
-    frameRate: { max: SCREEN_CAPTURE_MAX_FPS },
+    width: { max: q.screenWidth },
+    height: { max: q.screenHeight },
+    frameRate: { max: q.screenFps },
+  }
+}
+
+/**
+ * Capture constraints for the camera.
+ *
+ * `ideal` here (unlike the screen): a camera that cannot do 720p should hand
+ * back its best mode, not fail or be padded up to a size it does not have.
+ */
+export function cameraCaptureConstraints(): MediaTrackConstraints {
+  const q = readLiveQuality()
+  return {
+    width: { ideal: q.cameraWidth },
+    height: { ideal: q.cameraHeight },
+    frameRate: { ideal: q.cameraFps, max: q.cameraFps * 1.5 },
   }
 }
 
@@ -344,15 +370,26 @@ async function cpuLimitationOf(sender: RTCRtpSender): Promise<string | null> {
  *
  * It only ever reacts to the browser's own `qualityLimitationReason`, never to a
  * JS-side guess about how much work an encode is.
+ *
+ * `autoDowngrade` is the user's switch (设置 → 会议 → 画面质量). Turning it off
+ * keeps every sender at its base budget and stops the sampling rounds — it does
+ * NOT remove the budgets themselves, because those are the only thing bounding
+ * the encoders at all. The distinction matters: "no governor" would mean "no
+ * bitrate cap", which is the CPU blow-up this file exists to prevent.
  */
 export class VideoLoadGovernor {
   private readonly entries = new Map<string, GovernorEntry>()
+  private readonly autoDowngrade: boolean
   private level = 0
   private downStreak = 0
   private upStreak = 0
   private timer: ReturnType<typeof setInterval> | null = null
   /** True while a sampling round is in flight (see sample()). */
   private sampling = false
+
+  constructor(autoDowngrade = true) {
+    this.autoDowngrade = autoDowngrade
+  }
 
   /** Current downscale level: 0 = as captured, 1 = 2×, 2 = 4×. */
   get currentLevel(): number {
@@ -423,6 +460,10 @@ export class VideoLoadGovernor {
   }
 
   private async sampleOnce(): Promise<void> {
+    // The user turned automatic downgrading off: hold the base budget and skip
+    // the per-sender stats read entirely (one getStats per sender per round is
+    // not free on the machines this setting exists for).
+    if (!this.autoDowngrade) return
     let limited = false
     let sampled = false
     for (const entry of this.entries.values()) {

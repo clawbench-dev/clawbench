@@ -18,6 +18,7 @@ import type {
   Track,
 } from 'livekit-client'
 import { appLog } from '@/utils/appLog'
+import { cameraBudget, screenBudget } from './liveMediaPolicy'
 
 const TAG = 'LiveRelay'
 
@@ -64,10 +65,29 @@ export function relayConnectURL(): string {
 }
 
 /**
+ * The encode settings a relayed room publishes with.
+ *
+ * Exported so the numbers can be asserted without standing up the SDK: the
+ * SDK's own defaults are a 1080p / 15 fps screen share at 2.5 Mbps, visibly
+ * soft and choppy for shared text, and nothing else in this file would reveal
+ * that a user's 画面质量 choice never reached the relay.
+ */
+export function relayPublishDefaults(): {
+  screenShareEncoding: { maxBitrate: number; maxFramerate: number }
+  videoEncoding: { maxBitrate: number; maxFramerate: number }
+} {
+  const screen = screenBudget()
+  const camera = cameraBudget()
+  return {
+    screenShareEncoding: { maxBitrate: screen.maxBitrate, maxFramerate: screen.maxFramerate },
+    videoEncoding: { maxBitrate: camera.maxBitrate, maxFramerate: camera.maxFramerate },
+  }
+}
+
+/**
  * Connect to the relay.
  *
- * `url` is the ws/wss endpoint from the `joined` frame; `token` is the
- * short-lived credential the server signed. Neither is stored anywhere — a
+ * `url` and `token` come from the `joined` frame; neither is stored — a
  * reconnect asks ClawBench for a fresh one.
  */
 export async function openRelay(url: string, token: string, handlers: RelayHandlers = {}): Promise<Room> {
@@ -77,6 +97,9 @@ export async function openRelay(url: string, token: string, handlers: RelayHandl
     // logic treats a mostly-static desktop as "not visible" and pauses it.
     adaptiveStream: false,
     dynacast: false,
+    // Take the same budgets the peer-to-peer path uses, so a relayed meeting
+    // looks like a direct one (see relayPublishDefaults).
+    publishDefaults: relayPublishDefaults(),
   })
 
   room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication, participant) => {

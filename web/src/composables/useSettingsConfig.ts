@@ -11,8 +11,9 @@ import { resolveUIScale, computeAutoUIScale, currentScreenShortEdge, applyUIScal
 import { setLayoutScopeMode } from '@/utils/panelState'
 import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
+import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
 
-const LOCAL_PREFIX = 'clawbench-settings-'
+const LOCAL_PREFIX = SETTINGS_KEY_PREFIX
 
 // Guards the startup reconcile below. The locale side-effect clears it by
 // syncing immediately, and the flag also stops a PATCH → loadConfig → PATCH
@@ -493,6 +494,21 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   meetingDefaultShots: true,
   meetingDefaultAllowTalk: true,
   meetingDefaultAllowMemberScreen: true,
+  // 会议画面质量 (设置 → 会议 → 画面质量). Per device, because the right ceiling
+  // depends on the machine that has to encode the picture. The values are read
+  // back by `utils/liveQualityPrefs`, which normalises them against the same
+  // whitelists the panel's select options use — keep the two in step.
+  //
+  // Numeric ones are stored as STRINGS: the panel's select rows compare option
+  // values with `===`, and every option value is a string, so a numeric default
+  // would render an empty row on a device that never touched the setting.
+  liveScreenResolution: '1920x1200',
+  liveScreenFps: '30',
+  liveScreenBitrate: '4',
+  liveCameraResolution: '1280x720',
+  liveCameraFps: '24',
+  liveCameraBitrate: '2.5',
+  liveAutoDowngrade: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { relayConnectURL } from '../useLiveRelay'
+import { relayConnectURL, relayPublishDefaults } from '../useLiveRelay'
+import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
 
 /**
  * Where the page points the relay client.
@@ -11,6 +12,32 @@ import { relayConnectURL } from '../useLiveRelay'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  localStorage.clear()
+})
+
+/**
+ * The SDK's defaults are 1080p / 15 fps / 2.5 Mbps for a screen share. A relayed
+ * meeting must publish at the quality the user chose instead, or the relay path
+ * silently stays the worst-looking one.
+ */
+describe('relayPublishDefaults', () => {
+  it('publishes the screen at the chosen quality', () => {
+    localStorage.setItem(SETTINGS_KEY_PREFIX + 'liveScreenBitrate', JSON.stringify('8'))
+    localStorage.setItem(SETTINGS_KEY_PREFIX + 'liveScreenFps', JSON.stringify('24'))
+
+    expect(relayPublishDefaults().screenShareEncoding).toEqual({
+      maxBitrate: 8_000_000,
+      maxFramerate: 24,
+    })
+  })
+
+  it('publishes the camera with the camera settings, not the screen ones', () => {
+    localStorage.setItem(SETTINGS_KEY_PREFIX + 'liveScreenBitrate', JSON.stringify('12'))
+    localStorage.setItem(SETTINGS_KEY_PREFIX + 'liveCameraBitrate', JSON.stringify('1.5'))
+    localStorage.setItem(SETTINGS_KEY_PREFIX + 'liveCameraFps', JSON.stringify('15'))
+
+    expect(relayPublishDefaults().videoEncoding).toEqual({ maxBitrate: 1_500_000, maxFramerate: 15 })
+  })
 })
 
 describe('relayConnectURL', () => {

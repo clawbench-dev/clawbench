@@ -791,6 +791,47 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultShots', descriptionKey: 'settings.items.meetingDefaultShotsDesc', key: 'meetingDefaultShots', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowTalk', descriptionKey: 'settings.items.meetingDefaultAllowTalkDesc', key: 'meetingDefaultAllowTalk', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowMemberScreen', descriptionKey: 'settings.items.meetingDefaultAllowMemberScreenDesc', key: 'meetingDefaultAllowMemberScreen', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    // 画面质量. Local (per device): the right ceiling depends on the machine that
+    // has to encode the picture and the link it uploads over, so the same
+    // account on a phone and on a workstation must be able to differ. Read back
+    // by `utils/liveQualityPrefs` when a capture starts — the option values here
+    // and the whitelists there are one contract.
+    { type: 'item', spec: { labelKey: 'settings.items.liveScreenResolution', descriptionKey: 'settings.items.liveScreenResolutionDesc', key: 'liveScreenResolution', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveScreenRes720p', value: '1280x720' },
+      { labelKey: 'settings.items.liveScreenRes1200p', value: '1920x1200' },
+      { labelKey: 'settings.items.liveScreenRes1600p', value: '2560x1600' },
+      { labelKey: 'settings.items.liveScreenRes2160p', value: '3840x2160' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveScreenFps', descriptionKey: 'settings.items.liveScreenFpsDesc', key: 'liveScreenFps', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveFps15', value: '15' },
+      { labelKey: 'settings.items.liveFps24', value: '24' },
+      { labelKey: 'settings.items.liveFps30', value: '30' },
+      { labelKey: 'settings.items.liveFps60', value: '60' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveScreenBitrate', descriptionKey: 'settings.items.liveScreenBitrateDesc', key: 'liveScreenBitrate', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveMbps2', value: '2' },
+      { labelKey: 'settings.items.liveMbps4', value: '4' },
+      { labelKey: 'settings.items.liveMbps6', value: '6' },
+      { labelKey: 'settings.items.liveMbps8', value: '8' },
+      { labelKey: 'settings.items.liveMbps12', value: '12' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveCameraResolution', descriptionKey: 'settings.items.liveCameraResolutionDesc', key: 'liveCameraResolution', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveCamRes480p', value: '640x480' },
+      { labelKey: 'settings.items.liveCamRes720p', value: '1280x720' },
+      { labelKey: 'settings.items.liveCamRes1080p', value: '1920x1080' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveCameraFps', descriptionKey: 'settings.items.liveCameraFpsDesc', key: 'liveCameraFps', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveFps15', value: '15' },
+      { labelKey: 'settings.items.liveFps24', value: '24' },
+      { labelKey: 'settings.items.liveFps30', value: '30' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveCameraBitrate', descriptionKey: 'settings.items.liveCameraBitrateDesc', key: 'liveCameraBitrate', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveMbps1', value: '1' },
+      { labelKey: 'settings.items.liveMbps1_5', value: '1.5' },
+      { labelKey: 'settings.items.liveMbps2_5', value: '2.5' },
+      { labelKey: 'settings.items.liveMbps4', value: '4' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveAutoDowngrade', descriptionKey: 'settings.items.liveAutoDowngradeDesc', key: 'liveAutoDowngrade', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingQualitySection' } },
     // 中继服务 (LiveKit). Installation-wide, so it lives here rather than in the
     // create form: the relay is deployed once and every meeting that opts in
     // shares it. The row is a placeholder that only opens the card — the form

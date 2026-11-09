@@ -1023,8 +1023,8 @@ describe('encode budget', () => {
     expect(pc.transceivers[1].sender.params.degradationPreference).toBe('maintain-resolution')
 
     const relay = pc.transceivers[2].sender.params.encodings[0]
-    await vi.waitFor(() => expect(relay.maxBitrate).toBe(2_500_000))
-    expect(relay.maxFramerate).toBe(24)
+    await vi.waitFor(() => expect(relay.maxBitrate).toBe(3_000_000))
+    expect(relay.maxFramerate).toBe(30)
   })
 
   /**
@@ -1048,8 +1048,8 @@ describe('encode budget', () => {
     // The camera IS the main picture here.
     expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
     const picture = pc.transceivers[1].sender.params.encodings[0]
-    await vi.waitFor(() => expect(picture.maxBitrate).toBe(1_500_000))
-    expect(picture.maxFramerate).toBe(20)
+    await vi.waitFor(() => expect(picture.maxBitrate).toBe(2_500_000))
+    expect(picture.maxFramerate).toBe(24)
   })
 
   it('steps every sender down together when the browser reports cpu pressure', async () => {

@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet, formatAnchorForDisplay } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
+import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
+import { readLiveQuality } from '@/utils/liveQualityPrefs'
 import i18n from '@/i18n'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
@@ -78,6 +80,13 @@ describe('settingsFieldMap', () => {
       'meetingDefaultShots',
       'meetingDefaultAllowTalk',
       'meetingDefaultAllowMemberScreen',
+      'liveScreenResolution',
+      'liveScreenFps',
+      'liveScreenBitrate',
+      'liveCameraResolution',
+      'liveCameraFps',
+      'liveCameraBitrate',
+      'liveAutoDowngrade',
       'meetingRelay',
     ])
 
@@ -85,6 +94,66 @@ describe('settingsFieldMap', () => {
     if (model?.type !== 'item') throw new Error('expected the shared summary model row')
     expect(model.spec.descriptionKey).toBe('settings.items.summaryModelRowDescMeeting')
     expect(model.spec.showSummaryModelStatus).toBe(true)
+  })
+
+  /**
+   * The 画面质量 rows and the capture path are one contract expressed twice:
+   * the panel lists the choices, `liveQualityPrefs` whitelists them. If either
+   * side gains a value the other does not know, the setting silently does
+   * nothing — the capture falls back to its default and the panel still shows
+   * the choice the user picked.
+   */
+  it('picture-quality options are exactly the values liveQualityPrefs honours', () => {
+    const meeting = categoryItems['meeting']
+    const fields: Array<{ key: string; read: () => string }> = [
+      { key: 'liveScreenResolution', read: () => { const q = readLiveQuality(); return `${q.screenWidth}x${q.screenHeight}` } },
+      { key: 'liveScreenFps', read: () => String(readLiveQuality().screenFps) },
+      { key: 'liveScreenBitrate', read: () => String(readLiveQuality().screenBitrate) },
+      { key: 'liveCameraResolution', read: () => { const q = readLiveQuality(); return `${q.cameraWidth}x${q.cameraHeight}` } },
+      { key: 'liveCameraFps', read: () => String(readLiveQuality().cameraFps) },
+      { key: 'liveCameraBitrate', read: () => String(readLiveQuality().cameraBitrate) },
+    ]
+    try {
+      for (const field of fields) {
+        const row = meeting.find(e => e.type === 'item' && e.spec.key === field.key)
+        if (row?.type !== 'item') throw new Error(`missing picture-quality row: ${field.key}`)
+        expect(row.spec.source).toBe('local')
+        expect(row.spec.type).toBe('select')
+        const options = row.spec.options
+        expect(options?.length).toBeGreaterThan(1)
+        for (const opt of options!) {
+          localStorage.setItem(SETTINGS_KEY_PREFIX + field.key, JSON.stringify(opt.value))
+          expect(field.read(), `${field.key} = ${String(opt.value)}`).toBe(String(opt.value))
+        }
+      }
+    } finally {
+      localStorage.clear()
+    }
+  })
+
+  /**
+   * A settings row looks its text up through a VARIABLE (`t(item.labelKey)`),
+   * so the literal-key guard in `i18n/__tests__` cannot see it. A typo or a key
+   * added to only one locale therefore renders the raw key in the panel — the
+   * exact failure that guard exists for, one layer out.
+   */
+  it('every settings row resolves its label, description and option text', () => {
+    const lookup = (messages: unknown, path: string): unknown =>
+      path.split('.').reduce<unknown>((acc, part) => (acc as Record<string, unknown> | undefined)?.[part], messages)
+    const missing: string[] = []
+    for (const [category, entries] of Object.entries(categoryItems)) {
+      for (const entry of entries) {
+        if (entry.type !== 'item') continue
+        const spec = entry.spec
+        const keys = [spec.labelKey, spec.descriptionKey, spec.sectionHeader, ...(spec.options ?? []).map(o => o.labelKey)]
+        for (const key of keys) {
+          if (!key) continue
+          if (lookup(zh, key) === undefined) missing.push(`${category} ${key} zh`)
+          if (lookup(en, key) === undefined) missing.push(`${category} ${key} en`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
   })
 
   it('does not map local-only settings', () => {

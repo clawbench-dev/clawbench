@@ -32,15 +32,17 @@ import { buildMicConstraints, readVoiceTuning } from '@/utils/audioTuning'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 import {
-  CAMERA_BUDGET,
-  RELAY_BUDGET,
-  SCREEN_BUDGET,
   VideoLoadGovernor,
   applyCodecPreference,
   applyContentHint,
+  cameraBudget,
+  cameraCaptureConstraints,
+  relayBudget,
   resolvePreferredVideoMime,
+  screenBudget,
   screenCaptureConstraints,
 } from './liveMediaPolicy'
+import { androidCaptureOptions, readLiveQuality } from '@/utils/liveQualityPrefs'
 import {
   closeRelay,
   openRelay,
@@ -51,18 +53,6 @@ import {
 } from './useLiveRelay'
 
 const TAG = 'LiveShare'
-
-/**
- * Capture shape for the Android path.
- *
- * 10 fps at 1280 px keeps the bridge traffic (JPEG over the WebView JS bridge,
- * then re-encoded by WebRTC) inside what a mid-range phone can sustain; a phone
- * screen is tall and mostly static, so the frame rate matters less than the
- * resolution. See androidScreenCapture.ts for why the transport looks like this.
- */
-const ANDROID_CAPTURE_FPS = 10
-const ANDROID_CAPTURE_MAX_WIDTH = 1280
-const ANDROID_CAPTURE_QUALITY = 55
 
 export type LiveShareState = 'idle' | 'capturing' | 'publishing'
 
@@ -751,11 +741,12 @@ async function listInputs(
 }
 
 /**
- * Acquire the camera at the size the tile uses.
+ * Acquire the camera at the size the user chose.
  *
- * Small and slow on purpose: a face in a corner (or the whole picture on a
- * camera-only call), and each viewer costs the publisher another upload of it.
- * 640×480 at 15 fps is plenty.
+ * Default 720p/24 fps (设置 → 会议 → 画面质量). Each viewer costs the publisher
+ * another upload of it, which is why the ceiling is a setting rather than
+ * "whatever the camera reports": a 1080p sensor on a four-viewer call is 2.25×
+ * the pixels of 720p on every connection.
  */
 async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
   const gum = navigator.mediaDevices?.getUserMedia
@@ -767,9 +758,7 @@ async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
     lastCameraError = null
     const stream = await gum.call(navigator.mediaDevices, {
       video: {
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 15, max: 20 },
+        ...cameraCaptureConstraints(),
         // A chosen camera wins; empty means the system default. `{exact: ''}`
         // would fail everywhere, which is why this is conditional.
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
@@ -942,10 +931,10 @@ interface CapturedScreen {
 async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
   const bridge = getNative()
   if (bridge?.startScreenCapture) {
+    // The bridge is far more expensive per pixel than getDisplayMedia, so the
+    // options stay below the user's screen choice (see androidCaptureOptions).
     const android = await startAndroidScreenCapture({
-      fps: ANDROID_CAPTURE_FPS,
-      maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
-      quality: ANDROID_CAPTURE_QUALITY,
+      ...androidCaptureOptions(),
       systemAudio: true,
       // The user can revoke the projection from the system UI. That ends the
       // SCREEN, not the meeting: without a meeting type there is no reason to
@@ -1057,7 +1046,7 @@ async function applyPicture(): Promise<void> {
   // want different encode budgets and different encoder hints.
   applyContentHint(main, screenTrack ? 'text' : 'motion')
   for (const peer of peers.values()) {
-    governor?.setBudget(`${peer.viewerId}:video`, screenTrack ? SCREEN_BUDGET : CAMERA_BUDGET)
+    governor?.setBudget(`${peer.viewerId}:video`, screenTrack ? screenBudget() : cameraBudget())
     try {
       await peer.videoTx?.sender.replaceTrack(main)
     } catch (e) {
@@ -1550,7 +1539,9 @@ export function useLiveShare() {
       //    opens so the first viewer's offer is answered with it: a codec
       //    preference only affects negotiation that has not happened yet.
       governor?.stop()
-      governor = new VideoLoadGovernor()
+      // The switch only disables automatic stepping down; the base budgets are
+      // still applied (they are the only thing bounding the encoders at all).
+      governor = new VideoLoadGovernor(readLiveQuality().autoDowngrade)
       governor.start()
       await resolveVideoCodecPreference()
 
@@ -2214,17 +2205,16 @@ export function useLiveShare() {
     // The main m-line carries the screen when there is one and the camera
     // otherwise, so its budget has to be chosen HERE: `applyPicture()` corrects
     // it later, but it only runs when the picture CHANGES, and a camera-only
-    // meeting never changes. Registering at SCREEN_BUDGET meant such a meeting
-    // encoded 4 Mbps/30 fps — about 2.7× the uplink and CPU of the camera
-    // budget — for its whole length.
+    // meeting never changes. Registering at the screen budget meant such a
+    // meeting paid the screen's uplink and CPU for its whole length.
     governor?.register(
       `${peer.viewerId}:video`,
       videoTx.sender,
-      displayStream ? SCREEN_BUDGET : CAMERA_BUDGET,
+      displayStream ? screenBudget() : cameraBudget(),
     )
-    governor?.register(`${peer.viewerId}:relay`, relayTx.sender, RELAY_BUDGET)
+    governor?.register(`${peer.viewerId}:relay`, relayTx.sender, relayBudget())
     if (peer.cameraTx) {
-      governor?.register(`${peer.viewerId}:camera`, peer.cameraTx.sender, CAMERA_BUDGET)
+      governor?.register(`${peer.viewerId}:camera`, peer.cameraTx.sender, cameraBudget())
     }
     return true
   }
