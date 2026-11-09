@@ -56,6 +56,14 @@ describe('ConnectionOverlay', () => {
 
     beforeEach(() => {
         mockMode.value = null
+        // Clear anything a previous case left behind BEFORE this one mounts.
+        // `$()` queries document.body, and the component teleports there, so a
+        // leftover overlay would be the FIRST match — the assertions below would
+        // then be looking at a dead instance's DOM while the live one behaves
+        // correctly. afterEach already unmounts; this is the belt to that
+        // braces, because a case that throws skips part of its cleanup.
+        document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
+        document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
     })
 
     afterEach(() => {
