@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { DOMWrapper, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, type Ref } from 'vue'
 import ConnectionOverlay from '@/components/common/ConnectionOverlay.vue'
@@ -140,8 +140,11 @@ describe('ConnectionOverlay', () => {
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
-        btn?.click()
-        await nextTick()
+        // `DOMWrapper.trigger` rather than the native `el.click()`: it awaits
+        // the render flush, so the assertions below see the post-click state.
+        // The native call left `open` false on CI (measured "expected false to
+        // be true") even though the same code passed locally.
+        await new DOMWrapper(btn!).trigger('click')
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
