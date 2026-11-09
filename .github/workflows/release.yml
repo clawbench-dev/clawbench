@@ -112,6 +112,20 @@ jobs:
           cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
+      - name: Install desktop dependencies
+        # The ROOT vitest run collects `desktop/**/*.test.ts`, and those specs
+        # import `electron` at module scope. Without this install they die at
+        # import with "Failed to resolve import 'electron'" — which used to be
+        # invisible because the coverage script treated "coverage data exists"
+        # as proof the run was fine (fixed in scripts/check-frontend-coverage.sh).
+        # Mirrors ci.yml's Coverage (Frontend) job.
+        #
+        # `--ignore-scripts` skips electron's ~100 MB binary postinstall: the
+        # specs only need the module to resolve, and this job never launches
+        # Electron.
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+
       - name: Go coverage gate
         run: ./scripts/check-go-coverage.sh
 
