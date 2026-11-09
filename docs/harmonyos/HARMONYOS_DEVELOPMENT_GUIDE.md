@@ -1,8 +1,12 @@
 # ClawBench 鸿蒙端开发指南
 
-更新日期：2026-11-07
+更新日期：2026-11-09
 
-状态：当前开发版 `0.2.6 / 206`，沿用包名 `com.clawbench.harmony`，保留手机、平板及 `2in1` 声明。ArkWeb 网页下载、原生流式下载和 Blob 保存到系统 `Download/com.clawbench.harmony/`，根目录 287 项回归及未签名 HAP 构建通过。用户于 2026-11-07 确认新的选择界面及原生下载桥真机验证完成，此前已确认断网重连、切服通过；后台原生通知仍不可用，鸿蒙 Frozen 冻结限制未解决。
+状态：当前开发版 `0.2.9 / 209`，沿用包名 `com.clawbench.harmony`，保留手机、平板及 `2in1` 声明。ArkWeb 网页下载、原生流式下载和 Blob 保存到系统 `Download/com.clawbench.harmony/`，根目录 290 项回归及未签名 HAP 构建通过。本版本补齐关于页版本描述节点在 Vue 通过 `textContent` 替换时的更新检测。用户已确认平板端界面、投屏和既有会议真机验收通过；二合一因缺少设备暂缓。此前已确认新的选择界面、原生下载桥、断网重连和切服通过；后台原生通知仍不可用，鸿蒙 Frozen 冻结限制未解决。
+
+0.2.8 把平台文案替换限定在关于页 `data-settings-key="appVersion"` 的 `.settings-item__desc`，0.2.9 再补 Vue 通过 `textContent` 替换并新建文本节点时的观察；聊天、代码预览、可编辑区、textarea 和 script/JSON 不受改写。Push Kit 说明在系统授权请求之前显示，权限被拒时仍会看到。浏览器侧已复核聊天渲染、会话侧栏、文件管理 / README 预览和任务空态；这些结果只代表共享网页，不代表 ArkWeb 原生能力。
+
+0.2.7 修正“关于”页仍把应用版本描述为 Android 的问题：宿主脚本只在可信工作台根页面精确替换版本行中的 `Android 应用版本号` 为 HarmonyOS 文案，其他 Android 下载入口不受影响。首次从其他推送方式切换到原生推送时弹出说明，明确鸿蒙端未接入 Push Kit、原生推送仅限进程运行期间，并引导改用钉钉 / 飞书 / 微信推送。应用内更新检测等待上游发布 HarmonyOS release 后再实现与验收。
 
 0.2.6 为远程 Web 组件设置应用页面级 `WebDownloadDelegate`，在 `onBeforeDownload` 中取得系统 DOWNLOAD 目录并指定下载路径；原生下载及 Blob 使用同一目录。目标重名时保留已有文件并生成带序号的新名称。网页导航不取消已开始的 Web 下载；应用页面销毁时取消仍在下载的任务，完成提示只在工作台可见时显示。文件管理中查看 `Download/com.clawbench.harmony/`。此模式不打开文件名 / 位置选择器；系统文件权限或目录创建失败仍会取消并提示下载失败。
 
@@ -134,7 +138,7 @@ clawbench-source code/          # 上游参考源码，忽略
 
 已确认 DevEco Studio 26.0.0.851、配套 SDK 26.0.0.105 / API 26。当前配置兼容 API 23、目标 API 23、编译 API 26；使用 API 23 的 HTTP 禁止自动重定向选项。包内 `pack.info` 已核对，最低系统实际可运行性仍需 API 23 真机验证。
 
-0.2.6 的 `AppScope/app.json5` 沿用 `bundleName: "com.clawbench.harmony"`，`versionName: "0.2.6"`、`versionCode: 206`；`entry/src/main/module.json5` 的 `deviceTypes` 为 `["phone", "tablet", "2in1"]`。`compileSdkVersion` 使用当前 DevEco 接受的 `"26.0.0"` 格式，兼容和目标版本保持 `"6.1.0(23)"`。配置声明不替代对应设备验收。
+0.2.9 的 `AppScope/app.json5` 沿用 `bundleName: "com.clawbench.harmony"`，`versionName: "0.2.9"`、`versionCode: 209`；`entry/src/main/module.json5` 的 `deviceTypes` 为 `["phone", "tablet", "2in1"]`。`compileSdkVersion` 使用当前 DevEco 接受的 `"26.0.0"` 格式，兼容和目标版本保持 `"6.1.0(23)"`。配置声明不替代对应设备验收。
 
 普通偏好与敏感数据分开存储。服务器名称、主题、语言可使用偏好存储；密码和令牌采用所选 SDK 提供的安全资产存储或密钥保护方案。具体 API 与权限须在实施时对照官方文档和真机确认。
 
@@ -294,16 +298,17 @@ SSH 与 HTTP2 需要分别验证；普通 HTTP2 请求成功不能证明双向�
 ./scripts/build-harmonyos.ps1
 ```
 
-0.2.6 当前已完成未签名构建：
+0.2.9 当前已完成未签名构建：
 
 | 项目 | 已核对结果 |
 | --- | --- |
-| 应用身份 | `com.clawbench.harmony`，版本 `0.2.6 / 206` |
+| 应用身份 | `com.clawbench.harmony`，版本 `0.2.9 / 209` |
 | 设备类型 | `phone`、`tablet`、`2in1` |
-| 本地交付产物 | `bulid-hap/ClawBench-0.2.6-unsigned.hap`（构建脚本默认导出到 `release/`，本地交付按维护约定存放） |
-| 大小 | 8,549,895 字节 |
-| SHA-256 | `57b34dd689aefb83c69440eb45f3b71932036efdb4eb26a46116ed7a245751c0` |
-| 签名与设备验收 | 本地导出包未签名；2026-11-07 用户确认新的选择界面及原生下载桥真机验证完成；未取得已安装签名包哈希 |
+| 本地交付产物 | `bulid-hap/ClawBench-0.2.9-unsigned.hap`（构建脚本默认导出到 `release/`，本地交付按维护约定存放） |
+| 大小 | 8,557,139 字节 |
+| SHA-256 | `d58ea2a65dea569688168ebd017feaf5b598b689614fff587b9a249f916e718d` |
+| 签名与设备验收 | 本地导出包未签名；本轮没有在线 hdc 设备，未安装或启动；此前已确认的平板端界面、投屏和既有会议真机结果来自用户实际安装的签名包，未取得该安装包哈希；二合一暂缓 |
+| 分发注意 | debug 构建，原生库包含本机绝对构建路径和源码映射；公开分发前应改用 release 构建并复核路径 / 符号 |
 
 以上校验值仅对应未签名产物。签名完成后的 HAP 必须重新计算大小与哈希，并另记签名、设备安装和验证结果，不能沿用此处数值。
 
