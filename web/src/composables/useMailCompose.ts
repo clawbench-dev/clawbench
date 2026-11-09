@@ -20,6 +20,7 @@
 import { ref } from 'vue'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
+import type { MailDraftFile } from '@/utils/mailTypes'
 
 const TAG = 'MailCompose'
 
@@ -27,6 +28,9 @@ const TAG = 'MailCompose'
 export interface MailComposeRequest {
   subject: string
   body: string
+  /** Attachments already staged by the caller (e.g. a file the user mailed
+   *  from the file manager). Optional — most requests start empty. */
+  attachments: MailDraftFile[]
   /** Set by the panel once it has taken the request (guards double-consume). */
   consumed: boolean
 }
@@ -41,8 +45,11 @@ const pending = ref<MailComposeRequest | null>(null)
  * probe is one small GET, and it is deliberately run before the tab switch:
  * parking first and discovering the problem afterwards would strand the user on
  * an empty mail tab with no message.
+ *
+ * `attachments` are already-staged files (see `utils/mailAttach.ts`), not paths:
+ * the panel only knows how to send what the composer can display.
  */
-export async function composeMail(subject: string, body: string): Promise<boolean> {
+export async function composeMail(subject: string, body: string, attachments: MailDraftFile[] = []): Promise<boolean> {
   try {
     const data = await apiGet<{ accounts?: unknown[] }>('/api/mail/accounts')
     if (!Array.isArray(data.accounts) || data.accounts.length === 0) return false
@@ -53,7 +60,7 @@ export async function composeMail(subject: string, body: string): Promise<boolea
     return false
   }
 
-  pending.value = { subject, body, consumed: false }
+  pending.value = { subject, body, attachments, consumed: false }
   // App.vue listens for this and switches to the mail tab; the panel listens
   // too and opens the composer once it is active.
   window.dispatchEvent(new CustomEvent('clawbench-compose-mail'))

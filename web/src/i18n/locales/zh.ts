@@ -2031,6 +2031,7 @@ export default {
       downloadTree: '下载',
       shareExternal: '分享',
       shareLink: '分享链接',
+      sendByMail: '用邮件发送',
     },
     multiSelect: {
       enter: '多选',
@@ -2075,6 +2076,8 @@ export default {
       archiveFailedDetail: '打包失败: {error}',
       deleteFailed: '删除失败',
       renameFailed: '重命名失败',
+      mailNotConfigured: '内置邮件用不了——请到「设置 → 邮箱账号」检查是否已添加邮箱、邮件功能是否开启',
+      mailSendFailed: '准备邮件附件失败',
     },
     prompt: {
       fileName: '输入文件名：',
@@ -2168,6 +2171,7 @@ export default {
       shareExternal: '分享',
       quoteInChat: '引用对话',
       shareLink: '分享链接',
+      sendByMail: '用邮件发送',
       details: '文件详情',
       confirmDelete: '确定要删除"{name}"吗？',
       exportHtml: '导出 HTML',

@@ -441,6 +441,13 @@
             <ScreenShare :size="14" />
             {{ t('file.context.shareLink') }}
           </div>
+          <!-- One entry for both files and folders: a folder is packed into a
+               single zip server-side, so "send by mail" means the same thing
+               either way. -->
+          <div class="context-menu-item" data-menu-item="send-mail" @click.stop="doSendByMail">
+            <Mail :size="14" />
+            {{ t('file.context.sendByMail') }}
+          </div>
           <div class="context-menu-item" v-if="isNativeApp && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
             <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
@@ -520,7 +527,7 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode, Mail } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -553,6 +560,7 @@ import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
 import { requestAttachmentTarget } from '@/composables/useConversationTarget.ts'
+import { sendPathsByMail } from '@/utils/mailAttach'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
@@ -2439,6 +2447,27 @@ function doShareLink() {
         isDir: entry.type === 'dir',
     }
     shareDialogOpen.value = true
+}
+
+/**
+ * Send the right-clicked entry by mail.
+ *
+ * A folder is packed into one zip by the server, so both kinds take the same
+ * path: stage the path, then open the composer with it attached. Nothing is
+ * sent yet — the user still picks the recipient.
+ */
+async function doSendByMail() {
+    const entry = ctxMenu.entry
+    if (!entry) return
+    const path = enterPathOf(entry)
+    const name = entry.name || path.split('/').pop() || ''
+    closeCtxMenu()
+    const res = await sendPathsByMail([path], entry.type === 'dir' ? name + '.zip' : name)
+    if (res.outcome === 'no-mailbox') {
+        if (toast) toast.show(t('file.toast.mailNotConfigured'), { icon: 'warning', type: 'error', duration: 3000 })
+    } else if (res.outcome === 'failed') {
+        if (toast) toast.show(res.error || t('file.toast.mailSendFailed'), { icon: 'error', type: 'error', duration: 3000 })
+    }
 }
 
 function doShareExternal() {

@@ -2030,6 +2030,7 @@ export default {
       downloadTree: 'Download',
       shareExternal: 'Share',
       shareLink: 'Share link',
+      sendByMail: 'Send by email',
     },
     multiSelect: {
       enter: 'Select',
@@ -2076,6 +2077,8 @@ export default {
       archiveFailedDetail: 'Pack failed: {error}',
       deleteFailed: 'Delete failed',
       renameFailed: 'Rename failed',
+      mailNotConfigured: 'The built-in mail client is unavailable — check Settings → Mail accounts (an account, and the mail feature switched on)',
+      mailSendFailed: 'Could not prepare the mail attachment',
     },
     prompt: {
       fileName: 'Enter file name:',
@@ -2169,6 +2172,7 @@ export default {
       shareExternal: 'Share',
       quoteInChat: 'Quote in chat',
       shareLink: 'Share link',
+      sendByMail: 'Send by email',
       details: 'Details',
       confirmDelete: 'Delete "{name}"?',
       exportHtml: 'Export HTML',

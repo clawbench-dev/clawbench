@@ -9041,6 +9041,48 @@ paths:
         "200":
           description: 已发送
 
+  /api/mail/attachments:
+    post:
+      tags: [Mail]
+      summary: 把文件或目录转成邮件附件
+      description: |
+        文件管理器 / 文件页头「用邮件发送」用这个接口准备附件：普通文件原样引用（不复制），
+        目录由服务端打包成一个 zip（保留目录本身作为压缩包顶层条目）。
+
+        路径解析与其它文件接口一致：项目相对路径按项目 Cookie 解析，绝对路径校验是否在允许的根目录内。
+        单个附件上限 25 MB，超出返回 `400` + `MailAttachmentTooLarge`。
+      operationId: mailAttachmentsStage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths]
+              properties:
+                paths:
+                  type: array
+                  maxItems: 20
+                  items: {type: string}
+                  description: 项目相对路径或绝对路径
+      responses:
+        "200":
+          description: 可直接放进 `attachments` 的附件描述
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  attachments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename: {type: string}
+                        path: {type: string, description: 服务端可读的绝对路径}
+                        size: {type: integer}
+
   /api/mail/drafts:
     get:
       tags: [Mail]

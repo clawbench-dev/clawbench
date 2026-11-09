@@ -2839,3 +2839,66 @@ describe('FileManagerContent — gitignored entries', () => {
 // Thumbnails are now mounted only once their row is observed as visible. These
 // tests pin that gate: nothing renders before the observer fires, and the image
 // appears afterwards without needing a prop change.
+
+// ── Send by email ───────────────────────────────────────────────────────────
+// One menu entry for both kinds: a folder is packed into one zip server-side,
+// so the manager only has to hand the path over. The staging + composer wiring
+// is covered by mailAttach.test.ts / MailPanel; what matters here is that the
+// MENU ENTRY's path is what gets sent, not the open file's.
+describe('FileManagerContent — send by mail', () => {
+  it('renders the item for a file entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('用邮件发送'))).toBeTruthy()
+  })
+
+  it('renders the item for a directory too', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('用邮件发送'))).toBeTruthy()
+  })
+
+  it('sends the context-menu entry, not the open file, and closes the menu', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'other.md', path: 'docs/other.md' }
+    await nextTick()
+
+    await wrapper.vm.doSendByMail()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
+    expect(mocks.mockSendPathsByMail).toHaveBeenCalledWith(['docs/other.md'], 'other.md')
+  })
+
+  it('defaults the subject to the folder name plus .zip', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'docs', path: 'docs' }
+    await nextTick()
+
+    await wrapper.vm.doSendByMail()
+
+    expect(mocks.mockSendPathsByMail).toHaveBeenCalledWith(['docs'], 'docs.zip')
+  })
+
+  it('explains a missing mailbox instead of failing silently', async () => {
+    mocks.mockSendPathsByMail.mockResolvedValue({ outcome: 'no-mailbox' })
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    await wrapper.vm.doSendByMail()
+
+    expect(mocks.mockToastShow).toHaveBeenCalledWith(
+      expect.stringContaining('邮箱'),
+      expect.objectContaining({ type: 'error' }),
+    )
+  })
+})

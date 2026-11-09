@@ -239,6 +239,10 @@ type MailSendRequest struct {
 // mailMaxAttachmentBytes caps one outgoing attachment.
 const mailMaxAttachmentBytes = 25 * 1024 * 1024
 
+// MailMaxAttachmentBytes exposes the per-attachment cap so handlers can report
+// it in an error message.
+func MailMaxAttachmentBytes() int64 { return mailMaxAttachmentBytes }
+
 // SendMail sends one message and appends a copy to the Sent folder.
 func SendMail(ctx context.Context, req MailSendRequest) error {
 	if len(req.To) == 0 && len(req.Cc) == 0 && len(req.Bcc) == 0 {
@@ -275,6 +279,10 @@ func SendMail(ctx context.Context, req MailSendRequest) error {
 	if err != nil {
 		return err
 	}
+	// The message is out, so the zips built for it are no longer needed. Only
+	// staged copies are removed — a plain file attachment points at the user's
+	// own file and must stay where it is.
+	cleanupStagedMailAttachments(req.Attachments)
 
 	// Best effort, and in the background: a mailbox without a Sent folder (or a
 	// server that refuses APPEND) must not turn a successfully delivered

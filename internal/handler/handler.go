@@ -915,6 +915,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/mail/messages/", ServeMailMessageSubRoutes)
 	register("/api/mail/unread", ServeMailUnread)
 	register("/api/mail/send", ServeMailSend)
+	register("/api/mail/attachments", ServeMailAttachments)
 	register("/api/mail/drafts", ServeMailDrafts)
 	register("/api/mail/drafts/", ServeMailDraftSubRoutes)
 

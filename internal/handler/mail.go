@@ -604,6 +604,11 @@ func writeMailError(w http.ResponseWriter, r *http.Request, err error) {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "MailSyncBusy")
 	case errors.Is(err, service.ErrMailNoRecipients):
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MailNoRecipients")
+	case errors.Is(err, service.ErrMailAttachmentMissing):
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "FileNotFoundShort")
+	case errors.Is(err, service.ErrMailAttachmentTooLarge):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MailAttachmentTooLarge",
+			map[string]any{"MaxMB": service.MailMaxAttachmentBytes() / (1024 * 1024)})
 	default:
 		switch mail.KindOf(err) {
 		case mail.KindAuth:

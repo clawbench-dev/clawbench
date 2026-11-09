@@ -52,6 +52,7 @@ const i18n = createI18n({
           fileHistory: 'File history',
           shareExternal: 'Share',
           shareLink: 'Share link',
+          sendByMail: 'Send by email',
           exportHtml: 'Export HTML',
           edit: 'Edit',
           finishEditing: 'Finish editing',
@@ -60,6 +61,10 @@ const i18n = createI18n({
           openDirectory: 'Open directory',
         },
         overlay: { back: 'Back', forward: 'Forward' },
+        toast: {
+          mailNotConfigured: 'No mailbox configured',
+          mailSendFailed: 'Could not prepare the mail attachment',
+        },
       },
       imageBlock: { view: 'View image' },
     },
@@ -121,6 +126,13 @@ vi.mock('@/composables/useChatContext.ts', () => ({
 const mockToastShow = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: mockToastShow }),
+}))
+
+// The mail action stages the file and opens the mail panel's composer; both are
+// other modules' jobs, so the header only has to call the shared helper.
+const mockSendPathsByMail = vi.hoisted(() => vi.fn())
+vi.mock('@/utils/mailAttach', () => ({
+  sendPathsByMail: mockSendPathsByMail,
 }))
 
 // Mock useToolbarOverflow — simulate wide toolbar: all demotable items inline
@@ -1010,6 +1022,61 @@ describe('FileHeader', () => {
       expect(button!.classes()).not.toContain('active')
       expect(button!.find('.wrap-check').exists()).toBe(false)
       expect((wrapper.vm as any).$.setupState.isShared).toBe(false)
+    })
+  })
+
+  describe('send by email', () => {
+    const file = { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }
+
+    beforeEach(() => {
+      mockSendPathsByMail.mockReset()
+      mockToastShow.mockClear()
+    })
+
+    it('is an inline toolbar button for a regular file', () => {
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(renderedToolbarIds(wrapper)).toContain('sendByMail')
+    })
+
+    it('is hidden while editing, when the on-disk copy is stale', () => {
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: true })
+      expect(renderedToolbarIds(wrapper)).not.toContain('sendByMail')
+    })
+
+    it('is hidden for an unsaved buffer', () => {
+      const wrapper = mountHeader({ file: { name: '', path: '', untitled: true, content: '' } })
+      expect(renderedToolbarIds(wrapper)).not.toContain('sendByMail')
+    })
+
+    it('stages the open file and opens the composer', async () => {
+      mockSendPathsByMail.mockResolvedValue({ outcome: 'opened' })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+
+      await wrapper.find('[data-toolbar-id="sendByMail"]').trigger('click')
+      await flushPromises()
+
+      expect(mockSendPathsByMail).toHaveBeenCalledWith(['/tmp/readme.md'], 'readme.md')
+      expect(mockToastShow).not.toHaveBeenCalled()
+    })
+
+    it('explains a missing mailbox instead of failing silently', async () => {
+      mockSendPathsByMail.mockResolvedValue({ outcome: 'no-mailbox' })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+
+      await wrapper.find('[data-toolbar-id="sendByMail"]').trigger('click')
+      await flushPromises()
+
+      expect(mockToastShow).toHaveBeenCalledWith('No mailbox configured', expect.anything())
+    })
+
+    it('shows the server reason when staging fails', async () => {
+      mockSendPathsByMail.mockResolvedValue({ outcome: 'failed', error: '单个附件不能超过 25 MB' })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+
+      await wrapper.find('[data-toolbar-id="sendByMail"]').trigger('click')
+      await flushPromises()
+
+      expect(mockToastShow).toHaveBeenCalledWith('单个附件不能超过 25 MB', expect.anything())
     })
   })
 
