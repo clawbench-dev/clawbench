@@ -449,8 +449,18 @@ describe('Gradle autoVersionCode matches the shell implementation', () => {
       ] as const) {
         const dir = makeRepo(tag, extra)
         try {
-          writeFileSync(resolve(dir, 'probe.gradle'), `${fn}\nprintln "VERSION_CODE=" + autoVersionCode()\n`)
-          const r = run(gradleBin!, ['-q', '-b', 'probe.gradle', '--console=plain'], dir)
+          // `build.gradle` + `-p <dir>`, NOT `-b probe.gradle`: `-b` was
+          // removed in Gradle 9, and the CI runner's gradle is new enough to
+          // reject it ("Unknown command-line option '-b'"). `-p` is the
+          // supported way to run a build rooted at a directory, and the probe
+          // still executes inside the temp repo so `autoVersionCode()` reads
+          // that repo's tags.
+          // An empty settings.gradle keeps Gradle from searching parent
+          // directories for one (the temp repo lives under /tmp, but a stray
+          // settings file above it would silently change the project root).
+          writeFileSync(resolve(dir, 'settings.gradle'), '')
+          writeFileSync(resolve(dir, 'build.gradle'), `${fn}\nprintln "VERSION_CODE=" + autoVersionCode()\n`)
+          const r = run(gradleBin!, ['-q', '-p', dir, '--console=plain'], dir)
           const match = r.out.match(/VERSION_CODE=(\d+)/)
           expect(match, `no code in gradle output: ${r.out}`).not.toBeNull()
 
@@ -472,8 +482,12 @@ describe('Gradle autoVersionCode matches the shell implementation', () => {
       const fn = extractGroovyFunction(gradleSrc, 'autoVersionCode')
       const dir = makeRepo('v21.0.0', 0)
       try {
-        writeFileSync(resolve(dir, 'probe.gradle'), `${fn}\nprintln "VERSION_CODE=" + autoVersionCode()\n`)
-        const r = run(gradleBin!, ['-q', '-b', 'probe.gradle', '--console=plain'], dir)
+        // An empty settings.gradle keeps Gradle from searching parent
+        // directories for one (the temp repo lives under /tmp, but a stray
+        // settings file above it would silently change the project root).
+        writeFileSync(resolve(dir, 'settings.gradle'), '')
+        writeFileSync(resolve(dir, 'build.gradle'), `${fn}\nprintln "VERSION_CODE=" + autoVersionCode()\n`)
+        const r = run(gradleBin!, ['-q', '-p', dir, '--console=plain'], dir)
         expect(r.status).not.toBe(0)
         expect(r.out).toContain('major=21 exceeds')
       } finally {
