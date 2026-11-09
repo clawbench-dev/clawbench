@@ -1094,6 +1094,8 @@ export default {
       summaryViewOriginal: '原文',
       summaryViewSummary: '摘要',
       deepThinking: '深度思考',
+      creditUsed: '本次消耗 {value} 积分',
+      tokenUsed: '输入 {input} / 输出 {output}',
     },
     fileChanges: {
       title: '查看变更文件',

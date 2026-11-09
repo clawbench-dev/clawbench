@@ -75,6 +75,25 @@ export function formatCompactCount(v: number): string {
 }
 
 /**
+ * Compact credit figure for the per-message "this turn cost" tail.
+ *
+ * Same K/M/B edges as formatCompactCount, but WITHOUT its integer rounding:
+ * a turn's credit is routinely fractional (0.01 … 3.89), so rounding to an
+ * integer would render most CodeBuddy turns as "0" or "3" and erase the very
+ * number the tail exists to show. Two decimals are kept below the K tier and
+ * the large tiers match the token formatter so both numbers on one row are
+ * compacted the same way.
+ */
+export function formatCompactCredit(v: number): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  const abs = Math.abs(v)
+  if (abs >= 999_500_000) return `${(v / 1e9).toFixed(1)}B`
+  if (abs >= 999_950) return `${(v / 1e6).toFixed(1)}M`
+  if (abs >= 999.5) return `${(v / 1e3).toFixed(1)}K`
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
+/**
  * Compact value for space-constrained surfaces (header capsule, phone row):
  * K/M/B tiers with exactly one decimal, and no trailing ".0" below the K tier.
  *

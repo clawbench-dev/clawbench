@@ -126,6 +126,8 @@ const i18n = createI18n({
           readAloud: '朗读',
           speaking: '正在朗读',
           viewDetails: '详情',
+          creditUsed: '本次消耗 {value} 积分',
+          tokenUsed: '输入 {input} / 输出 {output}',
         },
         contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中', mergedIntoPrev: '回复已并入上一轮' },
@@ -373,6 +375,113 @@ describe('ChatMessageItem', () => {
       },
     })
     expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
+  })
+
+  describe('this-turn consumption tail', () => {
+    it('renders credit and token counts when the turn was billed in credits', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c1', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { wallMs: 100, credit: 2.79, inputTokens: 255_244, outputTokens: 945 },
+        },
+      })
+      const tail = wrapper.find('.chat-usage-inline')
+      expect(tail.exists()).toBe(true)
+      // K/M/B compaction, same thresholds as the stats page.
+      expect(tail.find('.chat-usage-tokens').text()).toContain('255.2K')
+      expect(tail.find('.chat-usage-tokens').text()).toContain('945')
+      // The direction markers are ICONS (not ↑/↓ text), one per token figure.
+      expect(tail.findAll('.chat-usage-arrow').length).toBe(2)
+      // Credit keeps its decimals (a turn is routinely fractional) and carries
+      // the coin glyph rather than the word "积分".
+      const credit = tail.find('.chat-usage-credit')
+      expect(credit.text()).toBe('2.79')
+      expect(credit.find('svg').exists()).toBe(true)
+    })
+
+    it('renders the figures INSIDE the bubble, not in the row below it', () => {
+      // The whole point of moving them: the row below the reply is the action
+      // toolbar's, so the figures must not compete with it for width.
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c0', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { wallMs: 100, credit: 1.5, inputTokens: 2000, outputTokens: 30 },
+        },
+      })
+      expect(wrapper.find('.msg-card .chat-usage-inline').exists()).toBe(true)
+      expect(wrapper.find('.chat-meta-bar .chat-usage-inline').exists()).toBe(false)
+    })
+
+    it('renders nothing at all when the turn has no credit', () => {
+      // Every non-CodeBuddy backend reports a monetary costUsd, not credit.
+      // Showing an empty group (or a bare "0") would claim this turn cost
+      // nothing, so the whole tail must be absent.
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c2', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { wallMs: 100, costUsd: 0.42, inputTokens: 1000, outputTokens: 20 },
+        },
+      })
+      expect(wrapper.find('.chat-usage-inline').exists()).toBe(false)
+      // The pre-existing meta items are untouched.
+      expect(wrapper.find('.chat-meta-duration').exists()).toBe(true)
+    })
+
+    it('compacts large credit figures with the same K/M/B tiers as tokens', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c3', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { credit: 14_965.51, inputTokens: 6_822_722, outputTokens: 26_174 },
+        },
+      })
+      const tail = wrapper.find('.chat-usage-inline')
+      expect(tail.find('.chat-usage-credit').text()).toBe('15.0K')
+      expect(tail.find('.chat-usage-tokens').text()).toContain('6.8M')
+      expect(tail.find('.chat-usage-tokens').text()).toContain('26.2K')
+    })
+
+    it('omits a token side the backend did not report', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c4', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { credit: 0.5, inputTokens: 1200 },
+        },
+      })
+      const tokens = wrapper.find('.chat-usage-tokens')
+      expect(tokens.text()).toContain('1.2K')
+      // Exactly one direction icon: the output side was not reported, so its
+      // icon and figure must both be absent.
+      expect(tokens.findAll('.chat-usage-arrow').length).toBe(1)
+    })
+
+    it('carries the exact figures in the tooltip, since the row shows compacted ones', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c5', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { credit: 2.79, inputTokens: 255_244, outputTokens: 945 },
+        },
+      })
+      const title = wrapper.find('.chat-usage-inline').attributes('title')
+      expect(title).toContain('2.79')
+      expect(title).toContain('255,244')
+      expect(title).toContain('945')
+    })
+
+    it('never renders the tail on a user message', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c6', role: 'user', content: 'hello', blocks: [],
+          metadata: { credit: 1.5, inputTokens: 100, outputTokens: 10 },
+        },
+      })
+      expect(wrapper.find('.chat-usage-inline').exists()).toBe(false)
+    })
   })
 
   // DELETED (queue-store refactor): 'emits remove-pending when pending remove

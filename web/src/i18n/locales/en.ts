@@ -1092,6 +1092,8 @@ export default {
       summaryViewOriginal: 'Original',
       summaryViewSummary: 'Summary',
       deepThinking: 'Thinking',
+      creditUsed: 'Credits used this turn: {value}',
+      tokenUsed: 'Input {input} / Output {output}',
     },
     fileChanges: {
       title: 'View Changed Files',
