@@ -467,6 +467,64 @@ func TestServeConfig_Patch_RecentProjectCardsMaxCount(t *testing.T) {
 	}
 }
 
+// recent_project_cards_window_hours is the other half of the same feature: how
+// far back a project still earns a collapsed card. It round-trips like the cap
+// and rejects 0 for the same reason — a zero window reads as "the feature is
+// off", not as a preference.
+func TestServeConfig_Patch_RecentProjectCardsWindowHours(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatRecentProjectCardsWindowHours
+	t.Cleanup(func() { model.ChatRecentProjectCardsWindowHours = orig })
+
+	body := `{"chat":{"recent_project_cards_window_hours":72}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 72, model.ConfigInstance.Chat.RecentProjectCardsWindowHours,
+		"the value must be applied to ConfigInstance")
+	assert.Equal(t, 72, model.ChatRecentProjectCardsWindowHours,
+		"applyHotReloadGlobals must sync the model global")
+
+	model.ConfigInstance.Chat.RecentProjectCardsWindowHours = 72
+	for _, bad := range []int{0, -1} {
+		b, _ := json.Marshal(map[string]any{"chat": map[string]any{"recent_project_cards_window_hours": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "hours=%d must be rejected", bad)
+		assert.Equal(t, 72, model.ConfigInstance.Chat.RecentProjectCardsWindowHours, "a rejected value must not be stored")
+	}
+}
+
+// The window must reach the client, otherwise the settings row renders empty
+// even though the server honours it.
+func TestServeConfig_Get_ExposesRecentProjectCardsWindow(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.RecentProjectCardsWindowHours = 36
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	w := callHandler(ServeConfig, req)
+	assertOK(t, w)
+
+	var result struct {
+		Chat struct {
+			RecentProjectCardsWindow int `json:"recent_project_cards_window_hours"`
+		} `json:"chat"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, 36, result.Chat.RecentProjectCardsWindow, "the window must be part of GET /api/config")
+}
+
 // A nickname equal to an existing agent's name is a conflict (409), not a
 // malformed value: the agent-side guard rejects the reverse direction, so the
 // two must agree.

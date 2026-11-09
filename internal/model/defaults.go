@@ -275,6 +275,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.RecentProjectCardsMaxCount <= 0 {
 		cfg.Chat.RecentProjectCardsMaxCount = 10
 	}
+	// RecentProjectCardsWindowHours: how far back a project still earns a
+	// collapsed card. A non-positive window would mean "no project is recent",
+	// which is indistinguishable from turning the feature off — so it falls back
+	// to the default rather than being kept.
+	if cfg.Chat.RecentProjectCardsWindowHours <= 0 {
+		cfg.Chat.RecentProjectCardsWindowHours = 24
+	}
 
 	// --- Session ---
 	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is

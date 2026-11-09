@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"clawbench/internal/service"
@@ -101,12 +102,57 @@ func TestListRecentlyActiveProjects_ExcludesOutsideWindow(t *testing.T) {
 	insertSessionAt(t, db, fresh, "fresh", now.Add(-time.Hour))
 	// One second past the window: the boundary must be inclusive of "inside"
 	// and exclusive of "outside", so this row is the sharp case.
-	insertSessionAt(t, db, stale, "stale", now.Add(-service.RecentProjectActivityWindow-time.Second))
+	insertSessionAt(t, db, stale, "stale", now.Add(-service.DefaultRecentProjectActivityWindow-time.Second))
 
 	got, err := service.ListRecentlyActiveProjects("")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, fresh, got[0].Path)
+}
+
+// The window is a setting, not a constant: widening it must pull in projects
+// that were previously too old, without touching the query itself.
+func TestListRecentlyActiveProjects_HonoursConfiguredWindow(t *testing.T) {
+	db := setupRecentActivityDB(t)
+	old := createTempProjectDir(t)
+	now := time.Now().UTC()
+
+	// Two days old: outside the default 24h window.
+	insertSessionAt(t, db, old, "two-days", now.Add(-48*time.Hour))
+
+	orig := model.ChatRecentProjectCardsWindowHours
+	t.Cleanup(func() { model.ChatRecentProjectCardsWindowHours = orig })
+
+	model.ChatRecentProjectCardsWindowHours = 24
+	got, err := service.ListRecentlyActiveProjects("")
+	require.NoError(t, err)
+	assert.Empty(t, got, "48h-old activity is outside the default 24h window")
+
+	model.ChatRecentProjectCardsWindowHours = 72
+	got, err = service.ListRecentlyActiveProjects("")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the same project becomes recent once the window is widened")
+	assert.Equal(t, old, got[0].Path)
+}
+
+// A non-positive configured window falls back to the default instead of
+// reading as "nothing is ever recent" (which would silently hide every card).
+func TestListRecentlyActiveProjects_NonPositiveWindowFallsBack(t *testing.T) {
+	db := setupRecentActivityDB(t)
+	dir := createTempProjectDir(t)
+	now := time.Now().UTC()
+
+	insertSessionAt(t, db, dir, "recent", now.Add(-time.Hour))
+
+	orig := model.ChatRecentProjectCardsWindowHours
+	t.Cleanup(func() { model.ChatRecentProjectCardsWindowHours = orig })
+
+	for _, bad := range []int{0, -5} {
+		model.ChatRecentProjectCardsWindowHours = bad
+		got, err := service.ListRecentlyActiveProjects("")
+		require.NoError(t, err)
+		assert.Len(t, got, 1, "window=%d must fall back to the default, not hide everything", bad)
+	}
 }
 
 func TestListRecentlyActiveProjects_OrdersByMostRecentFirst(t *testing.T) {

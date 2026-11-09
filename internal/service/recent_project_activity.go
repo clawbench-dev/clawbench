@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -24,14 +25,27 @@ type RecentProjectActivity struct {
 	LastActiveAt string `json:"lastActiveAt"`
 }
 
-// RecentProjectActivityWindow is how far back a project counts as "recently
-// active". Deliberately a constant rather than a setting: the card exists to
-// keep yesterday's work within reach, and a configurable window would add a
-// knob without changing what the list is for.
-const RecentProjectActivityWindow = 24 * time.Hour
+// DefaultRecentProjectActivityWindow is the fallback used when the configured
+// window is missing or nonsensical (0 / negative). The value itself lives in
+// config (`chat.recent_project_cards_window_hours`) so the user can widen or
+// narrow what counts as "recently active".
+const DefaultRecentProjectActivityWindow = 24 * time.Hour
+
+// recentProjectActivityWindow returns the configured recency window.
+//
+// Read at request time (not cached) so a settings change takes effect without
+// a restart — the same rule the card cap follows. A non-positive configured
+// value falls back to the default rather than producing "everything is recent".
+func recentProjectActivityWindow() time.Duration {
+	hours := model.ChatRecentProjectCardsWindowHours
+	if hours <= 0 {
+		return DefaultRecentProjectActivityWindow
+	}
+	return time.Duration(hours) * time.Hour
+}
 
 // ListRecentlyActiveProjects returns projects whose latest session activity
-// falls inside RecentProjectActivityWindow, most recent first.
+// falls inside the configured recency window, most recent first.
 //
 // `exclude` is the caller's current project: its sessions are already the main
 // list, so a card for it would duplicate the rows right above.
@@ -40,7 +54,7 @@ const RecentProjectActivityWindow = 24 * time.Hour
 // sessions — the same timestamp the session rows themselves display, so the
 // card's "2 小时前" agrees with the newest row inside it.
 func ListRecentlyActiveProjects(exclude string) ([]RecentProjectActivity, error) {
-	cutoff := time.Now().UTC().Add(-RecentProjectActivityWindow).Format("2006-01-02 15:04:05")
+	cutoff := time.Now().UTC().Add(-recentProjectActivityWindow()).Format("2006-01-02 15:04:05")
 	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT COALESCE(p.path, '') AS path, MAX(s.updated_at) AS last_at
 		  FROM chat_sessions s

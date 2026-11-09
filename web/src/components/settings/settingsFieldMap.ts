@@ -293,7 +293,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsMaxCount', descriptionKey: 'settings.items.recentProjectCardsMaxCountDesc', key: 'chat.recent_project_cards_max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000 } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
@@ -310,6 +309,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    // 「其他项目卡片」自成一组：这两个值是同一件事的两个维度（几张卡、多久内算活跃），
+    // 放在「消息与历史」里会跟会话条数、分页混在一起。渲染器按 sectionHeader 的
+    // **连续段**分组，所以这两行必须紧挨着，中间不能插别的 header。
+    { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsMaxCount', descriptionKey: 'settings.items.recentProjectCardsMaxCountDesc', key: 'chat.recent_project_cards_max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsWindowHours', descriptionKey: 'settings.items.recentProjectCardsWindowHoursDesc', key: 'chat.recent_project_cards_window_hours', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
     // Group chat: the cap on how many times the agents may speak to each other
     // before the floor returns to the user. A global server setting (same value
     // on every device). The user nickname now lives in the 身份 category — it

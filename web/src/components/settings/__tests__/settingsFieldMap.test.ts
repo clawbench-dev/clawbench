@@ -343,6 +343,30 @@ describe('settingsFieldMap', () => {
     expect(values).toEqual(['mixed', 'summary', 'original'])
   })
 
+  it('puts the other-project card settings in a card of their own', () => {
+    // The two values are one feature (how many cards, how far back counts), so
+    // they belong together — and NOT inside 消息与历史, where they read as yet
+    // another row about session counts.
+    const chatEntries = categoryItems['chat']
+    const keys = ['chat.recent_project_cards_max_count', 'chat.recent_project_cards_window_hours']
+    const rows = chatEntries.filter(e => e.type === 'item' && keys.includes(e.spec.key as string))
+    expect(rows.length).toBe(2)
+    for (const row of rows) {
+      if (row.type !== 'item') continue
+      expect(row.spec.sectionHeader).toBe('settings.items.recentProjectCardsSectionHeader')
+      // A number row without a floor would let the user enter 0, which the
+      // server rejects with a 400 the form cannot explain.
+      expect(row.spec.type).toBe('number')
+      expect(row.spec.min).toBe(1)
+    }
+
+    // Adjacent on purpose: the renderer groups by RUNS of the same header, so
+    // anything inserted between these two rows would split them into two
+    // one-row cards.
+    const indices = rows.map(r => chatEntries.indexOf(r))
+    expect(Math.abs(indices[1] - indices[0])).toBe(1)
+  })
+
   it('every server item in categoryItems has a corresponding field map entry', () => {
     const map = getServerFieldToLabelKey()
     for (const entries of Object.values(categoryItems)) {

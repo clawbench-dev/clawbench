@@ -586,6 +586,7 @@ const serverDefaults: Record<string, unknown> = {
   'user.profile': '',
   'chat.group_max_speeches': 100,
   'chat.recent_project_cards_max_count': 10,
+  'chat.recent_project_cards_window_hours': 24,
   // Opt-in: agent processes inherit the user's shell startup exports.
   'shell_env.inherit': false,
   'session.max_count': 15,

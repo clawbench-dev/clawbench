@@ -141,7 +141,7 @@ func TestServeSessionsOverview_ignoresSessionsOutsideTheWindow(t *testing.T) {
 	// CURRENT_TIMESTAMP, so the row has to be aged explicitly.
 	_, err = store.WriteExec(
 		"UPDATE chat_sessions SET updated_at = ? WHERE title = ?",
-		time.Now().UTC().Add(-service.RecentProjectActivityWindow-time.Hour).Format("2006-01-02 15:04:05"),
+		time.Now().UTC().Add(-service.DefaultRecentProjectActivityWindow-time.Hour).Format("2006-01-02 15:04:05"),
 		"long ago",
 	)
 	require.NoError(t, err)

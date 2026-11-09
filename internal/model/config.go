@@ -187,9 +187,14 @@ type Config struct {
 		// RecentProjectCardsMaxCount caps how many "other projects" cards the
 		// session list shows below the current project's rows. The cards cover
 		// two kinds of project: those with an active session (running / pending
-		// approval / unread) and those merely active in the last 24 hours.
-		// (default: 10, minimum 1)
+		// approval / unread) and those merely active inside
+		// RecentProjectCardsWindowHours. (default: 10, minimum 1)
 		RecentProjectCardsMaxCount int `yaml:"recent_project_cards_max_count"`
+		// RecentProjectCardsWindowHours is how far back a project counts as
+		// "recently active" for a collapsed card: a project with no active
+		// session still gets one if it was used inside this window. (default:
+		// 24, minimum 1)
+		RecentProjectCardsWindowHours int `yaml:"recent_project_cards_window_hours"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -774,6 +779,9 @@ var (
 	// session list (default 10). Read by the overview handler at request time,
 	// so a change takes effect without a restart.
 	ChatRecentProjectCardsMaxCount int
+	// ChatRecentProjectCardsWindowHours is how far back a project counts as
+	// recently active for a collapsed card (default 24). Same hot-reload rule.
+	ChatRecentProjectCardsWindowHours int
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

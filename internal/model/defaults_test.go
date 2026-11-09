@@ -968,6 +968,33 @@ func TestApplyDefaults_RecentProjectCardsMaxCount(t *testing.T) {
 	}
 }
 
+// The recency window follows the same rule as the cap: default 24 hours, an
+// explicit positive value is kept, and a non-positive one falls back (a zero
+// window would silently hide every collapsed card).
+func TestApplyDefaults_RecentProjectCardsWindowHours(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.RecentProjectCardsWindowHours != 24 {
+		t.Errorf("Chat.RecentProjectCardsWindowHours = %d, want 24 (default)", cfg.Chat.RecentProjectCardsWindowHours)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsWindowHours = 6
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_window_hours": true})
+	if cfg.Chat.RecentProjectCardsWindowHours != 6 {
+		t.Errorf("Chat.RecentProjectCardsWindowHours = %d, want 6 (explicitly set)", cfg.Chat.RecentProjectCardsWindowHours)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsWindowHours = 0
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_window_hours": true})
+	if cfg.Chat.RecentProjectCardsWindowHours != 24 {
+		t.Errorf("Chat.RecentProjectCardsWindowHours = %d, want 24 (non-positive clamps to default)", cfg.Chat.RecentProjectCardsWindowHours)
+	}
+}
+
 func TestApplyDefaults_RecentProjectsMaxCountExplicit(t *testing.T) {
 	setupTestBinDir(t)
 
