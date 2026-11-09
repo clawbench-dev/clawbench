@@ -193,6 +193,19 @@ test.describe.serial('Session search jump', () => {
     await page.locator('[data-action="search"]').first().click()
     const sheet = page.locator('.session-search-sheet')
     await expect(sheet).toBeVisible()
+
+    // Switch the status filter to "archived" BEFORE typing. The drawer keeps
+    // the previous selection, and an earlier spec leaves it on `all` or on a
+    // type filter that excludes this row; the test then searched a list that
+    // could never contain the archived session. The result list stayed empty,
+    // and `.session-search-mode` — rendered only inside the non-empty results
+    // block — never appeared (firefox: "element(s) not found" after 20 s).
+    //
+    // Located by title, not by index: there are four dropdown buttons in this
+    // row and the status one is second.
+    await sheet.locator('.filter-dropdown-btn[title="状态"], .filter-dropdown-btn[title="Status"]').click()
+    await page.locator('.filter-menu-item[data-value="archived"]').click()
+
     const archivedQuery = sheet.locator('.session-search-input-row input[type="text"]')
     await archivedQuery.click()
     await archivedQuery.pressSequentially(token, { delay: 20 })
