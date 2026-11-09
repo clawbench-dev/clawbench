@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures'
+import { apiFetch } from '../helpers/auth'
 
 /**
  * E2E for AI group chat (v1, sequential rounds).
@@ -22,17 +23,15 @@ test.describe('AI group chat', () => {
   // is what later specs in the same shard assert against.
   const createdGroups: string[] = []
 
-  test.afterAll(async ({ page }) => {
-    // Destroyed through `page.evaluate`, not the `request` fixture: these
-    // endpoints are session-authenticated, and `request` does not carry the
-    // page's cookies — every delete would have come back 401 and the cleanup
-    // would look like it ran while leaving every group behind.
+  test.afterAll(async () => {
+    // `apiFetch` (session cookie + one retry on 401), not a fixture: `page` and
+    // `context` are per-test and Playwright rejects them inside `afterAll`
+    // ("fixtures are not supported in afterAll"), and the `request` fixture
+    // carries no cookies so every delete would 401.
     for (const id of createdGroups.splice(0)) {
-      await page
-        .evaluate(async (sid) => {
-          await fetch(`/api/ai/session/destroy?session_id=${encodeURIComponent(sid)}`, { method: 'DELETE' })
-        }, id)
-        .catch(() => {})
+      await apiFetch(`/api/ai/session/destroy?session_id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }).catch(() => {})
     }
   })
 
@@ -128,20 +127,24 @@ test.describe('AI group chat', () => {
         body: JSON.stringify({ hostAgentId: 'acp-mock' }),
       })).json()
 
-      // Bail out with the reason instead of sending to `undefined`. Without
-      // this the chat request below goes to a session that does not exist, the
-      // handler takes its "already running" path, and the assertion fails with
-      // a bare `group === undefined` that says nothing about the real cause
-      // (observed on firefox: /api/group/create returned a non-ok body, so
-      // `created.groupId` was undefined).
+      // Bail out with the reason instead of sending to `undefined`: without
+      // this the chat request below addresses a session that does not exist
+      // and the assertion fails with a bare `group === undefined`.
       if (!created.ok || !created.groupId) {
         return { status: 0, body: { createFailed: created } }
       }
 
-      const r = await fetch('/api/ai/chat', {
+      // `session_id` goes in the QUERY STRING, not the body: the handler
+      // resolves the target session from `?session_id=` or the
+      // `chat_session_id` cookie (getSessionID) and never reads a body field.
+      // Sending it in the body therefore addressed whatever session the cookie
+      // pointed at — which was busy — and the handler answered
+      // `{running:true, queued:true}` with no `group` key. That is the
+      // "body.group === undefined" failure this test used to report.
+      const r = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(created.groupId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'hello group', sessionId: created.groupId }),
+        body: JSON.stringify({ message: 'hello group' }),
       })
       return { status: r.status, body: await r.json(), groupId: created.groupId }
     })
