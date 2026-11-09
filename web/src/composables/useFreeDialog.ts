@@ -58,6 +58,7 @@ import { acquireMic, classifyMicError, describeMicError } from '@/utils/micCaptu
 import { PcmStreamer } from '@/utils/pcmCapture'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { useAutoSpeech } from '@/composables/useAutoSpeech'
+import { playVoiceModeCue } from '@/composables/useNotificationSound'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -114,6 +115,20 @@ let utterance = ''
 let sessionId = ''
 /** Called with the final text when a turn should be sent. */
 let onSend: ((text: string) => void) | null = null
+/**
+ * Asks the owner to read out the reply of the turn that just ended, and
+ * returns whether it started doing so.
+ *
+ * Auto-speech normally starts from the terminal `done` event. That event is
+ * not guaranteed to arrive: the WebSocket reconnects (a mobile-network hiccup
+ * is enough — the screen can stay on and the app stay in the foreground) and
+ * the hub drops the frame with `reason=no_subscribers`. The turn then ends via
+ * a different path (the session-state update or a history reload), and only
+ * the loop knows the user is still waiting to HEAR this turn — so it re-asks
+ * once the turn has settled with nothing playing instead of silently going
+ * back to listening.
+ */
+let onSpeakPendingReply: (() => boolean) | null = null
 /** Cancels a turn that is still running when the user interrupts it. */
 let onInterrupt: (() => void) | null = null
 /** Whether a turn is currently in flight (set by the owner via `setThinking`). */
@@ -305,8 +320,11 @@ let autoSpeechTurnedOnByUs = false
  * `notify: false` suppresses the "dialog closed" toast. The failure paths have
  * already shown a more specific reason, and `startFreeDialog`'s own reset would
  * otherwise announce "closed" a millisecond before "opened".
+ *
+ * `silent: true` suppresses the closing cue as well, for that same internal
+ * reset — the mode is about to start again and a "closed" beep would be a lie.
  */
-export function stop(options: { notify?: boolean } = {}): void {
+export function stop(options: { notify?: boolean; silent?: boolean } = {}): void {
   const wasActive = phase.value !== 'idle'
   // Restore only if we are the ones who turned it on AND the user has not
   // turned it off in the meantime — re-enabling a switch they just disabled
@@ -326,7 +344,15 @@ export function stop(options: { notify?: boolean } = {}): void {
   phase.value = 'idle'
   autoSpeechTurnedOnByUs = false
   onInterrupt = null
+  onSpeakPendingReply = null
   if (restoreSpeech) autoSpeech.setEnabled(false, { silent: true })
+  // The closing cue: the user asked to be told when the mode ends, and the
+  // automatic exit (nothing heard for a while) is exactly the case where
+  // nothing on screen will be noticed.
+  if (wasActive && options.silent !== true) {
+    appLog.i(TAG, `closed (read-aloud restored: ${restoreSpeech})`)
+    playVoiceModeCue('exit')
+  }
   if (options.notify !== false && wasActive) {
     useToast().show(
       gt(restoreSpeech ? 'chat.voice.freeDialogOffWithSpeech' : 'chat.voice.freeDialogOff'),
@@ -406,6 +432,11 @@ function sendTurn(text: string) {
   closeDictationSocket()
   phase.value = 'thinking'
   turnInFlight = true
+  // Audible "took it": in this mode the user is not looking at the screen, so
+  // whether the sentence was actually sent needs a non-visual answer. Played
+  // after the recogniser socket is closed, so the cue itself can never be
+  // captured and transcribed as part of the next utterance.
+  playVoiceModeCue('send')
   onSend?.(clean)
 }
 
@@ -645,16 +676,24 @@ export async function startFreeDialog(opts: {
   busy?: boolean
   /** Cancels that running turn when the user interrupts it. */
   onInterrupt?: () => void
+  /**
+   * Reads out the reply of a finished turn when no playback started, returning
+   * whether it did. See `onSpeakPendingReply` for why the loop cannot rely on
+   * the terminal `done` event alone.
+   */
+  onSpeakPendingReply?: () => boolean
 }): Promise<void> {
   // Reset without announcing: "closed" followed immediately by "opened" is
-  // noise, and the toast slot only holds one message anyway.
-  stop({ notify: false })
+  // noise, and the toast slot only holds one message anyway. The cue is
+  // silenced too — the mode is about to start, not end.
+  stop({ notify: false, silent: true })
   // stop() released the lock, so take it again for this run.
   void wakeLock.acquire(WAKE_LOCK_REASON)
   warnIfScreenCannotStayAwake()
   sessionId = opts.sessionId
   onSend = opts.onSend
   onInterrupt = opts.onInterrupt ?? null
+  onSpeakPendingReply = opts.onSpeakPendingReply ?? null
   lastError.value = ''
   tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
   // The loop is built around the reply being read out: it waits for playback
@@ -736,6 +775,17 @@ export function setFreeDialogThinking(thinking: boolean): void {
     if (myGen !== gen) return
     if (phase.value !== 'thinking' && phase.value !== 'speaking') return
     if (autoSpeech.isBusy()) return
+    // Nothing is being read out. Ask the owner whether this turn's reply still
+    // needs speaking before going back to listening: the terminal `done` is the
+    // only thing that normally starts TTS, and it is dropped whenever the
+    // stream subscription is missing (a WS reconnect mid-turn is enough — the
+    // screen stays on, the app stays in the foreground). The turn then ends via
+    // a session-state update or a history reload, and the loop would otherwise
+    // move on in silence.
+    if (onSpeakPendingReply?.()) {
+      appLog.i(TAG, 'turn settled with no playback; asked the panel to read the reply')
+      return
+    }
     resumeListening()
   }, SETTLE_GRACE_MS)
 }

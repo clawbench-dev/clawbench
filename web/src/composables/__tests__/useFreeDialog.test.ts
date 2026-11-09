@@ -33,6 +33,8 @@ let wakeAcquire: ReturnType<typeof vi.fn>
 let wakeRelease: ReturnType<typeof vi.fn>
 /** Set false to simulate a host with neither the Web API nor the native bridge. */
 let wakeHeld: { value: boolean }
+/** The cues are the only thing this module needs from the sound layer. */
+let cuePlayed: ReturnType<typeof vi.fn>
 
 function installFakes() {
   sockets = []
@@ -145,6 +147,13 @@ function installFakes() {
   wakeHeld = held
   const api = { held, acquire: wakeAcquire, release: wakeRelease }
   vi.doMock('@/composables/useWakeLock', () => ({ useWakeLock: () => api }))
+
+  // Cues are synthesized audio; only the decision to play one is under test.
+  cuePlayed = vi.fn()
+  vi.doMock('@/composables/useNotificationSound', () => ({
+    playVoiceModeCue: cuePlayed,
+    playNotificationSound: vi.fn(),
+  }))
 }
 
 /** Pushes one recogniser message into the newest socket. */
@@ -176,6 +185,7 @@ describe('useFreeDialog', () => {
     vi.doUnmock('@/composables/useSettingsConfig')
     vi.doUnmock('@/composables/useToast')
     vi.doUnmock('@/composables/useWakeLock')
+    vi.doUnmock('@/composables/useNotificationSound')
   })
 
   it('keeps the screen awake for the whole time the mode is on', async () => {
@@ -965,5 +975,119 @@ describe('useFreeDialog', () => {
     // already left.
     sock.onmessage?.({ data: JSON.stringify({ type: 'done', final: '做点事 发送' }) })
     expect(onSend).not.toHaveBeenCalled()
+  })
+
+  // ── audible feedback ──
+  //
+  // The user is not looking at the screen in this mode, so "the sentence was
+  // taken" and "the mode is off" both need a sound.
+
+  it('beeps when it takes a spoken sentence and sends it', async () => {
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    speak('帮我看下这个报错 发送')
+    expect(cuePlayed).toHaveBeenCalledWith('send')
+  })
+
+  it('does not beep when there was nothing to send', async () => {
+    // A bare trigger word sends nothing, so a "sent" cue would be a lie.
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    speak('发送')
+    expect(cuePlayed).not.toHaveBeenCalled()
+  })
+
+  it('beeps when the mode closes', async () => {
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    mod.stop()
+    expect(cuePlayed).toHaveBeenCalledWith('exit')
+  })
+
+  it('beeps when the mode closes itself after a long silence', async () => {
+    // The automatic exit is exactly the case where nothing on screen is
+    // noticed: the user walked away believing the mode was still listening.
+    const settings = await import('@/composables/useSettingsConfig')
+    settings.serverConfig.value = { stt: { silence_send_seconds: 0, idle_exit_seconds: 5 } }
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+    expect(cuePlayed).toHaveBeenCalledWith('exit')
+  })
+
+  it('stays silent on the internal reset that start() performs', async () => {
+    // start() first stops any previous run; a "closed" beep a millisecond
+    // before "opened" would describe the opposite of what is happening.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    await mod.startFreeDialog({ sessionId: 's2', onSend: vi.fn() })
+    await flush()
+    expect(cuePlayed).not.toHaveBeenCalled()
+  })
+
+  // ── a reply whose `done` never arrived ──
+
+  it('asks the owner to read a reply that never reached TTS', async () => {
+    // The terminal `done` is the only thing that normally starts read-aloud,
+    // and it is lost when the app was backgrounded or the subscription
+    // dropped — the reply then only appears in the history reload. Without
+    // this the loop reopens the microphone and the user never hears it.
+    const onSpeakPendingReply = vi.fn(() => true)
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    vi.advanceTimersByTime(600)
+    await flush()
+    expect(onSpeakPendingReply).toHaveBeenCalledTimes(1)
+    // Playback is (about to be) running: the microphone must stay closed.
+    expect(useFreeDialog().phase.value).not.toBe('listening')
+  })
+
+  it('still resumes listening when there is nothing to read', async () => {
+    // A tool-only reply, or read-aloud off: the loop must not stall waiting
+    // for a playback that will never start.
+    const onSpeakPendingReply = vi.fn(() => false)
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    vi.advanceTimersByTime(600)
+    await flush()
+    expect(onSpeakPendingReply).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(250)
+    await flush()
+    expect(useFreeDialog().phase.value).toBe('listening')
+  })
+
+  it('does not ask again once playback has started normally', async () => {
+    // The normal path hands the reply to TTS at `done`, which marks auto-speech
+    // busy synchronously — the settle window must then bail out, not fire a
+    // second read of the same reply.
+    const onSpeakPendingReply = vi.fn(() => true)
+    const { startFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    autoSpeech.state.value = 'synthesizing'
+    setFreeDialogThinking(false)
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(onSpeakPendingReply).not.toHaveBeenCalled()
   })
 })

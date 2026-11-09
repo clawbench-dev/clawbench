@@ -120,6 +120,55 @@ export function playNotificationSound() {
   }
 }
 
+/**
+ * Tones for the continuous-conversation cues, as [frequency Hz, start offset s,
+ * duration s]. Deliberately different from the notification chime in both shape
+ * and pitch: "sent" rises, "closed" falls, so the two are distinguishable
+ * without looking at the screen — which is the whole point of the mode.
+ */
+const VOICE_CUE_TONES: Record<'send' | 'exit', ReadonlyArray<readonly [number, number, number]>> = {
+  send: [[880, 0, 0.07], [1244.5, 0.07, 0.09]],
+  exit: [[659.25, 0, 0.1], [440, 0.11, 0.18]],
+}
+
+/**
+ * Audible feedback for continuous conversation (连续对话).
+ *
+ * The user is not looking at the screen while talking, so "the loop took my
+ * sentence" and "the mode is off now" both need an answer that is not visual.
+ * Played at a lower gain than the completion chime: these fire mid-conversation
+ * and must not sound like an alert.
+ *
+ * Deliberately NOT gated on `notificationSound`: that switch is about task
+ * completion alerts (its description is "avoid interrupting Bluetooth audio"),
+ * while these are part of the voice mode the user just turned on. Silently
+ * dropping them would leave the mode with no feedback at all.
+ */
+export function playVoiceModeCue(kind: 'send' | 'exit') {
+  try {
+    const ctx = getAudioContext()
+    if (ctx.state === 'suspended') {
+      void ctx.resume()
+    }
+    const now = ctx.currentTime
+    for (const [freq, offset, duration] of VOICE_CUE_TONES[kind]) {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(0.18, now + offset)
+      gain.gain.exponentialRampToValueAtTime(0.01, now + offset + duration)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(now + offset)
+      osc.stop(now + offset + duration)
+    }
+  } catch (err: unknown) {
+    // Silently fail — the cue is non-critical
+    appLog.w(TAG, 'Failed to play voice mode cue:', err)
+  }
+}
+
 export function useNotificationSound() {
   return { play: playNotificationSound }
 }

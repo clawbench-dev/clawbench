@@ -354,6 +354,7 @@ import { sameFilePath } from '@/utils/path.ts'
 import { decidePendingNavigation, jumpFailureMessageKey } from '@/utils/pendingNavigation.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
+import { pickUnspokenReply } from '@/utils/speakableReply.ts'
 import { useFreeDialog, freeDialogSessionId } from '@/composables/useFreeDialog.ts'
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -1021,6 +1022,36 @@ function handleMemberFinalize(messageId) {
   autoSpeech.speakMessage(msg.id, fullText, speaker?.name || '')
 }
 
+// ── Reading the reply out loud ─────────────────────────
+// Auto-speech is triggered from the terminal `done` event, which is the only
+// place that knows a turn just finished. That event is not guaranteed to reach
+// us: a WS reconnect mid-turn (a mobile-network hiccup is enough — screen on,
+// app in the foreground) leaves the hub with no subscriber, so it drops the
+// frame and the turn ends through the session-state update / history reload
+// instead. Continuous conversation therefore re-asks once its turn has settled
+// with nothing playing (see `onSpeakPendingReply` in useFreeDialog) — this set
+// is what makes that safe: a reply that was already handed to TTS is never read
+// twice.
+const spokenReplyIds = new Set()
+
+/**
+ * Hands the newest unspoken assistant reply to auto-speech.
+ *
+ * Returns whether playback was started, so the caller can fall back to
+ * "nothing to say" handling (screen lock, reopening the microphone).
+ */
+function speakReplyIfPending() {
+  if (!autoSpeech.enabled.value) return false
+  // Group runs read each member's reply at stream_finalize; the terminal `done`
+  // carries only the last member, so speaking here would duplicate or replace it.
+  if (isGroupSession.value) return false
+  const pending = pickUnspokenReply(messages.value, spokenReplyIds)
+  if (!pending) return false
+  spokenReplyIds.add(pending.id)
+  autoSpeech.speakMessage(pending.id, pending.text)
+  return true
+}
+
 // ── Free-dialog mode (UI name: 连续对话) ────────────────
 // The loop itself lives in useFreeDialog (a module singleton); this is the
 // panel-side wiring: what to send, when a turn has finished, and when the user
@@ -1047,6 +1078,10 @@ function toggleFreeDialog() {
         if (!ok) freeDialog.setThinking(false)
       })
     },
+    // A reply whose `done` never arrived (WS reconnect mid-turn, lost
+    // subscription) is still in the history; without this the loop would go
+    // back to listening and the user would never hear the answer.
+    onSpeakPendingReply: speakReplyIfPending,
   })
 }
 
@@ -1107,6 +1142,9 @@ watch(loading, (now, before) => {
 // the conversation the user was talking to, and sending into a different one
 // would be worse than stopping.
 watch(() => identity.currentSessionId.value, (sid) => {
+  // Message ids are per session's history; carrying the set over would only
+  // grow it. (A same-session reload keeps it, which is the point.)
+  spokenReplyIds.clear()
   if (freeDialog.phase.value === 'idle') return
   if (sid === freeDialogSessionId()) return
   freeDialog.stop()
@@ -1120,30 +1158,16 @@ watch(() => identity.currentSessionId.value, (sid) => {
 async function onStreamEnd(reason) {
   if (reason === 'done') {
     playNotificationSound()
-    if (autoSpeech.enabled.value) {
-      if (isGroupSession.value) {
-        // Group runs are read per speaker at stream_finalize
-        // (handleMemberFinalize). The terminal `done` carries only the LAST
-        // member's reply, so speaking here would duplicate/replace it.
-        // onOutputEndNoSpeech is still called so the screen lock is released
-        // when nothing is queued or playing.
-        autoSpeech.onOutputEndNoSpeech()
-      } else {
-        const lastMsg = messages.value[messages.value.length - 1]
-        if (lastMsg?.role === 'assistant') {
-          const raw = extractSpeakableText(lastMsg.blocks || [])
-          if (raw && lastMsg.id) {
-            autoSpeech.speakMessage(lastMsg.id, raw)
-          } else {
-            // Output ended but no speakable text — restore screen lock
-            autoSpeech.onOutputEndNoSpeech()
-          }
-        } else {
-          autoSpeech.onOutputEndNoSpeech()
-        }
-      }
-    } else {
-      // Auto-speech off — restore screen lock since no TTS will play
+    if (isGroupSession.value) {
+      // Group runs are read per speaker at stream_finalize
+      // (handleMemberFinalize). The terminal `done` carries only the LAST
+      // member's reply, so speaking here would duplicate/replace it.
+      // onOutputEndNoSpeech is still called so the screen lock is released
+      // when nothing is queued or playing.
+      autoSpeech.onOutputEndNoSpeech()
+    } else if (!speakReplyIfPending()) {
+      // Nothing speakable (auto-speech off, or a reply with only tool calls) —
+      // restore the screen lock since no TTS will play.
       autoSpeech.onOutputEndNoSpeech()
     }
     // Recalculate chatUnread after stream completes — mark the current session

@@ -134,4 +134,49 @@ describe('useNotificationSound', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  // ── continuous-conversation cues ──
+  //
+  // "sent" and "closed" are part of the voice mode, not completion alerts, so
+  // they are neither gated on `notificationSound` nor coalesced with the chime.
+
+  it('plays a two-tone cue for each voice-mode event', async () => {
+    const chimes = stubAudioContext()
+    const { playVoiceModeCue, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+
+    playVoiceModeCue('send')
+    expect(chimes()).toBe(1)
+    // Immediately after — the notification coalescing window must not swallow
+    // it. A cue that arrives right after a completion chime is still the
+    // answer to "did it send?".
+    playVoiceModeCue('exit')
+    expect(chimes()).toBe(2)
+    vi.unstubAllGlobals()
+  })
+
+  it('plays the cue even when the completion chime is turned off', async () => {
+    // That switch is about task alerts ("avoid interrupting Bluetooth audio");
+    // the cue is feedback for a mode the user just turned on, and dropping it
+    // silently would leave the mode with no feedback at all.
+    mockLocalConfig.notificationSound = false
+    const audioCtxSpy = vi.fn()
+    vi.stubGlobal('AudioContext', audioCtxSpy)
+
+    const { playVoiceModeCue, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+    playVoiceModeCue('send')
+
+    expect(audioCtxSpy).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('never throws when audio is unavailable', async () => {
+    const { playVoiceModeCue, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+    expect(() => playVoiceModeCue('exit')).not.toThrow()
+  })
 })
