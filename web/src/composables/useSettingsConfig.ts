@@ -611,6 +611,11 @@ const serverDefaults: Record<string, unknown> = {
   'stt.api_key': '',
   'stt.model': 'openai/whisper-large-v3',
   'stt.resource_id': 'volc.seedasr.sauc.duration',
+  // Mirrors model.ApplyDefaults. The Alibaba base is separate from
+  // stt.base_url: switching providers must not inherit the vLLM localhost
+  // default and silently point the recogniser at nothing.
+  'stt.alibaba_base_url': 'https://dashscope.aliyuncs.com',
+  'stt.alibaba_model': 'paraformer-realtime-v2',
   'stt.language': 'zh',
   'stt.streaming': false,
   'stt.chunk_ms': 1000,

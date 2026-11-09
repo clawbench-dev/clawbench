@@ -2454,6 +2454,21 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		p.EndWindowSize = cfg.STT.EndWindowSize
 		return p
 	}
+	if cfg.STT.Provider == "alibaba" {
+		p := stt.NewAlibabaProvider(cfg.STT.APIKey)
+		if cfg.STT.AlibabaBaseURL != "" {
+			p.BaseURL = cfg.STT.AlibabaBaseURL
+		}
+		if cfg.STT.AlibabaModel != "" {
+			p.StreamModel = cfg.STT.AlibabaModel
+		}
+		p.Language = cfg.STT.Language
+		p.EnableITN = cfg.STT.EnableITN
+		p.EnablePunc = cfg.STT.EnablePunc
+		p.EnableDDC = cfg.STT.EnableDDC
+		p.EndWindowSize = cfg.STT.EndWindowSize
+		return p
+	}
 	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
 }
 

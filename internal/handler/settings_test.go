@@ -1564,6 +1564,28 @@ func TestServeConfig_Patch_STTProvider(t *testing.T) {
 	assert.Equal(t, "k", model.ConfigInstance.STT.APIKey)
 }
 
+// TestServeConfig_Patch_STTAlibaba covers the Alibaba Cloud fields end to end:
+// both must be in PatchableConfigPaths (otherwise the PATCH answers
+// forbidden_field) and in applyConfigPatch (otherwise the value is dropped).
+func TestServeConfig_Patch_STTAlibaba(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"stt":{"provider":"alibaba","api_key":"sk-dash","alibaba_base_url":"https://dashscope-intl.aliyuncs.com","alibaba_model":"paraformer-realtime-8k-v2"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "alibaba", model.ConfigInstance.STT.Provider)
+	assert.Equal(t, "sk-dash", model.ConfigInstance.STT.APIKey)
+	assert.Equal(t, "https://dashscope-intl.aliyuncs.com", model.ConfigInstance.STT.AlibabaBaseURL)
+	assert.Equal(t, "paraformer-realtime-8k-v2", model.ConfigInstance.STT.AlibabaModel)
+}
+
 // TestServeConfig_Patch_STTProviderRejectsUnknown guards the enum: an unknown
 // engine must be rejected instead of silently falling back to vLLM.
 func TestServeConfig_Patch_STTProviderRejectsUnknown(t *testing.T) {

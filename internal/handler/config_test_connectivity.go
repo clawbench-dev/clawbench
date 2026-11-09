@@ -356,8 +356,12 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	if resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider) == "doubao" {
+	providerName := resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider)
+	if providerName == "doubao" {
 		return testDoubaoSTT(ctx, values)
+	}
+	if providerName == "alibaba" {
+		return testAlibabaSTT(ctx, values)
 	}
 
 	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
@@ -456,6 +460,36 @@ func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestR
 		return ConnectivityTestResult{Success: false, Message: "Doubao transcription returned empty text"}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Doubao transcription succeeded: %q", text)}
+}
+
+// testAlibabaSTT probes Alibaba Cloud Model Studio with the embedded "你好"
+// clip. It goes through the same Qwen3-ASR-Flash path real uploads use, so a
+// key from the wrong region, a missing model or a revoked key all surface as
+// the actual HTTP answer instead of "the host is reachable".
+func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
+	if apiKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud API key is required"}
+	}
+	baseURL := resolveStringValue(values, "stt.alibaba_base_url", model.ConfigInstance.STT.AlibabaBaseURL)
+	language := resolveStringValue(values, "stt.language", model.ConfigInstance.STT.Language)
+
+	provider := stt.NewAlibabaProvider(apiKey)
+	if baseURL != "" {
+		provider.BaseURL = baseURL
+	}
+	provider.Language = language
+	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
+	if err != nil {
+		return sttProbeFailure(provider.BaseURL, "qwen3-asr-flash", err)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud transcription returned empty text"}
+	}
+	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Alibaba Cloud transcription succeeded: %q", text)}
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.

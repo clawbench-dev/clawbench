@@ -449,6 +449,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.ResourceID == "" {
 		cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
 	}
+	if cfg.STT.AlibabaBaseURL == "" {
+		cfg.STT.AlibabaBaseURL = "https://dashscope.aliyuncs.com"
+	}
+	if cfg.STT.AlibabaModel == "" {
+		cfg.STT.AlibabaModel = "paraformer-realtime-v2"
+	}
 	// Bool zero-value trap: ITN and punctuation default to ON, so only an
 	// explicit value in config.yaml may turn them off.
 	if _, ok := presence["stt.enable_itn"]; !ok {

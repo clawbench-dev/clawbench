@@ -545,6 +545,21 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
+  it('uses the PCM stream when the provider is alibaba and streaming is on', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { streaming: true, provider: 'alibaba' } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(env.getWS()).toBeDefined()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+    v.cancel()
+  })
+
   it('partial messages replace the transcript while keeping the typed prefix', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { streaming: true, provider: 'doubao' } }

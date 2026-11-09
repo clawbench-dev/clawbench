@@ -242,6 +242,83 @@ func TestServeConfigTest_STTDoubaoDispatches(t *testing.T) {
 	assert.True(t, result.Success, result.Message)
 }
 
+// ── Alibaba Cloud Model Studio branch ───────────────────────
+
+// TestSTTConnectivity_AlibabaSuccess asserts the probe uses the OpenAI-compatible
+// transcription path with the real speech clip inline as a data URI.
+func TestSTTConnectivity_AlibabaSuccess(t *testing.T) {
+	var gotPath, gotAuth string
+	var gotModel, gotData string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Content []struct {
+					InputAudio struct {
+						Data string `json:"data"`
+					} `json:"input_audio"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotModel = body.Model
+		if len(body.Messages) > 0 && len(body.Messages[0].Content) > 0 {
+			gotData = body.Messages[0].Content[0].InputAudio.Data
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"你好"}}]}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":         "alibaba",
+		"stt.api_key":          "sk-dash",
+		"stt.alibaba_base_url": srv.URL,
+		"stt.language":         "zh",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "/compatible-mode/v1/chat/completions", gotPath)
+	assert.Equal(t, "Bearer sk-dash", gotAuth)
+	assert.Equal(t, "qwen3-asr-flash", gotModel)
+
+	const prefix = "data:audio/mpeg;base64,"
+	require.True(t, strings.HasPrefix(gotData, prefix), gotData)
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(gotData, prefix))
+	require.NoError(t, err)
+	assert.Equal(t, sttProbeAudio, decoded, "probe must upload the real speech clip")
+}
+
+// TestSTTConnectivity_AlibabaRequiresAPIKey covers the missing-key guard.
+func TestSTTConnectivity_AlibabaRequiresAPIKey(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider": "alibaba",
+		"stt.api_key":  "",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "API key")
+}
+
+// TestSTTConnectivity_AlibabaAuthFailure classifies a rejected key by HTTP
+// status rather than by the message text.
+func TestSTTConnectivity_AlibabaAuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"InvalidApiKey","message":"bad key"}}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":         "alibaba",
+		"stt.api_key":          "bad",
+		"stt.alibaba_base_url": srv.URL,
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "auth failed")
+}
+
 // ── Summarize Voice: provider branch ────────────────────────
 
 // The provider branch of testSummarizeVoice: its protocol decides the request

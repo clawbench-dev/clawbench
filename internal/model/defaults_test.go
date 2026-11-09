@@ -170,6 +170,12 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.STT.Language != "zh" {
 		t.Errorf("STT.Language = %q, want default", cfg.STT.Language)
 	}
+	if cfg.STT.AlibabaBaseURL != "https://dashscope.aliyuncs.com" {
+		t.Errorf("STT.AlibabaBaseURL = %q, want default", cfg.STT.AlibabaBaseURL)
+	}
+	if cfg.STT.AlibabaModel != "paraformer-realtime-v2" {
+		t.Errorf("STT.AlibabaModel = %q, want default", cfg.STT.AlibabaModel)
+	}
 	if cfg.STT.ChunkMs != 1000 {
 		t.Errorf("STT.ChunkMs = %d, want 1000", cfg.STT.ChunkMs)
 	}

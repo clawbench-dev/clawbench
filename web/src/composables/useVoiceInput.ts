@@ -141,11 +141,12 @@ export function useVoiceInput() {
 
   /**
    * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
-   * protocol by provider capability, and only Doubao decodes PCM — every other
+   * protocol by provider capability, and only the engines that decode PCM
+   * (Doubao, Alibaba Cloud Paraformer) are reached that way — every other
    * provider receives the bytes as a `recording.webm` upload, so the flag alone
    * must never select this path.
    */
-  const usePcmStreaming = () => streaming() && provider() === 'doubao'
+  const usePcmStreaming = () => streaming() && (provider() === 'doubao' || provider() === 'alibaba')
 
   async function toggle(prefix = '') {
     if (state.value === 'recording' || state.value === 'transcribing') {

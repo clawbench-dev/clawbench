@@ -108,6 +108,8 @@ var hotReloadFields = map[string]bool{
 	"stt.api_key":                true,
 	"stt.model":                  true,
 	"stt.resource_id":            true,
+	"stt.alibaba_base_url":       true,
+	"stt.alibaba_model":          true,
 	"stt.language":               true,
 	"stt.streaming":              true,
 	"stt.chunk_ms":               true,
@@ -497,6 +499,8 @@ type configSTT struct {
 	APIKey          string `json:"api_key"`
 	Model           string `json:"model"`
 	ResourceID      string `json:"resource_id"`
+	AlibabaBaseURL  string `json:"alibaba_base_url"`
+	AlibabaModel    string `json:"alibaba_model"`
 	Language        string `json:"language"`
 	Streaming       bool   `json:"streaming"`
 	ChunkMs         int    `json:"chunk_ms"`
@@ -923,6 +927,8 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.api_key":                        true,
 	"stt.model":                          true,
 	"stt.resource_id":                    true,
+	"stt.alibaba_base_url":               true,
+	"stt.alibaba_model":                  true,
 	"stt.language":                       true,
 	"stt.streaming":                      true,
 	"stt.chunk_ms":                       true,
@@ -1019,7 +1025,7 @@ var validTTSEngines = map[string]bool{
 // must be rejected rather than falling back to vLLM, otherwise a typo silently
 // sends recordings to a service the user did not configure.
 var validSTTProviders = map[string]bool{
-	"vllm": true, "doubao": true,
+	"vllm": true, "doubao": true, "alibaba": true,
 }
 
 // validVoiceSensitivities is the set of voice-gate sensitivity values. The
@@ -1134,6 +1140,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			APIKey:          cfg.STT.APIKey,
 			Model:           cfg.STT.Model,
 			ResourceID:      cfg.STT.ResourceID,
+			AlibabaBaseURL:  cfg.STT.AlibabaBaseURL,
+			AlibabaModel:    cfg.STT.AlibabaModel,
 			Language:        cfg.STT.Language,
 			Streaming:       cfg.STT.Streaming,
 			ChunkMs:         cfg.STT.ChunkMs,
@@ -1730,12 +1738,17 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
 		if v, ok := sttVal["provider"].(string); ok && v != "" {
 			if !validSTTProviders[v] {
-				return fmt.Errorf("stt.provider must be one of: vllm,doubao")
+				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba")
 			}
 		}
 		if v, ok := sttVal["base_url"].(string); ok && v != "" {
 			if _, err := url.ParseRequestURI(v); err != nil {
 				return fmt.Errorf("stt.base_url must be a valid URL")
+			}
+		}
+		if v, ok := sttVal["alibaba_base_url"].(string); ok && v != "" {
+			if _, err := url.ParseRequestURI(v); err != nil {
+				return fmt.Errorf("stt.alibaba_base_url must be a valid URL")
 			}
 		}
 		if v, ok := sttVal["chunk_ms"].(float64); ok && v <= 0 {
@@ -2429,6 +2442,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["resource_id"].(string); ok {
 			cfg.STT.ResourceID = v
+		}
+		if v, ok := sttVal["alibaba_base_url"].(string); ok {
+			cfg.STT.AlibabaBaseURL = v
+		}
+		if v, ok := sttVal["alibaba_model"].(string); ok {
+			cfg.STT.AlibabaModel = v
 		}
 		if v, ok := sttVal["language"].(string); ok {
 			cfg.STT.Language = v
