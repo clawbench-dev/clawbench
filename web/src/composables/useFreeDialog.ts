@@ -138,6 +138,25 @@ let capturePending: Promise<boolean> | null = null
 let captureGen = 0
 /** Recogniser socket of the dictation (listening) phase. */
 let ws: WebSocket | null = null
+/**
+ * Set while the engine has been asked for its finished sentence and we are
+ * waiting for the answer.
+ *
+ * The running transcript is a REVISION, not the final answer. A streaming
+ * engine only finalizes a sentence once it has seen enough silence (Alibaba's
+ * default is 800 ms), and the microphone gate stops feeding audio 600 ms after
+ * the last loud frame — so the text in hand is missing its last few characters,
+ * and closing the socket (what this used to do) discarded them for good.
+ * Sending `end` makes the engine flush and answer with the finished sentence;
+ * dictation mode has always done that, free-dialog did not.
+ */
+let finalizeWait: {
+  /** Text to send if the engine never answers. */
+  fallback: string
+  /** Whether a trigger word still has to be stripped from the answer. */
+  trigger: boolean
+  timer: ReturnType<typeof setTimeout>
+} | null = null
 /** Text confirmed by the recogniser for the CURRENT utterance. */
 let utterance = ''
 /** The session the loop belongs to; a switch cancels the loop. */
@@ -169,6 +188,15 @@ let reopenTimer: ReturnType<typeof setTimeout> | null = null
 /** Recogniser socket that watches for an interruption (thinking/speaking). */
 let bargeWs: WebSocket | null = null
 let bargeTriggered = false
+/**
+ * How long to wait for the engine's finished sentence after "end".
+ *
+ * Long enough for a flush (Alibaba answers in a few hundred milliseconds),
+ * short enough that an engine which never answers costs a beat instead of the
+ * whole turn — on expiry the text already in hand is sent.
+ */
+const FINALIZE_TIMEOUT_MS = 1000
+
 /** Pending "arm the interrupt listener" timer — see `armBargeIn`. */
 let bargeArmTimer: ReturnType<typeof setTimeout> | null = null
 /**
@@ -304,6 +332,14 @@ function clearBargeArmTimer() {
   }
 }
 
+/** Abandons a pending "wait for the finished sentence" without sending. */
+function clearFinalizeWait() {
+  if (finalizeWait) {
+    clearTimeout(finalizeWait.timer)
+    finalizeWait = null
+  }
+}
+
 /** Closes the dictation recogniser, leaving the microphone alone. */
 function closeDictationSocket() {
   listenGen += 1
@@ -386,6 +422,8 @@ export function stop(options: { notify?: boolean; silent?: boolean } = {}): void
   clearReopenTimer()
   clearSettleTimer()
   clearWakeLockWarningTimer()
+  // A pending finalize must not send into a mode the user has just left.
+  clearFinalizeWait()
   stopCapture()
   wakeLock.release(WAKE_LOCK_REASON)
   utterance = ''
@@ -425,6 +463,9 @@ export function stop(options: { notify?: boolean; silent?: boolean } = {}): void
 function restartSilenceTimer() {
   clearSilenceTimer()
   if (tuning.silenceSendMs <= 0) return
+  // The send decision is already made and the engine is finishing the
+  // sentence; a later revision must not arm a second one.
+  if (finalizeWait) return
   // Nothing to send yet: arming here would only burn a timer that expires into
   // an empty utterance.
   if (!utterance.trim()) return
@@ -466,15 +507,84 @@ function applyTranscript(next: string): void {
   if (next === utterance) return
   utterance = next
   liveTranscript.value = next
+  // While the engine is finishing the sentence, a revision belongs to the
+  // answer we asked for — it must not re-arm the pause timer.
+  if (finalizeWait) return
   restartSilenceTimer()
   restartIdleExitTimer()
 }
 
-/** Sends the current utterance as a turn and stops feeding the recogniser. */
-function sendTurn(text: string) {
+/**
+ * Sends the current utterance as a turn.
+ *
+ * Unless the transcript is already final (`finalized`), this does NOT send
+ * immediately: it first asks the recogniser for its finished sentence.
+ *
+ * The running transcript is a REVISION. A streaming engine only settles a
+ * sentence after enough silence (Alibaba's default is 800 ms) while the
+ * microphone gate stops feeding audio 600 ms after the last loud frame, so the
+ * text in hand is missing its last few characters — closing the socket there
+ * discarded them for good. `end` makes the engine flush and answer with the
+ * finished sentence; dictation mode has always done that, this mode did not.
+ *
+ * `trigger` marks a send caused by the trigger word: the finished sentence
+ * still ends with it, so it is stripped again once the answer is in.
+ */
+function sendTurn(text: string, opts: { trigger?: boolean; finalized?: boolean } = {}) {
   const clean = text.trim()
   if (!clean) return
+  // Already waiting for the engine: a second partial must not start a second
+  // send (and a second `end`).
+  if (finalizeWait) return
   clearSilenceTimer()
+  const trigger = opts.trigger === true
+  const sock = ws
+  if (opts.finalized || !sock || sock.readyState !== WebSocket.OPEN || phase.value !== 'listening') {
+    commitTurn(clean, trigger)
+    return
+  }
+  // Stop feeding audio before asking: what follows the end of the sentence
+  // belongs to the next one.
+  frameSink = null
+  finalizeWait = {
+    fallback: clean,
+    trigger,
+    timer: setTimeout(() => {
+      if (!finalizeWait) return
+      finalizeWait = null
+      // The engine never answered. Send what we have rather than lose the turn.
+      commitTurn(utterance.trim() || clean, trigger)
+    }, FINALIZE_TIMEOUT_MS),
+  }
+  try {
+    sock.send(JSON.stringify({ type: 'end' }))
+  } catch {
+    // The socket died under us: fall through to the timeout, which sends the
+    // text already in hand.
+  }
+}
+
+/**
+ * Starts the turn with the text the recogniser has settled on.
+ *
+ * `trigger` re-strips the trigger word: the finished sentence includes it even
+ * though the partial it was matched on had already had it removed.
+ */
+function commitTurn(text: string, trigger: boolean) {
+  let clean = text.trim()
+  if (trigger) {
+    const { matched, text: rest } = extractTrigger(clean, tuning.triggerWords)
+    if (matched) clean = rest.trim()
+  }
+  if (!clean) {
+    // The revision retracted the words. Sending an empty turn would be a turn
+    // the user never asked for; go back to listening instead.
+    utterance = ''
+    liveTranscript.value = ''
+    closeDictationSocket()
+    void openListening()
+    return
+  }
   utterance = ''
   liveTranscript.value = ''
   // Stop feeding dictation before the turn starts: the reply will be read
@@ -599,8 +709,18 @@ async function openListening(): Promise<void> {
         checkTrigger()
       } else if (msg.type === 'done') {
         const final = (msg.final ?? '').trim()
+        const wait = finalizeWait
+        if (wait) {
+          // This is the answer to the `end` we sent: the finished sentence.
+          // Use it (or the text in hand if the engine had nothing to add) and
+          // do NOT run the trigger check again — the answer still ends with the
+          // trigger word and would fire a second send.
+          clearFinalizeWait()
+          commitTurn(final || wait.fallback, wait.trigger)
+          return
+        }
         if (final) applyTranscript(final)
-        checkTrigger()
+        checkTrigger({ finalized: true })
       } else if (msg.type === 'error') {
         lastError.value = msg.message || gt('chat.voice.transcribeFailed')
         toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
@@ -627,6 +747,9 @@ async function openListening(): Promise<void> {
   }
   sock.onclose = () => {
     if (ws !== sock || myGen !== gen) return
+    // The engine closes the connection right after answering our `end`, and
+    // that answer is the user's turn: leaving the mode here would drop it.
+    if (finalizeWait) return
     if (phase.value === 'listening') stop({ notify: false })
   }
   phase.value = 'listening'
@@ -649,15 +772,20 @@ async function openListening(): Promise<void> {
  * Running on partials is safe because the match is anchored to the END of the
  * transcript: a revision that adds words after the trigger simply stops
  * matching until the user says it again.
+ *
+ * `finalized` says the transcript came from a `done`, so it is already the
+ * engine's finished sentence and must not be sent back to the engine to be
+ * finalized a second time.
  */
-function checkTrigger() {
+function checkTrigger(opts: { finalized?: boolean } = {}) {
   if (phase.value !== 'listening') return
+  if (finalizeWait) return
   const text = utterance.trim()
   if (!text) return
   const { matched, text: rest } = extractTrigger(text, tuning.triggerWords)
   if (!matched) return
   if (rest) {
-    sendTurn(rest)
+    sendTurn(rest, { trigger: true, finalized: opts.finalized === true })
     return
   }
   // A bare "发送" sends nothing — there was no content, and sending an empty
@@ -837,6 +965,9 @@ export function setFreeDialogThinking(thinking: boolean): void {
   turnInFlight = thinking
   if (thinking) {
     if (phase.value === 'listening') {
+      // A turn started from elsewhere: the sentence this loop was finalizing
+      // would become a second, queued turn.
+      clearFinalizeWait()
       closeDictationSocket()
       phase.value = 'thinking'
     }
@@ -933,7 +1064,12 @@ watch(
       // used to swallow the first syllables of the reply on Android, and the
       // barge-in listener is about to read the same frames anyway.
       clearSettleTimer()
-      if (phase.value === 'listening') closeDictationSocket()
+      if (phase.value === 'listening') {
+        // Playback owns the microphone now; a pending finalize must not fire a
+        // turn in the middle of it.
+        clearFinalizeWait()
+        closeDictationSocket()
+      }
       phase.value = 'speaking'
       void openBargeListener()
     } else if (!playing && wasPlaying) {

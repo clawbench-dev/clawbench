@@ -164,6 +164,11 @@ function speak(text: string, kind: 'partial' | 'text' | 'done' = 'done') {
   sock.onmessage?.({ data: JSON.stringify(payload) })
 }
 
+/** How many `{"type":"end"}` control frames a socket has been given. */
+function endFrames(sock: FakeSocket): number {
+  return sock.sent.filter((m) => String(m).includes('"type":"end"')).length
+}
+
 async function flush() {
   await Promise.resolve()
   await Promise.resolve()
@@ -718,16 +723,88 @@ describe('useFreeDialog', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('sends after a pause long enough to count as done', async () => {
+  it('sends the finished sentence, not the half-revised partial', async () => {
+    // The bug this guards: the microphone gate stops feeding audio 600 ms after
+    // the last loud frame while a streaming engine needs ~800 ms of silence to
+    // settle a sentence — so the partial in hand is missing its last few
+    // characters, and closing the socket there (what this used to do) lost them
+    // for good. `end` makes the engine flush and answer with the finished
+    // sentence, which is what gets sent.
     const onSend = vi.fn()
     const { startFreeDialog } = await import('../useFreeDialog')
     await startFreeDialog({ sessionId: 's1', onSend })
     await flush()
+    const sock = sockets[0]
     // Recognition confirms a sentence, no trigger word in it.
     speak('这个文件改坏了', 'text')
     expect(onSend).not.toHaveBeenCalled()
     vi.advanceTimersByTime(3000)
+    // The pause fired: the engine is asked to finish the sentence instead of
+    // the revision being sent as-is.
+    expect(onSend).not.toHaveBeenCalled()
+    expect(endFrames(sock)).toBe(1)
+    speak('这个文件改坏了，你看看', 'done')
+    expect(onSend).toHaveBeenCalledWith('这个文件改坏了，你看看')
+  })
+
+  it('sends the text in hand when the engine never answers', async () => {
+    // A hung engine must cost a beat, not the whole turn.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('这个文件改坏了', 'text')
+    vi.advanceTimersByTime(3000)
+    expect(onSend).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('asks the engine for the finished sentence only once', async () => {
+    // Revisions keep arriving while the engine chews on the tail. A second
+    // `end` (and a second send) would duplicate the turn.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    const sock = sockets[0]
+    speak('帮我看下这个报错 发送', 'partial')
+    speak('帮我看下这个报错 发送', 'partial')
+    speak('帮我看下这个报错 发送', 'partial')
+    expect(endFrames(sock)).toBe(1)
+    // The answer still ends with the trigger word; it must not fire again.
+    speak('帮我看下这个报错 发送', 'done')
+    expect(endFrames(sock)).toBe(1)
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveBeenCalledWith('帮我看下这个报错')
+  })
+
+  it('keeps the turn when the engine closes right after answering "end"', async () => {
+    // The relay finishes the session on `end` and closes the connection. That
+    // close is the normal end of a finalize, not a reason to leave the mode.
+    const onSend = vi.fn()
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    const sock = sockets[0]
+    speak('这个文件改坏了', 'text')
+    vi.advanceTimersByTime(3000)
+    sock.onclose?.()
+    expect(useFreeDialog().phase.value).toBe('listening')
+    vi.advanceTimersByTime(1000)
+    expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('does not send a sentence the user abandoned by closing the mode', async () => {
+    const onSend = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('这个文件改坏了', 'text')
+    vi.advanceTimersByTime(3000)
+    mod.stop()
+    vi.advanceTimersByTime(2000)
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('restarts the pause timer when more words are recognised', async () => {
@@ -743,6 +820,8 @@ describe('useFreeDialog', () => {
     vi.advanceTimersByTime(2000)
     expect(onSend).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1000)
+    // The pause fired; the engine then answers with the finished sentence.
+    speak('第一句话，还有', 'done')
     expect(onSend).toHaveBeenCalledWith('第一句话，还有')
   })
 
@@ -761,6 +840,8 @@ describe('useFreeDialog', () => {
       vi.advanceTimersByTime(200)
       streamer.emit(0.02)
     }
+    // The pause fired during the loop; the engine answers with the sentence.
+    speak('这个文件改坏了', 'done')
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
   })
 
@@ -776,6 +857,7 @@ describe('useFreeDialog', () => {
     vi.advanceTimersByTime(2000)
     speak('第一句话', 'partial')
     vi.advanceTimersByTime(1000)
+    speak('第一句话', 'done')
     expect(onSend).toHaveBeenCalledWith('第一句话')
   })
 
@@ -980,6 +1062,12 @@ describe('useFreeDialog', () => {
     await startFreeDialog({ sessionId: 's1', onSend })
     await flush()
     speak('帮我看下这个报错 发送', 'partial')
+    // Matched on the partial, but the sentence is not settled yet: the engine
+    // is asked to finish it first, so the tail is not lost.
+    expect(onSend).not.toHaveBeenCalled()
+    expect(endFrames(sockets[0])).toBe(1)
+    speak('帮我看下这个报错 发送', 'done')
+    // The trigger word is stripped again from the finished sentence.
     expect(onSend).toHaveBeenCalledWith('帮我看下这个报错')
   })
 
