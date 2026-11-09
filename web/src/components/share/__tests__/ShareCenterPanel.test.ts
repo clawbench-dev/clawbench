@@ -43,6 +43,7 @@ vi.mock('@/utils/shareActions', () => ({
 vi.mock('@/composables/useSettingsConfig', () => ({ serverConfig: { value: { mail: { enabled: true } } } }))
 
 import ShareCenterPanel from '@/components/share/ShareCenterPanel.vue'
+import { emitShareChanged, _resetShareChangedForTest } from '@/composables/useShareEvents'
 
 const i18n = createI18n({
   legacy: false,
@@ -162,6 +163,9 @@ async function openRow(name: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Listeners live in module state, so one test's mounted panel would otherwise
+  // still be subscribed during the next one.
+  _resetShareChangedForTest()
   h.confirm.mockResolvedValue(true)
   h.compose.mockResolvedValue(true)
   h.shareLink.mockResolvedValue('shared')
@@ -281,14 +285,21 @@ describe('ShareCenterPanel — actions', () => {
     })
   }
 
-  it('copies the primary address, not the raw path', async () => {
+  it('offers copy exactly once, in the address field', async () => {
     stubAll()
     const wrapper = await openRow('report.md')
 
-    await wrapper.find('[data-action="share-to"]').exists()
-    const copyBtn = wrapper.findAll('.share-actions .fbtn').find((b) => b.text().includes('Copy link'))
-    await copyBtn!.trigger('click')
+    // The action bar used to carry its own "copy" button, two lines under the
+    // address field's own copy button — the same action twice, which read as
+    // two different things. Only the field keeps it.
+    const labels = wrapper.findAll('.share-actions .fbtn').map((b) => b.text())
+    expect(labels.filter((l) => l.includes('Copy link'))).toHaveLength(0)
 
+    // …and the field's copy button is wired to the primary address, not the
+    // raw server path.
+    const addrCopy = wrapper.find('[data-share-primary] + .share-addr-btn, .share-addr-btn')
+    expect(addrCopy.exists(), 'the address field must keep its copy button').toBe(true)
+    await addrCopy.trigger('click')
     expect(h.copyText).toHaveBeenCalledWith('http://10.0.0.5:20000/share/f1')
   })
 
@@ -420,5 +431,78 @@ describe('ShareCenterPanel — clear all', () => {
     // The running meeting keeps its row: its link is how people are joining.
     expect(wrapper.findAll('.share-row')).toHaveLength(1)
     expect(wrapper.find('.share-row-name').text()).toBe('进行中')
+  })
+})
+
+
+describe('ShareCenterPanel — live updates', () => {
+  /**
+   * The tab refreshes when it is re-activated, which covers "share it, then go
+   * look". It must ALSO refresh while it is already on screen: on a wide layout
+   * the file preview or the chat sits next to this panel, so a share made there
+   * has to appear without switching tabs.
+   */
+  it('reloads when a share is created elsewhere while the tab is active', async () => {
+    const calls = stubFetch({
+      '/api/share/list': () => ({ body: { shares: [] } }),
+      '/api/share/session/list': () => ({ body: { shares: [] } }),
+      '/api/live-share/notes/sessions': () => ({ body: { sessions: [] } }),
+    })
+    const wrapper = mount(ShareCenterPanel, {
+      props: { active: true },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const before = calls.length
+    expect(wrapper.findAll('.share-row')).toHaveLength(0)
+
+    // A conversation gets shared in the chat panel.
+    emitShareChanged('session')
+    await flushPromises()
+
+    // Three list requests again — a real refetch, not just a re-render.
+    expect(calls.length).toBe(before + 3)
+  })
+
+  it('ignores the notification while the tab is not active', async () => {
+    const calls = stubFetch({
+      '/api/share/list': () => ({ body: { shares: [] } }),
+      '/api/share/session/list': () => ({ body: { shares: [] } }),
+      '/api/live-share/notes/sessions': () => ({ body: { sessions: [] } }),
+    })
+    mount(ShareCenterPanel, {
+      props: { active: false },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const before = calls.length
+    emitShareChanged('file')
+    await flushPromises()
+
+    // Hidden tabs must not fetch: the activation watcher will reload when the
+    // user actually looks at it, and a background refetch of three endpoints
+    // per share is pure waste.
+    expect(calls.length).toBe(before)
+  })
+
+  it('stops listening once unmounted', async () => {
+    const calls = stubFetch({
+      '/api/share/list': () => ({ body: { shares: [] } }),
+      '/api/share/session/list': () => ({ body: { shares: [] } }),
+      '/api/live-share/notes/sessions': () => ({ body: { sessions: [] } }),
+    })
+    const wrapper = mount(ShareCenterPanel, {
+      props: { active: true },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+    wrapper.unmount()
+
+    const before = calls.length
+    emitShareChanged('session')
+    await flushPromises()
+    expect(calls.length).toBe(before)
   })
 })

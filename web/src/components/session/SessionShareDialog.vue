@@ -163,6 +163,7 @@ import { openExternalUrl } from '@/utils/externalLink'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { appLog } from '@/utils/appLog'
 import { useSessionShare } from '@/composables/useSessionShare'
+import { emitShareChanged } from '@/composables/useShareEvents'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
 // dialogs load it; see the file header for why it cannot be scoped.
 import '@/assets/share-dialog.css'
@@ -339,6 +340,9 @@ async function createLink() {
     // exactly the ids the new link carries.
     sharedIds.value = new Set(ids)
     markShared(props.sessionId)
+    // The 分享 tab may be open on the other half of a wide screen. It cannot
+    // see this dialog, and it has no way to poll for it — tell it.
+    emitShareChanged('session')
     // Auto-copy the freshly created link — the common next step is pasting it
     // somewhere. Silent: the link is already visible in the field above, and
     // this path has no button to flash a check on.
@@ -370,6 +374,7 @@ async function revokeLink() {
     sharedIds.value = null
     selectedIds.value = new Set(messages.value.filter(isSelectable).map((m) => m.id))
     markUnshared(props.sessionId)
+    emitShareChanged('session')
     toast.show(t('sessionShare.revoked'), { icon: 'link', type: 'success', duration: 2000 })
   } catch (err) {
     errorMsg.value = err instanceof Error ? err.message : String(err)

@@ -343,6 +343,7 @@ import {
 } from '@/composables/useMeetingHistory'
 import { useMeetingResources } from '@/composables/useMeetingResources'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
+import { emitShareChanged } from '@/composables/useShareEvents'
 import {
   setMeetingView,
   clearMeetingView,
@@ -1010,6 +1011,11 @@ async function setShareEnabled(enabled: boolean): Promise<void> {
     if (!resp.ok) throw new Error(resp.statusText)
     const data = (await resp.json()) as { session?: MeetingRecord }
     if (data.session) record.value = data.session
+    // Publishing changes whether this meeting appears in the 分享 tab at all
+    // (an unpublished finished meeting is not a share). Tell it, or it keeps
+    // showing a row whose link is now dead — or misses one that just became
+    // readable.
+    emitShareChanged('meeting')
     toast.show(
       t(enabled ? 'shareCenter.meetingSwitchOn' : 'shareCenter.revokedMeeting'),
       { icon: 'link', type: 'success', duration: 2000 },
@@ -1022,7 +1028,8 @@ async function setShareEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-async function cancelRegenerate(): Promise<void> {  if (!record.value) return
+async function cancelRegenerate(): Promise<void> {
+  if (!record.value) return
   const ok = await history.cancelRegeneration(record.value.token)
   if (!ok) {
     toast.show(t('meeting.detail.regen.cancelFailed'), { type: 'error', icon: 'warning' })

@@ -132,14 +132,14 @@
               {{ item.shareEnabled ? t('shareCenter.meetingSharedHint') : t('shareCenter.meetingPrivateHint') }}
             </p>
 
+            <!-- No standalone "copy" button: the address field above already
+                 carries one, and a second one two lines below it was the same
+                 action twice. The share button degrades to copying on hosts
+                 without a sheet, which is where the remaining copy lives. -->
             <ActionBar class="share-actions" mode="menu" size="bar">
               <button class="fbtn" type="button" @click="openLink">
                 <ExternalLink :size="14" />
                 <span class="action-label">{{ t('shareCenter.open') }}</span>
-              </button>
-              <button class="fbtn" type="button" @click="copyLink">
-                <Copy :size="14" />
-                <span class="action-label">{{ t('shareCenter.copy') }}</span>
               </button>
               <button
                 class="fbtn"
@@ -176,12 +176,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   ChevronDown,
-  Copy,
   ExternalLink,
   FileText,
   Folder,
@@ -199,8 +198,8 @@ import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { useShareCenter, type ShareItem } from '@/composables/useShareCenter'
+import { onShareChanged } from '@/composables/useShareEvents'
 import type { ShareLink } from '@/composables/useShareLinks'
-import { copyText } from '@/utils/clipboard'
 import { openExternalUrl } from '@/utils/externalLink'
 import { formatRelativeTime } from '@/utils/format'
 import { appLog } from '@/utils/appLog'
@@ -264,6 +263,9 @@ const errorText = computed(() => {
   if (kinds.length === 3) return t('shareCenter.loadFailed')
   return t('shareCenter.partialFailed', { kinds: kinds.join(' / ') })
 })
+
+// Unsubscribe handle for the "a share changed elsewhere" notification.
+let offShareChanged: (() => void) | null = null
 
 const openKey = ref('')
 const links = ref<ShareLink[]>([])
@@ -330,12 +332,6 @@ function openLink(): void {
   const url = primaryUrl()
   if (!url) return
   openExternalUrl(url)
-}
-
-function copyLink(): void {
-  const url = primaryUrl()
-  if (!url) return
-  copyText(url, () => toast.show(t('shareCenter.copied'), { icon: 'link', type: 'success', duration: 1800 }))
 }
 
 async function shareTo(item: ShareItem): Promise<void> {
@@ -418,6 +414,21 @@ async function clearAll(): Promise<void> {
 
 onMounted(() => {
   void center.load()
+  // Shares are created from three other screens (a file's toolbar, a
+  // conversation's dialog, a meeting's result page). Re-activating the tab
+  // covers "share it, then come look", but not having this tab open on the
+  // other half of a wide screen while the share is made — there the list stayed
+  // stale until the user switched away and back. The emit closes that gap.
+  //
+  // `reload()` rather than `load()`: it also rebuilds the open row's address
+  // list, so a regenerated link is never shown as the old one.
+  offShareChanged = onShareChanged(() => {
+    if (props.active) void reload()
+  })
+})
+
+onBeforeUnmount(() => {
+  offShareChanged?.()
 })
 
 // Re-entering the tab refreshes: links are created from three other screens, so
@@ -615,6 +626,15 @@ watch(
   }
 }
 
+/* One colour per kind, so the four sources are told apart at a glance.
+   All four come from the status palette, NOT from `--accent-color`: the accent
+   is a different colour in each of the 36 themes, and on several of them it
+   sits close to one of the status hues — the folder and the conversation would
+   then read as the same colour in some themes and not others. The status
+   palette is defined identically across every theme, so the mapping holds
+   everywhere.
+   File is green rather than grey on purpose: leaving one kind grey would make
+   it read as "no type" instead of "the file kind". */
 .share-kind-icon {
   display: inline-flex;
   align-items: center;
@@ -623,14 +643,14 @@ watch(
   width: calc(28 * var(--dp));
   height: calc(28 * var(--dp));
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
-  color: var(--text-secondary);
+  color: var(--kind-color);
+  background: color-mix(in srgb, var(--kind-color) 12%, transparent);
 }
 
-.share-kind-icon.kind-meeting {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  color: var(--accent-color);
-}
+.share-kind-icon.kind-dir { --kind-color: var(--color-info); }
+.share-kind-icon.kind-file { --kind-color: var(--color-green); }
+.share-kind-icon.kind-session { --kind-color: var(--color-purple); }
+.share-kind-icon.kind-meeting { --kind-color: var(--color-orange); }
 
 .share-row-text {
   display: flex;

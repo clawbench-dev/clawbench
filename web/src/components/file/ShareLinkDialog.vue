@@ -96,6 +96,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { useFileShare } from '@/composables/useFileShare.ts'
+import { emitShareChanged } from '@/composables/useShareEvents'
 import { copyText } from '@/utils/clipboard.ts'
 import { openExternalUrl } from '@/utils/externalLink'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
@@ -185,6 +186,9 @@ async function createLink() {
     const data = await resp.json()
     await setLinksForPath(data.path)
     markShared(props.file.path)
+    // Covers both "create" and "regenerate" (which calls this): either way the
+    // 分享 tab's copy of the list is now wrong.
+    emitShareChanged('file')
     // Auto-copy the freshly created link — the common next step is pasting it
     // somewhere. Silent on purpose: the link is already visible in the field
     // above, and this path has no button to flash a check on.
@@ -212,6 +216,7 @@ async function revokeLink() {
     if (!resp.ok) throw new Error(resp.statusText)
     linkUrl.value = ''
     markUnshared(props.file.path)
+    emitShareChanged('file')
     toast.show(t('shareDialog.revoked'), { icon: 'link', type: 'success', duration: 2000 })
   } catch (err) {
     errorMsg.value = err instanceof Error ? err.message : String(err)
