@@ -89,6 +89,10 @@
             <FolderUp :size="16" />
             <span class="action-label">{{ t('actionLabels.uploadFolder') }}</span>
           </button>
+          <button class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
+            <SearchCode :size="16" />
+            <span class="action-label">{{ t('actionLabels.contentSearch') }}</span>
+          </button>
           <button class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
@@ -110,14 +114,6 @@
           <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
             <FolderSearch :size="16" />
             <span class="action-label">{{ t('jump.button') }}</span>
-          </button>
-          <button class="toolbar-btn" @click="$emit('openShareCenter')" :title="t('shareCenter.title')">
-            <ScreenShare :size="16" />
-            <span class="action-label">{{ t('actionLabels.sharedFiles') }}</span>
-          </button>
-          <button class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
-            <SearchCode :size="16" />
-            <span class="action-label">{{ t('actionLabels.contentSearch') }}</span>
           </button>
         </ActionBar>
       </div>
@@ -823,7 +819,7 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
 })
 
-const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete', 'openShareCenter'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'newFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
 const sortMenuOpen = ref(false)

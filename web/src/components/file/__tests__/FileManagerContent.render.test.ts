@@ -110,19 +110,52 @@ describe('FileManagerContent — rendering', () => {
     expect(toolbarBtns.length).toBeGreaterThanOrEqual(4) // sort, hidden, refresh, multi-select, more
   })
 
-  it('renders content-search before the secondary toggles', () => {
+  it('keeps content-search out of the fold tail', () => {
     const wrapper = mountContent()
     // ActionBar folds the TAIL of the row, so a late button disappears first.
     // contentSearch used to sit last, which made it invisible on a normal-width
-    // toolbar — the reported bug. Its DOM position is now the priority.
-    const titles = wrapper.findAll('.dir-toolbar-btns > .toolbar-btn, .dir-toolbar-btns .toolbar-dropdown-wrap > .toolbar-btn')
-      .map(b => b.attributes('title') ?? '')
-    const pos = titles.findIndex(t => t.includes('搜索'))
-    for (const lower of ['跳转', '已分享', '显示隐藏文件', '多选']) {
-      const other = titles.findIndex(t => t.includes(lower))
-      if (other === -1) continue
-      expect(pos, `contentSearch should precede ${lower}`).toBeLessThan(other)
-    }
+    // toolbar — the reported bug.
+    //
+    // Asserted by POSITION, not by label. The previous version matched Chinese
+    // titles against a test dictionary that has no entry for these keys, so
+    // every lookup returned -1 and the `continue` guard skipped every
+    // comparison: the test passed for years while checking nothing. Position is
+    // language-independent and is what the folding behaviour actually depends
+    // on.
+    const buttons = wrapper.findAll(
+      '.dir-toolbar-btns > .toolbar-btn, .dir-toolbar-btns .toolbar-dropdown-wrap > .toolbar-btn',
+    )
+    expect(buttons.length, 'the toolbar must render its buttons').toBeGreaterThan(1)
+
+    // The search button is the one whose icon is the code-search glyph; find it
+    // structurally rather than by translated text.
+    const searchIdx = buttons.findIndex((b) => b.find('svg.lucide-search-code').exists())
+    expect(searchIdx, 'content-search must be in the toolbar').toBeGreaterThanOrEqual(0)
+    expect(searchIdx, 'content-search must not be the last (first-folded) button').toBeLessThan(
+      buttons.length - 1,
+    )
+  })
+
+  it('has no share-list button: managing shares lives in the 分享 tab', () => {
+    // The toolbar carried a "分享" button that jumped to the 分享 tab. With the
+    // tab in the dock it was a second, partial entry point to a list the dock
+    // already shows — and it sat between "jump" and "content search", pushing
+    // both further towards the fold.
+    //
+    // Found by ICON, not by title: this suite's i18n dictionary is a hand-picked
+    // subset that has no entry for `shareCenter.title`, so a title-based check
+    // matched the empty string and passed even with the button present (proven
+    // by mutation). `screen-share` appears in the row context menu, but that is
+    // not inside the toolbar — within `.dir-toolbar-btns` it can only be this
+    // button.
+    const wrapper = mountContent()
+    const toolbarIcons = wrapper
+      .findAll('.dir-toolbar-btns svg')
+      .map((s) => s.attributes('class') ?? '')
+    expect(
+      toolbarIcons.some((c) => c.includes('lucide-screen-share')),
+      'the toolbar must not carry a share-list button',
+    ).toBe(false)
   })
 })
 

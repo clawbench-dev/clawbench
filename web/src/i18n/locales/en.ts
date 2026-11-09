@@ -53,7 +53,6 @@ export default {
     help: 'Help',
     keyConfig: 'Key config',
     openDir: 'Open folder',
-    sharedFiles: 'Sharing',
     pin: 'Pin',
     quote: 'Quote',
     scanPorts: 'Scan',

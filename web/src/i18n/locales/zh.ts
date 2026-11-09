@@ -52,7 +52,6 @@ export default {
     help: '帮助',
     keyConfig: '按键配置',
     openDir: '打开目录',
-    sharedFiles: '分享',
     pin: '固定',
     quote: '引用',
     scanPorts: '端口扫描',

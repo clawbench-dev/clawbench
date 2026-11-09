@@ -123,7 +123,6 @@
                       @rename="handleRename"
                       @delete="handleDelete"
                       @batch-delete="handleBatchDelete"
-                      @open-share-center="switchTab('share')"
                       @refresh="handleRefresh"
                       @open-terminal="handleOpenTerminal"
                     />
