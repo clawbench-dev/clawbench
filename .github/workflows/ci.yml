@@ -577,17 +577,25 @@ jobs:
         # available while the matrix is expanded). The DENOMINATOR in the
         # `--shard=i/n` argument below must equal this list's length;
         # scripts/__tests__/ciSharding.test.ts fails the build if they drift.
+        #
+        # Written out explicitly rather than as `include:` + a `shard:` list.
+        # Mixing the two is legal but was NOT expanded the way it reads: the
+        # first run of this job (PR #652, run 42554466700) created only the
+        # three webkit jobs and silently dropped chromium and firefox — 6 of the
+        # 9 combinations never ran, and nothing went red to say so, because a
+        # job that is never created is not a failure. An explicit list has no
+        # such ambiguity, and `scripts/__tests__/ciSharding.test.ts` checks that
+        # the set of labels and the shard indexes are both complete.
         include:
-          - project: chromium-coverage
-            label: chromium
-            browser: chromium
-          - project: firefox
-            label: firefox
-            browser: firefox
-          - project: webkit
-            label: webkit
-            browser: webkit
-        shard: [1, 2, 3]
+          - { project: chromium-coverage, label: chromium, browser: chromium, shard: 1 }
+          - { project: chromium-coverage, label: chromium, browser: chromium, shard: 2 }
+          - { project: chromium-coverage, label: chromium, browser: chromium, shard: 3 }
+          - { project: firefox, label: firefox, browser: firefox, shard: 1 }
+          - { project: firefox, label: firefox, browser: firefox, shard: 2 }
+          - { project: firefox, label: firefox, browser: firefox, shard: 3 }
+          - { project: webkit, label: webkit, browser: webkit, shard: 1 }
+          - { project: webkit, label: webkit, browser: webkit, shard: 2 }
+          - { project: webkit, label: webkit, browser: webkit, shard: 3 }
     steps:
       - uses: actions/checkout@v4
         with:

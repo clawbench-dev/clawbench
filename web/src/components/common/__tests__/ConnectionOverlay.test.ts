@@ -122,14 +122,20 @@ describe('ConnectionOverlay', () => {
         expect(btn?.textContent).toContain('切换服务端')
 
         btn?.click()
-        await nextTick()
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
+        //
+        // Polled rather than asserted after a single `nextTick()`: a native
+        // `click()` schedules a Vue update that a busy runner can flush later
+        // than one tick, and the bare assertion then failed on CI (job
+        // 128956975616, "expected <div .connection-overlay> to be null") while
+        // passing on an idle machine. Waiting for the condition is the point —
+        // the overlay disappearing IS the behaviour under test.
+        await expect.poll(() => $('.connection-overlay')).toBeNull()
         const modal = $('.modal-overlay')
         expect(modal).not.toBeNull()
         expect(modal!.style.display).not.toBe('none')
-        expect($('.connection-overlay')).toBeNull()
 
         // Closing the dialog brings the mask back while still disconnected.
         const dialog = wrapper.findComponent(ServerSwitchDialog)

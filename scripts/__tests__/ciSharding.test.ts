@@ -60,17 +60,27 @@ describe('CI: E2E sharding', () => {
     expect(denomM, 'no --shard=i/n in the e2e job').not.toBeNull()
     const denom = Number(denomM![1])
 
-    const listM = job.match(/^\s+shard:\s*\[([^\]]*)\]\s*$/m)
-    expect(listM, 'no literal `shard: [...]` matrix entry').not.toBeNull()
-    const list = listM![1]
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
+    // The matrix is an explicit `include:` list of {label, shard} objects (see
+    // the comment in ci.yml). A `shard: [...]` list mixed with `include:` is
+    // legal YAML but did NOT expand as intended: PR #652's first run created
+    // only the three webkit jobs and silently dropped chromium and firefox,
+    // and a job that is never created reports nothing at all.
+    const entries = [...job.matchAll(/\{[^}]*shard:\s*(\d+)[^}]*\}/g)]
+    expect(entries.length, 'no explicit matrix combinations found').toBeGreaterThan(0)
 
-    expect(list.length).toBe(denom)
-    // The indexes must be exactly 1..n: a duplicate or a gap means one slice is
-    // run twice and another never.
-    expect(list.map(Number)).toEqual(Array.from({ length: denom }, (_, i) => i + 1))
+    const shards = [...new Set(entries.map((m) => Number(m[1])))].sort((a, b) => a - b)
+    expect(shards).toEqual(Array.from({ length: denom }, (_, i) => i + 1))
+
+    // Every browser must appear once per shard. A missing combination is
+    // invisible in CI (nothing runs, nothing fails), so it is checked here.
+    const labels = [...job.matchAll(/label:\s*([a-z-]+)/g)].map((m) => m[1])
+    const byLabel = new Map<string, number>()
+    for (const l of labels) byLabel.set(l, (byLabel.get(l) ?? 0) + 1)
+    expect([...byLabel.keys()].sort()).toEqual(['chromium', 'firefox', 'webkit'])
+    for (const [label, count] of byLabel) {
+      expect(count, `${label} does not have exactly ${denom} shard(s)`).toBe(denom)
+    }
+    expect(entries.length).toBe(denom * byLabel.size)
   })
 
   it('names per-shard artifacts uniquely', () => {
