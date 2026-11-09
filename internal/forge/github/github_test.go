@@ -729,3 +729,107 @@ func TestSearchItems_NoSinceOmitsQualifier(t *testing.T) {
 		"a query without a window must not be time-bounded")
 	assert.Contains(t, gotQuery, "crash")
 }
+
+// TestListItems_NumberQueryFetchesIssueDirectly pins the numeric search path:
+// GitHub's search API cannot match on item number, so a bare number must be
+// answered by GET /issues/{n} rather than sent to /search/issues as text.
+//
+// The state filter is deliberately not applied: a number names one item, and
+// hiding it because the row happens to be closed would read as "search is
+// broken".
+func TestListItems_NumberQueryFetchesIssueDirectly(t *testing.T) {
+	var paths []string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		assert.Equal(t, "/api/v3/repos/acme/widgets/issues/123", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"number":123,"title":"closed one","state":"closed",
+			"user":{"login":"alice"},"html_url":"https://github.com/acme/widgets/issues/123",
+			"updated_at":"2026-09-10T10:00:00Z"}`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: string(forge.StateOpen), Query: "#123",
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, 123, res.Items[0].Number)
+	assert.Equal(t, forge.StateClosed, res.Items[0].State)
+	assert.False(t, res.HasMore)
+	assert.Equal(t, []string{"/api/v3/repos/acme/widgets/issues/123"}, paths,
+		"a numeric query must be one direct GET, never a trip through the search API")
+}
+
+// TestListItems_NumberQueryOnPRTabUsesPullEndpoint: the same number means
+// "this pull request" on the PR tab, and the pull endpoint carries the head
+// branch the CI lookup needs.
+func TestListItems_NumberQueryOnPRTabUsesPullEndpoint(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v3/repos/acme/widgets/pulls/7", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"number":7,"title":"pr","state":"open","user":{"login":"bob"},
+			"head":{"ref":"feat/x"},"html_url":"https://github.com/acme/widgets/pull/7",
+			"updated_at":"2026-09-10T10:00:00Z"}`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, Query: "!7",
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, forge.ItemTypeChangeRequest, res.Items[0].Type)
+	assert.Equal(t, "feat/x", res.Items[0].SourceBranch)
+}
+
+// TestListItems_NumberQueryKeepsTabsDisjoint: GitHub numbers issues and pull
+// requests from one sequence and its issues endpoint returns pull requests, so
+// a PR number typed on the issues tab must yield nothing rather than a PR row.
+func TestListItems_NumberQueryKeepsTabsDisjoint(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"number":42,"title":"actually a pr","state":"open",
+			"user":{"login":"bob"},
+			"pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/42"},
+			"html_url":"https://github.com/acme/widgets/pull/42",
+			"updated_at":"2026-09-10T10:00:00Z"}`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, Query: "42",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Items, "a PR number must not leak into the issues tab")
+}
+
+// TestListItems_NumberQueryNotFoundIsEmpty: searching an unknown number is a
+// legitimate empty answer, not an error card.
+func TestListItems_NumberQueryNotFoundIsEmpty(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, Query: "999",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Items)
+	assert.False(t, res.HasMore)
+}
+
+// TestListItems_NumberQueryPropagatesRealErrors is the control for the above:
+// only not-found is swallowed, so a bad token still reaches the user.
+func TestListItems_NumberQueryPropagatesRealErrors(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, Query: "1",
+	})
+	require.Error(t, err)
+	assert.True(t, forge.IsAuthError(err), "an auth failure must not be reported as an empty result")
+}

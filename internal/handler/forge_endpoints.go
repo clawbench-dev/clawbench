@@ -178,7 +178,12 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Optional "mine" filter, applied server-side using the token's identity.
-	if q.Get("mine") == "1" {
+	//
+	// Skipped for a numeric query: a bare number is an exact lookup ("open
+	// #123"), which the provider resolves without applying state either. Adding
+	// "not assigned to you" on top would answer a request the user did not make.
+	_, numberQuery := forge.ParseNumberQuery(opts.Query)
+	if q.Get("mine") == "1" && !numberQuery {
 		me, meErr := provider.CurrentUser(forgeContext(r))
 		if meErr != nil {
 			writeForgeError(w, meErr, pf)

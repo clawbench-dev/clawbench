@@ -715,3 +715,44 @@ func TestServeForgeItems_NotFoundWithTokenStaysGeneric(t *testing.T) {
 	assert.Equal(t, "ForgeNotFound", resp["code"],
 		"a configured token means the 404 is a real not-found, not a credential hint")
 }
+
+// TestServeForgeItems_NumberQuerySkipsMineFilter pins the "a number is an exact
+// lookup" rule at the endpoint level.
+//
+// The provider already ignores the state chip for a numeric query; the handler
+// owns the "mine" filter and must agree, or searching a number while "assigned
+// to me" is selected would answer "not assigned to you" for an item the user
+// can plainly see.
+func TestServeForgeItems_NumberQuerySkipsMineFilter(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	userCalled := false
+	bindMockGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/user") {
+			userCalled = true
+			_, _ = w.Write([]byte(`{"username":"me"}`))
+			return
+		}
+		assert.Equal(t, "/api/v4/projects/acme%2Fwidgets/issues/12", r.URL.EscapedPath())
+		_, _ = w.Write([]byte(`{"iid":12,"title":"someone else's issue","state":"opened",
+			"author":{"username":"other"},"assignees":[],"labels":[],
+			"web_url":"https://gitlab.example.com/acme/widgets/-/issues/12",
+			"created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z"}`))
+	}))
+
+	req := newRequest(t, http.MethodGet,
+		"/api/forge/items?type=issue&state=open&mine=1&mineScope=assigned&q=%2312", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItems, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	items := resp["items"].([]any)
+	require.Len(t, items, 1, "a numeric lookup must return the item regardless of filters")
+	assert.Equal(t, float64(12), items[0].(map[string]any)["number"])
+	assert.False(t, userCalled, "the mine filter must not run for a numeric query")
+}

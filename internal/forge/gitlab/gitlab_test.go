@@ -538,3 +538,89 @@ func TestListResult_NoHeader(t *testing.T) {
 	assert.False(t, res.HasMore)
 	assert.Zero(t, res.NextPage)
 }
+
+// TestListItems_NumberQueryFetchesIssueByIID pins the numeric search path:
+// GitLab's `search` parameter covers title/description only and never the IID,
+// so a bare number must be answered by GET /issues/{iid} instead.
+//
+// The state filter is deliberately not applied: a number names one item, and
+// hiding it because the row happens to be closed would read as "search is
+// broken".
+func TestListItems_NumberQueryFetchesIssueByIID(t *testing.T) {
+	var paths []string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.EscapedPath())
+		assert.Equal(t, "/api/v4/projects/group%2Fwidgets/issues/12", r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":12,"title":"closed one","state":"closed",
+			"author":{"username":"alice"},"labels":[],"user_notes_count":0,
+			"web_url":"https://gitlab.com/group/widgets/-/issues/12",
+			"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-10T00:00:00Z"}`))
+	}), "group", "widgets")
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: string(forge.StateOpen), Query: "#12",
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, 12, res.Items[0].Number)
+	assert.Equal(t, forge.StateClosed, res.Items[0].State)
+	assert.False(t, res.HasMore)
+	assert.Equal(t, []string{"/api/v4/projects/group%2Fwidgets/issues/12"}, paths,
+		"a numeric query must be one direct GET with no search parameter")
+}
+
+// TestListItems_NumberQueryOnPRTabUsesMergeRequestEndpoint: on the PR tab the
+// same number addresses a merge request. GitLab keeps the two sequences
+// separate, so no cross-type check is needed — but the endpoint must be right.
+func TestListItems_NumberQueryOnPRTabUsesMergeRequestEndpoint(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/group%2Fwidgets/merge_requests/9", r.URL.EscapedPath())
+		assert.Empty(t, r.URL.Query().Get("search"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":9,"title":"mr","state":"opened","draft":true,
+			"author":{"username":"bob"},"labels":[],
+			"web_url":"https://gitlab.com/group/widgets/-/merge_requests/9",
+			"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-10T00:00:00Z"}`))
+	}), "group", "widgets")
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, Query: "!9",
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, forge.ItemTypeChangeRequest, res.Items[0].Type)
+	assert.True(t, res.Items[0].Draft)
+}
+
+// TestListItems_NumberQueryNotFoundIsEmpty: searching an unknown number is a
+// legitimate empty answer, not an error card.
+func TestListItems_NumberQueryNotFoundIsEmpty(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"404 Not found"}`))
+	}), "group", "widgets")
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, Query: "999",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Items)
+}
+
+// TestListItems_NumberQueryPropagatesRealErrors is the control for the above:
+// only not-found is swallowed, so a bad token still reaches the user.
+func TestListItems_NumberQueryPropagatesRealErrors(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
+	}), "group", "widgets")
+
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, Query: "1",
+	})
+	require.Error(t, err)
+	assert.True(t, forge.IsAuthError(err))
+}

@@ -2,6 +2,8 @@ package forge
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -125,6 +127,39 @@ type ListResult struct {
 	HasMore bool
 	// NextPage is the next page number when HasMore is true.
 	NextPage int
+}
+
+// ParseNumberQuery reports whether a search string is a bare item number and
+// returns it.
+//
+// Both platforms number their issues and change requests, but neither search
+// API can match on that number: GitHub's /search/issues has no number
+// qualifier, and GitLab's `search` covers title/description only. A numeric
+// query therefore means "open exactly this item", which the adapters answer
+// with a direct GET.
+//
+// The optional "#" / "!" prefix is the notation both web UIs use (#123, !123)
+// and is stripped, so pasting a reference works. Anything else — including a
+// number followed by words — stays a text search.
+func ParseNumberQuery(q string) (int, bool) {
+	s := strings.TrimSpace(q)
+	// Strip at most one prefix: "#!1" is not a reference to anything.
+	if strings.HasPrefix(s, "#") || strings.HasPrefix(s, "!") {
+		s = s[1:]
+	}
+	if s == "" {
+		return 0, false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // Provider is the read-only forge surface. Implementations must never issue

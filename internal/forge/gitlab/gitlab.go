@@ -139,6 +139,14 @@ func verifyUser(ctx context.Context, baseURL, token string, client *http.Client)
 
 // ListItems returns a page of issues or merge requests.
 func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	// A bare number is an exact lookup rather than a text search — see
+	// forge.ParseNumberQuery. It is answered before the state guards below,
+	// because a number identifies one item regardless of which filter happens
+	// to be selected in the UI.
+	if number, ok := forge.ParseNumberQuery(opts.Query); ok {
+		return p.listByNumber(ctx, opts.Type, number)
+	}
+
 	// GitLab issues have no merged lifecycle, and the API rejects
 	// state=merged on the issues endpoint with 400. Answer the impossible
 	// query locally instead of forwarding it and surfacing a platform error
@@ -194,6 +202,26 @@ func (p *Provider) GetItem(ctx context.Context, typ forge.ItemType, number int) 
 		return forge.Item{}, err
 	}
 	return raw.toItem(typ), nil
+}
+
+// listByNumber resolves a numeric search to the single item it names.
+//
+// A miss is an empty page, not an error: the user is searching, and "there is
+// no such issue" is a legitimate answer. Reporting it as a not-found error
+// card would read as a broken integration.
+//
+// Unlike GitHub, GitLab numbers issues and merge requests independently, so the
+// requested type alone decides which item the number refers to — no
+// cross-type check is needed.
+func (p *Provider) listByNumber(ctx context.Context, typ forge.ItemType, number int) (forge.ListResult, error) {
+	item, err := p.GetItem(ctx, typ, number)
+	if err != nil {
+		if forge.IsNotFoundError(err) {
+			return forge.ListResult{Items: []forge.Item{}}, nil
+		}
+		return forge.ListResult{}, err
+	}
+	return forge.ListResult{Items: []forge.Item{item}}, nil
 }
 
 // ListComments returns a page of notes for an item, oldest first.

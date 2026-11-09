@@ -5719,6 +5719,9 @@ paths:
 
         每项的 `unread` 为 true 表示该条目有用户尚未查看的活动。它与 dock 角标
         计数的是同一批数据，因此角标数字与列表中的未读标记始终一致。
+
+        `q` 为纯数字（可带 `#` / `!` 前缀）时按编号精确查找：返回该编号对应的
+        单条记录（不存在则空列表）。此时 `state` 与 `mine` 都不生效。
       parameters:
         - name: type
           in: query
@@ -5738,6 +5741,9 @@ paths:
             type: integer
         - name: q
           in: query
+          description: |
+            搜索关键词。纯数字（可带 `#` / `!` 前缀，如 `123`、`#123`、`!123`）
+            视为编号精确查找，返回该编号的单条记录；其余值按标题 / 描述搜索。
           schema:
             type: string
         - name: mine
