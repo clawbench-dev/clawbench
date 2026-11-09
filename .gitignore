@@ -25,6 +25,8 @@ clawbench-dev
 dev-clawbench
 coverage.out
 coverage/
+# Per-shard coverage from `check-frontend-coverage.sh --shard=i/n`
+coverage-shards/
 
 # Runtime
 nohup.out
