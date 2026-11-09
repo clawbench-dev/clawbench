@@ -136,7 +136,14 @@ describe('ConnectionOverlay', () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
 
-        const btn = $('.connection-overlay__switch')
+        // Take the button from the LAST mask in <body>, not the first: this
+        // case's own mask is the most recently teleported one. `$()` returns
+        // the first match, which on CI could be a stale mask that a previous
+        // case left behind — clicking that one changed a dead instance's state
+        // and left `open` false (measured: "expected false to be true").
+        const masks = document.body.querySelectorAll('.connection-overlay')
+        expect(masks.length).toBeGreaterThan(0)
+        const btn = masks[masks.length - 1].querySelector('.connection-overlay__switch') as HTMLElement | null
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
