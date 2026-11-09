@@ -619,6 +619,7 @@ const serverDefaults: Record<string, unknown> = {
   'stt.language': 'zh',
   'stt.streaming': false,
   'stt.chunk_ms': 1000,
+  'stt.final_recheck': false,
   'stt.shortcut_key': 'F9',
   'stt.enable_itn': true,
   'stt.enable_punc': true,

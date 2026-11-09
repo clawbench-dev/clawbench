@@ -336,7 +336,11 @@ export function useVoiceInput() {
           // Buffered-engine fallback emits deltas only.
           appendText(msg.text)
         } else if (msg.type === 'done') {
-          setPartial(msg.final ?? '')
+          // A final is authoritative when present. An empty one means the
+          // server did not re-check the whole recording (stt.final_recheck is
+          // off), so the accumulated text stands — clearing here would throw
+          // the user's dictation away.
+          if (msg.final) setPartial(msg.final)
           finalize()
         } else if (msg.type === 'error') {
           fail(msg.message || i18n.global.t('chat.voice.transcribeFailed'))

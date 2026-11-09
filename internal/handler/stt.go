@@ -232,7 +232,8 @@ func (s *sttStreamState) rateLocked() int {
 //
 // The server accumulates audio and, whenever a chunk has ended (a pause, or the
 // configured interval), transcribes that chunk and appends the text. After
-// "end", it re-transcribes the full buffer and sends the final result.
+// "end" it re-transcribes the full buffer only when stt.final_recheck is on;
+// otherwise "done" carries no final and the accumulated text stands.
 func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: wsOriginPatterns(r)})
 	if err != nil {
@@ -324,18 +325,24 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 	cancel()
 	<-tickDone
 
-	// Final full transcription of the whole buffer.
-	state.mu.Lock()
-	full := append([]byte(nil), state.buffer.Bytes()...)
-	rate := state.rateLocked()
-	heard := state.voiceSeen
-	state.mu.Unlock()
-
+	// Final answer. Only a whole-buffer re-transcription can span the chunk
+	// boundaries, so it is what makes the final text more coherent than the
+	// chunks the client accumulated — but it is a second pass over the entire
+	// clip, so it is opt-in (stt.final_recheck, default off). When off, "done"
+	// carries no final and the client keeps what the chunks produced.
 	finalText := ""
-	if len(full) > 0 && heard {
-		text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(wavFromPCM(full, rate)), cfg.STT.Language)
-		if terr == nil {
-			finalText = text
+	if cfg.STT.FinalRecheck {
+		state.mu.Lock()
+		full := append([]byte(nil), state.buffer.Bytes()...)
+		rate := state.rateLocked()
+		heard := state.voiceSeen
+		state.mu.Unlock()
+
+		if len(full) > 0 && heard {
+			text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(wavFromPCM(full, rate)), cfg.STT.Language)
+			if terr == nil {
+				finalText = text
+			}
 		}
 	}
 

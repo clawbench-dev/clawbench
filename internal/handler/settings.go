@@ -113,6 +113,7 @@ var hotReloadFields = map[string]bool{
 	"stt.language":               true,
 	"stt.streaming":              true,
 	"stt.chunk_ms":               true,
+	"stt.final_recheck":          true,
 	"stt.shortcut_key":           true,
 	"stt.enable_itn":             true,
 	"stt.enable_punc":            true,
@@ -504,6 +505,7 @@ type configSTT struct {
 	Language        string `json:"language"`
 	Streaming       bool   `json:"streaming"`
 	ChunkMs         int    `json:"chunk_ms"`
+	FinalRecheck    bool   `json:"final_recheck"`
 	ShortcutKey     string `json:"shortcut_key"`
 	EnableITN       bool   `json:"enable_itn"`
 	EnablePunc      bool   `json:"enable_punc"`
@@ -932,6 +934,7 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.language":                       true,
 	"stt.streaming":                      true,
 	"stt.chunk_ms":                       true,
+	"stt.final_recheck":                  true,
 	"stt.shortcut_key":                   true,
 	"stt.enable_itn":                     true,
 	"stt.enable_punc":                    true,
@@ -1145,6 +1148,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Language:        cfg.STT.Language,
 			Streaming:       cfg.STT.Streaming,
 			ChunkMs:         cfg.STT.ChunkMs,
+			FinalRecheck:    cfg.STT.FinalRecheck,
 			ShortcutKey:     cfg.STT.ShortcutKey,
 			EnableITN:       cfg.STT.EnableITN,
 			EnablePunc:      cfg.STT.EnablePunc,
@@ -2457,6 +2461,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["chunk_ms"].(float64); ok {
 			cfg.STT.ChunkMs = int(v)
+		}
+		if v, ok := sttVal["final_recheck"].(bool); ok {
+			cfg.STT.FinalRecheck = v
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok {
 			cfg.STT.ShortcutKey = v

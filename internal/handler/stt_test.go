@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"clawbench/internal/model"
 )
 
 // sttTestProvider is a deterministic STT provider for tests.
@@ -23,11 +25,15 @@ type sttTestProvider struct {
 	errText string
 	lang    string
 	audio   string
+	// calls counts Transcribe invocations, so a test can tell "the chunk was
+	// transcribed" from "the whole recording was transcribed again".
+	calls int
 }
 
 func (f *sttTestProvider) Transcribe(_ context.Context, r io.Reader, lang string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls++
 	f.lang = lang
 	b, _ := io.ReadAll(r)
 	f.audio = string(b)
@@ -188,6 +194,13 @@ func TestSTTTranscribeWS_IncrementalAndFinal(t *testing.T) {
 	old := GetSTTProvider()
 	defer SetSTTProvider(old)
 	SetSTTProvider(&sttTestProvider{text: "识别文本"})
+
+	// The final pass is opt-in (stt.final_recheck); this test covers it being
+	// on. The default — no second pass, "done" carries no final — is pinned by
+	// TestSTTTranscribeWS_FinalRecheckOffByDefault.
+	origRecheck := model.ConfigInstance.STT.FinalRecheck
+	model.ConfigInstance.STT.FinalRecheck = true
+	defer func() { model.ConfigInstance.STT.FinalRecheck = origRecheck }()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
 	defer server.Close()

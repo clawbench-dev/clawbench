@@ -3551,6 +3551,8 @@ export default {
       sttStreamingDesc: '开启后按住说话时实时上屏增量文本；关闭则松手后整段识别',
       sttChunkMs: '切片间隔(ms)',
       sttChunkMsDesc: '连续说话一直不停顿时，最长多久切一片去识别（正常说话在停顿处就切了，不受此项影响）；实际切点不小于 0.8 秒、也不晚于「停顿发送秒数 − 0.5 秒」，太短的片段识别质量差，太晚则赶不上停顿发送',
+      sttFinalRecheck: '收尾整段复核',
+      sttFinalRecheckDesc: '录音结束后把整段音频再识别一遍，用它的结果替换过程中的分段文本，最终文字更连贯；代价是整段音频被识别两次，所以默认关闭',
       sttShortcutKey: '录音快捷键',
       sttShortcutKeyDesc: '触发录音的全局快捷键（默认 F9）',
       sttMicHeader: '麦克风处理',

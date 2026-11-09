@@ -315,9 +315,10 @@ func TestBufferedForceCutMs(t *testing.T) {
 	assert.Equal(t, 10000, bufferedForceCutMs(10000, 0))
 }
 
-// TestSTTTranscribeWS_FinalTextIsWholeRecording verifies the final answer is a
-// re-transcription of everything, not just the last chunk: the client replaces
-// its transcript with it, so a chunk-only final would lose the earlier lines.
+// TestSTTTranscribeWS_FinalTextIsWholeRecording verifies the opt-in final pass
+// is a re-transcription of everything, not just the last chunk: the client
+// replaces its transcript with it, so a chunk-only final would lose the earlier
+// lines.
 func TestSTTTranscribeWS_FinalTextIsWholeRecording(t *testing.T) {
 	old := GetSTTProvider()
 	defer SetSTTProvider(old)
@@ -325,8 +326,13 @@ func TestSTTTranscribeWS_FinalTextIsWholeRecording(t *testing.T) {
 	SetSTTProvider(provider)
 
 	origChunk := model.ConfigInstance.STT.ChunkMs
+	origRecheck := model.ConfigInstance.STT.FinalRecheck
 	model.ConfigInstance.STT.ChunkMs = 200
-	defer func() { model.ConfigInstance.STT.ChunkMs = origChunk }()
+	model.ConfigInstance.STT.FinalRecheck = true
+	defer func() {
+		model.ConfigInstance.STT.ChunkMs = origChunk
+		model.ConfigInstance.STT.FinalRecheck = origRecheck
+	}()
 
 	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
 	defer server.Close()
@@ -357,6 +363,61 @@ func TestSTTTranscribeWS_FinalTextIsWholeRecording(t *testing.T) {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
 	assert.True(t, strings.HasPrefix(provider.audio, "RIFF"))
+}
+
+// TestSTTTranscribeWS_FinalRecheckOffByDefault verifies the default: the chunks
+// are all the client gets. The whole recording is not transcribed a second time,
+// so "done" carries no final and the text the client accumulated stands.
+func TestSTTTranscribeWS_FinalRecheckOffByDefault(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+	provider := &sttTestProvider{text: "分段"}
+	SetSTTProvider(provider)
+
+	origChunk := model.ConfigInstance.STT.ChunkMs
+	origRecheck := model.ConfigInstance.STT.FinalRecheck
+	model.ConfigInstance.STT.ChunkMs = 200
+	model.ConfigInstance.STT.FinalRecheck = false
+	defer func() {
+		model.ConfigInstance.STT.ChunkMs = origChunk
+		model.ConfigInstance.STT.FinalRecheck = origRecheck
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(STTTranscribeWS))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/api/stt/transcribe/ws", nil)
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	startCtl, _ := json.Marshal(sttWSControl{Type: sttWSStartCtl, SampleRate: 16000, Channels: 1, Bits: 16})
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, startCtl))
+	require.NoError(t, conn.Write(ctx, websocket.MessageBinary, loudPCM(5)))
+
+	// Wait for the chunk itself rather than sleeping: the chunk ends on 800 ms
+	// of silence, so receiving the text proves the wait was long enough.
+	assertReadsText(t, conn)
+
+	endCtl, _ := json.Marshal(sttWSControl{Type: sttWSEndCtl})
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, endCtl))
+
+	for {
+		_, data, rerr := conn.Read(ctx)
+		require.NoError(t, rerr)
+		var m sttWSServerMsg
+		require.NoError(t, json.Unmarshal(data, &m))
+		if m.Type != sttWSDone {
+			continue
+		}
+		assert.Empty(t, m.Final, "no whole-recording pass while the switch is off")
+		break
+	}
+
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	assert.Equal(t, 1, provider.calls, "only the chunk is transcribed")
 }
 
 // TestTranscribeBufferedChunk_DropsSilence verifies a chunk with no speech is

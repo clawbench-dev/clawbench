@@ -458,7 +458,13 @@ type STTConfig struct {
 	EndWindowSize   int    `yaml:"end_window_size"`   // Streaming VAD silence threshold in ms (default: 800)
 	Streaming       bool   `yaml:"streaming"`         // true=streaming incremental, false=non-streaming full (default: false)
 	ChunkMs         int    `yaml:"chunk_ms"`          // Streaming slice interval in ms (default: 1000)
-	ShortcutKey     string `yaml:"shortcut_key"`      // Recording shortcut (default: "F9")
+	// FinalRecheck re-transcribes the whole recording once the client sends
+	// "end", replacing the text it accumulated from the chunks. It is the only
+	// way a buffered engine's final answer can span chunk boundaries, but it
+	// costs a second pass over the entire clip, so it is off by default and the
+	// client keeps what the chunks produced.
+	FinalRecheck bool   `yaml:"final_recheck"` // Re-transcribe everything at the end (default: false)
+	ShortcutKey  string `yaml:"shortcut_key"`  // Recording shortcut (default: "F9")
 
 	// Microphone preprocessing. Applied where the microphone is opened, so the
 	// echo/noise/gain trio also reaches a meeting audience; the band filter is

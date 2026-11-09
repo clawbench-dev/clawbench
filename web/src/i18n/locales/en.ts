@@ -3555,6 +3555,8 @@ export default {
       sttStreamingDesc: 'Enable real-time incremental text while recording; off = full recognition on release',
       sttChunkMs: 'Chunk interval (ms)',
       sttChunkMsDesc: 'Longest stretch of unbroken speech sent for recognition at once (normal speech is cut at the pause instead); never shorter than 0.8 s and never later than pause-to-send − 0.5 s, since tiny clips transcribe poorly and late ones miss the pause-to-send deadline',
+      sttFinalRecheck: 'Re-check the whole recording at the end',
+      sttFinalRecheckDesc: 'Re-transcribe the entire recording once it ends and replace the chunk-by-chunk text with that result for a more coherent final answer; the cost is a second pass over the whole clip, so it is off by default',
       sttShortcutKey: 'Recording shortcut',
       sttShortcutKeyDesc: 'Global shortcut to trigger recording (default F9)',
       sttMicHeader: 'Microphone processing',
