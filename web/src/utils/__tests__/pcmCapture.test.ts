@@ -79,6 +79,9 @@ describe('PcmStreamer', () => {
   })
 
   afterEach(() => {
+    // The gate measures its hangover against `Date.now`, so one test fakes the
+    // clock; a fake clock left behind would freeze every later test.
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -179,6 +182,29 @@ describe('PcmStreamer', () => {
     // Second frame is inside the hangover window.
     expect(onFrame).toHaveBeenCalledTimes(2)
     s.stop()
+  })
+
+  it('holds the gate open for the span the tuning asks for', async () => {
+    // The span is engine-dependent: a streaming engine only closes a sentence
+    // after its own end window (800 ms by default), and the trailing silence has
+    // to outlast it or the last characters never settle on screen.
+    const feed = async (hangoverMs: number) => {
+      const onFrame = vi.fn()
+      const s = new PcmStreamer({ stream, tuning: { ...VOICE_TUNING_DEFAULTS, hangoverMs }, onFrame })
+      await s.start()
+      workletNode.port.onmessage!({ data: frameAt(8000) })
+      vi.advanceTimersByTime(900)
+      workletNode.port.onmessage!({ data: frameAt(0) })
+      s.stop()
+      return onFrame.mock.calls.length
+    }
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    // 900 ms after the last loud frame: inside a 1100 ms hangover, outside the
+    // old fixed 600 ms one.
+    expect(await feed(1100)).toBe(2)
+    expect(await feed(600)).toBe(1)
   })
 
   it('does not grow the pre-roll buffer without bound', async () => {

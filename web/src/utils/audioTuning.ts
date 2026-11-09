@@ -48,6 +48,16 @@ export interface VoiceTuning {
   bargeIn: BargeInMode
   /** Only used when `bargeIn === 'keyword'`. */
   bargeInWords: string[]
+  /**
+   * How long audio keeps flowing after the last loud frame.
+   *
+   * Not a comfort knob: a streaming engine only closes a sentence after its own
+   * end window of silence (800 ms by default), and the transcript stays a
+   * revision short until it does. Keeping the gate open a little longer than
+   * that window is what lets the last characters settle on screen while the
+   * user is still listening — see how it is derived in `readVoiceTuning`.
+   */
+  hangoverMs: number
 }
 
 /**
@@ -87,7 +97,20 @@ export const VOICE_TUNING_DEFAULTS: VoiceTuning = {
   idleExitMs: 60000,
   bargeIn: 'any',
   bargeInWords: [...DEFAULT_BARGE_IN_WORDS],
+  hangoverMs: 600,
 }
+
+/**
+ * Silence the trailing gate adds on top of the engine's own end window.
+ *
+ * The engine measures its window from where ITS voice detector saw the speech
+ * end, which is a little later than our threshold; the margin covers that plus
+ * one 100 ms frame of scheduling slack.
+ */
+const HANGOVER_MARGIN_MS = 300
+/** Shortest and longest trailing silence worth sending. */
+const HANGOVER_MIN_MS = 600
+const HANGOVER_MAX_MS = 2500
 
 /** Band filter corners. See `buildBandFilter` for why the low-pass is soft. */
 export const BAND_HIGHPASS_HZ = 100
@@ -155,6 +178,22 @@ export function readSttField(config: Record<string, unknown> | undefined | null,
 }
 
 /**
+ * How much silence the ACTIVE engine needs before it closes a sentence.
+ *
+ * Only the streaming engines have such a window (`end_window_size`, 800 ms by
+ * default). The buffered path has none: the server closes a chunk on its own
+ * wall-clock quiet timer, which trailing audio cannot influence — hence 0, and
+ * the floor applies.
+ */
+function engineEndWindowMs(cfg: Record<string, unknown>): number {
+  const provider = typeof cfg.provider === 'string' ? cfg.provider : ''
+  const section = provider ? cfg[provider] : undefined
+  if (!section || typeof section !== 'object') return 0
+  const raw = Number((section as Record<string, unknown>).end_window_size)
+  return Number.isFinite(raw) && raw > 0 ? raw : 0
+}
+
+/**
  * Reads the tuning out of the server config.
  *
  * Every field falls back to the shipped default, so a server that predates
@@ -169,6 +208,7 @@ export function readVoiceTuning(config: Record<string, unknown> | undefined | nu
   // keepalive — is measured that way.
   const silenceRaw = Number(cfg.silence_send_seconds)
   const idleExitRaw = Number(cfg.idle_exit_seconds)
+  const endWindowMs = engineEndWindowMs(cfg)
   return {
     echoCancellation: asBool(cfg.mic_echo_cancel, d.echoCancellation),
     noiseSuppression: asBool(cfg.mic_noise_suppress, d.noiseSuppression),
@@ -181,6 +221,11 @@ export function readVoiceTuning(config: Record<string, unknown> | undefined | nu
     idleExitMs: Number.isFinite(idleExitRaw) && idleExitRaw >= 0 ? Math.round(idleExitRaw * 1000) : d.idleExitMs,
     bargeIn: asBargeIn(cfg.barge_in),
     bargeInWords: parseWordList(cfg.barge_in_words, d.bargeInWords),
+    // Outlast the engine's window so it closes the sentence by itself. Without
+    // this the trailing gate shuts first (600 ms vs 800 ms), the engine never
+    // settles the last sentence, and the missing characters only show up when
+    // the send flushes it.
+    hangoverMs: Math.min(HANGOVER_MAX_MS, Math.max(HANGOVER_MIN_MS, endWindowMs + HANGOVER_MARGIN_MS)),
   }
 }
 

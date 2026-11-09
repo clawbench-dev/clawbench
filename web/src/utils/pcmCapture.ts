@@ -81,8 +81,13 @@ const KEEPALIVE_MS = 2000
  * Word endings are quieter than word middles: "…好的" trails off well below the
  * threshold. Cutting the moment the level drops clips the tail of the last
  * syllable, and a recogniser with a clipped ending guesses.
+ *
+ * The span itself comes from the tuning, because it has a second job: it has to
+ * outlast the engine's own end window (800 ms for the streaming engines) so the
+ * engine closes the sentence while the user is still listening, instead of
+ * leaving the last characters stuck in a revision until the send flushes it.
  */
-const HANGOVER_MS = 600
+const HANGOVER_FALLBACK_MS = 600
 
 /**
  * How much gated-out audio is kept to prepend when speech starts.
@@ -124,7 +129,7 @@ export class PcmStreamer {
   private stopped = false
   /** When a frame was last handed to the sink (epoch ms). */
   private lastSentAt = 0
-  /** Gate stays open until this time (epoch ms) — see HANGOVER_MS. */
+  /** Gate stays open until this time (epoch ms) — see `HANGOVER_FALLBACK_MS`. */
   private gateOpenUntil = 0
   /** Frames withheld while the gate was shut, oldest first — see PREROLL_FRAMES. */
   private preroll: ArrayBuffer[] = []
@@ -178,6 +183,7 @@ export class PcmStreamer {
     this.node = node
     const threshold = rmsThreshold(this.opts.tuning)
     const gate = this.opts.tuning.voiceGate
+    const hangoverMs = this.opts.tuning.hangoverMs || HANGOVER_FALLBACK_MS
     node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
       if (this.stopped) return
       const buf = e.data
@@ -195,7 +201,7 @@ export class PcmStreamer {
         // one, and hold the gate open so the tail is not clipped either.
         for (const pending of this.preroll) this.opts.onFrame(pending)
         this.preroll = []
-        this.gateOpenUntil = now + HANGOVER_MS
+        this.gateOpenUntil = now + hangoverMs
       } else if (gate && now <= this.gateOpenUntil) {
         // Inside the hangover window: keep sending, this is the end of a word.
       } else if (gate && now - this.lastSentAt < KEEPALIVE_MS) {
