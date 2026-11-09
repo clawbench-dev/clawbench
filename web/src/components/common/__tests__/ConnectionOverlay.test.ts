@@ -46,14 +46,6 @@ function mountOverlay() {
             plugins: [i18n],
             stubs: {
                 'lucide-vue-next': LucideStub,
-                // Stub the fade so removal is synchronous. In jsdom no
-                // `transitionend` ever fires, so Vue keeps the leaving element
-                // in the DOM until its CSS-duration timer elapses — and under
-                // load that timer landed after the assertion window, failing
-                // "the mask is gone once the dialog opens" on CI while passing
-                // locally (job 128970870731). The animation is not what this
-                // test is about; the v-if is.
-                transition: false,
             },
         },
     })
@@ -151,7 +143,11 @@ describe('ConnectionOverlay', () => {
         // 128956975616, "expected <div .connection-overlay> to be null") while
         // passing on an idle machine. Waiting for the condition is the point —
         // the overlay disappearing IS the behaviour under test.
-        await expect.poll(() => $('.connection-overlay')).toBeNull()
+        // Explicit timeout: vitest's `expect.poll` defaults to 1000 ms, and on
+        // a loaded runner the render flush after a native click can take longer
+        // than that (CI measured 1142 ms for this whole case). The default
+        // silently turns "slow machine" into "behaviour is broken".
+        await expect.poll(() => $('.connection-overlay'), { timeout: 10_000 }).toBeNull()
         const modal = $('.modal-overlay')
         expect(modal).not.toBeNull()
         expect(modal!.style.display).not.toBe('none')
