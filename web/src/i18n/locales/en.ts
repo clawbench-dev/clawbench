@@ -724,6 +724,7 @@ export default {
       stopGenerating: 'Stop generating',
       confirmStop: 'Confirm stop',
       stopMenuOpen: 'Choose who to stop',
+      stopThisMember: 'Stop {name}',
       stopMenuTitle: 'Speaking now ({count})',
       stopMenuHint: 'Tap to stop',
       stopMember: 'Stop',

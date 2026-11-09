@@ -64,6 +64,7 @@ const i18n = createI18n({
           confirmStop: 'Confirm stop',
           stopGenerating: 'Stop',
           stopMenuOpen: 'Choose who to stop',
+          stopThisMember: 'Stop {name}',
           stopMenuTitle: 'Speaking now ({count})',
           stopMenuHint: 'Tap to stop',
           stopMember: 'Stop',
@@ -1612,6 +1613,23 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('stop-member')?.[0]).toEqual(['m-1'])
     expect(wrapper.emitted('cancel')).toBeFalsy()
     expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+  })
+
+  // One voice needs no menu: the click stops that member straight away. A
+  // one-row menu would be an extra tap for the same outcome.
+  it('group chat with exactly one speaker stops it directly', async () => {
+    const wrapper = mountBar({
+      loading: true,
+      isGroupSession: true,
+      stopTargets: [{ id: 'm-1', name: '小北', backend: 'claude' }],
+    })
+    await nextTick()
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+
+    expect(wrapper.emitted('stop-member')?.[0]).toEqual(['m-1'])
+    expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+    expect(wrapper.emitted('cancel')).toBeFalsy()
   })
 
   it('group chat: "stop all" still needs a second click', async () => {

@@ -1753,7 +1753,12 @@ const cancelling = ref(false)
 const stopMenuOpen = ref(false)
 const stopBtnRef = ref(null)
 const hasStopTargets = computed(() => props.isGroupSession && props.stopTargets.length > 0)
+/** Only one voice → no menu: the click stops that member straight away. A
+ *  one-row menu would be a pointless extra tap (and the row's only action is
+ *  the same one the button would perform). */
+const soleStopTarget = computed(() => (props.stopTargets.length === 1 ? props.stopTargets[0] : null))
 const stopTitle = computed(() => {
+  if (soleStopTarget.value) return t('chat.input.stopThisMember', { name: soleStopTarget.value.name })
   if (hasStopTargets.value) return t('chat.input.stopMenuOpen')
   return stopPrimed.value ? t('chat.input.confirmStop') : t('chat.input.stopGenerating')
 })
@@ -1766,6 +1771,14 @@ const stopMachine = createStopButtonMachine({
 })
 
 function handleStopClick() {
+  // One speaker: stop it directly, no menu.
+  if (soleStopTarget.value) {
+    stopPrimed.value = false
+    stopMachine.reset()
+    stopMenuOpen.value = false
+    emit('stop-member', soleStopTarget.value.id)
+    return
+  }
   if (hasStopTargets.value) {
     // Drop any armed whole-turn confirm: the send button is hidden while
     // `stopPrimed` is set, so a leftover prime would keep it hidden behind the
