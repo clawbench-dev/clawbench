@@ -15,6 +15,7 @@ function createPage({ origin = 'https://example.com', path = '/', subframe = fal
   const events = new Map();
   const dispatched = [];
   const timers = new Map();
+  const timerDelays = new Map();
   let timerId = 0;
   const window = {
     addEventListener(name, handler) { events.set(name, handler); },
@@ -25,11 +26,16 @@ function createPage({ origin = 'https://example.com', path = '/', subframe = fal
     origin: 'https://example.com', channel: 'random-channel', language: 'zh', theme: 'gruvbox-dark', version: '0.1.2'
   })), {
     window, location: { origin, pathname: path },
-    setTimeout(handler) { timers.set(++timerId, handler); return timerId; },
-    clearTimeout(id) { timers.delete(id); },
+    setTimeout(handler, delay) {
+      const id = ++timerId;
+      timers.set(id, handler);
+      timerDelays.set(id, delay);
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); timerDelays.delete(id); },
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }
   });
-  return { window, events, timers, dispatched };
+  return { window, events, timers, timerDelays, dispatched };
 }
 
 function connectPort(page, channel = 'random-channel') {
@@ -142,6 +148,18 @@ test('queues requests and accepts only the per-connection channel', async () => 
   assert.equal(page.timers.size, 0);
 });
 
+test('setNativePushEnabled allows the user time to read and acknowledge guidance', async () => {
+  const page = createPage();
+  const { port, messages } = connectPort(page);
+  page.window.ClawBenchHarmony.setNativePushEnabled(true);
+  assert.equal(messages[0].method, 'setNativePushEnabled');
+  assert.equal([...page.timerDelays.values()][0], 300000);
+  assert.equal(page.timers.size, 1);
+  port.onmessage({ data: JSON.stringify({ id: messages[0].id, result: 'null' }) });
+  assert.equal(page.timers.size, 0);
+  assert.equal(page.dispatched.length, 0);
+});
+
 test('expired requests are never replayed when a late port arrives', async () => {
   const page = createPage();
   const result = page.window.ClawBenchHarmony.saveServer('https://example.com', 'fixture-password');
@@ -191,7 +209,7 @@ test('rewrites only the About app-version description, never chat or previews', 
   });
   dom.window.__HARMONY_CONFIG__ = {
     origin: 'https://example.com', channel: 'random-channel', language: 'zh',
-    theme: 'gruvbox-dark', version: '0.2.9'
+    theme: 'gruvbox-dark', version: '0.2.10'
   };
   dom.window.eval(code);
   const document = dom.window.document;
@@ -243,5 +261,58 @@ test('rewrites only the About app-version description, never chat or previews', 
   await wait();
   assert.equal(lateAbout.querySelector('.settings-item__desc').textContent,
     'Current installed HarmonyOS app version number');
+  dom.window.close();
+});
+
+test('chat insertions never scan their added subtrees for the About copy', async () => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'https://example.com/', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  dom.window.__HARMONY_CONFIG__ = {
+    origin: 'https://example.com', channel: 'random-channel', language: 'zh',
+    theme: 'gruvbox-dark', version: '0.2.10'
+  };
+  dom.window.eval(code);
+  const document = dom.window.document;
+  const chat = document.createElement('article');
+  chat.className = 'chat-message__body';
+  chat.innerHTML = '<div><pre><code>' + 'large code block '.repeat(1000) + '</code></pre></div>';
+  let subtreeQueries = 0;
+  const querySelector = chat.querySelector.bind(chat);
+  chat.querySelector = (...args) => {
+    subtreeQueries++;
+    return querySelector(...args);
+  };
+  document.body.appendChild(chat);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(subtreeQueries, 0);
+  dom.window.close();
+});
+
+test('unrelated settings-row insertions do not query the About copy', async () => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'https://example.com/', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  dom.window.__HARMONY_CONFIG__ = {
+    origin: 'https://example.com', channel: 'random-channel', language: 'zh',
+    theme: 'gruvbox-dark', version: '0.2.10'
+  };
+  dom.window.eval(code);
+  const document = dom.window.document;
+  const settings = document.createElement('section');
+  settings.className = 'settings-page';
+  document.body.appendChild(settings);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  let documentQueries = 0;
+  const querySelector = document.querySelector.bind(document);
+  document.querySelector = (...args) => {
+    documentQueries++;
+    return querySelector(...args);
+  };
+  settings.appendChild(document.createElement('div'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(documentQueries, 0);
   dom.window.close();
 });

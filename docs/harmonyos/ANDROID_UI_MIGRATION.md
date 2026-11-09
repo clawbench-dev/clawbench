@@ -35,7 +35,7 @@
 
 ## 前端兼容补丁
 
-补丁和完整基线记录位于 `patches/upstream/`，只发布必要差异，不提交整个原始源码目录。
+补丁、校验清单和 `apply-upstream-patch.ps1` 属于维护方本地流程，不在本仓库中。此处只记录适配边界，不提供无法在本检出中执行的脚本或文件路径。当前上游主线已包含鸿蒙宿主时，不要重放旧补丁。
 
 - 增加 `getHostPlatform()` 和能力表；`getNative()` 显式识别 `window.ClawBenchHarmony`。
 - HarmonyOS 与 Android、Electron、浏览器分别判断；触摸和宽屏轴继续独立。
@@ -49,16 +49,7 @@
 
 本地登录页使用独立 ArkWeb 控制器，仅允许导航到打包的登录文档。CSP 禁止联网、frame、表单导航和外部对象；只读 `ClawBenchLoginInit.getConfig()` 提供语言、主题、版本、服务器名称与临时密码引用，动作通过随机通道的消息端口执行。`javaScriptOnDocumentStart` 不用于本地资源页，避免初始化未执行；该 API 仍用于 HTTP/HTTPS 工作台的宿主注入。远程控制器不注册登录初始化代理。
 
-从锁定上游归档恢复参考目录后，在根目录运行：
-
-```powershell
-./scripts/apply-upstream-patch.ps1
-Set-Location 'clawbench-source code'
-npm ci
-npx vitest run web/src/composables/__tests__/harmonyHost.test.ts web/src/composables/__tests__/useAppMode.test.ts web/src/composables/__tests__/usePlatformDetect.test.ts web/src/utils/__tests__/portForwardUtils.test.ts --maxWorkers=1
-npm run typecheck
-npm run build
-```
+从锁定上游归档恢复参考目录后，先确认该快照是否已经含有鸿蒙宿主。旧快照的历史补丁应用属于维护方本地工作流，不在本仓库发布，也不提供可从本仓库执行的补丁路径。当前上游主线已包含鸿蒙宿主；在本仓库中只运行本仓库实际提供的测试、类型检查和构建入口。共享前端的依赖安装和验证应在单独取得的上游检出中按其自身开发文档执行。
 
 Office 预览依赖的 postinstall 会准备 Vue 3 入口，正常 `npm ci` 应保留这些初始化步骤。若为了审查依赖使用 `--ignore-scripts`，之后需要明确执行 `npm rebuild @vue-office/docx @vue-office/excel @vue-office/pptx vue-demi`。本次已用该流程成功构建。
 

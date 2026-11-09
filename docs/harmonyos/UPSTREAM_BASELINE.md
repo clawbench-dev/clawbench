@@ -14,12 +14,12 @@
 | 归档 SHA-256 | `4a873a972a9ba1395edbc59a1de5a6c00c2c13476130e7bf241e2d18079e5995` |
 | 上游文件数 | 4,332 |
 | 客户端协议号 | `1`，来自 `internal/version/client_protocol.txt` |
-| 鸿蒙工程版本 | `0.2.9 / 209`，包名 `com.clawbench.harmony` |
+| 鸿蒙工程版本 | PR #653 更新为 `0.2.10 / 210`，包名 `com.clawbench.harmony` |
 | HarmonyOS 集成状态 | PR #631 与 #636 已合并进上游；此快照已包含鸿蒙宿主，不要再叠加历史补丁 |
 | 鸿蒙 release 资产 | `v0.136.0` release 只有 Android、桌面和服务端资产，没有 HarmonyOS HAP；应用内更新检测待上游发布鸿蒙 release 后再验收 |
 | 发布状态 | README 标注实验性支持，明确未达到 Android 全功能对等且暂不进入正式发布流水线 |
 
-当前源文件的 Harmony 集成校验 blob 记录在 `patches/upstream/baseline.json`。运行 `scripts/apply-upstream-patch.ps1` 时会先比对这些 Git blob；快照匹配即跳过，不把旧补丁重放到已集成的新主线。
+历史 Harmony 集成补丁与校验材料属于维护方本地工作流，不随本仓库提交。上游主线已包含鸿蒙宿主时，无需也不应重放历史补丁。
 
 ## 原始适配基线
 
@@ -31,7 +31,7 @@
 | 归档 SHA-256 | `c810792c71301ccb0cd995b003a8c101b16c92efc428717d9d61c43809ff37f9` |
 | 文件数 | 4,151 |
 | 客户端协议号 | `1` |
-| 补丁 | `patches/upstream/0001-harmonyos-host.patch`，30 个路径 |
+| 补丁 | 首次适配所用的历史本地补丁涉及 30 个路径；本仓库不发布该维护材料 |
 | 当时验证 | 418 项定向测试、隧道设置 81 项、vue-tsc 和 Vite 生产构建通过 |
 
 上游许可证由 `LICENSE` 标明为 MIT。鸿蒙端复用上游 logo、安卓登录页和地址工具，来源及许可记录见 `ANDROID_LOGIN_ASSETS.md` 与 `docs/licenses/ClawBench-MIT.txt`。旧基线补丁作为历史移植记录保留；不代表当前上游仍需要该补丁。

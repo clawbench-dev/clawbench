@@ -1,5 +1,15 @@
 # 维护记录
 
+## 2026-11-09：0.2.10 修复软键盘换行及 PR #653 评审
+
+- 共享聊天输入框在鸿蒙软键盘点击“换行”时会触发 `Enter / code=Enter / keyCode=13`，旧版 `keydown` 逻辑将它误判为发送。新增 `rawfile/chat-keyboard.js`，仅在鸿蒙可信工作台捕获聊天 textarea 的未修饰 Enter 并停止事件传播，保留 ArkWeb 默认插入换行；ArkTS `onInterceptKeyEvent` 为物理 Enter 和数字小键盘 Enter 标记来源，继续使用共享前端原有发送快捷键。中文选词、其他编辑区、发送按钮及物理键盘均保留各自行为。
+- 使用独立隔离服务器和 HarmonyOS API 26 模拟器逐步复现并回归：软键盘插入英文换行、中文候选选词后换行、连续换行均产生 `beforeinput/input: insertLineBreak` 且未发送；发送按钮发送完整多行文本；物理 Enter 仍发送完整多行文本。通知首次启动说明、用户确认与系统权限请求顺序在同一模拟器安装包验证；模拟器原有授权拒绝状态如实保留。
+- 推送评审修复：首次工作台授权和默认 `push_mode=native` 配置同步共用同一个持久化说明门禁；启动与配置同步并发时只显示一次；离开页面、用户取消、弹窗失败或确认写入失败均不提前申请权限 / 启用推送，后续可重试。延长原生桥操作超时并收窄动态文案观察器扫描。移除没有剩余调用者的通知偏好状态判定方法。
+- 更新 README、功能对齐、原生能力、开发指南与本维护记录；上游指南中不存在的补丁执行文件继续明确为仓库外维护流程，H26/H27 使用约定状态与备注分开表达。PR 源码同步脚本 `-WhatIf` 检查后同步至隔离 PR #653 检出目录，未包含本地 `Agents.md`、测试账号、服务器凭据、原始参考源码或 HAP。
+- 根目录 `npm --prefix harmony test`：**306/306** 通过；PR 布局 `npm --prefix harmony test`：**306/306** 通过。鸿蒙 DevEco Studio 26.0 debug 构建成功并已在 HarmonyOS API 26 模拟器安装启动。`bulid-hap/ClawBench-0.2.10-unsigned.hap`：8,563,569 字节，SHA-256 `de2009e3d3ac497eb403e966f9792386b5e90bd0e488b1e747bb298f0e22dbdd`。包未签名；HAP 安装与所述模拟器场景已验证，不据此推断签名设备升级或 Frozen 后通知。
+- 全仓 `pre-push-checks.sh --skip-coverage --skip-android` 未通过：本轮干净 PR 检出缺少 `.clawbench-web/`，Go embed 相关包无法测试；Windows 环境下还出现既有 Codex session 文件访问、符号链接 gitignore 测试失败，golangci-lint 下载校验失败。前端类型检查、纯 JS script guard、Android lint 和前端构建通过。未将这些全仓环境 / 基线失败归因于本次鸿蒙改动；鸿蒙专用全套契约测试独立通过。
+- 仅运行本机隔离夹具 `127.0.0.1:21653`，未修改共享测试服务器。完成源码与文档、HAP 检查后，分别在本地维护仓和 PR 分支提交并核验 PR。
+
 ## 2026-11-09：0.2.9 修复关于页动态文案更新并重建 HAP
 
 - 修复“关于”页版本描述的动态更新：Vue 通过设置 `.settings-item__desc.textContent` 会替换其文本节点；bootstrap 观察器现在只在新文本节点直接属于 `[data-settings-key="appVersion"] .settings-item__desc` 时安排精确改写。未扩大到其他工作台内容。

@@ -608,37 +608,6 @@ test('notification denial is reported and no background connection is started', 
   assert.match(h.reports.at(-1).detail.error, /permission/);
 });
 
-test('push explanation is offered before authorization and survives a denial', async () => {
-  const h = harness();
-  h.setGrant(false);
-  h.configResponses.push(() => ({ responseCode: 200, result: '{"push_mode":"dingtalk"}' }));
-  cookies.registerServerCookies('https://guidance.example', ['clawbench_session=fixture; HttpOnly']);
-  await h.service.init(h.context);
-  await h.service.bind('https://guidance.example', 'en', false);
-  await new Promise(setImmediate);
-  assert.equal(h.service.hasKnownPreference(), true);
-  assert.equal(h.service.isEnabled(), false);
-  assert.equal(h.service.shouldExplainPushKit(true), true);
-  await assert.rejects(h.service.setEnabled(true), /permission/);
-  // setEnabled persists the requested mode before the OS check, so the host
-  // must have shown the explanation before this call.
-  assert.equal(h.service.isEnabled(), true);
-  assert.equal(h.service.shouldExplainPushKit(true), false);
-  await h.service.setEnabled(false);
-  assert.equal(h.service.shouldExplainPushKit(true), true);
-  h.service.destroy();
-});
-
-test('push explanation stays quiet while a startup preference is still unknown', async () => {
-  const h = harness();
-  await h.service.init(h.context);
-  await h.service.bind('https://startup.example', 'en', false);
-  assert.equal(h.service.hasKnownPreference(), false);
-  assert.equal(h.service.isEnabled(), false);
-  assert.equal(h.service.shouldExplainPushKit(true), false);
-  h.service.destroy();
-});
-
 test('native live events publish once, read retracts, and cold launch consumes only an issued token', async () => {
   const h = harness();
   await h.ready();

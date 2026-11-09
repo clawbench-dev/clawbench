@@ -89,6 +89,18 @@ test('store initialization preserves names and appearance without querying secur
   assert.equal(h.calls.length, 0);
 });
 
+test('Push Kit guidance acknowledgement is persisted across store restarts', async () => {
+  const h = await fixture();
+  assert.equal(h.store.pushKitGuidanceShown, false);
+  await h.store.acknowledgePushKitGuidance();
+  assert.equal(h.store.pushKitGuidanceShown, true);
+  assert.equal(h.persisted.get('pushKitGuidanceShown'), true);
+
+  const restored = new h.ServerStore();
+  await restored.init({});
+  assert.equal(restored.pushKitGuidanceShown, true);
+});
+
 for (const language of ['zh', 'en']) {
   test(`one unreadable credential is classified without corrupting other server records (${language})`, async () => {
     const h = await fixture({

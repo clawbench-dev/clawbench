@@ -85,7 +85,7 @@ struct Index {
   private activePassword: string = '';
   private volumeKeyMode: boolean = false;
   private notificationEpoch: number = 0;
-  private pushKitGuidanceShown: boolean = false;
+  private pushKitGuidanceRequest?: Promise<boolean>;
   private shareImport?: ShareImportService;
   private shareDialog: boolean = false;
   private tunnels?: TunnelService;
@@ -423,6 +423,7 @@ struct Index {
       const raw = await this.context().resourceManager.getRawFileContent('harmony-bootstrap.js');
       const systemBars = await this.context().resourceManager.getRawFileContent('system-bars.js');
       const selectionMenu = await this.context().resourceManager.getRawFileContent('selection-menu.js');
+      const chatKeyboard = await this.context().resourceManager.getRawFileContent('chat-keyboard.js');
       if (id !== this.connectionId) {
         return;
       }
@@ -432,7 +433,8 @@ struct Index {
           origin: address, channel: this.channelId, language: this.store.language,
           theme: this.store.theme, version: APP_VERSION
         })) + '\n' + new util.TextDecoder().decodeWithStream(systemBars) +
-        '\n' + new util.TextDecoder().decodeWithStream(selectionMenu);
+        '\n' + new util.TextDecoder().decodeWithStream(selectionMenu) +
+        '\n' + new util.TextDecoder().decodeWithStream(chatKeyboard);
       this.activeUrl = address;
       this.loginTargetUrl = address;
       this.activePassword = password;
@@ -877,10 +879,13 @@ struct Index {
         break;
       case 'setNativePushEnabled': {
         const enable = request.args[0] === 'true';
-        // Explain before the system permission request: setEnabled persists the
-        // preference first and then throws when the OS denies authorization.
-        if (this.notifications.shouldExplainPushKit(enable)) {
-          await this.showPushKitGuidance();
+        // Config reloads also call this method. The persisted acknowledgement,
+        // rather than a preference transition, gates the one-time explanation.
+        if (enable && !await this.showPushKitGuidance()) {
+          break;
+        }
+        if (!current()) {
+          break;
         }
         await this.notifications.setEnabled(enable);
         break;
@@ -1021,21 +1026,49 @@ struct Index {
     } catch (_) {}
   }
 
-  private async showPushKitGuidance(): Promise<void> {
-    if (this.pushKitGuidanceShown) {
-      return;
+  private showPushKitGuidance(): Promise<boolean> {
+    if (this.store.pushKitGuidanceShown) {
+      return Promise.resolve(true);
     }
-    this.pushKitGuidanceShown = true;
+    if (!this.pushKitGuidanceRequest) {
+      this.pushKitGuidanceRequest = this.confirmPushKitGuidance().finally(() => {
+        this.pushKitGuidanceRequest = undefined;
+      });
+    }
+    return this.pushKitGuidanceRequest;
+  }
+
+  private async confirmPushKitGuidance(): Promise<boolean> {
     const en = this.store.language === 'en';
     try {
-      await this.getUIContext().getPromptAction().showDialog({
+      const response = await this.getUIContext().getPromptAction().showDialog({
         title: en ? 'Push delivery on HarmonyOS' : '鸿蒙端推送方式',
         message: en
           ? 'This client does not integrate Push Kit, so system-level push is unavailable. Native push only works while the app process is running; when HarmonyOS freezes or closes the app, notifications are not delivered. To receive alerts while the app is not running, choose DingTalk, Feishu, or WeChat push in Settings > Notifications.'
           : '本客户端未接入 Push Kit，无法提供系统级推送。原生推送仅在应用进程运行时有效，应用被 HarmonyOS 冻结或结束后不会收到通知。如需在应用未运行时接收提醒，请在“设置 > 推送通知”中改用钉钉、飞书或微信推送。',
         buttons: [{ text: en ? 'Got it' : '知道了', color: '#2676D9' }]
       });
-    } catch (_) {}
+      if (response.index !== 0) {
+        return false;
+      }
+      await this.store.acknowledgePushKitGuidance();
+      return true;
+    } catch (_) {
+      // A failed dialog or preference write must remain retryable.
+      return false;
+    }
+  }
+
+  private async requestStartupNotificationPermission(): Promise<void> {
+    if (!this.foreground || !this.showWeb || !this.pageReady) {
+      return;
+    }
+    const document = this.documentId;
+    if (!await this.showPushKitGuidance() || document !== this.documentId ||
+      !this.foreground || !this.showWeb || !this.pageReady) {
+      return;
+    }
+    await this.notifications.requestStartupPermission();
   }
 
   private foregroundChanged(): void {
@@ -1043,7 +1076,7 @@ struct Index {
     this.tunnels?.setForeground(this.foreground);
     if (this.foreground) {
       if (this.showWeb && this.pageReady) {
-        void this.notifications.requestStartupPermission();
+        void this.requestStartupNotificationPermission();
       }
       this.handleShareImport();
       this.shareErrorChanged();
@@ -1054,6 +1087,17 @@ struct Index {
         'if (typeof window.__setAppForeground === "function") window.__setAppForeground(false);';
       this.controller.runJavaScript(script).catch(() => {});
     }
+  }
+
+  private markHardwareEnter(event: KeyEvent): boolean {
+    // IME function keys bypass this callback; hardware keys reach it before
+    // ArkWeb dispatches the corresponding DOM keyboard event.
+    if ((event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_NUMPAD_ENTER) &&
+      event.type === KeyType.Down &&
+      this.showWeb && isTrustedAppUrl(this.controller.getUrl(), this.activeUrl)) {
+      void this.controller.runJavaScript('window.__clawbenchHardwareEnter?.()').catch(() => {});
+    }
+    return false;
   }
 
   onBackPress(): boolean {
@@ -1135,7 +1179,7 @@ struct Index {
                 this.attachPort(event.url);
                 this.pageReady = true;
                 clearTimeout(this.pageTimeout);
-                void this.notifications.requestStartupPermission();
+                void this.requestStartupNotificationPermission();
               }
             })
             .onErrorReceive((event) => {
@@ -1162,6 +1206,7 @@ struct Index {
               this.capture?.request(event.handler, this.activeUrl, () => document === this.documentId &&
                 this.showWeb && isTrustedAppUrl(this.controller.getUrl(), this.activeUrl));
             })
+            .onInterceptKeyEvent((event: KeyEvent): boolean => this.markHardwareEnter(event))
             .onKeyEvent((event: KeyEvent) => {
               if (this.volumeKeyMode && event.type === KeyType.Down &&
                   (event.keyCode === KeyCode.KEYCODE_VOLUME_UP || event.keyCode === KeyCode.KEYCODE_VOLUME_DOWN)) {
