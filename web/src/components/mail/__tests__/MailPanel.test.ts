@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import en from '@/i18n/locales/en'
 import SplitView from '@/components/common/SplitView.vue'
 import type { MailAccount, MailFolder, MailReplyContext } from '@/utils/mailTypes'
+import { composeMail, _resetMailComposeForTest } from '@/composables/useMailCompose'
 import MailPanel from '../MailPanel.vue'
+
+// Every case mounts its own panel. Unmounting them is not just hygiene here:
+// a panel left mounted keeps its `clawbench-compose-mail` listener, and the
+// parked composer request is consumed exactly once — a stale panel would take
+// the request meant for the wrapper under test.
+enableAutoUnmount(afterEach)
 
 /**
  * The composer used to open as a modal on top of the message list. It is now
@@ -114,6 +122,12 @@ function mountPanel() {
   return mount(MailPanel, { global: { plugins: [i18n] } })
 }
 
+// The parked composer request is module state; a test that leaves one behind
+// would make the next mount open a composer nobody asked for.
+afterEach(() => {
+  _resetMailComposeForTest()
+})
+
 async function openCompose(wrapper: ReturnType<typeof mountPanel>) {
   await wrapper.find('button[title="Compose"]').trigger('click')
   await flushPromises()
@@ -209,6 +223,43 @@ describe('MailPanel compose view', () => {
       accountId: 1,
       to: 'someone@example.com',
     }))
+  })
+
+  it('opens with the attachments another panel staged', async () => {
+    mocks.accounts.value = [{ id: 1, lastSyncAt: 123 } as MailAccount]
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    apiGet.mockResolvedValue({ accounts: [{ id: 1 }] })
+    const opened = await composeMail('报告', '', [
+      { filename: 'docs.zip', path: '/data/mail/outbox/docs.zip', size: 2048 },
+    ])
+    await flushPromises()
+    await nextTick()
+
+    expect(opened).toBe(true)
+    expect(wrapper.find('.mail-compose').exists()).toBe(true)
+    // The chip is the user's only confirmation that the folder was packed.
+    expect(wrapper.find('.mail-compose__attachment-name').text()).toBe('docs.zip')
+    wrapper.unmount()
+  })
+
+  it('replaces an already-open composer when a new request arrives', async () => {
+    mocks.accounts.value = [{ id: 1, lastSyncAt: 123 } as MailAccount]
+    const wrapper = mountPanel()
+    await flushPromises()
+    await openCompose(wrapper)
+    expect(wrapper.find('.mail-compose__attachment-name').exists()).toBe(false)
+
+    apiGet.mockResolvedValue({ accounts: [{ id: 1 }] })
+    await composeMail('报告', '', [{ filename: 'a.txt', path: '/p/a.txt', size: 3 }])
+    await flushPromises()
+    await nextTick()
+
+    // Without remounting, the composer would keep showing the empty draft and
+    // the staged file would never appear.
+    expect(wrapper.find('.mail-compose__attachment-name').text()).toBe('a.txt')
+    wrapper.unmount()
   })
 })
 

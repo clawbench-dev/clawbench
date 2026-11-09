@@ -247,7 +247,6 @@ function measure(): void {
   if (hadLabels) root.classList.add('ab--labels')
 
   let visibleCount = kids.length
-  let hidden: HTMLElement[] = []
   if (props.mode === 'menu') {
     const total = widths.reduce((a, b) => a + b, 0) + gap * (kids.length - 1)
     if (total > availableWidth) {
@@ -263,10 +262,40 @@ function measure(): void {
       }
       // At least one button stays: a row of only "more" is useless.
       visibleCount = Math.max(1, visibleCount)
-      hidden = kids.slice(visibleCount)
     }
   }
   kids.forEach((k, i) => { k.style.display = i < visibleCount ? '' : 'none' })
+
+  // ── 1b. Ground truth: does the first button still stick out? ──
+  // With `align="end"` the row is justified to flex-end, so any overflow spills
+  // out of the START edge — exactly where `overflow: hidden` clips it, and the
+  // element still reports scrollWidth === clientWidth, so the browser pretends
+  // nothing is wrong. The width arithmetic above is therefore not allowed to be
+  // the last word: read the layout back and keep folding until the first
+  // visible button is inside the bar. This catches any under-estimate (a
+  // measurement taken while the bar was a few pixels wider than it paints).
+  if (props.mode === 'menu' && visibleCount > 1) {
+    const barRect = root.getBoundingClientRect()
+    // Compare real boxes only: a folded button (and a bar that has not been
+    // laid out yet, e.g. jsdom or a hidden pane) reports a zero-size rect at
+    // 0,0, which would otherwise read as "sticking out" for ever.
+    const firstVisible = () => kids.find(k => k.style.display !== 'none')
+    let firstRect = firstVisible()?.getBoundingClientRect()
+    let guard = kids.length
+    while (
+      guard-- > 0 &&
+      visibleCount > 1 &&
+      barRect.width > 0 &&
+      !!firstRect &&
+      firstRect.width > 0 &&
+      firstRect.left < barRect.left - 0.5
+    ) {
+      visibleCount = Math.max(1, visibleCount - 1)
+      kids.forEach((k, i) => { k.style.display = i < visibleCount ? '' : 'none' })
+      firstRect = firstVisible()?.getBoundingClientRect()
+    }
+  }
+  const hidden = kids.slice(visibleCount)
 
   // ── 2. Do the labels of the inline buttons fit? ──
   // Measure EVERY child, not just the buttons: the gaps between them, the fixed
@@ -373,9 +402,23 @@ function schedule(): void {
   })
 }
 
+/**
+ * The bar's own box changed. Shrinks are ALWAYS honoured, even 1px ones.
+ *
+ * The width can creep down in sub-2px steps (a webfont swapping in, fractional
+ * layout), and a dead-band swallowed every step: the fold decision stayed the
+ * one made for a bar a few pixels wider, so the row overflowed — and because
+ * `align="end"` pushes overflow past the START edge, the first button was
+ * silently clipped (measured: 7 buttons kept where only 6 fit, `scrollWidth`
+ * still reporting "no overflow").
+ *
+ * Growth keeps the old hysteresis: growing by a pixel or two never uncovers
+ * anything, and skipping it avoids re-measuring through sub-pixel jitter.
+ * measure() is rAF-batched, so honouring every shrink costs one pass a frame.
+ */
 function onResize(): void {
   const width = rootRef.value?.clientWidth ?? 0
-  if (lastWidth >= 0 && Math.abs(width - lastWidth) < 2) return
+  if (lastWidth >= 0 && width >= lastWidth && width - lastWidth < 2) return
   lastWidth = width
   schedule()
 }

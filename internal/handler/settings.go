@@ -62,32 +62,34 @@ func WithConfigLock(fn func()) {
 // hotReloadFields is the set of config dot-paths that take effect immediately
 // via applyHotReloadGlobals() and do NOT require a server restart.
 var hotReloadFields = map[string]bool{
-	"chat.initial_messages":              true,
-	"chat.page_size":                     true,
-	"chat.system_prompt_interval":        true,
-	"chat.recommend_enabled":             true,
-	"chat.recommend_context_messages":    true,
-	"chat.fork_context_budget":           true,
-	"chat.auto_continue_enabled":         true,
-	"chat.auto_continue_max_retries":     true,
-	"chat.restart_resume_window_minutes": true,
-	"chat.auto_rename_enabled":           true,
-	"user.nickname":                      true,
-	"user.profile":                       true,
-	"chat.group_max_speeches":            true,
-	"language":                           true,
-	"session.max_count":                  true,
-	"session.archive_retention_enabled":  true,
-	"session.archive_retention_days":     true,
-	"recent_projects.max_count":          true,
-	"upload.max_size_mb":                 true,
-	"upload.max_files":                   true,
-	"upload.retention_enabled":           true,
-	"upload.retention_days":              true,
-	"tts.max_cache_files":                true,
-	"tts.voice":                          true,
-	"tts.speed":                          true,
-	"default_agent":                      true,
+	"chat.initial_messages":                  true,
+	"chat.page_size":                         true,
+	"chat.system_prompt_interval":            true,
+	"chat.recommend_enabled":                 true,
+	"chat.recommend_context_messages":        true,
+	"chat.fork_context_budget":               true,
+	"chat.auto_continue_enabled":             true,
+	"chat.auto_continue_max_retries":         true,
+	"chat.restart_resume_window_minutes":     true,
+	"chat.auto_rename_enabled":               true,
+	"user.nickname":                          true,
+	"user.profile":                           true,
+	"chat.group_max_speeches":                true,
+	"chat.recent_project_cards_max_count":    true,
+	"chat.recent_project_cards_window_hours": true,
+	"language":                               true,
+	"session.max_count":                      true,
+	"session.archive_retention_enabled":      true,
+	"session.archive_retention_days":         true,
+	"recent_projects.max_count":              true,
+	"upload.max_size_mb":                     true,
+	"upload.max_files":                       true,
+	"upload.retention_enabled":               true,
+	"upload.retention_days":                  true,
+	"tts.max_cache_files":                    true,
+	"tts.voice":                              true,
+	"tts.speed":                              true,
+	"default_agent":                          true,
 	// Terminal — reconfigure Manager or toggle enabled
 	"terminal.enabled":      true,
 	"terminal.idle_timeout": true,
@@ -102,32 +104,46 @@ var hotReloadFields = map[string]bool{
 	"tts.openai.model":       true,
 	"tts.openai.voice":       true,
 	"tts.openai.stream_mode": true,
-	// STT — speech-to-text config, hot-reloadable
-	"stt.provider":               true,
-	"stt.base_url":               true,
-	"stt.api_key":                true,
-	"stt.model":                  true,
-	"stt.resource_id":            true,
-	"stt.language":               true,
-	"stt.streaming":              true,
-	"stt.chunk_ms":               true,
-	"stt.shortcut_key":           true,
-	"stt.enable_itn":             true,
-	"stt.enable_punc":            true,
-	"stt.enable_ddc":             true,
-	"stt.output_zh_variant":      true,
-	"stt.end_window_size":        true,
-	"stt.mic_echo_cancel":        true,
-	"stt.mic_noise_suppress":     true,
-	"stt.mic_auto_gain":          true,
-	"stt.mic_band_filter":        true,
-	"stt.voice_gate":             true,
-	"stt.voice_gate_sensitivity": true,
-	"stt.trigger_words":          true,
-	"stt.silence_send_seconds":   true,
-	"stt.idle_exit_seconds":      true,
-	"stt.barge_in":               true,
-	"stt.barge_in_words":         true,
+	// STT — speech-to-text config, hot-reloadable. Credentials and engine
+	// options live under the engine's own section so editing one engine cannot
+	// overwrite another's.
+	"stt.provider":                 true,
+	"stt.shortcut_key":             true,
+	"stt.vllm.base_url":            true,
+	"stt.vllm.api_key":             true,
+	"stt.vllm.model":               true,
+	"stt.vllm.language":            true,
+	"stt.vllm.streaming":           true,
+	"stt.vllm.chunk_ms":            true,
+	"stt.vllm.final_recheck":       true,
+	"stt.doubao.api_key":           true,
+	"stt.doubao.resource_id":       true,
+	"stt.doubao.enable_itn":        true,
+	"stt.doubao.enable_punc":       true,
+	"stt.doubao.enable_ddc":        true,
+	"stt.doubao.output_zh_variant": true,
+	"stt.doubao.end_window_size":   true,
+	"stt.doubao.streaming":         true,
+	"stt.alibaba.api_key":          true,
+	"stt.alibaba.base_url":         true,
+	"stt.alibaba.model":            true,
+	"stt.alibaba.language":         true,
+	"stt.alibaba.enable_itn":       true,
+	"stt.alibaba.enable_punc":      true,
+	"stt.alibaba.enable_ddc":       true,
+	"stt.alibaba.end_window_size":  true,
+	"stt.alibaba.streaming":        true,
+	"stt.mic_echo_cancel":          true,
+	"stt.mic_noise_suppress":       true,
+	"stt.mic_auto_gain":            true,
+	"stt.mic_band_filter":          true,
+	"stt.voice_gate":               true,
+	"stt.voice_gate_sensitivity":   true,
+	"stt.trigger_words":            true,
+	"stt.silence_send_seconds":     true,
+	"stt.idle_exit_seconds":        true,
+	"stt.barge_in":                 true,
+	"stt.barge_in_words":           true,
 	// Summarize — reconstruct TTS summarizer from shared ai_summary
 	"summarize.tts_backend":     true,
 	"summarize.auto_junk_ratio": true,
@@ -439,6 +455,8 @@ type configChat struct {
 	RestartResumeWindowMin   int  `json:"restart_resume_window_minutes"`
 	AutoRenameEnabled        bool `json:"auto_rename_enabled"`
 	GroupMaxSpeeches         int  `json:"group_max_speeches"`
+	RecentProjectCardsMax    int  `json:"recent_project_cards_max_count"`
+	RecentProjectCardsWindow int  `json:"recent_project_cards_window_hours"`
 }
 
 // configUser is the human user's identity as sent to the client. It is a
@@ -492,20 +510,11 @@ type configOpenAITTS struct {
 }
 
 type configSTT struct {
-	Provider        string `json:"provider"`
-	BaseURL         string `json:"base_url"`
-	APIKey          string `json:"api_key"`
-	Model           string `json:"model"`
-	ResourceID      string `json:"resource_id"`
-	Language        string `json:"language"`
-	Streaming       bool   `json:"streaming"`
-	ChunkMs         int    `json:"chunk_ms"`
-	ShortcutKey     string `json:"shortcut_key"`
-	EnableITN       bool   `json:"enable_itn"`
-	EnablePunc      bool   `json:"enable_punc"`
-	EnableDDC       bool   `json:"enable_ddc"`
-	OutputZHVariant string `json:"output_zh_variant"`
-	EndWindowSize   int    `json:"end_window_size"`
+	Provider    string           `json:"provider"`
+	VLLM        configSTTVLLM    `json:"vllm"`
+	Doubao      configSTTDoubao  `json:"doubao"`
+	Alibaba     configSTTAlibaba `json:"alibaba"`
+	ShortcutKey string           `json:"shortcut_key"`
 
 	MicEchoCancel        bool   `json:"mic_echo_cancel"`
 	MicNoiseSuppress     bool   `json:"mic_noise_suppress"`
@@ -518,6 +527,42 @@ type configSTT struct {
 	IdleExitSeconds      int    `json:"idle_exit_seconds"`
 	BargeIn              string `json:"barge_in"`
 	BargeInWords         string `json:"barge_in_words"`
+}
+
+// The three engine sections of GET /api/config. Each carries only its own
+// engine's credentials and options: they used to be flat stt.* fields, so
+// switching engines overwrote the previous engine's configuration.
+type configSTTVLLM struct {
+	BaseURL      string `json:"base_url"`
+	APIKey       string `json:"api_key"`
+	Model        string `json:"model"`
+	Language     string `json:"language"`
+	Streaming    bool   `json:"streaming"`
+	ChunkMs      int    `json:"chunk_ms"`
+	FinalRecheck bool   `json:"final_recheck"`
+}
+
+type configSTTDoubao struct {
+	APIKey          string `json:"api_key"`
+	ResourceID      string `json:"resource_id"`
+	EnableITN       bool   `json:"enable_itn"`
+	EnablePunc      bool   `json:"enable_punc"`
+	EnableDDC       bool   `json:"enable_ddc"`
+	OutputZHVariant string `json:"output_zh_variant"`
+	EndWindowSize   int    `json:"end_window_size"`
+	Streaming       bool   `json:"streaming"`
+}
+
+type configSTTAlibaba struct {
+	APIKey        string `json:"api_key"`
+	BaseURL       string `json:"base_url"`
+	Model         string `json:"model"`
+	Language      string `json:"language"`
+	EnableITN     bool   `json:"enable_itn"`
+	EnablePunc    bool   `json:"enable_punc"`
+	EnableDDC     bool   `json:"enable_ddc"`
+	EndWindowSize int    `json:"end_window_size"`
+	Streaming     bool   `json:"streaming"`
 }
 
 type configRAG struct {
@@ -880,119 +925,133 @@ func absWallpaperPath(name string) string {
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
 var PatchableConfigPaths = map[string]bool{
-	"default_agent":                      true,
-	"chat.initial_messages":              true,
-	"chat.page_size":                     true,
-	"chat.system_prompt_interval":        true,
-	"chat.recommend_enabled":             true,
-	"chat.recommend_context_messages":    true,
-	"chat.fork_context_budget":           true,
-	"chat.auto_continue_enabled":         true,
-	"chat.auto_continue_max_retries":     true,
-	"chat.restart_resume_window_minutes": true,
-	"chat.auto_rename_enabled":           true,
-	"user.nickname":                      true,
-	"user.profile":                       true,
-	"chat.group_max_speeches":            true,
-	"language":                           true,
-	"session.max_count":                  true,
-	"session.archive_retention_enabled":  true,
-	"session.archive_retention_days":     true,
-	"recent_projects.max_count":          true,
-	"upload.max_size_mb":                 true,
-	"upload.max_files":                   true,
-	"upload.retention_enabled":           true,
-	"upload.retention_days":              true,
-	"terminal.enabled":                   true,
-	"terminal.idle_timeout":              true,
-	"terminal.max_sessions":              true,
-	"terminal.buffer_lines":              true,
-	"tts.engine":                         true,
-	"tts.tts_model":                      true,
-	"tts.format":                         true,
-	"tts.speed":                          true,
-	"tts.voice":                          true,
-	"tts.max_cache_files":                true,
-	"tts.openai.base_url":                true,
-	"tts.openai.api_key":                 true,
-	"tts.openai.model":                   true,
-	"tts.openai.voice":                   true,
-	"tts.openai.stream_mode":             true,
-	"stt.provider":                       true,
-	"stt.base_url":                       true,
-	"stt.api_key":                        true,
-	"stt.model":                          true,
-	"stt.resource_id":                    true,
-	"stt.language":                       true,
-	"stt.streaming":                      true,
-	"stt.chunk_ms":                       true,
-	"stt.shortcut_key":                   true,
-	"stt.enable_itn":                     true,
-	"stt.enable_punc":                    true,
-	"stt.enable_ddc":                     true,
-	"stt.output_zh_variant":              true,
-	"stt.end_window_size":                true,
-	"stt.mic_echo_cancel":                true,
-	"stt.mic_noise_suppress":             true,
-	"stt.mic_auto_gain":                  true,
-	"stt.mic_band_filter":                true,
-	"stt.voice_gate":                     true,
-	"stt.voice_gate_sensitivity":         true,
-	"stt.trigger_words":                  true,
-	"stt.silence_send_seconds":           true,
-	"stt.idle_exit_seconds":              true,
-	"stt.barge_in":                       true,
-	"stt.barge_in_words":                 true,
-	"rag.vector_enabled":                 true,
-	"rag.base_url":                       true,
-	"rag.model":                          true,
-	"rag.api_key":                        true,
-	"rag.chunk_size":                     true,
-	"rag.chunk_overlap":                  true,
-	"rag.batch_size":                     true,
-	"rag.search_limit":                   true,
-	"rag.search_pool_size":               true,
-	"rag.retention_days":                 true,
-	"port_forward.enabled":               true,
-	"port_forward.port":                  true,
-	"port_forward.allowed_ports":         true,
-	"port_forward.transport":             true, // accepted but ignored: pinned to "both" in applyConfigPatch
-	"summarize.tts_backend":              true,
-	"summarize.auto_junk_ratio":          true,
-	"ai_summary.model":                   true,
-	"ai_summary.provider_id":             true,
-	"meeting.auto_minutes":               true,
-	"meeting.proofread":                  true,
-	"meeting.language":                   true,
-	"meeting.file_excerpts":              true,
-	"meeting.minutes_max_tokens":         true,
-	"dingtalk.enabled":                   true,
-	"dingtalk.app_key":                   true,
-	"dingtalk.app_secret":                true,
-	"dingtalk.agent_id":                  true,
-	"dingtalk.users":                     true,
-	"feishu.enabled":                     true,
-	"feishu.app_id":                      true,
-	"feishu.app_secret":                  true,
-	"feishu.users":                       true,
-	"push_mode":                          true,
-	"forge.enabled":                      true,
-	"forge.insecure_tls":                 true,
-	"forge.notify.opened":                true,
-	"forge.notify.closed":                true,
-	"forge.notify.merged":                true,
-	"forge.notify.reopened":              true,
-	"forge.notify.commented":             true,
-	"forge.notify.pipeline":              true,
-	"forge.pause_event_tasks":            true,
-	"mail.enabled":                       true,
-	"file_search.display_limit":          true,
-	"tls.cert_dir":                       true,
-	"fonts.dir":                          true,
-	"skills.enabled":                     true,
-	"skills.dirs":                        true,
-	"skills.refresh_hours":               true,
-	"skills.repos":                       true,
+	"default_agent":                          true,
+	"chat.initial_messages":                  true,
+	"chat.page_size":                         true,
+	"chat.system_prompt_interval":            true,
+	"chat.recommend_enabled":                 true,
+	"chat.recommend_context_messages":        true,
+	"chat.fork_context_budget":               true,
+	"chat.auto_continue_enabled":             true,
+	"chat.auto_continue_max_retries":         true,
+	"chat.restart_resume_window_minutes":     true,
+	"chat.auto_rename_enabled":               true,
+	"user.nickname":                          true,
+	"user.profile":                           true,
+	"chat.group_max_speeches":                true,
+	"chat.recent_project_cards_max_count":    true,
+	"chat.recent_project_cards_window_hours": true,
+	"language":                               true,
+	"session.max_count":                      true,
+	"session.archive_retention_enabled":      true,
+	"session.archive_retention_days":         true,
+	"recent_projects.max_count":              true,
+	"upload.max_size_mb":                     true,
+	"upload.max_files":                       true,
+	"upload.retention_enabled":               true,
+	"upload.retention_days":                  true,
+	"terminal.enabled":                       true,
+	"terminal.idle_timeout":                  true,
+	"terminal.max_sessions":                  true,
+	"terminal.buffer_lines":                  true,
+	"tts.engine":                             true,
+	"tts.tts_model":                          true,
+	"tts.format":                             true,
+	"tts.speed":                              true,
+	"tts.voice":                              true,
+	"tts.max_cache_files":                    true,
+	"tts.openai.base_url":                    true,
+	"tts.openai.api_key":                     true,
+	"tts.openai.model":                       true,
+	"tts.openai.voice":                       true,
+	"tts.openai.stream_mode":                 true,
+	"stt.provider":                           true,
+	"stt.shortcut_key":                       true,
+	"stt.vllm.base_url":                      true,
+	"stt.vllm.api_key":                       true,
+	"stt.vllm.model":                         true,
+	"stt.vllm.language":                      true,
+	"stt.vllm.streaming":                     true,
+	"stt.vllm.chunk_ms":                      true,
+	"stt.vllm.final_recheck":                 true,
+	"stt.doubao.api_key":                     true,
+	"stt.doubao.resource_id":                 true,
+	"stt.doubao.enable_itn":                  true,
+	"stt.doubao.enable_punc":                 true,
+	"stt.doubao.enable_ddc":                  true,
+	"stt.doubao.output_zh_variant":           true,
+	"stt.doubao.end_window_size":             true,
+	"stt.doubao.streaming":                   true,
+	"stt.alibaba.api_key":                    true,
+	"stt.alibaba.base_url":                   true,
+	"stt.alibaba.model":                      true,
+	"stt.alibaba.language":                   true,
+	"stt.alibaba.enable_itn":                 true,
+	"stt.alibaba.enable_punc":                true,
+	"stt.alibaba.enable_ddc":                 true,
+	"stt.alibaba.end_window_size":            true,
+	"stt.alibaba.streaming":                  true,
+	"stt.mic_echo_cancel":                    true,
+	"stt.mic_noise_suppress":                 true,
+	"stt.mic_auto_gain":                      true,
+	"stt.mic_band_filter":                    true,
+	"stt.voice_gate":                         true,
+	"stt.voice_gate_sensitivity":             true,
+	"stt.trigger_words":                      true,
+	"stt.silence_send_seconds":               true,
+	"stt.idle_exit_seconds":                  true,
+	"stt.barge_in":                           true,
+	"stt.barge_in_words":                     true,
+	"rag.vector_enabled":                     true,
+	"rag.base_url":                           true,
+	"rag.model":                              true,
+	"rag.api_key":                            true,
+	"rag.chunk_size":                         true,
+	"rag.chunk_overlap":                      true,
+	"rag.batch_size":                         true,
+	"rag.search_limit":                       true,
+	"rag.search_pool_size":                   true,
+	"rag.retention_days":                     true,
+	"port_forward.enabled":                   true,
+	"port_forward.port":                      true,
+	"port_forward.allowed_ports":             true,
+	"port_forward.transport":                 true, // accepted but ignored: pinned to "both" in applyConfigPatch
+	"summarize.tts_backend":                  true,
+	"summarize.auto_junk_ratio":              true,
+	"ai_summary.model":                       true,
+	"ai_summary.provider_id":                 true,
+	"meeting.auto_minutes":                   true,
+	"meeting.proofread":                      true,
+	"meeting.language":                       true,
+	"meeting.file_excerpts":                  true,
+	"meeting.minutes_max_tokens":             true,
+	"dingtalk.enabled":                       true,
+	"dingtalk.app_key":                       true,
+	"dingtalk.app_secret":                    true,
+	"dingtalk.agent_id":                      true,
+	"dingtalk.users":                         true,
+	"feishu.enabled":                         true,
+	"feishu.app_id":                          true,
+	"feishu.app_secret":                      true,
+	"feishu.users":                           true,
+	"push_mode":                              true,
+	"forge.enabled":                          true,
+	"forge.insecure_tls":                     true,
+	"forge.notify.opened":                    true,
+	"forge.notify.closed":                    true,
+	"forge.notify.merged":                    true,
+	"forge.notify.reopened":                  true,
+	"forge.notify.commented":                 true,
+	"forge.notify.pipeline":                  true,
+	"forge.pause_event_tasks":                true,
+	"mail.enabled":                           true,
+	"file_search.display_limit":              true,
+	"tls.cert_dir":                           true,
+	"fonts.dir":                              true,
+	"skills.enabled":                         true,
+	"skills.dirs":                            true,
+	"skills.refresh_hours":                   true,
+	"skills.repos":                           true,
 	// MCP server list — hot: connections compare a policy hash each turn, so a
 	// change takes effect on the next turn without a restart.
 	"mcp.servers": true,
@@ -1019,7 +1078,7 @@ var validTTSEngines = map[string]bool{
 // must be rejected rather than falling back to vLLM, otherwise a typo silently
 // sends recordings to a service the user did not configure.
 var validSTTProviders = map[string]bool{
-	"vllm": true, "doubao": true,
+	"vllm": true, "doubao": true, "alibaba": true,
 }
 
 // validVoiceSensitivities is the set of voice-gate sensitivity values. The
@@ -1099,6 +1158,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			RestartResumeWindowMin:   cfg.Chat.RestartResumeWindowMinutes,
 			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
 			GroupMaxSpeeches:         cfg.Chat.GroupMaxSpeeches,
+			RecentProjectCardsMax:    cfg.Chat.RecentProjectCardsMaxCount,
+			RecentProjectCardsWindow: cfg.Chat.RecentProjectCardsWindowHours,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -1129,20 +1190,38 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCacheFiles: cfg.TTS.MaxCacheFiles,
 		},
 		STT: configSTT{
-			Provider:        cfg.STT.Provider,
-			BaseURL:         cfg.STT.BaseURL,
-			APIKey:          cfg.STT.APIKey,
-			Model:           cfg.STT.Model,
-			ResourceID:      cfg.STT.ResourceID,
-			Language:        cfg.STT.Language,
-			Streaming:       cfg.STT.Streaming,
-			ChunkMs:         cfg.STT.ChunkMs,
-			ShortcutKey:     cfg.STT.ShortcutKey,
-			EnableITN:       cfg.STT.EnableITN,
-			EnablePunc:      cfg.STT.EnablePunc,
-			EnableDDC:       cfg.STT.EnableDDC,
-			OutputZHVariant: cfg.STT.OutputZHVariant,
-			EndWindowSize:   cfg.STT.EndWindowSize,
+			Provider:    cfg.STT.Provider,
+			ShortcutKey: cfg.STT.ShortcutKey,
+			VLLM: configSTTVLLM{
+				BaseURL:      cfg.STT.VLLM.BaseURL,
+				APIKey:       cfg.STT.VLLM.APIKey,
+				Model:        cfg.STT.VLLM.Model,
+				Language:     cfg.STT.VLLM.Language,
+				Streaming:    cfg.STT.VLLM.Streaming,
+				ChunkMs:      cfg.STT.VLLM.ChunkMs,
+				FinalRecheck: cfg.STT.VLLM.FinalRecheck,
+			},
+			Doubao: configSTTDoubao{
+				APIKey:          cfg.STT.Doubao.APIKey,
+				ResourceID:      cfg.STT.Doubao.ResourceID,
+				EnableITN:       cfg.STT.Doubao.EnableITN,
+				EnablePunc:      cfg.STT.Doubao.EnablePunc,
+				EnableDDC:       cfg.STT.Doubao.EnableDDC,
+				OutputZHVariant: cfg.STT.Doubao.OutputZHVariant,
+				EndWindowSize:   cfg.STT.Doubao.EndWindowSize,
+				Streaming:       cfg.STT.Doubao.Streaming,
+			},
+			Alibaba: configSTTAlibaba{
+				APIKey:        cfg.STT.Alibaba.APIKey,
+				BaseURL:       cfg.STT.Alibaba.BaseURL,
+				Model:         cfg.STT.Alibaba.Model,
+				Language:      cfg.STT.Alibaba.Language,
+				EnableITN:     cfg.STT.Alibaba.EnableITN,
+				EnablePunc:    cfg.STT.Alibaba.EnablePunc,
+				EnableDDC:     cfg.STT.Alibaba.EnableDDC,
+				EndWindowSize: cfg.STT.Alibaba.EndWindowSize,
+				Streaming:     cfg.STT.Alibaba.Streaming,
+			},
 
 			MicEchoCancel:        cfg.STT.MicEchoCancel,
 			MicNoiseSuppress:     cfg.STT.MicNoiseSuppress,
@@ -1638,6 +1717,90 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	return nil
 }
 
+// applySTTVLLMPatch writes the OpenAI-compatible engine's own fields.
+func applySTTVLLMPatch(cfg *model.STTEngineConfig, patch map[string]any) {
+	if v, ok := patch["base_url"].(string); ok {
+		cfg.BaseURL = v
+	}
+	if v, ok := patch["api_key"].(string); ok {
+		cfg.APIKey = v
+	}
+	if v, ok := patch["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := patch["language"].(string); ok {
+		cfg.Language = v
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+	if v, ok := patch["chunk_ms"].(float64); ok {
+		cfg.ChunkMs = int(v)
+	}
+	if v, ok := patch["final_recheck"].(bool); ok {
+		cfg.FinalRecheck = v
+	}
+}
+
+// applySTTDoubaoPatch writes the Volcano Engine engine's own fields.
+func applySTTDoubaoPatch(cfg *model.STTDoubaoConfig, patch map[string]any) {
+	if v, ok := patch["api_key"].(string); ok {
+		cfg.APIKey = v
+	}
+	if v, ok := patch["resource_id"].(string); ok {
+		cfg.ResourceID = v
+	}
+	if v, ok := patch["enable_itn"].(bool); ok {
+		cfg.EnableITN = v
+	}
+	if v, ok := patch["enable_punc"].(bool); ok {
+		cfg.EnablePunc = v
+	}
+	if v, ok := patch["enable_ddc"].(bool); ok {
+		cfg.EnableDDC = v
+	}
+	if v, ok := patch["output_zh_variant"].(string); ok {
+		cfg.OutputZHVariant = v
+	}
+	if v, ok := patch["end_window_size"].(float64); ok {
+		cfg.EndWindowSize = int(v)
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+}
+
+// applySTTAlibabaPatch writes the Alibaba Cloud engine's own fields.
+func applySTTAlibabaPatch(cfg *model.STTAlibabaConfig, patch map[string]any) {
+	if v, ok := patch["api_key"].(string); ok {
+		cfg.APIKey = v
+	}
+	if v, ok := patch["base_url"].(string); ok {
+		cfg.BaseURL = v
+	}
+	if v, ok := patch["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := patch["language"].(string); ok {
+		cfg.Language = v
+	}
+	if v, ok := patch["enable_itn"].(bool); ok {
+		cfg.EnableITN = v
+	}
+	if v, ok := patch["enable_punc"].(bool); ok {
+		cfg.EnablePunc = v
+	}
+	if v, ok := patch["enable_ddc"].(bool); ok {
+		cfg.EnableDDC = v
+	}
+	if v, ok := patch["end_window_size"].(float64); ok {
+		cfg.EndWindowSize = int(v)
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+}
+
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
 	// language: only locales the bundled translation tables actually carry.
 	// An unknown value would make every background-localized string fall back
@@ -1673,6 +1836,16 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["group_max_speeches"].(float64); ok && v < 1 {
 			return fmt.Errorf("chat.group_max_speeches must be a positive integer")
+		}
+		// The card cap must stay ≥ 1: 0 would mean "hide the section", which is
+		// not what the setting is for (an empty active set already hides it).
+		if v, ok := chat["recent_project_cards_max_count"].(float64); ok && v < 1 {
+			return fmt.Errorf("chat.recent_project_cards_max_count must be at least 1")
+		}
+		// Same reasoning for the window: 0 hours would mean "nothing is recent",
+		// which reads as the feature being off rather than as a preference.
+		if v, ok := chat["recent_project_cards_window_hours"].(float64); ok && v < 1 {
+			return fmt.Errorf("chat.recent_project_cards_window_hours must be at least 1")
 		}
 	}
 	if meeting, ok := patch["meeting"].(map[string]any); ok {
@@ -1730,16 +1903,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
 		if v, ok := sttVal["provider"].(string); ok && v != "" {
 			if !validSTTProviders[v] {
-				return fmt.Errorf("stt.provider must be one of: vllm,doubao")
+				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba")
 			}
-		}
-		if v, ok := sttVal["base_url"].(string); ok && v != "" {
-			if _, err := url.ParseRequestURI(v); err != nil {
-				return fmt.Errorf("stt.base_url must be a valid URL")
-			}
-		}
-		if v, ok := sttVal["chunk_ms"].(float64); ok && v <= 0 {
-			return fmt.Errorf("stt.chunk_ms must be positive")
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
 			return fmt.Errorf("stt.shortcut_key must not be empty")
@@ -1759,6 +1924,23 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := sttVal["idle_exit_seconds"].(float64); ok && v < 0 {
 			return fmt.Errorf("stt.idle_exit_seconds must not be negative")
+		}
+		if vllm, ok := sttVal["vllm"].(map[string]any); ok {
+			if v, ok := vllm["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("stt.vllm.base_url must be a valid URL")
+				}
+			}
+			if v, ok := vllm["chunk_ms"].(float64); ok && v <= 0 {
+				return fmt.Errorf("stt.vllm.chunk_ms must be positive")
+			}
+		}
+		if alibaba, ok := sttVal["alibaba"].(map[string]any); ok {
+			if v, ok := alibaba["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("stt.alibaba.base_url must be a valid URL")
+				}
+			}
 		}
 	}
 
@@ -2325,6 +2507,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := chat["group_max_speeches"].(float64); ok {
 			cfg.Chat.GroupMaxSpeeches = int(v)
 		}
+		if v, ok := chat["recent_project_cards_max_count"].(float64); ok {
+			cfg.Chat.RecentProjectCardsMaxCount = int(v)
+		}
+		if v, ok := chat["recent_project_cards_window_hours"].(float64); ok {
+			cfg.Chat.RecentProjectCardsWindowHours = int(v)
+		}
 	}
 
 	if session, ok := patch["session"].(map[string]any); ok {
@@ -2418,44 +2606,19 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := sttVal["provider"].(string); ok {
 			cfg.STT.Provider = v
 		}
-		if v, ok := sttVal["base_url"].(string); ok {
-			cfg.STT.BaseURL = v
-		}
-		if v, ok := sttVal["api_key"].(string); ok {
-			cfg.STT.APIKey = v
-		}
-		if v, ok := sttVal["model"].(string); ok {
-			cfg.STT.Model = v
-		}
-		if v, ok := sttVal["resource_id"].(string); ok {
-			cfg.STT.ResourceID = v
-		}
-		if v, ok := sttVal["language"].(string); ok {
-			cfg.STT.Language = v
-		}
-		if v, ok := sttVal["streaming"].(bool); ok {
-			cfg.STT.Streaming = v
-		}
-		if v, ok := sttVal["chunk_ms"].(float64); ok {
-			cfg.STT.ChunkMs = int(v)
-		}
 		if v, ok := sttVal["shortcut_key"].(string); ok {
 			cfg.STT.ShortcutKey = v
 		}
-		if v, ok := sttVal["enable_itn"].(bool); ok {
-			cfg.STT.EnableITN = v
+		// Each engine writes only its own section, so editing one engine never
+		// touches another's saved credentials.
+		if v, ok := sttVal["vllm"].(map[string]any); ok {
+			applySTTVLLMPatch(&cfg.STT.VLLM, v)
 		}
-		if v, ok := sttVal["enable_punc"].(bool); ok {
-			cfg.STT.EnablePunc = v
+		if v, ok := sttVal["doubao"].(map[string]any); ok {
+			applySTTDoubaoPatch(&cfg.STT.Doubao, v)
 		}
-		if v, ok := sttVal["enable_ddc"].(bool); ok {
-			cfg.STT.EnableDDC = v
-		}
-		if v, ok := sttVal["output_zh_variant"].(string); ok {
-			cfg.STT.OutputZHVariant = v
-		}
-		if v, ok := sttVal["end_window_size"].(float64); ok {
-			cfg.STT.EndWindowSize = int(v)
+		if v, ok := sttVal["alibaba"].(map[string]any); ok {
+			applySTTAlibabaPatch(&cfg.STT.Alibaba, v)
 		}
 		if v, ok := sttVal["mic_echo_cancel"].(bool); ok {
 			cfg.STT.MicEchoCancel = v
@@ -2790,6 +2953,8 @@ func applyHotReloadGlobals() {
 	model.UserNickname = cfg.User.Nickname
 	model.UserProfile = cfg.User.Profile
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
+	model.ChatRecentProjectCardsMaxCount = cfg.Chat.RecentProjectCardsMaxCount
+	model.ChatRecentProjectCardsWindowHours = cfg.Chat.RecentProjectCardsWindowHours
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
@@ -2805,10 +2970,13 @@ func applyHotReloadGlobals() {
 	// mutations redundant. Kept for test compatibility.
 	curProvider := GetSpeechProvider()
 	if cfg.TTS.Voice != "" {
+		// tts.voice belongs to the Edge engine; the OpenAI engine has its own
+		// tts.openai.voice, applied below. They are deliberately separate: a
+		// shared field meant picking an Edge voice rewrote the OpenAI voice (and
+		// the settings page reset it again on every engine switch).
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
 			p.Voice = cfg.TTS.Voice
 		}
-		// OpenAI: uses its own tts.openai.voice, applied below
 	}
 	if p, ok := curProvider.(*speech.OpenAITTSProvider); ok {
 		p.BaseURL = cfg.TTS.OpenAI.BaseURL
@@ -2901,6 +3069,9 @@ func writeConfigYAML(patch map[string]any) error {
 	// One-time cleanup of the legacy chat.user_nickname key (see
 	// dropLegacyChatNickname).
 	dropLegacyChatNickname(raw)
+	// The pre-per-engine flat stt.* keys: leaving them in the file would make a
+	// hand-edit of one look effective while nothing reads it.
+	model.DropLegacySTTKeys(raw)
 
 	data, err := yaml.Marshal(raw)
 	if err != nil {

@@ -707,6 +707,14 @@ paths:
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
 
+        `chat.recent_project_cards_max_count` 是会话列表底部「其他项目」卡片的
+        数量上限（默认 `10`）。卡片优先给有活跃会话的项目，其次是最近活跃过的
+        项目；上限在排除当前项目之后生效。`PATCH` 时须 ≥ 1。
+
+        `chat.recent_project_cards_window_hours` 决定「最近活跃」是多久之内
+        （默认 `24` 小时）：项目在这么多小时内用过、但当前没有活跃会话，就会以
+        收起的卡片出现。`PATCH` 时须 ≥ 1。
+
         `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（会议结束后由主持人
         客户端自动生成纪要，默认 `true`）、`proofread`（生成前先校对转写，默认
         `true`）、`language`（`""` 跟随转写 / `zh` / `en`）、`file_excerpts`
@@ -2015,12 +2023,23 @@ paths:
         每行同样带 `agentTakeoverFrom`（旧智能体的显示名；省略 = 从未被接管），
         语义与 `GET /api/ai/sessions` 的同名字段一致：智能体被删除后会话由默认智能体
         接管，本字段记录被删除者的名字，供客户端渲染「由 X 接管」徽标。
+
+        **没有活跃会话、但在 `chat.recent_project_cards_window_hours`（默认 24
+        小时）内用过的项目也会返回**（供会话列表把它们渲染成收起的卡片，标题上
+        显示最近活跃时间）。这类项目分组的 `sessions` 为空数组、只带
+        `lastActiveAt`；有活跃会话的分组不带该字段。两类分组各自按最近活跃时间
+        倒序，且活跃的分组排在前面。
+
+        分组数量上限由 `chat.recent_project_cards_max_count`（默认 10）决定，
+        **在排除当前项目、去掉已有活跃会话的项目之后**再截断，因此上限计的就是
+        界面上实际会显示的卡片数。调用方的当前项目永远不作为卡片返回。
       operationId: sessionsOverview
       responses:
         "200":
           description: |
-            各项目会话概览（`{projects: [{name, sessions}], total}`）。每行携带
-            `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
+            各项目会话概览（`{projects: [{name, sessions, lastActiveAt?}], total}`）。
+            每行携带 `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
+            `total` 仍是**活跃会话**总数，不含仅最近活跃的项目。
 
   /api/ai/sessions/by-project:
     get:
@@ -4935,6 +4954,52 @@ paths:
         "409":
           description: 会议仍在进行，或纪要正在生成
 
+  /api/live-share/notes/sessions/share:
+    patch:
+      tags: [LiveShare]
+      summary: 设置会议记录是否对外公开
+      description: |
+        **只控制会议结束之后**这条记录的链接还能不能被外人打开，不影响开会期间加入会议：
+        会议一开始就自动分配 token（观众靠它加入），这与「把纪要、转写公开出去」是两件事。
+
+        默认关闭。关闭时会议一结束，`/share/{token}` 就变成 404（记录本身仍在，
+        主人自己照常能在会议列表里看）。打开后链接长期有效，直到记录被删除。
+
+        与重命名分成两个接口：改名是纯标签操作，这个是「要不要给外人看」，
+        混在一个 PATCH 里会让改名请求意外改变公开状态。
+      operationId: liveShareNotesShare
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                  description: true = 会议结束后链接仍可访问；false = 会议结束即失效
+      responses:
+        "200":
+          description: 已更新，返回更新后的记录
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: "#/components/schemas/MeetingRecord"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/import:
     post:
       tags: [LiveShare]
@@ -5719,6 +5784,9 @@ paths:
 
         每项的 `unread` 为 true 表示该条目有用户尚未查看的活动。它与 dock 角标
         计数的是同一批数据，因此角标数字与列表中的未读标记始终一致。
+
+        `q` 为纯数字（可带 `#` / `!` 前缀）时按编号精确查找：返回该编号对应的
+        单条记录（不存在则空列表）。此时 `state` 与 `mine` 都不生效。
       parameters:
         - name: type
           in: query
@@ -5738,6 +5806,9 @@ paths:
             type: integer
         - name: q
           in: query
+          description: |
+            搜索关键词。纯数字（可带 `#` / `!` 前缀，如 `123`、`#123`、`!123`）
+            视为编号精确查找，返回该编号的单条记录；其余值按标题 / 描述搜索。
           schema:
             type: string
         - name: mine
@@ -6170,13 +6241,24 @@ paths:
 
         **模型列表由服务端合并**：`agents[].models` 是已解析的最终列表——CLI 发现的
         列表提供顺序与名称，ACP 上报的**具体**模型列表在存在时对成员资格有权威性
-        （ACP 未上报的 CLI 模型会被剔除）。ACP 若上报的是 `opus`/`sonnet`/`haiku`
-        这类**档位别名**，则不参与成员资格判定，而是对齐到对应的 CLI 条目并只取其
-        显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels` 是未经合并的纯 CLI
-        列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留基线并重新合并。
+        （ACP 未上报的 CLI 模型会被剔除）。绑定了模型提供商的 agent，其提供商编目的
+        模型**并入**该列表（不会被 ACP 的列表挤掉），并单独放在
+        `agents[].providerModels` 里供选择器按来源分组。ACP 若上报的是
+        `opus`/`sonnet`/`haiku` 这类**档位别名**，则不参与成员资格判定，而是对齐到
+        对应的 CLI 条目并只取其显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels`
+        是未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留
+        基线并重新合并。
 
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
+
+        **目录校验型后端的模型 ID 形态**：opencode 会在发请求前用自己的静态目录
+        解析模型 ID，目录外的 ID 直接被拒。ClawBench 因此把提供商编目**声明进它的
+        配置内容**（`OPENCODE_CONFIG_CONTENT`），声明后这些模型以
+        `<我们的 provider id>/<编目 ID 原样>` 的形式出现（目前是
+        `clawbench-openai/` / `clawbench-anthropic/`）。所以对这些后端，
+        `preferred_model` 存的是带前缀的形态；其他后端仍是编目原值。客户端只需
+        回传服务端给的 ID，不要自行拼接或裁剪前缀。
 
         **ACP 未确认时不展示 CLI 猜测列表**：agent 的 `transport` 为 `acp-stdio`
         且其 ACP 运行时**从未上报过**模型列表时，`agents[].models` 返回**空数组**
@@ -6192,6 +6274,14 @@ paths:
         项目中可见（依据请求的 `clawbench_project` cookie）。`defaultAgent` 同样
         受此约束：若配置的默认 agent 不在当前项目可见，则回退为列表中第一个未
         禁用的 agent。
+      # 斜杠命令的提示词只取这一句：AI 用这个端点是为了拿到 agent 的 id / 名称，
+      # 上面那整段（模型列表合并规则、档位别名对齐、ACP 未确认时的占位、目录
+      # 校验后端的 ID 形态）是给前端模型选择器读的响应契约，它一个字都用不上。
+      # 整段塞进 task / agent / mcp 三个命令会让它们的体积预算全部超出。
+      x-prompt-note: |
+        列出当前项目可见的 agent（含 id、名称、后端、`disabled`、`project_id`、
+        `models`、`providerModels`），以及 `acpStates`（各 agent 的模式、思考深度、
+        斜杠命令、模型列表）。创建任务 / 修改 agent 策略前用它拿 id。
       operationId: agentsList
       responses:
         "200":
@@ -8557,6 +8647,58 @@ paths:
         "500":
           $ref: "#/components/responses/Error"
 
+  /api/group/member-stop:
+    post:
+      tags: [Group]
+      summary: 停止某个群成员当前的发言
+      description: |
+        只停**一个成员**这一次输出：本轮讨论继续（其他成员照常说完，排队消息不受影响），
+        被停的成员之后仍可被主持人/其他成员再次点名。
+
+        与相邻端点区分：
+        - `POST /api/ai/chat/cancel` = 停整轮（并清空队列）；
+        - `POST /api/ai/queue/interrupt` = 停当前回复、下一条排队消息继续跑；
+        - 本端点 = 只让这一个成员闭嘴。
+
+        落库：该成员的助手消息保留已产出的内容，标记 `stopped: true`（**不是**
+        `cancelled`），前端据此显示「已停止发言」而不是「已取消」。
+
+        该成员当前没有在发言（已经说完或还没开始）不是错误：返回 `stopped: false`、
+        `reason: idle`，与 `queue/interrupt` 的「无回合可停」同形，避免过期点击误杀。
+      operationId: groupMemberStop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId:
+                  type: string
+                  description: 成员行 id（`GET /api/group/members` 的 `id`，不是智能体 id）
+      responses:
+        "200":
+          description: 已处理；`stopped` 表示这次是否真的停掉了一个正在发言的成员
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stopped: {type: boolean}
+                  reason:
+                    type: string
+                    description: '仅当 stopped 为 false 时出现，固定为 idle'
+        "400":
+          description: 参数缺失（`InvalidRequest`）
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
   /api/group/settings:
     patch:
       tags: [Group]
@@ -8970,6 +9112,48 @@ paths:
         "200":
           description: 已发送
 
+  /api/mail/attachments:
+    post:
+      tags: [Mail]
+      summary: 把文件或目录转成邮件附件
+      description: |
+        文件管理器 / 文件页头「用邮件发送」用这个接口准备附件：普通文件原样引用（不复制），
+        目录由服务端打包成一个 zip（保留目录本身作为压缩包顶层条目）。
+
+        路径解析与其它文件接口一致：项目相对路径按项目 Cookie 解析，绝对路径校验是否在允许的根目录内。
+        单个附件上限 25 MB，超出返回 `400` + `MailAttachmentTooLarge`。
+      operationId: mailAttachmentsStage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths]
+              properties:
+                paths:
+                  type: array
+                  maxItems: 20
+                  items: {type: string}
+                  description: 项目相对路径或绝对路径
+      responses:
+        "200":
+          description: 可直接放进 `attachments` 的附件描述
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  attachments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename: {type: string}
+                        path: {type: string, description: 服务端可读的绝对路径}
+                        size: {type: integer}
+
   /api/mail/drafts:
     get:
       tags: [Mail]
@@ -9305,7 +9489,12 @@ components:
             - $ref: "#/components/schemas/MeetingGeneration"
           nullable: true
         updatedAt: { type: integer, format: int64, description: 记录最后写入时间，Unix 毫秒 }
-      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, hasSegments, hasAudio, artifacts, updatedAt]
+        shareEnabled:
+          type: boolean
+          description: |
+            会议结束后这条记录的公开链接是否仍可访问。默认 false：token 是开会时
+            自动分配的（观众靠它加入），不等于把纪要公开出去。开会期间不受它影响。
+      required: [token, title, startedAt, endedAt, hasMinutes, hasTranscript, hasRevised, audioFiles, chatCount, hasSegments, hasAudio, artifacts, updatedAt, shareEnabled]
 
     LiveNoteChatMessage:
       type: object

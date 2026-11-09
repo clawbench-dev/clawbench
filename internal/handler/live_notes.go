@@ -79,17 +79,25 @@ const (
 	liveNoteShotMaxDimension = 8192
 	// liveNoteTextKey is the JSON key carrying one transcript line.
 	liveNoteTextKey = "text"
+	// liveNoteSessionKey is the JSON key wrapping a meeting record. It is a
+	// response field name, deliberately NOT shareSessionSegment (that one is a
+	// URL path segment that happens to spell the same word).
+	liveNoteSessionKey = "session"
 	// liveNoteSTTConcurrency is how many segment transcriptions may run at once
 	// across all rooms. The STT backend is a shared HTTP service; a long meeting
 	// with eight speaking viewers would otherwise burst it.
 	liveNoteSTTConcurrency = 4
-	// Per-step budgets. Recognition is the long one (a one-hour meeting is
-	// hundreds of 20-second chunks); proofread and summarize are model passes
-	// over the same text. The chain budget is deliberately larger than the sum
-	// of two steps because a regeneration can run all three.
-	liveNoteASRTimeout   = 30 * time.Minute
-	liveNoteModelTimeout = 10 * time.Minute
-	liveNoteChainTimeout = 60 * time.Minute
+	// Per-step budgets. Recognition and conversion are proportional to the
+	// recording — one 20-second chunk per 20 seconds of audio, four at a time —
+	// so their budget is derived from its length between these two bounds.
+	// Proofread and summarize are model passes over the same text and stay
+	// fixed.
+	liveNoteDurationFloor = 30 * time.Minute
+	liveNoteDurationCap   = 4 * time.Hour
+	liveNoteModelTimeout  = 10 * time.Minute
+	// liveNoteChainMargin is what the chain keeps beyond its steps, so a step
+	// that ends right at its own deadline still has room to record the failure.
+	liveNoteChainMargin = 10 * time.Minute
 )
 
 // liveNoteSTTSlots is the process-wide transcription semaphore.
@@ -224,6 +232,54 @@ func ServeLiveNotesSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ServeLiveNotesShare toggles whether a meeting record's public link keeps
+// working after the meeting ends (PATCH /api/live-share/notes/sessions/share).
+//
+// Deliberately its own endpoint rather than another field on the PATCH that
+// renames a record: renaming is a pure label edit, while this decides whether
+// strangers can read the meeting at all. Two different intentions behind one
+// endpoint would mean a rename request could silently flip publication.
+func ServeLiveNotesShare(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPatch) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if !validShareToken(token) || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if err := service.SetMeetingShareEnabled(projectID, token, body.Enabled); err != nil {
+		if errors.Is(err, service.ErrMeetingNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("live notes: set share flag failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	record, exists, err := service.GetMeetingRecord(projectPath, projectID, token)
+	if err != nil {
+		slog.Error("live notes: share flag read-back failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: record})
+}
+
 func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
 	projectPath, projectID, ok := liveNotesProject(w, r)
 	if !ok {
@@ -244,7 +300,7 @@ func serveLiveNotesList(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"session": record})
+		writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: record})
 		return
 	}
 	sessions, err := service.ListMeetingRecords(projectPath, projectID, 200)
@@ -428,7 +484,7 @@ func serveLiveNotesRename(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": record})
+	writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: record})
 }
 
 // serveLiveNotesDelete handles DELETE /api/live-share/notes/sessions?token=
@@ -1397,6 +1453,11 @@ type artifactChain struct {
 	screens  []service.LiveNoteScreenShare
 	segments []service.LiveNoteSegment
 	self     service.LiveNotesSpeaker
+	// audioMS is the total audio the chain has to recognize, resolved in
+	// prepare(). It sizes the step budgets: the work is proportional to the
+	// audio, so a fixed ceiling would either cut a long recording off or be
+	// pointless for a short one. 0 means "unknown" and falls back to the floor.
+	audioMS int64
 
 	// Context the transcript cannot carry. Loaded once in prepare() and consumed
 	// by the minutes step; the proofreader gets its own vocabulary from the
@@ -1441,6 +1502,7 @@ func (c *artifactChain) prepare() {
 		}
 		recordMergedAudioChannels(c.token, merged)
 	}
+	c.audioMS = c.mediaAudioMS()
 	files, filesErr := service.ListLiveNoteFiles(c.token, 0)
 	if filesErr != nil {
 		// The transcript and the minutes are worth producing without the file
@@ -1472,6 +1534,32 @@ func (c *artifactChain) prepare() {
 	}
 }
 
+// mediaAudioMS is the total audio the chain has to recognize, used to size the
+// step budgets.
+//
+// The audio channel metadata is the authority: the merge writes it for a
+// recorded meeting and the import writes it before the chain starts. The
+// durations are summed, not maxed — every channel is transcribed in full, so a
+// three-hour meeting with two speakers is six hours of recognition, not three.
+// (Channels never overlap in the table: the mix row exists only for a solo
+// recording, whose single channel was folded into it.) A read failure or a
+// meeting with no merged audio yields 0, which the budget treats as "unknown"
+// and covers with the floor.
+func (c *artifactChain) mediaAudioMS() int64 {
+	channels, err := service.ListLiveNoteAudioChannels(c.token)
+	if err != nil {
+		slog.Warn("live notes: list audio channels failed", "err", err)
+		return 0
+	}
+	var total int64
+	for _, channel := range channels {
+		if channel.DurationMS > 0 {
+			total += channel.DurationMS
+		}
+	}
+	return total
+}
+
 // refreshSegments re-reads the transcript rows. The ASR step replaces them, so
 // every step after it must see the new rows rather than the pre-chain snapshot.
 func (c *artifactChain) refreshSegments() {
@@ -1497,7 +1585,7 @@ func (c *artifactChain) run(ctx context.Context, steps []service.RegenStep) {
 			return
 		}
 		c.markRunning(step)
-		stepCtx, cancel := context.WithTimeout(ctx, artifactStepTimeout(step.Kind))
+		stepCtx, cancel := context.WithTimeout(ctx, artifactStepTimeout(step.Kind, c.audioMS))
 		err := c.runStep(stepCtx, step)
 		cancel()
 		if err == nil {
@@ -1808,7 +1896,11 @@ func runArtifactChain(token string, projectID int64, projectPath, title string, 
 	if len(steps) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), liveNoteChainTimeout)
+	// The chain budget depends on how long the recording is, which is only
+	// known once prepare has merged the audio and read its metadata. The
+	// cancellable parent keeps "stop" working during prepare; the deadline is
+	// layered on top of it afterwards.
+	parent, cancel := context.WithCancel(context.Background())
 	registerLiveNoteJob(token, cancel)
 	defer func() {
 		unregisterLiveNoteJob(token)
@@ -1817,16 +1909,50 @@ func runArtifactChain(token string, projectID int64, projectPath, title string, 
 
 	chain := newArtifactChain(token, projectID, projectPath, title, strict)
 	chain.prepare()
+	ctx, expire := context.WithTimeout(parent, liveNoteChainBudget(chain.audioMS))
+	defer expire()
 	chain.run(ctx, steps)
 }
 
-// artifactStepTimeout is the budget for one step. Recognition is the long one;
-// the model passes share a smaller budget.
-func artifactStepTimeout(kind service.ArtifactKind) time.Duration {
+// artifactStepTimeout is the budget for one step. Recognition is the long one
+// and grows with the recording; the model passes share a smaller budget.
+func artifactStepTimeout(kind service.ArtifactKind, durationMS int64) time.Duration {
 	if kind == service.ArtifactTranscript {
-		return liveNoteASRTimeout
+		return liveNoteDurationBudget(durationMS)
 	}
 	return liveNoteModelTimeout
+}
+
+// liveNoteDurationBudget is how long one media step may run for a recording of
+// the given length.
+//
+// The derivation is half the recording: recognition runs four 20-second chunks
+// at a time, so half the duration lets every chunk take 40 seconds — twice the
+// audio it carries — before the budget runs out. A fixed ceiling instead cuts
+// long recordings off and is pointlessly generous for short ones. Unknown
+// lengths (0) and short recordings get the floor; the cap keeps a corrupt
+// duration from buying an effectively unbounded job.
+func liveNoteDurationBudget(durationMS int64) time.Duration {
+	if durationMS <= 0 {
+		return liveNoteDurationFloor
+	}
+	// Compare in milliseconds and halve before scaling, so a hostile duration
+	// cannot overflow the multiplication.
+	if durationMS >= 2*int64(liveNoteDurationCap/time.Millisecond) {
+		return liveNoteDurationCap
+	}
+	if budget := time.Duration(durationMS/2) * time.Millisecond; budget > liveNoteDurationFloor {
+		return budget
+	}
+	return liveNoteDurationFloor
+}
+
+// liveNoteChainBudget is the whole chain's ceiling: every step at its own
+// budget plus the margin. It must stay above the sum of the steps, otherwise a
+// step that would have finished gets killed by the chain instead and reports
+// "timeout" from the wrong place.
+func liveNoteChainBudget(durationMS int64) time.Duration {
+	return liveNoteDurationBudget(durationMS) + 2*liveNoteModelTimeout + liveNoteChainMargin
 }
 
 // artifactErrorCode maps a step failure onto the code the SPA localizes.
@@ -1900,6 +2026,33 @@ func liveNotesStartTime(segments []service.LiveNoteSegment) time.Time {
 	return time.UnixMilli(earliest)
 }
 
+// loadPublicLiveNoteChat returns the archived chat for a share link. Chat is
+// not an official artifact of the meeting: losing it must not cost the reader
+// the minutes and the transcript, so a failure is a warning, not an error.
+func loadPublicLiveNoteChat(token string) []liveNotePublicChat {
+	messages, err := service.ListLiveNoteChat(token, 0)
+	if err != nil {
+		slog.Warn("live notes: public chat failed", "err", err)
+		return nil
+	}
+	var chat []liveNotePublicChat
+	for _, m := range messages {
+		chat = append(chat, liveNotePublicChat{Speaker: m.Speaker, Text: m.Text, At: m.At})
+	}
+	return chat
+}
+
+// loadPublicLiveNoteShots returns the redacted key frames for a share link.
+// Like chat, a failure must not cost the reader the minutes and transcript.
+func loadPublicLiveNoteShots(token string) []service.LiveNoteShot {
+	listed, err := service.ListLiveNoteShots(token)
+	if err != nil {
+		slog.Warn("live notes: public shots failed", "err", err)
+		return nil
+	}
+	return redactLiveNoteShots(listed)
+}
+
 // ServeShareLiveNotes handles GET /api/share/{token}/notes (PUBLIC: the share
 // token is the sole credential, exactly like the signaling socket).
 //
@@ -1921,9 +2074,22 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 	// A live room is the fast path, but it is NOT the only valid state: after
-	// the room is gone the record still owns the token.
+	// the room is gone the record may still be published.
+	//
+	// The two states use DIFFERENT gates on purpose. Joining a running meeting
+	// must keep working (that is what the link is handed out for), so the live
+	// room ignores the owner's share switch. The archived record is a stranger
+	// reading what was said in a meeting they were not in, so it requires the
+	// explicit opt-in — see PublicMeetingByTokenShared.
 	live := liveRegistry.Get(token) != nil
-	note, exists, err := service.PublicMeetingByToken(token)
+	var note service.LiveNote
+	var exists bool
+	var err error
+	if live {
+		note, exists, err = service.PublicMeetingByToken(token)
+	} else {
+		note, exists, err = service.PublicMeetingByTokenShared(token)
+	}
 	if err != nil {
 		slog.Error("live notes: public get failed", "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -1955,15 +2121,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	}
 	var chat []liveNotePublicChat
 	if full {
-		messages, chatErr := service.ListLiveNoteChat(token, 0)
-		if chatErr != nil {
-			// Chat is not an official artifact of the meeting: losing it must
-			// not cost the reader the minutes and the transcript.
-			slog.Warn("live notes: public chat failed", "err", chatErr)
-		}
-		for _, m := range messages {
-			chat = append(chat, liveNotePublicChat{Speaker: m.Speaker, Text: m.Text, At: m.At})
-		}
+		chat = loadPublicLiveNoteChat(token)
 	}
 	revise := liveNotesRevisePayload{Status: note.ReviseStatus, Error: note.ReviseError}
 	if full {
@@ -1975,13 +2133,7 @@ func ServeShareLiveNotes(w http.ResponseWriter, r *http.Request, token string) {
 	// viewer already watches the picture itself.
 	var shots []service.LiveNoteShot
 	if full {
-		listed, shotErr := service.ListLiveNoteShots(token)
-		if shotErr != nil {
-			// Like chat: losing the frames must not cost the reader the minutes
-			// and the transcript.
-			slog.Warn("live notes: public shots failed", "err", shotErr)
-		}
-		shots = redactLiveNoteShots(listed)
+		shots = loadPublicLiveNoteShots(token)
 	}
 	writeJSON(w, http.StatusOK, liveNotesResponse{
 		Title:     note.Title,
@@ -2060,6 +2212,21 @@ func ServeShareLiveNoteShotImage(w http.ResponseWriter, r *http.Request, token s
 	if err != nil || id <= 0 || !validShareToken(token) {
 		http.NotFound(w, r)
 		return
+	}
+	// Key frames are part of the archived record, so they follow the record's
+	// publication gate. During the meeting the viewer sees the picture live and
+	// the timeline needs its frames, so a running room is always allowed.
+	if liveRegistry.Get(token) == nil {
+		shared, shareErr := service.MeetingShareEnabled(token)
+		if shareErr != nil {
+			slog.Error("live notes: shot share flag failed", "err", shareErr)
+			model.WriteError(w, model.Internal(shareErr))
+			return
+		}
+		if !shared {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	absPath, found, lookupErr := service.LiveNoteShotFile(token, id)
 	if lookupErr != nil {
@@ -2213,7 +2380,7 @@ func transcribeLiveNoteSegment(ctx context.Context, audio []byte) (string, error
 	if provider == nil {
 		return "", errors.New("stt provider not configured")
 	}
-	return provider.Transcribe(ctx, bytes.NewReader(audio), model.ConfigInstance.STT.Language)
+	return provider.Transcribe(ctx, bytes.NewReader(audio), model.ConfigInstance.STT.ActiveLanguage())
 }
 
 // parseLiveNoteMillis parses a millisecond timestamp, returning 0 for garbage.

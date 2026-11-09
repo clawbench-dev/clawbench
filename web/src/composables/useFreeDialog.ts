@@ -2,8 +2,8 @@
  * Free-dialog mode (shown as 连续对话 in the UI): the microphone stays open,
  * the user talks, and a turn is sent to the assistant when they say a trigger
  * word or simply stop talking. Once the reply has been read out, listening
- * resumes — and if the user starts speaking while it is still talking, the
- * playback is cut short.
+ * resumes — and if the user starts speaking while it is still being generated
+ * or read aloud, the turn is cut short.
  *
  * State machine:
  *
@@ -13,10 +13,18 @@
  *   thinking   a turn was sent, waiting for the reply to finish
  *   speaking   the reply is being read aloud (auto-speech)
  *
+ * "Cut in" covers the whole reply, not only the read-aloud: the interrupt
+ * listener runs in BOTH thinking and speaking, because a long generation is
+ * exactly when a user most wants to say "等等，不是这个意思" and the text is not
+ * even on screen yet. What the interrupt does depends on what exists at that
+ * moment — stop the playback if something is being read, otherwise cancel the
+ * turn itself (`onInterrupt`).
+ *
  * ONE microphone for the whole session: the capture graph is opened when the
  * mode starts and released when it stops. A phase change only swaps who reads
  * its frames — the dictation recogniser while listening, the interrupt
- * recogniser while speaking, nobody in between.
+ * recogniser while the reply is in flight (generating or being read out),
+ * nobody in between.
  *
  * Two reasons, both observed on a phone:
  *
@@ -58,6 +66,7 @@ import { acquireMic, classifyMicError, describeMicError } from '@/utils/micCaptu
 import { PcmStreamer } from '@/utils/pcmCapture'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { useAutoSpeech } from '@/composables/useAutoSpeech'
+import { playVoiceModeCue } from '@/composables/useNotificationSound'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -82,6 +91,20 @@ export type FreeDialogPhase = 'idle' | 'listening' | 'thinking' | 'speaking'
  */
 const REOPEN_DELAY_MS = 250
 
+/**
+ * How long to wait before arming the interrupt listener for a turn this loop
+ * just sent.
+ *
+ * The "took it" cue is still ringing when the turn starts and the microphone
+ * hears it through the speaker. Arming immediately lets that cue be
+ * transcribed: harmless in keyword mode, but under the default "any speech"
+ * setting it would cancel the turn that was just sent — every single time.
+ *
+ * Short enough to stay well inside a normal generation, long enough for the
+ * cue (≈160 ms) plus the recogniser's own chunking to be over.
+ */
+const BARGE_ARM_DELAY_MS = 500
+
 // ── Module-level singleton ───────────────────────────────────────────────
 // One loop per app instance, like useAutoSpeech: the mode is a property of the
 // session being talked to, not of a component that may unmount.
@@ -90,6 +113,13 @@ const phase = ref<FreeDialogPhase>('idle')
 const liveTranscript = ref('')
 /** Set when the mode stopped itself because of a failure, so the UI can say why. */
 const lastError = ref('')
+/**
+ * Whether speaking cuts the reply short (`stt.barge_in` is not 'off').
+ *
+ * Exposed for the status strip: "AI 正在思考…" and "…你可以开口打断" describe
+ * very different affordances, and the user cannot see which one applies.
+ */
+const canInterrupt = ref(false)
 
 let tuning: VoiceTuning = { ...VOICE_TUNING_DEFAULTS }
 /** The session's capture graph — see "ONE microphone" in the header. */
@@ -108,12 +138,45 @@ let capturePending: Promise<boolean> | null = null
 let captureGen = 0
 /** Recogniser socket of the dictation (listening) phase. */
 let ws: WebSocket | null = null
+/**
+ * Set while the engine has been asked for its finished sentence and we are
+ * waiting for the answer.
+ *
+ * The running transcript is a REVISION, not the final answer. A streaming
+ * engine only finalizes a sentence once it has seen enough silence (Alibaba's
+ * default is 800 ms), and the microphone gate stops feeding audio 600 ms after
+ * the last loud frame — so the text in hand is missing its last few characters,
+ * and closing the socket (what this used to do) discarded them for good.
+ * Sending `end` makes the engine flush and answer with the finished sentence;
+ * dictation mode has always done that, free-dialog did not.
+ */
+let finalizeWait: {
+  /** Text to send if the engine never answers. */
+  fallback: string
+  /** Whether a trigger word still has to be stripped from the answer. */
+  trigger: boolean
+  timer: ReturnType<typeof setTimeout>
+} | null = null
 /** Text confirmed by the recogniser for the CURRENT utterance. */
 let utterance = ''
 /** The session the loop belongs to; a switch cancels the loop. */
 let sessionId = ''
 /** Called with the final text when a turn should be sent. */
 let onSend: ((text: string) => void) | null = null
+/**
+ * Asks the owner to read out the reply of the turn that just ended, and
+ * returns whether it started doing so.
+ *
+ * Auto-speech normally starts from the terminal `done` event. That event is
+ * not guaranteed to arrive: the WebSocket reconnects (a mobile-network hiccup
+ * is enough — the screen can stay on and the app stay in the foreground) and
+ * the hub drops the frame with `reason=no_subscribers`. The turn then ends via
+ * a different path (the session-state update or a history reload), and only
+ * the loop knows the user is still waiting to HEAR this turn — so it re-asks
+ * once the turn has settled with nothing playing instead of silently going
+ * back to listening.
+ */
+let onSpeakPendingReply: (() => boolean) | null = null
 /** Cancels a turn that is still running when the user interrupts it. */
 let onInterrupt: (() => void) | null = null
 /** Whether a turn is currently in flight (set by the owner via `setThinking`). */
@@ -122,9 +185,29 @@ let silenceTimer: ReturnType<typeof setTimeout> | null = null
 /** Fires when the microphone has produced no recognised words for too long. */
 let idleExitTimer: ReturnType<typeof setTimeout> | null = null
 let reopenTimer: ReturnType<typeof setTimeout> | null = null
-/** Recogniser socket of the interrupt (speaking) phase. */
+/** Recogniser socket that watches for an interruption (thinking/speaking). */
 let bargeWs: WebSocket | null = null
 let bargeTriggered = false
+/**
+ * How long to wait for the engine's finished sentence after "end".
+ *
+ * Long enough for a flush (Alibaba answers in a few hundred milliseconds),
+ * short enough that an engine which never answers costs a beat instead of the
+ * whole turn — on expiry the text already in hand is sent.
+ */
+const FINALIZE_TIMEOUT_MS = 1000
+
+/** Pending "arm the interrupt listener" timer — see `armBargeIn`. */
+let bargeArmTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Set when the user cut the running turn short instead of muting a playback.
+ *
+ * The truncated reply is never handed to TTS, so the panel's `spokenReplyIds`
+ * knows nothing about it and the "the `done` was lost, read the pending reply"
+ * fallback would read the abandoned half-answer out loud — immediately after
+ * the user asked it to stop.
+ */
+let turnCancelledByUser = false
 /**
  * Invalidation counter for the interrupt listener.
  *
@@ -242,6 +325,21 @@ function clearSettleTimer() {
   }
 }
 
+function clearBargeArmTimer() {
+  if (bargeArmTimer !== null) {
+    clearTimeout(bargeArmTimer)
+    bargeArmTimer = null
+  }
+}
+
+/** Abandons a pending "wait for the finished sentence" without sending. */
+function clearFinalizeWait() {
+  if (finalizeWait) {
+    clearTimeout(finalizeWait.timer)
+    finalizeWait = null
+  }
+}
+
 /** Closes the dictation recogniser, leaving the microphone alone. */
 function closeDictationSocket() {
   listenGen += 1
@@ -258,6 +356,9 @@ function closeDictationSocket() {
 
 /** Closes the interrupt recogniser, leaving the microphone alone. */
 function closeBargeSocket() {
+  // A pending arm belongs to the listener being torn down: nothing should
+  // reopen it behind the caller's back.
+  clearBargeArmTimer()
   bargeGen += 1
   if (bargeWs) {
     bargeWs.onmessage = null
@@ -305,8 +406,11 @@ let autoSpeechTurnedOnByUs = false
  * `notify: false` suppresses the "dialog closed" toast. The failure paths have
  * already shown a more specific reason, and `startFreeDialog`'s own reset would
  * otherwise announce "closed" a millisecond before "opened".
+ *
+ * `silent: true` suppresses the closing cue as well, for that same internal
+ * reset — the mode is about to start again and a "closed" beep would be a lie.
  */
-export function stop(options: { notify?: boolean } = {}): void {
+export function stop(options: { notify?: boolean; silent?: boolean } = {}): void {
   const wasActive = phase.value !== 'idle'
   // Restore only if we are the ones who turned it on AND the user has not
   // turned it off in the meantime — re-enabling a switch they just disabled
@@ -318,15 +422,27 @@ export function stop(options: { notify?: boolean } = {}): void {
   clearReopenTimer()
   clearSettleTimer()
   clearWakeLockWarningTimer()
+  // A pending finalize must not send into a mode the user has just left.
+  clearFinalizeWait()
   stopCapture()
   wakeLock.release(WAKE_LOCK_REASON)
   utterance = ''
   liveTranscript.value = ''
   turnInFlight = false
+  turnCancelledByUser = false
+  canInterrupt.value = false
   phase.value = 'idle'
   autoSpeechTurnedOnByUs = false
   onInterrupt = null
+  onSpeakPendingReply = null
   if (restoreSpeech) autoSpeech.setEnabled(false, { silent: true })
+  // The closing cue: the user asked to be told when the mode ends, and the
+  // automatic exit (nothing heard for a while) is exactly the case where
+  // nothing on screen will be noticed.
+  if (wasActive && options.silent !== true) {
+    appLog.i(TAG, `closed (read-aloud restored: ${restoreSpeech})`)
+    playVoiceModeCue('exit')
+  }
   if (options.notify !== false && wasActive) {
     useToast().show(
       gt(restoreSpeech ? 'chat.voice.freeDialogOffWithSpeech' : 'chat.voice.freeDialogOff'),
@@ -347,6 +463,9 @@ export function stop(options: { notify?: boolean } = {}): void {
 function restartSilenceTimer() {
   clearSilenceTimer()
   if (tuning.silenceSendMs <= 0) return
+  // The send decision is already made and the engine is finishing the
+  // sentence; a later revision must not arm a second one.
+  if (finalizeWait) return
   // Nothing to send yet: arming here would only burn a timer that expires into
   // an empty utterance.
   if (!utterance.trim()) return
@@ -388,15 +507,84 @@ function applyTranscript(next: string): void {
   if (next === utterance) return
   utterance = next
   liveTranscript.value = next
+  // While the engine is finishing the sentence, a revision belongs to the
+  // answer we asked for — it must not re-arm the pause timer.
+  if (finalizeWait) return
   restartSilenceTimer()
   restartIdleExitTimer()
 }
 
-/** Sends the current utterance as a turn and stops feeding the recogniser. */
-function sendTurn(text: string) {
+/**
+ * Sends the current utterance as a turn.
+ *
+ * Unless the transcript is already final (`finalized`), this does NOT send
+ * immediately: it first asks the recogniser for its finished sentence.
+ *
+ * The running transcript is a REVISION. A streaming engine only settles a
+ * sentence after enough silence (Alibaba's default is 800 ms) while the
+ * microphone gate stops feeding audio 600 ms after the last loud frame, so the
+ * text in hand is missing its last few characters — closing the socket there
+ * discarded them for good. `end` makes the engine flush and answer with the
+ * finished sentence; dictation mode has always done that, this mode did not.
+ *
+ * `trigger` marks a send caused by the trigger word: the finished sentence
+ * still ends with it, so it is stripped again once the answer is in.
+ */
+function sendTurn(text: string, opts: { trigger?: boolean; finalized?: boolean } = {}) {
   const clean = text.trim()
   if (!clean) return
+  // Already waiting for the engine: a second partial must not start a second
+  // send (and a second `end`).
+  if (finalizeWait) return
   clearSilenceTimer()
+  const trigger = opts.trigger === true
+  const sock = ws
+  if (opts.finalized || !sock || sock.readyState !== WebSocket.OPEN || phase.value !== 'listening') {
+    commitTurn(clean, trigger)
+    return
+  }
+  // Stop feeding audio before asking: what follows the end of the sentence
+  // belongs to the next one.
+  frameSink = null
+  finalizeWait = {
+    fallback: clean,
+    trigger,
+    timer: setTimeout(() => {
+      if (!finalizeWait) return
+      finalizeWait = null
+      // The engine never answered. Send what we have rather than lose the turn.
+      commitTurn(utterance.trim() || clean, trigger)
+    }, FINALIZE_TIMEOUT_MS),
+  }
+  try {
+    sock.send(JSON.stringify({ type: 'end' }))
+  } catch {
+    // The socket died under us: fall through to the timeout, which sends the
+    // text already in hand.
+  }
+}
+
+/**
+ * Starts the turn with the text the recogniser has settled on.
+ *
+ * `trigger` re-strips the trigger word: the finished sentence includes it even
+ * though the partial it was matched on had already had it removed.
+ */
+function commitTurn(text: string, trigger: boolean) {
+  let clean = text.trim()
+  if (trigger) {
+    const { matched, text: rest } = extractTrigger(clean, tuning.triggerWords)
+    if (matched) clean = rest.trim()
+  }
+  if (!clean) {
+    // The revision retracted the words. Sending an empty turn would be a turn
+    // the user never asked for; go back to listening instead.
+    utterance = ''
+    liveTranscript.value = ''
+    closeDictationSocket()
+    void openListening()
+    return
+  }
   utterance = ''
   liveTranscript.value = ''
   // Stop feeding dictation before the turn starts: the reply will be read
@@ -406,6 +594,15 @@ function sendTurn(text: string) {
   closeDictationSocket()
   phase.value = 'thinking'
   turnInFlight = true
+  turnCancelledByUser = false
+  // Interrupting is not limited to the read-aloud: arm the listener for the
+  // generation window as well (after the "took it" cue has rung out).
+  armBargeIn()
+  // Audible "took it": in this mode the user is not looking at the screen, so
+  // whether the sentence was actually sent needs a non-visual answer. Played
+  // after the recogniser socket is closed, so the cue itself can never be
+  // captured and transcribed as part of the next utterance.
+  playVoiceModeCue('send')
   onSend?.(clean)
 }
 
@@ -512,8 +709,18 @@ async function openListening(): Promise<void> {
         checkTrigger()
       } else if (msg.type === 'done') {
         const final = (msg.final ?? '').trim()
+        const wait = finalizeWait
+        if (wait) {
+          // This is the answer to the `end` we sent: the finished sentence.
+          // Use it (or the text in hand if the engine had nothing to add) and
+          // do NOT run the trigger check again — the answer still ends with the
+          // trigger word and would fire a second send.
+          clearFinalizeWait()
+          commitTurn(final || wait.fallback, wait.trigger)
+          return
+        }
         if (final) applyTranscript(final)
-        checkTrigger()
+        checkTrigger({ finalized: true })
       } else if (msg.type === 'error') {
         lastError.value = msg.message || gt('chat.voice.transcribeFailed')
         toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
@@ -540,6 +747,9 @@ async function openListening(): Promise<void> {
   }
   sock.onclose = () => {
     if (ws !== sock || myGen !== gen) return
+    // The engine closes the connection right after answering our `end`, and
+    // that answer is the user's turn: leaving the mode here would drop it.
+    if (finalizeWait) return
     if (phase.value === 'listening') stop({ notify: false })
   }
   phase.value = 'listening'
@@ -562,15 +772,20 @@ async function openListening(): Promise<void> {
  * Running on partials is safe because the match is anchored to the END of the
  * transcript: a revision that adds words after the trigger simply stops
  * matching until the user says it again.
+ *
+ * `finalized` says the transcript came from a `done`, so it is already the
+ * engine's finished sentence and must not be sent back to the engine to be
+ * finalized a second time.
  */
-function checkTrigger() {
+function checkTrigger(opts: { finalized?: boolean } = {}) {
   if (phase.value !== 'listening') return
+  if (finalizeWait) return
   const text = utterance.trim()
   if (!text) return
   const { matched, text: rest } = extractTrigger(text, tuning.triggerWords)
   if (!matched) return
   if (rest) {
-    sendTurn(rest)
+    sendTurn(rest, { trigger: true, finalized: opts.finalized === true })
     return
   }
   // A bare "发送" sends nothing — there was no content, and sending an empty
@@ -580,10 +795,37 @@ function checkTrigger() {
 }
 
 /**
+ * Arms the interrupt listener for a turn that has just started generating.
+ *
+ * Delayed rather than immediate: see `BARGE_ARM_DELAY_MS` for the cue that
+ * would otherwise be transcribed as the user's speech. The timer re-checks the
+ * phase because the turn can finish inside the window (an instant failure, a
+ * cancelled turn, or playback taking over) — opening a recogniser then would
+ * transcribe the reply as the user's next message.
+ */
+function armBargeIn() {
+  clearBargeArmTimer()
+  if (tuning.bargeIn === 'off') return
+  const myGen = gen
+  bargeArmTimer = setTimeout(() => {
+    bargeArmTimer = null
+    if (myGen !== gen) return
+    if (phase.value !== 'thinking' || !turnInFlight) return
+    void openBargeListener()
+  }, BARGE_ARM_DELAY_MS)
+}
+
+/**
  * Points the capture at a recogniser that watches for an interruption.
  *
  * Recognition runs on the same socket protocol, but only the trigger decision
  * matters here — the transcript is discarded.
+ *
+ * Runs in BOTH phases of a reply: 'thinking' (generating, nothing to hear yet)
+ * and 'speaking' (reading out). Playback starting re-opens it, which is what
+ * gives the new window a fresh recogniser session — a transcript left over
+ * from the generation phase would otherwise be able to fire again the instant
+ * the read-aloud begins.
  */
 async function openBargeListener(): Promise<void> {
   if (tuning.bargeIn === 'off') return
@@ -599,7 +841,8 @@ async function openBargeListener(): Promise<void> {
   bargeTriggered = false
   frameSink = null
   if (!(await ensureCapture())) return
-  if (myGen !== gen || myBargeGen !== bargeGen || phase.value !== 'speaking') return
+  if (myGen !== gen || myBargeGen !== bargeGen) return
+  if (phase.value !== 'speaking' && phase.value !== 'thinking') return
   const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
   // Tracked at module scope: a local would leave the socket (and the engine
   // session behind it) open forever once playback ends.
@@ -622,6 +865,10 @@ async function openBargeListener(): Promise<void> {
       // false positive; anything that matches what is being read out is ignored.
       if (looksLikeOwnSpeech(heard, autoSpeech.speakingText.value)) return
       if (!matchesBargeInWord(heard, tuning)) return
+      // Nothing is playing yet (the reply is still being generated) and there
+      // is nobody to ask: leave the latch clear instead of going deaf for the
+      // rest of the turn.
+      if (!autoSpeech.isBusy() && !onInterrupt) return
       bargeTriggered = true
       appLog.i(TAG, `barge-in by "${heard}"`)
       if (autoSpeech.isBusy()) {
@@ -630,6 +877,7 @@ async function openBargeListener(): Promise<void> {
       } else {
         // The turn is still running and has produced no speech yet, so there is
         // nothing to mute — the turn itself has to be cancelled.
+        turnCancelledByUser = true
         onInterrupt?.()
       }
     } catch { /* ignore malformed */ }
@@ -645,22 +893,31 @@ export async function startFreeDialog(opts: {
   busy?: boolean
   /** Cancels that running turn when the user interrupts it. */
   onInterrupt?: () => void
+  /**
+   * Reads out the reply of a finished turn when no playback started, returning
+   * whether it did. See `onSpeakPendingReply` for why the loop cannot rely on
+   * the terminal `done` event alone.
+   */
+  onSpeakPendingReply?: () => boolean
 }): Promise<void> {
   // Reset without announcing: "closed" followed immediately by "opened" is
-  // noise, and the toast slot only holds one message anyway.
-  stop({ notify: false })
+  // noise, and the toast slot only holds one message anyway. The cue is
+  // silenced too — the mode is about to start, not end.
+  stop({ notify: false, silent: true })
   // stop() released the lock, so take it again for this run.
   void wakeLock.acquire(WAKE_LOCK_REASON)
   warnIfScreenCannotStayAwake()
   sessionId = opts.sessionId
   onSend = opts.onSend
   onInterrupt = opts.onInterrupt ?? null
+  onSpeakPendingReply = opts.onSpeakPendingReply ?? null
   lastError.value = ''
   tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
+  canInterrupt.value = tuning.bargeIn !== 'off'
   // The loop is built around the reply being read out: it waits for playback
-  // before reopening the microphone, and interrupting only means anything while
-  // something is being spoken. Starting with read-aloud off leaves a mode that
-  // sends and listens with no voice in between — not what "对话" means.
+  // before reopening the microphone, and a spoken reply is what the user is
+  // waiting on. Starting with read-aloud off leaves a mode that sends and
+  // listens with no voice in between — not what "对话" means.
   //
   // Opened SILENTLY: the toast slot is a single one, so the "read-aloud on"
   // message and the "dialog on" message would overwrite each other and the user
@@ -708,11 +965,20 @@ export function setFreeDialogThinking(thinking: boolean): void {
   turnInFlight = thinking
   if (thinking) {
     if (phase.value === 'listening') {
+      // A turn started from elsewhere: the sentence this loop was finalizing
+      // would become a second, queued turn.
+      clearFinalizeWait()
       closeDictationSocket()
       phase.value = 'thinking'
     }
+    // A turn the loop did not send itself (started from the composer, or
+    // already running when the mode opened) still gets the interrupt window.
+    if (phase.value === 'thinking') armBargeIn()
     return
   }
+  // The turn is over: a pending arm would open a listener for a reply that is
+  // no longer being generated.
+  clearBargeArmTimer()
   // Turn finished. Two ways out, and BOTH are needed:
   //   - playback starts (the watcher below flips the phase to 'speaking' and
   //     cancels this window), or
@@ -736,6 +1002,25 @@ export function setFreeDialogThinking(thinking: boolean): void {
     if (myGen !== gen) return
     if (phase.value !== 'thinking' && phase.value !== 'speaking') return
     if (autoSpeech.isBusy()) return
+    // The user cut this turn short: the half-written reply is exactly what they
+    // wanted to stop, so it must not be read out now.
+    if (turnCancelledByUser) {
+      turnCancelledByUser = false
+      appLog.i(TAG, 'turn was interrupted; not reading its truncated reply')
+      resumeListening()
+      return
+    }
+    // Nothing is being read out. Ask the owner whether this turn's reply still
+    // needs speaking before going back to listening: the terminal `done` is the
+    // only thing that normally starts TTS, and it is dropped whenever the
+    // stream subscription is missing (a WS reconnect mid-turn is enough — the
+    // screen stays on, the app stays in the foreground). The turn then ends via
+    // a session-state update or a history reload, and the loop would otherwise
+    // move on in silence.
+    if (onSpeakPendingReply?.()) {
+      appLog.i(TAG, 'turn settled with no playback; asked the panel to read the reply')
+      return
+    }
     resumeListening()
   }, SETTLE_GRACE_MS)
 }
@@ -779,7 +1064,12 @@ watch(
       // used to swallow the first syllables of the reply on Android, and the
       // barge-in listener is about to read the same frames anyway.
       clearSettleTimer()
-      if (phase.value === 'listening') closeDictationSocket()
+      if (phase.value === 'listening') {
+        // Playback owns the microphone now; a pending finalize must not fire a
+        // turn in the middle of it.
+        clearFinalizeWait()
+        closeDictationSocket()
+      }
       phase.value = 'speaking'
       void openBargeListener()
     } else if (!playing && wasPlaying) {
@@ -834,6 +1124,7 @@ export function useFreeDialog() {
     enabled,
     liveTranscript,
     lastError,
+    canInterrupt,
     start: startFreeDialog,
     stop,
     setThinking: setFreeDialogThinking,

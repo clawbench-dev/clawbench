@@ -68,20 +68,27 @@ describe('i18n sessionShare keys completeness', () => {
     }
   })
 
-  // The shared-conversations drawer. Parity is not enough on its own — a key
-  // missing from BOTH locales would still pass that check while rendering the
-  // raw key, so every key the component references is listed here explicitly.
-  it('every sharedSessions key the drawer references exists in both locales', () => {
+  // The 分享 tab. Parity is not enough on its own — a key missing from BOTH
+  // locales would still pass that check while rendering the raw key, so every
+  // key the panel references is listed here explicitly.
+  it('every shareCenter key the panel references exists in both locales', () => {
     const required = [
-      'button', 'title', 'empty',
-      'openConversation', 'openInNewTab', 'copyLink', 'copied',
-      'revoke', 'revoked', 'clearAll', 'clear',
-      'confirmClearAll', 'confirmRevoke',
-      'archived', 'archivedHint', 'messageCount',
+      'title', 'refresh', 'empty', 'emptyFiltered',
+      'filterAll', 'filterFile', 'filterSession', 'filterMeeting',
+      'kindFile', 'kindDir', 'kindSession', 'kindMeeting', 'count',
+      'loadFailed', 'partialFailed',
+      'fileMissing', 'sessionArchived', 'meetingRunning',
+      'meetingPrivate', 'meetingPrivateHint', 'meetingSharedHint',
+      'open', 'copy', 'copied', 'shareTo', 'copyInstead',
+      'mail', 'mailSubject', 'mailBody',
+      'revoke', 'revoked', 'confirmRevoke',
+      'confirmRevokeMeeting', 'revokedMeeting',
+      'clearAll', 'clearAllTip', 'confirmClearAll', 'cleared',
+      'sharedAt', 'meetingSwitchOn', 'meetingSwitchOff',
     ]
     for (const key of required) {
-      expect((en.sharedSessions as Record<string, string>)[key], `en.sharedSessions.${key}`).toBeTruthy()
-      expect((zh.sharedSessions as Record<string, string>)[key], `zh.sharedSessions.${key}`).toBeTruthy()
+      expect((en.shareCenter as Record<string, string>)[key], `en.shareCenter.${key}`).toBeTruthy()
+      expect((zh.shareCenter as Record<string, string>)[key], `zh.shareCenter.${key}`).toBeTruthy()
     }
   })
 
@@ -97,7 +104,7 @@ describe('i18n sessionShare keys completeness', () => {
   // share entry lives in. English is deliberately NOT asserted: it says
   // "conversation" consistently, which is the natural choice there.
   it('the zh share copy uses one term (会话), never 对话', () => {
-    const shareNamespaces = [zh.sessionShare, zh.sharedSessions] as Record<string, string>[]
+    const shareNamespaces = [zh.sessionShare, zh.shareCenter] as Record<string, string>[]
     for (const ns of shareNamespaces) {
       for (const [key, value] of Object.entries(ns)) {
         expect(value, `zh ${key} mixes 对话 into the share copy`).not.toContain('对话')
@@ -106,22 +113,13 @@ describe('i18n sessionShare keys completeness', () => {
     expect((zh.share as Record<string, string>).sharedConversation).not.toContain('对话')
   })
 
-  // The drawer instructs the user to right-click and pick a named menu item,
-  // so that quoted name must equal the actual button label. They disagreed
-  // when the button was renamed and this string was not.
-  it('the drawer instruction quotes the real button label', () => {
-    const label = (zh.sessionShare as Record<string, string>).button
-    expect((zh.sharedSessions as Record<string, string>).empty).toContain(label)
-  })
-
-  // The revoke confirmations interpolate the conversation title and the count.
-  it('sharedSessions interpolated keys keep their placeholders', () => {
-    for (const key of ['confirmRevoke'] as const) {
-      expect((en.sharedSessions as Record<string, string>)[key]).toContain('{')
-      expect((zh.sharedSessions as Record<string, string>)[key]).toContain('{')
+  // The revoke confirmation interpolates the share's name. Losing the
+  // placeholder renders the sentence with a bare "{name}" in it.
+  it('shareCenter revoke confirmations keep their placeholders', () => {
+    for (const key of ['confirmRevoke', 'confirmRevokeMeeting', 'confirmClearAll'] as const) {
+      expect((en.shareCenter as Record<string, string>)[key], `en ${key}`).toContain('{')
+      expect((zh.shareCenter as Record<string, string>)[key], `zh ${key}`).toContain('{')
     }
-    expect((en.sharedSessions as Record<string, string>).messageCount).toContain('{count}')
-    expect((zh.sharedSessions as Record<string, string>).messageCount).toContain('{count}')
   })
   // Keys the dialog interpolates must keep their placeholders in both locales,
   // otherwise the count renders as a bare literal.

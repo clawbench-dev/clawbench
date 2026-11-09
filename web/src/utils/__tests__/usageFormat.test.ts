@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { formatCompactCount, formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
+import { formatCompactCount, formatCompactCredit, formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
+
+describe('formatCompactCredit', () => {
+  it('keeps a turn\'s fractional credit instead of rounding it away', () => {
+    // The token formatter rounds to an integer; doing that here would render
+    // nearly every CodeBuddy turn as "0" or "3", destroying the figure the
+    // per-message tail exists to show.
+    expect(formatCompactCredit(0.01)).toBe('0.01')
+    expect(formatCompactCredit(2.79)).toBe('2.79')
+    expect(formatCompactCredit(3.89)).toBe('3.89')
+  })
+
+  it('uses the same K/M/B tiers as tokens for large values', () => {
+    expect(formatCompactCredit(999)).toBe('999')
+    expect(formatCompactCredit(1_200)).toBe('1.2K')
+    expect(formatCompactCredit(14_965.51)).toBe('15.0K')
+    expect(formatCompactCredit(2_500_000)).toBe('2.5M')
+  })
+
+  it('returns a placeholder for non-numbers', () => {
+    expect(formatCompactCredit(Number.NaN)).toBe('—')
+  })
+})
 
 describe('formatCompactCount', () => {
   it('keeps small counts verbatim', () => {

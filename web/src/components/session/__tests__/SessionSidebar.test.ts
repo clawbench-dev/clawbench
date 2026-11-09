@@ -13,10 +13,10 @@ vi.mock('vue-i18n', async (importOriginal) => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
-// SharedSessionsDrawer (imported by the sidebar) renders dates through the
-// shared formatter, which imports the real i18n instance and its createI18n —
-// which this suite's narrow vue-i18n mock does not provide. Mocking the
-// formatter keeps the i18n chain out, as this suite intends.
+// SessionList renders dates through the shared formatter, which imports the
+// real i18n instance and its createI18n — which this suite's narrow vue-i18n
+// mock does not provide. Mocking the formatter keeps the i18n chain out, as
+// this suite intends.
 vi.mock('@/utils/format', () => ({ formatRelativeTime: (d: string) => d || '' }))
 
 const loadSessionsMock = vi.hoisted(() => vi.fn())
@@ -75,10 +75,10 @@ describe('SessionSidebar', () => {
   //   <SessionSidebar v-show="sessionSidebar.open.value && isWideScreen" />
   // v-show compiles to a `style` FALLTHROUGH attribute, and a fragment (multi
   // root) component cannot inherit fallthrough attributes — Vue warns
-  // "Extraneous non-props attributes (style)" and DROPS it. Adding
-  // <SharedSessionsDrawer> as a sibling of the root div turned this component
-  // into a fragment, so the sidebar stayed visible in portrait and the close
-  // button could not hide it.
+  // "Extraneous non-props attributes (style)" and DROPS it. Adding a drawer as
+  // a sibling of the root div once turned this component into a fragment, so
+  // the sidebar stayed visible in portrait and the close button could not hide
+  // it.
   //
   // The assertion must be on the RENDERED root element's style, not on the
   // component's own markup: mounting the component alone always looks fine,
@@ -105,9 +105,9 @@ describe('SessionSidebar', () => {
     host.unmount()
   })
 
-  it('emits close when the pinned pin button clicked', async () => {
+  it('emits close when the sidebar close button clicked', async () => {
     const wrapper = mountSidebar()
-    await wrapper.find('.sidebar-pin-btn').trigger('click')
+    await wrapper.find('.sidebar-close-btn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 

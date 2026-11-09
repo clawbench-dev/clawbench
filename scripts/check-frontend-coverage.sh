@@ -20,17 +20,38 @@ WEB_DIR="$ROOT_DIR/web"
 BASELINE_DIR="$ROOT_DIR/.clawbench-ci/baseline"
 
 SKIP_TEST=false
+# `--shard=i/n` runs only this slice and writes its coverage under a per-shard
+# directory; `--merge-shards=a,b,c` then folds those into the normal report. CI
+# uses both (one job per shard, plus a final gate job); locally you pass neither
+# and get a single full run.
+SHARD=""
+MERGE_SHARDS=""
 
 for arg in "$@"; do
   case "$arg" in
     --skip-test) SKIP_TEST=true ;;
+    --shard=*) SHARD="${arg#--shard=}" ;;
+    --merge-shards=*) MERGE_SHARDS="${arg#--merge-shards=}" ;;
     --help|-h)
-      echo "Usage: $0 [--skip-test] [--help]"
+      echo "Usage: $0 [--skip-test] [--shard=i/n] [--merge-shards=dir,dir,...] [--help]"
+      echo ""
+      echo "  (no shard args)   run the whole suite, write coverage/ and gate on it"
+      echo "  --shard=i/n       run slice i of n, write coverage-shards/<i>"
+      echo "  --merge-shards=…  merge the listed shard dirs into coverage/, then gate"
       exit 0 ;;
   esac
 done
 
 cd "$ROOT_DIR"
+
+# Where this invocation writes coverage. A shard run writes to its own dir so
+# parallel jobs cannot clobber each other; everything else uses coverage/.
+if [ -n "$SHARD" ]; then
+  COVERAGE_DIR="$ROOT_DIR/coverage-shards/${SHARD%%/*}"
+else
+  COVERAGE_DIR="$ROOT_DIR/coverage"
+fi
+VITEST_RESULT_JSON="$COVERAGE_DIR/vitest-results.json"
 
 # Step 1: Run tests with coverage (if not skipped)
 if [ "$SKIP_TEST" = false ]; then
@@ -39,15 +60,30 @@ fi
 
 result=0
 if [ "$SKIP_TEST" = false ]; then
-  "$SCRIPT_DIR/vitest-run.sh" --coverage || result=$?
+  rm -f "$VITEST_RESULT_JSON"
+  mkdir -p "$COVERAGE_DIR"
+  shard_args=()
+  if [ -n "$SHARD" ]; then shard_args+=("--shard=$SHARD"); fi
+  "$SCRIPT_DIR/vitest-run.sh" --coverage \
+    --coverage.reportsDirectory="$COVERAGE_DIR" \
+    --reporter=default --reporter=json --outputFile="$VITEST_RESULT_JSON" \
+    ${shard_args[@]+"${shard_args[@]}"} || result=$?
   # Exit code 124 = vitest-run.sh watchdog timeout. If coverage data was
   # written before the hang (V8 provider writes during test execution),
   # we can still proceed. This handles the vitest 4 pool cleanup hang bug
   # (vitest-dev/vitest#8766) where all tests pass but the process can't exit.
   #
-  # Exit code 1 can also occur when workers are killed during pool cleanup
-  # (causing "Worker forks emitted error" unhandled errors). If all tests
-  # passed and coverage data was written, this is acceptable.
+  # Exit code 1 is ambiguous, and this is where a real failure used to hide:
+  # it can mean "some tests failed" OR "workers were killed during pool
+  # cleanup". The old check only asked "does coverage data exist?", which is
+  # TRUE in both cases (coverage is written per test, before the pool closes).
+  # CI run 42519003966 waved through 17 failed files / 20 failed tests that way
+  # — 14 desktop specs could not resolve `electron` (no desktop deps installed)
+  # and 3 others failed for real — and still reported a green gate.
+  #
+  # So the question is now answered from the test RESULTS, not from the
+  # presence of a file. The JSON reporter is enabled only for this purpose;
+  # it records the counts even when workers are killed.
   if [ $result -ne 0 ] && [ $result -ne 124 ] && [ $result -ne 1 ]; then
     echo "ERROR: Frontend tests failed (exit code $result). Fix test failures before checking coverage."
     exit 1
@@ -55,23 +91,134 @@ if [ "$SKIP_TEST" = false ]; then
   if [ $result -eq 124 ]; then
     echo "WARNING: vitest timed out (pool cleanup hang), checking if coverage data was written..."
   fi
-  if [ $result -eq 1 ]; then
-    # Exit code 1: could be real test failures OR worker kill errors during pool cleanup.
-    # Check if coverage data exists — if it does, the tests likely passed and the
-    # exit code is from unhandled errors caused by killing hung workers.
-    if [ -f "$ROOT_DIR/coverage/coverage-summary.json" ]; then
-      echo "WARNING: vitest exited with code 1, but coverage data was written (likely pool cleanup worker kill errors)"
-    else
-      echo "ERROR: Frontend tests failed (exit code 1) and no coverage data was written."
+  if [ $result -eq 1 ] || [ $result -eq 124 ]; then
+    # $COVERAGE_DIR, not a hardcoded coverage/: a shard run writes to
+    # coverage-shards/<i>/, and checking the wrong directory reported "no
+    # coverage data was written" even though the shard had just produced a
+    # 4.3 MB report that uploaded fine (CI job 128970870673).
+    if [ ! -f "$COVERAGE_DIR/coverage-summary.json" ]; then
+      echo "ERROR: vitest exited with code $result and no coverage data was written to $COVERAGE_DIR."
       exit 1
+    fi
+    # Distinguish "clean run whose pool failed to close" from "tests failed".
+    #
+    # Both fields are needed. `numFailedTests` alone is not enough: a file that
+    # fails to IMPORT (e.g. desktop specs with no `electron` installed) never
+    # produces a test result at all, so it reports numFailedTests=0 while
+    # `success` is false and numTotalTests is 0. Checking only the failure count
+    # would call that a clean run — which is exactly the shape of the CI run
+    # this guard was written for (14 files: "0 test", import error).
+    verdict=$(python3 - "$VITEST_RESULT_JSON" <<'PY'
+import json, sys, os
+p = sys.argv[1]
+if not os.path.exists(p):
+    print("missing 0 0")   # no report ⇒ cannot vouch for the run
+    raise SystemExit
+try:
+    d = json.load(open(p))
+except Exception:
+    print("unreadable 0 0")
+    raise SystemExit
+failed = int(d.get("numFailedTests") or 0)
+total = int(d.get("numTotalTests") or 0)
+ok = bool(d.get("success"))
+# success=false with zero failures means collection/import errors.
+print(("ok" if ok and failed == 0 else "bad"), failed, total)
+PY
+)
+    read -r verdict_state verdict_failed verdict_total <<<"$verdict"
+    if [ "$verdict_state" = "ok" ]; then
+      echo "WARNING: vitest exited with code $result but every test passed (pool cleanup worker kill)"
+    else
+      case "$verdict_state" in
+        missing) echo "ERROR: vitest exited with code $result and wrote no JSON report," ;;
+        unreadable) echo "ERROR: vitest exited with code $result and its JSON report is unreadable," ;;
+        *) echo "WARNING: $verdict_failed of $verdict_total test(s) failed (exit code $result)." ;;
+      esac
+      if [ "$verdict_state" = "bad" ] && [ "${verdict_failed:-0}" != "0" ]; then
+        # Failures can be REAL or an artefact of a loaded machine: every vitest
+        # test has a 10 s budget, and under CPU contention ordinary component
+        # mounts blow through it (measured: 24 "failures" at 10-41 s each, all of
+        # which passed when re-run alone). Re-running just the failed tests is
+        # the cheap way to tell the two apart — it costs seconds, and a genuine
+        # failure fails again.
+        #
+        # Only the tests that failed are re-run, NOT the suite: re-running
+        # everything would double the job's wall clock on a machine that is
+        # already slow.
+        echo "==> Re-running the failed tests to rule out machine contention..."
+        mapfile -t failed_files < <(python3 - "$VITEST_RESULT_JSON" <<'PY'
+import json, sys, os
+p = sys.argv[1]
+try:
+    d = json.load(open(p))
+except Exception:
+    raise SystemExit
+seen = set()
+for tr in d.get("testResults", []):
+    name = tr.get("name") or ""
+    if any(a.get("status") == "failed" for a in tr.get("assertionResults", [])):
+        if name and name not in seen:
+            seen.add(name)
+            print(name)
+PY
+)
+        if [ ${#failed_files[@]} -gt 0 ]; then
+          retry_rc=0
+          "$SCRIPT_DIR/vitest-run.sh" "${failed_files[@]}" || retry_rc=$?
+          if [ "$retry_rc" -eq 0 ]; then
+            echo "WARNING: every failed test passed on re-run — the failures were machine contention, not defects"
+            # Keep the first run's coverage: it is complete and the re-run did
+            # not collect any.
+            echo "==> Continuing with the coverage gate from the first run."
+          else
+            echo "ERROR: the failures REPRODUCE on a quiet re-run. Fix them before the coverage gate."
+            exit 1
+          fi
+        else
+          echo "ERROR: failures were reported but no failing test file could be identified."
+          exit 1
+        fi
+      else
+        echo "       so test failures cannot be ruled out. Treating as a failure."
+        echo "       (Coverage data may still exist: it is written per test, before"
+        echo "        the pool closes, which is why 'coverage exists' proves nothing.)"
+        exit 1
+      fi
     fi
   fi
 else
-  # --skip-test: just verify coverage data exists
-  if [ ! -f "$ROOT_DIR/coverage/coverage-summary.json" ] || [ ! -f "$ROOT_DIR/coverage/coverage-final.json" ]; then
-    echo "ERROR: coverage data not found. Run without --skip-test first."
-    exit 1
+  # --skip-test: verify the report exists — but only when nothing is going to
+  # produce it later in this same run. With --merge-shards the report is
+  # created by the merge step BELOW, so checking here failed every merge job
+  # with "coverage data not found" (CI job 129071809219) even though all three
+  # shards had uploaded fine.
+  if [ -z "$MERGE_SHARDS" ]; then
+    if [ ! -f "$COVERAGE_DIR/coverage-summary.json" ] || [ ! -f "$COVERAGE_DIR/coverage-final.json" ]; then
+      echo "ERROR: coverage data not found in $COVERAGE_DIR. Run without --skip-test first."
+      exit 1
+    fi
   fi
+fi
+
+# ── Sharded runs ────────────────────────────────────────────────────
+# A `--shard=i/n` invocation stops here: its job is to produce that slice's
+# coverage and report its own test results, NOT to gate (one shard sees only
+# part of the suite, so both coverage tiers would be measured on a partial
+# picture — Tier 2 in particular would call untouched changed files "0%").
+if [ -n "$SHARD" ]; then
+  echo ""
+  echo "==> Shard $SHARD finished; coverage written to $COVERAGE_DIR"
+  echo "    The gate runs in the merge job, over all shards combined."
+  exit 0
+fi
+
+# Fold per-shard coverage into coverage/ so the gate below reads one report.
+if [ -n "$MERGE_SHARDS" ]; then
+  echo "==> Merging shard coverage..."
+  # shellcheck disable=SC2207  # splitting the comma list is the point
+  IFS=',' read -r -a shard_dirs <<<"$MERGE_SHARDS"
+  node "$SCRIPT_DIR/merge-coverage.mjs" "$ROOT_DIR/coverage" "${shard_dirs[@]}"
 fi
 
 # Coverage data: vitest writes to <root>/coverage/ (not web/coverage/)

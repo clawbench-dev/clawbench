@@ -816,6 +816,13 @@ func TestOpenCodeStream_RetryFrame_EmitsTransientNoticeOnly(t *testing.T) {
 			wantStatus: 0,
 			wantAttmpt: 2,
 		},
+		// opencode 1.x reports the same failure as a tagged union.
+		"1.x tagged-union retry": {
+			line:       `{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":3,"error":{"name":"APIError","data":{"message":"Rate limit exceeded","statusCode":429,"isRetryable":true}}}`,
+			wantMsg:    "Rate limit exceeded",
+			wantStatus: 429,
+			wantAttmpt: 3,
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -871,6 +878,93 @@ func TestOpenCodeStream_RetryThenTerminalQuotaReportsOnlyTheTerminal(t *testing.
 	}
 	assert.Equal(t, 1, quotaBlocks, "exactly one visible card for one failure")
 	assert.True(t, gotDone, "the turn must terminate")
+}
+
+// opencode 1.x (the `opencode-ai` package — what `InstallCmd` installs) reports
+// the same upstream failure as a tagged union:
+//
+//	{"name":"APIError","data":{"message":"Insufficient Balance","statusCode":402}}
+//
+// Reading only the 2.x fields (type/message/status) left all three empty, so a
+// real quota failure degraded to a generic "AI request failed" tagged
+// request_failed: no "out of credit" card, and auto-continue kept re-sending a
+// request that can only fail (issue #656). This is the exact frame captured from
+// opencode-ai 1.19.5 driven against a 402 mock provider.
+func TestOpenCodeStream_ErrorFrameV1Shape_ClassifiesQuota(t *testing.T) {
+	const line = `{"type":"error","timestamp":1794225317669,"sessionID":"ses_e3fd65d5effeeh3aSZEsXDkeSa","error":{"name":"APIError","data":{"message":"Insufficient Balance","statusCode":402,"isRetryable":false,"responseHeaders":{"content-type":"application/json"},"responseBody":"{\"error\":{\"message\":\"Insufficient Balance\"}}","metadata":{"url":"http://127.0.0.1:18999/v1/chat/completions"}}}}`
+
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
+	ch := make(chan StreamEvent, 16)
+	parser.ParseLine(line, ch)
+	close(ch)
+
+	var errEvents []StreamEvent
+	var gotDone bool
+	for ev := range ch {
+		switch ev.Type {
+		case "error":
+			errEvents = append(errEvents, ev)
+		case "done":
+			gotDone = true
+		}
+	}
+	if len(errEvents) != 1 {
+		t.Fatalf("the error frame must produce exactly one error event, got %+v", errEvents)
+	}
+	ev := errEvents[0]
+	assert.Equal(t, ReasonQuotaExhausted, ev.Reason,
+		"a 402 delivered in the 1.x shape is still an exhausted quota")
+	assert.Equal(t, "Insufficient Balance", ev.Error)
+	assert.Equal(t, "Insufficient Balance", ev.ErrorDetail)
+	assert.Equal(t, 402, ev.HTTPStatus)
+	assert.True(t, gotDone, "the turn must terminate")
+	assert.True(t, parser.ReportedStreamError(),
+		"a classified 1.x failure must suppress the retryable generic exit warning")
+}
+
+// An `error.data` that is not the expected object must not fail the frame.
+// Losing the line is worse than losing the field: ParseLine drops unparseable
+// lines, the turn then has no classified reason, and the CLI driver falls back
+// to the retryable "backend exited abnormally" warning — the very defect the
+// error-frame handling exists to remove.
+func TestOpenCodeStream_ErrorFrameToleratesOddDataShape(t *testing.T) {
+	cases := map[string]struct {
+		line       string
+		wantReason string
+		wantStatus int
+	}{
+		"2.x with non-object data": {
+			line:       `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"type":"provider.quota","message":"Insufficient Balance","status":402,"data":"not-an-object"}}`,
+			wantReason: ReasonQuotaExhausted,
+			wantStatus: 402,
+		},
+		"1.x with quoted statusCode": {
+			line:       `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"name":"APIError","data":{"message":"Insufficient Balance","statusCode":"402"}}}`,
+			wantReason: ReasonQuotaExhausted,
+			wantStatus: 402,
+		},
+		"1.x with array data": {
+			line:       `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"name":"APIError","data":[1,2,3]}}`,
+			wantReason: ReasonRequestFailed,
+			wantStatus: 0,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			events := parseOpenCodeLine(tc.line)
+			var got *StreamEvent
+			for i := range events {
+				if events[i].Type == "error" {
+					got = &events[i]
+				}
+			}
+			if got == nil {
+				t.Fatalf("the error frame must not be dropped: %+v", events)
+			}
+			assert.Equal(t, tc.wantReason, got.Reason)
+			assert.Equal(t, tc.wantStatus, got.HTTPStatus)
+		})
+	}
 }
 
 // A turn that hit a retry and then SUCCEEDED must not look failed. This is the
@@ -932,6 +1026,14 @@ func TestIsOpenCodeQuotaError(t *testing.T) {
 		{"insufficient permissions", &OpenCodeError{Type: "provider.api_error", Message: "insufficient permissions for this tool"}, false},
 		{"plain 500", &OpenCodeError{Type: "provider.api_error", Message: "Internal server error", Status: 500}, false},
 		{"transport failure", &OpenCodeError{Type: "provider.transport", Message: "ECONNREFUSED"}, false},
+		// opencode 1.x tagged-union shape: the status lives in data.statusCode
+		// and the text in data.message; `name` is the generic SDK class.
+		{"1.x 402 status", &OpenCodeError{Name: "APIError", Data: &OpenCodeErrorData{StatusCode: 402}}, true},
+		{"1.x insufficient balance", &OpenCodeError{Name: "APIError", Data: &OpenCodeErrorData{Message: "Insufficient Balance", StatusCode: 402}}, true},
+		{"1.x usage limit text", &OpenCodeError{Name: "APIError", Data: &OpenCodeErrorData{Message: "Usage limit reached"}}, true},
+		{"1.x plain 500", &OpenCodeError{Name: "APIError", Data: &OpenCodeErrorData{Message: "Internal server error", StatusCode: 500}}, false},
+		{"1.x auth error", &OpenCodeError{Name: "ProviderAuthError", Data: &OpenCodeErrorData{Message: "invalid api key"}}, false},
+		{"1.x without data", &OpenCodeError{Name: "UnknownError"}, false},
 		{"nil error", nil, false},
 	}
 	for _, c := range cases {

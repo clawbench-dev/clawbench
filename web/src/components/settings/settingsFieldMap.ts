@@ -180,8 +180,6 @@ export interface GroupPanelConfig {
   afterSave?: (changedKeys: string[], values?: Record<string, unknown>) => void
   /** Side effect: called on panel mount */
   onInit?: () => void
-  /** Whether this panel needs voice reset on engine change (TTS only) */
-  needsVoiceReset?: boolean
 }
 
 /** A category entry is either a flat item or a group panel. */
@@ -311,6 +309,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    // 「其他项目卡片」自成一组：这两个值是同一件事的两个维度（几张卡、多久内算活跃），
+    // 放在「消息与历史」里会跟会话条数、分页混在一起。渲染器按 sectionHeader 的
+    // **连续段**分组，所以这两行必须紧挨着，中间不能插别的 header。
+    { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsMaxCount', descriptionKey: 'settings.items.recentProjectCardsMaxCountDesc', key: 'chat.recent_project_cards_max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsWindowHours', descriptionKey: 'settings.items.recentProjectCardsWindowHoursDesc', key: 'chat.recent_project_cards_window_hours', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
     // Group chat: the cap on how many times the agents may speak to each other
     // before the floor returns to the user. A global server setting (same value
     // on every device). The user nickname now lives in the 身份 category — it
@@ -650,9 +653,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
       ]},
       commonFields: [
-        // The shared voice row is a fixed dropdown per engine, so it is hidden
-        // for "openai": that engine takes a free-text voice name (or a custom
-        // voice id) in its own tts.openai.voice row below.
+        // tts.voice belongs to the Edge engine. It is hidden for "openai" (that
+        // engine has its own tts.openai.voice row below) and is NOT reset when
+        // the engine changes — resetting it overwrote the Edge voice the moment
+        // the user tried the other engine.
         { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', value: 'edge' } },
         { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
         { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
@@ -682,7 +686,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       requiredFields: ['tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
-      needsVoiceReset: true,
     }},
   ],
   stt: [
@@ -692,24 +695,44 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.sttProvider', descriptionKey: 'settings.items.sttProviderDesc', key: 'stt.provider', type: 'select', source: 'server', sectionHeader: 'settings.items.sttHeader', options: [
           { labelKey: 'settings.items.sttProviderVllm', value: 'vllm' },
           { labelKey: 'settings.items.sttProviderDoubao', value: 'doubao' },
+          { labelKey: 'settings.items.sttProviderAlibaba', value: 'alibaba' },
         ] },
-        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.api_key', type: 'password', source: 'server' },
-        { labelKey: 'settings.items.sttResourceId', descriptionKey: 'settings.items.sttResourceIdDesc', key: 'stt.resource_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
-        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
-        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
-        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
-        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
-        { labelKey: 'settings.items.sttZhVariant', descriptionKey: 'settings.items.sttZhVariantDesc', key: 'stt.output_zh_variant', type: 'select', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' }, options: [
+        // Each engine's credentials and options live in its own section. They
+        // are NOT shared: a single set of fields meant switching the engine
+        // overwrote the previous one's key and endpoint, so the engine you were
+        // not using lost its configuration.
+        { labelKey: 'settings.items.sttBaseUrl', descriptionKey: 'settings.items.sttBaseUrlDesc', key: 'stt.vllm.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.vllm.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.vllm.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.vllm.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.vllm.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.vllm.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        { labelKey: 'settings.items.sttFinalRecheck', descriptionKey: 'settings.items.sttFinalRecheckDesc', key: 'stt.vllm.final_recheck', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+
+        { labelKey: 'settings.items.sttDoubaoApiKey', descriptionKey: 'settings.items.sttDoubaoApiKeyDesc', key: 'stt.doubao.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttResourceId', descriptionKey: 'settings.items.sttResourceIdDesc', key: 'stt.doubao.resource_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.doubao.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.doubao.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.doubao.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.doubao.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttZhVariant', descriptionKey: 'settings.items.sttZhVariantDesc', key: 'stt.doubao.output_zh_variant', type: 'select', source: 'server', dependsOn: { key: 'stt.provider', value: 'doubao' }, options: [
           { labelKey: 'settings.items.sttZhVariantNone', value: '' },
           { labelKey: 'settings.items.sttZhVariantTraditional', value: 'traditional' },
           { labelKey: 'settings.items.sttZhVariantTw', value: 'tw' },
           { labelKey: 'settings.items.sttZhVariantHk', value: 'hk' },
         ] },
-        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'doubao' } },
+        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.doubao.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'doubao' } },
+
+        { labelKey: 'settings.items.sttAlibabaApiKey', descriptionKey: 'settings.items.sttAlibabaApiKeyDesc', key: 'stt.alibaba.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaBaseUrl', descriptionKey: 'settings.items.sttAlibabaBaseUrlDesc', key: 'stt.alibaba.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaModel', descriptionKey: 'settings.items.sttAlibabaModelDesc', key: 'stt.alibaba.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaLanguage', descriptionKey: 'settings.items.sttAlibabaLanguageDesc', key: 'stt.alibaba.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.alibaba.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.alibaba.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.alibaba.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.alibaba.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.alibaba.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+
         { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
 
         // Microphone processing. Shared with meetings (the echo/noise/gain trio
@@ -741,7 +764,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         ] },
         { labelKey: 'settings.items.sttBargeInWords', descriptionKey: 'settings.items.sttBargeInWordsDesc', key: 'stt.barge_in_words', type: 'text', source: 'server', dependsOn: { key: 'stt.barge_in', value: 'keyword' } },
       ],
-      requiredFields: ['stt.base_url', 'stt.model'],
+      requiredFields: ['stt.vllm.base_url', 'stt.vllm.model'],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'stt', values }],
     }},
@@ -768,6 +791,47 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultShots', descriptionKey: 'settings.items.meetingDefaultShotsDesc', key: 'meetingDefaultShots', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowTalk', descriptionKey: 'settings.items.meetingDefaultAllowTalkDesc', key: 'meetingDefaultAllowTalk', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowMemberScreen', descriptionKey: 'settings.items.meetingDefaultAllowMemberScreenDesc', key: 'meetingDefaultAllowMemberScreen', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
+    // 画面质量. Local (per device): the right ceiling depends on the machine that
+    // has to encode the picture and the link it uploads over, so the same
+    // account on a phone and on a workstation must be able to differ. Read back
+    // by `utils/liveQualityPrefs` when a capture starts — the option values here
+    // and the whitelists there are one contract.
+    { type: 'item', spec: { labelKey: 'settings.items.liveScreenResolution', descriptionKey: 'settings.items.liveScreenResolutionDesc', key: 'liveScreenResolution', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveScreenRes720p', value: '1280x720' },
+      { labelKey: 'settings.items.liveScreenRes1200p', value: '1920x1200' },
+      { labelKey: 'settings.items.liveScreenRes1600p', value: '2560x1600' },
+      { labelKey: 'settings.items.liveScreenRes2160p', value: '3840x2160' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveScreenFps', descriptionKey: 'settings.items.liveScreenFpsDesc', key: 'liveScreenFps', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveFps15', value: '15' },
+      { labelKey: 'settings.items.liveFps24', value: '24' },
+      { labelKey: 'settings.items.liveFps30', value: '30' },
+      { labelKey: 'settings.items.liveFps60', value: '60' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveScreenBitrate', descriptionKey: 'settings.items.liveScreenBitrateDesc', key: 'liveScreenBitrate', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveMbps2', value: '2' },
+      { labelKey: 'settings.items.liveMbps4', value: '4' },
+      { labelKey: 'settings.items.liveMbps6', value: '6' },
+      { labelKey: 'settings.items.liveMbps8', value: '8' },
+      { labelKey: 'settings.items.liveMbps12', value: '12' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveCameraResolution', descriptionKey: 'settings.items.liveCameraResolutionDesc', key: 'liveCameraResolution', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveCamRes480p', value: '640x480' },
+      { labelKey: 'settings.items.liveCamRes720p', value: '1280x720' },
+      { labelKey: 'settings.items.liveCamRes1080p', value: '1920x1080' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveCameraFps', descriptionKey: 'settings.items.liveCameraFpsDesc', key: 'liveCameraFps', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveFps15', value: '15' },
+      { labelKey: 'settings.items.liveFps24', value: '24' },
+      { labelKey: 'settings.items.liveFps30', value: '30' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveCameraBitrate', descriptionKey: 'settings.items.liveCameraBitrateDesc', key: 'liveCameraBitrate', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
+      { labelKey: 'settings.items.liveMbps1', value: '1' },
+      { labelKey: 'settings.items.liveMbps1_5', value: '1.5' },
+      { labelKey: 'settings.items.liveMbps2_5', value: '2.5' },
+      { labelKey: 'settings.items.liveMbps4', value: '4' },
+    ] } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveAutoDowngrade', descriptionKey: 'settings.items.liveAutoDowngradeDesc', key: 'liveAutoDowngrade', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingQualitySection' } },
     // 中继服务 (LiveKit). Installation-wide, so it lives here rather than in the
     // create form: the relay is deployed once and every meeting that opts in
     // shares it. The row is a placeholder that only opens the card — the form

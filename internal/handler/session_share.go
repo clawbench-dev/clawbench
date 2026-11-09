@@ -492,11 +492,12 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 
-	// The room is gone, but the meeting record is permanent: a link that was
-	// handed out must keep working after the meeting ends, until the owner
-	// deletes the record. Answering 404 here is what used to turn every link
-	// into a dead URL the moment the host pressed 结束会议.
-	if note, ok, err := service.PublicMeetingByToken(token); err != nil {
+	// The room is gone, but the meeting record may still be published: a link
+	// that was handed out keeps working after the meeting ends ONLY when the
+	// owner opted in (会议结果页的「分享」开关). Otherwise the token stops
+	// resolving the moment the room closes — the token is minted automatically
+	// so viewers can join, which is not the same as publishing the record.
+	if note, ok, err := service.PublicMeetingByTokenShared(token); err != nil {
 		slog.Error("share: meta live record lookup failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return

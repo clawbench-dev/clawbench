@@ -49,10 +49,13 @@ export function parseMessages(
       // below — and the row is historical, where a missing `done` is
       // meaningless and defaults to settled.)
       const liveStreaming = !!msg.streaming && sessionRunning !== false
-      const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content as string, { liveStreaming })
+      const { blocks, metadata, cancelled, stopped } = onParseAssistantContent(msg.content as string, { liveStreaming })
       msg.blocks = blocks
       if (metadata) msg.metadata = metadata
       if (cancelled) msg.cancelled = cancelled
+      // A group member the user stopped on purpose ("stop this one"). Distinct
+      // from `cancelled`: the bubble says "已停止发言", not "已取消".
+      if (stopped) msg.stopped = stopped
       if (msg.streaming) {
         if (sessionRunning === false) {
           // Session is not running — strip stale streaming flag from DB.

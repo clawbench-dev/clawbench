@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { nextTick, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import SettingsItem from '@/components/settings/SettingsItem.vue'
@@ -1275,5 +1277,76 @@ describe('SettingsItem — datetime', () => {
     await w.find('.settings-item__editor-confirm').trigger('click')
 
     expect(w.emitted('update:modelValue')?.[0]).toEqual(['2026-10-14T08:00:00'])
+  })
+})
+
+// Grouped model options (issue #651): the picker mixes a bound provider's models
+// with the agent's own, and the heading is the only thing telling them apart.
+//
+// The picker lives inside BottomSheet, which Teleports to <body> and whose
+// visibility is driven by the non-reactive useTabDrawer mock — so the DOM is
+// reached through `document` and the grouping itself through setupState, the
+// same convention the search-box tests above follow.
+describe('SettingsItem grouped select', () => {
+  const groupedOptions = [
+    { label: 'glm-5.3-flash', value: 'openai/glm-5.3-flash', modelName: 'glm-5.3-flash', groupKey: 'group.provider' },
+    { label: 'gpt-6', value: 'openai/gpt-6', modelName: 'gpt-6', groupKey: 'group.agent' },
+  ]
+
+  it('splits the visible options into one group per heading, in order', async () => {
+    const wrapper = mountItem({ type: 'select', modelValue: '', options: groupedOptions })
+    const vm = wrapper.vm as any
+    await wrapper.find('.settings-item').trigger('click')
+    await nextTick()
+
+    const groups = vm.$.setupState.renderGroups as Array<{ groupKey?: string; options: unknown[] }>
+    expect(groups.map(g => g.groupKey)).toEqual(['group.provider', 'group.agent'])
+    expect(groups.map(g => g.options.length)).toEqual([1, 1])
+    wrapper.unmount()
+  })
+
+  // Grouping used to be applied to the UNFILTERED list, which kept headings
+  // whose options the search had just hidden.
+  it('regroups the search-filtered list, dropping empty headings', async () => {
+    const wrapper = mountItem({ type: 'select', modelValue: '', options: groupedOptions })
+    const vm = wrapper.vm as any
+    await wrapper.find('.settings-item').trigger('click')
+    await nextTick()
+    vm.$.setupState.searchQuery = 'gpt'
+    await nextTick()
+
+    const groups = vm.$.setupState.renderGroups as Array<{ groupKey?: string; options: unknown[] }>
+    expect(groups.map(g => g.groupKey)).toEqual(['group.agent'])
+    wrapper.unmount()
+  })
+
+  it('renders one group with no heading for an ungrouped list', async () => {
+    const wrapper = mountItem({
+      type: 'select',
+      modelValue: '',
+      options: [{ label: 'a', value: 'a' }, { label: 'b', value: 'b' }],
+    })
+    const vm = wrapper.vm as any
+    const groups = vm.$.setupState.renderGroups as Array<{ groupKey?: string; options: unknown[] }>
+    expect(groups.length).toBe(1)
+    expect(groups[0].groupKey).toBeUndefined()
+    expect(groups[0].options.length).toBe(2)
+    wrapper.unmount()
+  })
+
+  // The grouped branch used to be a separate copy of the row markup, which
+  // silently lost the two-line model row (name over id) and the badge. The two
+  // branches are now one path, so there is exactly one `.settings-item__option`
+  // loop — asserted on the source, because the picker's DOM lives in a
+  // teleported BottomSheet whose visibility the non-reactive mock keeps closed.
+  it('has a single option-rendering path shared by grouped and flat lists', async () => {
+    const source = readFileSync(join(__dirname, '..', 'SettingsItem.vue'), 'utf8')
+    // Match the element, not one exact attribute spelling: a second copy with a
+    // bound class (`:class="..."` on the same element) would slip past a literal
+    // `class="settings-item__option"` count.
+    const loops = source.match(/v-for="opt in [^"]+"[\s\S]{0,400}?settings-item__option/g) ?? []
+    expect(loops.length).toBe(1)
+    // The one loop must render the shared row, not a plain label.
+    expect(source).toContain('<ModelRow')
   })
 })

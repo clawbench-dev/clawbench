@@ -14,7 +14,7 @@ import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
-import { LiveMixer } from './useLiveMixer'
+import { LiveMixer, openRemoteAudioSink, type RemoteAudioSink } from './useLiveMixer'
 import {
   VIEWER_MESSAGE_TYPES,
   parseControlMessage,
@@ -32,15 +32,17 @@ import { buildMicConstraints, readVoiceTuning } from '@/utils/audioTuning'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { startAndroidScreenCapture, type AndroidCaptureHandle } from './androidScreenCapture'
 import {
-  CAMERA_BUDGET,
-  RELAY_BUDGET,
-  SCREEN_BUDGET,
   VideoLoadGovernor,
   applyCodecPreference,
   applyContentHint,
+  cameraBudget,
+  cameraCaptureConstraints,
+  relayBudget,
   resolvePreferredVideoMime,
+  screenBudget,
   screenCaptureConstraints,
 } from './liveMediaPolicy'
+import { androidCaptureOptions, readLiveQuality } from '@/utils/liveQualityPrefs'
 import {
   closeRelay,
   openRelay,
@@ -51,18 +53,6 @@ import {
 } from './useLiveRelay'
 
 const TAG = 'LiveShare'
-
-/**
- * Capture shape for the Android path.
- *
- * 10 fps at 1280 px keeps the bridge traffic (JPEG over the WebView JS bridge,
- * then re-encoded by WebRTC) inside what a mid-range phone can sustain; a phone
- * screen is tall and mostly static, so the frame rate matters less than the
- * resolution. See androidScreenCapture.ts for why the transport looks like this.
- */
-const ANDROID_CAPTURE_FPS = 10
-const ANDROID_CAPTURE_MAX_WIDTH = 1280
-const ANDROID_CAPTURE_QUALITY = 55
 
 export type LiveShareState = 'idle' | 'capturing' | 'publishing'
 
@@ -353,6 +343,17 @@ let relayRoom: import('livekit-client').Room | null = null
 let relayMode = false
 /** Identities that were speaking at the previous sample, to send their stop. */
 let lastRelaySpeakers: string[] = []
+/**
+ * Remote audio the HOST plays from the relay, keyed by track id.
+ *
+ * The LiveKit client does not play anything by itself: a subscribed audio track
+ * stays silent until something attaches it. Peer-to-peer mode has the mixer's
+ * monitor edge for this (one per viewer, straight into `ctx.destination`), but
+ * a relayed meeting has no per-viewer PeerConnection and therefore no mixer
+ * slot — so without these nodes the host hears nobody while everybody hears the
+ * host, which is exactly backwards.
+ */
+const relayMonitors = new Map<string, { src: MediaStreamAudioSourceNode; sink: RemoteAudioSink }>()
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /**
@@ -511,6 +512,7 @@ function resetSession(): void {
   preferredVideoMime = null
   // Disconnect before dropping the handle: leaving the LiveKit room open keeps
   // the server's participant alive and the OS camera/mic indicators lit.
+  stopAllRelayMonitors()
   closeRelay(relayRoom)
   relayRoom = null
   relayMode = false
@@ -751,11 +753,12 @@ async function listInputs(
 }
 
 /**
- * Acquire the camera at the size the tile uses.
+ * Acquire the camera at the size the user chose.
  *
- * Small and slow on purpose: a face in a corner (or the whole picture on a
- * camera-only call), and each viewer costs the publisher another upload of it.
- * 640×480 at 15 fps is plenty.
+ * Default 720p/24 fps (设置 → 会议 → 画面质量). Each viewer costs the publisher
+ * another upload of it, which is why the ceiling is a setting rather than
+ * "whatever the camera reports": a 1080p sensor on a four-viewer call is 2.25×
+ * the pixels of 720p on every connection.
  */
 async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
   const gum = navigator.mediaDevices?.getUserMedia
@@ -767,9 +770,7 @@ async function acquireCamera(deviceId = ''): Promise<MediaStream | null> {
     lastCameraError = null
     const stream = await gum.call(navigator.mediaDevices, {
       video: {
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 15, max: 20 },
+        ...cameraCaptureConstraints(),
         // A chosen camera wins; empty means the system default. `{exact: ''}`
         // would fail everywhere, which is why this is conditional.
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
@@ -874,16 +875,59 @@ export function relaySpeakerFrames(
  * The host subscribes to every guest's microphone, because that audio is what
  * the transcript is made of. A guest it does not subscribe to is silently
  * missing from the minutes.
+ *
+ * It is also the only path by which the host can HEAR that guest: the relay
+ * delivers tracks, not sound (see `monitorRelayAudio`).
  */
 function handleRelayTrack(track: MediaStreamTrack, _source: unknown, identity: string): void {
   const viewerId = relayViewerId(identity)
   if (viewerId && track.kind === 'audio') {
     useLiveNotes().addViewer(viewerId, new MediaStream([track]))
+    monitorRelayAudio(track)
   }
+}
+
+/**
+ * Play one relayed track on this host's speakers.
+ *
+ * Routed through the meeting's own AudioContext rather than an `<audio>`
+ * element: that context was created by the click that started the meeting, so
+ * it is already unlocked and cannot be silenced by the browser's autoplay
+ * policy (an element created later could be).
+ */
+function monitorRelayAudio(track: MediaStreamTrack): void {
+  if (!audioCtx || relayMonitors.has(track.id)) return
+  try {
+    const src = audioCtx.createMediaStreamSource(new MediaStream([track]))
+    // The only edge into `destination` on this path: the host's own microphone
+    // is never monitored (it would be heard twice, once delayed).
+    src.connect(audioCtx.destination)
+    relayMonitors.set(track.id, { src, sink: openRemoteAudioSink(new MediaStream([track])) })
+    track.addEventListener('ended', () => stopRelayMonitor(track.id))
+  } catch (e) {
+    appLog.w(TAG, 'could not monitor relay audio', e)
+  }
+}
+
+function stopRelayMonitor(trackId: string): void {
+  const monitor = relayMonitors.get(trackId)
+  if (!monitor) return
+  monitor.sink.dispose()
+  try {
+    monitor.src.disconnect()
+  } catch {
+    /* already disconnected */
+  }
+  relayMonitors.delete(trackId)
+}
+
+function stopAllRelayMonitors(): void {
+  for (const id of [...relayMonitors.keys()]) stopRelayMonitor(id)
 }
 
 function handleRelayDisconnected(reason: string): void {
   appLog.w(TAG, 'relay disconnected', reason)
+  stopAllRelayMonitors()
   relayRoom = null
   if (state.value === 'publishing') fail(i18n.global.t('liveShare.relayLost'))
 }
@@ -897,6 +941,7 @@ async function connectRelay(
     onData: handleRelayData,
     onActiveSpeakers,
     onTrack: handleRelayTrack,
+    onTrackGone: (track) => stopRelayMonitor(track.id),
     onDisconnected: handleRelayDisconnected,
   })
   await publishRelayPicture()
@@ -942,10 +987,10 @@ interface CapturedScreen {
 async function captureScreen(sourceId: string): Promise<CapturedScreen | null> {
   const bridge = getNative()
   if (bridge?.startScreenCapture) {
+    // The bridge is far more expensive per pixel than getDisplayMedia, so the
+    // options stay below the user's screen choice (see androidCaptureOptions).
     const android = await startAndroidScreenCapture({
-      fps: ANDROID_CAPTURE_FPS,
-      maxWidth: ANDROID_CAPTURE_MAX_WIDTH,
-      quality: ANDROID_CAPTURE_QUALITY,
+      ...androidCaptureOptions(),
       systemAudio: true,
       // The user can revoke the projection from the system UI. That ends the
       // SCREEN, not the meeting: without a meeting type there is no reason to
@@ -1057,7 +1102,7 @@ async function applyPicture(): Promise<void> {
   // want different encode budgets and different encoder hints.
   applyContentHint(main, screenTrack ? 'text' : 'motion')
   for (const peer of peers.values()) {
-    governor?.setBudget(`${peer.viewerId}:video`, screenTrack ? SCREEN_BUDGET : CAMERA_BUDGET)
+    governor?.setBudget(`${peer.viewerId}:video`, screenTrack ? screenBudget() : cameraBudget())
     try {
       await peer.videoTx?.sender.replaceTrack(main)
     } catch (e) {
@@ -1550,7 +1595,9 @@ export function useLiveShare() {
       //    opens so the first viewer's offer is answered with it: a codec
       //    preference only affects negotiation that has not happened yet.
       governor?.stop()
-      governor = new VideoLoadGovernor()
+      // The switch only disables automatic stepping down; the base budgets are
+      // still applied (they are the only thing bounding the encoders at all).
+      governor = new VideoLoadGovernor(readLiveQuality().autoDowngrade)
       governor.start()
       await resolveVideoCodecPreference()
 
@@ -2214,17 +2261,16 @@ export function useLiveShare() {
     // The main m-line carries the screen when there is one and the camera
     // otherwise, so its budget has to be chosen HERE: `applyPicture()` corrects
     // it later, but it only runs when the picture CHANGES, and a camera-only
-    // meeting never changes. Registering at SCREEN_BUDGET meant such a meeting
-    // encoded 4 Mbps/30 fps — about 2.7× the uplink and CPU of the camera
-    // budget — for its whole length.
+    // meeting never changes. Registering at the screen budget meant such a
+    // meeting paid the screen's uplink and CPU for its whole length.
     governor?.register(
       `${peer.viewerId}:video`,
       videoTx.sender,
-      displayStream ? SCREEN_BUDGET : CAMERA_BUDGET,
+      displayStream ? screenBudget() : cameraBudget(),
     )
-    governor?.register(`${peer.viewerId}:relay`, relayTx.sender, RELAY_BUDGET)
+    governor?.register(`${peer.viewerId}:relay`, relayTx.sender, relayBudget())
     if (peer.cameraTx) {
-      governor?.register(`${peer.viewerId}:camera`, peer.cameraTx.sender, CAMERA_BUDGET)
+      governor?.register(`${peer.viewerId}:camera`, peer.cameraTx.sender, cameraBudget())
     }
     return true
   }

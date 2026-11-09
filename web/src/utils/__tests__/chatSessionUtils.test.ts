@@ -221,6 +221,20 @@ describe('parseMessages', () => {
     expect(result[0].cancelled).toBe(true)
   })
 
+  // A stopped group-member speech is a different state from a cancelled turn,
+  // so the flag must land on the message (the bubble renders its own badge).
+  it('adopts the stopped flag from the parser', () => {
+    const parser = vi.fn().mockReturnValue({
+      blocks: [{ type: 'text', text: '说了一半' }],
+      metadata: null,
+      cancelled: false,
+      stopped: true,
+    })
+    const result = parseMessages([{ role: 'assistant', content: 'x' }], parser)
+    expect(result[0].stopped).toBe(true)
+    expect(result[0].cancelled).toBeUndefined()
+  })
+
   it('handles empty array', () => {
     expect(parseMessages([], mockParser)).toEqual([])
   })

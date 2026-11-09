@@ -19,10 +19,42 @@ import (
 	"clawbench/internal/store"
 )
 
+// overviewSession is one row of the cross-project overview response.
+type overviewSession struct {
+	ID                string                     `json:"id"`
+	Title             string                     `json:"title"`
+	Backend           string                     `json:"backend"`
+	AgentID           string                     `json:"agentId"`
+	AgentName         string                     `json:"agentName,omitempty"`
+	AgentAvatar       string                     `json:"agentAvatar,omitempty"`
+	AgentTakeoverFrom string                     `json:"agentTakeoverFrom,omitempty"`
+	Model             string                     `json:"model"`
+	SessionType       string                     `json:"sessionType,omitempty"`
+	Running           bool                       `json:"running"`
+	PendingApproval   bool                       `json:"pendingApproval"`
+	UnreadCount       int                        `json:"unreadCount"`
+	UpdatedAt         time.Time                  `json:"updatedAt"`
+	GroupMembers      []model.GroupMemberPreview `json:"groupMembers,omitempty"`
+}
+
+// overviewProjectGroup is one project card: either a group with active rows,
+// or (via LastActiveAt) a project that was merely touched inside the recency
+// window and therefore renders collapsed.
+type overviewProjectGroup struct {
+	Name     string            `json:"name"`
+	Sessions []overviewSession `json:"sessions"`
+	// LastActiveAt is set ONLY on groups that have no active session (they
+	// exist because the project was touched inside the recency window). It
+	// is what the collapsed card shows instead of a session count.
+	LastActiveAt string `json:"lastActiveAt,omitempty"`
+}
+
 // ServeSessionsOverview handles GET /api/ai/sessions/overview.
 // Returns sessions across ALL projects that are running, pending approval, or
-// have unread messages, grouped by project name. Requires auth (session cookie);
-// no project cookie needed since it spans projects.
+// have unread messages, grouped by project name, PLUS projects that merely saw
+// activity inside the recency window (those groups carry `lastActiveAt` and no
+// sessions). Requires auth (session cookie); no project cookie needed since it
+// spans projects.
 func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -38,37 +70,25 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	for _, id := range runningIDs {
 		runningSet[id] = true
 	}
-	pendingSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
-
-	type overviewSession struct {
-		ID                string                     `json:"id"`
-		Title             string                     `json:"title"`
-		Backend           string                     `json:"backend"`
-		AgentID           string                     `json:"agentId"`
-		AgentName         string                     `json:"agentName,omitempty"`
-		AgentAvatar       string                     `json:"agentAvatar,omitempty"`
-		AgentTakeoverFrom string                     `json:"agentTakeoverFrom,omitempty"`
-		Model             string                     `json:"model"`
-		SessionType       string                     `json:"sessionType,omitempty"`
-		Running           bool                       `json:"running"`
-		PendingApproval   bool                       `json:"pendingApproval"`
-		UnreadCount       int                        `json:"unreadCount"`
-		UpdatedAt         time.Time                  `json:"updatedAt"`
-		GroupMembers      []model.GroupMemberPreview `json:"groupMembers,omitempty"`
-	}
-	type projectGroup struct {
-		Name     string            `json:"name"`
-		Sessions []overviewSession `json:"sessions"`
-	}
-	groups := []*projectGroup{}
-	groupByName := map[string]*projectGroup{}
-	groupIDs := []string{}
 	// The caller's project decides which agents it can resolve itself: this
 	// endpoint spans projects, so a row's agent may be scoped to the session's
-	// project and invisible in GET /api/agents here (see
-	// agentDisplayIdentity). Scoping is judged against the CALLER, not the
-	// session's project, because that is what the client's lookup sees.
+	// project and invisible in GET /api/agents here (see agentDisplayIdentity).
+	// Scoping is judged against the CALLER, not the session's project, because
+	// that is what the client's lookup sees.
 	callerProject := middleware.GetProjectFromCookie(r)
+	groups, groupIDs, total := buildOverviewGroups(sessions, runningSet,
+		ai.GetACPConnManager().GetPendingApprovalSessionIDs(), callerProject)
+	attachOverviewGroupMembers(groups, groupIDs)
+	groups = appendRecentProjectCards(groups, callerProject)
+	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
+}
+
+// buildOverviewGroups keeps only rows worth showing (running, pending approval
+// or unread) and groups them by project in first-seen order.
+func buildOverviewGroups(sessions []model.ChatSession, runningSet, pendingSet map[string]bool, callerProject string) ([]*overviewProjectGroup, []string, int) {
+	groups := []*overviewProjectGroup{}
+	groupByName := map[string]*overviewProjectGroup{}
+	groupIDs := []string{}
 	total := 0
 	for _, s := range sessions {
 		running := runningSet[s.ID]
@@ -78,7 +98,7 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		g, ok := groupByName[s.ProjectPath]
 		if !ok {
-			g = &projectGroup{Name: s.ProjectPath}
+			g = &overviewProjectGroup{Name: s.ProjectPath}
 			groupByName[s.ProjectPath] = g
 			groups = append(groups, g)
 		}
@@ -106,21 +126,58 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 		})
 		total++
 	}
-	// Group rows carry the same active-member preview as the main list. One
-	// batch query for all groups on this page (attachGroupMembers works on
-	// model.ChatSession, so this path inlines the lookup).
-	if membersByGroup, err := service.GroupMembersForGroups(groupIDs); err != nil {
+	return groups, groupIDs, total
+}
+
+// attachOverviewGroupMembers adds the active-member preview to group rows. One
+// batch query for all groups on this page (attachGroupMembers works on
+// model.ChatSession, so this path inlines the lookup).
+func attachOverviewGroupMembers(groups []*overviewProjectGroup, groupIDs []string) {
+	membersByGroup, err := service.GroupMembersForGroups(groupIDs)
+	if err != nil {
 		slog.Warn("failed to load overview group members", "error", err)
-	} else {
-		for gi := range groups {
-			for si := range groups[gi].Sessions {
-				if members := membersByGroup[groups[gi].Sessions[si].ID]; len(members) > 0 {
-					groups[gi].Sessions[si].GroupMembers = members
-				}
+		return
+	}
+	for gi := range groups {
+		for si := range groups[gi].Sessions {
+			if members := membersByGroup[groups[gi].Sessions[si].ID]; len(members) > 0 {
+				groups[gi].Sessions[si].GroupMembers = members
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
+}
+
+// appendRecentProjectCards adds the projects with recent activity but no
+// active session right now, so yesterday's work stays one tap away. Excluding
+// the caller's own project (it is already the main list) and the projects
+// already grouped above (their cards carry rows) keeps one card per project.
+// Capped by chat.recent_project_cards_max_count AFTER both exclusions, so the
+// cap counts what is actually displayed.
+func appendRecentProjectCards(groups []*overviewProjectGroup, callerProject string) []*overviewProjectGroup {
+	activePaths := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		activePaths[g.Name] = true
+	}
+	recent, err := service.ListRecentlyActiveProjects(callerProject)
+	if err != nil {
+		slog.Warn("failed to load recently active projects", "error", err)
+		return groups
+	}
+	limit := model.ChatRecentProjectCardsMaxCount
+	if limit <= 0 {
+		limit = 10
+	}
+	for _, rp := range recent {
+		if activePaths[rp.Path] {
+			continue
+		}
+		if len(groups) >= limit {
+			break
+		}
+		groups = append(groups, &overviewProjectGroup{Name: rp.Path, LastActiveAt: rp.LastActiveAt})
+		activePaths[rp.Path] = true
+	}
+	return groups
 }
 
 // decorateSessionRows fills the derived fields every session-list response

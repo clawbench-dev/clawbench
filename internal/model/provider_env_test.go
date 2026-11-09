@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ func providerForTest(protocol, baseURL, key, auth string) *Provider {
 }
 
 func TestBuildProviderEnv_AnthropicAuto(t *testing.T) {
-	env, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolAnthropic, "https://api.minimax.io/anthropic", "sk-1", ProviderAuthAuto))
+	env, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolAnthropic, "https://api.minimax.io/anthropic", "sk-1", ProviderAuthAuto), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -23,7 +24,7 @@ func TestBuildProviderEnv_AnthropicAuto(t *testing.T) {
 }
 
 func TestBuildProviderEnv_AnthropicBearer(t *testing.T) {
-	env, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolAnthropic, "https://gw.example", "tok", ProviderAuthBearer))
+	env, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolAnthropic, "https://gw.example", "tok", ProviderAuthBearer), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,23 +39,23 @@ func TestBuildProviderEnv_AnthropicBearer(t *testing.T) {
 
 func TestBuildProviderEnv_RejectsUnsupportedProtocol(t *testing.T) {
 	// claude has no OpenAI path: silently doing nothing would look applied.
-	if _, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto)); err == nil {
+	if _, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto), ""); err == nil {
 		t.Fatal("expected an error for an unsupported protocol")
 	}
 }
 
 func TestBuildProviderEnv_RejectsUnsupportedBackend(t *testing.T) {
-	if _, err := BuildProviderEnv("copilot", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto)); err == nil {
+	if _, err := BuildProviderEnv("copilot", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto), ""); err == nil {
 		t.Fatal("expected an error for a backend that cannot take a provider")
 	}
-	if _, err := BuildProviderEnv("nonexistent", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto)); err == nil {
+	if _, err := BuildProviderEnv("nonexistent", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto), ""); err == nil {
 		t.Fatal("expected an error for an unknown backend")
 	}
 }
 
 func TestBuildProviderEnv_KeyOnlyBackend(t *testing.T) {
 	// cursor accepts a credential but no endpoint override.
-	env, err := BuildProviderEnv("cursor", providerForTest(ProviderProtocolAnthropic, "", "cursor-key", ProviderAuthAuto))
+	env, err := BuildProviderEnv("cursor", providerForTest(ProviderProtocolAnthropic, "", "cursor-key", ProviderAuthAuto), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestBuildProviderEnv_KeyOnlyBackend(t *testing.T) {
 
 func TestBuildProviderEnv_NoBaseURLKeepsProtocolVariable(t *testing.T) {
 	// An official-API key with no base URL must still reach the CLI.
-	env, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolAnthropic, "", "sk-official", ProviderAuthAuto))
+	env, err := BuildProviderEnv("claude", providerForTest(ProviderProtocolAnthropic, "", "sk-official", ProviderAuthAuto), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,13 +78,13 @@ func TestBuildProviderEnv_NoBaseURLKeepsProtocolVariable(t *testing.T) {
 func TestBuildProviderEnv_BearerUnsupportedIsAnError(t *testing.T) {
 	// opencode has no ANTHROPIC_AUTH_TOKEN slot in this table; asking for
 	// Bearer must fail rather than send the key as x-api-key.
-	if _, err := BuildProviderEnv("opencode", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthBearer)); err == nil {
+	if _, err := BuildProviderEnv("opencode", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthBearer), ""); err == nil {
 		t.Fatal("expected an error when the backend cannot express Bearer auth")
 	}
 }
 
 func TestBuildProviderEnv_ConfigOnlyCarriesSecret(t *testing.T) {
-	env, err := BuildProviderEnv("codex", providerForTest(ProviderProtocolOpenAI, "https://api.deepseek.com/v1", "sk-ds", ProviderAuthAuto))
+	env, err := BuildProviderEnv("codex", providerForTest(ProviderProtocolOpenAI, "https://api.deepseek.com/v1", "sk-ds", ProviderAuthAuto), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,14 +94,14 @@ func TestBuildProviderEnv_ConfigOnlyCarriesSecret(t *testing.T) {
 }
 
 func TestBuildProviderEnv_NilProvider(t *testing.T) {
-	env, err := BuildProviderEnv("claude", nil)
+	env, err := BuildProviderEnv("claude", nil, "")
 	if err != nil || env != nil {
 		t.Fatalf("nil provider must be a no-op, got %v / %v", env, err)
 	}
 }
 
 func TestBuildProviderEnv_Gemini(t *testing.T) {
-	env, err := BuildProviderEnv("antigravity", providerForTest(ProviderProtocolGemini, "https://gw.example", "g-key", ProviderAuthAuto))
+	env, err := BuildProviderEnv("antigravity", providerForTest(ProviderProtocolGemini, "https://gw.example", "g-key", ProviderAuthAuto), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestProviderAuthModeError_MatchesBuildProviderEnv(t *testing.T) {
 			if !ProviderEnvSupportedProvider(tc.backend, p) {
 				return
 			}
-			_, buildErr := BuildProviderEnv(tc.backend, p)
+			_, buildErr := BuildProviderEnv(tc.backend, p, "")
 			if (buildErr != nil) != tc.wantErr {
 				t.Fatalf("BuildProviderEnv disagrees with ProviderAuthModeError: build=%v predicate=%v", buildErr, err)
 			}
@@ -353,7 +354,7 @@ func TestProviderAuthModeError_UnknownBackend(t *testing.T) {
 // empty credential would look applied while every request 401s.
 func TestBuildProviderEnv_RequiresAPIKey(t *testing.T) {
 	p := providerForTest(ProviderProtocolAnthropic, "https://gw.example", "", ProviderAuthAuto)
-	if _, err := BuildProviderEnv("claude", p); err == nil {
+	if _, err := BuildProviderEnv("claude", p, ""); err == nil {
 		t.Fatal("expected an error for a provider without a key")
 	} else if !strings.Contains(err.Error(), "no API key") {
 		t.Fatalf("error %q must say the key is missing", err)
@@ -364,7 +365,7 @@ func TestBuildProviderEnv_RequiresAPIKey(t *testing.T) {
 // unknown one must fail loudly instead of silently producing no variables.
 func TestBuildProviderEnv_UnknownProtocol(t *testing.T) {
 	p := providerForTest("cohere", "https://gw.example", "k", ProviderAuthAuto)
-	_, err := BuildProviderEnv("claude", p)
+	_, err := BuildProviderEnv("claude", p, "")
 	if err == nil {
 		t.Fatal("expected an error for an unknown protocol")
 	}
@@ -414,5 +415,274 @@ func TestProviderEnvForAgent(t *testing.T) {
 	// deepseek only speaks the OpenAI wire protocol.
 	if _, err := ProviderEnvForAgent("bound", "deepseek"); err == nil {
 		t.Fatal("claude's anthropic provider must not be applied to an openai-only backend")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Inline config content (issue #651)
+// ---------------------------------------------------------------------------
+
+// opencode resolves a model id against its own provider catalog before sending
+// anything, so a provider redirect alone leaves a catalog-absent id
+// unresolvable: the turn fails with "model not found" while the endpoint was
+// injected correctly. Declaring the provider's models in the config content is
+// what makes them resolvable.
+func TestBuildProviderEnv_OpenCodeDeclaresProviderModels(t *testing.T) {
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "sk-1", ProviderAuthAuto)
+	p.Models = []string{"glm-5.3-flash", "glm-5.3"}
+
+	env, err := BuildProviderEnv("opencode", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	content := inlineConfigContent(t, env)
+	provider := content["provider"].(map[string]any)
+	openai, ok := provider["clawbench-openai"].(map[string]any)
+	if !ok {
+		t.Fatalf("models must be declared under our provider id for this protocol, got %v", provider)
+	}
+	models := openai["models"].(map[string]any)
+	for _, id := range []string{"glm-5.3-flash", "glm-5.3"} {
+		spec, ok := models[id].(map[string]any)
+		if !ok {
+			t.Fatalf("model %q missing from the declared set: %v", id, models)
+		}
+		// A model without tool_call is advertised but cannot call tools, which
+		// silently downgrades every coding turn to plain chat.
+		if spec["tool_call"] != true {
+			t.Fatalf("model %q must declare tool_call, got %v", id, spec)
+		}
+	}
+
+	// The secret must never be written into the content: it is referenced by
+	// the variable name the spawn already sets, so it cannot leak via a process
+	// listing and stays a single source of truth. Only the content entry is
+	// inspected — the separate OPENAI_API_KEY entry is supposed to carry it.
+	raw := ""
+	for _, entry := range env {
+		if rest, ok := strings.CutPrefix(entry, "OPENCODE_CONFIG_CONTENT="); ok {
+			raw = rest
+		}
+	}
+	if strings.Contains(raw, "sk-1") {
+		t.Fatalf("the credential must not be inlined into the config content: %s", raw)
+	}
+	opts := openai["options"].(map[string]any)
+	if opts["apiKey"] != "{env:OPENAI_API_KEY}" || opts["baseURL"] != "{env:OPENAI_BASE_URL}" {
+		t.Fatalf("options must reference the injected variables, got %v", opts)
+	}
+}
+
+// A pinned model outside the provider's curated list must still be declared:
+// PATCH accepts it on purpose (a bound provider makes the list advisory), so
+// without this the "custom model" escape hatch saves an id the backend refuses
+// to resolve — exactly the reported repro.
+func TestBuildProviderEnv_OpenCodeDeclaresPinnedModel(t *testing.T) {
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "sk-1", ProviderAuthAuto)
+	p.Models = []string{"gw-a"}
+
+	env, err := BuildProviderEnv("opencode", p, "gw-custom")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	models := inlineConfigContent(t, env)["provider"].(map[string]any)["clawbench-openai"].(map[string]any)["models"].(map[string]any)
+	for _, id := range []string{"gw-a", "gw-custom"} {
+		if _, ok := models[id]; !ok {
+			t.Fatalf("model %q must be declared, got %v", id, models)
+		}
+	}
+	if len(models) != 2 {
+		t.Fatalf("declared set = %v, want exactly the curated list plus the pin", models)
+	}
+}
+
+// Each protocol gets its own provider id: opencode addresses a declared model as
+// "<provider id>/<declared key>", and the two protocols speak different wire
+// formats, so they cannot share one block.
+func TestBuildProviderEnv_OpenCodeAnthropicProviderID(t *testing.T) {
+	p := providerForTest(ProviderProtocolAnthropic, "https://gw.example", "sk-ant", ProviderAuthAuto)
+	p.Models = []string{"claude-custom"}
+
+	env, err := BuildProviderEnv("opencode", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	provider := inlineConfigContent(t, env)["provider"].(map[string]any)
+	if _, ok := provider["clawbench-anthropic"]; !ok {
+		t.Fatalf("anthropic models must be declared under \"clawbench-anthropic\", got %v", provider)
+	}
+}
+
+// Nothing to declare must mean no content at all: an empty provider block would
+// shadow the user's own opencode configuration without adding anything.
+func TestBuildProviderEnv_OpenCodeWithoutModelsHasNoContent(t *testing.T) {
+	env, err := BuildProviderEnv("opencode", providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "sk-1", ProviderAuthAuto), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "OPENCODE_CONFIG_CONTENT=") {
+			t.Fatalf("an uncurated provider must not inject config content: %v", env)
+		}
+	}
+}
+
+// Backends with no inline-config slot are untouched by the new branch.
+func TestBuildProviderEnv_InlineConfigOnlyForDeclaringBackends(t *testing.T) {
+	p := providerForTest(ProviderProtocolAnthropic, "https://gw.example", "sk-1", ProviderAuthAuto)
+	p.Models = []string{"m1"}
+
+	env, err := BuildProviderEnv("claude", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "OPENCODE_CONFIG_CONTENT=") {
+			t.Fatalf("claude must not receive opencode config content: %v", env)
+		}
+	}
+}
+
+// inlineConfigContent extracts and decodes the inline config entry, failing the
+// test when it is absent or not valid JSON.
+func inlineConfigContent(t *testing.T, env []string) map[string]any {
+	t.Helper()
+	const prefix = "OPENCODE_CONFIG_CONTENT="
+	for _, entry := range env {
+		raw, ok := strings.CutPrefix(entry, prefix)
+		if !ok {
+			continue
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			t.Fatalf("inline config is not valid JSON: %v\n%s", err, raw)
+		}
+		return out
+	}
+	t.Fatalf("no %s entry in %v", prefix, env)
+	return nil
+}
+
+// A provider with no base URL (an official API key) must not reference an
+// endpoint variable the spawn never sets: an unresolved "${...}" would either
+// fail to parse or replace opencode's own default endpoint with garbage.
+func TestBuildProviderEnv_OpenCodeNoBaseURLSkipsEndpointReference(t *testing.T) {
+	p := providerForTest(ProviderProtocolOpenAI, "", "sk-1", ProviderAuthAuto)
+	p.Models = []string{"glm-5.3-flash"}
+
+	env, err := BuildProviderEnv("opencode", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	opts := inlineConfigContent(t, env)["provider"].(map[string]any)["clawbench-openai"].(map[string]any)["options"].(map[string]any)
+	if _, ok := opts["baseURL"]; ok {
+		t.Fatalf("baseURL must be absent when the provider has none, got %v", opts)
+	}
+	if opts["apiKey"] != "{env:OPENAI_API_KEY}" {
+		t.Fatalf("the credential reference must stay, got %v", opts)
+	}
+}
+
+// A gateway may namespace its own ids ("openai/gpt-4o" is a real OpenRouter
+// style id). Declaring it must not strip the namespace: the endpoint expects
+// the full id, and opencode already keys the model under "openai".
+func TestBuildProviderEnv_OpenCodeKeepsForeignNamespace(t *testing.T) {
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "sk-1", ProviderAuthAuto)
+	p.Models = []string{"openai/gpt-4o"}
+
+	env, err := BuildProviderEnv("opencode", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	models := inlineConfigContent(t, env)["provider"].(map[string]any)["clawbench-openai"].(map[string]any)["models"].(map[string]any)
+	if _, ok := models["openai/gpt-4o"]; !ok {
+		t.Fatalf("the endpoint's own id must be declared verbatim, got %v", models)
+	}
+}
+
+// Merging must leave exactly one default: `resolved` is already normalised (it
+// carries the session's current model), while the provider entries carry their
+// own flag. Two defaults would make a frontend `find(m => m.default)` fallback
+// move a session off the model it is actually running (issue #651 review).
+func TestMergeProviderModels_KeepsSingleDefault(t *testing.T) {
+	pid := int64(652)
+	ReplaceProviders([]*Provider{{
+		ID: 652, Name: "GW", Protocol: ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example/v1", APIKey: "k",
+		Models: []string{"m1", "m2"}, DefaultModel: "m1",
+	}})
+	t.Cleanup(func() { ReplaceProviders(nil) })
+
+	agent := &Agent{ID: "merge-default-agent", Backend: "opencode", ProviderID: &pid}
+	resolved := []AgentModel{
+		{ID: "clawbench-openai/m2", Name: "m2", Default: true},
+		{ID: "clawbench-openai/m1", Name: "m1"},
+	}
+
+	merged := agent.MergeProviderModels(resolved)
+	require := func(cond bool, format string, args ...any) {
+		if !cond {
+			t.Fatalf(format, args...)
+		}
+	}
+	defaults := 0
+	for _, m := range merged {
+		if m.Default {
+			defaults++
+			require(m.ID == "clawbench-openai/m2", "default = %q, want the resolved list's pick", m.ID)
+		}
+	}
+	require(defaults == 1, "exactly one default, got %d", defaults)
+}
+
+// A bound provider supplies models even when the agent's own discovery found
+// nothing — the chat drawer reads this channel, so bailing out on an empty CLI
+// list would hide them (issue #651 review).
+func TestMergeProviderModels_WorksWithEmptyResolvedList(t *testing.T) {
+	pid := int64(653)
+	ReplaceProviders([]*Provider{{
+		ID: 653, Name: "GW", Protocol: ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example/v1", APIKey: "k", Models: []string{"m1"},
+	}})
+	t.Cleanup(func() { ReplaceProviders(nil) })
+
+	agent := &Agent{ID: "merge-empty-agent", Backend: "opencode", ProviderID: &pid}
+	merged := agent.MergeProviderModels(nil)
+	if len(merged) != 1 || merged[0].ID != "clawbench-openai/m1" {
+		t.Fatalf("merged = %v, want the provider model", merged)
+	}
+}
+
+// A provider opencode does not know needs `npm` to pick a wire adapter. Without
+// it the model LISTING and set_config_option both still succeed, but the real
+// turn dies with "Unsupported package" / provider.no-route and not one byte
+// reaches the endpoint — so this is the difference between "looks configured"
+// and "actually works" (issue #651 review).
+func TestBuildProviderEnv_OpenCodeDeclaresWireAdapter(t *testing.T) {
+	cases := []struct {
+		protocol string
+		wantNPM  string
+	}{
+		{ProviderProtocolOpenAI, "@ai-sdk/openai-compatible"},
+		{ProviderProtocolAnthropic, "@ai-sdk/anthropic"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.protocol, func(t *testing.T) {
+			p := providerForTest(tc.protocol, "https://gw.example/v1", "sk-1", ProviderAuthAuto)
+			p.Models = []string{"m1"}
+
+			env, err := BuildProviderEnv("opencode", p, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			provider := inlineConfigContent(t, env)["provider"].(map[string]any)
+			var block map[string]any
+			for _, v := range provider {
+				block = v.(map[string]any)
+			}
+			if block["npm"] != tc.wantNPM {
+				t.Fatalf("npm = %v, want %q (without it the turn has no route)", block["npm"], tc.wantNPM)
+			}
+		})
 	}
 }

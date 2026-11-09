@@ -11,8 +11,9 @@ import { resolveUIScale, computeAutoUIScale, currentScreenShortEdge, applyUIScal
 import { setLayoutScopeMode } from '@/utils/panelState'
 import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
+import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
 
-const LOCAL_PREFIX = 'clawbench-settings-'
+const LOCAL_PREFIX = SETTINGS_KEY_PREFIX
 
 // Guards the startup reconcile below. The locale side-effect clears it by
 // syncing immediately, and the flag also stops a PATCH → loadConfig → PATCH
@@ -493,6 +494,21 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   meetingDefaultShots: true,
   meetingDefaultAllowTalk: true,
   meetingDefaultAllowMemberScreen: true,
+  // 会议画面质量 (设置 → 会议 → 画面质量). Per device, because the right ceiling
+  // depends on the machine that has to encode the picture. The values are read
+  // back by `utils/liveQualityPrefs`, which normalises them against the same
+  // whitelists the panel's select options use — keep the two in step.
+  //
+  // Numeric ones are stored as STRINGS: the panel's select rows compare option
+  // values with `===`, and every option value is a string, so a numeric default
+  // would render an empty row on a device that never touched the setting.
+  liveScreenResolution: '1920x1200',
+  liveScreenFps: '30',
+  liveScreenBitrate: '4',
+  liveCameraResolution: '1280x720',
+  liveCameraFps: '24',
+  liveCameraBitrate: '2.5',
+  liveAutoDowngrade: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -585,6 +601,8 @@ const serverDefaults: Record<string, unknown> = {
   'user.nickname': '',
   'user.profile': '',
   'chat.group_max_speeches': 100,
+  'chat.recent_project_cards_max_count': 10,
+  'chat.recent_project_cards_window_hours': 24,
   // Opt-in: agent processes inherit the user's shell startup exports.
   'shell_env.inherit': false,
   'session.max_count': 15,
@@ -607,19 +625,34 @@ const serverDefaults: Record<string, unknown> = {
   'tts.speed': 1.0,
   'tts.max_cache_files': 100,
   'stt.provider': 'vllm',
-  'stt.base_url': 'http://localhost:8000/v1',
-  'stt.api_key': '',
-  'stt.model': 'openai/whisper-large-v3',
-  'stt.resource_id': 'volc.seedasr.sauc.duration',
-  'stt.language': 'zh',
-  'stt.streaming': false,
-  'stt.chunk_ms': 1000,
+  // Per-engine defaults, mirroring model.ApplyDefaults. Every engine keeps its
+  // own credentials and options, so switching the engine never inherits (or
+  // overwrites) another engine's values.
+  'stt.vllm.base_url': 'http://localhost:8000/v1',
+  'stt.vllm.api_key': '',
+  'stt.vllm.model': 'openai/whisper-large-v3',
+  'stt.vllm.language': 'zh',
+  'stt.vllm.streaming': false,
+  'stt.vllm.chunk_ms': 1000,
+  'stt.vllm.final_recheck': false,
+  'stt.doubao.api_key': '',
+  'stt.doubao.resource_id': 'volc.seedasr.sauc.duration',
+  'stt.doubao.enable_itn': true,
+  'stt.doubao.enable_punc': true,
+  'stt.doubao.enable_ddc': false,
+  'stt.doubao.output_zh_variant': '',
+  'stt.doubao.end_window_size': 800,
+  'stt.doubao.streaming': false,
+  'stt.alibaba.api_key': '',
+  'stt.alibaba.base_url': 'https://dashscope.aliyuncs.com',
+  'stt.alibaba.model': 'paraformer-realtime-v2',
+  'stt.alibaba.language': 'zh',
+  'stt.alibaba.enable_itn': true,
+  'stt.alibaba.enable_punc': true,
+  'stt.alibaba.enable_ddc': false,
+  'stt.alibaba.end_window_size': 800,
+  'stt.alibaba.streaming': false,
   'stt.shortcut_key': 'F9',
-  'stt.enable_itn': true,
-  'stt.enable_punc': true,
-  'stt.enable_ddc': false,
-  'stt.output_zh_variant': '',
-  'stt.end_window_size': 800,
   // Mirrors model.ApplyDefaults: the preprocessing and gate switches default ON
   // (only an explicit false turns them off), and the free-dialog defaults are
   // the ones documented in the settings descriptions.

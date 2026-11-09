@@ -356,14 +356,18 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	if resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider) == "doubao" {
+	providerName := resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider)
+	if providerName == "doubao" {
 		return testDoubaoSTT(ctx, values)
 	}
+	if providerName == "alibaba" {
+		return testAlibabaSTT(ctx, values)
+	}
 
-	baseURL := resolveStringValue(values, "stt.base_url", model.ConfigInstance.STT.BaseURL)
-	sttModel := resolveStringValue(values, "stt.model", model.ConfigInstance.STT.Model)
-	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
-	language := resolveStringValue(values, "stt.language", model.ConfigInstance.STT.Language)
+	baseURL := resolveStringValue(values, "stt.vllm.base_url", model.ConfigInstance.STT.VLLM.BaseURL)
+	sttModel := resolveStringValue(values, "stt.vllm.model", model.ConfigInstance.STT.VLLM.Model)
+	apiKey := resolveStringValue(values, "stt.vllm.api_key", model.ConfigInstance.STT.VLLM.APIKey)
+	language := resolveStringValue(values, "stt.vllm.language", model.ConfigInstance.STT.VLLM.Language)
 
 	if baseURL == "" {
 		return ConnectivityTestResult{Success: false, Message: "STT base URL is required"}
@@ -437,8 +441,8 @@ var doubaoSTTBaseURL = stt.DoubaoBaseURL
 // the response body carries the real status code — a reachable host with a
 // revoked key still answers HTTP 200, so the body is authoritative.
 func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
-	apiKey := resolveStringValue(values, "stt.api_key", model.ConfigInstance.STT.APIKey)
-	resourceID := resolveStringValue(values, "stt.resource_id", model.ConfigInstance.STT.ResourceID)
+	apiKey := resolveStringValue(values, "stt.doubao.api_key", model.ConfigInstance.STT.Doubao.APIKey)
+	resourceID := resolveStringValue(values, "stt.doubao.resource_id", model.ConfigInstance.STT.Doubao.ResourceID)
 
 	if apiKey == "" {
 		return ConnectivityTestResult{Success: false, Message: "Doubao API key is required"}
@@ -456,6 +460,36 @@ func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestR
 		return ConnectivityTestResult{Success: false, Message: "Doubao transcription returned empty text"}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Doubao transcription succeeded: %q", text)}
+}
+
+// testAlibabaSTT probes Alibaba Cloud Model Studio with the embedded "你好"
+// clip. It goes through the same Qwen3-ASR-Flash path real uploads use, so a
+// key from the wrong region, a missing model or a revoked key all surface as
+// the actual HTTP answer instead of "the host is reachable".
+func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	apiKey := resolveStringValue(values, "stt.alibaba.api_key", model.ConfigInstance.STT.Alibaba.APIKey)
+	if apiKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud API key is required"}
+	}
+	baseURL := resolveStringValue(values, "stt.alibaba.base_url", model.ConfigInstance.STT.Alibaba.BaseURL)
+	language := resolveStringValue(values, "stt.alibaba.language", model.ConfigInstance.STT.Alibaba.Language)
+
+	provider := stt.NewAlibabaProvider(apiKey)
+	if baseURL != "" {
+		provider.BaseURL = baseURL
+	}
+	provider.Language = language
+	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
+	if err != nil {
+		return sttProbeFailure(provider.BaseURL, "qwen3-asr-flash", err)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud transcription returned empty text"}
+	}
+	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Alibaba Cloud transcription succeeded: %q", text)}
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.

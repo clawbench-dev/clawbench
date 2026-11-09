@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -42,6 +43,26 @@ type ProviderEnvSpec struct {
 	// ConfigProtocols lists the protocols a ConfigOnly backend's file format
 	// can express (e.g. codex understands OpenAI wire APIs only).
 	ConfigProtocols []string
+
+	// InlineConfigEnv names an environment variable that takes config CONTENT
+	// (not a path). It exists for backends that validate a model id against
+	// their own provider catalog before sending anything: the endpoint
+	// variables above redirect where requests go, but they do not ADD models to
+	// that catalog, so a provider model outside it is rejected (opencode:
+	// "model not found") before the request ever reaches the endpoint. Declaring
+	// the provider's models in the config content is what makes them real.
+	InlineConfigEnv string
+	// InlineConfigProviderIDs maps a wire protocol to the config provider id
+	// this backend registers the models under (opencode: "clawbench-openai" /
+	// "clawbench-anthropic"). Required whenever InlineConfigEnv is set; a
+	// protocol absent here is left undeclared rather than guessed.
+	//
+	// A dedicated id, NOT the backend's built-in one, because the backend
+	// addresses a declared model as "<provider>/<declared key>" — reusing the
+	// built-in id would make a curated id that already carries that prefix
+	// addressable only as "openai/openai/…". With our own id the prefix is
+	// unambiguous: "<our id>/<curated id verbatim>".
+	InlineConfigProviderIDs map[string]string
 }
 
 // providerEnvTable is the single place that knows which environment variables
@@ -111,6 +132,24 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 	"opencode": {
 		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
 		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		// opencode resolves a model id against its own provider catalog before
+		// it sends anything, and a provider redirect does not extend that
+		// catalog: OPENAI_BASE_URL/OPENAI_API_KEY alone leave "glm-…"
+		// unresolvable ("model not found"), which is issue #651. Declaring the
+		// provider's models through the config content is the only lever that
+		// makes them resolvable. Content (not a file path) so nothing is
+		// written to the user's home.
+		//
+		// The ids are ours, not opencode's built-in ones: it addresses a
+		// declared model as "<provider>/<key>", so reusing "openai" would turn a
+		// curated id that already says "openai/gpt-4o" into "openai/openai/…"
+		// (verified against 2.2.6). With a dedicated id the rule is simply
+		// "<our id>/<curated id verbatim>".
+		InlineConfigEnv: "OPENCODE_CONFIG_CONTENT",
+		InlineConfigProviderIDs: map[string]string{
+			ProviderProtocolOpenAI:    "clawbench-openai",
+			ProviderProtocolAnthropic: "clawbench-anthropic",
+		},
 	},
 	"pi": {
 		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
@@ -328,7 +367,13 @@ func SupportedProtocols(backendID string) []string {
 // An unsupported backend or protocol returns an error rather than an empty
 // slice: silently starting the process with its own credentials would look like
 // the provider was applied while every request still went to the old endpoint.
-func BuildProviderEnv(backendID string, p *Provider) ([]string, error) {
+//
+// pinnedModel is the model the agent may actually run (its preference). Some
+// backends only accept ids their own catalog declares, and the provider's list
+// is the set the endpoint serves — so a pinned id outside that list must be
+// declared too, or the user can save it and still fail every turn. Empty means
+// "no pin"; the provider's whole list is declared either way.
+func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]string, error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -352,15 +397,140 @@ func BuildProviderEnv(backendID string, p *Provider) ([]string, error) {
 		return nil, err
 	}
 	if p.BaseURL == "" {
-		return []string{keyVar + "=" + p.APIKey}, nil
+		return withInlineConfig(spec, p, pinnedModel, []string{keyVar + "=" + p.APIKey}), nil
 	}
-	env := make([]string, 0, 2+len(pe.Extra))
+	env := make([]string, 0, 3+len(pe.Extra))
 	env = append(env, pe.BaseURL+"="+p.BaseURL, keyVar+"="+p.APIKey)
 	for name, value := range pe.Extra {
 		env = append(env, name+"="+value)
 	}
 	sort.Strings(env)
-	return env, nil
+	return withInlineConfig(spec, p, pinnedModel, env), nil
+}
+
+// withInlineConfig appends the backend's inline config-content variable when the
+// spec declares one and there is at least one model to declare.
+//
+// The models are declared under the config provider id for the protocol (see
+// InlineConfigProviderIDs), with the endpoint and credential taken from the SAME
+// environment variables the spawn already sets. That indirection is deliberate:
+// the secret is never written into the content, so it cannot leak through a
+// process listing, and the endpoint stays a single source of truth.
+//
+// Declared set = the provider's curated list plus pinnedModel when it is not in
+// that list. The pin is accepted by PATCH on purpose (a bound provider makes the
+// model list advisory), so it has to become real here — otherwise the "custom
+// model" escape hatch saves an id the backend then refuses to resolve.
+//
+// Nothing to declare means no content at all: an empty provider block would
+// merely shadow the user's own backend configuration.
+func withInlineConfig(spec ProviderEnvSpec, p *Provider, pinnedModel string, env []string) []string {
+	if spec.InlineConfigEnv == "" {
+		return env
+	}
+	providerID, ok := spec.InlineConfigProviderIDs[p.Protocol]
+	if !ok {
+		return env
+	}
+	ids := declaredModelIDs(p, pinnedModel, providerID)
+	if len(ids) == 0 {
+		return env
+	}
+	pe := protocolEnvFor(spec, p.Protocol)
+	if pe == nil {
+		return env
+	}
+	content, ok := inlineConfigJSON(p, pe, providerID, ids)
+	if !ok {
+		return env
+	}
+	return append(env, spec.InlineConfigEnv+"="+content)
+}
+
+// declaredModelIDs is the set of model ids to declare to the backend: the
+// provider's curated list, plus the pinned model when it is not already covered.
+//
+// Both are used VERBATIM. The curated list holds the ids the endpoint serves,
+// including a namespace the gateway itself uses ("openai/gpt-4o" on an
+// OpenRouter-style endpoint) — the backend sends the declared key to the
+// endpoint unchanged, so rewriting it would send an id the endpoint rejects.
+//
+// The pin comes from the picker, which prefixes the curated id with the config
+// provider id (ProviderModelIDFor). That prefix is ours, so it is removed before
+// the comparison — otherwise the same model would be declared twice.
+func declaredModelIDs(p *Provider, pinnedModel, providerID string) []string {
+	ids := make([]string, 0, len(p.Models)+1)
+	for _, id := range p.Models {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	pin := strings.TrimPrefix(strings.TrimSpace(pinnedModel), providerID+"/")
+	if pin != "" && !containsString(ids, pin) {
+		ids = append(ids, pin)
+	}
+	return ids
+}
+
+// inlineConfigJSON renders the provider block. ok is false when the value could
+// not be encoded, which only happens for inputs the caller never produces.
+func inlineConfigJSON(p *Provider, pe *ProtocolEnv, providerID string, ids []string) (string, bool) {
+	keyVar := pe.APIKey
+	if p.AuthMode == ProviderAuthBearer {
+		keyVar = pe.AuthToken
+	}
+	models := make(map[string]any, len(ids))
+	for _, id := range ids {
+		// tool_call must be on: a model declared without it is advertised but
+		// cannot call tools, which turns every coding turn into a chat reply.
+		models[id] = map[string]any{"name": id, "tool_call": true}
+	}
+	// {env:NAME} is opencode's own interpolation syntax, and it is the only one
+	// that works for a provider we declare ourselves: "${NAME}" resolves inside
+	// opencode's BUILT-IN provider definitions but is passed through literally
+	// for a custom provider (verified against 2.2.6 — the request went out with
+	// "Bearer ${OPENAI_API_KEY}").
+	opts := map[string]any{"apiKey": "{env:" + keyVar + "}"}
+	// Only reference the endpoint variable when the spawn actually sets it: a
+	// provider with no base_url (an official API key) leaves it unset, and an
+	// unresolved reference would either fail to parse or override opencode's own
+	// default endpoint with garbage.
+	if p.BaseURL != "" {
+		opts["baseURL"] = "{env:" + pe.BaseURL + "}"
+	}
+	// npm names the wire adapter. A provider opencode does not know needs it
+	// explicitly: without it the ACP surface still lists the models and
+	// set_config_option still succeeds, but the actual turn dies with
+	// "Unsupported package for <provider>/<model>" and NOT ONE BYTE reaches the
+	// endpoint. Reusing a built-in provider id used to imply it; a dedicated id
+	// does not (verified against 2.2.6).
+	provider := map[string]any{
+		"npm":     npmForProtocol(p.Protocol),
+		"name":    "ClawBench " + p.Name,
+		"options": opts,
+		"models":  models,
+	}
+	block := map[string]any{"provider": map[string]any{providerID: provider}}
+	content, err := json.Marshal(block)
+	if err != nil {
+		return "", false
+	}
+	return string(content), true
+}
+
+// npmForProtocol is the wire adapter opencode must load for a protocol. An
+// unknown protocol returns "" and the caller declares nothing — the binding was
+// already rejected earlier, so this is only a safety net.
+func npmForProtocol(protocol string) string {
+	switch protocol {
+	case ProviderProtocolOpenAI:
+		return "@ai-sdk/openai-compatible"
+	case ProviderProtocolAnthropic:
+		return "@ai-sdk/anthropic"
+	case ProviderProtocolGemini:
+		return "@ai-sdk/google"
+	}
+	return ""
 }
 
 // keyOnlyEnv renders the credential-only form used by backends that accept a
@@ -404,14 +574,142 @@ func keyEnvVar(backendID string, pe *ProtocolEnv, p *Provider) (string, error) {
 	}
 }
 
+// ProviderModelIDFor renders a provider model id in the form the backend
+// actually accepts.
+//
+// Most backends take the bare id the endpoint serves. opencode does not: its
+// model ids are "<provider>/<model>", so a bare id is unusable in a picker and
+// in a turn alike (issue #651). Callers that build a picker entry, or that
+// declare the model to the backend, must go through this so the two agree.
+//
+// A protocol the backend cannot express, or one with no provider id mapping,
+// returns the id unchanged — the caller's own validation already rejected those
+// combinations.
+func ProviderModelIDFor(backendID, protocol, id string) string {
+	spec, ok := providerEnvTable[backendID]
+	if !ok || spec.InlineConfigProviderIDs == nil {
+		return id
+	}
+	providerID, ok := spec.InlineConfigProviderIDs[protocol]
+	if !ok || providerID == "" || id == "" {
+		return id
+	}
+	if strings.HasPrefix(id, providerID+"/") {
+		return id
+	}
+	return providerID + "/" + id
+}
+
+// ProviderBareModelID is the inverse of ProviderModelIDFor: it drops the
+// "<provider>/" namespace so a wire-form id can be compared with the provider's
+// stored list.
+func ProviderBareModelID(backendID, protocol, id string) string {
+	spec, ok := providerEnvTable[backendID]
+	if !ok || spec.InlineConfigProviderIDs == nil {
+		return id
+	}
+	providerID, ok := spec.InlineConfigProviderIDs[protocol]
+	if !ok || providerID == "" {
+		return id
+	}
+	return strings.TrimPrefix(id, providerID+"/")
+}
+
+// ProviderPickerModels renders the provider's curated list as picker entries,
+// with ids in the form this backend accepts. Nil when the agent is unbound or
+// the provider has not curated models.
+func (a *Agent) ProviderPickerModels() []AgentModel {
+	p := a.Provider()
+	if p == nil || len(p.Models) == 0 {
+		return nil
+	}
+	out := make([]AgentModel, 0, len(p.Models))
+	for _, id := range p.Models {
+		out = append(out, AgentModel{
+			ID:      ProviderModelIDFor(a.Backend, p.Protocol, id),
+			Name:    id,
+			Default: id == p.DefaultModel,
+		})
+	}
+	return out
+}
+
+// MergeProviderModels prepends this agent's provider models to a resolved list,
+// dropping duplicates.
+//
+// Every channel that ships a model list must go through this: the provider's
+// models are what the user configured the agent to run, so a list built only
+// from the agent's own discovery makes the binding invisible (issue #651). It
+// lives here, on the model, because both the HTTP handlers and the ACP event
+// enrichment build the same list and must not each re-implement the rule.
+//
+// The merged list keeps exactly ONE default. `resolved` has already been
+// normalised (ResolveModels picks the session's current model), and the provider
+// entries carry their own Default flag — leaving both set would give the picker
+// two "default" rows and let a frontend `find(m => m.default)` fallback move a
+// session off the model it is actually running.
+func (a *Agent) MergeProviderModels(resolved []AgentModel) []AgentModel {
+	pm := a.ProviderPickerModels()
+	if len(pm) == 0 {
+		return resolved
+	}
+	seen := make(map[string]struct{}, len(pm)+len(resolved))
+	merged := make([]AgentModel, 0, len(pm)+len(resolved))
+	for _, m := range pm {
+		if _, ok := seen[m.ID]; ok {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		merged = append(merged, m)
+	}
+	for _, m := range resolved {
+		if _, ok := seen[m.ID]; ok {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		merged = append(merged, m)
+	}
+	// Exactly one default. The resolved list's pick wins (it is the session's
+	// current model, or the agent's own default); the provider's flag is only a
+	// fallback for a resolved list that brought none. Scanning `merged` instead
+	// would find the provider entry first, since it is prepended.
+	defaultID := ""
+	for _, m := range resolved {
+		if m.Default {
+			defaultID = m.ID
+			break
+		}
+	}
+	if defaultID == "" {
+		for _, m := range merged {
+			if m.Default {
+				defaultID = m.ID
+				break
+			}
+		}
+	}
+	for i := range merged {
+		merged[i].Default = merged[i].ID == defaultID
+	}
+	return merged
+}
+
 // ProviderEnvForAgent resolves the agent's provider and renders its environment
 // in one step, which is what every spawn site needs.
+//
+// The agent's preferred model rides along because a backend that validates ids
+// against its own catalog needs the pin declared too, not only the curated list
+// (see withInlineConfig).
 func ProviderEnvForAgent(agentID, backendID string) ([]string, error) {
 	p := AgentProvider(agentID)
 	if p == nil {
 		return nil, nil
 	}
-	return BuildProviderEnv(backendID, p)
+	pinned := ""
+	if agent := GetAgent(agentID); agent != nil {
+		pinned = agent.PreferredModel
+	}
+	return BuildProviderEnv(backendID, p, pinned)
 }
 
 // RedactProviderEnv hides credential values so a spawn log can name the

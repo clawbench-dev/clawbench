@@ -83,10 +83,26 @@ func TestIsACPQuotaError(t *testing.T) {
 		Message: "Internal error",
 		Data:    map[string]any{"httpStatus": float64(402)},
 	}
+	// opencode 1.x (the `opencode-ai` package) reports the generic SDK class
+	// instead of a provider-level limit type — captured from 1.19.5 against a
+	// 402 mock: data={"service":"session","errorName":"APIError"}. Only the
+	// message identifies the failure there, so the text fallback is load-bearing.
+	v1Quota := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: Insufficient Balance",
+		Data:    map[string]any{"service": "session", "errorName": "APIError"},
+	}
+	v1Plain := &acp.RequestError{
+		Code:    -32603,
+		Message: "Internal error: internal server error",
+		Data:    map[string]any{"service": "session", "errorName": "APIError"},
+	}
 
 	assert.True(t, isACPQuotaError(quotaErr), "provider.quota must classify as quota")
 	assert.True(t, isACPQuotaError(rateLimitErr), "provider.rate-limit must classify as quota")
 	assert.True(t, isACPQuotaError(http402), "an HTTP 402 must classify as quota")
+	assert.True(t, isACPQuotaError(v1Quota), "1.x errorName=APIError must classify by message")
+	assert.False(t, isACPQuotaError(v1Plain), "a generic 1.x APIError must stay request_failed")
 	assert.False(t, isACPQuotaError(plainErr), "an unrelated internal error must stay request_failed")
 	assert.False(t, isACPQuotaError(errors.New("acp: prompt: peer disconnected")),
 		"a non-RequestError must not be mistaken for a quota failure")

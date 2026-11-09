@@ -66,7 +66,10 @@ describe('chat meta bar: user and assistant rows align on the right edge', () =>
     // neither role may override it, or the two bars would disagree on their
     // inner edge.
     const bar = declsIn(source, /\.chat-meta-bar\s*\{([^}]*)\}/)
-    expect(bar).toMatch(/padding:\s*0\s+var\(--space-6\)/)
+    // Horizontal padding is what the two rows must agree on. The vertical part
+    // is free: the bar is a footer now (hairline above it), so it carries its
+    // own top padding.
+    expect(bar).toMatch(/padding:[^;]*var\(--space-6\)/)
     expect(source).not.toMatch(/\.chat-meta-bar-(?:user|assistant)\s*\{[^}]*padding/)
   })
 })

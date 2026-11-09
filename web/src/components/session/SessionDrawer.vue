@@ -1,6 +1,6 @@
 <template>
   <!-- Single root wrapper. Every child here is an overlay that Teleports to
-       <body> (BottomSheet, AgentSelectorDrawer, SharedSessionsDrawer), so this
+       <body> (BottomSheet, AgentSelectorDrawer), so this
        wrapper is empty in the DOM and `display: contents` keeps it
        layout-transparent. Without it the template is a FRAGMENT, and a fragment
        root cannot receive fallthrough attributes: a host binding `v-show` (which
@@ -27,15 +27,6 @@
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
         >
-          <template #actions>
-            <!-- Always present: the drawer is the only place to review and
-                 revoke links, and it shows an empty state when there is
-                 nothing shared, so hiding the entry point only stranded it. -->
-            <button class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
-              <MessageSquareShare :size="16" />
-              <span class="action-label">{{ t('actionLabels.sharedSessions') }}</span>
-            </button>
-          </template>
           <!-- Pin sits in the trailing slot so it is the right-most control in
                the header, after search/create. -->
           <template #actions-end>
@@ -85,18 +76,16 @@
       @update:host-id="v => groupHostId = v"
       @select="handleAgentPicked"
     />
-    <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
   </div>
 </template>
 
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelRight, MessageSquareShare } from 'lucide-vue-next'
+import { PanelRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
-import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -118,7 +107,6 @@ const { isWideScreen } = useWideScreenLayout()
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
 const listRef = ref(null)
-const sharedSessionsRef = ref(null)
 const { loadAgents } = useAgents()
 const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 

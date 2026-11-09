@@ -162,7 +162,8 @@ function makeI18n() {
           type: { issues: 'Issues', prs: 'Pull Requests', pipelines: 'Pipelines' },
           state: { open: 'Open', closed: 'Closed', all: 'All', merged: 'Merged' },
           mine: { all: 'All', assigned: 'Assigned to me', created: 'Created by me', review: 'Awaiting my review' },
-          searchPlaceholder: 'Search',
+          searchIssuePlaceholder: 'Search issues',
+          searchPrPlaceholder: 'Search pull requests',
           loading: 'Loading',
           emptyList: 'No matching issues or PRs',
           markAllRead: 'Mark all read',
@@ -327,6 +328,33 @@ describe('ForgePanelContent', () => {
     expect(wrapper.text()).toContain('A bug')
     expect(wrapper.text()).toContain('#7')
     expect(wrapper.find('.forge-row').exists()).toBe(true)
+  })
+
+  it('names the current item type in the search placeholder', async () => {
+    // The box searches one type at a time, so a shared "issues / PRs" hint
+    // promised something the request never did. The hint must also carry the
+    // number-search affordance, since that is the only way to discover it.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 2, url: 'u', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
+    ]
+
+    const issues = await mountOnIssues()
+    await new Promise(r => setTimeout(r, 0))
+    expect(issues.find('.forge-search input').attributes('placeholder')).toBe('Search issues')
+
+    // The mock's `type` is a plain object, so this second mount is what proves
+    // the hint is derived from the active type rather than hard-coded.
+    state.type.value = 'pr'
+    const prs = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await prs.findAll('.forge-tab')[2].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+    expect(prs.find('.forge-search input').attributes('placeholder')).toBe('Search pull requests')
   })
 
   it('replaces the row chevron with a quote action, matching the task list', async () => {

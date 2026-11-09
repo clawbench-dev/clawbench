@@ -99,10 +99,54 @@ func VerifyToken(ctx context.Context, cfg Config) (forge.Author, error) {
 
 // ListItems returns a page of issues or pull requests.
 func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	// A bare number is an exact lookup rather than a text search — see
+	// forge.ParseNumberQuery. It is answered before the state guards below,
+	// because a number identifies one item regardless of which filter happens
+	// to be selected in the UI.
+	if number, ok := forge.ParseNumberQuery(opts.Query); ok {
+		return p.listByNumber(ctx, opts.Type, number)
+	}
 	if opts.Type == forge.ItemTypeChangeRequest {
 		return p.listPulls(ctx, opts)
 	}
 	return p.listIssues(ctx, opts)
+}
+
+// listByNumber resolves a numeric search to the single item it names.
+//
+// A miss is an empty page, not an error: the user is searching, and "there is
+// no such issue" is a legitimate answer. Reporting it as a not-found error
+// card would read as a broken integration.
+//
+// GitHub numbers issues and pull requests from ONE sequence, so the number may
+// belong to the other tab. The issues endpoint happily returns pull requests,
+// so the type is checked explicitly instead of trusting the endpoint.
+func (p *Provider) listByNumber(ctx context.Context, typ forge.ItemType, number int) (forge.ListResult, error) {
+	if typ == forge.ItemTypeChangeRequest {
+		pr, _, err := p.client.PullRequests.Get(ctx, p.owner, p.repo, number)
+		if err != nil {
+			return numberMiss(wrapErr(err))
+		}
+		return forge.ListResult{Items: []forge.Item{convertPull(pr)}}, nil
+	}
+	iss, _, err := p.client.Issues.Get(ctx, p.owner, p.repo, number)
+	if err != nil {
+		return numberMiss(wrapErr(err))
+	}
+	if iss.IsPullRequest() {
+		return forge.ListResult{Items: []forge.Item{}}, nil
+	}
+	return forge.ListResult{Items: []forge.Item{convertIssue(iss)}}, nil
+}
+
+// numberMiss turns a not-found into an empty page and lets every other failure
+// through, so an expired token still surfaces as an error. The error must
+// already be classified (see wrapErr).
+func numberMiss(err error) (forge.ListResult, error) {
+	if forge.IsNotFoundError(err) {
+		return forge.ListResult{Items: []forge.Item{}}, nil
+	}
+	return forge.ListResult{}, err
 }
 
 func (p *Provider) listIssues(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {

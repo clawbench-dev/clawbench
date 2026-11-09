@@ -132,20 +132,29 @@ export function useVoiceInput() {
     readSttField(settings.serverConfig.value as Record<string, unknown> | undefined, key)
 
   const shortcutKey = () => (sttField('shortcut_key') as string | undefined) ?? 'F9'
-  const streaming = () => Boolean(sttField('streaming') ?? false)
   const provider = () => (sttField('provider') as string | undefined) ?? 'vllm'
-  const language = () => sttField('language') as string | undefined
+
+  // Each engine keeps its own streaming switch and language: they used to be
+  // shared, so turning streaming on for Doubao also switched it on for the
+  // self-hosted engine, and its language was overwritten by the other engine's.
+  const engineField = (key: string): unknown => {
+    const engine = sttField(provider())
+    return engine && typeof engine === 'object' ? (engine as Record<string, unknown>)[key] : undefined
+  }
+  const streaming = () => Boolean(engineField('streaming') ?? false)
+  const language = () => engineField('language') as string | undefined
 
   /** The tuning currently in effect (read by free-dialog mode as well). */
   const currentTuning = () => tuning
 
   /**
    * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
-   * protocol by provider capability, and only Doubao decodes PCM — every other
+   * protocol by provider capability, and only the engines that decode PCM
+   * (Doubao, Alibaba Cloud Paraformer) are reached that way — every other
    * provider receives the bytes as a `recording.webm` upload, so the flag alone
    * must never select this path.
    */
-  const usePcmStreaming = () => streaming() && provider() === 'doubao'
+  const usePcmStreaming = () => streaming() && (provider() === 'doubao' || provider() === 'alibaba')
 
   async function toggle(prefix = '') {
     if (state.value === 'recording' || state.value === 'transcribing') {
@@ -335,7 +344,11 @@ export function useVoiceInput() {
           // Buffered-engine fallback emits deltas only.
           appendText(msg.text)
         } else if (msg.type === 'done') {
-          setPartial(msg.final ?? '')
+          // A final is authoritative when present. An empty one means the
+          // server did not re-check the whole recording (stt.final_recheck is
+          // off), so the accumulated text stands — clearing here would throw
+          // the user's dictation away.
+          if (msg.final) setPartial(msg.final)
           finalize()
         } else if (msg.type === 'error') {
           fail(msg.message || i18n.global.t('chat.voice.transcribeFailed'))

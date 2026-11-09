@@ -26,8 +26,51 @@ interface ViewerSlot {
   dest: MediaStreamAudioDestinationNode
   /** Source node for this viewer's inbound audio (null until ontrack fires). */
   remoteSource: MediaStreamAudioSourceNode | null
+  /** Keeps that inbound audio actually rendering in Chromium (see below). */
+  sink: RemoteAudioSink | null
   /** The track currently attached to the viewer's sender. */
   outTrack: MediaStreamTrack
+}
+
+/** Something to release once a remote track is no longer routed anywhere. */
+export interface RemoteAudioSink {
+  dispose(): void
+}
+
+/**
+ * A silent element that keeps one remote track's audio flowing.
+ *
+ * Chromium does not render an inbound audio track into a Web Audio graph by
+ * itself: a `MediaStreamAudioSourceNode` fed from a remote track stays silent
+ * until that track is ALSO attached to a media element. The element does not
+ * have to be in the document, playing, or unmuted — attaching the track is the
+ * whole trigger — so this is a muted, detached sink, not a second playback
+ * path.
+ *
+ * Without it the publisher hears nobody while every viewer hears the publisher:
+ * the mix sent DOWN is built from local sources, which do render. Measured on
+ * Chromium: remote track → `createMediaStreamSource` alone reads 0.000 RMS
+ * while inbound RTP bytes climb; adding this sink makes the same node read the
+ * real level. Firefox and WebKit render without it, so it is a no-op there.
+ */
+export function openRemoteAudioSink(stream: MediaStream): RemoteAudioSink {
+  if (typeof document === 'undefined') return { dispose: () => undefined }
+  const el = document.createElement('audio')
+  el.muted = true
+  try {
+    el.srcObject = stream
+  } catch {
+    return { dispose: () => undefined }
+  }
+  return {
+    dispose: () => {
+      try {
+        el.srcObject = null
+      } catch {
+        /* already detached */
+      }
+    },
+  }
 }
 
 /**
@@ -203,7 +246,7 @@ export class LiveMixer {
     }
 
     const outTrack = dest.stream.getAudioTracks()[0]
-    this.slots.set(viewerId, { dest, remoteSource: null, outTrack })
+    this.slots.set(viewerId, { dest, remoteSource: null, sink: null, outTrack })
     return outTrack
   }
 
@@ -225,6 +268,9 @@ export class LiveMixer {
     }
     const src = this.ctx.createMediaStreamSource(stream)
     slot.remoteSource = src
+    // Chromium needs the track attached to a media element before it renders
+    // into the graph at all; see openRemoteAudioSink.
+    slot.sink = openRemoteAudioSink(stream)
     this.tap(`v:${viewerId}`, src)
     for (const [otherId, other] of this.slots) {
       if (otherId === viewerId) continue
@@ -241,7 +287,10 @@ export class LiveMixer {
   detachRemote(viewerId: string): void {
     this.analysers.delete(`v:${viewerId}`)
     const slot = this.slots.get(viewerId)
-    if (!slot?.remoteSource) return
+    if (!slot) return
+    slot.sink?.dispose()
+    slot.sink = null
+    if (!slot.remoteSource) return
     // disconnect() with no argument drops every edge, including the monitor
     // edge to ctx.destination added in attachRemote.
     try {

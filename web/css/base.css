@@ -28,6 +28,18 @@
     -webkit-tap-highlight-color: transparent;
 }
 
+/* The other half of the `color-scheme` story above: the UA stylesheet gives
+   form controls their own colour (`buttontext` / `fieldtext`) — pure white under
+   a dark scheme — and they do NOT inherit the text colour the way a <span>
+   does. So a control that forgets to declare its own colour renders colder than
+   every themed element around it: the meeting-detail header shipped its
+   back/rename icons that way, and a scan found 60+ buttons plus ~50 inputs in
+   the same state. Reset them all to the inherited colour; any rule that does
+   set a colour still wins on specificity. */
+button, input, select, textarea {
+    color: inherit;
+}
+
 /* HTML & Body — use 100vh instead of 100dvh to avoid iOS WKWebView mismatch.
    On iOS, dvh shrinks when the soft keyboard opens but position:fixed elements
    still reference the full screen, causing overflow. 100vh stays stable.

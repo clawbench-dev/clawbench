@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
- * Source-contract guard: the "archived" badge must look the same in the shared
- * sessions drawer and in the session-search result list.
+ * Source-contract guard: the "archived" badge must look the same in the share
+ * centre and in the session-search result list.
  *
  * Both badges mark the same server state, so a divergence is a bug: the user
  * sees one archived conversation rendered as a neutral gray chip and another as
@@ -15,12 +15,17 @@ import { join } from 'node:path'
  * the source, the same pattern as wideDockIconSize.css.test.ts.
  */
 
-const sharedDrawer = readFileSync(
-  join(__dirname, '..', 'SharedSessionsDrawer.vue'),
+const shareCenter = readFileSync(
+  join(__dirname, '..', '..', 'share', 'ShareCenterPanel.vue'),
   'utf8',
 )
 const searchDrawer = readFileSync(
   join(__dirname, '..', 'SessionSearchDrawer.vue'),
+  'utf8',
+)
+// The label key is chosen where the row is normalised, not in the template.
+const shareCenterComposable = readFileSync(
+  join(__dirname, '..', '..', '..', 'composables', 'useShareCenter.ts'),
   'utf8',
 )
 
@@ -48,54 +53,46 @@ function normalise(decls: string): string {
 }
 
 describe('archived badge consistency', () => {
-  it('renders the shared-sessions badge with the session-search styling', () => {
-    const shared = ruleDecls(sharedDrawer, '.shared-session-badge')
+  it('renders the share-centre badge with the session-search styling', () => {
+    const shared = ruleDecls(shareCenter, '.share-badge--warn')
     const search = ruleDecls(searchDrawer, '.session-search-item-archived')
 
-    expect(shared, '.shared-session-badge rule must exist').not.toBeNull()
+    expect(shared, '.share-badge--warn rule must exist').not.toBeNull()
     expect(
       search,
       '.session-search-item-archived rule must exist',
     ).not.toBeNull()
 
-    // `flex-shrink: 0` is a layout concern of the shared row (the search list
-    // does not set it), so it is the one declaration allowed to differ.
-    const withoutLayout = (d: string) =>
-      normalise(d)
-        .split(';')
-        .filter((x) => !x.startsWith('flex-shrink'))
-        .join(';')
-
     expect(
-      withoutLayout(shared!),
+      normalise(shared!),
       'the two archived badges must use identical visual declarations',
-    ).toBe(withoutLayout(search!))
+    ).toBe(normalise(search!))
   })
 
-  it('labels both badges with the same i18n text', () => {
-    const sharedText = sharedDrawer.match(
-      /class="shared-session-badge"[^>]*>\s*\{\{\s*t\('([^']+)'\)/,
+  it('labels both badges with the same text in both locales', () => {
+    // The share centre reads its label from a key, so the guard is on the
+    // RESOLVED string: the two keys live in different namespaces and would
+    // otherwise drift into different words for the same state.
+    const sharedKey = shareCenterComposable.match(
+      /goneLabelKey:\s*archived\s*\?\s*'([^']+)'/,
     )?.[1]
+    expect(sharedKey, 'the share centre must name an archived label key').toBe('shareCenter.sessionArchived')
+
     const searchText = searchDrawer.match(
       /class="session-search-item-archived"[^>]*>\{\{\s*t\('([^']+)'\)/,
     )?.[1]
-
-    expect(sharedText).toBe('sharedSessions.archived')
     expect(searchText).toBe('sessionSearch.archived')
 
-    // The keys differ (different namespaces) but the resolved strings must be
-    // the same label in every locale, otherwise the same state reads
-    // differently. Both locales are checked: zh is the primary UI language.
     const localeRoot = join(__dirname, '..', '..', '..', 'i18n', 'locales')
-    const label = (file: string, ns: string) =>
+    const label = (file: string, ns: string, key: string) =>
       readFileSync(join(localeRoot, file), 'utf8').match(
-        new RegExp(`^\\s*${ns}:\\s*\\{[\\s\\S]*?archived:\\s*'([^']+)'`, 'm'),
+        new RegExp(`^\\s*${ns}:\\s*\\{[\\s\\S]*?${key}:\\s*'([^']+)'`, 'm'),
       )?.[1]
 
     for (const file of ['zh.ts', 'en.ts']) {
-      const sharedLabel = label(file, 'sharedSessions')
-      const searchLabel = label(file, 'sessionSearch')
-      expect(sharedLabel, `${file}: sharedSessions.archived`).toBeTruthy()
+      const sharedLabel = label(file, 'shareCenter', 'sessionArchived')
+      const searchLabel = label(file, 'sessionSearch', 'archived')
+      expect(sharedLabel, `${file}: shareCenter.sessionArchived`).toBeTruthy()
       expect(searchLabel, `${file}: sessionSearch.archived`).toBe(sharedLabel)
     }
   })

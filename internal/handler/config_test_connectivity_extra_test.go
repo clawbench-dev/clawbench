@@ -29,7 +29,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body := fmt.Sprintf(`{"category":"stt","values":{"stt.base_url":%q,"stt.model":"m"}}`, srv.URL)
+	body := fmt.Sprintf(`{"category":"stt","values":{"stt.vllm.base_url":%q,"stt.vllm.model":"m"}}`, srv.URL)
 	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	ServeConfigTest(w, r)
@@ -44,8 +44,8 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 // TestSTTConnectivity_EmptyBaseURL covers the missing base URL guard in testSTT.
 func TestSTTConnectivity_EmptyBaseURL(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": "",
-		"stt.model":    "m",
+		"stt.vllm.base_url": "",
+		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "required")
@@ -62,7 +62,7 @@ func TestSTTConnectivity_DefaultModel(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
+		"stt.vllm.base_url": srv.URL,
 	})
 	assert.True(t, res.Success, res.Message)
 }
@@ -78,9 +78,9 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": srv.URL,
-		"stt.model":    "m",
-		"stt.api_key":  "test-api-key",
+		"stt.vllm.base_url": srv.URL,
+		"stt.vllm.model":    "m",
+		"stt.vllm.api_key":  "test-api-key",
 	})
 	assert.True(t, res.Success, res.Message)
 }
@@ -88,8 +88,8 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 // TestSTTConnectivity_Unreachable covers the client.Do network error path.
 func TestSTTConnectivity_Unreachable(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": "http://127.0.0.1:19999",
-		"stt.model":    "m",
+		"stt.vllm.base_url": "http://127.0.0.1:19999",
+		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "unreachable")
@@ -99,8 +99,8 @@ func TestSTTConnectivity_Unreachable(t *testing.T) {
 // must report it rather than panicking or reporting success.
 func TestSTTConnectivity_NewRequestError(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": ":",
-		"stt.model":    "m",
+		"stt.vllm.base_url": ":",
+		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "create request")
@@ -170,9 +170,9 @@ func TestSTTConnectivity_DoubaoSuccess(t *testing.T) {
 	})
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.provider":    "doubao",
-		"stt.api_key":     "key-123",
-		"stt.resource_id": "volc.seedasr.sauc.duration",
+		"stt.provider":           "doubao",
+		"stt.doubao.api_key":     "key-123",
+		"stt.doubao.resource_id": "volc.seedasr.sauc.duration",
 	})
 
 	assert.True(t, res.Success, res.Message)
@@ -185,8 +185,8 @@ func TestSTTConnectivity_DoubaoSuccess(t *testing.T) {
 // TestSTTConnectivity_DoubaoRequiresAPIKey covers the missing-key guard.
 func TestSTTConnectivity_DoubaoRequiresAPIKey(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
-		"stt.provider": "doubao",
-		"stt.api_key":  "",
+		"stt.provider":       "doubao",
+		"stt.doubao.api_key": "",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "API key")
@@ -200,9 +200,9 @@ func TestSTTConnectivity_DoubaoBodyErrorIsFailure(t *testing.T) {
 	})
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.provider":    "doubao",
-		"stt.api_key":     "key-123",
-		"stt.resource_id": "volc.bigasr.auc",
+		"stt.provider":           "doubao",
+		"stt.doubao.api_key":     "key-123",
+		"stt.doubao.resource_id": "volc.bigasr.auc",
 	})
 
 	assert.False(t, res.Success)
@@ -217,8 +217,8 @@ func TestSTTConnectivity_DoubaoEmptyTranscriptIsFailure(t *testing.T) {
 	})
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.provider": "doubao",
-		"stt.api_key":  "key-123",
+		"stt.provider":       "doubao",
+		"stt.doubao.api_key": "key-123",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "empty")
@@ -231,7 +231,7 @@ func TestServeConfigTest_STTDoubaoDispatches(t *testing.T) {
 		_, _ = w.Write([]byte(`{"header":{"code":20000000},"result":{"text":"你好"}}`))
 	})
 
-	body := `{"category":"stt","values":{"stt.provider":"doubao","stt.api_key":"k"}}`
+	body := `{"category":"stt","values":{"stt.provider":"doubao","stt.doubao.api_key":"k"}}`
 	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	ServeConfigTest(w, r)
@@ -240,6 +240,83 @@ func TestServeConfigTest_STTDoubaoDispatches(t *testing.T) {
 	var result ConnectivityTestResult
 	_ = json.NewDecoder(w.Body).Decode(&result)
 	assert.True(t, result.Success, result.Message)
+}
+
+// ── Alibaba Cloud Model Studio branch ───────────────────────
+
+// TestSTTConnectivity_AlibabaSuccess asserts the probe uses the OpenAI-compatible
+// transcription path with the real speech clip inline as a data URI.
+func TestSTTConnectivity_AlibabaSuccess(t *testing.T) {
+	var gotPath, gotAuth string
+	var gotModel, gotData string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Content []struct {
+					InputAudio struct {
+						Data string `json:"data"`
+					} `json:"input_audio"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotModel = body.Model
+		if len(body.Messages) > 0 && len(body.Messages[0].Content) > 0 {
+			gotData = body.Messages[0].Content[0].InputAudio.Data
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"你好"}}]}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":         "alibaba",
+		"stt.alibaba.api_key":  "sk-dash",
+		"stt.alibaba.base_url": srv.URL,
+		"stt.alibaba.language": "zh",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "/compatible-mode/v1/chat/completions", gotPath)
+	assert.Equal(t, "Bearer sk-dash", gotAuth)
+	assert.Equal(t, "qwen3-asr-flash", gotModel)
+
+	const prefix = "data:audio/mpeg;base64,"
+	require.True(t, strings.HasPrefix(gotData, prefix), gotData)
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(gotData, prefix))
+	require.NoError(t, err)
+	assert.Equal(t, sttProbeAudio, decoded, "probe must upload the real speech clip")
+}
+
+// TestSTTConnectivity_AlibabaRequiresAPIKey covers the missing-key guard.
+func TestSTTConnectivity_AlibabaRequiresAPIKey(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":        "alibaba",
+		"stt.alibaba.api_key": "",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "API key")
+}
+
+// TestSTTConnectivity_AlibabaAuthFailure classifies a rejected key by HTTP
+// status rather than by the message text.
+func TestSTTConnectivity_AlibabaAuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"InvalidApiKey","message":"bad key"}}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":         "alibaba",
+		"stt.alibaba.api_key":  "bad",
+		"stt.alibaba.base_url": srv.URL,
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "auth failed")
 }
 
 // ── Summarize Voice: provider branch ────────────────────────
@@ -364,8 +441,8 @@ func TestTestPortForward_ServerPortClosed(t *testing.T) {
 // base URL from a wrong key.
 func TestSTTConnectivity_UnreachableNamesEndpoint(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
-		"stt.base_url": "http://127.0.0.1:1",
-		"stt.model":    "m",
+		"stt.vllm.base_url": "http://127.0.0.1:1",
+		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "127.0.0.1:1")
@@ -380,7 +457,7 @@ func TestSTTConnectivity_UnclassifiedError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := testSTT(context.Background(), map[string]any{"stt.base_url": srv.URL, "stt.model": "m"})
+	res := testSTT(context.Background(), map[string]any{"stt.vllm.base_url": srv.URL, "stt.vllm.model": "m"})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "500")
 	assert.Contains(t, res.Message, "internal failure")

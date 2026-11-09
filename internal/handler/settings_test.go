@@ -431,6 +431,100 @@ func TestServeConfig_Patch_GroupMaxSpeeches(t *testing.T) {
 	}
 }
 
+// recent_project_cards_max_count round-trips through PATCH /api/config and is
+// synced into the model global so the overview endpoint honors it without a
+// restart. 0 is rejected rather than read as "hide the section": an empty active
+// set already hides it, so 0 has no distinct meaning.
+func TestServeConfig_Patch_RecentProjectCardsMaxCount(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatRecentProjectCardsMaxCount
+	t.Cleanup(func() { model.ChatRecentProjectCardsMaxCount = orig })
+
+	body := `{"chat":{"recent_project_cards_max_count":3}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 3, model.ConfigInstance.Chat.RecentProjectCardsMaxCount,
+		"the value must be applied to ConfigInstance")
+	assert.Equal(t, 3, model.ChatRecentProjectCardsMaxCount,
+		"applyHotReloadGlobals must sync the model global")
+
+	model.ConfigInstance.Chat.RecentProjectCardsMaxCount = 3
+	for _, bad := range []int{0, -1} {
+		b, _ := json.Marshal(map[string]any{"chat": map[string]any{"recent_project_cards_max_count": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "count=%d must be rejected", bad)
+		assert.Equal(t, 3, model.ConfigInstance.Chat.RecentProjectCardsMaxCount, "a rejected value must not be stored")
+	}
+}
+
+// recent_project_cards_window_hours is the other half of the same feature: how
+// far back a project still earns a collapsed card. It round-trips like the cap
+// and rejects 0 for the same reason — a zero window reads as "the feature is
+// off", not as a preference.
+func TestServeConfig_Patch_RecentProjectCardsWindowHours(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatRecentProjectCardsWindowHours
+	t.Cleanup(func() { model.ChatRecentProjectCardsWindowHours = orig })
+
+	body := `{"chat":{"recent_project_cards_window_hours":72}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 72, model.ConfigInstance.Chat.RecentProjectCardsWindowHours,
+		"the value must be applied to ConfigInstance")
+	assert.Equal(t, 72, model.ChatRecentProjectCardsWindowHours,
+		"applyHotReloadGlobals must sync the model global")
+
+	model.ConfigInstance.Chat.RecentProjectCardsWindowHours = 72
+	for _, bad := range []int{0, -1} {
+		b, _ := json.Marshal(map[string]any{"chat": map[string]any{"recent_project_cards_window_hours": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "hours=%d must be rejected", bad)
+		assert.Equal(t, 72, model.ConfigInstance.Chat.RecentProjectCardsWindowHours, "a rejected value must not be stored")
+	}
+}
+
+// The window must reach the client, otherwise the settings row renders empty
+// even though the server honors it.
+func TestServeConfig_Get_ExposesRecentProjectCardsWindow(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.RecentProjectCardsWindowHours = 36
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	w := callHandler(ServeConfig, req)
+	assertOK(t, w)
+
+	var result struct {
+		Chat struct {
+			RecentProjectCardsWindow int `json:"recent_project_cards_window_hours"`
+		} `json:"chat"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, 36, result.Chat.RecentProjectCardsWindow, "the window must be part of GET /api/config")
+}
+
 // A nickname equal to an existing agent's name is a conflict (409), not a
 // malformed value: the agent-side guard rejects the reverse direction, so the
 // two must agree.
@@ -644,24 +738,66 @@ func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
 	// Collect the string literals used as map keys inside applyConfigPatch.
 	// Bounding the walk to that function keeps a leaf from being "covered" by
 	// an unrelated mention elsewhere in the file.
-	var applyBody *ast.BlockStmt
+	// applyConfigPatch delegates the per-engine STT sections to small appliers
+	// (three engines x ~9 fields would otherwise bloat an already exhaustive
+	// function). The guard follows those explicitly rather than by name prefix:
+	// a renamed or dropped helper must fail here, not silently stop covering the
+	// fields it used to apply.
+	extractedAppliers := map[string]bool{
+		"applySTTVLLMPatch":    false,
+		"applySTTDoubaoPatch":  false,
+		"applySTTAlibabaPatch": false,
+	}
+
+	bodies := map[string]*ast.BlockStmt{}
 	ast.Inspect(parsed, func(n ast.Node) bool {
-		if fn, isFn := n.(*ast.FuncDecl); isFn && fn.Name.Name == "applyConfigPatch" {
-			applyBody = fn.Body
+		fn, isFn := n.(*ast.FuncDecl)
+		if !isFn {
+			return true
+		}
+		if fn.Name.Name == "applyConfigPatch" {
+			bodies[fn.Name.Name] = fn.Body
+			return true
+		}
+		if _, want := extractedAppliers[fn.Name.Name]; want {
+			bodies[fn.Name.Name] = fn.Body
+			extractedAppliers[fn.Name.Name] = true
 		}
 		return true
 	})
-	require.NotNil(t, applyBody, "applyConfigPatch must exist")
+	_, ok = bodies["applyConfigPatch"]
+	require.True(t, ok, "applyConfigPatch must exist")
+	for name, found := range extractedAppliers {
+		assert.True(t, found, "%s is listed as an extracted applier but no longer exists; "+
+			"update this guard alongside the extraction", name)
+	}
 
 	applied := map[string]bool{}
-	ast.Inspect(applyBody, func(n ast.Node) bool {
-		if lit, isLit := n.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
-			if s, err := strconv.Unquote(lit.Value); err == nil {
-				applied[s] = true
+	appliedByFunc := map[string]map[string]bool{}
+	for name, body := range bodies {
+		leaves := map[string]bool{}
+		ast.Inspect(body, func(n ast.Node) bool {
+			if lit, isLit := n.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+				if s, err := strconv.Unquote(lit.Value); err == nil {
+					applied[s] = true
+					leaves[s] = true
+				}
 			}
-		}
-		return true
-	})
+			return true
+		})
+		appliedByFunc[name] = leaves
+	}
+
+	// The engine sections are applied by three sibling helpers whose field names
+	// overlap almost entirely (every engine has its own enable_itn, streaming,
+	// …). A union check would let one engine's branch be deleted and still pass,
+	// because the same leaf name survives in a sibling. So a section's fields
+	// are checked against ITS applier.
+	sectionApplier := map[string]string{
+		"stt.vllm.":    "applySTTVLLMPatch",
+		"stt.doubao.":  "applySTTDoubaoPatch",
+		"stt.alibaba.": "applySTTAlibabaPatch",
+	}
 
 	var missing []string
 	for p := range PatchableConfigPaths {
@@ -678,6 +814,18 @@ func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
 		leaf := p
 		if i := strings.LastIndex(p, "."); i >= 0 {
 			leaf = p[i+1:]
+		}
+		for prefix, fn := range sectionApplier {
+			if strings.HasPrefix(p, prefix) {
+				if !appliedByFunc[fn][leaf] {
+					missing = append(missing, p)
+				}
+				leaf = ""
+				break
+			}
+		}
+		if leaf == "" {
+			continue
 		}
 		if !applied[leaf] {
 			missing = append(missing, p)
@@ -1552,7 +1700,7 @@ func TestServeConfig_Patch_STTProvider(t *testing.T) {
 	// leaves it on "api" would otherwise make this one fail depending on order.
 	model.ConfigInstance = model.Config{}
 
-	body := `{"stt":{"provider":"doubao","resource_id":"volc.seedasr.sauc.duration","api_key":"k"}}`
+	body := `{"stt":{"provider":"doubao","doubao":{"resource_id":"volc.seedasr.sauc.duration","api_key":"k"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -1560,8 +1708,61 @@ func TestServeConfig_Patch_STTProvider(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, "doubao", model.ConfigInstance.STT.Provider)
-	assert.Equal(t, "volc.seedasr.sauc.duration", model.ConfigInstance.STT.ResourceID)
-	assert.Equal(t, "k", model.ConfigInstance.STT.APIKey)
+	assert.Equal(t, "volc.seedasr.sauc.duration", model.ConfigInstance.STT.Doubao.ResourceID)
+	assert.Equal(t, "k", model.ConfigInstance.STT.Doubao.APIKey)
+}
+
+// TestServeConfig_Patch_STTAlibaba covers the Alibaba Cloud fields end to end:
+// both must be in PatchableConfigPaths (otherwise the PATCH answers
+// forbidden_field) and in applyConfigPatch (otherwise the value is dropped).
+func TestServeConfig_Patch_STTAlibaba(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"stt":{"provider":"alibaba","alibaba":{"api_key":"sk-dash","base_url":"https://dashscope-intl.aliyuncs.com","model":"paraformer-realtime-8k-v2"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "alibaba", model.ConfigInstance.STT.Provider)
+	assert.Equal(t, "sk-dash", model.ConfigInstance.STT.Alibaba.APIKey)
+	assert.Equal(t, "https://dashscope-intl.aliyuncs.com", model.ConfigInstance.STT.Alibaba.BaseURL)
+	assert.Equal(t, "paraformer-realtime-8k-v2", model.ConfigInstance.STT.Alibaba.Model)
+}
+
+// TestServeConfig_Patch_STTEnginesAreIndependent is the point of the per-engine
+// split: configuring one engine must not overwrite another's saved credentials.
+func TestServeConfig_Patch_STTEnginesAreIndependent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	steps := []string{
+		`{"stt":{"vllm":{"base_url":"http://whisper.local/v1","api_key":"sk-vllm","model":"large-v3"}}}`,
+		`{"stt":{"doubao":{"api_key":"volc-key","resource_id":"volc.bigasr.auc"}}}`,
+		`{"stt":{"alibaba":{"api_key":"sk-dash","base_url":"https://dashscope-intl.aliyuncs.com"}}}`,
+	}
+	for _, body := range steps {
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+
+	sttCfg := model.ConfigInstance.STT
+	assert.Equal(t, "http://whisper.local/v1", sttCfg.VLLM.BaseURL, "vLLM base URL must survive the other engines' saves")
+	assert.Equal(t, "sk-vllm", sttCfg.VLLM.APIKey, "vLLM key must survive the other engines' saves")
+	assert.Equal(t, "large-v3", sttCfg.VLLM.Model)
+	assert.Equal(t, "volc-key", sttCfg.Doubao.APIKey, "Doubao key must survive the Alibaba save")
+	assert.Equal(t, "volc.bigasr.auc", sttCfg.Doubao.ResourceID)
+	assert.Equal(t, "sk-dash", sttCfg.Alibaba.APIKey)
+	assert.Equal(t, "https://dashscope-intl.aliyuncs.com", sttCfg.Alibaba.BaseURL)
 }
 
 // TestServeConfig_Patch_STTProviderRejectsUnknown guards the enum: an unknown
@@ -1816,6 +2017,38 @@ func TestServeConfigPatch_NoExistingConfig(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 20, model.ConfigInstance.Chat.SystemPromptInterval)
+}
+
+// TestServeConfigPatch_DropsLegacySTTKeys pins the write-path cleanup: a
+// config.yaml that still carries the flat stt.* keys must have them removed, so
+// a hand-edit of one cannot look effective while nothing reads it.
+func TestServeConfigPatch_DropsLegacySTTKeys(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	configDir := filepath.Join(model.DataDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	configPath := filepath.Join(configDir, "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(
+		"stt:\n  provider: vllm\n  api_key: old-flat-key\n  base_url: http://old/v1\n  streaming: true\n"), 0o600))
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"stt":{"vllm":{"api_key":"new-key"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	written, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	text := string(written)
+	for _, legacy := range []string{"old-flat-key", "http://old/v1"} {
+		assert.NotContains(t, text, legacy, "the flat stt.* key must be dropped from config.yaml")
+	}
+	assert.Contains(t, text, "new-key", "the per-engine key must be written")
+	assert.Contains(t, text, "vllm:", "the per-engine section must be written")
 }
 
 // --- IsRunningUnderSupervisor ---
@@ -2561,52 +2794,64 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 	applyConfigPatch(map[string]any{
 		"stt": map[string]any{
 			"provider":     "doubao",
-			"base_url":     "http://localhost:9000/v1",
-			"api_key":      "k",
-			"model":        "whisper-small",
-			"resource_id":  "volc.seedasr.sauc.duration",
-			"language":     "en",
-			"streaming":    true,
-			"chunk_ms":     float64(800),
 			"shortcut_key": "Ctrl+M",
+			"vllm": map[string]any{
+				"base_url":  "http://localhost:9000/v1",
+				"api_key":   "k",
+				"model":     "whisper-small",
+				"language":  "en",
+				"streaming": true,
+				"chunk_ms":  float64(800),
+			},
+			"doubao": map[string]any{
+				"api_key":     "volc-k",
+				"resource_id": "volc.seedasr.sauc.duration",
+			},
 		},
 	})
 	cfg2 := model.ConfigInstance
 	if cfg2.STT.Provider != "doubao" {
 		t.Errorf("STT.Provider = %q, want doubao", cfg2.STT.Provider)
 	}
-	if cfg2.STT.ResourceID != "volc.seedasr.sauc.duration" {
-		t.Errorf("STT.ResourceID = %q, want volc.seedasr.sauc.duration", cfg2.STT.ResourceID)
-	}
-	if cfg2.STT.BaseURL != "http://localhost:9000/v1" {
-		t.Errorf("STT.BaseURL = %q, want http://localhost:9000/v1", cfg2.STT.BaseURL)
-	}
-	if cfg2.STT.APIKey != "k" {
-		t.Errorf("STT.APIKey = %q, want k", cfg2.STT.APIKey)
-	}
-	if cfg2.STT.Model != "whisper-small" {
-		t.Errorf("STT.Model = %q, want whisper-small", cfg2.STT.Model)
-	}
-	if cfg2.STT.Language != "en" {
-		t.Errorf("STT.Language = %q, want en", cfg2.STT.Language)
-	}
-	if !cfg2.STT.Streaming {
-		t.Error("STT.Streaming = false, want true")
-	}
-	if cfg2.STT.ChunkMs != 800 {
-		t.Errorf("STT.ChunkMs = %d, want 800", cfg2.STT.ChunkMs)
-	}
 	if cfg2.STT.ShortcutKey != "Ctrl+M" {
 		t.Errorf("STT.ShortcutKey = %q, want Ctrl+M", cfg2.STT.ShortcutKey)
+	}
+	if cfg2.STT.VLLM.BaseURL != "http://localhost:9000/v1" {
+		t.Errorf("STT.VLLM.BaseURL = %q, want http://localhost:9000/v1", cfg2.STT.VLLM.BaseURL)
+	}
+	if cfg2.STT.VLLM.APIKey != "k" {
+		t.Errorf("STT.VLLM.APIKey = %q, want k", cfg2.STT.VLLM.APIKey)
+	}
+	if cfg2.STT.VLLM.Model != "whisper-small" {
+		t.Errorf("STT.VLLM.Model = %q, want whisper-small", cfg2.STT.VLLM.Model)
+	}
+	if cfg2.STT.VLLM.Language != "en" {
+		t.Errorf("STT.VLLM.Language = %q, want en", cfg2.STT.VLLM.Language)
+	}
+	if !cfg2.STT.VLLM.Streaming {
+		t.Error("STT.VLLM.Streaming = false, want true")
+	}
+	if cfg2.STT.VLLM.ChunkMs != 800 {
+		t.Errorf("STT.VLLM.ChunkMs = %d, want 800", cfg2.STT.VLLM.ChunkMs)
+	}
+	// The Doubao block is written independently of the vLLM block.
+	if cfg2.STT.Doubao.APIKey != "volc-k" {
+		t.Errorf("STT.Doubao.APIKey = %q, want volc-k", cfg2.STT.Doubao.APIKey)
+	}
+	if cfg2.STT.Doubao.ResourceID != "volc.seedasr.sauc.duration" {
+		t.Errorf("STT.Doubao.ResourceID = %q, want volc.seedasr.sauc.duration", cfg2.STT.Doubao.ResourceID)
+	}
+	if cfg2.STT.VLLM.APIKey == cfg2.STT.Doubao.APIKey {
+		t.Error("vLLM and Doubao keys must be separate fields, got the same value")
 	}
 }
 
 func TestValidatePatchValues_STTBadURL(t *testing.T) {
 	err := validatePatchValues(map[string]any{
-		"stt": map[string]any{"base_url": "://bad"},
+		"stt": map[string]any{"vllm": map[string]any{"base_url": "://bad"}},
 	})
 	if err == nil {
-		t.Fatal("expected error for invalid stt.base_url, got nil")
+		t.Fatal("expected error for invalid stt.vllm.base_url, got nil")
 	}
 }
 
@@ -2616,14 +2861,15 @@ func TestServeConfig_Get_STT(t *testing.T) {
 
 	cfg := model.Config{}
 	cfg.STT.Provider = "doubao"
-	cfg.STT.BaseURL = "http://localhost:9000/v1"
-	cfg.STT.APIKey = "k"
-	cfg.STT.Model = "whisper-small"
-	cfg.STT.ResourceID = "volc.seedasr.sauc.duration"
-	cfg.STT.Language = "en"
-	cfg.STT.Streaming = true
-	cfg.STT.ChunkMs = 800
 	cfg.STT.ShortcutKey = "Ctrl+M"
+	cfg.STT.VLLM.BaseURL = "http://localhost:9000/v1"
+	cfg.STT.VLLM.APIKey = "k"
+	cfg.STT.VLLM.Model = "whisper-small"
+	cfg.STT.VLLM.Language = "en"
+	cfg.STT.VLLM.Streaming = true
+	cfg.STT.VLLM.ChunkMs = 800
+	cfg.STT.Doubao.APIKey = "volc-k"
+	cfg.STT.Doubao.ResourceID = "volc.seedasr.sauc.duration"
 	model.ConfigInstance = cfg
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)
@@ -2638,14 +2884,24 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	stt, ok := resp["stt"].(map[string]any)
 	require.True(t, ok, "response should contain stt section")
 	assert.Equal(t, "doubao", stt["provider"])
-	assert.Equal(t, "http://localhost:9000/v1", stt["base_url"])
-	assert.Equal(t, "k", stt["api_key"])
-	assert.Equal(t, "whisper-small", stt["model"])
-	assert.Equal(t, "volc.seedasr.sauc.duration", stt["resource_id"])
-	assert.Equal(t, "en", stt["language"])
-	assert.Equal(t, true, stt["streaming"])
-	assert.Equal(t, float64(800), stt["chunk_ms"])
 	assert.Equal(t, "Ctrl+M", stt["shortcut_key"])
+
+	vllm, ok := stt["vllm"].(map[string]any)
+	require.True(t, ok, "response should contain stt.vllm")
+	assert.Equal(t, "http://localhost:9000/v1", vllm["base_url"])
+	assert.Equal(t, "k", vllm["api_key"])
+	assert.Equal(t, "whisper-small", vllm["model"])
+	assert.Equal(t, "en", vllm["language"])
+	assert.Equal(t, true, vllm["streaming"])
+	assert.Equal(t, float64(800), vllm["chunk_ms"])
+
+	doubao, ok := stt["doubao"].(map[string]any)
+	require.True(t, ok, "response should contain stt.doubao")
+	assert.Equal(t, "volc-k", doubao["api_key"])
+	assert.Equal(t, "volc.seedasr.sauc.duration", doubao["resource_id"])
+
+	// The engine sections must not leak into each other.
+	assert.NotEqual(t, vllm["api_key"], doubao["api_key"])
 }
 
 // --- fonts.dir: config response + PATCH plumbing ---

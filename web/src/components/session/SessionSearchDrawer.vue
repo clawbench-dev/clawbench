@@ -104,6 +104,7 @@
           :key="opt.value"
           type="button"
           class="filter-menu-item"
+          :data-value="opt.value"
           :class="{ selected: searchState.archivedFilter === opt.value }"
           @click="chooseArchive(opt.value)"
         >

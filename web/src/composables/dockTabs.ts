@@ -29,6 +29,7 @@ export type TabId =
   | 'notifications'
   | 'terminal'
   | 'live'
+  | 'share'
   | 'mail'
   | 'proxy'
   | 'stats'
@@ -92,6 +93,11 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   // same recorder, the same endpoints and the same artifact folder; a record
   // can be either kind, so one tab is the honest shape.
   { id: 'live', titleKey: 'nav.meeting' },
+  // 分享: every public link this project has handed out (files, conversations,
+  // meetings), in one place. It sits next to 会议 because both are "things this
+  // machine offers to other people", and it stays before 端口映射 for the same
+  // reason — the outgoing-access pair stays together.
+  { id: 'share', titleKey: 'nav.share' },
   { id: 'proxy', titleKey: 'nav.portForward' },
   // Notifications sits immediately before settings: settings stays the final
   // tab (it is the "exit" affordance at the end of the dock), and the

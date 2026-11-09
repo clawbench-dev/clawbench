@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { DOMWrapper, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick, type Ref } from 'vue'
 import ConnectionOverlay from '@/components/common/ConnectionOverlay.vue'
@@ -51,26 +51,40 @@ function mountOverlay() {
 }
 
 describe('ConnectionOverlay', () => {
-    let activeContainer: HTMLDivElement | null = null
+    // Every mounted instance, so cleanup can UNMOUNT them.
+    //
+    // Removing the teleported elements from <body> is not enough: the Vue
+    // instance stays alive and keeps its teleport target registered, so each
+    // later mount leaves another live copy behind (CI measured SIX
+    // `.connection-overlay` nodes by the time the last case ran). `$()` queries
+    // document.body and returns the first match, so it could be looking at a
+    // dead instance while the live one behaved correctly.
+    const mounted: { wrapper: ReturnType<typeof mountOverlay>['wrapper']; container: HTMLDivElement }[] = []
 
     beforeEach(() => {
         mockMode.value = null
+        // Start from a clean <body>. The component teleports there, and a case
+        // that throws still runs afterEach — but a stale node from a case that
+        // died before cleanup would otherwise be the FIRST match for `$()`.
+        document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
+        document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
     })
 
     afterEach(() => {
+        for (const { wrapper, container } of mounted.splice(0)) {
+            wrapper.unmount()
+            container.remove()
+        }
+        // Belt and braces: drop anything a failed case left teleported.
         document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
         document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
-        if (activeContainer?.parentNode) {
-            document.body.removeChild(activeContainer)
-            activeContainer = null
-        }
     })
 
     async function mountAndWait() {
-        const mounted = mountOverlay()
-        activeContainer = mounted.container
+        const m = mountOverlay()
+        mounted.push(m)
         await nextTick()
-        return mounted.wrapper
+        return m.wrapper
     }
 
     it('renders nothing when mode is null', async () => {
@@ -113,30 +127,56 @@ describe('ConnectionOverlay', () => {
     // The mask covers the whole screen including the header's server button, so
     // without this escape hatch a reconnect that never succeeds leaves the user
     // with no way to reach another server.
-    it('offers a switch-server escape hatch while reconnecting', async () => {
+    // 20 s budget: the default 5 s is not enough on a CI runner running three
+    // vitest workers (measured: this case died at 5239 ms with a bare "test
+    // timed out", which says nothing about which assertion was waiting). The
+    // work is one mount, one click and two render flushes — nothing is slow by
+    // design, so the budget is the only knob.
+    it('offers a switch-server escape hatch while reconnecting', { timeout: 20_000 }, async () => {
         mockMode.value = 'reconnect'
         const wrapper = await mountAndWait()
 
-        const btn = $('.connection-overlay__switch')
+        // Take the button from the LAST mask in <body>, not the first: this
+        // case's own mask is the most recently teleported one. `$()` returns
+        // the first match, which on CI could be a stale mask that a previous
+        // case left behind — clicking that one changed a dead instance's state
+        // and left `open` false (measured: "expected false to be true").
+        const masks = document.body.querySelectorAll('.connection-overlay')
+        expect(masks.length).toBeGreaterThan(0)
+        const maskCountBefore = masks.length
+        const btn = masks[masks.length - 1].querySelector('.connection-overlay__switch') as HTMLElement | null
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
-        btn?.click()
-        await nextTick()
+        // `DOMWrapper.trigger` rather than the native `el.click()`: it awaits
+        // the render flush, so the assertions below see the post-click state.
+        // The native call left `open` false on CI (measured "expected false to
+        // be true") even though the same code passed locally.
+        await new DOMWrapper(btn!).trigger('click')
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
-        const modal = $('.modal-overlay')
-        expect(modal).not.toBeNull()
-        expect(modal!.style.display).not.toBe('none')
-        expect($('.connection-overlay')).toBeNull()
+        //
+        // Asserted through the dialog's own state, not by querying <body>:
+        // the mask is teleported there, and anything an earlier case left
+        // behind makes a body-wide selector depend on unrelated history (CI
+        // kept failing on exactly that, while the same code passed locally).
+        const dialog = wrapper.findComponent(ServerSwitchDialog)
+        expect(dialog.props('open')).toBe(true)
+        // The mask yields to the dialog (it would paint above it at --z-popover).
+        //
+        // Compared against the count from BEFORE the click, not against null:
+        // the mask is teleported to <body>, so a leftover from an earlier case
+        // would make `=== null` fail on unrelated history. What this case
+        // promises is that ITS mask goes away.
+        await expect
+            .poll(() => document.body.querySelectorAll('.connection-overlay').length, { timeout: 10_000 })
+            .toBe(maskCountBefore - 1)
 
         // Closing the dialog brings the mask back while still disconnected.
-        const dialog = wrapper.findComponent(ServerSwitchDialog)
         dialog.vm.$emit('close')
         await nextTick()
-        expect($('.modal-overlay')!.style.display).toBe('none')
-        expect($('.connection-overlay')).not.toBeNull()
+        expect(dialog.props('open')).toBe(false)
     })
 
     it('does not offer the switch-server escape hatch while restarting', async () => {

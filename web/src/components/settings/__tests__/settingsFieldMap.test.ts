@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet, formatAnchorForDisplay } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
+import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
+import { readLiveQuality } from '@/utils/liveQualityPrefs'
 import i18n from '@/i18n'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
@@ -78,6 +80,13 @@ describe('settingsFieldMap', () => {
       'meetingDefaultShots',
       'meetingDefaultAllowTalk',
       'meetingDefaultAllowMemberScreen',
+      'liveScreenResolution',
+      'liveScreenFps',
+      'liveScreenBitrate',
+      'liveCameraResolution',
+      'liveCameraFps',
+      'liveCameraBitrate',
+      'liveAutoDowngrade',
       'meetingRelay',
     ])
 
@@ -85,6 +94,66 @@ describe('settingsFieldMap', () => {
     if (model?.type !== 'item') throw new Error('expected the shared summary model row')
     expect(model.spec.descriptionKey).toBe('settings.items.summaryModelRowDescMeeting')
     expect(model.spec.showSummaryModelStatus).toBe(true)
+  })
+
+  /**
+   * The 画面质量 rows and the capture path are one contract expressed twice:
+   * the panel lists the choices, `liveQualityPrefs` whitelists them. If either
+   * side gains a value the other does not know, the setting silently does
+   * nothing — the capture falls back to its default and the panel still shows
+   * the choice the user picked.
+   */
+  it('picture-quality options are exactly the values liveQualityPrefs honours', () => {
+    const meeting = categoryItems['meeting']
+    const fields: Array<{ key: string; read: () => string }> = [
+      { key: 'liveScreenResolution', read: () => { const q = readLiveQuality(); return `${q.screenWidth}x${q.screenHeight}` } },
+      { key: 'liveScreenFps', read: () => String(readLiveQuality().screenFps) },
+      { key: 'liveScreenBitrate', read: () => String(readLiveQuality().screenBitrate) },
+      { key: 'liveCameraResolution', read: () => { const q = readLiveQuality(); return `${q.cameraWidth}x${q.cameraHeight}` } },
+      { key: 'liveCameraFps', read: () => String(readLiveQuality().cameraFps) },
+      { key: 'liveCameraBitrate', read: () => String(readLiveQuality().cameraBitrate) },
+    ]
+    try {
+      for (const field of fields) {
+        const row = meeting.find(e => e.type === 'item' && e.spec.key === field.key)
+        if (row?.type !== 'item') throw new Error(`missing picture-quality row: ${field.key}`)
+        expect(row.spec.source).toBe('local')
+        expect(row.spec.type).toBe('select')
+        const options = row.spec.options
+        expect(options?.length).toBeGreaterThan(1)
+        for (const opt of options!) {
+          localStorage.setItem(SETTINGS_KEY_PREFIX + field.key, JSON.stringify(opt.value))
+          expect(field.read(), `${field.key} = ${String(opt.value)}`).toBe(String(opt.value))
+        }
+      }
+    } finally {
+      localStorage.clear()
+    }
+  })
+
+  /**
+   * A settings row looks its text up through a VARIABLE (`t(item.labelKey)`),
+   * so the literal-key guard in `i18n/__tests__` cannot see it. A typo or a key
+   * added to only one locale therefore renders the raw key in the panel — the
+   * exact failure that guard exists for, one layer out.
+   */
+  it('every settings row resolves its label, description and option text', () => {
+    const lookup = (messages: unknown, path: string): unknown =>
+      path.split('.').reduce<unknown>((acc, part) => (acc as Record<string, unknown> | undefined)?.[part], messages)
+    const missing: string[] = []
+    for (const [category, entries] of Object.entries(categoryItems)) {
+      for (const entry of entries) {
+        if (entry.type !== 'item') continue
+        const spec = entry.spec
+        const keys = [spec.labelKey, spec.descriptionKey, spec.sectionHeader, ...(spec.options ?? []).map(o => o.labelKey)]
+        for (const key of keys) {
+          if (!key) continue
+          if (lookup(zh, key) === undefined) missing.push(`${category} ${key} zh`)
+          if (lookup(en, key) === undefined) missing.push(`${category} ${key} en`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
   })
 
   it('does not map local-only settings', () => {
@@ -343,6 +412,30 @@ describe('settingsFieldMap', () => {
     expect(values).toEqual(['mixed', 'summary', 'original'])
   })
 
+  it('puts the other-project card settings in a card of their own', () => {
+    // The two values are one feature (how many cards, how far back counts), so
+    // they belong together — and NOT inside 消息与历史, where they read as yet
+    // another row about session counts.
+    const chatEntries = categoryItems['chat']
+    const keys = ['chat.recent_project_cards_max_count', 'chat.recent_project_cards_window_hours']
+    const rows = chatEntries.filter(e => e.type === 'item' && keys.includes(e.spec.key as string))
+    expect(rows.length).toBe(2)
+    for (const row of rows) {
+      if (row.type !== 'item') continue
+      expect(row.spec.sectionHeader).toBe('settings.items.recentProjectCardsSectionHeader')
+      // A number row without a floor would let the user enter 0, which the
+      // server rejects with a 400 the form cannot explain.
+      expect(row.spec.type).toBe('number')
+      expect(row.spec.min).toBe(1)
+    }
+
+    // Adjacent on purpose: the renderer groups by RUNS of the same header, so
+    // anything inserted between these two rows would split them into two
+    // one-row cards.
+    const indices = rows.map(r => chatEntries.indexOf(r))
+    expect(Math.abs(indices[1] - indices[0])).toBe(1)
+  })
+
   it('every server item in categoryItems has a corresponding field map entry', () => {
     const map = getServerFieldToLabelKey()
     for (const entries of Object.values(categoryItems)) {
@@ -449,7 +542,9 @@ describe('settingsFieldMap', () => {
       'tts.openai.model',
       'tts.openai.voice',
     ])
-    expect(cfg.needsVoiceReset).toBe(true)
+    // There is no engine-switch voice reset: tts.voice belongs to Edge, so
+    // switching engines must leave it alone.
+    expect(cfg.needsVoiceReset).toBeUndefined()
     expect(cfg.hasConnectivityTest).toBe(true)
   })
 
@@ -530,6 +625,37 @@ describe('settingsFieldMap', () => {
   })
 
   // ── RAG panel ──
+
+  it('stt panel keeps each engine\'s fields separate', () => {
+    const cfg = getCategoryPanels('stt')[0]
+    const keys = cfg.commonFields.map(f => f.key)
+
+    // No credential or engine option is shared: a shared key would be
+    // overwritten the moment the user switched engines.
+    for (const shared of ['stt.api_key', 'stt.base_url', 'stt.model', 'stt.language', 'stt.streaming',
+      'stt.chunk_ms', 'stt.enable_itn', 'stt.enable_punc', 'stt.enable_ddc', 'stt.end_window_size',
+      'stt.resource_id', 'stt.final_recheck', 'stt.output_zh_variant']) {
+      expect(keys).not.toContain(shared)
+    }
+
+    // Each engine has its own api_key, and only that engine's row shows it.
+    for (const [engine, key] of [['vllm', 'stt.vllm.api_key'], ['doubao', 'stt.doubao.api_key'], ['alibaba', 'stt.alibaba.api_key']]) {
+      const field = cfg.commonFields.find(f => f.key === key)
+      expect(field, key).toBeDefined()
+      expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
+    }
+
+    // The streaming switch exists once per engine, each gated on its own engine.
+    for (const engine of ['vllm', 'doubao', 'alibaba']) {
+      const field = cfg.commonFields.find(f => f.key === `stt.${engine}.streaming`)
+      expect(field, engine).toBeDefined()
+      expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
+    }
+
+    // Global choices stay at the top level.
+    expect(keys).toContain('stt.provider')
+    expect(keys).toContain('stt.shortcut_key')
+  })
 
   it('rag panel has 13 commonFields and requiredFields', () => {
     const panels = getCategoryPanels('rag')

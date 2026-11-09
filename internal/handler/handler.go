@@ -624,6 +624,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/group/host", ServeGroupHost)
 	register("/api/group/member-avatars", ServeGroupMemberAvatars)
 	register("/api/group/member-compact", ServeGroupMemberCompact)
+	register("/api/group/member-stop", ServeGroupMemberStop)
 	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
@@ -728,6 +729,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Meeting records: GET lists the project's meetings (the database row is the
 	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
+	// Whether this record's link stays readable after the meeting ends. Off by
+	// default: the token is minted automatically for viewers to join, which is
+	// not the same as publishing the archived record.
+	register("/api/live-share/notes/sessions/share", ServeLiveNotesShare)
 	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
 	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
 	// Import an existing recording or video as a meeting: the file is decoded to
@@ -911,6 +916,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/mail/messages/", ServeMailMessageSubRoutes)
 	register("/api/mail/unread", ServeMailUnread)
 	register("/api/mail/send", ServeMailSend)
+	register("/api/mail/attachments", ServeMailAttachments)
 	register("/api/mail/drafts", ServeMailDrafts)
 	register("/api/mail/drafts/", ServeMailDraftSubRoutes)
 

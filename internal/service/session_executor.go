@@ -56,6 +56,18 @@ const (
 	// session context is cancelled — the executor persists a restart warning so
 	// the frontend shows the interrupted-response banner after reload.
 	cancelReasonRestart = "restart"
+	// cancelReasonMemberStop stops ONE group member's current speech. The group
+	// round keeps running (the other members and the queue are untouched), so it
+	// is NOT a turn-level cancel: the orchestrator only skips that speaker and
+	// the bubble is stamped `stopped` instead of `cancelled`.
+	//
+	// Distinct from cancelReasonInterrupt ("interrupt and send"), which ends the
+	// whole turn and keeps the queue.
+	cancelReasonMemberStop = "member_stop"
+	// contentKeyStopped is the JSON key marking a member speech the user stopped
+	// on purpose. Deliberately NOT the `cancelled` key: that one means "the user
+	// abandoned this turn" and carries a different badge.
+	contentKeyStopped = "stopped"
 	// blockTypeWarning is the content block type for warning messages.
 	blockTypeWarning = "warning"
 	// blockTypeThinking is the content block type for thinking (reasoning) text.
@@ -1612,6 +1624,16 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 	// The frontend renders a clean "cancelled" badge — no alarming warning needed.
 	if result.CancelReason == cancelReasonUser {
 		contentMap := map[string]any{contentKeyBlocks: blocks, contentKeyMetadata: meta, statusCancelled: true}
+		blocksJSON, _ := json.Marshal(contentMap)
+		return string(blocksJSON), blocks
+	}
+
+	// "Stop this member" (group chat): only this speaker was cut short, the round
+	// continues with the others. Persist what was said WITHOUT the cancelled
+	// badge — the user stopped one voice, not the discussion — and stamp
+	// `stopped` so the bubble says "已停止发言" instead of "已取消".
+	if result.CancelReason == cancelReasonMemberStop {
+		contentMap := map[string]any{contentKeyBlocks: blocks, contentKeyMetadata: meta, contentKeyStopped: true}
 		blocksJSON, _ := json.Marshal(contentMap)
 		return string(blocksJSON), blocks
 	}

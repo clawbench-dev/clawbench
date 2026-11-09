@@ -289,6 +289,7 @@ minutes.stale = revised.content_at > 0 && minutes.content_at > 0
 - 读取时归一化：`job_status in (queued,running)` 且 `now - job_at > 10min` → 展示为 `failed` + `error_code=interrupted`（不依赖每小时清扫是否跑过）；
 - 每小时清扫与启动时把同样的行真正落成 `failed`；
 - 单步超时：**ASR 30 分钟**（长会议），校对/纪要各 10 分钟；整链上限 60 分钟（`liveNoteChainTimeout`），替代现在「整条链 10 分钟」；
+  - 后续调整（2026-11-09）：ASR 与导入转码改为**按录音时长推导**（时长的一半，下限 30 分钟、上限 4 小时），整链上限 = 该值 + 20 分钟模型步骤 + 10 分钟余量。`liveNoteASRTimeout` / `liveNoteChainTimeout` / `liveNoteImportTimeout` 三个常量已被 `liveNoteDurationBudget` / `liveNoteChainBudget` 取代；
 - 进程重启后任务不会续跑：10 分钟后变「已中断」，用户手动重试；已完成的步骤保留，重试时不会重做（计划只看缺失/过期）。
 
 ### 5.5 单会议单任务

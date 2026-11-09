@@ -319,7 +319,7 @@ interface AgentItem {
   /** Caveat about when an edit takes effect (see SettingsItem's `note`). */
   note?: string
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea' | 'avatar' | 'nav'
-  options?: { label: string; value: unknown }[]
+  options?: { label: string; value: unknown; groupKey?: string }[]
   warning?: string
   value?: unknown
   patchField?: string
@@ -407,8 +407,28 @@ const items = computed<AgentItem[]>(() => {
   // Preferred Model. Before an ACP agent reports its list there is nothing to
   // pick from, so the authoritative catalogue stands in — clearly marked, since
   // the ids are not confirmed to run until the agent connects.
-  const modelChoices = a.models && a.models.length > 0 ? a.models : (a.catalogModels ?? [])
-  const usingCatalogModels = (!a.models || a.models.length === 0) && modelChoices.length > 0
+  const reportedModels = a.models && a.models.length > 0 ? a.models : (a.catalogModels ?? [])
+  // Models that come from the bound provider are grouped under their own
+  // heading: the list mixes two sources, and "where does this model come from"
+  // is exactly what a user needs to answer before picking one (issue #651).
+  //
+  // Provider models are UNIONED in rather than assumed to be a subset: the
+  // server merges them today, but the picker must not silently hide the very
+  // models the user just configured if a list ever arrives without them (that
+  // mismatch was the reported symptom).
+  const providerModelIds = new Set((a.providerModels ?? []).map((m: { id: string }) => m.id))
+  const hasProviderModels = providerModelIds.size > 0
+  const modelChoices = hasProviderModels
+    ? [
+        ...(a.providerModels ?? []),
+        ...reportedModels.filter((m: { id: string }) => !providerModelIds.has(m.id)),
+      ]
+    : reportedModels
+  // The "from the catalogue, not yet confirmed" caveat only applies to a list
+  // that is ENTIRELY the catalogue. A provider's models are confirmed by the
+  // user's own configuration, so showing that note about them would be wrong.
+  const usingCatalogModels = modelChoices.length > 0 && !hasProviderModels
+    && (!a.models || a.models.length === 0)
   if (modelChoices.length > 0) {
     result.push({
       key: 'preferred_model',
@@ -427,6 +447,11 @@ const items = computed<AgentItem[]>(() => {
         // a JSON-shaped wire id; the shared ModelRow shows it readably on a
         // second line (the value stays untouched).
         modelId: m.id,
+        // Grouped rendering requires the key on every option: SettingsItem only
+        // switches to grouped mode when at least one option carries it.
+        ...(hasProviderModels
+          ? { groupKey: providerModelIds.has(m.id) ? 'settings.items.agentModelsGroupProvider' : 'settings.items.agentModelsGroupAgent' }
+          : {}),
       })),
       // A provider-backed agent may serve an id neither list knows about, so
       // the picker always keeps a free-form escape.

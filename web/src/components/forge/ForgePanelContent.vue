@@ -274,7 +274,7 @@
         <div class="forge-search">
           <SearchInput
             v-model="searchInput"
-            :placeholder="t('forge.searchPlaceholder')"
+            :placeholder="searchPlaceholder"
             @enter="items.setQuery(searchInput)"
           />
         </div>
@@ -519,6 +519,14 @@ const stateOptions = computed<Array<'open' | 'closed' | 'merged' | 'all'>>(() =>
 const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'assigned', 'created', 'review']
 
 const searchInput = ref('')
+/**
+ * The search box speaks for the tab it sits in: "issues" on the issues tab,
+ * "pull requests" on the PR tab. A shared "issues / PRs" string made it look
+ * like one box searched both, while the request only ever covers one type.
+ */
+const searchPlaceholder = computed(() =>
+  items.type.value === 'pr' ? t('forge.searchPrPlaceholder') : t('forge.searchIssuePlaceholder'),
+)
 const detailOpen = ref(false)
 const detailNumber = ref(0)
 const pipelineDetailId = ref(0)

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,20 +181,27 @@ func applyCodexProvider(p *model.Provider) error {
 		return fmt.Errorf("load codex config state: %w", err)
 	}
 	prev, hadState := state[path]
-	if !hadState {
-		_, origValue, hadKey := findTopLevelKey(stripManagedBlock(content, codexBlockStart, codexBlockEnd), "model_provider")
-		if hadKey && unquoteTomlString(origValue) == managedProviderKey {
-			// Our own value from an earlier apply whose sidecar is gone. The
-			// file no longer records what the user had, so recovering it from a
-			// backup is the only way to keep the promise that unbinding
-			// restores the original configuration.
+	// Read the value the file holds NOW rather than trusting the sidecar alone.
+	// Another tool (or a hand edit) may have repointed model_provider after our
+	// last apply, and that newer value — not the one we recorded back then — is
+	// what unbinding has to put back. Keeping the old record made "bind again,
+	// then unbind" overwrite the user's edit with a stale original.
+	_, current, hadKey := findTopLevelKey(stripManagedBlock(content, codexBlockStart, codexBlockEnd), "model_provider")
+	switch {
+	case hadKey && tomlValueIsManagedProvider(current):
+		// Still our own value: what the user had is in the sidecar, or — when
+		// that record is gone — in the pristine backup.
+		if !hadState {
 			if value, had, ok := originalModelProviderFromBackup(path); ok {
-				origValue, hadKey = value, had
+				prev = codexState{OriginalModelProvider: value, HadModelProvider: had}
 			} else {
-				origValue, hadKey = "", false
+				prev = codexState{}
 			}
 		}
-		prev = codexState{OriginalModelProvider: origValue, HadModelProvider: hadKey}
+	default:
+		// Someone else owns this value now (or the key is gone): it is the
+		// original to restore, whatever an older record says.
+		prev = codexState{OriginalModelProvider: current, HadModelProvider: hadKey}
 	}
 
 	next := stripManagedBlock(content, codexBlockStart, codexBlockEnd)
@@ -246,28 +254,39 @@ func restoreCodexProvider(path string) error {
 	}
 
 	next := stripManagedBlock(string(content), codexBlockStart, codexBlockEnd)
-	switch {
-	case hadState && prev.HadModelProvider:
-		next = upsertTopLevelKey(next, "model_provider", prev.OriginalModelProvider)
-	case hadState:
-		next = removeTopLevelKey(next, "model_provider")
-	default:
-		// No sidecar record (corrupt, deleted, or a different data dir). The
-		// managed block is stripped regardless — leaving it behind points codex
-		// at a provider table that is about to disappear. For the top-level key
-		// the backups are the only surviving record of the user's value;
-		// without them, drop it only when it is our own value so a hand-written
-		// provider survives.
-		if value, had, ok := originalModelProviderFromBackup(path); ok && had {
-			next = upsertTopLevelKey(next, "model_provider", value)
-		} else {
-			next = dropClawbenchModelProvider(next)
+	// Only a value ClawBench itself wrote is ours to put back. Another tool
+	// sharing this file (a gateway such as Codex++, or a hand edit) may have
+	// pointed model_provider somewhere else after our last apply. Restoring a
+	// remembered original over it silently hijacks that tool's configuration
+	// and breaks any session it already created under the other provider, so
+	// the key is left untouched unless it still reads "clawbench".
+	//
+	// The managed block is stripped regardless: it declares a provider table
+	// that is about to disappear.
+	if _, current, hasKey := findTopLevelKey(next, "model_provider"); hasKey &&
+		tomlValueIsManagedProvider(current) {
+		switch {
+		case hadState && prev.HadModelProvider:
+			next = upsertTopLevelKey(next, "model_provider", prev.OriginalModelProvider)
+		case hadState:
+			next = removeTopLevelKey(next, "model_provider")
+		default:
+			// No sidecar record (corrupt, deleted, or a different data dir).
+			// The backups are the only surviving record of the user's value;
+			// without a usable one, drop the key rather than leave it dangling
+			// at the managed provider.
+			if value, had, ok := originalModelProviderFromBackup(path); ok && had {
+				next = upsertTopLevelKey(next, "model_provider", value)
+			} else {
+				next = removeTopLevelKey(next, "model_provider")
+			}
 		}
 	}
 	if next != string(content) {
 		if err := writeFileAtomic(path, []byte(next)); err != nil {
 			return err
 		}
+		slog.Info("restored codex config file", slog.String("path", path))
 	}
 	if !hadState {
 		return nil
@@ -297,22 +316,12 @@ func originalModelProviderFromBackup(path string) (value string, had bool, ok bo
 			continue
 		}
 		_, v, found := findTopLevelKey(string(data), "model_provider")
-		if found && unquoteTomlString(v) == managedProviderKey {
+		if found && tomlValueIsManagedProvider(v) {
 			continue
 		}
 		return v, found, true
 	}
 	return "", false, false
-}
-
-// dropClawbenchModelProvider removes a top-level model_provider that still
-// points at the managed provider, leaving any other value alone.
-func dropClawbenchModelProvider(content string) string {
-	_, value, found := findTopLevelKey(content, "model_provider")
-	if !found || unquoteTomlString(value) != managedProviderKey {
-		return content
-	}
-	return removeTopLevelKey(content, "model_provider")
 }
 
 func unquoteTomlString(v string) string {
@@ -322,6 +331,25 @@ func unquoteTomlString(v string) string {
 		}
 	}
 	return v
+}
+
+// tomlValueIsManagedProvider reports whether a raw `model_provider = <raw>`
+// right-hand side still holds the id ClawBench writes.
+//
+// The raw text is whatever followed the `=` on that line, so it may carry a
+// trailing comment (`"clawbench" # note`). Leaving the comment in made a value
+// we wrote read as foreign: the managed block would be stripped while the key
+// stayed on `clawbench`, leaving codex pointing at a provider table that no
+// longer exists.
+//
+// No quote-awareness is needed when cutting the comment: managedProviderKey is
+// our own id and cannot contain the '#' that would be needed to tell a comment
+// apart from a '#' inside the value.
+func tomlValueIsManagedProvider(raw string) bool {
+	if i := strings.IndexByte(raw, '#'); i >= 0 {
+		raw = raw[:i]
+	}
+	return unquoteTomlString(strings.TrimSpace(raw)) == managedProviderKey
 }
 
 // codexProviderBlock renders the managed TOML block. The secret is referenced

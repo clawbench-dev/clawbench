@@ -375,6 +375,53 @@ func TestRenderCommand_NoRepeatHintWithoutArrayParams(t *testing.T) {
 		"no array params means no repeat hint")
 }
 
+// TestRenderCommand_PromptNoteOverridesDescription pins the split between the
+// two audiences of an endpoint's prose.
+//
+// `GET /api/agents` documents the model-list merge rules for the UI's model
+// picker — several kilobytes the AI never acts on when it just needs an agent
+// id. Rendering all of it into every command that touches the endpoint is what
+// pushed the task / agent / mcp budgets over their limits. The spec therefore
+// carries `x-prompt-note` for the prompt fragment.
+//
+// This test asserts the behavior from BOTH sides, because either half alone
+// would pass with the feature broken: the short note must appear, and the long
+// description it replaces must not.
+func TestRenderCommand_PromptNoteOverridesDescription(t *testing.T) {
+	out, err := RenderCommand(CommandTask)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "列出当前项目可见的 agent",
+		"the prompt note must reach the rendered command")
+	// A distinctive sentence from the response-contract paragraph that the note
+	// replaces. If the override silently stopped applying, this is what would
+	// come back — and the size budget would fail, but only for commands large
+	// enough to notice.
+	assert.NotContains(t, out, "档位别名",
+		"the model-picker contract must not be rendered into the prompt")
+}
+
+// TestRenderCommand_PromptNoteKeepsFullDescriptionInSpec is the other half: the
+// override must be a RENDERING concern, not a deletion. The spec's own
+// description has to stay intact for anyone reading the API docs.
+func TestRenderCommand_PromptNoteKeepsFullDescriptionInSpec(t *testing.T) {
+	s, err := load()
+	require.NoError(t, err)
+
+	var found bool
+	for _, item := range s.Paths {
+		op := item.method("get")
+		if op == nil || op.OperationID != "agentsList" {
+			continue
+		}
+		found = true
+		assert.NotEmpty(t, op.PromptNote, "agentsList must carry x-prompt-note")
+		assert.Contains(t, op.Description, "档位别名",
+			"the full response contract must stay in the spec's description")
+	}
+	assert.True(t, found, "agentsList must exist in the spec")
+}
+
 // TestOperationIDs_Resolvable asserts every operationId a command declares
 // actually exists in the spec. This is the drift guard's first half: renaming
 // an operation without updating commandOperations fails here.

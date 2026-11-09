@@ -135,8 +135,36 @@ describe('MeetingResources', () => {
       'http://10.0.0.5:20000/share/tok-9',
     )
     // The sentence that answers "how long does this keep working" is the whole
-    // point of showing the link here rather than in the running stage.
-    expect(block.text()).toContain(enMessages.meeting.resources.linkHint)
+    // point of showing the link here rather than in the running stage. It now
+    // depends on the publish switch, and the default is NOT published — so the
+    // honest sentence is the one saying the link dies with the meeting.
+    expect(block.text()).toContain(enMessages.shareCenter.meetingPrivateHint)
+  })
+
+  it('says the link is permanent once the record is published', () => {
+    const wrapper = mountResources({
+      shareToken: 'tok-9',
+      shareEnabled: true,
+      links: [{ url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' } }],
+    })
+    expect(wrapper.find('[data-role="meeting-link"]').text()).toContain(
+      enMessages.shareCenter.meetingSharedHint,
+    )
+  })
+
+  it('renders the publish switch off by default and reports a toggle', async () => {
+    const wrapper = mountResources({
+      shareToken: 'tok-9',
+      links: [{ url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' } }],
+    })
+
+    const toggle = wrapper.find('[data-role="meeting-share-toggle"]')
+    expect(toggle.exists()).toBe(true)
+    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+
+    await toggle.setValue(true)
+    // The parent owns the request; the component only reports the intent.
+    expect(wrapper.emitted('update:shareEnabled')?.[0]).toEqual([true])
   })
 
   it('hides the link block when there is no record token', () => {

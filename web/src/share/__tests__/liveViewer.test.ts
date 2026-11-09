@@ -863,14 +863,14 @@ describe('LiveViewer screen sharing', () => {
     // from its side.
     expect(gdm).toHaveBeenCalledWith(
       expect.objectContaining({
-        video: { width: { max: 1920 }, height: { max: 1200 }, frameRate: { max: 15 } },
+        video: { width: { max: 1920 }, height: { max: 1200 }, frameRate: { max: 20 } },
       }),
     )
     expect((track as unknown as { contentHint?: string }).contentHint).toBe('text')
     await vi.waitFor(() =>
-      expect(lastPC().transceivers[1].sender.params.encodings[0].maxBitrate).toBe(2_500_000),
+      expect(lastPC().transceivers[1].sender.params.encodings[0].maxBitrate).toBe(2_000_000),
     )
-    expect(lastPC().transceivers[1].sender.params.encodings[0].maxFramerate).toBe(15)
+    expect(lastPC().transceivers[1].sender.params.encodings[0].maxFramerate).toBe(20)
   })
 
   it('stops when the browser ends the track (its own "stop sharing" bar)', async () => {

@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  CAMERA_BUDGET,
   MAX_ENCODE_LEVEL,
-  RELAY_BUDGET,
-  SCREEN_BUDGET,
   VideoLoadGovernor,
   applyCodecPreference,
   applyContentHint,
   applyEncodeBudget,
+  cameraBudget,
+  cameraCaptureConstraints,
+  guestScreenBudget,
   pickPreferredVideoMime,
+  relayBudget,
   reorderVideoCodecs,
   resolvePreferredVideoMime,
+  screenBudget,
   screenCaptureConstraints,
 } from '../liveMediaPolicy'
 
@@ -73,6 +75,7 @@ function asSender(s: Sender): RTCRtpSender {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  localStorage.clear()
 })
 
 describe('screenCaptureConstraints', () => {
@@ -81,6 +84,51 @@ describe('screenCaptureConstraints', () => {
       width: { max: 1920 },
       height: { max: 1200 },
       frameRate: { max: 30 },
+    })
+  })
+
+  /**
+   * The caps are the user's choice, not constants. Without this the panel would
+   * write a value that no capture ever reads — the failure mode is invisible,
+   * because the share still works, just at the old size.
+   */
+  it('follows the stored picture-quality choice', () => {
+    localStorage.setItem('clawbench-settings-liveScreenResolution', JSON.stringify('2560x1600'))
+    localStorage.setItem('clawbench-settings-liveScreenFps', JSON.stringify('60'))
+    expect(screenCaptureConstraints()).toEqual({
+      width: { max: 2560 },
+      height: { max: 1600 },
+      frameRate: { max: 60 },
+    })
+  })
+
+  it('ignores a stored value that is not one of the offered choices', () => {
+    localStorage.setItem('clawbench-settings-liveScreenResolution', JSON.stringify('9999x9999'))
+    localStorage.setItem('clawbench-settings-liveScreenFps', JSON.stringify('500'))
+    expect(screenCaptureConstraints()).toEqual({
+      width: { max: 1920 },
+      height: { max: 1200 },
+      frameRate: { max: 30 },
+    })
+  })
+})
+
+describe('cameraCaptureConstraints', () => {
+  it('asks for the chosen size as a preference, not a hard cap', () => {
+    localStorage.setItem('clawbench-settings-liveCameraResolution', JSON.stringify('1920x1080'))
+    localStorage.setItem('clawbench-settings-liveCameraFps', JSON.stringify('30'))
+    expect(cameraCaptureConstraints()).toEqual({
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, max: 45 },
+    })
+  })
+
+  it('defaults to 720p/24 even on a device that never opened the panel', () => {
+    expect(cameraCaptureConstraints()).toEqual({
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 24, max: 36 },
     })
   })
 })
@@ -232,7 +280,7 @@ describe('applyCodecPreference', () => {
 describe('applyEncodeBudget', () => {
   it('writes bitrate, frame rate, scale and degradation preference', async () => {
     const sender = new Sender()
-    await expect(applyEncodeBudget(asSender(sender), SCREEN_BUDGET)).resolves.toBe(true)
+    await expect(applyEncodeBudget(asSender(sender), screenBudget())).resolves.toBe(true)
 
     expect(sender.params.encodings[0]).toMatchObject({
       maxBitrate: 4_000_000,
@@ -245,26 +293,54 @@ describe('applyEncodeBudget', () => {
   it('creates an encoding slot when the sender has none yet', async () => {
     const sender = new Sender()
     sender.params = { encodings: [] }
-    await applyEncodeBudget(asSender(sender), CAMERA_BUDGET)
+    await applyEncodeBudget(asSender(sender), cameraBudget())
     expect(sender.params.encodings).toHaveLength(1)
-    expect(sender.params.encodings[0].maxBitrate).toBe(1_500_000)
+    expect(sender.params.encodings[0].maxBitrate).toBe(2_500_000)
   })
 
   it('retries without the scale when the platform refuses it', async () => {
     const sender = new Sender()
     sender.rejectScale = true
-    await expect(applyEncodeBudget(asSender(sender), RELAY_BUDGET)).resolves.toBe(true)
+    await expect(applyEncodeBudget(asSender(sender), relayBudget())).resolves.toBe(true)
 
     // Bitrate and frame rate still bound the encoder, so dropping only the
     // rejected field is better than dropping the whole budget.
     expect(sender.applied).toHaveLength(1)
-    expect(sender.params.encodings[0].maxBitrate).toBe(2_500_000)
+    expect(sender.params.encodings[0].maxBitrate).toBe(3_000_000)
     expect(sender.params.encodings[0].scaleResolutionDownBy).toBeUndefined()
   })
 
   it('reports failure instead of throwing when the sender cannot take parameters', async () => {
-    await expect(applyEncodeBudget(null, SCREEN_BUDGET)).resolves.toBe(false)
-    await expect(applyEncodeBudget({} as RTCRtpSender, SCREEN_BUDGET)).resolves.toBe(false)
+    await expect(applyEncodeBudget(null, screenBudget())).resolves.toBe(false)
+    await expect(applyEncodeBudget({} as RTCRtpSender, screenBudget())).resolves.toBe(false)
+  })
+})
+
+describe('budgets from the picture-quality settings', () => {
+  /**
+   * One choice drives four paths. Relay and guest budgets are derived from the
+   * screen one on purpose (a re-encode and a member's uplink are fractions of
+   * the same picture); if they ever stop following it, raising the setting
+   * would silently leave the relayed and member pictures at the old size.
+   */
+  it('derives relay and guest budgets from the screen choice', () => {
+    localStorage.setItem('clawbench-settings-liveScreenBitrate', JSON.stringify('8'))
+    localStorage.setItem('clawbench-settings-liveScreenFps', JSON.stringify('24'))
+    expect(screenBudget()).toEqual({ maxBitrate: 8_000_000, maxFramerate: 24, scaleResolutionDownBy: 1 })
+    expect(relayBudget()).toEqual({ maxBitrate: 6_000_000, maxFramerate: 24, scaleResolutionDownBy: 1 })
+    expect(guestScreenBudget()).toEqual({ maxBitrate: 4_000_000, maxFramerate: 20, scaleResolutionDownBy: 1 })
+  })
+
+  it('caps the guest uplink at 20 fps even when the screen runs at 60', () => {
+    localStorage.setItem('clawbench-settings-liveScreenFps', JSON.stringify('60'))
+    expect(guestScreenBudget().maxFramerate).toBe(20)
+    expect(relayBudget().maxFramerate).toBe(30)
+  })
+
+  it('moves the camera budget with the camera settings', () => {
+    localStorage.setItem('clawbench-settings-liveCameraBitrate', JSON.stringify('4'))
+    localStorage.setItem('clawbench-settings-liveCameraFps', JSON.stringify('30'))
+    expect(cameraBudget()).toEqual({ maxBitrate: 4_000_000, maxFramerate: 30, scaleResolutionDownBy: 1 })
   })
 })
 
@@ -273,7 +349,7 @@ describe('VideoLoadGovernor', () => {
     const governor = new VideoLoadGovernor()
     const keys = senders.map((s, i) => {
       const key = `s${i}`
-      governor.register(key, asSender(s), SCREEN_BUDGET)
+      governor.register(key, asSender(s), screenBudget())
       return key
     })
     return { governor, keys }
@@ -410,9 +486,24 @@ describe('VideoLoadGovernor', () => {
   it('re-applies the new budget when the picture changes kind', async () => {
     const sender = new Sender()
     const { governor, keys } = makeGovernor([sender])
-    governor.setBudget(keys[0], CAMERA_BUDGET)
-    await vi.waitFor(() => expect(sender.params.encodings[0].maxBitrate).toBe(1_500_000))
-    expect(sender.params.encodings[0].maxFramerate).toBe(20)
+    governor.setBudget(keys[0], cameraBudget())
+    await vi.waitFor(() => expect(sender.params.encodings[0].maxBitrate).toBe(2_500_000))
+    expect(sender.params.encodings[0].maxFramerate).toBe(24)
+  })
+
+  /**
+   * The 自动降画质 switch must not mean "no budget". Turning it off holds the
+   * base budget and skips the stats rounds; the encoders stay bounded, which is
+   * the whole reason this class also applies the initial parameters.
+   */
+  it('holds the base budget when automatic downgrading is off', async () => {
+    const sender = new Sender()
+    sender.reason = 'cpu'
+    const governor = new VideoLoadGovernor(false)
+    governor.register('a', asSender(sender), screenBudget())
+    for (let i = 0; i < 4; i++) await governor.sample()
+    expect(governor.currentLevel).toBe(0)
+    expect(sender.params.encodings[0].maxBitrate).toBe(4_000_000)
   })
 
   it('resets everything on stop', async () => {

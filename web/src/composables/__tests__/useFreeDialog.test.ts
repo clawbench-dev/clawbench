@@ -33,6 +33,8 @@ let wakeAcquire: ReturnType<typeof vi.fn>
 let wakeRelease: ReturnType<typeof vi.fn>
 /** Set false to simulate a host with neither the Web API nor the native bridge. */
 let wakeHeld: { value: boolean }
+/** The cues are the only thing this module needs from the sound layer. */
+let cuePlayed: ReturnType<typeof vi.fn>
 
 function installFakes() {
   sockets = []
@@ -145,6 +147,13 @@ function installFakes() {
   wakeHeld = held
   const api = { held, acquire: wakeAcquire, release: wakeRelease }
   vi.doMock('@/composables/useWakeLock', () => ({ useWakeLock: () => api }))
+
+  // Cues are synthesized audio; only the decision to play one is under test.
+  cuePlayed = vi.fn()
+  vi.doMock('@/composables/useNotificationSound', () => ({
+    playVoiceModeCue: cuePlayed,
+    playNotificationSound: vi.fn(),
+  }))
 }
 
 /** Pushes one recogniser message into the newest socket. */
@@ -153,6 +162,11 @@ function speak(text: string, kind: 'partial' | 'text' | 'done' = 'done') {
   if (!sock) throw new Error('no socket')
   const payload = kind === 'done' ? { type: 'done', final: text } : { type: kind, text }
   sock.onmessage?.({ data: JSON.stringify(payload) })
+}
+
+/** How many `{"type":"end"}` control frames a socket has been given. */
+function endFrames(sock: FakeSocket): number {
+  return sock.sent.filter((m) => String(m).includes('"type":"end"')).length
 }
 
 async function flush() {
@@ -176,6 +190,7 @@ describe('useFreeDialog', () => {
     vi.doUnmock('@/composables/useSettingsConfig')
     vi.doUnmock('@/composables/useToast')
     vi.doUnmock('@/composables/useWakeLock')
+    vi.doUnmock('@/composables/useNotificationSound')
   })
 
   it('keeps the screen awake for the whole time the mode is on', async () => {
@@ -396,6 +411,138 @@ describe('useFreeDialog', () => {
     expect(mod.useFreeDialog().phase.value).toBe('listening')
   })
 
+  // ── interrupting the generation, not only the read-aloud ──
+  //
+  // The reply is produced long before it is spoken, and that is exactly when
+  // "等等，不是这个意思" needs to land.
+
+  it('arms the interrupt listener while the reply is still being generated', async () => {
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt })
+    await flush()
+    speak('做点事 发送')
+    expect(mod.useFreeDialog().phase.value).toBe('thinking')
+    vi.advanceTimersByTime(500)
+    await flush()
+    // Two sockets: the dictation one (closed when the turn was sent) and the
+    // interrupt one armed for the generation window.
+    expect(sockets.length).toBe(2)
+    speak('等等', 'partial')
+    // Nothing is playing yet, so the turn itself is what has to be cancelled.
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not arm the listener while the "took it" cue is still ringing', async () => {
+    // Under the default "any speech" setting the cue would be transcribed as
+    // the user talking, cancelling the turn that was just sent.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(300)
+    await flush()
+    expect(sockets.length).toBe(1)
+  })
+
+  it('opens no generation-phase listener when interrupting is switched off', async () => {
+    vi.doMock('@/composables/useSettingsConfig', async () => {
+      const { ref } = await vi.importActual<typeof import('vue')>('vue')
+      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_seconds: 3 } }) }
+    })
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(sockets.length).toBe(1)
+    expect(mod.useFreeDialog().phase.value).toBe('thinking')
+  })
+
+  it('does not arm a listener for a turn that has already ended', async () => {
+    // The reply can finish inside the arming delay (an instant failure, a
+    // cancel). Opening a recogniser then would transcribe whatever plays next
+    // as the user's speech.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    mod.setFreeDialogThinking(false)
+    // Still inside the settle window, so the phase is still 'thinking' when
+    // the arming delay elapses: nothing may be opened at that point.
+    vi.advanceTimersByTime(400)
+    await flush()
+    expect(sockets.length).toBe(1)
+  })
+
+  it('gives the read-aloud a fresh listener instead of reusing the generation one', async () => {
+    // Partials are cumulative within a recogniser session: carrying the
+    // generation-phase transcript over would let an already-heard phrase fire
+    // again the moment playback starts.
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(500)
+    await flush()
+    const generation = sockets[sockets.length - 1]
+    mod.setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    expect(generation.readyState).toBe(3)
+    expect(sockets.length).toBe(3)
+  })
+
+  it('does not read out a reply the user just cancelled', async () => {
+    // The truncated answer was never handed to TTS, so the panel's
+    // "already spoken" set knows nothing about it. Without this the loop would
+    // read the half-answer out right after the user asked it to stop.
+    const onSpeakPendingReply = vi.fn(() => true)
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt, onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(500)
+    await flush()
+    speak('等等', 'partial')
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+    // The owner cancels the turn; `loading` goes false.
+    mod.setFreeDialogThinking(false)
+    vi.advanceTimersByTime(600)
+    await flush()
+    expect(onSpeakPendingReply).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(250)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('listening')
+  })
+
+  it('reports whether speaking can interrupt, for the status strip', async () => {
+    // The strip says "AI 正在思考…" unless the user can cut in; a hint nobody
+    // can act on would be worse than none.
+    const mod = await import('../useFreeDialog')
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(false)
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(true)
+    mod.stop()
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(false)
+  })
+
+  it('reports no interruption when the setting is off', async () => {
+    vi.doMock('@/composables/useSettingsConfig', async () => {
+      const { ref } = await vi.importActual<typeof import('vue')>('vue')
+      return { serverConfig: ref({ stt: { barge_in: 'off', trigger_words: '发送', silence_send_seconds: 3 } }) }
+    })
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(mod.useFreeDialog().canInterrupt.value).toBe(false)
+  })
+
   it('releases the interrupt microphone before listening starts', async () => {
     // The interrupt recogniser must be gone before dictation starts, or two
     // sockets each apply a transcript to the same utterance.
@@ -576,16 +723,88 @@ describe('useFreeDialog', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('sends after a pause long enough to count as done', async () => {
+  it('sends the finished sentence, not the half-revised partial', async () => {
+    // The bug this guards: the microphone gate stops feeding audio 600 ms after
+    // the last loud frame while a streaming engine needs ~800 ms of silence to
+    // settle a sentence — so the partial in hand is missing its last few
+    // characters, and closing the socket there (what this used to do) lost them
+    // for good. `end` makes the engine flush and answer with the finished
+    // sentence, which is what gets sent.
     const onSend = vi.fn()
     const { startFreeDialog } = await import('../useFreeDialog')
     await startFreeDialog({ sessionId: 's1', onSend })
     await flush()
+    const sock = sockets[0]
     // Recognition confirms a sentence, no trigger word in it.
     speak('这个文件改坏了', 'text')
     expect(onSend).not.toHaveBeenCalled()
     vi.advanceTimersByTime(3000)
+    // The pause fired: the engine is asked to finish the sentence instead of
+    // the revision being sent as-is.
+    expect(onSend).not.toHaveBeenCalled()
+    expect(endFrames(sock)).toBe(1)
+    speak('这个文件改坏了，你看看', 'done')
+    expect(onSend).toHaveBeenCalledWith('这个文件改坏了，你看看')
+  })
+
+  it('sends the text in hand when the engine never answers', async () => {
+    // A hung engine must cost a beat, not the whole turn.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('这个文件改坏了', 'text')
+    vi.advanceTimersByTime(3000)
+    expect(onSend).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('asks the engine for the finished sentence only once', async () => {
+    // Revisions keep arriving while the engine chews on the tail. A second
+    // `end` (and a second send) would duplicate the turn.
+    const onSend = vi.fn()
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    const sock = sockets[0]
+    speak('帮我看下这个报错 发送', 'partial')
+    speak('帮我看下这个报错 发送', 'partial')
+    speak('帮我看下这个报错 发送', 'partial')
+    expect(endFrames(sock)).toBe(1)
+    // The answer still ends with the trigger word; it must not fire again.
+    speak('帮我看下这个报错 发送', 'done')
+    expect(endFrames(sock)).toBe(1)
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveBeenCalledWith('帮我看下这个报错')
+  })
+
+  it('keeps the turn when the engine closes right after answering "end"', async () => {
+    // The relay finishes the session on `end` and closes the connection. That
+    // close is the normal end of a finalize, not a reason to leave the mode.
+    const onSend = vi.fn()
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    const sock = sockets[0]
+    speak('这个文件改坏了', 'text')
+    vi.advanceTimersByTime(3000)
+    sock.onclose?.()
+    expect(useFreeDialog().phase.value).toBe('listening')
+    vi.advanceTimersByTime(1000)
+    expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('does not send a sentence the user abandoned by closing the mode', async () => {
+    const onSend = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend })
+    await flush()
+    speak('这个文件改坏了', 'text')
+    vi.advanceTimersByTime(3000)
+    mod.stop()
+    vi.advanceTimersByTime(2000)
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   it('restarts the pause timer when more words are recognised', async () => {
@@ -601,6 +820,8 @@ describe('useFreeDialog', () => {
     vi.advanceTimersByTime(2000)
     expect(onSend).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1000)
+    // The pause fired; the engine then answers with the finished sentence.
+    speak('第一句话，还有', 'done')
     expect(onSend).toHaveBeenCalledWith('第一句话，还有')
   })
 
@@ -619,6 +840,8 @@ describe('useFreeDialog', () => {
       vi.advanceTimersByTime(200)
       streamer.emit(0.02)
     }
+    // The pause fired during the loop; the engine answers with the sentence.
+    speak('这个文件改坏了', 'done')
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
   })
 
@@ -634,6 +857,7 @@ describe('useFreeDialog', () => {
     vi.advanceTimersByTime(2000)
     speak('第一句话', 'partial')
     vi.advanceTimersByTime(1000)
+    speak('第一句话', 'done')
     expect(onSend).toHaveBeenCalledWith('第一句话')
   })
 
@@ -838,6 +1062,12 @@ describe('useFreeDialog', () => {
     await startFreeDialog({ sessionId: 's1', onSend })
     await flush()
     speak('帮我看下这个报错 发送', 'partial')
+    // Matched on the partial, but the sentence is not settled yet: the engine
+    // is asked to finish it first, so the tail is not lost.
+    expect(onSend).not.toHaveBeenCalled()
+    expect(endFrames(sockets[0])).toBe(1)
+    speak('帮我看下这个报错 发送', 'done')
+    // The trigger word is stripped again from the finished sentence.
     expect(onSend).toHaveBeenCalledWith('帮我看下这个报错')
   })
 
@@ -965,5 +1195,119 @@ describe('useFreeDialog', () => {
     // already left.
     sock.onmessage?.({ data: JSON.stringify({ type: 'done', final: '做点事 发送' }) })
     expect(onSend).not.toHaveBeenCalled()
+  })
+
+  // ── audible feedback ──
+  //
+  // The user is not looking at the screen in this mode, so "the sentence was
+  // taken" and "the mode is off" both need a sound.
+
+  it('beeps when it takes a spoken sentence and sends it', async () => {
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    speak('帮我看下这个报错 发送')
+    expect(cuePlayed).toHaveBeenCalledWith('send')
+  })
+
+  it('does not beep when there was nothing to send', async () => {
+    // A bare trigger word sends nothing, so a "sent" cue would be a lie.
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    speak('发送')
+    expect(cuePlayed).not.toHaveBeenCalled()
+  })
+
+  it('beeps when the mode closes', async () => {
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    mod.stop()
+    expect(cuePlayed).toHaveBeenCalledWith('exit')
+  })
+
+  it('beeps when the mode closes itself after a long silence', async () => {
+    // The automatic exit is exactly the case where nothing on screen is
+    // noticed: the user walked away believing the mode was still listening.
+    const settings = await import('@/composables/useSettingsConfig')
+    settings.serverConfig.value = { stt: { silence_send_seconds: 0, idle_exit_seconds: 5 } }
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(mod.useFreeDialog().phase.value).toBe('idle')
+    expect(cuePlayed).toHaveBeenCalledWith('exit')
+  })
+
+  it('stays silent on the internal reset that start() performs', async () => {
+    // start() first stops any previous run; a "closed" beep a millisecond
+    // before "opened" would describe the opposite of what is happening.
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    cuePlayed.mockClear()
+    await mod.startFreeDialog({ sessionId: 's2', onSend: vi.fn() })
+    await flush()
+    expect(cuePlayed).not.toHaveBeenCalled()
+  })
+
+  // ── a reply whose `done` never arrived ──
+
+  it('asks the owner to read a reply that never reached TTS', async () => {
+    // The terminal `done` is the only thing that normally starts read-aloud,
+    // and it is lost when the app was backgrounded or the subscription
+    // dropped — the reply then only appears in the history reload. Without
+    // this the loop reopens the microphone and the user never hears it.
+    const onSpeakPendingReply = vi.fn(() => true)
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    vi.advanceTimersByTime(600)
+    await flush()
+    expect(onSpeakPendingReply).toHaveBeenCalledTimes(1)
+    // Playback is (about to be) running: the microphone must stay closed.
+    expect(useFreeDialog().phase.value).not.toBe('listening')
+  })
+
+  it('still resumes listening when there is nothing to read', async () => {
+    // A tool-only reply, or read-aloud off: the loop must not stall waiting
+    // for a playback that will never start.
+    const onSpeakPendingReply = vi.fn(() => false)
+    const { startFreeDialog, useFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    vi.advanceTimersByTime(600)
+    await flush()
+    expect(onSpeakPendingReply).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(250)
+    await flush()
+    expect(useFreeDialog().phase.value).toBe('listening')
+  })
+
+  it('does not ask again once playback has started normally', async () => {
+    // The normal path hands the reply to TTS at `done`, which marks auto-speech
+    // busy synchronously — the settle window must then bail out, not fire a
+    // second read of the same reply.
+    const onSpeakPendingReply = vi.fn(() => true)
+    const { startFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onSpeakPendingReply })
+    await flush()
+    speak('做点事 发送')
+    autoSpeech.state.value = 'synthesizing'
+    setFreeDialogThinking(false)
+    vi.advanceTimersByTime(5000)
+    await flush()
+    expect(onSpeakPendingReply).not.toHaveBeenCalled()
   })
 })

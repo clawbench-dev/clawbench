@@ -103,6 +103,29 @@ export async function compactGroupMember(groupId: string, memberId: string): Pro
   return (data.usage as MemberUsage | null) ?? null
 }
 
+/** stopGroupMember stops ONE member's current speech.
+ *
+ *  The round keeps running (the other members finish their turns, the queue is
+ *  untouched) and the member may be named again later — this is NOT "cancel the
+ *  turn" and NOT "mute the member".
+ *
+ *  Returns whether anything was actually stopped: `false` means that member was
+ *  not speaking any more (it finished while the menu was open), so the caller
+ *  must not claim it stopped something. Throws only on a real request failure. */
+export async function stopGroupMember(groupId: string, memberId: string): Promise<boolean> {
+  const resp = await fetch('/api/group/member-stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ groupId, memberId }),
+  })
+  const data = await resp.json().catch(() => ({} as Record<string, unknown>))
+  if (!resp.ok) {
+    appLog.w('Group', `stop member ${memberId} failed: ${resp.status}`)
+    throw new Error(String(data.error ?? `request failed: ${resp.status}`))
+  }
+  return data.stopped === true
+}
+
 /** addGroupMembers adds one or more agents to the group. */
 export async function addGroupMembers(groupId: string, agentIds: string[]): Promise<string[]> {
   const data = await postJSON('/api/group/members', { groupId, agentIds })

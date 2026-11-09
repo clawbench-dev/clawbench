@@ -258,16 +258,11 @@ func gateUnconfirmedACPModels(a *model.Agent) *model.Agent {
 // providerModelsForAgent turns the provider's curated list into picker entries.
 // It is nil when the agent is unbound or the provider has not curated models,
 // in which case discovery (and the catalog fallback) still applies.
+//
+// Delegates to the model: the ACP event enrichment builds the same list for the
+// chat drawer, and two implementations would drift (issue #651).
 func providerModelsForAgent(a *model.Agent) []model.AgentModel {
-	p := a.Provider()
-	if p == nil || len(p.Models) == 0 {
-		return nil
-	}
-	out := make([]model.AgentModel, 0, len(p.Models))
-	for _, id := range p.Models {
-		out = append(out, model.AgentModel{ID: id, Name: id, Default: id == p.DefaultModel})
-	}
-	return out
+	return a.ProviderPickerModels()
 }
 
 func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
@@ -326,6 +321,7 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 				clone := *a
 				clone.CLIModels = a.Models
 				clone.Models = pm
+				clone.ProviderModels = pm
 				agents[i] = &clone
 			}
 			continue
@@ -347,6 +343,7 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 			if pm := providerModelsForAgent(a); pm != nil {
 				clone := *gated
 				clone.Models = pm
+				clone.ProviderModels = pm
 				clone.CatalogModels = nil
 				gated = &clone
 			}
@@ -380,12 +377,18 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 			if pm := providerModelsForAgent(a); pm != nil {
 				clone := *gated
 				clone.Models = pm
+				clone.ProviderModels = pm
 				clone.CatalogModels = nil
 				gated = &clone
 			}
 			agents[i] = gated
 			continue
 		}
+
+		// A bound provider's models are ADDED to the resolved list, not replaced
+		// by it — see model.Agent.MergeProviderModels. The provider entries stay
+		// flagged in ProviderModels so the picker can group them by source.
+		resolved = a.MergeProviderModels(resolved)
 
 		// Publish the resolved list as Models, and the untouched CLI list as
 		// CLIModels. The client needs the latter to render the CLI view when the
@@ -404,6 +407,7 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 		clone := *a
 		clone.CLIModels = a.Models
 		clone.Models = resolved
+		clone.ProviderModels = a.ProviderPickerModels()
 		agents[i] = gateUnconfirmedACPModels(&clone)
 	}
 }
@@ -428,6 +432,7 @@ func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 		priced.Models = model.WithPrices(a.Models)
 		priced.CLIModels = model.WithPrices(a.CLIModels)
 		priced.CatalogModels = model.WithPrices(a.CatalogModels)
+		priced.ProviderModels = model.WithPrices(a.ProviderModels)
 		agents[i] = &priced
 	}
 	for _, s := range states {
@@ -1707,6 +1712,11 @@ func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Age
 	if resolved == nil {
 		resolved = []model.AgentModel{}
 	}
+	// Same rule as GET /api/agents: the provider's curated models are part of
+	// the selectable set, not something the agent's own report may erase. A
+	// manual refresh used to drop them, so the binding's models vanished from
+	// the picker until the next full page load (issue #651).
+	resolved = current.MergeProviderModels(resolved)
 
 	// Mode/thinking/command lists ride along so the client does not need a second
 	// round trip. Built from the probe's result rather than read back from the
@@ -1761,19 +1771,25 @@ const acpProbeTimeout = 150 * time.Second
 // applies. The caller still returns the discovered list as `cliModels`.
 func resolveRefreshedModels(agent *model.Agent, discovered []model.AgentModel) []model.AgentModel {
 	if acpModelsUnconfirmed(agent) {
-		return []model.AgentModel{}
+		// The CLI list must not be presented as runnable over ACP, but a bound
+		// provider's models are configured, not guessed — they stay (issue #651).
+		return agent.MergeProviderModels(nil)
 	}
+	// A bound provider's models are part of the selectable set on this path too,
+	// for the same reason as GET /api/agents (issue #651): the client writes the
+	// response straight onto the agent, so omitting them here would drop the
+	// binding's models on every manual refresh.
 	if !agent.SupportsACP() {
-		return discovered
+		return agent.MergeProviderModels(discovered)
 	}
 	ml := modelListStateForAgent(agent.ID)
 	if ml == nil {
-		return discovered
+		return agent.MergeProviderModels(discovered)
 	}
 	if r := model.ResolveModels(discovered, ml.Models, ml.CurrentModelID); len(r) > 0 {
-		return r
+		return agent.MergeProviderModels(r)
 	}
-	return discovered
+	return agent.MergeProviderModels(discovered)
 }
 
 // modelListStateForAgent returns the cached ACP model state for an agent, or nil

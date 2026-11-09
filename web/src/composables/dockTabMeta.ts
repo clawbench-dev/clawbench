@@ -11,6 +11,7 @@ import {
   Github,
   Inbox,
   Mail,
+  Share2,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
 import { MEETING_ICON } from '@/utils/meetingIcon'
@@ -40,6 +41,10 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // utils/meetingIcon.ts — the list header, the quote chip and this tab share
   // one constant so they cannot drift apart.
   live: MEETING_ICON,
+  // Share2 (a node with two arrows leaving it), not a link glyph: this tab is
+  // the OUTGOING side — what has been handed to other people — and the meeting
+  // icon next to it already carries the "screen" half of that idea.
+  share: Share2,
   mail: Mail,
   proxy: Network,
   stats: BarChart3,

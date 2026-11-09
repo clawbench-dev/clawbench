@@ -151,7 +151,7 @@ func writeRegeneratedRecord(w http.ResponseWriter, r *http.Request, projectPath 
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": updated})
+	writeJSON(w, http.StatusOK, map[string]any{liveNoteSessionKey: updated})
 }
 
 // ServeLiveShareNotesRegenerateCancel handles

@@ -256,7 +256,10 @@
               :folder-path="resourceDir"
               :links="shareLinks"
               :share-token="record?.token || ''"
+              :share-enabled="record?.shareEnabled === true"
+              :share-saving="shareSaving"
               @reload="reloadResources"
+              @update:share-enabled="setShareEnabled"
             />
           </template>
         </div>
@@ -340,6 +343,7 @@ import {
 } from '@/composables/useMeetingHistory'
 import { useMeetingResources } from '@/composables/useMeetingResources'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
+import { emitShareChanged } from '@/composables/useShareEvents'
 import {
   setMeetingView,
   clearMeetingView,
@@ -982,6 +986,48 @@ async function confirmRegenerate(): Promise<void> {
   pollRecord()
 }
 
+/**
+ * Publish / unpublish the record's link.
+ *
+ * The server answers with the updated record, so the switch reflects the stored
+ * value rather than the click — a rejected write leaves the checkbox where it
+ * was instead of showing a state that did not persist.
+ */
+const shareSaving = ref(false)
+
+async function setShareEnabled(enabled: boolean): Promise<void> {
+  const current = record.value
+  if (!current) return
+  shareSaving.value = true
+  try {
+    const resp = await fetch(
+      `/api/live-share/notes/sessions/share?token=${encodeURIComponent(current.token)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      },
+    )
+    if (!resp.ok) throw new Error(resp.statusText)
+    const data = (await resp.json()) as { session?: MeetingRecord }
+    if (data.session) record.value = data.session
+    // Publishing changes whether this meeting appears in the 分享 tab at all
+    // (an unpublished finished meeting is not a share). Tell it, or it keeps
+    // showing a row whose link is now dead — or misses one that just became
+    // readable.
+    emitShareChanged('meeting')
+    toast.show(
+      t(enabled ? 'shareCenter.meetingSwitchOn' : 'shareCenter.revokedMeeting'),
+      { icon: 'link', type: 'success', duration: 2000 },
+    )
+  } catch (e) {
+    appLog.w('MeetingDetail', 'set share flag failed', e)
+    toast.show(t('meeting.detail.shareFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  } finally {
+    shareSaving.value = false
+  }
+}
+
 async function cancelRegenerate(): Promise<void> {
   if (!record.value) return
   const ok = await history.cancelRegeneration(record.value.token)
@@ -1148,7 +1194,18 @@ onMounted(() => {
   /* Needed by the back/rename buttons, which sit in the header row OUTSIDE the
      ActionBar and so do not get the shared transparent background. */
   background: transparent;
+  /* …nor the shared colour: a <button> does not inherit text colour, so without
+     this the two header icons fall back to the UA button colour — pure white in
+     a dark color-scheme, which reads colder than every themed element around
+     them. Same value as the ActionBar row so the header is one colour family. */
+  color: var(--text-secondary);
   cursor: pointer; flex-shrink: 0;
+}
+@media (hover: hover) {
+  .meeting-icon-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  }
 }
 
 .meeting-tabs {

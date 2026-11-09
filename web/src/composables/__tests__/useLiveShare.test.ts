@@ -311,6 +311,10 @@ class FakeAudioCtx {
   static instances: FakeAudioCtx[] = []
   state = 'running'
   dests: FakeDest[] = []
+  /** The context's real output; monitor edges are asserted against it. */
+  destination = { name: 'destination' }
+  /** Every source node this context created, with the edges it was given. */
+  sources: Array<{ stream: unknown; connectedTo: unknown[] }> = []
   private readonly listeners = new Map<string, Array<() => void>>()
   resume = vi.fn(() => {
     if (!audioResumeHangs) return Promise.resolve()
@@ -352,8 +356,19 @@ class FakeAudioCtx {
     this.dests.push(d)
     return d
   }
-  createMediaStreamSource() {
-    return { connect: () => undefined, disconnect: () => undefined }
+  createMediaStreamSource(stream?: unknown) {
+    const node = {
+      stream,
+      connectedTo: [] as unknown[],
+      connect: (to: unknown) => {
+        node.connectedTo.push(to)
+      },
+      disconnect: () => {
+        node.connectedTo = []
+      },
+    }
+    this.sources.push(node)
+    return node
   }
   createAnalyser() {
     return new FakeAnalyser()
@@ -1023,8 +1038,8 @@ describe('encode budget', () => {
     expect(pc.transceivers[1].sender.params.degradationPreference).toBe('maintain-resolution')
 
     const relay = pc.transceivers[2].sender.params.encodings[0]
-    await vi.waitFor(() => expect(relay.maxBitrate).toBe(2_500_000))
-    expect(relay.maxFramerate).toBe(24)
+    await vi.waitFor(() => expect(relay.maxBitrate).toBe(3_000_000))
+    expect(relay.maxFramerate).toBe(30)
   })
 
   /**
@@ -1048,8 +1063,8 @@ describe('encode budget', () => {
     // The camera IS the main picture here.
     expect(pc.transceivers[1].sender.track?.id).toBe('cam1')
     const picture = pc.transceivers[1].sender.params.encodings[0]
-    await vi.waitFor(() => expect(picture.maxBitrate).toBe(1_500_000))
-    expect(picture.maxFramerate).toBe(20)
+    await vi.waitFor(() => expect(picture.maxBitrate).toBe(2_500_000))
+    expect(picture.maxFramerate).toBe(24)
   })
 
   it('steps every sender down together when the browser reports cpu pressure', async () => {
@@ -2614,6 +2629,34 @@ describe('relay mode', () => {
       expect.anything(),
       expect.objectContaining({ t: 'chat' }),
     )
+  })
+
+  /**
+   * The relay hands the host a track, not sound. Without a monitor edge the
+   * host hears nobody while every member hears the host — the meeting works in
+   * exactly one direction.
+   */
+  it('plays a member’s microphone on the host’s own speakers', async () => {
+    respondWithRelay()
+    const { share } = await startSharing()
+    expect(share.state.value).toBe('publishing')
+
+    const ctx = FakeAudioCtx.instances.at(-1) as FakeAudioCtx
+    const calls = relayApi.openRelay.mock.calls as unknown as Array<
+      [string, string, { onTrack: (track: FakeTrack, source: string, identity: string) => void }]
+    >
+    const handlers = calls.at(-1)?.[2]
+    const mic = new FakeTrack('audio', 'member-mic')
+    handlers?.onTrack(mic, 'microphone', 'viewer:v1')
+
+    const monitor = ctx.sources.find((s) =>
+      (s.stream as FakeMediaStream | undefined)?.getAudioTracks().includes(mic),
+    )
+    expect(monitor?.connectedTo).toContain(ctx.destination)
+
+    // A track that goes away must not leave a node feeding the output.
+    mic.emitEnded()
+    expect(monitor?.connectedTo).toEqual([])
   })
 })
 

@@ -17,19 +17,31 @@
     </div>
 
     <template v-else>
-      <!-- The meeting link outlives the room: it resolves to this record until
-           the record is deleted. It sits above the files because it is the one
-           item a reader comes here to copy. Gated on `links` as well as the
-           token so the address list never flashes as an empty input. -->
+      <!-- The meeting link outlives the room only when the owner publishes the
+           record. The switch lives HERE, next to the link, because this is
+           where someone decides to send it on: the state and the action belong
+           in one place. Off by default — the token exists so people could join,
+           which is not the same as publishing the minutes. -->
       <div v-if="shareToken && shareLinks.length > 0" class="res-link" data-role="meeting-link">
         <div class="res-group__label">
           <Link2 :size="11" />
           {{ t('meeting.resources.linkTitle') }}
+          <label class="res-share-toggle">
+            <input
+              type="checkbox"
+              class="res-share-check"
+              data-role="meeting-share-toggle"
+              :checked="shareEnabled"
+              :disabled="shareSaving"
+              @change="onToggleShare(($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ shareEnabled ? t('shareCenter.meetingSwitchOn') : t('shareCenter.meetingSwitchOff') }}</span>
+          </label>
         </div>
         <ShareAddressList :links="shareLinks" />
         <div class="res-hint">
           <Info :size="12" />
-          {{ t('meeting.resources.linkHint') }}
+          {{ shareEnabled ? t('shareCenter.meetingSharedHint') : t('shareCenter.meetingPrivateHint') }}
         </div>
       </div>
 
@@ -202,9 +214,17 @@ const props = defineProps<{
   links?: ShareLink[]
   /** The record's token. Empty hides the link block entirely. */
   shareToken?: string
+  /**
+   * Whether the record's link stays readable after the meeting ends. Off by
+   * default server-side: the token exists so people could join, which is not
+   * the same as publishing the minutes.
+   */
+  shareEnabled?: boolean
+  /** A toggle is in flight — the checkbox is disabled until the server agrees. */
+  shareSaving?: boolean
 }>()
 
-const emit = defineEmits<{ reload: [] }>()
+const emit = defineEmits<{ reload: []; 'update:shareEnabled': [value: boolean] }>()
 
 // Attaching a resource by dragging it onto the chat is a wide-screen gesture —
 // on a narrow layout the chat column is never on screen next to this list.
@@ -220,6 +240,11 @@ const { openFilePath } = useFilePathAnnotation()
 const { groups, loading, error, total } = toRefs(props)
 const reload = () => emit('reload')
 const shareLinks = computed(() => props.links ?? [])
+
+/** The parent owns the request; this only reports the intent. */
+function onToggleShare(checked: boolean): void {
+  emit('update:shareEnabled', checked)
+}
 
 const summary = computed(() => {
   const folder = props.groups.find((group) => group.key === 'folder')?.items.length ?? 0
@@ -497,6 +522,65 @@ function metaFor(item: MeetingResourceItem): string {
 }
 .res-hint :deep(svg) { flex-shrink: 0; margin-top: 1px; color: var(--text-hint); }
 .res-hint--group { margin-top: var(--space-1); }
+
+/* ── Share switch ──
+   Sits at the right end of the link's label row: it belongs to the link, not to
+   the file list below. Native checkbox replaced with the app's custom box, the
+   same construction every other toggle in the app uses (an OS-drawn checkbox
+   ignores the theme entirely). */
+.res-share-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  padding: 0;
+  font-weight: var(--font-weight-normal);
+  letter-spacing: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.res-share-check {
+  -webkit-appearance: none;
+  appearance: none;
+  flex-shrink: 0;
+  width: calc(15 * var(--dp));
+  height: calc(15 * var(--dp));
+  margin: 0;
+  border: 1.5px solid color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-primary);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--duration-base), border-color var(--duration-base);
+}
+
+.res-share-check:checked {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.res-share-check:checked::after {
+  content: '';
+  position: absolute;
+  left: calc(3.5 * var(--dp));
+  top: 0.5px;
+  width: calc(4 * var(--dp));
+  height: calc(8 * var(--dp));
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.res-share-check:disabled {
+  cursor: default;
+  opacity: var(--opacity-muted);
+}
+
+.res-share-check:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
 
 /* Touch devices have no hover: the row actions must be visible without it.
    The narrow layout also hides the chat column, so the paperclip is the only

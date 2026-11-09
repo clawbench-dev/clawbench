@@ -40,9 +40,11 @@ describe('forge dock tab title wiring', () => {
     // function.
     expect(app).not.toContain('function wideDockTabTitle')
     expect(app).not.toMatch(/:\s*title="wideDockTabTitle\(/)
-    // The wide dock's buttons now use the shared lookup.
-    const wideDockButtons = app.match(/:title="dockTabTitle\(tab\)"/g) ?? []
-    expect(wideDockButtons.length).toBeGreaterThanOrEqual(3)
+    // The wide dock labels its buttons through the shared lookup too, but as a
+    // rendered chip (`v-dock-tip`) plus its accessible name rather than a
+    // native `title` — native titles never appear on Android WebView.
+    const labels = app.match(/(?:v-dock-tip|:aria-label|:title)="dockTabTitle\(tab\)"/g) ?? []
+    expect(labels.length).toBeGreaterThanOrEqual(3)
   })
 
   it('lets the overflow button tooltip reuse the dock title', () => {

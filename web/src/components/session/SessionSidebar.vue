@@ -12,21 +12,14 @@
           @open-search="$emit('open-session-search')"
           @create="handleCreateClick"
         >
-          <template #actions>
-            <!-- Always present: the drawer is the only place to review and
-                 revoke links, and it shows an empty state when there is
-                 nothing shared, so hiding the entry point only stranded it. -->
-            <button class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
-              <MessageSquareShare :size="16" />
-              <span class="action-label">{{ t('actionLabels.sharedSessions') }}</span>
-            </button>
-          </template>
-          <!-- Unpin sits in the trailing slot so it is the right-most control in
-               the header, after search/create/refresh. -->
+          <!-- Close sits in the trailing slot so it is the right-most control in
+               the header, after search/create/refresh. It is a plain utility
+               action like refresh — no accent tint — and uses the close (X)
+               glyph so it reads as "collapse this panel". -->
           <template #actions-end>
-            <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
-              <PanelRight :size="16" />
-              <span class="action-label">{{ t('session.unpinToSidebar') }}</span>
+            <button class="header-action-btn sidebar-close-btn" @click.stop="$emit('close')" :title="t('session.closeSidebar')">
+              <X :size="16" />
+              <span class="action-label">{{ t('session.closeSidebar') }}</span>
             </button>
           </template>
         </SessionListHeader>
@@ -41,26 +34,20 @@
         @destroy="$emit('destroy', $event)"
       />
     </div>
-    <!-- MUST stay inside the root element. SharedSessionsDrawer renders through
-         BottomSheet, which Teleports to <body>, so its DOM position here is
-         irrelevant — but a sibling at template top level would make this
-         component a FRAGMENT, and a fragment root cannot receive fallthrough
-         attributes. The host (App.vue) drives visibility with v-show, which
-         compiles to a `style` fallthrough: Vue would warn "Extraneous non-props
-         attributes (style)" and silently drop it, so the sidebar showed in
-         portrait and could not be closed. -->
-    <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
+    <!-- Shared-conversation management lives in the 分享 tab now, so this
+         component no longer mounts a drawer. The root stays a single element:
+         App.vue drives visibility with v-show (a style fallthrough), and a
+         fragment root silently drops it. -->
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PanelRight, MessageSquareShare } from 'lucide-vue-next'
+import { X } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
-import SharedSessionsDrawer from '@/components/session/SharedSessionsDrawer.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
 
@@ -75,7 +62,6 @@ const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'op
 const { t } = useI18n()
 
 const listRef = ref(null)
-const sharedSessionsRef = ref(null)
 const rootRef = ref(null)
 // Tracks a manual refresh so the sidebar refresh button can spin for the real
 // load duration (SessionList keeps its list visible during background reloads,
@@ -146,12 +132,5 @@ defineExpose({ loadSessions: () => listRef.value?.loadSessions(), addSessionLoca
 .session-sidebar-header {
   flex-shrink: 0;
   cursor: default;
-}
-/* Pinned is a toggled-on state, not a primary action: same tint as the shared
-   ActionBar "active" treatment instead of a hard-coded blue that ignores the
-   theme. */
-.header-action-btn.sidebar-pin-btn.is-active {
-  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-  color: var(--accent-color);
 }
 </style>

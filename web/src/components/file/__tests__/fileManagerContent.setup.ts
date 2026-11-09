@@ -122,6 +122,13 @@ vi.mock('@/utils/download', () => ({
   postForBlobWithProgress: mockPostForBlob,
 }))
 
+// "Send by email" stages the path and opens the mail panel's composer; the
+// manager only has to hand over the right path, so the helper is stubbed.
+const mockSendPathsByMail = vi.hoisted(() => vi.fn(async () => ({ outcome: 'opened' })))
+vi.mock('@/utils/mailAttach', () => ({
+  sendPathsByMail: mockSendPathsByMail,
+}))
+
 const mockCopyText = vi.hoisted(() => vi.fn((_text: string, onSuccess?: () => void) => onSuccess?.()))
 vi.mock('@/utils/clipboard', () => ({
   copyText: mockCopyText,
@@ -453,7 +460,7 @@ export const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝', shareLink: '分享链接', shareExternal: '分享' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝', shareLink: '分享链接', shareExternal: '分享', sendByMail: '用邮件发送' },
         uploadHere: '上传到此处',
         dropToUpload: '松开上传到当前目录',
         pasteToUpload: '粘贴上传文件...',
@@ -474,7 +481,7 @@ export const i18n = createI18n({
         gitIgnored: '已被 .gitignore 忽略',
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
-        toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
+        toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}', mailNotConfigured: '还没有配置邮箱账号', mailSendFailed: '准备邮件附件失败' },
         search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
         nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录', projectRoot: '项目根目录' },
       },
@@ -596,6 +603,8 @@ beforeEach(() => {
   mockPostForBlob.mockResolvedValue({ blob: null })
   mockCopyText.mockReset()
   mockCopyText.mockImplementation((_text: string, onSuccess?: () => void) => onSuccess?.())
+  mockSendPathsByMail.mockReset()
+  mockSendPathsByMail.mockResolvedValue({ outcome: 'opened' })
   mockNavigateToDir.mockReset()
   mockShowPreview.mockReset()
   mockClosePreview.mockReset()
@@ -703,4 +712,5 @@ export const mocks = {
   mockHasAttachedFile,
   mockRemoveAttachedFileByPath,
   mockToggleAttachedFile,
+  mockSendPathsByMail,
 }

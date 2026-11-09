@@ -129,8 +129,11 @@ async function installNotificationRecorders(page: Page): Promise<void> {
 
 /** Click the Tasks dock button in whichever dock is actually visible. */
 async function openTasksTab(page: Page): Promise<void> {
+  // Keyed on `data-tab`, not the button's label: the wide-screen dock renders a
+  // themed chip (`v-dock-tip`) instead of a native `title`, so a title-based
+  // selector silently matches nothing when that dock is the visible one.
   await page
-    .locator('button.dock-btn[title="Tasks"], button.dock-btn[title="任务"]')
+    .locator('.dock-btn[data-tab="tasks"]')
     .filter({ visible: true })
     .first()
     .click()

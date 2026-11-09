@@ -100,6 +100,16 @@
         <span class="action-label">{{ t('file.header.quoteInChat') }}</span>
       </button>
 
+      <!-- Send by email: stages this file (or packs it, for a directory) and
+           opens the mail panel's composer with it attached. Inline rather than
+           in the More menu — it is an action on the open file, the same class
+           of thing as 引用对话 next to it; ActionBar folds it away on its own
+           when the header runs out of room. -->
+      <button v-if="!isUntitled && !editing" data-toolbar-id="sendByMail" class="file-header-btn" @click.stop="handleSendByMail" :title="t('file.header.sendByMail')" :aria-label="t('file.header.sendByMail')">
+        <Mail :size="14" />
+        <span class="action-label">{{ t('file.header.sendByMail') }}</span>
+      </button>
+
       <!-- Lightbox view button (image / svg files only): opens the image full-size
            in the shared Lightbox (zoom + sibling navigation). Attach lives on the
            same header — no need for a per-image header. -->
@@ -208,7 +218,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen } from 'lucide-vue-next'
+import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen, Mail } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -218,6 +228,8 @@ import { getNative } from '@/utils/clawbenchNative'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { useFileShare } from '@/composables/useFileShare'
+import { useToast } from '@/composables/useToast'
+import { sendPathsByMail } from '@/utils/mailAttach'
 
 const props = defineProps({
     file: Object,
@@ -435,6 +447,26 @@ function handleDownload() {
 
 function handleExportHtml() {
     emit('exportHtml')
+}
+
+/**
+ * Send this file by mail.
+ *
+ * The composer belongs to the mail panel, so the file is staged first (a plain
+ * file is used in place; a folder would be packed into a zip) and the panel
+ * opens with it already attached. Nothing is sent yet — the user still picks
+ * the recipient.
+ */
+async function handleSendByMail() {
+    const path = props.file?.path
+    if (!path) return
+    const name = props.file?.name || path.split('/').pop() || ''
+    const res = await sendPathsByMail([path], name)
+    if (res.outcome === 'no-mailbox') {
+        useToast().show(t('file.toast.mailNotConfigured'), { icon: 'warning', type: 'error', duration: 3000 })
+    } else if (res.outcome === 'failed') {
+        useToast().show(res.error || t('file.toast.mailSendFailed'), { icon: 'error', type: 'error', duration: 3000 })
+    }
 }
 
 function handleShareExternal() {

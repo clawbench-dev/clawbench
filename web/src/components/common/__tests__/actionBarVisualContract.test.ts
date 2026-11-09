@@ -207,6 +207,35 @@ describe('no dead overrides left behind', () => {
     }
   })
 
+  // The share centre's header shipped with a refresh button that had a visible
+  // browser-drawn border next to a borderless one: the RefreshButton never got
+  // the `header-btn` class (so nothing removed the UA border), while the clear
+  // button carried its own colour/height/padding that the shared row rules
+  // out-rank anyway. Both halves are asserted here because fixing only one
+  // leaves the pair looking like two different kinds of control.
+  it('gives every share-centre header button the shared class and nothing else', () => {
+    const src = stripComments(readWebFile('src/components/share/ShareCenterPanel.vue'))
+
+    // The refresh button is a component, so the class must be on its tag.
+    const refreshTag = src.match(/<RefreshButton[^>]*>/)
+    expect(refreshTag, 'the header must render a RefreshButton').not.toBeNull()
+    expect(refreshTag![0], 'the refresh button must carry header-btn').toMatch(/class="[^"]*\bheader-btn\b/)
+
+    const clearTag = src.match(/<button[^>]*data-action="clear-all"[^>]*>/)
+    expect(clearTag, 'the header must render a clear-all button').not.toBeNull()
+    expect(clearTag![0], 'the clear button must carry header-btn').toMatch(/class="[^"]*\bheader-btn\b/)
+    // Destructive colour comes from the shared recipe, not a private class.
+    expect(clearTag![0], 'the clear button must use is-danger').toMatch(/\bis-danger\b/)
+
+    const decls = baseRule(src, 'header-btn')
+    expect(decls, '.header-btn must exist').not.toBeNull()
+    for (const prop of ['width', 'height', 'border-radius', 'color', 'background', 'padding', 'font-size']) {
+      expect(decls, `.header-btn must not restate ${prop} (the shared rule wins)`).not.toMatch(
+        new RegExp(`(^|;)\\s*${prop}:`),
+      )
+    }
+  })
+
   it('hands the code preview toggles to the shared active class', () => {
     const src = stripComments(readWebFile('src/components/file/CodePreviewToolbar.vue'))
     expect(src).not.toMatch(/is-active/)

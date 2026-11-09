@@ -33,7 +33,7 @@
           <span class="action-label">{{ t('common.refresh') }}</span>
         </RefreshButton>
       </template>
-      <!-- Trailing slot: hosts put the sidebar pin/unpin toggle here so it is the
+      <!-- Trailing slot: hosts put the sidebar pin/close toggle here so it is the
            right-most control in the header, after search/create/refresh. The
            leading #actions slot is rendered before the built-in buttons. -->
       <slot name="actions-end" />
@@ -166,16 +166,15 @@ const sessionBarColor = computed(() => {
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
 /* Size, radius, colour, hover AND the gap between buttons come from the shared
-   ActionBar row rules (size="bar"). The row is a utility row (search / shared /
-   create / refresh / pin) and stays neutral, with two exceptions that are
-   DELIBERATE and mean something different from each other:
+   ActionBar row rules (size="bar"). The row is a utility row (search / create /
+   refresh / pin / close) and stays neutral, with one deliberate exception:
      - `is-primary` marks the single create entry (the "+"), the one action the
-       row wants to stand out — the same marking the task and proxy headers use;
-     - `.active` marks a TOGGLED-ON state (the sidebar pin), which is a state,
-       not emphasis.
+       row wants to stand out — the same marking the task and proxy headers use.
    Painting any other button of the row in the accent is what this rule forbids:
    the accent used to make one or two utilities read as a different kind of
-   control.
+   control. The sidebar's pin/close button used to carry an accent tint as a
+   "toggled on" state; it is a plain utility action like refresh, so it stays
+   neutral now.
 
    This block used to add `margin-left: var(--space-3)` as well, which stacked on
    top of the bar's own 8px gap: the row measured 14px between buttons, and it

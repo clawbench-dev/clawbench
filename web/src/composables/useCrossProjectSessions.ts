@@ -84,6 +84,12 @@ export interface CrossProjectGroup {
   /** Abbreviated path (homeDir → "~", middle-truncated when long). */
   displayPath: string
   sessions: CrossProjectSession[]
+  /**
+   * When this project was last touched, ISO-ish timestamp. Set on BOTH kinds of
+   * card: active ones take it from their newest session, inactive ones from the
+   * server's recency query. Empty only when neither source had a usable value.
+   */
+  lastActiveAt: string
 }
 
 // ── Module-level singleton state ──
@@ -139,7 +145,14 @@ function toSession(raw: Record<string, unknown>): CrossProjectSession {
 /**
  * Fetch the overview once and rebuild `groups`:
  * - exclude the current project (its sessions already show in the main list)
- * - group order: project path ascending, case-insensitive
+ * - keep BOTH kinds of group the server sends: ones with active sessions, and
+ *   ones that only carry `lastActiveAt` (recently touched, nothing active now).
+ *   The latter arrive without sessions on purpose — the card stays collapsed
+ *   until the user opens it, so the response stays small.
+ * - order: projects with active sessions first, then the merely-recent ones;
+ *   within each bucket by most recent activity (the server already sends both
+ *   buckets in that order, so the sort is a guard against a future reshuffle,
+ *   not the source of truth)
  * - within a group: updatedAt descending (most recent activity first)
  *
  * `projectRoot`/`homeDir` are read AFTER the await on purpose: whichever
@@ -160,7 +173,10 @@ async function fetchOverview(): Promise<void> {
     const name = String(p.name ?? '')
     if (!name || name === currentProject) continue
     const rawSessions: Array<Record<string, unknown>> = (p.sessions as Array<Record<string, unknown>>) || []
-    if (rawSessions.length === 0) continue
+    const serverLastActive = p.lastActiveAt ? String(p.lastActiveAt) : ''
+    // A group with neither sessions nor a recency stamp carries no information;
+    // dropping it keeps the section from rendering an empty card.
+    if (rawSessions.length === 0 && !serverLastActive) continue
     const sessions = rawSessions.map(toSession)
     sessions.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
     next.push({
@@ -168,9 +184,20 @@ async function fetchOverview(): Promise<void> {
       displayName: baseName(name),
       displayPath: abbreviatePath(name, homeDir),
       sessions,
+      // The newest session is the same fact as the server's MAX(updated_at),
+      // so an active card reads the time off its own rows and only falls back
+      // to the server's stamp.
+      lastActiveAt: sessions[0]?.updatedAt || serverLastActive,
     })
   }
-  next.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+  // Active cards first; within each bucket newest activity first. Array#sort is
+  // stable, so the server's ordering survives ties.
+  next.sort((a, b) => {
+    const aActive = a.sessions.length > 0
+    const bActive = b.sessions.length > 0
+    if (aActive !== bActive) return aActive ? -1 : 1
+    return (b.lastActiveAt || '').localeCompare(a.lastActiveAt || '')
+  })
 
   groups.value = next
   loaded.value = true

@@ -333,12 +333,15 @@ func TestServeShareLiveNotes_RequiresLiveRoomOrRecord(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// A share link outlives the room.
+// A share link outlives the room, but only once the owner has published the
+// record.
 //
-// The room is in-memory and disappears the moment the publisher presses 结束会议,
-// but the RECORD is permanent: the same URL must keep answering with the
-// transcript, the minutes, the proofread text and the chat until the owner
-// deletes it. Before this, every link handed out in advance died with the room.
+// The room is in-memory and disappears the moment the publisher presses 结束会议.
+// The record is permanent, and the same URL keeps answering with the
+// transcript, the minutes, the proofread text and the chat — provided the owner
+// turned the share switch on in the meeting result page. The token itself is
+// minted automatically so viewers can join, which is not the same as agreeing
+// to publish what was said.
 func TestServeShareLiveNotes_RecordOutlivesRoom(t *testing.T) {
 	db := setupLiveNotesDB(t)
 	defer func() { _ = db.Close() }()
@@ -360,6 +363,7 @@ func TestServeShareLiveNotes_RecordOutlivesRoom(t *testing.T) {
 	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "发版评审", service.LiveNotesStatusReady, "# 纪要", "", ""))
 	require.NoError(t, service.SetLiveNoteRevise(token, pid, service.LiveNotesStatusReady, "[00:00] 我：你好", ""))
 	require.NoError(t, service.EndLiveNote(token, 1_700_000_060_000))
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
 
 	// No room: exactly the state after the publisher ended the meeting.
 	require.Nil(t, liveRegistry.Get(token))
@@ -383,6 +387,69 @@ func TestServeShareLiveNotes_RecordOutlivesRoom(t *testing.T) {
 	assert.Equal(t, "早", resp.Chat[0].Text)
 }
 
+// The switch defaults to off, so a meeting that just ended is NOT readable by
+// whoever holds the link. This is the whole point of the opt-in: the token is
+// handed out so people can join, not so the minutes leak afterwards.
+//
+// Uses the full handler environment rather than the notes-only fixture: the
+// meta endpoint falls through to the session and file share lookups, which need
+// their tables to exist.
+func TestServeShareLiveNotes_RecordIs404UntilShared(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	resetLiveRegistry(t)
+
+	pid, err := store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+	const token = "11223344556677889900aabbccddeeff"
+	require.NoError(t, service.StartLiveNote(token, pid, "内部复盘", 1_700_000_000_000))
+	require.NoError(t, service.EndLiveNote(token, 1_700_000_060_000))
+
+	// Room gone, switch untouched (off).
+	w := httptest.NewRecorder()
+	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), token)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// Same for the meta endpoint: the share page must report "link gone" rather
+	// than mounting a record view that 404s on its first fetch.
+	w = httptest.NewRecorder()
+	serveShareMeta(w, newRequest(t, http.MethodGet, "/api/share/"+token+"/meta", nil), token)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// After the owner publishes it, both resolve.
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
+	w = httptest.NewRecorder()
+	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), token)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = httptest.NewRecorder()
+	serveShareMeta(w, newRequest(t, http.MethodGet, "/api/share/"+token+"/meta", nil), token)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// The switch governs the ARCHIVED record only. A running meeting must stay
+// joinable regardless: the link is handed out precisely so people can attend,
+// and refusing it because "sharing is off" would break every meeting.
+func TestServeShareLiveNotes_LiveRoomIgnoresShareSwitch(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+
+	project := projPath("/proj/a")
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	room, err := liveRegistry.Create(project, "会议")
+	require.NoError(t, err)
+	require.NoError(t, service.StartLiveNote(room.Token(), pid, "会议", 1_700_000_000_000))
+	require.NoError(t, service.SetMeetingShareEnabled(pid, room.Token(), false))
+
+	w := httptest.NewRecorder()
+	ServeShareLiveNotes(w, httptest.NewRequest(http.MethodGet, "/api/share/x/notes", http.NoBody), room.Token())
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp liveNotesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.Ended)
+}
+
 // The live poll must stay cheap: `?full=1` is the record view only, so the chat
 // and the proofread text are not re-sent every three seconds while a meeting is
 // running.
@@ -401,6 +468,7 @@ func TestServeShareLiveNotes_PollOmitsRecordExtras(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, service.SetLiveNoteRevise(token, pid, service.LiveNotesStatusReady, "[00:00] 我：你好", ""))
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/share/x/notes?since=0", http.NoBody)
@@ -425,6 +493,10 @@ func TestServeShareLiveNotes_HiddenRecordIs404(t *testing.T) {
 	require.NoError(t, err)
 	const token = "00112233445566778899aabbccddeeff"
 	require.NoError(t, service.StartLiveNote(token, pid, "旧会议", 1_700_000_000_000))
+	// Published FIRST, then hidden: the flag update filters hidden = 0, so the
+	// order matters. This keeps the 404 below attributable to `hidden` alone
+	// rather than to the share switch being off by default.
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
 	_, err = db.Exec(`UPDATE live_notes SET hidden = 1 WHERE token = ?`, token)
 	require.NoError(t, err)
 
@@ -455,6 +527,7 @@ func TestShareMeta_RecordOutlivesRoom(t *testing.T) {
 	const token = "aaaabbbbccccddddeeeeffff00001111"
 	require.NoError(t, service.StartLiveNote(token, pid, "发版评审", 1_700_000_000_000))
 	require.NoError(t, service.EndLiveNote(token, 1_700_000_060_000))
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
 
 	w := httptest.NewRecorder()
 	serveShareMeta(w, newRequest(t, http.MethodGet, "/api/share/"+token+"/meta", nil), token)
@@ -1499,8 +1572,127 @@ func TestServeLiveNotesArtifact_ServesByTokenAndRejectsUnknown(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-// ── Delete + chat ──────────────────────────────────────────────────────────
+// ── Share switch ───────────────────────────────────────────────────────────
 
+// The switch is per record, project-scoped, and reported back in the record so
+// the result page can render the current state without a second request.
+func TestServeLiveNotesShare_TogglesTheFlag(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+
+	// Default off — the record is not published just because it exists.
+	rec := httptest.NewRecorder()
+	ServeLiveNotesSessions(rec, liveNotesProjectRequest(t, "/api/live-share/notes/sessions?token="+token, project))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got struct {
+		Session service.MeetingRecord `json:"session"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.False(t, got.Session.ShareEnabled)
+
+	// Turn it on.
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/share?token="+token, project)
+	req.Method = http.MethodPatch
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(strings.NewReader(`{"enabled":true}`))
+	rec = httptest.NewRecorder()
+	ServeLiveNotesShare(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.True(t, got.Session.ShareEnabled)
+
+	enabled, err := service.MeetingShareEnabled(token)
+	require.NoError(t, err)
+	assert.True(t, enabled)
+
+	// ...and off again.
+	req = liveNotesProjectRequest(t, "/api/live-share/notes/sessions/share?token="+token, project)
+	req.Method = http.MethodPatch
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(strings.NewReader(`{"enabled":false}`))
+	rec = httptest.NewRecorder()
+	ServeLiveNotesShare(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	enabled, err = service.MeetingShareEnabled(token)
+	require.NoError(t, err)
+	assert.False(t, enabled)
+}
+
+// A record from another project must not be togglable: the token alone is not
+// enough, the caller has to own it.
+func TestServeLiveNotesShare_RejectsForeignRecord(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	owner := t.TempDir()
+	other := t.TempDir()
+	pid, err := store.ProjectIDForPath(owner)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/share?token="+token, other)
+	req.Method = http.MethodPatch
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(strings.NewReader(`{"enabled":true}`))
+	rec := httptest.NewRecorder()
+	ServeLiveNotesShare(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	enabled, err := service.MeetingShareEnabled(token)
+	require.NoError(t, err)
+	assert.False(t, enabled, "a rejected request must not have changed the flag")
+}
+
+// Without a project cookie there is no scope to authorize against, and a
+// body that does not parse must not be read as "enabled: false" (that would
+// silently unpublish a meeting on a typo).
+func TestServeLiveNotesShare_RejectsMissingProjectAndBadBody(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.SetMeetingShareEnabled(pid, token, true))
+
+	t.Run("missing project", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch,
+			"/api/live-share/notes/sessions/share?token="+token, http.NoBody)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		ServeLiveNotesShare(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/share?token="+token, project)
+		req.Method = http.MethodPatch
+		req.Header.Set("Content-Type", "application/json")
+		req.Body = io.NopCloser(strings.NewReader(`{"enabled":`))
+		rec := httptest.NewRecorder()
+		ServeLiveNotesShare(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	enabled, err := service.MeetingShareEnabled(token)
+	require.NoError(t, err)
+	assert.True(t, enabled, "a rejected request must not change the flag")
+}
+
+func TestServeLiveNotesShare_RejectsWrongMethod(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ServeLiveNotesShare(rec, httptest.NewRequest(http.MethodGet, "/api/live-share/notes/sessions/share", http.NoBody))
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+}
+
+// ── Delete + chat ──────────────────────────────────────────────────────────
 func TestServeLiveNotesDelete_RemovesRecordAndFolder(t *testing.T) {
 	db := setupLiveNotesDB(t)
 	defer func() { _ = db.Close() }()

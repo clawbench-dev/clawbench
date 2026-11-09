@@ -84,7 +84,7 @@ describe('useCrossProjectSessions', () => {
     expect(useCrossProjectSessions().groups.value).toEqual([])
   })
 
-  it('sorts groups by path case-insensitively and sessions by updatedAt desc', async () => {
+  it('sorts active groups by most recent activity and sessions by updatedAt desc', async () => {
     mockFetch.mockResolvedValue(overviewPayload([
       { name: '/proj/Zeta', sessions: [session('z1', '2026-01-01')] },
       { name: '/proj/alpha', sessions: [
@@ -97,6 +97,70 @@ describe('useCrossProjectSessions', () => {
     const { groups } = useCrossProjectSessions()
     expect(groups.value.map(g => g.name)).toEqual(['/proj/alpha', '/proj/Zeta'])
     expect(groups.value[0].sessions.map(s => s.id)).toEqual(['a-new', 'a-mid', 'a-old'])
+  })
+
+  describe('projects with no active session', () => {
+    it('keeps a group that only carries lastActiveAt and gives it no rows', async () => {
+      mockFetch.mockResolvedValue(overviewPayload([
+        { name: '/proj/quiet', sessions: [], lastActiveAt: '2026-05-01 08:00:00' },
+      ]))
+      await refresh()
+      const g = useCrossProjectSessions().groups.value[0]
+      expect(g.name).toBe('/proj/quiet')
+      expect(g.sessions).toEqual([])
+      expect(g.lastActiveAt).toBe('2026-05-01 08:00:00')
+    })
+
+    it('drops a group with neither sessions nor a recency stamp', async () => {
+      mockFetch.mockResolvedValue(overviewPayload([
+        { name: '/proj/empty', sessions: [] },
+      ]))
+      await refresh()
+      expect(useCrossProjectSessions().groups.value).toEqual([])
+    })
+
+    it('puts active projects before idle ones regardless of recency', async () => {
+      // The idle project is MORE recent than the active one on purpose: the
+      // ordering is "has activity now" first, not "touched most recently".
+      mockFetch.mockResolvedValue(overviewPayload([
+        { name: '/proj/idle', sessions: [], lastActiveAt: '2026-06-01 12:00:00' },
+        { name: '/proj/active', sessions: [session('a1', '2026-01-01')] },
+      ]))
+      await refresh()
+      expect(useCrossProjectSessions().groups.value.map(g => g.name))
+        .toEqual(['/proj/active', '/proj/idle'])
+    })
+
+    it('orders idle projects among themselves by most recent activity', async () => {
+      mockFetch.mockResolvedValue(overviewPayload([
+        { name: '/proj/older', sessions: [], lastActiveAt: '2026-05-01 08:00:00' },
+        { name: '/proj/newer', sessions: [], lastActiveAt: '2026-05-01 20:00:00' },
+      ]))
+      await refresh()
+      expect(useCrossProjectSessions().groups.value.map(g => g.name))
+        .toEqual(['/proj/newer', '/proj/older'])
+    })
+
+    it('takes an active card\'s timestamp from its newest session', async () => {
+      mockFetch.mockResolvedValue(overviewPayload([
+        { name: '/proj/active', sessions: [
+          session('old', '2026-01-01'),
+          session('new', '2026-02-01'),
+        ] },
+      ]))
+      await refresh()
+      expect(useCrossProjectSessions().groups.value[0].lastActiveAt).toBe('2026-02-01')
+    })
+
+    it('still excludes the current project when it is only idle-recent', async () => {
+      mockStore.state.projectRoot = '/proj/a'
+      mockFetch.mockResolvedValue(overviewPayload([
+        { name: '/proj/a', sessions: [], lastActiveAt: '2026-05-01 08:00:00' },
+        { name: '/proj/b', sessions: [], lastActiveAt: '2026-05-01 07:00:00' },
+      ]))
+      await refresh()
+      expect(useCrossProjectSessions().groups.value.map(g => g.name)).toEqual(['/proj/b'])
+    })
   })
 
   it('maps backend/agentId/model through for row rendering', async () => {

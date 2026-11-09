@@ -161,17 +161,40 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.TTS.Speed != 1.0 {
 		t.Errorf("TTS.Speed = %v, want 1.0", cfg.TTS.Speed)
 	}
-	if cfg.STT.BaseURL != "http://localhost:8000/v1" {
-		t.Errorf("STT.BaseURL = %q, want default", cfg.STT.BaseURL)
+	// Every engine's defaults are applied, not just the selected one: switching
+	// the engine in the settings UI must land on a usable configuration.
+	if cfg.STT.VLLM.BaseURL != "http://localhost:8000/v1" {
+		t.Errorf("STT.VLLM.BaseURL = %q, want default", cfg.STT.VLLM.BaseURL)
 	}
-	if cfg.STT.Model != "openai/whisper-large-v3" {
-		t.Errorf("STT.Model = %q, want default", cfg.STT.Model)
+	if cfg.STT.VLLM.Model != "openai/whisper-large-v3" {
+		t.Errorf("STT.VLLM.Model = %q, want default", cfg.STT.VLLM.Model)
 	}
-	if cfg.STT.Language != "zh" {
-		t.Errorf("STT.Language = %q, want default", cfg.STT.Language)
+	if cfg.STT.VLLM.Language != "zh" {
+		t.Errorf("STT.VLLM.Language = %q, want default", cfg.STT.VLLM.Language)
 	}
-	if cfg.STT.ChunkMs != 1000 {
-		t.Errorf("STT.ChunkMs = %d, want 1000", cfg.STT.ChunkMs)
+	if cfg.STT.VLLM.ChunkMs != 1000 {
+		t.Errorf("STT.VLLM.ChunkMs = %d, want 1000", cfg.STT.VLLM.ChunkMs)
+	}
+	if cfg.STT.Doubao.ResourceID != "volc.seedasr.sauc.duration" {
+		t.Errorf("STT.Doubao.ResourceID = %q, want default", cfg.STT.Doubao.ResourceID)
+	}
+	if !cfg.STT.Doubao.EnableITN || !cfg.STT.Doubao.EnablePunc {
+		t.Errorf("STT.Doubao ITN/punc = %v/%v, want both true", cfg.STT.Doubao.EnableITN, cfg.STT.Doubao.EnablePunc)
+	}
+	if cfg.STT.Doubao.EndWindowSize != 800 {
+		t.Errorf("STT.Doubao.EndWindowSize = %d, want 800", cfg.STT.Doubao.EndWindowSize)
+	}
+	if cfg.STT.Alibaba.BaseURL != "https://dashscope.aliyuncs.com" {
+		t.Errorf("STT.Alibaba.BaseURL = %q, want default", cfg.STT.Alibaba.BaseURL)
+	}
+	if cfg.STT.Alibaba.Model != "paraformer-realtime-v2" {
+		t.Errorf("STT.Alibaba.Model = %q, want default", cfg.STT.Alibaba.Model)
+	}
+	if cfg.STT.Alibaba.Language != "zh" {
+		t.Errorf("STT.Alibaba.Language = %q, want default", cfg.STT.Alibaba.Language)
+	}
+	if !cfg.STT.Alibaba.EnableITN || !cfg.STT.Alibaba.EnablePunc {
+		t.Errorf("STT.Alibaba ITN/punc = %v/%v, want both true", cfg.STT.Alibaba.EnableITN, cfg.STT.Alibaba.EnablePunc)
 	}
 	if cfg.STT.ShortcutKey != "F9" {
 		t.Errorf("STT.ShortcutKey = %q, want F9", cfg.STT.ShortcutKey)
@@ -308,6 +331,31 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	// Unset values should get defaults
 	if cfg.Upload.MaxFiles != 20 {
 		t.Errorf("Upload.MaxFiles = %d, want 20 (default)", cfg.Upload.MaxFiles)
+	}
+}
+
+// TestApplyDefaults_STTEngineSwitchesIndependent pins the per-engine split: a
+// switch turned off for one engine must not affect another's default, and an
+// engine the user never configured still comes up usable.
+func TestApplyDefaults_STTEngineSwitchesIndependent(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, map[string]bool{
+		"stt.doubao.enable_itn":  true, // present, so the value (false) survives
+		"stt.doubao.enable_punc": true,
+	})
+
+	if cfg.STT.Doubao.EnableITN {
+		t.Error("STT.Doubao.EnableITN = true, want false (explicitly set)")
+	}
+	if cfg.STT.Doubao.EnablePunc {
+		t.Error("STT.Doubao.EnablePunc = true, want false (explicitly set)")
+	}
+	// The other engine was never touched, so its ON defaults must still apply.
+	if !cfg.STT.Alibaba.EnableITN || !cfg.STT.Alibaba.EnablePunc {
+		t.Errorf("STT.Alibaba ITN/punc = %v/%v, want both true (untouched engine)",
+			cfg.STT.Alibaba.EnableITN, cfg.STT.Alibaba.EnablePunc)
 	}
 }
 
@@ -889,6 +937,61 @@ func TestApplyDefaults_RecentProjectsMaxCount(t *testing.T) {
 
 	if cfg.RecentProjects.MaxCount != 10 {
 		t.Errorf("RecentProjects.MaxCount = %d, want 10", cfg.RecentProjects.MaxCount)
+	}
+}
+
+// The session list's card cap defaults to 10 and keeps a positive explicit
+// value. A non-positive value falls back to the default: 0 would hide the
+// section, which an empty active set already does, so it carries no meaning of
+// its own.
+func TestApplyDefaults_RecentProjectCardsMaxCount(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.RecentProjectCardsMaxCount != 10 {
+		t.Errorf("Chat.RecentProjectCardsMaxCount = %d, want 10 (default)", cfg.Chat.RecentProjectCardsMaxCount)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsMaxCount = 4
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_max_count": true})
+	if cfg.Chat.RecentProjectCardsMaxCount != 4 {
+		t.Errorf("Chat.RecentProjectCardsMaxCount = %d, want 4 (explicitly set)", cfg.Chat.RecentProjectCardsMaxCount)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsMaxCount = -1
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_max_count": true})
+	if cfg.Chat.RecentProjectCardsMaxCount != 10 {
+		t.Errorf("Chat.RecentProjectCardsMaxCount = %d, want 10 (non-positive clamps to default)", cfg.Chat.RecentProjectCardsMaxCount)
+	}
+}
+
+// The recency window follows the same rule as the cap: default 24 hours, an
+// explicit positive value is kept, and a non-positive one falls back (a zero
+// window would silently hide every collapsed card).
+func TestApplyDefaults_RecentProjectCardsWindowHours(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.RecentProjectCardsWindowHours != 24 {
+		t.Errorf("Chat.RecentProjectCardsWindowHours = %d, want 24 (default)", cfg.Chat.RecentProjectCardsWindowHours)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsWindowHours = 6
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_window_hours": true})
+	if cfg.Chat.RecentProjectCardsWindowHours != 6 {
+		t.Errorf("Chat.RecentProjectCardsWindowHours = %d, want 6 (explicitly set)", cfg.Chat.RecentProjectCardsWindowHours)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsWindowHours = 0
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_window_hours": true})
+	if cfg.Chat.RecentProjectCardsWindowHours != 24 {
+		t.Errorf("Chat.RecentProjectCardsWindowHours = %d, want 24 (non-positive clamps to default)", cfg.Chat.RecentProjectCardsWindowHours)
 	}
 }
 

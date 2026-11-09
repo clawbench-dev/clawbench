@@ -388,6 +388,224 @@ func TestApplyCodexProvider_NoConfigPath(t *testing.T) {
 	assert.Contains(t, err.Error(), "config path unavailable")
 }
 
+// ── Shared config.toml: only our own value may be touched ───
+
+// issue #654: another tool (a gateway such as Codex++) may point model_provider
+// at its own provider after ClawBench's last apply. Restoring the remembered
+// original over it rewrote the user's file on every startup — with no managed
+// block present, nothing bound, and no log — and broke every ACP session that
+// had been created under the other provider.
+//
+// The recorded original must not win over a value we did not write.
+func TestCodexProviderConfig_RestoreLeavesForeignModelProviderAlone(t *testing.T) {
+	path := setupCodexHome(t)
+
+	// A stale sidecar from an apply that is no longer in the file (the user
+	// removed the managed block by hand, or another tool rewrote the file).
+	statePath := filepath.Join(model.DataDir, "providers", "config-state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	require.NoError(t, os.WriteFile(statePath, []byte(fmt.Sprintf(
+		`{%q:{"backup":"","originalModelProvider":"\"openai\"","hadModelProvider":true}}`, path,
+	)), 0o600))
+
+	foreign := `model = "gpt-6.1"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "gateway"
+base_url = "http://127.0.0.1:57321/gw/codex/v1"
+`
+	require.NoError(t, os.WriteFile(path, []byte(foreign), 0o600))
+
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, foreign, string(data),
+		"a model_provider we did not write is not ours to change")
+}
+
+// The same rule without a sidecar: a backup recording "openai" must not be
+// replayed over a value another tool has since written.
+func TestCodexProviderConfig_RestoreLeavesForeignValueAloneWithoutSidecar(t *testing.T) {
+	path := setupCodexHome(t)
+
+	foreign := `model = "gpt-6.1"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "gateway"
+base_url = "http://127.0.0.1:57321/gw/codex/v1"
+`
+	require.NoError(t, os.WriteFile(path, []byte(foreign), 0o600))
+	// A pristine backup from an earlier apply, taken when the value was openai.
+	require.NoError(t, os.WriteFile(path+".clawbench-bak-1700000000000000000",
+		[]byte("model = \"gpt-5\"\nmodel_provider = \"openai\"\n"), 0o600))
+
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, foreign, string(data))
+}
+
+// Startup reconcile is the path the issue reported: nothing bound, no managed
+// block, and the file must come out byte-identical.
+//
+// The stale sidecar is what makes this fail on the old code; without it the
+// old implementation also left the file alone (the backup lookup found nothing
+// to replay), so the case would not distinguish the two.
+func TestReconcileProviderConfigs_LeavesUnboundFileUntouched(t *testing.T) {
+	path := setupCodexHome(t)
+	t.Cleanup(func() {
+		model.ReplaceProviders(nil)
+		model.ReplaceAgents(nil, nil)
+	})
+	model.ReplaceAgents(nil, nil)
+
+	foreign := `model = "gpt-6.1"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "gateway"
+base_url = "http://127.0.0.1:57321/gw/codex/v1"
+`
+	require.NoError(t, os.WriteFile(path, []byte(foreign), 0o600))
+	statePath := filepath.Join(model.DataDir, "providers", "config-state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	require.NoError(t, os.WriteFile(statePath, []byte(fmt.Sprintf(
+		`{%q:{"backup":"","originalModelProvider":"\"openai\"","hadModelProvider":true}}`, path,
+	)), 0o600))
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	require.NoError(t, service.ReconcileProviderConfigs())
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, foreign, string(data))
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, before.ModTime(), after.ModTime(), "an unbound reconcile must not rewrite the file")
+}
+
+// A trailing comment is part of the same line and must not make our own value
+// look foreign: stripping the managed block while leaving the key on
+// "clawbench" points codex at a provider table that no longer exists.
+func TestCodexProviderConfig_RestoreHandlesTrailingComment(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	commented := strings.Replace(string(data),
+		`model_provider = "clawbench"`, `model_provider = "clawbench" # written by ClawBench`, 1)
+	require.NoError(t, os.WriteFile(path, []byte(commented), 0o600))
+
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(data)
+	assert.NotContains(t, content, "clawbench provider")
+	assert.NotContains(t, content, `model_provider = "clawbench"`, "a dangling key makes codex refuse to start")
+	assert.Contains(t, content, `model_provider = "deepseek"`, "the original value must be put back")
+}
+
+// Re-binding must re-read the file instead of replaying the record made by the
+// first apply. Otherwise "bind, edit model_provider by hand, bind again,
+// unbind" puts back the value recorded the FIRST time, discarding the edit.
+func TestCodexProviderConfig_RebindRecordsTheCurrentValue(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	// The user repoints the key while our block is still there.
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	edited := strings.Replace(string(data),
+		`model_provider = "clawbench"`, `model_provider = "custom"`, 1)
+	require.NoError(t, os.WriteFile(path, []byte(edited), 0o600))
+
+	// Bind again, then unbind.
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `model_provider = "custom"`,
+		"the value that was in the file at re-bind time is the one to restore")
+	assert.NotContains(t, string(data), `model_provider = "deepseek"`,
+		"the first apply's record is stale once the user has edited the key")
+}
+
+// The same rule for a key the user deleted between two binds: unbinding must
+// leave it deleted rather than resurrect the first apply's original.
+func TestCodexProviderConfig_RebindRemembersADeletedKey(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	removed := strings.Replace(string(data), "model_provider = \"clawbench\"\n", "", 1)
+	require.NoError(t, os.WriteFile(path, []byte(removed), 0o600))
+
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "model_provider =", "the key was gone before the re-bind, so it stays gone")
+}
+
+// A plain re-bind with no edit in between must still restore the value the
+// first apply recorded — the fix must not lose that.
+//
+// The second provider differs on purpose: re-applying the same one produces an
+// identical file, so apply returns early and never records anything, which
+// would make this case pass no matter what the switch decides.
+func TestCodexProviderConfig_RebindWithoutEditKeepsOriginal(t *testing.T) {
+	path := setupCodexHome(t)
+
+	first := &model.Provider{ID: 1, Name: "One", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://one.example/v1", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", first))
+	second := &model.Provider{ID: 2, Name: "Two", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://two.example/v1", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", second))
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `model_provider = "deepseek"`)
+}
+
+// The managed block is still ours: it declares a provider table that is about
+// to disappear, so it is stripped even when the top-level key is foreign.
+func TestCodexProviderConfig_RestoreStripsBlockButKeepsForeignKey(t *testing.T) {
+	path := setupCodexHome(t)
+
+	p := &model.Provider{ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto}
+	require.NoError(t, service.ApplyProviderConfigToBackend("codex", p))
+
+	// Another tool repoints the key while our block is still there.
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	repointed := strings.Replace(string(data), `model_provider = "clawbench"`, `model_provider = "custom"`, 1)
+	require.NoError(t, os.WriteFile(path, []byte(repointed), 0o600))
+
+	require.NoError(t, service.RestoreProviderConfig("codex"))
+
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(data)
+	assert.NotContains(t, content, "clawbench provider", "our block must not outlive the table it declares")
+	assert.Contains(t, content, `model_provider = "custom"`, "the foreign value must survive")
+}
+
 // ── Reconcile at startup ────────────────────────────────────
 
 // A restart must re-apply the file for a bound codex agent and restore it when

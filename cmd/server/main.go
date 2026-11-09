@@ -846,6 +846,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Legacy value extracted from the raw map for migration (chat.user_nickname
 	// moved to the first-class user section).
 	var legacyUserNickname string
+	// rawConfigMap is the whole file as parsed YAML. Kept because the typed
+	// struct silently drops keys it no longer has, and the stt migration needs
+	// the old flat stt.* fields to move them into the per-engine sections.
+	var rawConfigMap map[string]any
 
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
@@ -861,6 +865,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			os.Exit(1)
 		}
 		presence = model.ParsePresenceMap(raw)
+		rawConfigMap = raw
 
 		// Capture the legacy chat.user_nickname for migration into the
 		// first-class user section. It was a chat field until the nickname
@@ -896,6 +901,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			cfg.User.Nickname = legacy
 		}
 	}
+
+	// Move the pre-per-engine flat stt.* keys into their engine sections before
+	// defaults run: the typed struct no longer has those fields, so they would
+	// otherwise be dropped silently and every existing install would come up
+	// with an empty recogniser configuration.
+	model.MigrateLegacySTT(rawConfigMap, &cfg, presence)
 
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
@@ -937,6 +948,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.UserNickname = cfg.User.Nickname
 	model.UserProfile = cfg.User.Profile
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
+	model.ChatRecentProjectCardsMaxCount = cfg.Chat.RecentProjectCardsMaxCount
+	model.ChatRecentProjectCardsWindowHours = cfg.Chat.RecentProjectCardsWindowHours
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
@@ -1015,9 +1028,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	slog.Info(
 		"stt provider configured",
 		slog.String("provider", cfg.STT.Provider),
-		slog.String("base_url", cfg.STT.BaseURL),
-		slog.String("model", cfg.STT.Model),
-		slog.Bool("streaming", cfg.STT.Streaming),
+		slog.Bool("streaming", cfg.STT.ActiveStreaming()),
 	)
 
 	fileHandler, err := service.NewFileHandler(cfg.LogDir, "clawbench", cfg.LogMaxDays)
@@ -1980,7 +1991,7 @@ func hotReloadReconfigure(port int) {
 	// --- STT: recreate provider on config change ---
 	sttProvider := newSTTProvider(cfg)
 	handler.SetSTTProvider(sttProvider)
-	slog.Info("hot-reload: STT provider reconfigured", slog.String("base_url", cfg.STT.BaseURL))
+	slog.Info("hot-reload: STT provider reconfigured", slog.String("provider", cfg.STT.Provider))
 
 	// --- Summarize: reconstruct TTS summarizer ---
 	// Re-apply the text-processing globals first: the reconstructed summarizer
@@ -2444,17 +2455,38 @@ func hotReloadTerminal(cfg model.Config, port int) {
 }
 
 // newSTTProvider builds the STT provider from config.
+//
+// Each branch reads its own section: a single shared set of credentials and
+// options would be overwritten the moment the user switches engines, so the
+// configuration of the engine they are not using has to survive untouched.
 func newSTTProvider(cfg model.Config) stt.STTProvider {
-	if cfg.STT.Provider == "doubao" {
-		p := stt.NewDoubaoProvider(cfg.STT.APIKey, cfg.STT.ResourceID)
-		p.EnableITN = cfg.STT.EnableITN
-		p.EnablePunc = cfg.STT.EnablePunc
-		p.EnableDDC = cfg.STT.EnableDDC
-		p.OutputZHVariant = cfg.STT.OutputZHVariant
-		p.EndWindowSize = cfg.STT.EndWindowSize
+	switch cfg.STT.Provider {
+	case "doubao":
+		p := stt.NewDoubaoProvider(cfg.STT.Doubao.APIKey, cfg.STT.Doubao.ResourceID)
+		p.EnableITN = cfg.STT.Doubao.EnableITN
+		p.EnablePunc = cfg.STT.Doubao.EnablePunc
+		p.EnableDDC = cfg.STT.Doubao.EnableDDC
+		p.OutputZHVariant = cfg.STT.Doubao.OutputZHVariant
+		p.EndWindowSize = cfg.STT.Doubao.EndWindowSize
 		return p
+	case "alibaba":
+		p := stt.NewAlibabaProvider(cfg.STT.Alibaba.APIKey)
+		if cfg.STT.Alibaba.BaseURL != "" {
+			p.BaseURL = cfg.STT.Alibaba.BaseURL
+		}
+		if cfg.STT.Alibaba.Model != "" {
+			p.StreamModel = cfg.STT.Alibaba.Model
+		}
+		p.Language = cfg.STT.Alibaba.Language
+		p.EnableITN = cfg.STT.Alibaba.EnableITN
+		p.EnablePunc = cfg.STT.Alibaba.EnablePunc
+		p.EnableDDC = cfg.STT.Alibaba.EnableDDC
+		p.EndWindowSize = cfg.STT.Alibaba.EndWindowSize
+		return p
+	default:
+		return stt.NewVLLMProvider(
+			cfg.STT.VLLM.BaseURL, cfg.STT.VLLM.Model, cfg.STT.VLLM.APIKey, cfg.STT.VLLM.Language)
 	}
-	return stt.NewVLLMProvider(cfg.STT.BaseURL, cfg.STT.Model, cfg.STT.APIKey, cfg.STT.Language)
 }
 
 // hasFlag reports whether argv contains flag (without consuming a value).

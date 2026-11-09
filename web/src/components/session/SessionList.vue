@@ -207,14 +207,19 @@
            One card per project, sitting directly under the project's own rows
            and scrolling with them. Clicking a header expands THAT card in
            place: it grows to show the project's full session list and pushes
-           everything below it down — nothing is covered or taken over. -->
+           everything below it down — nothing is covered or taken over.
+
+           A project with no active session still gets a card (it was touched
+           inside the server's recency window): its header is the whole card
+           until the user opens it, and the count slot shows when it was last
+           active instead of a number. -->
       <div v-if="crossGroups.length > 0" class="other-cards" data-other-zone>
         <div
           v-for="group in crossGroups"
           :key="group.name"
           class="pcard"
-          :class="{ 'is-expanded': expandedProject === group.name }"
-          :style="{ '--pc': projectTintVar(group.name) }"
+          :class="{ 'is-expanded': expandedProject === group.name, 'is-idle': group.sessions.length === 0 }"
+          :style="projectTintStyle(group.name)"
           :data-project="group.name"
         >
           <button
@@ -224,8 +229,14 @@
             :aria-expanded="expandedProject === group.name"
             @click.stop="toggleProject(group)"
           >
+            <!-- Same mark as the app header's project segment: the card and the
+                 top bar name the same thing, so they read with the same glyph. -->
+            <Projector :size="12" class="pcard-icon" aria-hidden="true" />
             <span class="pcard-name">{{ group.displayName }}</span>
-            <span class="pcard-count">{{ cardCount(group) }}</span>
+            <!-- Active card: the count. Idle card: when it was last touched, in
+                 the same slot, so the header keeps one rhythm either way. -->
+            <span v-if="group.sessions.length > 0" class="pcard-count">{{ cardCount(group) }}</span>
+            <span v-else class="pcard-recent">{{ formatRelativeTime(group.lastActiveAt) }}</span>
             <span class="pcard-path" :title="group.name">{{ group.displayPath }}</span>
             <!-- Same slot in all three states, so nothing shifts while loading. -->
             <LoadingIndicator
@@ -239,6 +250,9 @@
             <ChevronDown v-else :size="14" class="pcard-chev" />
           </button>
 
+          <!-- An idle card has no rows to show until it is opened, and its
+               session list is the only thing that ever appears — so nothing
+               renders below the header while collapsed. -->
           <div v-if="expandedProject === group.name && expandedError" class="pcard-state">{{ expandedError }}</div>
           <div v-else-if="expandedProject === group.name && expandedSessions.length === 0" class="pcard-state">
             {{ t('session.noSessions') }}
@@ -354,7 +368,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, ChevronUp, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, ChevronUp, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert, Projector } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
@@ -379,7 +393,7 @@ import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
-import { projectTintVar } from '@/utils/projectTint'
+import { projectTintStyle } from '@/utils/projectTint'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -2103,9 +2117,18 @@ onUnmounted(() => {
    separators and hovers are the same colour at low alpha. Status keeps its own
    meaning: pending stays amber. */
 .pcard {
+  /* One colour drives the whole card. Both theme values arrive inline; the
+     attribute selector below picks one, so switching themes needs no JS. */
+  --pc: var(--pc-light);
   border: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 45%, var(--border-color));
   background: var(--bg-primary, #fff);
   overflow: hidden;
+}
+
+/* Dark themes get the re-lit palette: the light values are darkened for text
+   use and read as mud on a dark surface. */
+:root[data-theme-base="dark"] .pcard {
+  --pc: var(--pc-dark);
 }
 
 /* Cards are flush, so their facing borders would show as a 2px double line.
@@ -2152,6 +2175,15 @@ onUnmounted(() => {
   color: var(--text-primary, #1a1a1a);
 }
 
+/* The same glyph the app header's project segment uses — these cards name the
+   same thing, so they must not read as a different kind of object. Tinted with
+   the card's own colour so it belongs to the header band rather than floating
+   above it. */
+.pcard-icon {
+  flex: 0 0 auto;
+  color: var(--pc, var(--text-muted, #656d76));
+}
+
 .pcard-count {
   flex: 0 0 auto;
   /* Round badge, fixed size: the count is a single number (the session cap is
@@ -2168,6 +2200,16 @@ onUnmounted(() => {
   color: color-mix(in srgb, var(--pc, var(--text-primary)) 62%, var(--text-primary, #1a1a1a));
   font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;
+}
+
+/* Idle card (recently touched, nothing active): the count slot becomes a
+   relative timestamp. It is text, not a badge, so it takes only the width it
+   needs — a fixed circle would either clip "23 小时前" or leave a hole. */
+.pcard-recent {
+  flex: 0 0 auto;
+  font-size: var(--font-size-2xs);
+  color: var(--text-hint, #8c959f);
+  white-space: nowrap;
 }
 
 /* The card expands downward, so the hint points down; the expanded header
@@ -2272,6 +2314,14 @@ onUnmounted(() => {
    the card simply gets taller, pushing the rows below it down. */
 .pcard.is-expanded {
   background: var(--bg-primary, #fff);
+}
+
+/* An idle card (recently touched, nothing active) is nothing but its header
+   until opened, so the header's bottom border would sit right on the card's
+   own bottom border and read as a double line. Drop it while collapsed — when
+   the card is open the border is the header/rows divider again and must stay. */
+.pcard.is-idle:not(.is-expanded) .pcard-head {
+  border-bottom: 0;
 }
 
 .pcard-state {

@@ -391,6 +391,24 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	return at
 }
 
+// isExplicitCancelReason reports whether a cancel reason was recorded ON PURPOSE
+// by whoever stopped the turn. Those must reach the caller verbatim: folding
+// them into the generic "cancel" would erase the distinction the drain loop and
+// the group orchestrator act on.
+//
+//   - cancelReasonUser: the user abandoned the turn (drops the queue);
+//   - cancelReasonInterrupt: "interrupt and send" — stop this reply, keep the
+//     queue and run the next message;
+//   - cancelReasonMemberStop: stop ONE group member's speech — the round, the
+//     other members and the queue all continue.
+func isExplicitCancelReason(reason string) bool {
+	switch reason {
+	case cancelReasonUser, cancelReasonInterrupt, cancelReasonMemberStop:
+		return true
+	}
+	return false
+}
+
 // runTurnFinalize performs the second phase: persist to DB, emit metadata, and
 // classify the outcome.
 func (at *activeTurn) runTurnFinalize() TurnResult {
@@ -407,13 +425,10 @@ func (at *activeTurn) runTurnFinalize() TurnResult {
 		ReceivedTerminal: runResult.ReceivedTerminal,
 		MsgID:            at.msgID,
 	}
+	// A reason the executor recorded on purpose passes through verbatim; only a
+	// bare context cancel degrades to the generic "cancel".
 	switch {
-	case runResult.CancelReason == cancelReasonUser:
-		result.CancelReason = runResult.CancelReason
-	case runResult.CancelReason == cancelReasonInterrupt:
-		// "interrupt and send": the drain loop must KEEP the queue and move on
-		// to the next message (see drainHandleTerminal). Passing the reason
-		// through (instead of folding it into "cancel") is what tells it that.
+	case isExplicitCancelReason(runResult.CancelReason):
 		result.CancelReason = runResult.CancelReason
 	case at.turnCtx.Err() == context.Canceled:
 		result.CancelReason = "cancel"

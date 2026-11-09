@@ -4132,6 +4132,52 @@ describe('rebuildFromDb: adopts the cancelled flag from the DB row', () => {
   })
 })
 
+// "Stopped this member" is DB-only state too, but the client also sets it
+// optimistically when the stop request succeeds (the row only carries it once
+// that member finalized, and a group turn reloads history at the END of the
+// round). rebuildFromDb must therefore both adopt AND invalidate it.
+describe('rebuildFromDb: reconciles the stopped flag with the DB row', () => {
+  const liveRow = (extra: Record<string, unknown> = {}) => ({
+    role: 'assistant',
+    id: 64005,
+    content: '',
+    blocks: [{ type: 'text', text: '说了一半' }],
+    createdAt: '2026-11-09T03:41:10Z',
+    _finalizedLocally: true,
+    ...extra,
+  })
+  const dbRow = (extra: Record<string, unknown> = {}) => ({
+    role: 'assistant',
+    id: 64005,
+    content: '',
+    blocks: [{ type: 'text', text: '说了一半' }],
+    streaming: false,
+    createdAt: '2026-11-09T03:41:10Z',
+    ...extra,
+  })
+
+  it('adopts stopped from a finalized row', () => {
+    const live = liveRow()
+    const merged = rebuildFromDb([live] as any, [dbRow({ stopped: true })] as any, false)
+    expect(merged[0]).toBe(live)
+    expect(merged[0].stopped).toBe(true)
+  })
+
+  // The optimistic flag must not survive a row that says the speech was NOT
+  // stopped: the click landed just as the member finished on its own.
+  it('clears an optimistic stopped flag when the row does not carry it', () => {
+    const live = liveRow({ stopped: true })
+    const merged = rebuildFromDb([live] as any, [dbRow()] as any, false)
+    expect(merged[0].stopped).toBeUndefined()
+  })
+
+  it('keeps the optimistic flag while the row is still streaming', () => {
+    const live = liveRow({ stopped: true, streaming: true })
+    const merged = rebuildFromDb([live] as any, [dbRow({ streaming: true })] as any, true)
+    expect(merged[0].stopped).toBe(true)
+  })
+})
+
 // Group chat: each member turn is a SEPARATE assistant message. The backend
 // emits stream_start (with the member's row id) then stream_finalize at the end
 // of THAT member's turn. Regression for the reported "other agents don't stream

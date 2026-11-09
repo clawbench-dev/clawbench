@@ -133,19 +133,96 @@ type sttWSServerMsg struct {
 	Message string `json:"message,omitempty"` // failure detail for "error"
 }
 
+// Buffered-engine chunking.
+//
+// A buffered engine is handed a FILE, so it has no idea where a word or a
+// sentence ends — wherever the chunk is cut, that is what it transcribes. A cut
+// on a fixed clock therefore lands mid-syllable every so often, and the piece
+// on either side of it is transcribed wrong; there is no later revision to fix
+// it, because this path appends text as it arrives. So a chunk is closed on a
+// pause, and only force-cut when the speaker has gone on long enough that
+// waiting for a pause would starve the client.
+const (
+	// sttBufferedTickMs is how often the chunk boundary is evaluated.
+	sttBufferedTickMs = 200
+	// sttBufferedQuietMs is how much silence closes a chunk.
+	sttBufferedQuietMs = 800
+	// sttBufferedMinChunkMs keeps a chunk from being opened for a few stray
+	// frames: the client's voice gate sends one 100 ms keepalive every couple of
+	// seconds while nothing is being said.
+	sttBufferedMinChunkMs = 250
+	// sttBufferedMinForceMs is the shortest forced cut. Below this a clip carries
+	// so little context that a buffered engine guesses, and this path appends
+	// text, so nothing corrects it afterwards. It only ever applies to speech
+	// that never pauses — a normal sentence is cut at the pause, which is
+	// shorter.
+	sttBufferedMinForceMs = 800
+	// sttBufferedForceMarginMs keeps a forced cut ahead of the client's
+	// pause-to-send deadline, so the text lands in time to restart that timer
+	// instead of letting the client send without it.
+	sttBufferedForceMarginMs = 500
+	// sttBufferedMinVoiceMs is how much of a chunk must actually carry speech
+	// before it is uploaded. A single loud frame is not an utterance: the client
+	// forwards one 100 ms keepalive frame every couple of seconds regardless of
+	// the gate, and a noisy room keeps that above the floor. One such frame in an
+	// otherwise silent chunk is exactly the input a buffered engine answers with
+	// invented text. Kept just over that 100 ms so a one-word reply still counts.
+	sttBufferedMinVoiceMs = 150
+	// sttBufferedSilenceFloor is the peak level below which a frame carries no
+	// speech, on the same 0..1 scale as the client's gate. It must stay BELOW the
+	// most conservative sensitivity the client offers (0.0015): frames that
+	// passed the client's gate are speech by definition, and a stricter floor
+	// here would silently throw a soft-spoken user's words away.
+	sttBufferedSilenceFloor = 0.0012
+	// sttBufferedFailStreakLimit is how many chunks in a row may fail to be
+	// transcribed before the client is told. One failure is a hiccup; a streak
+	// means the engine is unusable (bad key, quota, unreachable host) and the
+	// mode would otherwise keep "listening" forever while producing nothing.
+	sttBufferedFailStreakLimit = 3
+)
+
 // sttStreamState holds the mutable streaming state, protected by mu to avoid
 // data races between the incremental goroutine and the read goroutine.
 type sttStreamState struct {
 	mu     sync.Mutex
 	buffer bytes.Buffer
+	// offset is the start of the audio not yet transcribed. Chunks are taken
+	// from buffer[offset:] so the whole recording stays available for the final
+	// re-transcription.
 	offset int
 	done   bool
+	// sampleRate comes from the client's start frame and labels the WAV
+	// container handed to the engine (a wrong rate is not an error, it is
+	// garbled audio).
+	sampleRate int
+	// lastVoiceAt is when the pending chunk last carried audio above the floor.
+	lastVoiceAt time.Time
+	// voiceBytes is how much audio in the pending chunk carried speech, so a
+	// lone keepalive frame is not mistaken for an utterance. Bytes rather than a
+	// frame count: how many frames the client packs a second into is its own
+	// business.
+	voiceBytes int
+	// voiceSeen records the same for the whole recording, so a session that
+	// only ever carried silence is not sent to the engine at all.
+	voiceSeen bool
+	// failStreak counts consecutive chunks the engine refused, so a real
+	// outage is reported while a single hiccup is not.
+	failStreak int
+}
+
+// rateLocked returns the sample rate the client declared. Callers hold mu.
+func (s *sttStreamState) rateLocked() int {
+	if s.sampleRate <= 0 {
+		return sttDefaultSampleRate
+	}
+	return s.sampleRate
 }
 
 // STTTranscribeWS handles WS /api/stt/transcribe/ws (streaming).
 //
 // Client → server:
 //   - binary frames: raw audio bytes (appended to running buffer)
+//   - text frame: {"type":"start",...} declares the PCM format
 //   - text frame: {"type":"end"} signals recording stopped → final full transcription
 //
 // Server → client:
@@ -153,9 +230,10 @@ type sttStreamState struct {
 //   - {"type":"done","final":"<full text>"} — final result after "end"
 //   - {"type":"error","message":"..."} — failure
 //
-// The server accumulates audio. At each ChunkMs tick it transcribes only the
-// newly-appended portion and appends the incremental text. After "end", it
-// re-transcribes the full buffer and sends the final result.
+// The server accumulates audio and, whenever a chunk has ended (a pause, or the
+// configured interval), transcribes that chunk and appends the text. After
+// "end" it re-transcribes the full buffer only when stt.vllm.final_recheck is on;
+// otherwise "done" carries no final and the accumulated text stands.
 func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: wsOriginPatterns(r)})
 	if err != nil {
@@ -173,37 +251,44 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveBufferedSTT handles engines that can only transcribe a complete audio
-// segment: audio is accumulated and each tick re-transcribes the new portion.
-// It stays as the fallback for providers without live-streaming support.
+// segment: audio is accumulated and every finished chunk is transcribed once.
+// It stays as the fallback for providers without live-streaming support, which
+// is every engine except the two streaming ones — including the default
+// OpenAI-compatible engine, so this is the path continuous-conversation mode
+// uses there.
 func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.STTProvider, cfg model.Config) {
-	chunkMs := cfg.STT.ChunkMs
+	chunkMs := cfg.STT.VLLM.ChunkMs
 	if chunkMs <= 0 {
 		chunkMs = 1000
 	}
+	forceMs := bufferedForceCutMs(chunkMs, cfg.STT.SilenceSendSeconds)
 
+	// One cancellable scope for the whole exchange: the chunker aborts the
+	// connection by cancelling it, and the final transcription runs on a context
+	// detached from that cancellation (see below).
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	state := &sttStreamState{}
-	newAudio := make(chan struct{}, 1)
 	readErr := make(chan error, 1)
+	tickDone := make(chan struct{})
 
-	// Incremental goroutine: on each tick (when new audio is available),
-	// transcribe the newly appended segment and send incremental text.
+	// Incremental goroutine: close the pending chunk when it has ended and
+	// transcribe it. It runs for as long as the connection does — continuous
+	// conversation keeps this socket open across long silences, so a tick that
+	// finds nothing to do must not be mistaken for the end of the stream.
 	go func() {
-		ticker := time.NewTicker(time.Duration(chunkMs) * time.Millisecond)
+		defer close(tickDone)
+		ticker := time.NewTicker(sttBufferedTickMs * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-			case <-newAudio:
 			}
-			if stop, abort := streamIncrementalChunk(ctx, state, provider, conn, cfg.STT.Language); abort {
+			if transcribeBufferedChunkIfDue(ctx, state, provider, conn, cfg.STT.ActiveLanguage(), forceMs) {
 				cancel()
-				return
-			} else if stop {
 				return
 			}
 		}
@@ -217,25 +302,47 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 				readErr <- rerr
 				return
 			}
-			if rerr = handleSTTWSMessage(state, newAudio, conn, mt, msg); rerr != nil {
+			if rerr = handleSTTWSMessage(state, conn, mt, msg); rerr != nil {
 				readErr <- rerr
 				return
 			}
 		}
 	}()
 
-	<-readErr // client ended (end control) or connection error
+	readFailure := <-readErr
+	// Only an explicit "end" means the recording is over and somebody is
+	// waiting for the final text. Any other read error means the socket is gone
+	// — continuous-conversation mode closes it between turns — so a full
+	// re-transcription would be work nobody waits for, written to a connection
+	// that cannot receive it.
+	if !errors.Is(readFailure, errSTTWSEnd) {
+		return
+	}
+	// Stop the chunker and let it finish before the final write, so a late chunk
+	// cannot land after "done" and be appended to a transcript the client has
+	// already replaced. The final transcription below therefore runs on a
+	// context detached from this cancellation.
+	cancel()
+	<-tickDone
 
-	// Final full transcription of the whole buffer.
-	state.mu.Lock()
-	full := append([]byte(nil), state.buffer.Bytes()...)
-	state.mu.Unlock()
-
+	// Final answer. Only a whole-buffer re-transcription can span the chunk
+	// boundaries, so it is what makes the final text more coherent than the
+	// chunks the client accumulated — but it is a second pass over the entire
+	// clip, so it is opt-in (stt.vllm.final_recheck, default off). When off, "done"
+	// carries no final and the client keeps what the chunks produced.
 	finalText := ""
-	if len(full) > 0 {
-		text, terr := provider.Transcribe(ctx, bytes.NewReader(full), cfg.STT.Language)
-		if terr == nil {
-			finalText = text
+	if cfg.STT.VLLM.FinalRecheck {
+		state.mu.Lock()
+		full := append([]byte(nil), state.buffer.Bytes()...)
+		rate := state.rateLocked()
+		heard := state.voiceSeen
+		state.mu.Unlock()
+
+		if len(full) > 0 && heard {
+			text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(wavFromPCM(full, rate)), cfg.STT.ActiveLanguage())
+			if terr == nil {
+				finalText = text
+			}
 		}
 	}
 
@@ -244,52 +351,106 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 	_ = writeSTTWSText(conn, data)
 }
 
-// streamIncrementalChunk transcribes the newly-appended audio segment and
-// sends the incremental text. It returns (stop, abort): stop=true when the
-// stream has finished and the goroutine should exit cleanly; abort=true when a
-// write error occurred and the whole connection should be cancelled.
-func streamIncrementalChunk(ctx context.Context, state *sttStreamState, provider stt.STTProvider, conn *websocket.Conn, language string) (bool, bool) {
+// bufferedForceCutMs is how long a chunk may run while the speaker keeps
+// talking before it is cut anyway.
+//
+// `chunk_ms` is what the operator asked for, but it is not the only constraint:
+// the client measures its pause-to-send timer from the last transcript it
+// received, so a cut landing after that interval lets the client send and close
+// the socket with this sentence's tail still unread. The client's deadline
+// therefore wins — unless the operator set it so short that the clip would be
+// useless to the engine, in which case recognition simply cannot keep up and
+// the floor is kept.
+func bufferedForceCutMs(chunkMs, silenceSendSeconds int) int {
+	ms := chunkMs
+	if silenceSendSeconds > 0 {
+		ms = min(ms, silenceSendSeconds*1000-sttBufferedForceMarginMs)
+	}
+	return max(ms, sttBufferedMinForceMs)
+}
+
+// transcribeBufferedChunkIfDue takes the pending chunk once it has ended and
+// transcribes it, sending the text as an incremental delta.
+//
+// A chunk ends on a pause — that is where a word boundary actually is — or when
+// it has run past forceMs. Returns abort=true when the connection can no longer
+// be written to.
+func transcribeBufferedChunkIfDue(ctx context.Context, state *sttStreamState, provider stt.STTProvider, conn *websocket.Conn, language string, forceMs int) bool {
+	state.mu.Lock()
+	if state.done {
+		state.mu.Unlock()
+		return false
+	}
+	rate := state.rateLocked()
+	pending := state.buffer.Len() - state.offset
+	if pending < sttBufferedMinChunkMs*rate/1000*2 {
+		state.mu.Unlock()
+		return false
+	}
+	quiet := time.Since(state.lastVoiceAt) >= sttBufferedQuietMs*time.Millisecond
+	if !quiet && pending < forceMs*rate/1000*2 {
+		state.mu.Unlock()
+		return false
+	}
+	seg := append([]byte(nil), state.buffer.Bytes()[state.offset:]...)
+	state.offset = state.buffer.Len()
+	voiced := state.voiceBytes >= rate/1000*sttBufferedMinVoiceMs*2
+	state.voiceBytes = 0
+	state.mu.Unlock()
+
+	if !voiced {
+		// Too little of this chunk carried speech: uploading it would only buy
+		// invented text.
+		return false
+	}
+
+	// Buffered engines take a file, not a byte stream: headerless samples are
+	// either rejected or decoded as silence. This is the whole reason the
+	// OpenAI-compatible path could not transcribe continuous conversation.
+	text, terr := provider.Transcribe(ctx, bytes.NewReader(wavFromPCM(seg, rate)), language)
+	if terr != nil {
+		// A single failure is not worth ending the conversation — a gateway
+		// hiccup would otherwise close the mode mid-sentence. A streak is: the
+		// mode would keep "listening" and produce nothing, which looks exactly
+		// like a microphone that hears nothing, so say which one it is.
+		state.mu.Lock()
+		state.failStreak++
+		streak := state.failStreak
+		state.mu.Unlock()
+		slog.Warn("stt ws: incremental transcribe failed", slog.Int("streak", streak), slog.String("error", terr.Error()))
+		if streak < sttBufferedFailStreakLimit {
+			return false
+		}
+		_ = sendSTTMsg(conn, sttWSServerMsg{Type: sttWSError, Message: terr.Error()})
+		return true
+	}
+	state.mu.Lock()
+	state.failStreak = 0
+	state.mu.Unlock()
+	if text == "" {
+		return false
+	}
 	state.mu.Lock()
 	done := state.done
-	start := state.offset
-	seg := append([]byte(nil), state.buffer.Bytes()[start:]...)
-	state.offset = state.buffer.Len()
 	state.mu.Unlock()
-
-	if done || len(seg) == 0 {
-		return true, false
+	if done {
+		return false
 	}
 
-	text, terr := provider.Transcribe(ctx, bytes.NewReader(seg), language)
-	if terr != nil {
-		slog.Debug("stt ws: incremental transcribe failed", slog.String("error", terr.Error()))
-		return false, false
-	}
-	if text == "" {
-		return false, false
-	}
 	msg := sttWSServerMsg{Type: sttWSText, Text: text}
 	data, _ := json.Marshal(msg)
-
-	state.mu.Lock()
-	doneNow := state.done
-	state.mu.Unlock()
-	if doneNow {
-		return false, false
-	}
-
-	if err := writeSTTWSText(conn, data); err != nil {
-		return false, true
-	}
-	return false, false
+	return writeSTTWSText(conn, data) != nil
 }
 
 // handleSTTWSMessage processes a single STT WebSocket frame. Binary frames
-// append audio to the streaming buffer (bounded); a text "end" control frame
-// marks the stream done. Returns a non-nil error to terminate the read loop.
-func handleSTTWSMessage(state *sttStreamState, newAudio chan struct{}, conn *websocket.Conn, mt websocket.MessageType, msg []byte) error {
+// append audio to the streaming buffer (bounded) and note whether the chunk
+// carries speech; a text "start" frame declares the PCM format and an "end"
+// frame marks the stream done. Returns a non-nil error to terminate the read
+// loop.
+func handleSTTWSMessage(state *sttStreamState, conn *websocket.Conn, mt websocket.MessageType, msg []byte) error {
 	switch mt {
 	case websocket.MessageBinary:
+		peak := pcmPeakRMS(msg)
 		state.mu.Lock()
 		if state.buffer.Len()+len(msg) > sttWSMaxAudioBytes {
 			state.mu.Unlock()
@@ -298,14 +459,26 @@ func handleSTTWSMessage(state *sttStreamState, newAudio chan struct{}, conn *web
 			return errors.New("stt ws: audio exceeds limit")
 		}
 		state.buffer.Write(msg)
-		state.mu.Unlock()
-		select {
-		case newAudio <- struct{}{}:
-		default:
+		if peak >= sttBufferedSilenceFloor {
+			state.lastVoiceAt = time.Now()
+			state.voiceBytes += len(msg)
+			state.voiceSeen = true
 		}
+		state.mu.Unlock()
 	case websocket.MessageText:
 		var ctl sttWSControl
-		if json.Unmarshal(msg, &ctl) == nil && ctl.Type == sttWSEndCtl {
+		if json.Unmarshal(msg, &ctl) != nil {
+			// A malformed control frame must not kill the audio path.
+			return nil //nolint:nilerr // intentional: ignore unparseable control frames
+		}
+		switch ctl.Type {
+		case sttWSStartCtl:
+			state.mu.Lock()
+			if ctl.SampleRate > 0 {
+				state.sampleRate = ctl.SampleRate
+			}
+			state.mu.Unlock()
+		case sttWSEndCtl:
 			state.mu.Lock()
 			state.done = true
 			state.mu.Unlock()

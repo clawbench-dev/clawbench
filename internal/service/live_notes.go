@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	-- Production databases get this column from the ALTER probe in InitDB; it is
 	-- declared here too so the DDL constant used by tests is self-contained.
 	hidden INTEGER NOT NULL DEFAULT 0,
+	-- share_enabled is the owner's opt-in for "this meeting's link keeps working
+	-- after the meeting ends". DEFAULT 0 on purpose: the share token is minted
+	-- automatically when the meeting starts (viewers need it to join), so
+	-- without an explicit opt-in every finished meeting would be publicly
+	-- readable forever just because it happened to be held.
+	--
+	-- It does NOT gate the live room: joining an in-progress meeting is the
+	-- reason the link exists. Only the archived record endpoints check it.
+	share_enabled INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -716,6 +725,28 @@ func PublicMeetingByToken(token string) (LiveNote, bool, error) {
 	return n, true, nil
 }
 
+// PublicMeetingByTokenShared resolves a token to its meeting record only when
+// the owner has opted in to publishing it.
+//
+// This is the gate for every ARCHIVED-record endpoint a stranger can reach. The
+// live room is exempt (it is addressed by the same token and must stay joinable
+// while the meeting runs) — callers check the registry first and only fall
+// through to this function once the room is gone.
+func PublicMeetingByTokenShared(token string) (LiveNote, bool, error) {
+	n, ok, err := PublicMeetingByToken(token)
+	if err != nil || !ok {
+		return n, ok, err
+	}
+	enabled, err := MeetingShareEnabled(token)
+	if err != nil {
+		return LiveNote{}, false, err
+	}
+	if !enabled {
+		return LiveNote{}, false, nil
+	}
+	return n, true, nil
+}
+
 // LiveNoteProjectID reports which project owns a share's notes. The publisher
 // endpoints use it to authorize requests for a room that has already ended.
 func LiveNoteProjectID(token string) (int64, bool, error) {
@@ -917,6 +948,61 @@ func SetMeetingTitle(projectID int64, token, title string) error {
 		return ErrMeetingNotFound
 	}
 	return nil
+}
+
+// SetMeetingShareEnabled turns the meeting record's public link on or off.
+//
+// This is the owner's opt-in for "keep this meeting readable after it ends".
+// It is deliberately NOT the switch that lets people join a running meeting —
+// the live room is addressed by the same token and must stay reachable while
+// the meeting is in progress (that is what the link is handed out for).
+//
+// A hidden row is reported as not found, exactly like a missing one.
+func SetMeetingShareEnabled(projectID int64, token string, enabled bool) error {
+	if token == "" {
+		return ErrMeetingNotFound
+	}
+	flag := 0
+	if enabled {
+		flag = 1
+	}
+	res, err := store.WriteExec(
+		`UPDATE live_notes SET share_enabled = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE token = ? AND project_id = ? AND hidden = 0`,
+		flag, token, projectID,
+	)
+	if err != nil {
+		return fmt.Errorf("live notes: set share flag: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("live notes: set share flag: %w", err)
+	}
+	if n == 0 {
+		return ErrMeetingNotFound
+	}
+	return nil
+}
+
+// MeetingShareEnabled reports whether a meeting record's link is public.
+//
+// An unknown token answers false rather than an error: the callers are public
+// endpoints that must degrade to "not shared" (a 404) instead of a 500.
+func MeetingShareEnabled(token string) (bool, error) {
+	if strings.TrimSpace(token) == "" {
+		return false, nil
+	}
+	var flag int
+	err := store.ReadDB().QueryRow(
+		`SELECT share_enabled FROM live_notes WHERE token = ?`, token,
+	).Scan(&flag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("live notes: share flag: %w", err)
+	}
+	return flag != 0, nil
 }
 
 // EndLiveNote stamps the end time once. A second call is a no-op so a
@@ -1200,6 +1286,10 @@ type MeetingRecord struct {
 	// UpdatedAt is the row's last write, used by the record's own lifecycle
 	// (the artifact heartbeat is separate).
 	UpdatedAt int64 `json:"updatedAt"`
+	// ShareEnabled is the owner's opt-in for "this meeting's link keeps working
+	// after it ends". Off by default: the token is minted automatically so
+	// viewers can join, which is not the same as publishing the record.
+	ShareEnabled bool `json:"shareEnabled"`
 }
 
 // ListMeetingRecords returns a project's meetings, newest first.
@@ -1214,7 +1304,8 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 	}
 	rows, err := store.ReadDB().Query(
 		`SELECT token, title, started_at, ended_at, dir_name,
-		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
+		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000,
+		        share_enabled
 		   FROM live_notes
 		  WHERE project_id = ? AND hidden = 0
 		  ORDER BY started_at DESC, token DESC
@@ -1231,11 +1322,13 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 		var m MeetingRecord
 		var dirName string
 		var updatedMS int64
+		var shareEnabled int
 		if scanErr := rows.Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName,
-			&updatedMS); scanErr != nil {
+			&updatedMS, &shareEnabled); scanErr != nil {
 			return nil, fmt.Errorf("live notes: scan meeting: %w", scanErr)
 		}
 		m.UpdatedAt = updatedMS
+		m.ShareEnabled = shareEnabled != 0
 		if dirName != "" {
 			m.Dir = dirName
 			m.DirPath = MeetingDirPath(projectPath, dirName)
@@ -1295,11 +1388,13 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	var m MeetingRecord
 	var dirName string
 	var updatedMS int64
+	var shareEnabled int
 	err := store.ReadDB().QueryRow(
 		`SELECT token, title, started_at, ended_at, dir_name,
-		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000
+		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000,
+		        share_enabled
 		   FROM live_notes WHERE token = ? AND project_id = ? AND hidden = 0`, token, projectID,
-	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &updatedMS)
+	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &updatedMS, &shareEnabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MeetingRecord{}, false, nil
 	}
@@ -1307,6 +1402,7 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 		return MeetingRecord{}, false, fmt.Errorf("live notes: get meeting: %w", err)
 	}
 	m.UpdatedAt = updatedMS
+	m.ShareEnabled = shareEnabled != 0
 	var flags liveNoteArtifactState
 	if dirName != "" {
 		m.Dir = dirName

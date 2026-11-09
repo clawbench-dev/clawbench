@@ -749,11 +749,35 @@ func (o *GroupOrchestrator) snapshotTurn(s groupTurnSetup, t speakerTurn, highWa
 // speaker consumed and persist the notes it emitted. Mirrors the cursor rule
 // (decision #69): a failed/cancelled turn advances nothing and keeps its notes.
 func (o *GroupOrchestrator) executeTurn(ctx context.Context, s groupTurnSetup, p preparedTurn) groupMemberResult {
-	res := s.runner(ctx, o.groupID, groupMemberTurn{MemberRowID: p.turn.member.ID, Prompt: p.prompt})
+	// Per-MEMBER context: this is the address "stop only THIS member" needs. The
+	// group turn's own context (registered under the group id) still stops
+	// everything; this child stops just this speech, so the other members of a
+	// parallel group keep talking and the round keeps running.
+	memberCtx, memberCancel := context.WithCancel(ctx)
+	turnID := RegisterGroupMemberTurnCancel(o.groupID, p.turn.member.ID, memberCancel)
+	// Safety net for a panicking runner (the drain path recovers, so an entry left
+	// behind would keep the member addressable forever). Both calls are
+	// idempotent; the explicit teardown below still runs first, right after the
+	// turn, to keep the "is this member still speaking" window tight.
+	defer func() {
+		UnregisterGroupMemberTurnCancel(p.turn.member.ID, turnID)
+		memberCancel()
+	}()
+	res := s.runner(memberCtx, o.groupID, groupMemberTurn{MemberRowID: p.turn.member.ID, Prompt: p.prompt})
+	UnregisterGroupMemberTurnCancel(p.turn.member.ID, turnID)
+	memberCancel()
+	// Drop a cancel reason that landed too late for this turn's executor to read
+	// (the interrupt records it, then cancels; the executor may already have
+	// consumed its outcome). The slot is per-session, so leaving it behind would
+	// stop this member's NEXT speech for no reason.
+	GetAndClearCancelReason(p.turn.member.ID)
 	o.noteMemberOutcome(res)
 	if res.CancelReason != "" {
 		// The user stopped the turn mid-speech. Delivered notes are NOT cleared
-		// (the turn consumed nothing) — they re-send (decision #69).
+		// (the turn consumed nothing) — they re-send (decision #69). This also
+		// covers a single member being stopped (cancelReasonMemberStop): its
+		// cursor stays put, so the context it never consumed is re-injected when
+		// it speaks again.
 		return res
 	}
 	advanceCursorOnSuccess(p.turn.member.ID, p.highWater, res)
@@ -939,6 +963,12 @@ func (o *GroupOrchestrator) runSequentialGroup(
 		p := o.snapshotTurn(s, t, GroupTimelineHighWater(o.groupID))
 		r := o.executeTurn(ctx, s, p)
 		if r.CancelReason != "" {
+			// A member the user stopped ("stop this one") is NOT a turn-level
+			// cancel: only that member stays silent, the rest of the round goes
+			// on. Every other reason still stops the whole turn.
+			if r.CancelReason == cancelReasonMemberStop {
+				continue
+			}
 			return DrainResult{CancelReason: r.CancelReason}, appended, true
 		}
 		// A member that asked the user a question is addressing the human: hand
@@ -1027,7 +1057,9 @@ func (o *GroupOrchestrator) runParallelGroup(
 				r := o.executeTurn(egCtx, s, prepared[i])
 				mu.Lock()
 				results[i] = r
-				if r.CancelReason != "" && cancel == "" {
+				// A member the user stopped only goes silent; it must NOT abort
+				// its siblings or the remaining batches.
+				if r.CancelReason != "" && r.CancelReason != cancelReasonMemberStop && cancel == "" {
 					cancel = r.CancelReason
 				}
 				mu.Unlock()
@@ -1218,6 +1250,16 @@ func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) Drain
 		if hostRes.CancelReason != "" {
 			// The user stopped the turn while the host was speaking. Do NOT fall
 			// back to a member turn — that would keep running after a stop.
+			//
+			// A per-member stop aimed at the host is a whole-turn stop in
+			// disguise: the host is what routes the round, so nothing can follow
+			// it. Report it as an interrupt (the narrowest whole-turn reason)
+			// instead of letting the unknown "member_stop" reach the drain loop:
+			// that keeps the QUEUE (the user stopped a speaker, not the messages
+			// they already sent) and ends the run with a clean "done".
+			if hostRes.CancelReason == cancelReasonMemberStop {
+				return nil, false, DrainResult{CancelReason: cancelReasonInterrupt}
+			}
 			return nil, false, DrainResult{CancelReason: hostRes.CancelReason}
 		}
 		if hostRes.Err != "" {

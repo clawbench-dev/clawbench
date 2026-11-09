@@ -87,7 +87,7 @@ import { refreshMailUnread } from '@/composables/useMailUnread'
 
 const props = defineProps<{
   accountId: number
-  initial?: Partial<MailReplyContext> & { body?: string; draftId?: number }
+  initial?: Partial<MailReplyContext> & { body?: string; attachments?: MailDraftFile[]; draftId?: number }
 }>()
 const emit = defineEmits<{ close: []; sent: [] }>()
 
@@ -125,7 +125,9 @@ function resetFromInitial(): void {
   form.text = (init.body ?? '') + (init.quote ?? '')
   form.inReplyTo = init.inReplyTo ?? ''
   form.references = init.references ?? ''
-  attachments.value = []
+  // Copied, not referenced: the composer mutates its list (remove attachment)
+  // and must not reach back into the caller's request object.
+  attachments.value = (init.attachments ?? []).map((a) => ({ ...a }))
   draftId.value = init.draftId ?? 0
   error.value = ''
   showCc.value = !!(init.cc ?? '')

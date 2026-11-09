@@ -101,6 +101,12 @@ interface AgentRecord {
    * the agent pick until ACP confirms.
    */
   catalogModels?: Array<{ id: string; name: string; default: boolean }>
+  /**
+   * The bound provider's curated models, already in the id form this backend
+   * accepts. A subset of `models`; the settings picker uses it to group the list
+   * by source so the user can tell where a model comes from.
+   */
+  providerModels?: Array<{ id: string; name: string; default: boolean }>
   /** Derived usage counts from GET /api/agents (not persisted). */
   sessionCount?: number
   taskCount?: number

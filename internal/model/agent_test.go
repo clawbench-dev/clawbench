@@ -154,3 +154,91 @@ func TestEffectiveModeID_Empty(t *testing.T) {
 	agent := &model.Agent{}
 	assert.Equal(t, "", agent.EffectiveModeID())
 }
+
+// opencode addresses a model as "<provider>/<model>", so a provider's bare ids
+// must be namespaced before they reach the picker or a turn (issue #651).
+func TestDefaultModelID_NamespacesProviderModelForBackend(t *testing.T) {
+	pid := int64(88)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 88, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"glm-5.3-flash"}, DefaultModel: "glm-5.3-flash",
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	opencodeAgent := &model.Agent{Backend: "opencode", ProviderID: &pid}
+	if got := opencodeAgent.DefaultModelID(); got != "clawbench-openai/glm-5.3-flash" {
+		t.Fatalf("default = %q, want the id the picker offers", got)
+	}
+
+	// A preference stored in bare form (what the provider list holds) must still
+	// be recognized, and must come back namespaced — the picker's value.
+	opencodeAgent.PreferredModel = "glm-5.3-flash"
+	if got := opencodeAgent.DefaultModelID(); got != "clawbench-openai/glm-5.3-flash" {
+		t.Fatalf("default = %q, want the picker form of the preference", got)
+	}
+
+	// A backend that takes bare ids is untouched.
+	claudeAgent := &model.Agent{Backend: "claude", ProviderID: &pid}
+	if got := claudeAgent.DefaultModelID(); got != "glm-5.3-flash" {
+		t.Fatalf("default = %q, want the bare id", got)
+	}
+}
+
+// A gateway can namespace its own ids ("openai/gpt-4o" is a real OpenRouter
+// style id). The picker then offers the already-namespaced form, so comparing
+// only the BARE form would miss the user's own pick and silently fall back to
+// the provider default (issue #651 review).
+func TestDefaultModelID_MatchesAlreadyNamespacedProviderID(t *testing.T) {
+	pid := int64(91)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 91, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"openai/gpt-4o", "openai/gpt-5"}, DefaultModel: "openai/gpt-5",
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	// The picker offers the curated id under OUR provider prefix, so a
+	// gateway-namespaced id becomes "clawbench-openai/openai/gpt-4o".
+	agent := &model.Agent{Backend: "opencode", ProviderID: &pid, PreferredModel: "clawbench-openai/openai/gpt-4o"}
+	if got := agent.DefaultModelID(); got != "clawbench-openai/openai/gpt-4o" {
+		t.Fatalf("default = %q, want the user's pick (not the provider default)", got)
+	}
+}
+
+// The "custom…" escape hatch exists for ids the provider's list does not hold.
+// For a backend that DECLARES the pin to itself, that pin must be the model the
+// turn runs — otherwise the id is declared but never selected, and the session
+// silently runs a different model (issue #651 review).
+func TestDefaultModelID_HonoursUnlistedPinForDeclaringBackend(t *testing.T) {
+	pid := int64(95)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 95, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"gw-a"}, DefaultModel: "gw-a",
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	opencodeAgent := &model.Agent{Backend: "opencode", ProviderID: &pid, PreferredModel: "gw-custom"}
+	if got := opencodeAgent.DefaultModelID(); got != "clawbench-openai/gw-custom" {
+		t.Fatalf("default = %q, want the declared pin", got)
+	}
+
+	// An uncurated provider must honor it too: that is the whole point of the
+	// escape hatch when the endpoint publishes no list.
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 95, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k",
+	}})
+	if got := opencodeAgent.DefaultModelID(); got != "clawbench-openai/gw-custom" {
+		t.Fatalf("default = %q, want the declared pin on an uncurated provider", got)
+	}
+
+	// A backend that cannot declare anything keeps the old safety: an unlisted
+	// pin is stale, so the provider default wins.
+	claudeAgent := &model.Agent{Backend: "claude", ProviderID: &pid, PreferredModel: "gw-custom"}
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 95, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"gw-a"}, DefaultModel: "gw-a",
+	}})
+	if got := claudeAgent.DefaultModelID(); got != "gw-a" {
+		t.Fatalf("default = %q, want the provider default for a backend that cannot declare a pin", got)
+	}
+}

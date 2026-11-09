@@ -127,6 +127,12 @@
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
 
+    <!-- Stopped-on-purpose marker (group chats): the user stopped THIS member's
+         speech while the round went on. Deliberately a different label from
+         「已取消」— cancelling means the whole turn was abandoned, this means one
+         voice was cut short. -->
+    <div v-if="msg.stopped && !msg.cancelled && !isLastBlockThinking" class="chat-stopped-mark">{{ t('chat.contentBlocks.stopped') }}</div>
+
     <!-- Host's private notes (密送), at the BOTTOM of the bubble.
          Two forms, deliberately different:
            - a note addressed to the USER is expanded by default, labelled
@@ -168,6 +174,20 @@
         </div>
       </div>
     </template>
+    <!-- This turn's consumption, inside the bubble at its bottom right: it
+         belongs to the reply, so it rides with it instead of competing with the
+         action buttons for the row below. Rendered only when the turn was billed
+         in CREDIT — that is what makes this a CodeBuddy-style "this turn cost"
+         tail; backends that report a monetary costUsd keep no tail at all. -->
+    <div v-if="usageTail" class="chat-usage-inline" :title="usageTailTooltip">
+      <span v-if="usageTail.input || usageTail.output" class="chat-usage-tokens">
+        <span v-if="usageTail.input" class="chat-usage-tok"><ArrowUp class="chat-usage-arrow" aria-hidden="true" />{{ usageTail.input }}</span>
+        <span v-if="usageTail.output" class="chat-usage-tok"><ArrowDown class="chat-usage-arrow" aria-hidden="true" />{{ usageTail.output }}</span>
+      </span>
+      <span class="chat-usage-credit">
+        <Coins aria-hidden="true" />{{ usageTail.credit }}
+      </span>
+    </div>
     </div><!-- /.msg-card -->
 
     <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
@@ -176,8 +196,13 @@
          only which actions are meaningful differs. -->
     <div v-if="showMetaBar" class="chat-meta-bar" :class="msg.role === 'user' ? 'chat-meta-bar-user' : 'chat-meta-bar-assistant'">
       <span class="chat-meta-info">
-        <span v-if="msg.role === 'assistant' && msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
-        <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.role === 'assistant' && msg.metadata?.wallMs }">{{ relativeTime }}</span>
+        <!-- Duration and timestamp travel as ONE unit. They are the same
+             "when / how long" answer, and grouping them keeps the "·"
+             separator from being stranded at the start of a wrapped line. -->
+        <span v-if="hasTiming" class="chat-meta-timing">
+          <span v-if="showDuration" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
+          <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': showDuration }">{{ relativeTime }}</span>
+        </span>
       </span>
       <div class="chat-meta-actions">
         <!-- Summary/original toggle — deliberately FIRST in the row. It is the
@@ -302,8 +327,9 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check } from 'lucide-vue-next'
+import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
+import { formatCompactCount, formatCompactCredit } from '@/utils/usageFormat.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -587,11 +613,59 @@ const speakableText = computed(() => {
 // times), so the label and its separator stay hidden when there is nothing to show.
 const relativeTime = computed(() => (props.msg?.createdAt ? formatRelativeTime(props.msg.createdAt) : ''))
 
+// The wall-clock duration is an assistant-only figure (user bubbles have none).
+const showDuration = computed(() => props.msg?.role === 'assistant' && !!props.msg?.metadata?.wallMs)
+
+// Whether the "how long / when" block renders at all. It is one wrapping unit
+// in the meta row, so an empty block must not be emitted for either half.
+const hasTiming = computed(() => showDuration.value || !!relativeTime.value)
+
 // Copyable text for a user message — the raw content (blocks are the same text
 // for user rows; `content` survives summary-stripped payloads).
 const copyableUserText = computed(() => {
   if (props.msg?.role !== 'user') return ''
   return extractSpeakableText(props.msg?.blocks || []) || (props.msg?.content || '')
+})
+
+/**
+ * This turn's consumption, rendered as the meta bar's trailing group.
+ *
+ * Only CREDIT makes a tail. CodeBuddy bills in credits and reports them per
+ * turn (metadata.credit, already accumulated over every model call of the
+ * turn); every other backend reports a monetary costUsd, which is a different
+ * unit and would be misread next to a credit figure. So a turn without credit
+ * renders nothing at all — no empty group, no zero.
+ *
+ * Input/output tokens ride along because they are the same "what did this turn
+ * cost" question; both are omitted individually when the backend reported none.
+ */
+const usageTail = computed(() => {
+  if (props.msg?.role !== 'assistant') return null
+  const meta = props.msg?.metadata
+  if (!meta) return null
+  const credit = Number(meta.credit) || 0
+  if (credit <= 0) return null
+  const input = Number(meta.inputTokens) || 0
+  const output = Number(meta.outputTokens) || 0
+  return {
+    credit: formatCompactCredit(credit),
+    input: input > 0 ? formatCompactCount(input) : '',
+    output: output > 0 ? formatCompactCount(output) : '',
+  }
+})
+
+/** Hover text for the tail. Compact figures lose precision, so the tooltip
+ *  carries the exact numbers the stats page would show. */
+const usageTailTooltip = computed(() => {
+  if (!usageTail.value) return ''
+  const meta = props.msg?.metadata || {}
+  const parts = [t('chat.message.creditUsed', { value: Number(meta.credit).toLocaleString('en-US', { maximumFractionDigits: 2 }) })]
+  const input = Number(meta.inputTokens) || 0
+  const output = Number(meta.outputTokens) || 0
+  if (input > 0 || output > 0) {
+    parts.push(t('chat.message.tokenUsed', { input: input.toLocaleString('en-US'), output: output.toLocaleString('en-US') }))
+  }
+  return parts.join(' · ')
 })
 
 // Meta bar visibility. Assistant keeps its old gate (it owns the action bar);
@@ -848,7 +922,8 @@ const copyPayload = quotableText
 }
 
 /* ── Cancelled marker (shown after file changes banner) ── */
-.chat-cancelled-mark {
+.chat-cancelled-mark,
+.chat-stopped-mark {
   display: inline-block;
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
@@ -909,16 +984,19 @@ const copyPayload = quotableText
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
 }
 
-/* Chat Meta Bar — duration/time info + message actions.
-   Sits OUTSIDE the bubble (sibling of .msg-card), so it always renders on the
-   panel background and never inherits the user bubble's white-on-accent text. */
+/* Chat Meta Bar — the message's footer: duration/timestamp on the left, actions
+   on the right. Sits OUTSIDE the bubble (sibling of .msg-card), so it always
+   renders on the panel background and never inherits the user bubble's
+   white-on-accent text. The hairline turns it into a footer rather than a loose
+   row floating under the reply. */
 .chat-meta-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-top: var(--space-2);
     gap: var(--space-3);
-    padding: 0 var(--space-6);
+    padding: var(--space-2) var(--space-6) 0;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
     min-width: 0;
 }
 
@@ -930,15 +1008,90 @@ const copyPayload = quotableText
     display: flex;
     align-items: center;
     gap: var(--space-3);
+    /* Only the timing block lives here now (the consumption figures moved into
+       the bubble), but it stays a single nowrap unit so the "·" separator can
+       never be stranded at the start of a wrapped line. */
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
     font-size: var(--font-size-xs);
     color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
     min-width: 0;
     overflow: hidden;
 }
 
+/* ── This turn's consumption, inside the bubble ──
+   Sits at the bottom right of the reply it describes. The colour is a step
+   stronger than the row below the bubble: this text sits on the bubble's own
+   grey fill (and, with a wallpaper on, a translucent one), where the muted meta
+   tone used outside would wash out.
+
+   `user-select: none` is the point of no return for the "copy the reply" case:
+   without it, selecting a reply appends these figures to the copied text. */
+.chat-usage-inline {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+    font-size: var(--font-size-xs);
+    color: color-mix(in srgb, var(--text-secondary) 85%, transparent);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.chat-usage-tokens {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.chat-usage-tok {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(2 * var(--dp));
+}
+
+/* Direction markers are ICONS, not ↑/↓ text, so they render identically on
+   every platform instead of inheriting a font's arrow shape. */
+.chat-usage-arrow {
+    width: calc(12 * var(--dp));
+    height: calc(12 * var(--dp));
+    flex-shrink: 0;
+    opacity: 0.55;
+}
+
+/* Credit is the headline figure of the tail but deliberately carries NO colour
+   of its own: it inherits the row's muted meta tone, so the icons alone mark
+   where the consumption group starts instead of a tint competing with the
+   reply text. */
+.chat-usage-credit {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(2 * var(--dp));
+    font-weight: var(--font-weight-medium);
+}
+
+.chat-usage-credit svg {
+    width: calc(12 * var(--dp));
+    height: calc(12 * var(--dp));
+    flex-shrink: 0;
+}
+
 .chat-meta-sep::before {
     content: '·';
     margin-right: var(--space-3);
+}
+
+/* Duration + timestamp, kept together as ONE wrapping unit so the row only ever
+   breaks between the consumption group and this one. `white-space: nowrap`
+   stops the "·" separator from ending up alone at the start of a line. */
+.chat-meta-timing {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    white-space: nowrap;
 }
 
 .chat-meta-duration {

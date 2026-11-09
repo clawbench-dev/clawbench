@@ -79,6 +79,7 @@
 
           <MailCompose
             v-if="view === 'compose'"
+            :key="'compose-' + composeSeq"
             :account-id="activeAccountId"
             :initial="composeInitial"
             @close="closeCompose"
@@ -128,7 +129,8 @@ import { appLog } from '@/utils/appLog'
 import { useToast } from '@/composables/useToast'
 import { useUiScale } from '@/composables/useUiScale'
 import { DEFAULT_MAIL_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
-import { mailErrorMessage, type MailMessage, type MailReplyContext } from '@/utils/mailTypes'
+import { mailErrorMessage, type MailDraftFile, type MailMessage, type MailReplyContext } from '@/utils/mailTypes'
+import { takePendingMailCompose } from '@/composables/useMailCompose'
 
 const props = defineProps<{ active?: boolean }>()
 const emit = defineEmits<{ 'open-settings': [] }>()
@@ -147,7 +149,11 @@ const markingRead = ref(false)
 // Where the composer returns to: a reply started from the reader goes back to
 // that message, a new mail started from the folder bar goes back to the list.
 const composeReturn = ref<'list' | 'reader'>('list')
-const composeInitial = ref<Partial<MailReplyContext> & { body?: string; draftId?: number }>({})
+const composeInitial = ref<Partial<MailReplyContext> & { body?: string; attachments?: MailDraftFile[]; draftId?: number }>({})
+// Bumped whenever a composer request arrives from outside the panel. The view
+// is already 'compose' in that case, so the v-if alone would keep the mounted
+// component (and its half-typed draft) instead of showing the new message.
+const composeSeq = ref(0)
 
 // Pane minimums in design px. The split appears only when both fit: below that
 // the two views would each be too narrow to read, so they drill down instead.
@@ -240,6 +246,7 @@ async function loadAll(): Promise<void> {
 
 onMounted(async () => {
   window.addEventListener('clawbench-open-mail', handleOpenMail)
+  window.addEventListener('clawbench-compose-mail', handleComposeMail)
   measureWidth()
   if (typeof ResizeObserver !== 'undefined' && rootEl.value) {
     widthObserver = new ResizeObserver((entries) => {
@@ -253,10 +260,15 @@ onMounted(async () => {
   } finally {
     initialLoading.value = false
   }
+  // A composer requested from another panel may have been parked before this
+  // one mounted (the tab is lazily created). Consume it once the account list
+  // exists, otherwise the composer would open with no account to send from.
+  await consumePendingCompose()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-open-mail', handleOpenMail)
+  window.removeEventListener('clawbench-compose-mail', handleComposeMail)
   widthObserver?.disconnect()
   widthObserver = null
 })
@@ -343,6 +355,30 @@ function handleOpenMail(event: Event): void {
   if (detail?.messageId) openMessage(detail.messageId)
 }
 
+/**
+ * Open the composer from a request parked by another panel (分享中心's
+ * 「用邮件发送」). The subject and body arrive filled in; the recipient is left
+ * for the user, since nobody but them knows who the link is for.
+ */
+function handleComposeMail(): void {
+  void consumePendingCompose()
+}
+
+async function consumePendingCompose(): Promise<void> {
+  const req = takePendingMailCompose()
+  if (!req) return
+  // The account list may still be loading on a cold mount; without an account
+  // the composer would have nothing to send from.
+  if (accounts.value.length === 0) {
+    await loadAll()
+  }
+  if (accounts.value.length === 0) return
+  composeInitial.value = { subject: req.subject, body: req.body, attachments: req.attachments }
+  composeSeq.value += 1
+  composeReturn.value = 'list'
+  view.value = 'compose'
+}
+
 async function backToList(): Promise<void> {
   view.value = 'list'
   await list.reload()
@@ -386,6 +422,7 @@ useFeatureBackHandler(
 
 function openCompose(): void {
   composeInitial.value = {}
+  composeSeq.value += 1
   composeReturn.value = 'list'
   view.value = 'compose'
 }
@@ -400,6 +437,7 @@ async function startReply(mode: 'reply' | 'replyAll' | 'forward'): Promise<void>
       `/api/mail/messages/${readerMessageId.value}/reply-context?mode=${mode}`,
     )
     composeInitial.value = data.context
+    composeSeq.value += 1
     composeReturn.value = 'reader'
     view.value = 'compose'
   } catch (e) {

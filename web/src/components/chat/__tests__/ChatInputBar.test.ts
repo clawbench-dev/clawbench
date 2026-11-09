@@ -11,6 +11,7 @@ vi.setConfig({ testTimeout: 30_000 })
 import { nextTick, ref, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
+import ChatStopMenu from '../ChatStopMenu.vue'
 import { apiGet } from '@/utils/api'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import enLocale from '@/i18n/locales/en'
@@ -62,6 +63,20 @@ const i18n = createI18n({
           send: 'Send',
           confirmStop: 'Confirm stop',
           stopGenerating: 'Stop',
+          stopMenuOpen: 'Choose who to stop',
+          stopThisMember: 'Stop {name}',
+          confirmStopMember: 'Tap again to stop {name}',
+          stopMenuTitle: 'Speaking now ({count})',
+          stopMenuHint: 'Tap to stop',
+          stopMember: 'Stop',
+          stopMemberSpeaking: 'Speaking',
+          stopMemberSpokenFor: '{seconds}s in',
+          stopAll: 'Stop all',
+          stopAllHint: 'Tap again to confirm',
+          stopAllConfirm: 'Tap again to stop all',
+          stoppedMemberToast: 'Stopped {name}',
+          stopMemberFailed: 'Could not stop that member',
+          stopUnknownMember: 'Member',
         },
         attach: {
           dropToUpload: 'Drop to upload',
@@ -734,6 +749,19 @@ describe('ChatInputBar', () => {
     expect(strip.exists()).toBe(true)
     // The hint is muted so it cannot be mistaken for recognised speech.
     expect(strip.find('.free-dialog-text').classes()).toContain('is-hint')
+  })
+
+  it('says the reply can be interrupted while it is being generated', () => {
+    // Generation is interruptible too; a plain "thinking…" hint would leave
+    // the user waiting for the answer to finish before speaking.
+    const quiet = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogCanInterrupt: false })
+    const quietText = quiet.find('[data-role="free-dialog-strip"]').text()
+    expect(quietText).toContain('chat.actions.freeDialogThinking')
+    expect(quietText).not.toContain('Interruptible')
+
+    const armed = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogCanInterrupt: true })
+    expect(armed.find('[data-role="free-dialog-strip"]').text())
+      .toContain('chat.actions.freeDialogThinkingInterruptible')
   })
 
   it('renders no strip when the mode is off', () => {
@@ -1549,6 +1577,118 @@ describe('ChatInputBar', () => {
     // Second click: confirm
     await stopBtn.trigger('click')
     expect(wrapper.emitted('cancel')).toBeTruthy()
+  })
+
+  // ── Group chat: per-member stop menu ─────────────────────────────────────
+  // Replaces the old two-click confirm for group chats WITH somebody speaking:
+  // the first click opens the menu (that IS the deliberate step), and picking a
+  // member stops only that speech.
+  const speakingTargets = [
+    { id: 'm-1', name: '小北', backend: 'claude' },
+    { id: 'm-2', name: '阿岚', backend: 'claude' },
+  ]
+
+  it('group chat: one click opens the stop menu instead of priming a confirm', async () => {
+    const wrapper = mountBar({ loading: true, isGroupSession: true, stopTargets: speakingTargets })
+    await nextTick()
+    const menu = wrapper.findComponent(ChatStopMenu)
+    expect(menu.props('show')).toBe(false)
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    await nextTick()
+
+    expect(menu.props('show')).toBe(true)
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+  })
+
+  it('group chat: choosing a member stops only that member', async () => {
+    const wrapper = mountBar({ loading: true, isGroupSession: true, stopTargets: speakingTargets })
+    await nextTick()
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    await nextTick()
+
+    const rows = wrapper.findAll('[data-action="stop-member"]')
+    expect(rows.length).toBe(2)
+    await rows[0].trigger('click')
+
+    expect(wrapper.emitted('stop-member')?.[0]).toEqual(['m-1'])
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+    expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+  })
+
+  // One voice needs no menu — but it KEEPS the two-click confirm: with no menu
+  // there is no "I picked someone" step left, and one stray tap must not cut a
+  // reply.
+  it('group chat with exactly one speaker stops it on the SECOND click', async () => {
+    const wrapper = mountBar({
+      loading: true,
+      isGroupSession: true,
+      stopTargets: [{ id: 'm-1', name: '小北', backend: 'claude' }],
+    })
+    await nextTick()
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    expect(wrapper.emitted('stop-member')).toBeFalsy()
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    expect(wrapper.emitted('stop-member')?.[0]).toEqual(['m-1'])
+    expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+  })
+
+  // The confirmed click must stop the member the button was armed for, even if
+  // the speaker changed in between — and must never fall through to "cancel the
+  // whole turn" because the list now looks different.
+  it('group chat: a confirm aimed at a finished speaker does nothing', async () => {
+    const wrapper = mountBar({
+      loading: true,
+      isGroupSession: true,
+      stopTargets: [{ id: 'm-1', name: '小北', backend: 'claude' }],
+    })
+    await nextTick()
+    await wrapper.find('.chat-stop-btn').trigger('click') // arm for m-1
+
+    await wrapper.setProps({ stopTargets: [{ id: 'm-2', name: '阿岚', backend: 'claude' }] })
+    await nextTick()
+    await wrapper.find('.chat-stop-btn').trigger('click') // confirm
+
+    expect(wrapper.emitted('stop-member')).toBeFalsy()
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+  })
+
+  it('group chat: "stop all" still needs a second click', async () => {
+    const wrapper = mountBar({ loading: true, isGroupSession: true, stopTargets: speakingTargets })
+    await nextTick()
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    await nextTick()
+
+    await wrapper.find('[data-action="stop-all"]').trigger('click')
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+
+    await wrapper.find('[data-action="stop-all"]').trigger('click')
+    expect(wrapper.emitted('cancel')).toBeTruthy()
+  })
+
+  it('group chat with nobody speaking keeps the two-click whole-turn cancel', async () => {
+    const wrapper = mountBar({ loading: true, isGroupSession: true, stopTargets: [] })
+    await nextTick()
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    expect(wrapper.emitted('cancel')).toBeFalsy()
+    expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    expect(wrapper.emitted('cancel')).toBeTruthy()
+  })
+
+  it('single chat never opens the stop menu', async () => {
+    const wrapper = mountBar({ loading: true, isGroupSession: false, stopTargets: speakingTargets })
+    await nextTick()
+
+    await wrapper.find('.chat-stop-btn').trigger('click')
+    expect(wrapper.findComponent(ChatStopMenu).props('show')).toBe(false)
+    expect(wrapper.emitted('cancel')).toBeFalsy()
   })
 
   it('attach button click toggles attach drawer', async () => {

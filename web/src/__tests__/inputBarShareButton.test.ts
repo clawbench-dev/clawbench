@@ -45,22 +45,18 @@ describe('conversation share in the input action bar', () => {
   })
 
   /**
-   * The icon must match the session list's "shared conversations" button, so the
-   * two entry points to the same feature read as one. Asserting the literal tag
-   * (not just "some icon") is what stops a later edit from drifting back to the
-   * plain Share2 glyph.
+   * The glyph must be the conversation+share mark, not the generic Share2: this
+   * button shares a CONVERSATION, and the dock tab (which shares anything) uses
+   * Share2 — two different meanings, two different glyphs.
+   *
+   * The session-list counterpart is gone: managing existing shares moved into
+   * the 分享 tab, so there is no second header button to match any more.
    */
-  it('uses the same icon as the session list share button', () => {
+  it('uses the conversation+share glyph, not the generic one', () => {
     const src = readWebFile(BAR)
 
     expect(src).toMatch(/import\s*\{[^}]*\bMessageSquareShare\b[^}]*\}\s*from\s*'lucide-vue-next'/)
     expect(src, 'Share2 is the wrong glyph for this button').not.toMatch(/\bShare2\b/)
-
-    // …and the session list headers really do use that same icon, so this test
-    // fails if THEY change rather than silently passing on a stale assumption.
-    for (const host of ['src/components/session/SessionSidebar.vue', 'src/components/session/SessionDrawer.vue']) {
-      expect(readWebFile(host), `${host} must render MessageSquareShare`).toContain('<MessageSquareShare')
-    }
   })
 
   it('disables the share button when there is no session', () => {

@@ -89,6 +89,10 @@
             <FolderUp :size="16" />
             <span class="action-label">{{ t('actionLabels.uploadFolder') }}</span>
           </button>
+          <button class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
+            <SearchCode :size="16" />
+            <span class="action-label">{{ t('actionLabels.contentSearch') }}</span>
+          </button>
           <button class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
@@ -110,14 +114,6 @@
           <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
             <FolderSearch :size="16" />
             <span class="action-label">{{ t('jump.button') }}</span>
-          </button>
-          <button class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
-            <ScreenShare :size="16" />
-            <span class="action-label">{{ t('actionLabels.sharedFiles') }}</span>
-          </button>
-          <button class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
-            <SearchCode :size="16" />
-            <span class="action-label">{{ t('actionLabels.contentSearch') }}</span>
           </button>
         </ActionBar>
       </div>
@@ -441,6 +437,13 @@
             <ScreenShare :size="14" />
             {{ t('file.context.shareLink') }}
           </div>
+          <!-- One entry for both files and folders: a folder is packed into a
+               single zip server-side, so "send by mail" means the same thing
+               either way. -->
+          <div class="context-menu-item" data-menu-item="send-mail" @click.stop="doSendByMail">
+            <Mail :size="14" />
+            {{ t('file.context.sendByMail') }}
+          </div>
           <div class="context-menu-item" v-if="isNativeApp && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
             <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
@@ -489,7 +492,8 @@
       :current-dir="currentDir"
       @open-file="onContentSearchOpenFile"
     />
-    <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
+    <!-- Shared-file management lives in the 分享 tab now, so this component no
+         longer mounts a drawer; the toolbar button asks the host to switch. -->
     <!-- Public share link for the context-menu entry. Mounted here rather than
          in App.vue because the dialog is owned by the file manager's own menu:
          the target file is the menu entry, not necessarily the open file. -->
@@ -519,7 +523,7 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode, Mail } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -547,12 +551,12 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import ContentSearchDialog from './ContentSearchDialog.vue'
-import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import ShareLinkDialog from './ShareLinkDialog.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
 import { requestAttachmentTarget } from '@/composables/useConversationTarget.ts'
+import { sendPathsByMail } from '@/utils/mailAttach'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
@@ -794,10 +798,6 @@ async function handleJumpConfirm(path) {
   // and external ones stay absolute (browsed via /api/projects);
   // navToFileInManager handles normalization and the existence check.
   await navToFileInManager(path)
-}
-const sharedDrawerRef = ref(null)
-function onSharedFileOpen(path) {
-  emit('selectFile', path)
 }
 // Public share-link dialog, driven from the entry context menu.
 const shareDialogOpen = ref(false)
@@ -2443,6 +2443,27 @@ function doShareLink() {
         isDir: entry.type === 'dir',
     }
     shareDialogOpen.value = true
+}
+
+/**
+ * Send the right-clicked entry by mail.
+ *
+ * A folder is packed into one zip by the server, so both kinds take the same
+ * path: stage the path, then open the composer with it attached. Nothing is
+ * sent yet — the user still picks the recipient.
+ */
+async function doSendByMail() {
+    const entry = ctxMenu.entry
+    if (!entry) return
+    const path = enterPathOf(entry)
+    const name = entry.name || path.split('/').pop() || ''
+    closeCtxMenu()
+    const res = await sendPathsByMail([path], entry.type === 'dir' ? name + '.zip' : name)
+    if (res.outcome === 'no-mailbox') {
+        if (toast) toast.show(t('file.toast.mailNotConfigured'), { icon: 'warning', type: 'error', duration: 3000 })
+    } else if (res.outcome === 'failed') {
+        if (toast) toast.show(res.error || t('file.toast.mailSendFailed'), { icon: 'error', type: 'error', duration: 3000 })
+    }
 }
 
 function doShareExternal() {

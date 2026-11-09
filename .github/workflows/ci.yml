@@ -262,8 +262,75 @@ jobs:
         run: npm run typecheck
 
   coverage-frontend:
+    # Split into shards like the E2E job, for the same reason: a single runner
+    # needs ~16 min for the whole suite (measured: 834 s of test time plus ~2 min
+    # of installs), which made this the pipeline's critical path as soon as E2E
+    # was parallelised. Shards run slices of the suite; `coverage-frontend-gate`
+    # merges their reports and enforces both tiers over the combined result.
+    #
+    # Vitest's `--shard=i/n` partitions test FILES (verified against
+    # `vitest list --filesOnly`), so every case of a file runs on one machine —
+    # which the specs depend on, several of them being order-sensitive.
+    name: Coverage (Frontend, ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          # Two lockfiles feed this job (see the desktop install below).
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install desktop dependencies
+        # The ROOT vitest run collects `desktop/**/*.test.ts` too (vitest.config.ts
+        # has no `desktop` entry in its exclude list), and those specs import
+        # `electron` at module scope. Without this install 14 of them die at
+        # import with "Failed to resolve import 'electron'" — which used to be
+        # invisible because the coverage script treated "coverage data exists"
+        # as proof the run was fine (fixed in scripts/check-frontend-coverage.sh).
+        #
+        # `--ignore-scripts` skips electron's ~100 MB binary postinstall: the
+        # specs only need the module to resolve, and this job never launches
+        # Electron. Same trick as `typecheck-desktop`.
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+
+      - name: Run coverage slice
+        # A shard does NOT gate: it sees part of the suite, so both tiers would
+        # be measured on a partial picture (Tier 2 would call every changed file
+        # this shard did not touch "0%"). The script exits after writing the slice.
+        env:
+          VITEST_TIMEOUT_S: 1800
+        run: ./scripts/check-frontend-coverage.sh --shard=${{ matrix.shard }}/3
+
+      - name: Upload this shard's coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-shard-${{ matrix.shard }}
+          path: coverage-shards/${{ matrix.shard }}/
+          retention-days: 7
+
+  coverage-frontend-gate:
     name: Coverage Gate (Frontend)
     runs-on: ubuntu-latest
+    needs: coverage-frontend
+    # Run even if a shard failed, so the gate reports the real reason (a test
+    # failure in a shard) instead of being skipped and reading as "no opinion".
+    if: always()
     steps:
       - uses: actions/checkout@v4
         with:
@@ -285,20 +352,23 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
+        # Only the merge needs deps (istanbul-lib-coverage); the tests already
+        # ran. Root-only: this job never collects desktop specs.
         run: npm ci
 
-      - name: Run coverage gate check
-        # V8 coverage roughly triples the suite's wall clock, and the suite has
-        # grown past what the default 20-minute watchdog allows on a 2-core
-        # runner: the run was killed mid-suite and never wrote
-        # coverage-summary.json, which reads as a gate failure. 45 minutes
-        # leaves room for the slowest runner without hiding a real hang (the
-        # script still kills workers that stop making CPU progress).
-        env:
-          VITEST_TIMEOUT_S: 2700
+      - name: Download shard coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frontend-coverage-shard-*
+          path: coverage-shards/
+
+      - name: Merge shards and enforce the gate
+        # download-artifact puts each match in coverage-shards/<artifact name>/,
+        # i.e. coverage-shards/frontend-coverage-shard-<i>/.
         run: |
           set +e
-          ./scripts/check-frontend-coverage.sh
+          ./scripts/check-frontend-coverage.sh --skip-test \
+            --merge-shards=coverage-shards/frontend-coverage-shard-1,coverage-shards/frontend-coverage-shard-2,coverage-shards/frontend-coverage-shard-3
           exit_code=$?
           set -e
           if [ $exit_code -eq 2 ]; then
@@ -367,7 +437,9 @@ jobs:
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
-    needs: [lint-frontend, typecheck-frontend, coverage-frontend]
+    # Depends on the GATE, not the shard jobs: a shard only produces a slice,
+    # and the gate is what decides whether the coverage requirement was met.
+    needs: [lint-frontend, typecheck-frontend, coverage-frontend-gate]
     steps:
       - uses: actions/checkout@v4
 
@@ -448,12 +520,24 @@ jobs:
   # is removed and it runs on each PR. It is skipped on `push`: the same commit
   # is already covered by the `pull_request` event.
   #
-  # ONE MATRIX JOB PER BROWSER, run in parallel. The three browsers used to run
-  # serially inside a single job (~33 min of test time + ~3 min of shared setup),
-  # which made the job's wall clock exceed the auto-merge wait window and forced
-  # a manual label re-paste on every merge. Splitting by browser makes the wall
-  # clock ~one browser (~13 min incl. its own setup) instead of three. The cost
-  # is duplicated setup (~3 min per job); the payoff is a merge that auto-completes.
+  # ONE MATRIX JOB PER BROWSER AND SHARD, run in parallel. The three browsers
+  # used to run serially inside a single job (~33 min of test time + ~3 min of
+  # shared setup), which made the job's wall clock exceed the auto-merge wait
+  # window and forced a manual label re-paste on every merge. Splitting by
+  # browser made it ~one browser, but that is still 21–27 min and remained the
+  # critical path of the whole pipeline (every other job finished inside 21).
+  #
+  # Each browser is therefore split into SHARDS parallel jobs. Playwright's
+  # `--shard=i/n` partitions whole test FILES (measured: 92/92/91 tests for
+  # n=3), which is what makes this safe here — 32 spec files use
+  # `test.describe.serial` and depend on running their own cases in order, and
+  # no serial file is ever split across shards (verified by
+  # e2e/specs/../scripts guard: see scripts/__tests__/ciSharding.test.ts).
+  #
+  # Cost: each shard repeats setup (~3 min: npm ci, browser install, two builds,
+  # two go builds). On a public repo Actions minutes are free, so the only real
+  # cost is runner contention. Payoff: the critical path drops from ~27 min to
+  # ~27/SHARDS + setup.
   #
   # `continue-on-error: true` (matching `android-e2e`) keeps the *workflow run*
   # from turning red when the suite flakes. It is NOT a free pass, though: the
@@ -469,16 +553,17 @@ jobs:
   # <spec>`); let CI cover the full matrix.
   # --------------------------------------------------------------------------
   e2e:
-    name: E2E Tests (Playwright, ${{ matrix.label }})
+    name: E2E Tests (${{ matrix.label }} ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     continue-on-error: true
-    # A hang must fail rather than burn the 6-hour default. A single browser
-    # measures ~13 min; the margin covers a cold Playwright browser install.
+    # A hang must fail rather than burn the 6-hour default. One shard measures
+    # ~7 min of test time; the margin covers a cold Playwright browser install
+    # plus the retry pass a flaky spec can trigger.
     timeout-minutes: 60
     strategy:
-      # Let every browser finish: a failure in one must not cancel the others,
-      # or a single flake would hide whether the other two are also broken.
+      # Let every shard finish: a failure in one must not cancel the others, or
+      # a single flake would hide whether the rest are also broken.
       fail-fast: false
       matrix:
         # `project` must match the Playwright project names in
@@ -486,16 +571,31 @@ jobs:
         # the coverage project is called `chromium-coverage` because
         # coverage.fixture.ts keys V8 collection on that exact name. `browser`
         # is the name `playwright install` wants (note: not `chromium-coverage`).
+        #
+        # `shard` is the list of shard indexes. It is written out literally
+        # because `strategy.matrix` cannot read `env` (that context is not
+        # available while the matrix is expanded). The DENOMINATOR in the
+        # `--shard=i/n` argument below must equal this list's length;
+        # scripts/__tests__/ciSharding.test.ts fails the build if they drift.
+        #
+        # Written out explicitly rather than as `include:` + a `shard:` list.
+        # Mixing the two is legal but was NOT expanded the way it reads: the
+        # first run of this job (PR #652, run 42554466700) created only the
+        # three webkit jobs and silently dropped chromium and firefox — 6 of the
+        # 9 combinations never ran, and nothing went red to say so, because a
+        # job that is never created is not a failure. An explicit list has no
+        # such ambiguity, and `scripts/__tests__/ciSharding.test.ts` checks that
+        # the set of labels and the shard indexes are both complete.
         include:
-          - project: chromium-coverage
-            label: chromium
-            browser: chromium
-          - project: firefox
-            label: firefox
-            browser: firefox
-          - project: webkit
-            label: webkit
-            browser: webkit
+          - { project: chromium-coverage, label: chromium, browser: chromium, shard: 1 }
+          - { project: chromium-coverage, label: chromium, browser: chromium, shard: 2 }
+          - { project: chromium-coverage, label: chromium, browser: chromium, shard: 3 }
+          - { project: firefox, label: firefox, browser: firefox, shard: 1 }
+          - { project: firefox, label: firefox, browser: firefox, shard: 2 }
+          - { project: firefox, label: firefox, browser: firefox, shard: 3 }
+          - { project: webkit, label: webkit, browser: webkit, shard: 1 }
+          - { project: webkit, label: webkit, browser: webkit, shard: 2 }
+          - { project: webkit, label: webkit, browser: webkit, shard: 3 }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -552,15 +652,29 @@ jobs:
         run: go build -o acp-mock ./cmd/acp-mock
 
       - name: Run E2E tests
-        run: npx playwright test --config e2e/playwright.config.ts --project=${{ matrix.project }}
+        # `--shard=i/n` partitions whole test FILES, not individual cases. That
+        # matters here: 32 specs use `test.describe.serial` and break if their
+        # cases run on different machines. Verified for 2/3/4 shards — no serial
+        # file is ever split (see scripts/__tests__/ciSharding.test.ts).
+        run: npx playwright test --config e2e/playwright.config.ts --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
         env:
           E2E_PORT: '20100'
           E2E_PASSWORD: 'e2e-test-password'
 
       # Coverage is collected ONLY on the chromium project (see
-      # e2e/fixtures/coverage.fixture.ts), so the other two jobs would generate
-      # an empty .nyc_output and just print the script's "no data" warning.
-      # Gate the report/upload on chromium to keep the other jobs' logs clean.
+      # e2e/fixtures/coverage.fixture.ts), so the other two browsers would
+      # generate an empty .nyc_output and just print the script's "no data"
+      # warning. Gate the report/upload on chromium to keep the other logs clean.
+      #
+      # This script is REPORT-ONLY (no threshold), so running it per shard is
+      # correct rather than a gate that could fail on a partial picture: each
+      # shard reports the files its own cases exercised, and the three uploaded
+      # artifacts together are the full picture. Merging them into one report is
+      # a separate step and nothing consumes it yet.
+      #
+      # Artifact names carry the shard index: three chromium shards upload at the
+      # same time, and upload-artifact refuses to overwrite an existing artifact
+      # (`overwrite: false`), so a shared name would fail two of the three.
       - name: Generate E2E coverage report
         if: always() && matrix.project == 'chromium-coverage'
         run: ./scripts/check-e2e-coverage.sh
@@ -569,7 +683,7 @@ jobs:
         if: always() && matrix.project == 'chromium-coverage'
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-coverage
+          name: e2e-coverage-shard-${{ matrix.shard }}
           path: coverage/e2e/
           retention-days: 90
 
@@ -577,7 +691,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.label }}
+          name: playwright-report-${{ matrix.label }}-${{ matrix.shard }}
           path: playwright-report/
           retention-days: 30
 
@@ -585,7 +699,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results-${{ matrix.label }}
+          name: playwright-results-${{ matrix.label }}-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
 

@@ -42,6 +42,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
     t: (key: string, params?: any) => {
       const map: Record<string, string> = {
         'settings.items.agentPreferredModel': 'Preferred Model',
+        'settings.items.agentModelsGroupProvider': 'Model provider',
+        'settings.items.agentModelsGroupAgent': 'Agent defaults',
         'settings.items.agentPreferredThinkingEffort': 'Thinking Effort',
         'settings.items.agentTransport': 'Protocol',
         'settings.items.agentAutoApprove': 'Auto-Approve by Default',
@@ -779,6 +781,58 @@ describe('SettingsAgentDetail', () => {
       // is passed through verbatim — ModelRow does the display formatting.
       expect(options[0].value).toBe('["deepseek-official","deepseek-v4-pro"]')
       expect(options[0].modelId).toBe('["deepseek-official","deepseek-v4-pro"]')
+    })
+
+    it('groups provider models under their own heading, agent models under theirs', () => {
+      // The list mixes two sources. Without the split the user cannot tell
+      // whether a model comes from the provider they just bound or from the
+      // agent's own catalog (issue #651).
+      const wrapper = mountDetail({
+        providerId: 7,
+        models: [
+          { id: 'clawbench-openai/glm-5.3-flash', name: 'glm-5.3-flash', default: true },
+          { id: 'clawbench-openai/gpt-6', name: 'gpt-6' },
+        ],
+        providerModels: [{ id: 'clawbench-openai/glm-5.3-flash', name: 'glm-5.3-flash', default: true }],
+      })
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Preferred Model')
+      expect(item).toBeTruthy()
+
+      const options = item!.props('options') as Array<{ value: string; groupKey?: string }>
+      const byValue = new Map(options.map(o => [o.value, o.groupKey]))
+      expect(byValue.get('clawbench-openai/glm-5.3-flash')).toBe('settings.items.agentModelsGroupProvider')
+      expect(byValue.get('clawbench-openai/gpt-6')).toBe('settings.items.agentModelsGroupAgent')
+    })
+
+    // A provider model missing from `models` is exactly what the pre-fix server
+    // produced: the picker would then group everything under "agent defaults"
+    // and the provider entry would not be selectable at all.
+    it('groups every provider model even if it is absent from models', () => {
+      const wrapper = mountDetail({
+        providerId: 7,
+        models: [{ id: 'clawbench-openai/gpt-6', name: 'gpt-6', default: true }],
+        providerModels: [{ id: 'clawbench-openai/glm-5.3-flash', name: 'glm-5.3-flash' }],
+      })
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Preferred Model')
+      const options = item!.props('options') as Array<{ value: string; groupKey?: string }>
+      // The provider entry is what the user came to pick; it must be offered.
+      const provider = options.find(o => o.value === 'clawbench-openai/glm-5.3-flash')
+      expect(provider).toBeTruthy()
+      expect(provider!.groupKey).toBe('settings.items.agentModelsGroupProvider')
+    })
+
+    it('leaves the list ungrouped when no provider models are bound', () => {
+      // Grouping only makes sense when there are two sources; a single flat list
+      // must keep its previous look (no stray headings).
+      const wrapper = mountDetail({
+        models: [{ id: 'cli-a', name: 'CLI A', default: true }],
+      })
+      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+        .find((it: any) => it.props('label') === 'Preferred Model')
+      const options = item!.props('options') as Array<{ groupKey?: string }>
+      expect(options[0].groupKey).toBeUndefined()
     })
   })
 

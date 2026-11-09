@@ -168,6 +168,13 @@ type Agent struct {
 	// turn keeps leaving the model to the agent until ACP confirms a list.
 	CatalogModels []AgentModel `json:"catalogModels,omitempty"`
 
+	// ProviderModels is a runtime-only list of the bound provider's curated
+	// models, already rendered in the form this backend accepts (see
+	// ProviderModelIDFor). The settings picker groups them under their own
+	// heading so the user can tell a model's source apart (issue #651); they are
+	// also present in Models, which is the list the turn resolves against.
+	ProviderModels []AgentModel `json:"providerModels,omitempty"`
+
 	// ProviderConfigBackend is true when the backend receives its provider by
 	// editing a CLI config file (codex) instead of environment variables. The
 	// settings UI asks for explicit consent before such a binding, and the
@@ -193,20 +200,63 @@ type Agent struct {
 // endpoint is known to serve, so a preference outside it would 404. Without a
 // curated list the priority is the old one:
 // PreferredModel > first model with Default:true > first model in list > "".
+//
+// Ids resolved from the provider go through ProviderModelIDFor: some backends
+// (opencode) address a model as "<provider>/<model>", so the bare id the
+// provider stores would be rejected on the first turn (issue #651).
+//
+// The preference is checked in BOTH forms. The picker hands back the namespaced
+// id while the provider may store either form (a gateway that namespaces its own
+// ids, like "openai/gpt-4o", stores the namespaced one) — comparing a single
+// form silently ignores the user's pick and falls back to the provider default.
 func (a *Agent) DefaultModelID() string {
 	if p := a.Provider(); p != nil && len(p.Models) > 0 {
-		if a.PreferredModel != "" && containsString(p.Models, a.PreferredModel) {
-			return a.PreferredModel
+		if pref := a.PreferredModel; pref != "" && a.providerAcceptsPin(p, pref) {
+			return ProviderModelIDFor(a.Backend, p.Protocol, pref)
 		}
 		if p.DefaultModel != "" {
-			return p.DefaultModel
+			return ProviderModelIDFor(a.Backend, p.Protocol, p.DefaultModel)
 		}
-		return p.Models[0]
+		return ProviderModelIDFor(a.Backend, p.Protocol, p.Models[0])
+	}
+	// An uncurated provider still has to honor a pin: the "custom…" escape
+	// hatch exists exactly for an endpoint that publishes no model list.
+	if p := a.Provider(); p != nil && a.PreferredModel != "" && a.providerAcceptsPin(p, a.PreferredModel) {
+		return ProviderModelIDFor(a.Backend, p.Protocol, a.PreferredModel)
 	}
 	if a.PreferredModel != "" {
 		return a.PreferredModel
 	}
 	return a.BaseModelID()
+}
+
+// providerAcceptsPin reports whether a preferred model should be used as-is
+// rather than falling back to the provider default.
+//
+// In the curated list (either form) is the normal case. Outside it, the pin is
+// honored only for a backend that DECLARES the pin to itself (see
+// withInlineConfig): that declaration is what makes an unlisted id resolvable,
+// and the escape hatch exists precisely so the user can type one. For any other
+// backend an unlisted pin is a stale or mistyped value, and the provider default
+// is the safer answer.
+func (a *Agent) providerAcceptsPin(p *Provider, pref string) bool {
+	if containsString(p.Models, pref) {
+		return true
+	}
+	if containsString(p.Models, ProviderBareModelID(a.Backend, p.Protocol, pref)) {
+		return true
+	}
+	spec, ok := providerEnvTable[a.Backend]
+	return ok && spec.InlineConfigEnv != "" && providerEnvSupportsProtocol(spec, p.Protocol)
+}
+
+// providerEnvSupportsProtocol reports whether the backend has a slot for the
+// protocol, so declaring the pin is actually possible.
+func providerEnvSupportsProtocol(spec ProviderEnvSpec, protocol string) bool {
+	if _, ok := spec.InlineConfigProviderIDs[protocol]; ok {
+		return true
+	}
+	return protocolEnvFor(spec, protocol) != nil
 }
 
 // BaseModelID returns the base default model ID without considering user preference.

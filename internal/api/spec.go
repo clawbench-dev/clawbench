@@ -72,6 +72,22 @@ type operation struct {
 	// Security is a pointer so an explicit `security: []` (public endpoint) is
 	// distinguishable from an absent key (inherits the global requirement).
 	Security *[]map[string][]string `yaml:"security"`
+	// PromptNote is an `x-` extension: the note to render when this operation
+	// is quoted in a built-in slash command's prompt fragment, INSTEAD of the
+	// full `description`.
+	//
+	// It exists because the two audiences want different things from the same
+	// endpoint. `description` documents the RESPONSE contract for whoever
+	// renders it (the model picker's merge rules, the ACP-confirmation
+	// placeholder rule, …) — hundreds of lines the AI never acts on when it is
+	// just looking up an agent id. Rendering the whole thing into every command
+	// that happens to touch the endpoint is what pushed three command budgets
+	// over their limits. Splitting the text is not an option (one shared block
+	// for GET and PATCH); overriding it per prompt is.
+	//
+	// Absent → the full description is rendered, which is right for endpoints
+	// whose description IS the contract the AI must follow.
+	PromptNote string `yaml:"x-prompt-note"`
 }
 
 type parameter struct {
@@ -306,13 +322,20 @@ func endpointsForOperations(ids []string, requiredTags map[string]string) ([]end
 // buildEndpoint flattens one operation into its renderable form, resolving
 // component parameter references and extracting request-body field names.
 func buildEndpoint(s *spec, method, path string, op *operation) endpoint {
+	desc := strings.TrimSpace(op.Description)
+	// The prompt fragment is a different audience from the spec reader: when an
+	// endpoint carries an explicit prompt note, that is the whole note the AI
+	// sees. See operation.PromptNote for why the two cannot share one string.
+	if note := strings.TrimSpace(op.PromptNote); note != "" {
+		desc = note
+	}
 	ep := endpoint{
 		OperationID: op.OperationID,
 		Tags:        op.Tags,
 		Method:      strings.ToUpper(method),
 		Path:        path,
 		Summary:     strings.TrimSpace(op.Summary),
-		Description: strings.TrimSpace(op.Description),
+		Description: desc,
 	}
 	for _, raw := range op.Parameters {
 		p := s.resolve(raw)

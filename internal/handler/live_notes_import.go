@@ -44,9 +44,9 @@ const (
 	// recording is well under this; the cap only stops a hostile or mistaken
 	// upload from filling the disk before ffmpeg ever sees it.
 	liveNoteImportMaxBytes = int64(4) << 30
-	// liveNoteImportTimeout bounds the conversion. Audio-only transcoding runs
-	// far faster than realtime, so this is generous even for a feature film.
-	liveNoteImportTimeout = 30 * time.Minute
+	// liveNoteImportProbeTimeout bounds the header read that sizes the
+	// conversion budget. Reading a duration is a header parse, not a decode.
+	liveNoteImportProbeTimeout = 30 * time.Second
 	// liveNoteImportFieldMax bounds one plain form field.
 	liveNoteImportFieldMax = 4 << 10
 	// liveNoteImportTempPrefix names the scratch copy of the upload. It lives in
@@ -193,7 +193,7 @@ func ServeLiveNotesImport(w http.ResponseWriter, r *http.Request) {
 	if recErr != nil {
 		slog.Warn("live notes: import record read failed", "err", recErr)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, shareSessionSegment: record})
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, liveNoteSessionKey: record})
 }
 
 // receiveLiveNoteImport streams the multipart body to a scratch file.
@@ -375,7 +375,15 @@ func runLiveNoteImport(
 ) {
 	defer cleanupImportFile(cleanupPath)
 
-	ctx, cancel := context.WithTimeout(context.Background(), liveNoteImportTimeout)
+	// The conversion budget scales with the source: pulling the audio out of a
+	// three-hour screen recording is not the same job as a ten-second clip, and
+	// a fixed ceiling either cuts the long one off or is pointless for the
+	// short one. The header read is cheap and runs under its own short budget,
+	// so a source ffprobe cannot parse still gets the floor.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), liveNoteImportProbeTimeout)
+	sourceDurationMS := probeDurationMS(probeCtx, source)
+	probeCancel()
+	ctx, cancel := context.WithTimeout(context.Background(), liveNoteDurationBudget(sourceDurationMS))
 	defer cancel()
 
 	dst := filepath.Join(paths.Audio, service.LiveNoteMeetingAudioFile)
