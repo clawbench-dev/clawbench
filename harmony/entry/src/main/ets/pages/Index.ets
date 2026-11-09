@@ -85,6 +85,7 @@ struct Index {
   private activePassword: string = '';
   private volumeKeyMode: boolean = false;
   private notificationEpoch: number = 0;
+  private pushKitGuidanceShown: boolean = false;
   private shareImport?: ShareImportService;
   private shareDialog: boolean = false;
   private tunnels?: TunnelService;
@@ -874,9 +875,16 @@ struct Index {
       case 'showSelectionMenu':
         await this.showSelectionMenu(selectionText(arg(0)), current);
         break;
-      case 'setNativePushEnabled':
-        await this.notifications.setEnabled(request.args[0] === 'true');
+      case 'setNativePushEnabled': {
+        const enable = request.args[0] === 'true';
+        // Explain before the system permission request: setEnabled persists the
+        // preference first and then throws when the OS denies authorization.
+        if (this.notifications.shouldExplainPushKit(enable)) {
+          await this.showPushKitGuidance();
+        }
+        await this.notifications.setEnabled(enable);
         break;
+      }
       case 'updateLastSeenEventId':
         await this.notifications.updateLastSeenEventId(arg(0));
         break;
@@ -1010,6 +1018,23 @@ struct Index {
         this.emitNativeEvent('clawbench-selection-action',
           JSON.stringify({ action: result.index === 1 ? 'quote' : 'comment' }));
       }
+    } catch (_) {}
+  }
+
+  private async showPushKitGuidance(): Promise<void> {
+    if (this.pushKitGuidanceShown) {
+      return;
+    }
+    this.pushKitGuidanceShown = true;
+    const en = this.store.language === 'en';
+    try {
+      await this.getUIContext().getPromptAction().showDialog({
+        title: en ? 'Push delivery on HarmonyOS' : '鸿蒙端推送方式',
+        message: en
+          ? 'This client does not integrate Push Kit, so system-level push is unavailable. Native push only works while the app process is running; when HarmonyOS freezes or closes the app, notifications are not delivered. To receive alerts while the app is not running, choose DingTalk, Feishu, or WeChat push in Settings > Notifications.'
+          : '本客户端未接入 Push Kit，无法提供系统级推送。原生推送仅在应用进程运行时有效，应用被 HarmonyOS 冻结或结束后不会收到通知。如需在应用未运行时接收提醒，请在“设置 > 推送通知”中改用钉钉、飞书或微信推送。',
+        buttons: [{ text: en ? 'Got it' : '知道了', color: '#2676D9' }]
+      });
     } catch (_) {}
   }
 

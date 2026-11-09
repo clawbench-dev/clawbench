@@ -1,5 +1,69 @@
 # 维护记录
 
+## 2026-11-09：0.2.9 修复关于页动态文案更新并重建 HAP
+
+- 修复“关于”页版本描述的动态更新：Vue 通过设置 `.settings-item__desc.textContent` 会替换其文本节点；bootstrap 观察器现在只在新文本节点直接属于 `[data-settings-key="appVersion"] .settings-item__desc` 时安排精确改写。未扩大到其他工作台内容。
+- 回归覆盖原文本节点就地更新、`textContent` 替换创建新节点、迟到插入的关于节点，以及聊天、代码预览、可编辑区、textarea、script/JSON 和 Android 下载入口维持原文。根目录 `npm --prefix harmony test`：**290/290** 通过。
+- 版本为 `0.2.9 / 209`，bundleName `com.clawbench.harmony`；HAP 内核对 `versionName`、`versionCode`、bundleName、`phone` / `tablet` / `2in1` 设备类型及 bootstrap 资源。包内未包含 `Agents.md` 或原始上游源码目录。
+- `./scripts/build-harmonyos.ps1` 通过，完成 ohpm 安装检查和 DevEco Studio 26.0 debug ArkTS / HAP 构建；构建保持未签名。产物 `bulid-hap/ClawBench-0.2.9-unsigned.hap`，8,557,139 字节，SHA-256 `d58ea2a65dea569688168ebd017feaf5b598b689614fff587b9a249f916e718d`。
+- 本机 `hdc list targets` 未发现在线设备；本轮未安装、启动或新增真机验收结果。此前用户确认的真机项目仍对应用户实际安装的签名包，不能据本地未签名包推定其字节一致。
+- 校正会议听记验收边界：上游 `v0.136.0` 的 `live_notes_stream.go` 在 provider 无流式接口时缓冲 PCM 并转为 WAV，再调用非流式 `Transcribe`。因此测试服务器 `stt.streaming=false` 不能单独证明会议听记不可用；实际 provider 和识别结果仍未核验，实时听记与回退均需设备端到端验收。本轮没有访问或修改测试服务器。
+- debug HAP 含源码映射并保留调试构建信息，不作为公开分发包；公开发布前需另行构建 release 并复核符号、路径及签名。本轮未推送远端、未发布正式安装包。
+
+## 2026-11-09：供应商模型价格专项核验（issue #643）
+
+- 上游来源：`v0.136.0` / `06a43010` 已包含模型价格；相关提交为 `7ca642a`（模型选择器显示每百万 token 单价）和 `2e7f70c`（提供商模型列表也显示单价）。本地参考源码、测试服务器和 HAP 加载的共享前端处于同一版本线。
+- 接口证据：`/api/providers/2/models` 返回 `prices`，例如 `claude-opus-5-5` 为 `$4 / $20`、`claude-sonnet-5-5` 为 `$2 / $10`、`gpt-oss-120b` 为 `~$0.15 / $0.6`（`approx:true`）；`/api/agents` 的模型项也含 `price` 字段。
+- 页面证据：设置 > 模型提供商 > 管理模型显示价格标签；设置 > 智能体 > 首选模型使用 `ModelRow`，tooltip 为“每百万 token 的美元单价（输入 / 输出）”，参考价 tooltip 为“参考价：来自第三方渠道，不是该智能体官方报价”。桌面浏览器截图与 DOM 文本均已留存为临时验收证据。
+- 可编辑项与保存回读：价格只读、不落库；可编辑的是提供商名称 / 协议 / 端点 / 认证 / API Key、模型勾选和默认模型。使用隔离 provider 测了两次：创建后 GET 字段一致，`/api/providers/{id}/models` 返回已选模型的 `input/output` 价格；PATCH 模型与默认模型后 GET 回读一致；两次均 DELETE 204 清理，测试后 `/api/providers` 只剩原有 1 条。
+- 费用统计关联：`/api/usage/stats?dims=model&metrics=cost` 返回每模型 `costUsd`，当前测试数据为 0；源码确认费用来自 `chat_metadata` 的累计成本记录，不由目录价格回算或补齐。价格仅用于选择器展示，二者按模型 id 关联但不互相写回。
+- 结论：**已实现且验证通过（服务端 + 共享网页）**；鸿蒙原生宿主无缺口，未修改运行时代码，也未重新构建。ArkWeb 上的实际渲染仍需随设备矩阵真机确认。交付包继续为 0.2.8（`bulid-hap/ClawBench-0.2.8-unsigned.hap`，8,556,757 字节，SHA-256 `4ffe9c7a6ebffd4aabc5aeddcae566e13824ed79037e212a11830c48e01bc3c2`）。
+- 未修改测试服务器配置，未触碰现有供应商 id=2 的密钥或模型；服务器升级不在本轮范围。
+
+## 2026-11-09：0.2.8 修复文案替换范围、推送说明时序并补浏览器验收
+
+- 修复文案替换范围：`harmony-bootstrap.js` 不再遍历整个工作台，只查询 `[data-settings-key="appVersion"] .settings-item__desc`，仅在该说明节点新增或文本更新时改写。聊天、代码预览、可编辑区、textarea、script/JSON 和其他 Android 下载入口保持原样；新增 jsdom 回归覆盖以上区外场景、动态重绘和英文文案。
+- 修复推送说明时序：`NativeEventService.shouldExplainPushKit()` 在 `setEnabled()` 之前判断，Index 先显示说明再请求系统授权。权限被拒时说明不会漏掉；`setEnabled` 仍先保存偏好再抛错，保留原有 WS / 补拉和重试行为。新增“首次拒绝仍能显示”“启动偏好未知时不误弹”的定向测试。
+- 浏览器侧补验共享网页（桌面浏览器，非鸿蒙设备）：登录测试服务器后，聊天页正确渲染既有会话、工具卡片和主持人内容；会话侧栏显示 7/15 条；文件管理器列出项目目录，双击 README.md 打开预览；任务页显示“暂无任务”；设置“关于”页显示服务端 `v0.136.0`。`appVersion` 行在浏览器模式按前端规则隐藏，因此用真实浏览器 DOM 注入 bootstrap 验证：关于节点被改写，聊天和代码预览保持 Android 原文。
+- 区分结论：以上浏览器结果只证明共享网页可用，不代表 ArkWeb 布局、原生桥、文件选择器、下载或通知能力通过。平板、投屏、既有会议保留用户验收；新版连续语音 / 实时听记尚无设备端到端证据。会议听记代码有非流式 STT 回退路径，`stt.streaming=false` 不足以判断可用性，实际 provider 与识别结果仍待核实；更新检测等待官方鸿蒙 release；二合一缺设备。
+- 版本升至 `0.2.8 / 208`，同步 `AppInfo.ts`、`AppScope/app.json5`。`npm --prefix harmony test` 290 项通过；DevEco Studio 26.0 未签名 debug 构建成功，`module.json` 核对 `versionName=0.2.8`、`versionCode=208`、`bundleName=com.clawbench.harmony`。
+- 交付产物：`bulid-hap/ClawBench-0.2.8-unsigned.hap`，8,556,757 字节，SHA-256 `4ffe9c7a6ebffd4aabc5aeddcae566e13824ed79037e212a11830c48e01bc3c2`。未签名、未安装；未推送远端。
+- 分发限制：当前为 debug 构建，原生库包含本机绝对构建路径和源码映射，不适合公开分发；公开前应改用 release 构建并复核路径、符号与签名。未签名包不能用于普通已签名设备的覆盖安装或升级验证。
+
+## 2026-11-09：测试服务器只读补验与 H06–H20 验收边界
+
+- 测试服务器的公开 `/api/health` 返回 `{"app":"clawbench","version":"v0.136.0","protocol":1}`；使用维护约定中的测试账号登录后仅执行 GET 读取，没有写配置、发消息、改文件、跑 Git 写操作或触发任务。
+- 服务器配置核对：`push_mode=wechat`；`stt.streaming=false`，但已包含 `mic_echo_cancel`、`mic_noise_suppress`、`mic_auto_gain`、`mic_band_filter`、`voice_gate`、`trigger_words` 等新版音频处理字段；`meeting.auto_minutes=true`，`meeting.proofread=true`；`/api/live-share/notes/sessions` 返回 200 且 `import.available=true`，说明会议听记入口由服务器提供；`terminal.enabled=true` 但 `/api/terminal/status` 返回 `platform_supported=false`。`stt.streaming=false` 只记录当前配置，不能单独判断会议听记的非流式回退；实际 STT provider / 结果尚未核验。终端在当前服务端平台不可用，不能作为鸿蒙端已通过的证据。
+- 接口补验结果：
+  - 200 且返回有效数据：`/api/projects/list`、`/api/roots`、`/api/git/worktrees`、`/api/git/branches`、`/api/git/history`、`/api/git/working-tree`、`/api/git/stats`、`/api/ai/sessions`、`/api/ai/sessions/overview`、`/api/ai/sessions/by-project`、`/api/ai/chat`、`/api/ai/session/settings`、`/api/ai/queue`、`/api/agents`、`/api/dir/search`、`/api/file/list-tree`、`/api/fs/file/README.md`、`/api/upload/recent`、`/api/share-in/recent`、`/api/share/list`、`/api/share/session/list`、`/api/tasks`、`/api/mail/accounts`、`/api/skills`、`/api/live-share`、`/api/live-share/notes/sessions`、`/api/push/wechat/status`、`/api/ai/events/pending`。
+  - 返回预期业务限制：`/api/forge/items` 为 `NoForgeBinding`（项目未绑定仓库）；`/api/usage/stats` 需要维度参数，未取得统计结果；`/api/git/file-diff` 需要 sha / path；`/api/terminal/status` 的 `platform_supported=false`。
+- H06–H20 已按“服务端接口可独立验证”和“必须鸿蒙设备”拆分，逐项写入 [功能对齐清单](FEATURE_PARITY.md)。接口 200 只证明服务端路由和数据可用，不等于 ArkWeb 页面、原生桥或业务写操作通过；发送消息、上传、删除、Git 写入、任务触发等未在测试服务器执行。
+- 验收边界明确区分：用户确认的“原有会议”通过；v0.136.0 新增的连续语音对话、PCM / `AudioWorklet` 收音和会议听记仍需实际 provider 与真机端到端验收，不能由既有会议验收自动覆盖。`stt.streaming=false` 不排除会议听记的 PCM→WAV→非流式 STT 回退。
+- 更新检测继续等待官方发布 HarmonyOS release / HAP 与版本清单；二合一继续标记为缺少设备。服务器升级不在本轮范围，未修改服务器配置或部署任何前端。
+- 本轮无代码修改，不重新构建；交付包仍为 `bulid-hap/ClawBench-0.2.7-unsigned.hap`，8,555,918 字节，SHA-256 `0cf990c18d81fd4475a09497450ed696b37605df1c0bf1a5cab8c73714bdb1ab`。该包未签名，不能直接用于普通已签名设备的覆盖安装或升级验证；用户已确认的真机结果来自其实际安装的签名包，不能推定与本未签名产物字节一致。
+
+## 2026-11-09：0.2.7 修正平台文案、补充推送限制说明并构建
+
+- 通过 GitHub API 复核上游 `main`、最新 tag 与最新 release：仍为 `v0.136.0` / `06a43010cee4c5e04c0f6c32eb2a2d2651664d2c`，与本地参考源码一致，本轮未再次覆盖 `clawbench-source code/`，未创建备份。客户端协议保持 `1`。
+- 同步用户 2026-11-09 验收结论：平板端界面、投屏和会议通过；二合一因缺少设备暂缓；鸿蒙原生推送因 Push Kit 限制不支持。用户已确认的项目在清单中记为通过，二合一不记为失败。
+- 修复“关于”页平台描述：共享前端仍写“当前安装的 Android 应用版本号”，服务端文案无法随 HAP 更新。`harmony-bootstrap.js` 增加只读文案修正，在可信工作台根页面监测新增 / 更新文本，精确替换 `Android 应用版本号` / `Android app version number`，其他 Android 下载入口和正文不变；新增 jsdom 回归覆盖替换与不误改。
+- 补充推送限制说明：`NativeEventService.isEnabled()` 暴露原有偏好，首次从其他方式切换到原生推送时，宿主弹出双语说明，明确未接入 Push Kit、原生推送仅限进程运行期间，并引导改用钉钉 / 飞书 / 微信；不改变 `push_mode` 和原有 WS / 补拉行为。
+- 对齐 `v0.136.0` 新功能：连续对话与 PCM / `AudioWorklet` 仍依赖 ArkWeb 真机验证，鸿蒙走 `getUserMedia`，不依赖 Android 专有 `probeMicrophone`；会议听记已随用户会议验收通过；新增采集、批注和远程控制方法均为可选，前端存在性守卫，鸿蒙未实现时走现有浏览器共享流程。应用内更新检测等待上游发布鸿蒙 release，未伪造实现或通过结果。
+- 版本升至 `0.2.7 / 207`，同步 `AppInfo.ts`、`AppScope/app.json5`。`npm --prefix harmony test` 288 项通过；使用 DevEco Studio 26.0 的 ohpm / Hvigor 完成未签名 debug HAP 构建，`module.json` 核对 `versionName=0.2.7`、`versionCode=207`、`bundleName=com.clawbench.harmony`。
+- 交付产物：`bulid-hap/ClawBench-0.2.7-unsigned.hap`，8,555,918 字节，SHA-256 `0cf990c18d81fd4475a09497450ed696b37605df1c0bf1a5cab8c73714bdb1ab`。未签名、未安装；本轮未部署共享服务器、未发布 release、未推送远端。
+- 仍需真机验收：连续对话 / 流式转写与 `AudioWorklet`、蓝牙耳机、系统音频共享与停止共享、API 23 / ARM64、横屏 / 分屏 / 大字体、二合一、H06–H20 业务组合、长时后台恢复。
+
+## 2026-11-09：同步 Android v0.136.0 上游基线并复核鸿蒙发布门槛
+
+- 按维护约定从上游 `main` 下载 ZIP 快照并覆盖 `clawbench-source code/`，未创建旧版本备份；源目录镜像为 4,332 个文件。下载归档 SHA-256 为 `4a873a972a9ba1395edbc59a1de5a6c00c2c13476130e7bf241e2d18079e5995`。
+- 上游 `main` HEAD 与正式 tag `v0.136.0` 都指向 `06a43010cee4c5e04c0f6c32eb2a2d2651664d2c`；协议保持 `1`。HarmonyOS 工程仍为 `0.2.6 / 206`。HarmonyOS 客户端与 #636 的修复已在 #631 / #636 后进入上游；最新源码不需要再叠加最初的本地适配补丁。
+- 用 GitHub blob id 对照 `Index.ets`、`harmony-bootstrap.js`、`NativeEventService.ets` 及全目录文件数量；Harmony 配置、包名、协议和参考目录忽略规则检查通过。覆盖同步移除了旧参考目录中的 `node_modules/` 和 `.clawbench-web/` 生成物。没有访问、部署或更改测试服务器。
+- 更新 [上游基线记录](UPSTREAM_BASELINE.md)、[功能对齐清单](FEATURE_PARITY.md) 和 README，区分当前功能限制、待完整设备验收和正式发布门槛。上游 `v0.136.0` 新增自由对话与 PCM / `AudioWorklet` 收音，列入 ArkWeb 真机回归；未据共享前端代码推断鸿蒙已通过。
+- 发现旧补丁不能应用到当前已集成上游。更新本地补丁入口：仅当关键 Harmony 源文件的 Git blob 与锁定当前快照相符时报告“上游已包含集成”并跳过历史补丁；不匹配时仍执行原基线的正常检查。
+- 上游维护者于 2026-11-08 在 Issue #630 说明“当前为实验性支持”，并要求继续按功能清单推进真机和完整功能对等验收。Harmony README 同时明确暂不进入正式发布流水线；Release `v0.136.0` 没有鸿蒙 HAP 资产。
+- 本轮只更新参考源码、适配维护脚本和文档；没有修改鸿蒙运行时代码或 HAP 版本，不重新构建、签名、安装或发布应用。
+- 验证：下载 ZIP 路径与 SHA-256 检查通过；参考目录 4,332 文件，协议 1；应用补丁脚本的当前快照 blob 识别和跳过路径、历史补丁在当前快照的失配路径均经检查；`git diff --check` 通过。鸿蒙自动化和设备测试未重跑，因为应用代码 / HAP 未改变。
+
 ## 2026-11-06：建立本地仓库与开发文档
 
 类型：初始化 / 文档，无程序功能变更。

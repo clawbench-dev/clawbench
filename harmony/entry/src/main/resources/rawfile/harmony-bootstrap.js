@@ -3,6 +3,81 @@
   const config = __HARMONY_CONFIG__;
   if (window !== window.top || location.origin !== config.origin ||
       !['/', '/login'].includes(location.pathname)) return;
+  // The shared workbench copy still says "Android app version" on every native
+  // host. Only the About page's app-version description is rewritten: chat
+  // messages, code previews, editors, textareas and script/JSON payloads must
+  // stay byte-for-byte intact.
+  const appVersionDescription = '[data-settings-key="appVersion"] .settings-item__desc';
+  const platformCopyRules = [
+    ['Android 应用版本号', 'HarmonyOS 应用版本号'],
+    ['Android app version number', 'HarmonyOS app version number']
+  ];
+  function rewritePlatformCopy(text) {
+    if (typeof text !== 'string' || !text) return text;
+    let next = text;
+    for (const [from, to] of platformCopyRules) {
+      if (next.includes(from)) next = next.split(from).join(to);
+    }
+    return next;
+  }
+  function rewriteAppVersionText(node) {
+    if (!node || node.nodeType !== 3) return;
+    const next = rewritePlatformCopy(node.nodeValue);
+    if (next !== node.nodeValue) node.nodeValue = next;
+  }
+  function rewriteAppVersionCopy() {
+    if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+    const hosts = document.querySelectorAll(appVersionDescription);
+    for (const host of hosts) {
+      for (const child of host.childNodes) rewriteAppVersionText(child);
+    }
+  }
+  function isAppVersionDescription(node) {
+    if (!node || node.nodeType !== 1 || typeof node.matches !== 'function' ||
+        typeof node.closest !== 'function') return false;
+    return node.matches('.settings-item__desc') &&
+      node.closest('[data-settings-key="appVersion"]') !== null;
+  }
+  function installPlatformCopy() {
+    if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return;
+    const root = document.documentElement;
+    if (!root) return;
+    rewriteAppVersionCopy();
+    // The workbench is a Vue SPA: the About page is inserted after bootstrap.
+    // Only schedule a rewrite when an app-version description node or its text
+    // changes, so unrelated chat and preview mutations never trigger a walk.
+    new MutationObserver(records => {
+      let dirty = false;
+      for (const record of records) {
+        if (record.type === 'characterData') {
+          if (isAppVersionDescription(record.target.parentElement)) dirty = true;
+          continue;
+        }
+        for (const node of record.addedNodes) {
+          // Vue updates a text-only element by assigning textContent, which
+          // replaces the old text node with a NEW one. A childList record for
+          // that new text node must not be mistaken for an unrelated addition.
+          if (node.nodeType === 3) {
+            if (isAppVersionDescription(node.parentElement)) dirty = true;
+            continue;
+          }
+          if (node.nodeType !== 1) continue;
+          if ((typeof node.matches === 'function' && node.matches(appVersionDescription)) ||
+              (typeof node.querySelector === 'function' && node.querySelector(appVersionDescription) !== null)) {
+            dirty = true;
+          }
+        }
+      }
+      if (dirty) rewriteAppVersionCopy();
+    }).observe(root, { subtree: true, childList: true, characterData: true });
+  }
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', installPlatformCopy, { once: true });
+    } else {
+      installPlatformCopy();
+    }
+  }
   let port;
   let closed = false;
   let nextId = 0;

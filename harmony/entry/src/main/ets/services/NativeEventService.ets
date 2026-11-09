@@ -17,6 +17,8 @@ import {
 interface SavedEvents {
   origin: string;
   enabled: boolean;
+  /** Whether this preference came from a completed config read or an explicit change. */
+  known?: boolean;
   state: EventState;
 }
 
@@ -126,7 +128,7 @@ export class NativeEventService {
     const normalized = parseServerAddress(origin).url;
     this.active = this.records.find((record: SavedEvents) => record.origin === normalized);
     if (!this.active) {
-      this.active = { origin: normalized, enabled: false, state: { cursor: '', recentIds: [] } };
+      this.active = { origin: normalized, enabled: false, known: false, state: { cursor: '', recentIds: [] } };
       this.records.push(this.active);
     }
     this.setLanguage(language);
@@ -173,6 +175,7 @@ export class NativeEventService {
         throw new Error('Invalid notification mode');
       }
       record.enabled = mode === 'native';
+      record.known = true;
       this.lastError = '';
       await this.persist();
     } catch (_) {
@@ -265,6 +268,7 @@ export class NativeEventService {
       // Retain the requested mode when the OS blocks it. A later grant can
       // resume delivery without changing the server's push_mode.
       record.enabled = enabled;
+      record.known = true;
       this.lastError = enabled && !allowed ? 'notification_permission_denied' : '';
       await this.persist();
       if (generation !== this.generation || settingEpoch !== this.settingEpoch) {
@@ -292,6 +296,25 @@ export class NativeEventService {
       enabled && this.permission === 'denied') {
       throw new NativeFailure('notification_permission_denied', this.language);
     }
+  }
+
+  /** Last requested native-delivery preference, before the OS permission check. */
+  isEnabled(): boolean {
+    return this.active?.enabled === true;
+  }
+
+  /** True once the mode came from a config read or an explicit host call. */
+  hasKnownPreference(): boolean {
+    return this.active?.known === true;
+  }
+
+  /**
+   * Whether this enable request should show the Push Kit limitation notice.
+   * The host asks before `setEnabled`, so a denied system permission cannot
+   * swallow the explanation after the preference was already persisted.
+   */
+  shouldExplainPushKit(enable: boolean): boolean {
+    return enable && !this.isEnabled() && this.hasKnownPreference();
   }
 
   getStatus(): string {

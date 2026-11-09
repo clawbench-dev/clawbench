@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { JSDOM } from 'jsdom';
 import ts from 'typescript';
 
 const bootstrapUrl = [
@@ -182,4 +183,65 @@ test('a failed port-browser request reports an error even when its caller swallo
   assert.equal(page.dispatched[0].type, 'clawbench-native-error');
   assert.equal(page.dispatched[0].detail.method, 'openInSandbox');
   assert.equal(page.dispatched[0].detail.message, 'Tunnel is not ready');
+});
+
+test('rewrites only the About app-version description, never chat or previews', async () => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'https://example.com/', runScripts: 'outside-only', pretendToBeVisual: true
+  });
+  dom.window.__HARMONY_CONFIG__ = {
+    origin: 'https://example.com', channel: 'random-channel', language: 'zh',
+    theme: 'gruvbox-dark', version: '0.2.9'
+  };
+  dom.window.eval(code);
+  const document = dom.window.document;
+  const wait = () => new Promise(resolve => setTimeout(resolve, 0));
+  function aboutRow(text = '当前安装的 Android 应用版本号') {
+    const row = document.createElement('div');
+    row.setAttribute('data-settings-key', 'appVersion');
+    row.innerHTML = '<span class="settings-item__label">App版本</span><div class="settings-item__desc"></div>';
+    row.querySelector('.settings-item__desc').textContent = text;
+    return row;
+  }
+
+  const about = aboutRow();
+  document.body.appendChild(about);
+  await wait();
+  assert.equal(about.querySelector('.settings-item__label').textContent, 'App版本');
+  assert.equal(about.querySelector('.settings-item__desc').textContent, '当前安装的 HarmonyOS 应用版本号');
+
+  const unchanged = [
+    ['chat', '<div class="chat-message__body">当前安装的 Android 应用版本号</div>'],
+    ['code preview', '<pre><code>当前安装的 Android 应用版本号</code></pre>'],
+    ['editable', '<div contenteditable="true">当前安装的 Android 应用版本号</div>'],
+    ['textarea', '<textarea>当前安装的 Android 应用版本号</textarea>'],
+    ['json script', '<script type="application/json">{"note":"当前安装的 Android 应用版本号"}</script>'],
+    ['download link', '<a href="/api/apk">下载 Android 应用</a>']
+  ];
+  for (const [label, html] of unchanged) {
+    const host = document.createElement('section');
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    await wait();
+    assert.match(host.textContent, /Android 应用版本号|下载 Android 应用/, `${label} must keep the original copy`);
+  }
+
+  // Vue may patch the text node instead of replacing the row.
+  about.querySelector('.settings-item__desc').firstChild.nodeValue = '当前安装的 Android 应用版本号';
+  await wait();
+  assert.equal(about.querySelector('.settings-item__desc').textContent, '当前安装的 HarmonyOS 应用版本号');
+
+  // Vue also replaces a text-only element by assigning textContent, which
+  // removes the old text node and inserts a fresh one under the description.
+  about.querySelector('.settings-item__desc').textContent = '当前安装的 Android 应用版本号';
+  await wait();
+  assert.equal(about.querySelector('.settings-item__desc').textContent, '当前安装的 HarmonyOS 应用版本号');
+
+  // A late about-page render must still be corrected.
+  const lateAbout = aboutRow('Current installed Android app version number');
+  document.body.appendChild(lateAbout);
+  await wait();
+  assert.equal(lateAbout.querySelector('.settings-item__desc').textContent,
+    'Current installed HarmonyOS app version number');
+  dom.window.close();
 });
