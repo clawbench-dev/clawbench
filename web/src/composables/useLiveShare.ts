@@ -14,7 +14,7 @@ import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildShareLinks, type ShareLink } from '@/composables/useShareLinks'
-import { LiveMixer } from './useLiveMixer'
+import { LiveMixer, openRemoteAudioSink, type RemoteAudioSink } from './useLiveMixer'
 import {
   VIEWER_MESSAGE_TYPES,
   parseControlMessage,
@@ -343,6 +343,17 @@ let relayRoom: import('livekit-client').Room | null = null
 let relayMode = false
 /** Identities that were speaking at the previous sample, to send their stop. */
 let lastRelaySpeakers: string[] = []
+/**
+ * Remote audio the HOST plays from the relay, keyed by track id.
+ *
+ * The LiveKit client does not play anything by itself: a subscribed audio track
+ * stays silent until something attaches it. Peer-to-peer mode has the mixer's
+ * monitor edge for this (one per viewer, straight into `ctx.destination`), but
+ * a relayed meeting has no per-viewer PeerConnection and therefore no mixer
+ * slot — so without these nodes the host hears nobody while everybody hears the
+ * host, which is exactly backwards.
+ */
+const relayMonitors = new Map<string, { src: MediaStreamAudioSourceNode; sink: RemoteAudioSink }>()
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /**
@@ -501,6 +512,7 @@ function resetSession(): void {
   preferredVideoMime = null
   // Disconnect before dropping the handle: leaving the LiveKit room open keeps
   // the server's participant alive and the OS camera/mic indicators lit.
+  stopAllRelayMonitors()
   closeRelay(relayRoom)
   relayRoom = null
   relayMode = false
@@ -863,16 +875,59 @@ export function relaySpeakerFrames(
  * The host subscribes to every guest's microphone, because that audio is what
  * the transcript is made of. A guest it does not subscribe to is silently
  * missing from the minutes.
+ *
+ * It is also the only path by which the host can HEAR that guest: the relay
+ * delivers tracks, not sound (see `monitorRelayAudio`).
  */
 function handleRelayTrack(track: MediaStreamTrack, _source: unknown, identity: string): void {
   const viewerId = relayViewerId(identity)
   if (viewerId && track.kind === 'audio') {
     useLiveNotes().addViewer(viewerId, new MediaStream([track]))
+    monitorRelayAudio(track)
   }
+}
+
+/**
+ * Play one relayed track on this host's speakers.
+ *
+ * Routed through the meeting's own AudioContext rather than an `<audio>`
+ * element: that context was created by the click that started the meeting, so
+ * it is already unlocked and cannot be silenced by the browser's autoplay
+ * policy (an element created later could be).
+ */
+function monitorRelayAudio(track: MediaStreamTrack): void {
+  if (!audioCtx || relayMonitors.has(track.id)) return
+  try {
+    const src = audioCtx.createMediaStreamSource(new MediaStream([track]))
+    // The only edge into `destination` on this path: the host's own microphone
+    // is never monitored (it would be heard twice, once delayed).
+    src.connect(audioCtx.destination)
+    relayMonitors.set(track.id, { src, sink: openRemoteAudioSink(new MediaStream([track])) })
+    track.addEventListener('ended', () => stopRelayMonitor(track.id))
+  } catch (e) {
+    appLog.w(TAG, 'could not monitor relay audio', e)
+  }
+}
+
+function stopRelayMonitor(trackId: string): void {
+  const monitor = relayMonitors.get(trackId)
+  if (!monitor) return
+  monitor.sink.dispose()
+  try {
+    monitor.src.disconnect()
+  } catch {
+    /* already disconnected */
+  }
+  relayMonitors.delete(trackId)
+}
+
+function stopAllRelayMonitors(): void {
+  for (const id of [...relayMonitors.keys()]) stopRelayMonitor(id)
 }
 
 function handleRelayDisconnected(reason: string): void {
   appLog.w(TAG, 'relay disconnected', reason)
+  stopAllRelayMonitors()
   relayRoom = null
   if (state.value === 'publishing') fail(i18n.global.t('liveShare.relayLost'))
 }
@@ -886,6 +941,7 @@ async function connectRelay(
     onData: handleRelayData,
     onActiveSpeakers,
     onTrack: handleRelayTrack,
+    onTrackGone: (track) => stopRelayMonitor(track.id),
     onDisconnected: handleRelayDisconnected,
   })
   await publishRelayPicture()

@@ -221,6 +221,38 @@ describe('LiveMixer', () => {
     expect(toSpeakers.map((s) => s.id)).toEqual(['src:a-voice'])
   })
 
+  /**
+   * Chromium leaves a remote track silent in a Web Audio graph until the track
+   * is also attached to a media element. Without this sink the publisher hears
+   * nobody while every viewer hears the publisher.
+   */
+  it('attaches each remote stream to a silent sink element, and releases it', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
+    const created: Array<{ muted: boolean; srcObject: unknown }> = []
+    const original = document.createElement.bind(document)
+    const spy = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = original(tag) as HTMLAudioElement & { srcObject: unknown }
+      if (tag === 'audio') created.push(el as unknown as { muted: boolean; srcObject: unknown })
+      return el
+    })
+
+    try {
+      mixer.addViewer('A')
+      const voice = stream('a-voice')
+      mixer.attachRemote('A', voice as unknown as MediaStream)
+
+      expect(created).toHaveLength(1)
+      expect(created[0].muted).toBe(true)
+      expect(created[0].srcObject).toBe(voice)
+
+      mixer.removeViewer('A')
+      expect(created[0].srcObject).toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('stops routing a removed viewer to everyone else', () => {
     const ctx = new FakeCtx()
     const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
