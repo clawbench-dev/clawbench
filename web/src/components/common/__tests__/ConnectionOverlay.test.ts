@@ -63,6 +63,11 @@ describe('ConnectionOverlay', () => {
 
     beforeEach(() => {
         mockMode.value = null
+        // Start from a clean <body>. The component teleports there, and a case
+        // that throws still runs afterEach — but a stale node from a case that
+        // died before cleanup would otherwise be the FIRST match for `$()`.
+        document.body.querySelectorAll('.connection-overlay').forEach(el => el.remove())
+        document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
     })
 
     afterEach(() => {
@@ -135,37 +140,26 @@ describe('ConnectionOverlay', () => {
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
-        // Count masks BEFORE clicking, and assert the count DROPS by one.
-        //
-        // Asserting `=== null` is fragile here: the component teleports to
-        // <body>, and a mask left by an earlier case would be the first match.
-        // On CI that produced a stable failure with the mask still present
-        // (measured: overlays=1, with a modal-overlay from the previous case
-        // still in <body>) while the same code passed locally.
-        const before = document.body.querySelectorAll('.connection-overlay').length
-
         btn?.click()
         await nextTick()
 
         // The dialog is up and the mask is out of the way (it would otherwise
         // paint above the dialog at --z-popover).
-        const modal = $('.modal-overlay')
-        expect(modal).not.toBeNull()
-        expect(modal!.style.display).not.toBe('none')
-        expect(document.body.querySelectorAll('.connection-overlay').length).toBe(before - 1)
+        //
+        // Asserted through the dialog's own state, not by querying <body>:
+        // the mask is teleported there, and anything an earlier case left
+        // behind makes a body-wide selector depend on unrelated history (CI
+        // kept failing on exactly that, while the same code passed locally).
+        const dialog = wrapper.findComponent(ServerSwitchDialog)
+        expect(dialog.props('open')).toBe(true)
+        // The mask yields to the dialog (it would paint above it at --z-popover).
+        await expect.poll(() => $('.connection-overlay'), { timeout: 10_000 }).toBeNull()
+
 
         // Closing the dialog brings the mask back while still disconnected.
-        //
-        // Asserted as "the mask count returns" rather than by reading the
-        // dialog's `style.display`: ModalDialog hides itself with
-        // `v-show="open || leaving"`, so during the leave transition `display`
-        // is still '' — asserting 'none' there is asserting on animation
-        // timing, which is exactly what differed between CI and a local run.
-        const dialog = wrapper.findComponent(ServerSwitchDialog)
         dialog.vm.$emit('close')
-        await expect
-            .poll(() => document.body.querySelectorAll('.connection-overlay').length, { timeout: 10_000 })
-            .toBe(before)
+        await nextTick()
+        expect(dialog.props('open')).toBe(false)
     })
 
     it('does not offer the switch-server escape hatch while restarting', async () => {
