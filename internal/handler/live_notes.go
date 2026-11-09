@@ -83,13 +83,17 @@ const (
 	// across all rooms. The STT backend is a shared HTTP service; a long meeting
 	// with eight speaking viewers would otherwise burst it.
 	liveNoteSTTConcurrency = 4
-	// Per-step budgets. Recognition is the long one (a one-hour meeting is
-	// hundreds of 20-second chunks); proofread and summarize are model passes
-	// over the same text. The chain budget is deliberately larger than the sum
-	// of two steps because a regeneration can run all three.
-	liveNoteASRTimeout   = 30 * time.Minute
-	liveNoteModelTimeout = 10 * time.Minute
-	liveNoteChainTimeout = 60 * time.Minute
+	// Per-step budgets. Recognition and conversion are proportional to the
+	// recording — one 20-second chunk per 20 seconds of audio, four at a time —
+	// so their budget is derived from its length between these two bounds.
+	// Proofread and summarize are model passes over the same text and stay
+	// fixed.
+	liveNoteDurationFloor = 30 * time.Minute
+	liveNoteDurationCap   = 4 * time.Hour
+	liveNoteModelTimeout  = 10 * time.Minute
+	// liveNoteChainMargin is what the chain keeps beyond its steps, so a step
+	// that ends right at its own deadline still has room to record the failure.
+	liveNoteChainMargin = 10 * time.Minute
 )
 
 // liveNoteSTTSlots is the process-wide transcription semaphore.
@@ -1445,6 +1449,11 @@ type artifactChain struct {
 	screens  []service.LiveNoteScreenShare
 	segments []service.LiveNoteSegment
 	self     service.LiveNotesSpeaker
+	// audioMS is the total audio the chain has to recognize, resolved in
+	// prepare(). It sizes the step budgets: the work is proportional to the
+	// audio, so a fixed ceiling would either cut a long recording off or be
+	// pointless for a short one. 0 means "unknown" and falls back to the floor.
+	audioMS int64
 
 	// Context the transcript cannot carry. Loaded once in prepare() and consumed
 	// by the minutes step; the proofreader gets its own vocabulary from the
@@ -1489,6 +1498,7 @@ func (c *artifactChain) prepare() {
 		}
 		recordMergedAudioChannels(c.token, merged)
 	}
+	c.audioMS = c.mediaAudioMS()
 	files, filesErr := service.ListLiveNoteFiles(c.token, 0)
 	if filesErr != nil {
 		// The transcript and the minutes are worth producing without the file
@@ -1520,6 +1530,32 @@ func (c *artifactChain) prepare() {
 	}
 }
 
+// mediaAudioMS is the total audio the chain has to recognize, used to size the
+// step budgets.
+//
+// The audio channel metadata is the authority: the merge writes it for a
+// recorded meeting and the import writes it before the chain starts. The
+// durations are summed, not maxed — every channel is transcribed in full, so a
+// three-hour meeting with two speakers is six hours of recognition, not three.
+// (Channels never overlap in the table: the mix row exists only for a solo
+// recording, whose single channel was folded into it.) A read failure or a
+// meeting with no merged audio yields 0, which the budget treats as "unknown"
+// and covers with the floor.
+func (c *artifactChain) mediaAudioMS() int64 {
+	channels, err := service.ListLiveNoteAudioChannels(c.token)
+	if err != nil {
+		slog.Warn("live notes: list audio channels failed", "err", err)
+		return 0
+	}
+	var total int64
+	for _, channel := range channels {
+		if channel.DurationMS > 0 {
+			total += channel.DurationMS
+		}
+	}
+	return total
+}
+
 // refreshSegments re-reads the transcript rows. The ASR step replaces them, so
 // every step after it must see the new rows rather than the pre-chain snapshot.
 func (c *artifactChain) refreshSegments() {
@@ -1545,7 +1581,7 @@ func (c *artifactChain) run(ctx context.Context, steps []service.RegenStep) {
 			return
 		}
 		c.markRunning(step)
-		stepCtx, cancel := context.WithTimeout(ctx, artifactStepTimeout(step.Kind))
+		stepCtx, cancel := context.WithTimeout(ctx, artifactStepTimeout(step.Kind, c.audioMS))
 		err := c.runStep(stepCtx, step)
 		cancel()
 		if err == nil {
@@ -1856,7 +1892,11 @@ func runArtifactChain(token string, projectID int64, projectPath, title string, 
 	if len(steps) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), liveNoteChainTimeout)
+	// The chain budget depends on how long the recording is, which is only
+	// known once prepare has merged the audio and read its metadata. The
+	// cancellable parent keeps "stop" working during prepare; the deadline is
+	// layered on top of it afterwards.
+	parent, cancel := context.WithCancel(context.Background())
 	registerLiveNoteJob(token, cancel)
 	defer func() {
 		unregisterLiveNoteJob(token)
@@ -1865,16 +1905,50 @@ func runArtifactChain(token string, projectID int64, projectPath, title string, 
 
 	chain := newArtifactChain(token, projectID, projectPath, title, strict)
 	chain.prepare()
+	ctx, expire := context.WithTimeout(parent, liveNoteChainBudget(chain.audioMS))
+	defer expire()
 	chain.run(ctx, steps)
 }
 
-// artifactStepTimeout is the budget for one step. Recognition is the long one;
-// the model passes share a smaller budget.
-func artifactStepTimeout(kind service.ArtifactKind) time.Duration {
+// artifactStepTimeout is the budget for one step. Recognition is the long one
+// and grows with the recording; the model passes share a smaller budget.
+func artifactStepTimeout(kind service.ArtifactKind, durationMS int64) time.Duration {
 	if kind == service.ArtifactTranscript {
-		return liveNoteASRTimeout
+		return liveNoteDurationBudget(durationMS)
 	}
 	return liveNoteModelTimeout
+}
+
+// liveNoteDurationBudget is how long one media step may run for a recording of
+// the given length.
+//
+// The derivation is half the recording: recognition runs four 20-second chunks
+// at a time, so half the duration lets every chunk take 40 seconds — twice the
+// audio it carries — before the budget runs out. A fixed ceiling instead cuts
+// long recordings off and is pointlessly generous for short ones. Unknown
+// lengths (0) and short recordings get the floor; the cap keeps a corrupt
+// duration from buying an effectively unbounded job.
+func liveNoteDurationBudget(durationMS int64) time.Duration {
+	if durationMS <= 0 {
+		return liveNoteDurationFloor
+	}
+	// Compare in milliseconds and halve before scaling, so a hostile duration
+	// cannot overflow the multiplication.
+	if durationMS >= 2*int64(liveNoteDurationCap/time.Millisecond) {
+		return liveNoteDurationCap
+	}
+	if budget := time.Duration(durationMS/2) * time.Millisecond; budget > liveNoteDurationFloor {
+		return budget
+	}
+	return liveNoteDurationFloor
+}
+
+// liveNoteChainBudget is the whole chain's ceiling: every step at its own
+// budget plus the margin. It must stay above the sum of the steps, otherwise a
+// step that would have finished gets killed by the chain instead and reports
+// "timeout" from the wrong place.
+func liveNoteChainBudget(durationMS int64) time.Duration {
+	return liveNoteDurationBudget(durationMS) + 2*liveNoteModelTimeout + liveNoteChainMargin
 }
 
 // artifactErrorCode maps a step failure onto the code the SPA localizes.
