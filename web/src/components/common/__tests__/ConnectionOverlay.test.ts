@@ -143,6 +143,7 @@ describe('ConnectionOverlay', () => {
         // and left `open` false (measured: "expected false to be true").
         const masks = document.body.querySelectorAll('.connection-overlay')
         expect(masks.length).toBeGreaterThan(0)
+        const maskCountBefore = masks.length
         const btn = masks[masks.length - 1].querySelector('.connection-overlay__switch') as HTMLElement | null
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
@@ -163,8 +164,14 @@ describe('ConnectionOverlay', () => {
         const dialog = wrapper.findComponent(ServerSwitchDialog)
         expect(dialog.props('open')).toBe(true)
         // The mask yields to the dialog (it would paint above it at --z-popover).
-        await expect.poll(() => $('.connection-overlay'), { timeout: 10_000 }).toBeNull()
-
+        //
+        // Compared against the count from BEFORE the click, not against null:
+        // the mask is teleported to <body>, so a leftover from an earlier case
+        // would make `=== null` fail on unrelated history. What this case
+        // promises is that ITS mask goes away.
+        await expect
+            .poll(() => document.body.querySelectorAll('.connection-overlay').length, { timeout: 10_000 })
+            .toBe(maskCountBefore - 1)
 
         // Closing the dialog brings the mask back while still disconnected.
         dialog.vm.$emit('close')
