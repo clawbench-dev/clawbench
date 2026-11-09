@@ -10,7 +10,13 @@
         <span v-if="items.length > 0" class="share-count">{{ t('shareCenter.count', { count: items.length }) }}</span>
       </div>
       <ActionBar class="share-header-actions" mode="menu" align="end" size="header">
+        <!-- Both buttons carry ONLY `header-btn`: size, radius, colour, hover
+             and press all come from the shared ActionBar row rules, and the
+             bar decides whether the labels fit. Restating any of it here is
+             how the refresh button ended up with a browser-drawn border while
+             the button next to it had none. -->
         <RefreshButton
+          class="header-btn"
           :loading="loading"
           :disabled="loading"
           :title="t('shareCenter.refresh')"
@@ -19,7 +25,7 @@
           <span class="action-label">{{ t('shareCenter.refresh') }}</span>
         </RefreshButton>
         <button
-          class="header-btn share-clear-btn"
+          class="header-btn is-danger"
           :disabled="items.length === 0 || loading || clearing"
           :title="t('shareCenter.clearAllTip')"
           data-action="clear-all"
@@ -471,6 +477,10 @@ watch(
   flex: 1 1 auto;
 }
 
+/* Only what the shared ActionBar row rules do NOT set. Size, radius, colour,
+   hover and press all come from `.ab--header button` in css/components.css
+   (size="header"); restating them here is what made the refresh button and the
+   clear button disagree about having a border. */
 .header-btn {
   border: none;
   cursor: pointer;
@@ -484,21 +494,6 @@ watch(
 .header-btn:disabled {
   opacity: var(--opacity-muted);
   cursor: not-allowed;
-}
-
-.share-clear-btn {
-  color: var(--color-red);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-3);
-  height: calc(28 * var(--dp));
-  background: transparent;
-  font-size: var(--font-size-sm);
-}
-
-@media (hover: hover) {
-  .share-clear-btn:not(:disabled):hover {
-    background: color-mix(in srgb, var(--color-red) 10%, transparent);
-  }
 }
 
 /* ── Filters ── */
