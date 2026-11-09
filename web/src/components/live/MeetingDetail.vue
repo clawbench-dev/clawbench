@@ -1148,7 +1148,18 @@ onMounted(() => {
   /* Needed by the back/rename buttons, which sit in the header row OUTSIDE the
      ActionBar and so do not get the shared transparent background. */
   background: transparent;
+  /* …nor the shared colour: a <button> does not inherit text colour, so without
+     this the two header icons fall back to the UA button colour — pure white in
+     a dark color-scheme, which reads colder than every themed element around
+     them. Same value as the ActionBar row so the header is one colour family. */
+  color: var(--text-secondary);
   cursor: pointer; flex-shrink: 0;
+}
+@media (hover: hover) {
+  .meeting-icon-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  }
 }
 
 .meeting-tabs {
