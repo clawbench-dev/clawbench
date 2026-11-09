@@ -30,6 +30,7 @@ const methods = [
   between(source, '  private async receiveLoginBridge(', '  private reportLoginError('),
   between(source, '  private async receiveBridge(', '  private reportDownloadFailure('),
   between(source, '  private async invokeBridge(', '  private async keepScreenOn('),
+  between(source, '  private showPushKitGuidance(', '  private foregroundChanged('),
   between(source, '  private foregroundChanged(', '  onBackPress(): boolean {'),
   between(source, '  onBackPress(): boolean {', '  build() {')
 ].join('\n');
@@ -69,6 +70,7 @@ function host({ local = false, passwordWait, snapshotWait, connections = new Map
   const { Navigation, ConnectionFailure } = runInNewContext(code, {
     isTrustedAppUrl, parseServerAddress, APP_VERSION, isLocalLoginPage, portBrowserUrl, Error,
     NativeFailure, nativeMessage, formatNativeError,
+    KeyCode: { KEYCODE_ENTER: 2054, KEYCODE_NUMPAD_ENTER: 2119 }, KeyType: { Down: 0, Up: 1 },
     clearServerCookies() {}, clearTimeout() {},
     util: {
       generateRandomUUID: () => 'fixture-' + ++nextUuid,
@@ -166,6 +168,26 @@ test('loading the local login page never requests notification authorization', (
   assert.equal(permissionRequests.length, 0);
 });
 
+test('only hardware Enter on the trusted workbench marks the next DOM key', async () => {
+  const h = host();
+  const scripts = [];
+  h.instance.controller.runJavaScript = async script => { scripts.push(script); };
+  for (const event of [{ keyCode: 2054, type: 1 }, { keyCode: 2017, type: 0 }]) {
+    assert.equal(h.instance.markHardwareEnter(event), false);
+  }
+  h.instance.showWeb = false;
+  h.instance.markHardwareEnter({ keyCode: 2054, type: 0 });
+  h.instance.showWeb = true;
+  h.setRemoteUrl('https://untrusted.example/');
+  h.instance.markHardwareEnter({ keyCode: 2054, type: 0 });
+  assert.deepEqual(scripts, []);
+  h.setRemoteUrl('https://current.example/');
+  assert.equal(h.instance.markHardwareEnter({ keyCode: 2054, type: 0 }), false);
+  assert.deepEqual(scripts, ['window.__clawbenchHardwareEnter?.()']);
+  h.instance.markHardwareEnter({ keyCode: 2119, type: 0 });
+  assert.equal(scripts.length, 2);
+});
+
 test('foreground authorization waits for the authenticated workbench to be ready', () => {
   for (const [showWeb, pageReady, loginReady, foreground, expected] of [
     [false, false, true, true, 0],
@@ -180,12 +202,185 @@ test('foreground authorization waits for the authenticated workbench to be ready
       showWeb, pageReady, loginReady, foreground,
       handleShareImport() {}, shareErrorChanged() {}
     });
-    h.instance.notifications.requestStartupPermission = async () => permissionRequests.push(true);
+    h.instance.requestStartupNotificationPermission = async () => permissionRequests.push(true);
     h.instance.controller.runJavaScript = async () => {};
     h.instance.foregroundChanged();
     assert.equal(permissionRequests.length, expected,
       JSON.stringify({ showWeb, pageReady, loginReady, foreground }));
   }
+});
+
+test('startup notification authorization waits for the persisted Push Kit explanation', async () => {
+  const h = host();
+  const calls = [];
+  Object.assign(h.instance, { showWeb: true, pageReady: true, foreground: true, documentId: 12 });
+  h.instance.store.pushKitGuidanceShown = false;
+  h.instance.store.acknowledgePushKitGuidance = async () => {
+    calls.push('acknowledge');
+    h.instance.store.pushKitGuidanceShown = true;
+  };
+  h.instance.getUIContext = () => ({ getPromptAction: () => ({
+    async showDialog(options) {
+      calls.push(['dialog', options.title]);
+      return { index: 0 };
+    }
+  }) });
+  h.instance.notifications.requestStartupPermission = async () => calls.push('permission');
+
+  await h.instance.requestStartupNotificationPermission();
+
+  assert.deepEqual(calls, [
+    ['dialog', 'Push delivery on HarmonyOS'],
+    'acknowledge',
+    'permission'
+  ]);
+});
+
+test('native push activation shows and persists guidance before a denied permission result', async () => {
+  const h = host();
+  const dialog = deferred();
+  const calls = [];
+  h.instance.store.pushKitGuidanceShown = false;
+  h.instance.store.acknowledgePushKitGuidance = async () => {
+    calls.push('acknowledge');
+    h.instance.store.pushKitGuidanceShown = true;
+  };
+  Object.assign(h.instance.notifications, {
+    async setEnabled(enabled) {
+      calls.push(['enabled', enabled]);
+      throw new NativeFailure('notification_permission_denied', 'en');
+    }
+  });
+  h.instance.getUIContext = () => ({ getPromptAction: () => ({
+    showDialog: async options => {
+      calls.push(['dialog', options.title]);
+      await dialog.promise;
+      return { index: 0 };
+    }
+  }) });
+
+  const receiving = h.instance.receiveBridge(JSON.stringify({
+    id: 42, method: 'setNativePushEnabled', args: [JSON.stringify(true)]
+  }), h.port, h.instance.connectionId, h.instance.documentId);
+  await tick();
+  assert.deepEqual(calls, [['dialog', 'Push delivery on HarmonyOS']]);
+
+  dialog.resolve();
+  await receiving;
+
+  assert.deepEqual(calls, [
+    ['dialog', 'Push delivery on HarmonyOS'],
+    'acknowledge',
+    ['enabled', true]
+  ]);
+  assert.equal(h.instance.store.pushKitGuidanceShown, true);
+  assert.equal(h.replies.at(-1).error, nativeMessage('notification_permission_denied', 'en'));
+});
+
+test('dismissing startup guidance does not persist acknowledgement or request permission', async () => {
+  const h = host();
+  h.instance.pageReady = true;
+  h.instance.store.pushKitGuidanceShown = false;
+  let acknowledgements = 0;
+  let permissionRequests = 0;
+  h.instance.store.acknowledgePushKitGuidance = async () => { acknowledgements++; };
+  h.instance.getUIContext = () => ({ getPromptAction: () => ({
+    async showDialog() { return { index: -1 }; }
+  }) });
+  h.instance.notifications.requestStartupPermission = async () => { permissionRequests++; };
+
+  await h.instance.requestStartupNotificationPermission();
+
+  assert.equal(acknowledgements, 0);
+  assert.equal(permissionRequests, 0);
+  assert.equal(h.instance.store.pushKitGuidanceShown, false);
+});
+
+test('startup and default-native config reload share guidance before either permission path', async () => {
+  const h = host();
+  const dialog = deferred();
+  const calls = [];
+  h.instance.pageReady = true;
+  h.instance.store.acknowledgePushKitGuidance = async () => {
+    calls.push('acknowledge');
+    h.instance.store.pushKitGuidanceShown = true;
+  };
+  h.instance.getUIContext = () => ({ getPromptAction: () => ({
+    async showDialog() { calls.push('dialog'); return dialog.promise; }
+  }) });
+  h.instance.notifications.requestStartupPermission = async () => calls.push('startup');
+  h.instance.notifications.setEnabled = async enabled => calls.push(enabled);
+
+  const startup = h.instance.requestStartupNotificationPermission();
+  const reload = h.instance.invokeBridge({ method: 'setNativePushEnabled', args: ['true'] });
+  await tick();
+  assert.deepEqual(calls, ['dialog']);
+  dialog.resolve({ index: 0 });
+  await Promise.all([startup, reload]);
+  assert.deepEqual(calls.slice(0, 2), ['dialog', 'acknowledge']);
+  assert.deepEqual(new Set(calls.slice(2)), new Set(['startup', true]));
+
+  await h.instance.invokeBridge({ method: 'setNativePushEnabled', args: ['true'] });
+  assert.equal(calls.filter(value => value === 'dialog').length, 1);
+  assert.equal(calls.at(-1), true);
+});
+
+test('failed guidance or acknowledgement is retryable and never enables notifications early', async () => {
+  for (const failure of ['dialog', 'storage']) {
+    const h = host();
+    let dialogs = 0;
+    let acknowledgements = 0;
+    let activations = 0;
+    h.instance.getUIContext = () => ({ getPromptAction: () => ({
+      async showDialog() {
+        dialogs++;
+        if (failure === 'dialog' && dialogs === 1) throw new Error('Dialog unavailable');
+        return { index: 0 };
+      }
+    }) });
+    h.instance.store.acknowledgePushKitGuidance = async () => {
+      acknowledgements++;
+      if (failure === 'storage' && acknowledgements === 1) throw new Error('Write failed');
+      h.instance.store.pushKitGuidanceShown = true;
+    };
+    h.instance.notifications.setEnabled = async () => { activations++; };
+    const request = { method: 'setNativePushEnabled', args: ['true'] };
+    await h.instance.invokeBridge(request);
+    assert.equal(activations, 0);
+    assert.equal(h.instance.store.pushKitGuidanceShown, undefined);
+    await h.instance.invokeBridge(request);
+    assert.equal(dialogs, 2);
+    assert.equal(activations, 1);
+    assert.equal(h.instance.store.pushKitGuidanceShown, true);
+  }
+});
+
+test('leaving a workbench during guidance cancels both old permission paths', async () => {
+  const h = host();
+  const dialog = deferred();
+  h.instance.pageReady = true;
+  h.instance.getUIContext = () => ({ getPromptAction: () => ({
+    async showDialog() { return dialog.promise; }
+  }) });
+  h.instance.store.acknowledgePushKitGuidance = async () => {};
+  let requests = 0;
+  h.instance.notifications.requestStartupPermission = async () => { requests++; };
+  h.instance.notifications.setEnabled = async () => { requests++; };
+  const startup = h.instance.requestStartupNotificationPermission();
+  const reload = h.instance.invokeBridge({ method: 'setNativePushEnabled', args: ['true'] });
+  h.instance.documentId++;
+  dialog.resolve({ index: 0 });
+  await Promise.all([startup, reload]);
+  assert.equal(requests, 0);
+});
+
+test('disabling native push never opens guidance or requests authorization', async () => {
+  const h = host();
+  h.instance.getUIContext = () => { throw new Error('Unexpected dialog'); };
+  const calls = [];
+  h.instance.notifications.setEnabled = async enabled => calls.push(enabled);
+  await h.instance.invokeBridge({ method: 'setNativePushEnabled', args: ['false'] });
+  assert.deepEqual(calls, [false]);
 });
 
 test('removing the selected login server clears its temporary retry target', async () => {

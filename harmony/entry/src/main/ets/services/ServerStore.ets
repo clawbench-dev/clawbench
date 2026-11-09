@@ -17,6 +17,7 @@ export class ServerStore {
   lastUrl: string = '';
   language: string = 'zh';
   theme: string = 'gruvbox-dark';
+  pushKitGuidanceShown: boolean = false;
 
   async init(context: common.UIAbilityContext): Promise<void> {
     this.prefs = await preferences.getPreferences(context, { name: 'clawbench' });
@@ -24,6 +25,7 @@ export class ServerStore {
     this.lastUrl = String(await this.prefs.get('lastUrl', ''));
     this.language = String(await this.prefs.get('language', 'zh'));
     this.theme = String(await this.prefs.get('theme', 'gruvbox-dark'));
+    this.pushKitGuidanceShown = await this.prefs.get('pushKitGuidanceShown', false) === true;
   }
 
   private bytes(value: string): Uint8Array {
@@ -110,6 +112,15 @@ export class ServerStore {
     this.language = language === 'en' ? 'en' : 'zh';
     this.theme = theme.slice(0, 80);
     await this.persist();
+  }
+
+  async acknowledgePushKitGuidance(): Promise<void> {
+    if (!this.prefs) {
+      throw new NativeFailure('store_not_ready', this.language);
+    }
+    await this.prefs.put('pushKitGuidanceShown', true);
+    await this.prefs.flush();
+    this.pushKitGuidanceShown = true;
   }
 
   private async persist(): Promise<void> {

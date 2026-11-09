@@ -298,25 +298,6 @@ export class NativeEventService {
     }
   }
 
-  /** Last requested native-delivery preference, before the OS permission check. */
-  isEnabled(): boolean {
-    return this.active?.enabled === true;
-  }
-
-  /** True once the mode came from a config read or an explicit host call. */
-  hasKnownPreference(): boolean {
-    return this.active?.known === true;
-  }
-
-  /**
-   * Whether this enable request should show the Push Kit limitation notice.
-   * The host asks before `setEnabled`, so a denied system permission cannot
-   * swallow the explanation after the preference was already persisted.
-   */
-  shouldExplainPushKit(enable: boolean): boolean {
-    return enable && !this.isEnabled() && this.hasKnownPreference();
-  }
-
   getStatus(): string {
     const status: NativeNotificationStatus = {
       enabled: this.active?.enabled === true && this.permission === 'granted', connected: this.connected,

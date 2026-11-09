@@ -7,7 +7,9 @@
   // host. Only the About page's app-version description is rewritten: chat
   // messages, code previews, editors, textareas and script/JSON payloads must
   // stay byte-for-byte intact.
-  const appVersionDescription = '[data-settings-key="appVersion"] .settings-item__desc';
+  const appVersionSetting = '[data-settings-key="appVersion"]';
+  const appVersionDescription = appVersionSetting + ' .settings-item__desc';
+  const settingsContainer = '.settings-page, .settings-category';
   const platformCopyRules = [
     ['Android 应用版本号', 'HarmonyOS 应用版本号'],
     ['Android app version number', 'HarmonyOS app version number']
@@ -44,8 +46,8 @@
     if (!root) return;
     rewriteAppVersionCopy();
     // The workbench is a Vue SPA: the About page is inserted after bootstrap.
-    // Only schedule a rewrite when an app-version description node or its text
-    // changes, so unrelated chat and preview mutations never trigger a walk.
+    // Only inspect a newly mounted settings container once. Mutations inside
+    // unrelated settings rows, chat, and previews do not trigger a document query.
     new MutationObserver(records => {
       let dirty = false;
       for (const record of records) {
@@ -62,8 +64,12 @@
             continue;
           }
           if (node.nodeType !== 1) continue;
-          if ((typeof node.matches === 'function' && node.matches(appVersionDescription)) ||
-              (typeof node.querySelector === 'function' && node.querySelector(appVersionDescription) !== null)) {
+          const isVersionSetting = node.matches(appVersionSetting) ||
+            (typeof node.closest === 'function' && node.closest(appVersionSetting) !== null);
+          const mountsSettings = node.matches(settingsContainer) &&
+            typeof node.querySelector === 'function' &&
+            node.querySelector(appVersionDescription) !== null;
+          if (isVersionSetting || mountsSettings) {
             dirty = true;
           }
         }
@@ -100,7 +106,7 @@
         queue.delete(id);
         reject(new Error('HarmonyOS bridge timed out: ' + method));
       }, ['downloadBlob', 'shareFile', 'shareFiles', 'shareText', 'readClipboardText',
-        'showSelectionMenu', 'reconnectTunnel', 'reconnectTunnelAsync',
+        'showSelectionMenu', 'setNativePushEnabled', 'reconnectTunnel', 'reconnectTunnelAsync',
         'addForwardedPort', 'addReverseForwardedPort', 'openInBrowser',
         'openInSandbox'].includes(method) ? 300000 : 20000);
       pending.set(id, { resolve, reject, timer });
