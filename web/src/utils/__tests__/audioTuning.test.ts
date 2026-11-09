@@ -40,6 +40,28 @@ describe('readVoiceTuning', () => {
     expect(readVoiceTuning({ 'stt.silence_send_seconds': 3 }).silenceSendMs).toBe(3000)
   })
 
+  it('keeps the trailing gate open past the engine\'s own end window', () => {
+    // The gate used to shut 600 ms after speech while Paraformer waits 800 ms of
+    // silence to close a sentence: the engine never settled the last sentence,
+    // so the last characters only appeared when the send flushed it.
+    const t = readVoiceTuning({ stt: { provider: 'alibaba', alibaba: { end_window_size: 800 } } })
+    expect(t.hangoverMs).toBe(1100)
+  })
+
+  it('follows the configured end window instead of a fixed number', () => {
+    // The window is a user setting (300–5000 ms). A hard-coded hangover would
+    // silently fall behind the moment it is raised.
+    expect(readVoiceTuning({ stt: { provider: 'doubao', doubao: { end_window_size: 1500 } } }).hangoverMs).toBe(1800)
+    // Absurd values are capped: the send fires long before 5 s of silence.
+    expect(readVoiceTuning({ stt: { provider: 'alibaba', alibaba: { end_window_size: 5000 } } }).hangoverMs).toBe(2500)
+  })
+
+  it('keeps the floor for an engine without an end window', () => {
+    // The buffered path closes a chunk on the server's wall-clock quiet timer,
+    // which trailing audio cannot influence — more silence would buy nothing.
+    expect(readVoiceTuning({ stt: { provider: 'vllm' } }).hangoverMs).toBe(600)
+  })
+
   it('returns the shipped defaults for an undefined config (not loaded yet)', () => {
     // The settings page and the chat panel both read this before /api/config
     // resolves. Falling back to "gate everything off with a 0 threshold" here
