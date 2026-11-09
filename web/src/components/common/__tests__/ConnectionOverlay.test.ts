@@ -55,10 +55,10 @@ describe('ConnectionOverlay', () => {
     //
     // Removing the teleported elements from <body> is not enough: the Vue
     // instance stays alive and keeps its teleport target registered, so each
-    // later mount leaves another live copy behind. CI showed SIX
-    // `.connection-overlay` nodes by the time this case ran (measured with a
-    // temporary log), and `$()` returns the first — a dead instance's DOM — so
-    // clicking the live one looked like it had no effect.
+    // later mount leaves another live copy behind (CI measured SIX
+    // `.connection-overlay` nodes by the time the last case ran). `$()` queries
+    // document.body and returns the first match, so it could be looking at a
+    // dead instance while the live one behaved correctly.
     const mounted: { wrapper: ReturnType<typeof mountOverlay>['wrapper']; container: HTMLDivElement }[] = []
 
     beforeEach(() => {
@@ -130,6 +130,15 @@ describe('ConnectionOverlay', () => {
         expect(btn).not.toBeNull()
         expect(btn?.textContent).toContain('切换服务端')
 
+        // Count masks BEFORE clicking, and assert the count DROPS by one.
+        //
+        // Asserting `=== null` is fragile here: the component teleports to
+        // <body>, and a mask left by an earlier case would be the first match.
+        // On CI that produced a stable failure with the mask still present
+        // (measured: overlays=1, with a modal-overlay from the previous case
+        // still in <body>) while the same code passed locally.
+        const before = document.body.querySelectorAll('.connection-overlay').length
+
         btn?.click()
         await nextTick()
 
@@ -138,14 +147,7 @@ describe('ConnectionOverlay', () => {
         const modal = $('.modal-overlay')
         expect(modal).not.toBeNull()
         expect(modal!.style.display).not.toBe('none')
-        // DIAG2
-        // eslint-disable-next-line no-console
-        console.log('[DIAG3] overlays=', document.body.querySelectorAll('.connection-overlay').length,
-            ' bodyChildren=', Array.from(document.body.children).map(e => e.tagName + '.' + e.className).join('|'),
-            ' modalExists=', !!document.body.querySelector('.modal-overlay'),
-            ' modalDisplay=', document.body.querySelector('.modal-overlay')?.style.display,
-            ' connected=', btn?.isConnected)
-        expect($('.connection-overlay')).toBeNull()
+        expect(document.body.querySelectorAll('.connection-overlay').length).toBe(before - 1)
 
         // Closing the dialog brings the mask back while still disconnected.
         const dialog = wrapper.findComponent(ServerSwitchDialog)
