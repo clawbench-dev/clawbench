@@ -21,8 +21,10 @@ import (
 
 // ServeSessionsOverview handles GET /api/ai/sessions/overview.
 // Returns sessions across ALL projects that are running, pending approval, or
-// have unread messages, grouped by project name. Requires auth (session cookie);
-// no project cookie needed since it spans projects.
+// have unread messages, grouped by project name, PLUS projects that merely saw
+// activity inside the recency window (those groups carry `lastActiveAt` and no
+// sessions). Requires auth (session cookie); no project cookie needed since it
+// spans projects.
 func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -59,6 +61,10 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	type projectGroup struct {
 		Name     string            `json:"name"`
 		Sessions []overviewSession `json:"sessions"`
+		// LastActiveAt is set ONLY on groups that have no active session (they
+		// exist because the project was touched inside the recency window). It
+		// is what the collapsed card shows instead of a session count.
+		LastActiveAt string `json:"lastActiveAt,omitempty"`
 	}
 	groups := []*projectGroup{}
 	groupByName := map[string]*projectGroup{}
@@ -120,6 +126,37 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Projects with recent activity but no active session right now: the list
+	// renders them as collapsed cards so yesterday's work stays one tap away.
+	// Excluding the caller's own project (it is already the main list) and the
+	// projects already grouped above (their cards carry rows) keeps one card per
+	// project. Capped by chat.recent_project_cards_max_count, AFTER both
+	// exclusions, so the cap counts what is actually displayed.
+	activePaths := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		activePaths[g.Name] = true
+	}
+	recent, err := service.ListRecentlyActiveProjects(middleware.GetProjectFromCookie(r))
+	if err != nil {
+		slog.Warn("failed to load recently active projects", "error", err)
+	} else {
+		limit := model.ChatRecentProjectCardsMaxCount
+		if limit <= 0 {
+			limit = 10
+		}
+		for _, rp := range recent {
+			if activePaths[rp.Path] {
+				continue
+			}
+			if len(groups) >= limit {
+				break
+			}
+			groups = append(groups, &projectGroup{Name: rp.Path, LastActiveAt: rp.LastActiveAt})
+			activePaths[rp.Path] = true
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
 }
 

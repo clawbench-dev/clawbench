@@ -940,6 +940,34 @@ func TestApplyDefaults_RecentProjectsMaxCount(t *testing.T) {
 	}
 }
 
+// The session list's card cap defaults to 10 and keeps a positive explicit
+// value. A non-positive value falls back to the default: 0 would hide the
+// section, which an empty active set already does, so it carries no meaning of
+// its own.
+func TestApplyDefaults_RecentProjectCardsMaxCount(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.RecentProjectCardsMaxCount != 10 {
+		t.Errorf("Chat.RecentProjectCardsMaxCount = %d, want 10 (default)", cfg.Chat.RecentProjectCardsMaxCount)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsMaxCount = 4
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_max_count": true})
+	if cfg.Chat.RecentProjectCardsMaxCount != 4 {
+		t.Errorf("Chat.RecentProjectCardsMaxCount = %d, want 4 (explicitly set)", cfg.Chat.RecentProjectCardsMaxCount)
+	}
+
+	cfg = Config{}
+	cfg.Chat.RecentProjectCardsMaxCount = -1
+	ApplyDefaults(&cfg, map[string]bool{"chat": true, "chat.recent_project_cards_max_count": true})
+	if cfg.Chat.RecentProjectCardsMaxCount != 10 {
+		t.Errorf("Chat.RecentProjectCardsMaxCount = %d, want 10 (non-positive clamps to default)", cfg.Chat.RecentProjectCardsMaxCount)
+	}
+}
+
 func TestApplyDefaults_RecentProjectsMaxCountExplicit(t *testing.T) {
 	setupTestBinDir(t)
 

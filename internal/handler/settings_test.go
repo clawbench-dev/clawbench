@@ -431,6 +431,42 @@ func TestServeConfig_Patch_GroupMaxSpeeches(t *testing.T) {
 	}
 }
 
+// recent_project_cards_max_count round-trips through PATCH /api/config and is
+// synced into the model global so the overview endpoint honours it without a
+// restart. 0 is rejected rather than read as "hide the section": an empty active
+// set already hides it, so 0 has no distinct meaning.
+func TestServeConfig_Patch_RecentProjectCardsMaxCount(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatRecentProjectCardsMaxCount
+	t.Cleanup(func() { model.ChatRecentProjectCardsMaxCount = orig })
+
+	body := `{"chat":{"recent_project_cards_max_count":3}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 3, model.ConfigInstance.Chat.RecentProjectCardsMaxCount,
+		"the value must be applied to ConfigInstance")
+	assert.Equal(t, 3, model.ChatRecentProjectCardsMaxCount,
+		"applyHotReloadGlobals must sync the model global")
+
+	model.ConfigInstance.Chat.RecentProjectCardsMaxCount = 3
+	for _, bad := range []int{0, -1} {
+		b, _ := json.Marshal(map[string]any{"chat": map[string]any{"recent_project_cards_max_count": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(b)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "count=%d must be rejected", bad)
+		assert.Equal(t, 3, model.ConfigInstance.Chat.RecentProjectCardsMaxCount, "a rejected value must not be stored")
+	}
+}
+
 // A nickname equal to an existing agent's name is a conflict (409), not a
 // malformed value: the agent-side guard rejects the reverse direction, so the
 // two must agree.

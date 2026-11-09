@@ -1463,10 +1463,22 @@ describe('SessionList', () => {
         name: '/proj/other',
         displayName: 'other',
         displayPath: '~/proj/other',
+        lastActiveAt: '2025-01-05',
         sessions: [
           { id: 'o1', title: 'Other 1', backend: 'cli', agentId: 'agent-1', model: 'gpt-4', running: true, pendingApproval: false, unreadCount: 0, updatedAt: '2025-01-05' },
           { id: 'o2', title: 'Other 2', backend: 'acp', agentId: 'agent-2', running: false, pendingApproval: false, unreadCount: 3, updatedAt: '2025-01-04' },
         ],
+      }
+    }
+
+    /** A project with recent activity but no active session right now. */
+    function idleCrossGroup(name = '/proj/idle', lastActiveAt = '2025-01-03') {
+      return {
+        name,
+        displayName: name.split('/').pop(),
+        displayPath: '~' + name,
+        lastActiveAt,
+        sessions: [],
       }
     }
 
@@ -1508,6 +1520,53 @@ describe('SessionList', () => {
       expect(wrapper.find('.pcard-name').text()).toBe('other')
       expect(wrapper.find('.pcard-count').text()).toBe('2')
       expect(wrapper.find('.pcard-path').text()).toBe('~/proj/other')
+    })
+
+    it('marks the card header with the same project glyph as the app header', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup(), idleCrossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      // Every card, active or idle, carries it — the glyph says "this is a
+      // project", which is true of both kinds.
+      const heads = wrapper.findAll('.pcard-head')
+      expect(heads.length).toBe(2)
+      for (const head of heads) {
+        expect(head.find('.pcard-icon').exists(), 'header carries the project glyph').toBe(true)
+      }
+    })
+
+    it('shows an idle project as a header-only card with its last active time', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [idleCrossGroup('/proj/idle', '2025-01-03')]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      const card = wrapper.find('.pcard')
+      expect(card.classes()).toContain('is-idle')
+      // No rows and no count badge: the card is exactly its header until opened.
+      expect(card.findAll('.pcard-row').length).toBe(0)
+      expect(card.find('.pcard-count').exists()).toBe(false)
+      // The count slot carries the recency instead. formatRelativeTime is mocked
+      // to echo its input, so the value proves which timestamp was passed.
+      expect(card.find('.pcard-recent').text()).toBe('2025-01-03')
+    })
+
+    it('opens an idle card into the project\'s full session list', async () => {
+      routeListAndBrowse(browseSessions)
+      mockCrossState.groups.value = [idleCrossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      expect(wrapper.findAll('.pcard-row').length).toBe(0)
+      await wrapper.find('.pcard-head').trigger('click')
+      await flushPromises()
+
+      // The same by-project fetch the active cards use — an idle card needs no
+      // separate code path, it just starts with nothing to show.
+      expect(wrapper.findAll('.pcard-row').length).toBe(2)
+      expect(wrapper.find('.pcard-head').attributes('aria-expanded')).toBe('true')
     })
 
     it('keeps the pending/unread language and shows running as a ring', async () => {

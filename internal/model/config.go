@@ -184,6 +184,12 @@ type Config struct {
 		// free mode share the same meaning. Reaching it stops the AI
 		// discussion no matter whose turn it is. (default: 100)
 		GroupMaxSpeeches int `yaml:"group_max_speeches"`
+		// RecentProjectCardsMaxCount caps how many "other projects" cards the
+		// session list shows below the current project's rows. The cards cover
+		// two kinds of project: those with an active session (running / pending
+		// approval / unread) and those merely active in the last 24 hours.
+		// (default: 10, minimum 1)
+		RecentProjectCardsMaxCount int `yaml:"recent_project_cards_max_count"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -764,6 +770,10 @@ var (
 	// the discussion is forced to stop (default 100). Read by internal/service
 	// at turn time so a change takes effect without a restart.
 	ChatGroupMaxSpeeches int
+	// ChatRecentProjectCardsMaxCount caps the "other projects" cards in the
+	// session list (default 10). Read by the overview handler at request time,
+	// so a change takes effect without a restart.
+	ChatRecentProjectCardsMaxCount int
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

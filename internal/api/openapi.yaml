@@ -707,6 +707,10 @@ paths:
         语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
         AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
 
+        `chat.recent_project_cards_max_count` 是会话列表底部「其他项目」卡片的
+        数量上限（默认 `10`）。卡片优先给有活跃会话的项目，其次是最近 24 小时
+        用过的项目；上限在排除当前项目之后生效。`PATCH` 时须 ≥ 1。
+
         `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（会议结束后由主持人
         客户端自动生成纪要，默认 `true`）、`proofread`（生成前先校对转写，默认
         `true`）、`language`（`""` 跟随转写 / `zh` / `en`）、`file_excerpts`
@@ -2015,12 +2019,22 @@ paths:
         每行同样带 `agentTakeoverFrom`（旧智能体的显示名；省略 = 从未被接管），
         语义与 `GET /api/ai/sessions` 的同名字段一致：智能体被删除后会话由默认智能体
         接管，本字段记录被删除者的名字，供客户端渲染「由 X 接管」徽标。
+
+        **没有活跃会话、但最近 24 小时内用过的项目也会返回**（供会话列表把它们
+        渲染成收起的卡片，标题上显示最近活跃时间）。这类项目分组的 `sessions` 为
+        空数组、只带 `lastActiveAt`；有活跃会话的分组不带该字段。两类分组各自按
+        最近活跃时间倒序，且活跃的分组排在前面。
+
+        分组数量上限由 `chat.recent_project_cards_max_count`（默认 10）决定，
+        **在排除当前项目、去掉已有活跃会话的项目之后**再截断，因此上限计的就是
+        界面上实际会显示的卡片数。调用方的当前项目永远不作为卡片返回。
       operationId: sessionsOverview
       responses:
         "200":
           description: |
-            各项目会话概览（`{projects: [{name, sessions}], total}`）。每行携带
-            `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
+            各项目会话概览（`{projects: [{name, sessions, lastActiveAt?}], total}`）。
+            每行携带 `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
+            `total` 仍是**活跃会话**总数，不含仅最近活跃的项目。
 
   /api/ai/sessions/by-project:
     get:

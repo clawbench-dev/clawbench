@@ -3314,6 +3314,8 @@ export default {
       chatForkContextBudgetDesc: 'Max characters of conversation history re-injected when forking or rewinding a session. Older messages are omitted beyond this limit (default 100000).',
       sessionMaxCount: 'Max Sessions',
       sessionMaxCountDesc: 'Maximum number of concurrent chat sessions',
+      recentProjectCardsMaxCount: 'Other Project Cards Limit',
+      recentProjectCardsMaxCountDesc: 'How many other-project cards the session list shows at the bottom. Projects with active sessions come first, then projects used in the last 24 hours (default 10).',
       archiveRetentionSectionHeader: 'Archive Retention',
       archiveRetentionEnabled: 'Auto-Purge Archived Sessions',
       archiveRetentionEnabledDesc: 'Automatically delete archived sessions after the retention period expires',

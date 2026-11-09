@@ -268,6 +268,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.GroupMaxSpeeches <= 0 {
 		cfg.Chat.GroupMaxSpeeches = 100
 	}
+	// RecentProjectCardsMaxCount: how many "other projects" cards the session
+	// list may show. 0 is not meaningful here (it would hide the section
+	// entirely, which is what an empty active set already does), so a
+	// non-positive value falls back to the default rather than being kept.
+	if cfg.Chat.RecentProjectCardsMaxCount <= 0 {
+		cfg.Chat.RecentProjectCardsMaxCount = 10
+	}
 
 	// --- Session ---
 	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is
