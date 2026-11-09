@@ -336,8 +336,29 @@ test.describe('Meeting flow', () => {
     const token = await row.getAttribute('data-token')
     expect(token, 'the row must carry the meeting token for cleanup').toBeTruthy()
 
-    // The link handed out in advance still works after the meeting: a member
-    // opening it now lands on the record — minutes / transcript / proofread /
+    // A link handed out in advance must NOT expose the record by itself. The
+    // token is minted automatically so people can join, which is not the same
+    // as publishing what was said; the archived view is a stranger reading a
+    // meeting they were not in, so it stays closed until the owner opts in.
+    const unpublishedViewer = await page.context().newPage()
+    await unpublishedViewer.goto(`/share/${token}`)
+    // 404 from /meta is what the share root renders as its "link does not
+    // exist" page — the deterministic signal that the record is closed.
+    await expect(unpublishedViewer.locator('.share-root-error-title')).toBeVisible({ timeout: 20000 })
+    await expect(unpublishedViewer.locator('[data-role="meeting-ended"]')).toHaveCount(0)
+    await unpublishedViewer.close()
+
+    // Publishing is a switch next to the link in 资源, off by default, and the
+    // switch reflects what the server stored rather than the click.
+    await row.click()
+    const shareToggle = page.locator('[data-role="meeting-share-toggle"]')
+    await expect(shareToggle).toBeVisible({ timeout: 20000 })
+    await expect(shareToggle).not.toBeChecked()
+    await shareToggle.check()
+    await expect(shareToggle).toBeChecked()
+
+    // Published: the link handed out in advance now works after the meeting. A
+    // member opening it lands on the record — minutes / transcript / proofread /
     // chat — instead of a dead "share ended" page. This is the whole point of
     // keeping the link until the record is deleted.
     const viewer = await page.context().newPage()
