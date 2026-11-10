@@ -57,9 +57,9 @@ func resolveOrCreateProjectSession(w http.ResponseWriter, r *http.Request, proje
 	defer implicitSessionMu.Unlock()
 	// Re-check under the lock: a concurrent recovery request may have created
 	// the session while this one waited.
-	if id, be, err := service.GetLatestSessionID(projectPath); err == nil {
+	if id, be, retryErr := service.GetLatestSessionID(projectPath); retryErr == nil {
 		return id, be, true
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	} else if !errors.Is(retryErr, sql.ErrNoRows) {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to find latest session")))
 		return "", "", false
 	}
