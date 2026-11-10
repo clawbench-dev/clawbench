@@ -18,9 +18,10 @@ import { join } from 'node:path'
  *   3. The recency label is plain text, not the fixed-size count badge: a
  *      18dp circle would clip "23 小时前" or leave a hole.
  *
- * jsdom does not apply scoped styles, so this is a source guard.
+ * jsdom does not apply scoped styles, so this is a source guard. The cards live
+ * in their own component (both layouts render it), so the guard reads that file.
  */
-const src = readFileSync(join(__dirname, '..', 'SessionList.vue'), 'utf8')
+const src = readFileSync(join(__dirname, '..', 'OtherProjectCards.vue'), 'utf8')
 
 /** The declaration block for one selector, or '' when absent. */
 function block(selector: string): string {

@@ -181,4 +181,41 @@ test.describe.serial('Cross-project session jump', () => {
       return 0
     }, { timeout: 30000, intervals: [500, 1000] }).toBe(0)
   })
+  /**
+   * Same jump, with 设置 → 聊天 → 其他项目卡片 set to the bottom tabs. The cards
+   * are the same component in both layouts, so what needs proving is the
+   * LAYOUT contract: the bar exists, the project pane holds no cards, and the
+   * other pane is reachable and still jumps.
+   *
+   * The previous test marked the seeded session read, so its card is now idle
+   * (no active rows) — the card header has to be opened first, which is also
+   * the only way an idle project's sessions are reachable at all.
+   */
+  test('tab mode separates the panes and still jumps', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('clawbench-settings-sessionOtherProjectMode', JSON.stringify('tabs'))
+    })
+    await page.goto('/')
+    const chat = new ChatPage(page)
+    await expect(chat.textarea).toBeVisible({ timeout: 20000 })
+
+    await expect(page.locator('.session-tabs'), 'tab bar must appear in tab mode')
+      .toBeVisible({ timeout: 30000 })
+
+    await page.locator('[data-session-tab="cross"]').click()
+    const crossPane = page.locator('.session-list-pane--cross:visible')
+    await expect(crossPane).toBeVisible()
+
+    const card = crossPane.locator(`.pcard[data-project="${projectB}"]`)
+    await expect(card).toBeVisible({ timeout: 30000 })
+    if (await card.locator('.pcard-row').count() === 0) {
+      await card.locator('.pcard-head').click()
+    }
+    const row = card.locator(`.pcard-row[data-session-id="${targetId}"]`)
+    await expect(row).toBeVisible({ timeout: 30000 })
+    await row.click()
+
+    await expect(page.locator('.chat-message.user').filter({ hasText: /cross target/ }).first())
+      .toBeVisible({ timeout: 30000 })
+  })
 })

@@ -5,6 +5,7 @@ import SessionList from '@/components/session/SessionList.vue'
 import { RunningSweepDirective } from '@/directives/runningSweep'
 import { LongPressDirective } from '@/directives/longPress'
 import { readWebFile } from '@/testUtils/readWebFile'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
@@ -1783,6 +1784,121 @@ describe('SessionList', () => {
 
       expect(wrapper.find('.pcard .pcard-state').text()).toBe('session.browseFailed')
       expect(wrapper.findAll('.pcard-row').length).toBe(0)
+    })
+  })
+
+  // ── Tab mode (设置 → 聊天 → 其他项目卡片 → 底部页签) ──
+  //
+  // The cards are the same component in both layouts; what changes is WHERE
+  // they render and whether the project pane is hidden. The setting is a local
+  // (per-device) value, so the test flips the same reactive object the settings
+  // panel writes.
+  describe('other-project tabs mode', () => {
+    function crossGroup() {
+      return {
+        name: '/proj/other',
+        displayName: 'other',
+        displayPath: '~/proj/other',
+        lastActiveAt: '2025-01-05',
+        sessions: [
+          { id: 'o1', title: 'Other 1', backend: 'cli', agentId: 'agent-1', running: true, pendingApproval: false, unreadCount: 0, updatedAt: '2025-01-05' },
+        ],
+      }
+    }
+
+    /** List + tags endpoints; tags non-empty so the filter bar has something to render. */
+    function routeFetch() {
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/session/tags')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ tags: [{ name: 'bug', scope: 'project', count: 1 }] }) })
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      })
+    }
+
+    afterEach(() => {
+      // Module-level reactive object shared with the real settings panel.
+      localConfig.sessionOtherProjectMode = 'strip'
+    })
+
+    it('puts the cards in their own pane instead of under the project rows', async () => {
+      localConfig.sessionOtherProjectMode = 'tabs'
+      routeFetch()
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList()
+      await flushPromises()
+
+      // Two panes now; the project one is on screen and holds no cards.
+      const panes = wrapper.findAll('.session-list-pane')
+      expect(panes.length).toBe(2)
+      expect(panes[0].find('[data-other-zone]').exists()).toBe(false)
+      expect(panes[1].find('[data-other-zone]').exists()).toBe(true)
+      expect(panes[1].isVisible()).toBe(false)
+      expect(panes[0].isVisible()).toBe(true)
+    })
+
+    it('switches panes and hides the project tag filter on the other-projects tab', async () => {
+      localConfig.sessionOtherProjectMode = 'tabs'
+      routeFetch()
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'project' })
+      await flushPromises()
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(true)
+
+      await wrapper.setProps({ activeTab: 'cross' })
+      await flushPromises()
+
+      const panes = wrapper.findAll('.session-list-pane')
+      expect(panes[0].isVisible()).toBe(false)
+      expect(panes[1].isVisible()).toBe(true)
+      // This project's tags say nothing about another project's sessions.
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
+    })
+
+    it('snaps back to the project tab when the other projects disappear', async () => {
+      localConfig.sessionOtherProjectMode = 'tabs'
+      routeFetch()
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      expect(wrapper.emitted('update:activeTab')).toBeUndefined()
+
+      mockCrossState.groups.value = []
+      await flushPromises()
+
+      // Otherwise the bar unmounts and the user is stranded on a pane they can
+      // no longer switch away from.
+      expect(wrapper.emitted('update:activeTab')).toEqual([['project']])
+    })
+
+    it('snaps back when the setting is flipped back to the strip', async () => {
+      localConfig.sessionOtherProjectMode = 'tabs'
+      routeFetch()
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+
+      localConfig.sessionOtherProjectMode = 'strip'
+      await flushPromises()
+
+      expect(wrapper.emitted('update:activeTab')).toEqual([['project']])
+      // Strip mode has exactly one pane again, with the cards inside it.
+      expect(wrapper.findAll('.session-list-pane').length).toBe(1)
+      expect(wrapper.find('.session-list-pane [data-other-zone]').exists()).toBe(true)
+    })
+
+    it('does not let arrow keys drive the hidden project rows', async () => {
+      localConfig.sessionOtherProjectMode = 'tabs'
+      routeFetch()
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+      await flushPromises()
+
+      // No row gets the keyboard highlight while the other pane is on screen.
+      expect(wrapper.findAll('.session-row-active').length).toBe(0)
     })
   })
 

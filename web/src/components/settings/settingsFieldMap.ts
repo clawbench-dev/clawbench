@@ -318,6 +318,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // **连续段**分组，所以这两行必须紧挨着，中间不能插别的 header。
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsMaxCount', descriptionKey: 'settings.items.recentProjectCardsMaxCountDesc', key: 'chat.recent_project_cards_max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsWindowHours', descriptionKey: 'settings.items.recentProjectCardsWindowHoursDesc', key: 'chat.recent_project_cards_window_hours', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
+    // How those cards are laid out. Local (per device): the same person may
+    // want the always-visible strip on a desktop and separate tabs on a phone.
+    // Kept inside the same section as the two rows above — the renderer groups
+    // by consecutive runs of the same sectionHeader.
+    { type: 'item', spec: { labelKey: 'settings.items.sessionOtherProjectMode', descriptionKey: 'settings.items.sessionOtherProjectModeDesc', key: 'sessionOtherProjectMode', type: 'select', source: 'local', sectionHeader: 'settings.items.recentProjectCardsSectionHeader', options: [
+      { labelKey: 'settings.items.sessionOtherProjectModeStrip', value: 'strip' },
+      { labelKey: 'settings.items.sessionOtherProjectModeTabs', value: 'tabs' },
+    ]}},
     // Group chat: the cap on how many times the agents may speak to each other
     // before the floor returns to the user. A global server setting (same value
     // on every device). The user nickname now lives in the 身份 category — it

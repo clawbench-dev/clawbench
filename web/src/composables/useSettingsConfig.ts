@@ -412,6 +412,14 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // keeps the pre-existing behaviour.
   layoutMemory: 'global',
   messageDisplayMode: 'mixed',
+  // Where the OTHER projects' sessions go in the session list:
+  //   'strip' — the default: cards under the project's own rows, one scroll.
+  //   'tabs'  — a two-slot bar at the bottom switches between this project and
+  //             the other ones.
+  // A per-device display preference (a phone and a desktop can reasonably
+  // disagree), unlike the card limit / recency window in the same settings
+  // group, which are server values because the server computes the cards.
+  sessionOtherProjectMode: 'strip',
   terminalFontSize: 12,
   // Copy-on-select is ON by default, matching mainstream terminals (GNOME
   // Terminal / Windows Terminal / Termius). Only the PC floating-copy-bar
