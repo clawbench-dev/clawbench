@@ -2535,12 +2535,6 @@ func LiveNotesSelfLabel(segments []LiveNoteSegment) string {
 // summary model worth configuring).
 const liveNotesMinutesChunkRunes = 24000
 
-// liveNotesMinutesChunkMaxTokens bounds one extraction pass. It keeps roughly
-// the same 5:1 input:output ratio the old 6000-rune chunk had with 1200
-// tokens: holding it at 1200 for a 24000-rune chunk would compress 20:1 and
-// drop exactly the details the larger chunk was meant to preserve.
-const liveNotesMinutesChunkMaxTokens = liveNotesMinutesChunkRunes / 5
-
 const liveNotesMinutesPrompt = `你是一名专业的会议记录员。根据下面这场会议的实时转写（每行是「时间 说话人：内容」，已按时间重排；同一路声音里也可能有多人交替发言，一律以每行的说话人标签为准），生成结构化的会议纪要。
 
 要求：
@@ -2834,6 +2828,9 @@ func GenerateLiveNotesMinutesWithOptions(
 	if summarizer == nil {
 		return "", ErrSummaryModelNotConfigured
 	}
+	// The model the budget is derived from — the same one the summarizer will
+	// actually call (NewAISummarizer builds it from this config).
+	summaryModelID := model.ConfigInstance.AISummary.Model
 	report := func(done, total int, phase string) {
 		if len(progress) > 0 && progress[0] != nil {
 			progress[0](done, total, phase)
@@ -2843,12 +2840,18 @@ func GenerateLiveNotesMinutesWithOptions(
 	chunks := splitRunes(transcript, liveNotesMinutesChunkRunes)
 	contextBlock := transcript
 	if len(chunks) > 1 {
+		// One extraction per chunk, each given the model's own budget rather
+		// than a fixed number: a cap that also has to cover the model's
+		// reasoning starves long chunks and fails the whole run with
+		// "output truncated". The prompt — not the cap — keeps the extraction
+		// short (roughly 5:1 against the chunk).
+		chunkBudget := summarize.OutputBudgetForModel(summaryModelID, 0)
 		partials := make([]string, 0, len(chunks))
 		for i, chunk := range chunks {
 			out, err := summarize.AskAboutContext(
 				ctx, summarizer, self.withPrompt(liveNotesChunkPrompt),
 				fmt.Sprintf("第 %d/%d 段：\n%s", i+1, len(chunks), chunk),
-				"请提取这一段的关键信息。", liveNotesMinutesChunkMaxTokens,
+				"请提取这一段的关键信息。", chunkBudget,
 			)
 			if err != nil {
 				return "", fmt.Errorf("live notes: chunk %d: %w", i+1, err)
@@ -2867,10 +2870,10 @@ func GenerateLiveNotesMinutesWithOptions(
 
 	report(0, 1, "final")
 	question := liveNotesMinutesQuestion(title)
-	maxTokens := opts.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = model.DefaultMeetingMinutesMaxTokens
-	}
+	// opts.MaxTokens <= 0 means "auto": follow the model's published output
+	// limit. A manual value still cannot exceed it — the provider rejects that
+	// outright rather than returning a longer document.
+	maxTokens := summarize.OutputBudgetForModel(summaryModelID, opts.MaxTokens)
 	systemPrompt := self.withPrompt(liveNotesMinutesPrompt)
 	if directive := liveNotesLanguageDirective(opts.Language); directive != "" {
 		systemPrompt += "\n\n" + directive

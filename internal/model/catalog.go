@@ -172,6 +172,37 @@ func CatalogModelsForPreset(presetID string) []AgentModel {
 	return out
 }
 
+// CatalogOutputLimitForModel returns the maximum output tokens the catalog
+// publishes for a model id, or 0 when the snapshot has no entry for it.
+//
+// The match is by model id alone, across every provider in the snapshot: the
+// caller may be a BYOK / custom endpoint whose provider has no catalog entry of
+// its own (a local proxy, say), yet the same model id carries the same limit
+// wherever it is served. When several providers disagree the largest limit
+// wins — callers use this as a CEILING for a request, and asking for less than
+// the model supports only costs quality, while asking for more is a hard API
+// error.
+//
+// The value is a static published number, not a live capability probe: no
+// provider's /v1/models response carries it (they return id/name/created only,
+// and Anthropic has no model list endpoint at all), so the snapshot is the only
+// place it can come from.
+func CatalogOutputLimitForModel(modelID string) int {
+	cat := CatalogSnapshot()
+	if cat == nil || modelID == "" {
+		return 0
+	}
+	limit := 0
+	for _, p := range cat.Providers {
+		for _, m := range p.Models {
+			if m.ID == modelID && m.Output > limit {
+				limit = m.Output
+			}
+		}
+	}
+	return limit
+}
+
 // CatalogProviderForPreset returns the provider entry itself (used by the
 // provider-models endpoint when the live probe fails).
 func CatalogProviderForPreset(presetID string) *CatalogProvider {

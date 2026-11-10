@@ -684,7 +684,7 @@ const serverDefaults: Record<string, unknown> = {
   'meeting.proofread': true,
   'meeting.language': '',
   'meeting.file_excerpts': true,
-  'meeting.minutes_max_tokens': 3000,
+  'meeting.minutes_max_tokens': 0,
   'port_forward.allowed_ports': '1024-65535',
   'push_mode': 'native',
   'file_search.display_limit': 100,

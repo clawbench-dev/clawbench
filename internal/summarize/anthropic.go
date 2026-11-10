@@ -199,7 +199,7 @@ func (s *AnthropicSummarizer) DoSummarizePass(ctx context.Context, text, systemP
 		Messages: []anthropicMessage{
 			{Role: roleUser, Content: text},
 		},
-		MaxTokens:   1024,
+		MaxTokens:   summarizePassBudget(s.Model),
 		Temperature: 0.3,
 	}
 

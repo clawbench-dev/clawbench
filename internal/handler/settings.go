@@ -1849,7 +1849,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := meeting["minutes_max_tokens"].(float64); ok {
 			n := int(v)
-			if n < model.MinMeetingMinutesMaxTokens || n > model.MaxMeetingMinutesMaxTokens {
+			// 0 = auto (follow the summary model's published output limit);
+			// anything else is a manual cap inside the advertised range.
+			if n != 0 && (n < model.MinMeetingMinutesMaxTokens || n > model.MaxMeetingMinutesMaxTokens) {
 				return &configValueError{
 					MsgKey: "MeetingMinutesMaxTokensRange",
 					Field:  "meeting.minutes_max_tokens",

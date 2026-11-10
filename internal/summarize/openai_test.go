@@ -77,7 +77,7 @@ func TestOpenAISummarizer_APICall(t *testing.T) {
 	assert.Equal(t, "gpt-4o-mini", receivedReq.Model)
 	assert.Equal(t, "system", receivedReq.Messages[0].Role)
 	assert.Equal(t, "user", receivedReq.Messages[1].Role)
-	assert.Equal(t, 1024, receivedReq.MaxTokens)
+	assert.Equal(t, summarizePassBudget(s.Model), receivedReq.MaxTokens)
 }
 
 func TestOpenAISummarizer_MultiPass(t *testing.T) {
@@ -133,6 +133,32 @@ func TestOpenAISummarizer_ConnectionRefused(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "openai request")
+}
+
+// The summarize pass shares its output budget with the model's reasoning. A
+// reasoning model spends the whole budget thinking and then answers with an
+// empty `content` (finish_reason=length), which silently degraded every long
+// TTS summary to the non-AI cleaner. 1024 measured empty on a 2600-rune text.
+func TestOpenAISummarizer_SummarizeBudgetCoversReasoning(t *testing.T) {
+	var receivedReq openaiChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&receivedReq))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{
+			Choices: []openaiChoice{
+				{Message: openaiChatMessage{Role: "assistant", Content: "总结。"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "")
+	_, err := s.Summarize(context.Background(), "短文本", "zh")
+	assert.NoError(t, err)
+
+	assert.Equal(t, summarizePassBudget(s.Model), receivedReq.MaxTokens)
+	// 1024 was measured to leave a reasoning model with no budget for the answer.
+	assert.GreaterOrEqual(t, receivedReq.MaxTokens, 4096)
 }
 
 func TestOpenAISummarizer_EmptyResponse(t *testing.T) {

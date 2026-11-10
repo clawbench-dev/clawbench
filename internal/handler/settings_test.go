@@ -3639,6 +3639,24 @@ func TestServeConfig_Patch_MeetingMinutesMaxTokensRange(t *testing.T) {
 	}
 }
 
+// 0 is the "auto" sentinel (follow the summary model's published limit), not an
+// out-of-range value: rejecting it would make the recommended setting unusable.
+func TestServeConfig_Patch_MeetingMinutesMaxTokensAcceptsAuto(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	req := httptest.NewRequest(http.MethodPatch, "/api/config",
+		strings.NewReader(`{"meeting":{"minutes_max_tokens":0}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Locale", "en")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Zero(t, model.ConfigInstance.Meeting.MinutesMaxTokens)
+}
+
 func TestServeConfig_Patch_MeetingRejectsUnknownLanguage(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

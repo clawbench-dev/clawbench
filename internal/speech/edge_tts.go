@@ -72,15 +72,8 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, text string, outputPat
 	}
 	defer func() { _ = f.Close() }()
 
-	// Build SSML
-	rate := p.Rate
-	if rate == "" {
-		rate = "+0%"
-	}
-	ssml := buildSSML(p.Voice, rate, cleaned)
-
-	// Connect and synthesize
-	if err := p.synthesizeViaWebSocket(ctx, ssml, f); err != nil {
+	// Connect and synthesize (one request per segment, one continuous file)
+	if err := p.synthesizeText(ctx, cleaned, f); err != nil {
 		// Remove the empty/broken output file on error
 		_ = f.Close()
 		_ = os.Remove(outputPath)
@@ -93,6 +86,122 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, text string, outputPat
 		slog.Int("text_len", len([]rune(text))),
 	)
 	return nil
+}
+
+const (
+	// edgeSegmentRunes bounds ONE request to the Edge service. A reply read in
+	// full can be several thousand runes (minutes of audio); sending that as a
+	// single request makes the whole read hang on one connection and, when it
+	// fails, loses everything after the failure point. One request per segment
+	// keeps each request short and lets the audio of segment N play while
+	// segment N+1 is being synthesized.
+	edgeSegmentRunes = 500
+
+	// edgeSegmentTimeout bounds one segment request. It is per segment, not per
+	// text: a long read legitimately takes minutes in total, but a single
+	// request that hangs must fail fast instead of stalling the whole job.
+	edgeSegmentTimeout = 90 * time.Second
+)
+
+// synthesizeText splits text into speech-sized segments and sends one Edge TTS
+// request per segment, writing all of them into the same writer.
+//
+// The output stays ONE continuous stream/file: the caller (and the listener)
+// sees no segment boundaries. What changes is the request granularity — and with
+// it the failure granularity, which is why a segment that fails aborts the job
+// instead of silently skipping its content.
+func (p *EdgeTTSProvider) synthesizeText(ctx context.Context, text string, w io.Writer) error {
+	return p.synthesizeSegments(ctx, text, func(sctx context.Context, ssml string) error {
+		return p.synthesizeViaWebSocket(sctx, ssml, w)
+	})
+}
+
+// synthesizeSegments is synthesizeText with the per-segment request lifted out,
+// so the loop (ordering, per-segment budget, abort-on-failure) is testable
+// without an Edge endpoint.
+func (p *EdgeTTSProvider) synthesizeSegments(
+	ctx context.Context, text string, synth func(context.Context, string) error,
+) error {
+	segments := splitSpeechSegments(text, edgeSegmentRunes)
+	if len(segments) == 0 {
+		return fmt.Errorf("no speakable text")
+	}
+	rate := p.Rate
+	if rate == "" {
+		rate = "+0%"
+	}
+	for i, seg := range segments {
+		sctx, cancel := context.WithTimeout(ctx, edgeSegmentTimeout)
+		err := synth(sctx, buildSSML(p.Voice, rate, seg))
+		// Read the segment's own state BEFORE cancel(), which would set it.
+		segmentErr := sctx.Err()
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err() // caller cancelled (user stopped, client gone)
+			}
+			return fmt.Errorf("segment %d/%d: %w", i+1, len(segments), err)
+		}
+		if segmentErr != nil {
+			// Returned without an error but its budget expired: the segment is
+			// incomplete, and the rest must not pretend it was spoken in full.
+			return fmt.Errorf("segment %d/%d: %w", i+1, len(segments), segmentErr)
+		}
+	}
+	return nil
+}
+
+// splitSpeechSegments cuts text into segments of at most maxRunes runes, ending
+// each one at a sentence boundary when there is one (so a segment is a whole
+// sentence, not half of one). A run with no punctuation at all is cut at
+// maxRunes, preferring a comma or space near the cut.
+func splitSpeechSegments(text string, maxRunes int) []string {
+	if maxRunes <= 0 {
+		maxRunes = edgeSegmentRunes
+	}
+	runes := []rune(text)
+	var out []string
+	for start := 0; start < len(runes); {
+		if len(runes)-start <= maxRunes {
+			if seg := strings.TrimSpace(string(runes[start:])); seg != "" {
+				out = append(out, seg)
+			}
+			break
+		}
+		cut := start + maxRunes
+		for i := start + maxRunes - 1; i > start; i-- {
+			if isSpeechBoundary(runes[i]) {
+				cut = i + 1
+				break
+			}
+		}
+		if cut == start+maxRunes {
+			// No sentence boundary in the window: fall back to a comma/space in
+			// the second half, so a long unpunctuated run still breaks somewhere
+			// a listener would pause.
+			for i := cut - 1; i > start+maxRunes/2; i-- {
+				if runes[i] == '，' || runes[i] == ',' || runes[i] == ' ' {
+					cut = i + 1
+					break
+				}
+			}
+		}
+		if seg := strings.TrimSpace(string(runes[start:cut])); seg != "" {
+			out = append(out, seg)
+		}
+		start = cut
+	}
+	return out
+}
+
+// isSpeechBoundary reports whether r ends a sentence (and so is a good place to
+// split a synthesis request).
+func isSpeechBoundary(r rune) bool {
+	switch r {
+	case '。', '！', '？', '；', '…', '\n', '.', '!', '?', ';':
+		return true
+	}
+	return false
 }
 
 // synthesizeViaWebSocket connects to the Edge TTS WebSocket, sends the SSML,
@@ -166,7 +275,9 @@ func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml strin
 			if !audioReceived {
 				return fmt.Errorf("context cancelled before audio was received")
 			}
-			return nil
+			// Report it rather than returning nil: the segment is incomplete, and
+			// the caller must not carry on as if it had been spoken in full.
+			return ctx.Err()
 		default:
 		}
 
@@ -320,21 +431,14 @@ func (p *EdgeTTSProvider) SynthesizeStream(ctx context.Context, text string, out
 	}
 	defer func() { _ = f.Close() }()
 
-	// Build SSML
-	rate := p.Rate
-	if rate == "" {
-		rate = "+0%"
-	}
-	ssml := buildSSML(p.Voice, rate, cleaned)
-
 	// Create multi-writer: write to file AND send chunks to channel
 	var writer io.Writer = f
 	if chunkCh != nil {
 		writer = io.MultiWriter(f, &chunkWriter{ch: chunkCh})
 	}
 
-	// Connect and synthesize
-	if err := p.synthesizeViaWebSocket(ctx, ssml, writer); err != nil {
+	// Connect and synthesize (one request per segment, streamed as it arrives)
+	if err := p.synthesizeText(ctx, cleaned, writer); err != nil {
 		// Remove the empty/broken output file on error
 		_ = f.Close()
 		_ = os.Remove(outputPath)

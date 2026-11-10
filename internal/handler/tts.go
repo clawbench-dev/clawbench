@@ -29,8 +29,14 @@ const (
 	// ttsSummarizeTimeout is the timeout for the summarization step.
 	ttsSummarizeTimeout = 60 * time.Second
 
-	// ttsSynthesizeTimeout is the timeout for the TTS synthesis step.
-	ttsSynthesizeTimeout = 120 * time.Second
+	// ttsSynthesizeTimeout is a hard ceiling on the whole synthesis step.
+	//
+	// It is NOT the per-request budget: streaming synthesis sends one request
+	// per segment (see speech.EdgeTTSProvider) and each of those is bounded on
+	// its own, so a hang fails fast there. This only has to be generous enough
+	// that reading a long reply in full — minutes of audio, one segment after
+	// another — is not cut off halfway.
+	ttsSynthesizeTimeout = 10 * time.Minute
 )
 
 // speechProvider is the global speech provider instance.
@@ -364,14 +370,21 @@ func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cache
 
 	service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "summarizing", Streaming: streaming})
 
+	// degraded records that the text below is the raw reply, not a condensation.
+	degraded := false
 	summarizeCtx, summarizeCancel := context.WithTimeout(ctx, ttsSummarizeTimeout)
 	var err error
 	summary, err = curSummarizer.Summarize(summarizeCtx, text, language)
 	summarizeCancel()
 	if err != nil {
+		// Condensing failed, so read the WHOLE reply (cleaned of markdown)
+		// instead of a fragment. A cap here is what made playback start in the
+		// middle of a long answer — the listener cannot tell a fragment from a
+		// complete reading.
 		slog.Warn(
-			"tts summarize failed, falling back to simple summarizer",
+			"tts summarize failed, reading the full text instead",
 			slog.String("error", err.Error()),
+			slog.Int("text_len", len([]rune(text))),
 		)
 		fallbackSummary, fallbackErr := summarize.NewSimple().Summarize(context.Background(), text, language)
 		if fallbackErr != nil || fallbackSummary == "" {
@@ -384,6 +397,7 @@ func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cache
 			return "", false
 		}
 		summary = fallbackSummary
+		degraded = true
 	}
 
 	slog.Info(
@@ -393,7 +407,11 @@ func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cache
 		slog.Int("summary_len", len([]rune(summary))),
 	)
 
-	if messageID > 0 {
+	// Cache only a real condensation. The fallback is the raw text, not a
+	// summary: caching it would pin a transient model failure to that message
+	// forever, so every later read would replay the long version instead of
+	// retrying the model.
+	if messageID > 0 && !degraded {
 		if err := service.SaveTTSSummaryByMessageID(messageID, summary); err != nil {
 			slog.Warn(
 				"tts failed to cache summary to DB",

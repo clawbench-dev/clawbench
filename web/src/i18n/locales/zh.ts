@@ -1096,6 +1096,7 @@ export default {
       summaryViewSummary: '摘要',
       deepThinking: '深度思考',
       creditUsed: '本次消耗 {value} 积分',
+      costUsed: '本次花费 {value}',
       tokenUsed: '输入 {input} / 输出 {output}',
     },
     fileChanges: {
@@ -3496,7 +3497,7 @@ export default {
       meetingFileExcerpts: '读取会议中打开的文件内容',
       meetingFileExcerptsDesc: '把会议期间打开的文件各取一小段（最多 5 个、每个约 1500 字）发给纪要模型，帮助理解讨论对象。关掉后仍保留文件时间线，但不发送文件内容',
       meetingMinutesMaxTokens: '纪要输出上限',
-      meetingMinutesMaxTokensDesc: '单位 tokens，默认 3000。1500 偏简洁、3000 标准、6000 偏详细；调得过低会导致纪要超出上限而生成失败',
+      meetingMinutesMaxTokensDesc: '单位 tokens。0 = 自动，按摘要模型声明的输出上限来给（推荐）；填数字则手动指定：1500 偏简洁、3000 标准、6000 偏详细，调得过低会导致纪要超出上限而生成失败',
       meetingDefaultsSection: '新会议默认值',
       meetingDefaultNotes: '默认开启听记',
       meetingDefaultNotesDesc: '新建会议时预先勾选 AI 听记；仅本机生效，会议中仍可随时开关',

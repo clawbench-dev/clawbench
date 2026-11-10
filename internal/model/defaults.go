@@ -402,12 +402,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["meeting.file_excerpts"] {
 		cfg.Meeting.FileExcerpts = true
 	}
-	if cfg.Meeting.MinutesMaxTokens <= 0 {
+	if cfg.Meeting.MinutesMaxTokens < 0 {
 		cfg.Meeting.MinutesMaxTokens = DefaultMeetingMinutesMaxTokens
 	}
 	// Clamp hand-edited values instead of failing startup: an out-of-range cap
-	// is a bad preference, not a broken installation.
-	if cfg.Meeting.MinutesMaxTokens < MinMeetingMinutesMaxTokens {
+	// is a bad preference, not a broken installation. 0 is the auto sentinel and
+	// must survive this clamp — only a positive value is pushed into the manual
+	// range.
+	if cfg.Meeting.MinutesMaxTokens > 0 && cfg.Meeting.MinutesMaxTokens < MinMeetingMinutesMaxTokens {
 		cfg.Meeting.MinutesMaxTokens = MinMeetingMinutesMaxTokens
 	}
 	if cfg.Meeting.MinutesMaxTokens > MaxMeetingMinutesMaxTokens {

@@ -634,9 +634,16 @@ type SummarizeConfig struct {
 // Meeting minutes output limits. Exported so the settings PATCH validator and
 // the frontend's number field agree on the same range.
 const (
-	DefaultMeetingMinutesMaxTokens = 3000
-	MinMeetingMinutesMaxTokens     = 1000
-	MaxMeetingMinutesMaxTokens     = 8000
+	// DefaultMeetingMinutesMaxTokens is the "auto" sentinel: 0 means the budget
+	// follows the summary model's published output limit (see
+	// summarize.OutputBudgetForModel) instead of a fixed number. A fixed default
+	// starved reasoning models — they spend the budget thinking and answer with
+	// an empty response, which fails minutes generation outright.
+	DefaultMeetingMinutesMaxTokens = 0
+	// MinMeetingMinutesMaxTokens is the smallest MANUAL value. 0 itself is the
+	// auto sentinel and is always allowed.
+	MinMeetingMinutesMaxTokens = 1000
+	MaxMeetingMinutesMaxTokens = 8000
 )
 
 // MeetingConfig holds the defaults and output limits for AI meeting notes.
@@ -663,9 +670,10 @@ type MeetingConfig struct {
 	// CONTENT off the machine; the file timeline itself is still included when
 	// it is off.
 	FileExcerpts bool `yaml:"file_excerpts"`
-	// MinutesMaxTokens caps the final minutes output. The map-reduce chunk
-	// extraction has its own fixed budget: this only controls how long the
-	// final document may be, and it is a cap rather than a target.
+	// MinutesMaxTokens caps the final minutes output. 0 means auto: the budget
+	// follows the summary model's published output limit. A positive value is a
+	// manual cap (still clamped to that limit, since asking for more than a
+	// model supports is an API error). It is a cap rather than a target.
 	MinutesMaxTokens int `yaml:"minutes_max_tokens"`
 }
 

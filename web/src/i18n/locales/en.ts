@@ -1094,6 +1094,7 @@ export default {
       summaryViewSummary: 'Summary',
       deepThinking: 'Thinking',
       creditUsed: 'Credits used this turn: {value}',
+      costUsed: 'Cost this turn: {value}',
       tokenUsed: 'Input {input} / Output {output}',
     },
     fileChanges: {
@@ -3500,7 +3501,7 @@ export default {
       meetingFileExcerpts: 'Read contents of files opened in the meeting',
       meetingFileExcerptsDesc: 'Sends a short excerpt of up to 5 opened files (about 1500 characters each) to the minutes model. Turning it off keeps the file timeline but withholds the contents',
       meetingMinutesMaxTokens: 'Minutes output limit',
-      meetingMinutesMaxTokensDesc: 'In tokens, default 3000. 1500 is concise, 3000 standard, 6000 detailed. Too low makes generation fail when the minutes exceed the limit',
+      meetingMinutesMaxTokensDesc: 'In tokens. 0 = auto, following the summary model\'s published output limit (recommended). A number sets it manually: 1500 is concise, 3000 standard, 6000 detailed; too low makes generation fail when the minutes exceed the limit',
       meetingDefaultsSection: 'New meeting defaults',
       meetingDefaultNotes: 'Enable AI notes by default',
       meetingDefaultNotesDesc: 'Pre-checks AI notes when creating a meeting; applies to this device only, and can still be toggled during the meeting',

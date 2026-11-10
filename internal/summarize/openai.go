@@ -158,7 +158,7 @@ func (s *OpenAISummarizer) DoSummarizePass(ctx context.Context, text, systemProm
 			{Role: roleUser, Content: text},
 		},
 		Temperature: 0.3,
-		MaxTokens:   1024,
+		MaxTokens:   summarizePassBudget(s.Model),
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
