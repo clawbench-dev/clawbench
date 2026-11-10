@@ -2847,12 +2847,19 @@ defineExpose({
 /* Attach button (inside input row).
    A square box the same size as the send/stop buttons, so the row's
    align-items: flex-end lines all three controls up on one baseline. Sizing it
-   to the icon instead would leave the paperclip hanging below the text line. */
+   to the icon instead would leave the paperclip hanging below the text line.
+
+   Resting tone is the MUTED tier, not --text-secondary: this is a quiet
+   affordance beside the text, not a toolbar action, and the chat composer is a
+   size="custom" ActionBar host that keeps its own colours (design-guide). The
+   toolbar colour sweep (0de95d933) pushed it up a tier as collateral, which
+   read as a near-white paperclip on dark themes (#e0e0e0 vs #a0a0a0 on pure
+   black). Hover still steps up to the theme accent, so feedback is intact. */
 .chat-attach-btn {
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
   padding: 0;

@@ -83,6 +83,20 @@ describe('chat input type scale matches the message body', () => {
     expect(block).not.toMatch(/color:\s*var\(--text-secondary\)/)
   })
 
+  // The paperclip beside the textarea is chrome around the message, not a
+  // toolbar action: at --text-secondary it reads as near-white on dark themes
+  // (pure black: #e0e0e0) and competes with the typed text. The same bulk
+  // sweep (0de95d933) moved it up a tier; this pins it back on the muted tier.
+  it('keeps the composer attach icon on the muted tier', () => {
+    const block = ruleBlock(inputBar, '.chat-attach-btn')
+    expect(block).toMatch(/color:\s*var\(--text-muted\)/)
+    expect(block).not.toMatch(/color:\s*var\(--text-secondary\)/)
+    // Dimming the resting tone must not cost the button its feedback: hover
+    // still steps up to the theme accent.
+    const hover = ruleBlock(inputBar, '.chat-attach-btn:hover:not(:disabled)')
+    expect(hover).toMatch(/color:\s*var\(--accent-color/)
+  })
+
   it('keeps --input-line-height a whole number of px', () => {
     // The integer constraint is the entire point of the token, and nothing else
     // in the design system enforces it — a retune to e.g. 1.4em or 18.2px would
