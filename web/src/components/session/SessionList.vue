@@ -1184,6 +1184,16 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
+/* Tab mode only. The cards ARE the whole pane, so the first card's top border
+   lands exactly on the pane's top edge — on top of the header's own divider —
+   and reads as "the card has no top". The smallest step token is enough to
+   pull the two lines apart; anything more just looks like a stray gap.
+   Strip mode needs none of this: there the cards follow the project's rows,
+   whose spacing already separates them. */
+.session-list-pane--cross {
+  padding-top: var(--space-1);
+}
+
 .session-rows {
   display: flex;
   flex-direction: column;

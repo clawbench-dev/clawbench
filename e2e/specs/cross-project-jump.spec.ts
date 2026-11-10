@@ -199,10 +199,12 @@ test.describe.serial('Cross-project session jump', () => {
     const chat = new ChatPage(page)
     await expect(chat.textarea).toBeVisible({ timeout: 20000 })
 
-    await expect(page.locator('.session-tabs'), 'tab bar must appear in tab mode')
+    // Both mounted SessionList instances (pinned sidebar + mobile drawer) carry
+    // the bar; only the sidebar's is on screen in this desktop viewport.
+    await expect(page.locator('.session-tabs:visible'), 'tab bar must appear in tab mode')
       .toBeVisible({ timeout: 30000 })
 
-    await page.locator('[data-session-tab="cross"]').click()
+    await page.locator('[data-session-tab="cross"]:visible').first().click()
     const crossPane = page.locator('.session-list-pane--cross:visible')
     await expect(crossPane).toBeVisible()
 
