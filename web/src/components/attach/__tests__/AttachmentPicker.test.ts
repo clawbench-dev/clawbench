@@ -228,13 +228,11 @@ const i18n = createI18n({
           filesTab: 'Files',
           pickDir: 'Attach this folder',
           unpickDir: 'Deselect this folder',
-          recentReferences: 'References',
           recentShares: 'Shares',
           recentUploads: 'Uploads',
           currentDir: 'Dir',
           currentFile: 'File',
           emptyCurrent: 'No current file or directory',
-          emptyReferences: 'No referenced files',
           emptyShares: 'No shared files',
           emptyUploads: 'No uploaded files',
           uploading: 'Uploading...',
@@ -317,7 +315,7 @@ describe('AttachmentPicker', () => {
   it('shows the file picker tab by default', () => {
     const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.ad-tab')
-    expect(tabs.length).toBe(4)
+    expect(tabs.length).toBe(3)
     expect(tabs[0].classes()).toContain('ad-tab-active')
     expect(wrapper.find('.file-picker-stub').exists()).toBe(true)
   })
@@ -337,25 +335,25 @@ describe('AttachmentPicker', () => {
     expect(picker.props('selected')).toEqual([{ path: 'src/foo.ts' }])
   })
 
-  it('switches activeTab to references on click', async () => {
-    const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    expect(getRawState(wrapper).activeTab.value).toBe('references')
-  })
-
   it('switches activeTab to shares on click', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[2].trigger('click')
+    await wrapper.findAll('.ad-tab')[1].trigger('click')
     await nextTick()
     expect(getRawState(wrapper).activeTab.value).toBe('shares')
   })
 
   it('switches activeTab to uploads on click', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await wrapper.findAll('.ad-tab')[2].trigger('click')
     await nextTick()
     expect(getRawState(wrapper).activeTab.value).toBe('uploads')
+  })
+
+  it('has no "recent references" tab any more', () => {
+    // Removed for good: the file picker covers "pick a file you used before",
+    // and the tab only ever listed the same few paths.
+    const wrapper = mountDrawer()
+    expect(wrapper.findAll('.ad-tab').map(t => t.text())).toEqual(['Files', 'Shares', 'Uploads'])
   })
 
   it('mail variant drops the chat-only history tabs but keeps uploads', () => {
@@ -366,51 +364,8 @@ describe('AttachmentPicker', () => {
   })
 
   it('mail variant never renders the chat-only recent tabs', async () => {
-    const wrapper = mountDrawer({ variant: 'mail', recentReferencedFiles: [{ path: 'src/foo.ts', count: 2 }] })
-    expect(wrapper.text()).not.toContain('References')
+    const wrapper = mountDrawer({ variant: 'mail' })
     expect(wrapper.text()).not.toContain('Shares')
-  })
-
-  it('renders referenced files on the references tab when provided', () => {
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/foo.ts', count: 3 }],
-    })
-    expect(wrapper.props('recentReferencedFiles')).toEqual([{ path: 'src/foo.ts', count: 3 }])
-  })
-
-  it('selects a referenced directory in the draft, applied on OK with isDir=true', async () => {
-    // A referenced directory must carry its isDir flag, otherwise it is attached
-    // as a file and shows a file icon instead of a folder. Selection is local,
-    // so the flag has to survive until OK — not just until the click.
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/utils', count: 2, isDir: true }],
-    })
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('utils'))
-    expect(row).toBeTruthy()
-    await row!.trigger('click')
-    // Nothing reaches the composer before OK.
-    expect(wrapper.emitted('add-attached')).toBeFalsy()
-    expect(row!.classes()).toContain('ad-file-attached')
-
-    await wrapper.find('[data-action="attach-ok"]').trigger('click')
-    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/utils', true])
-  })
-
-  it('selects a referenced file in the draft, applied on OK with isDir=false', async () => {
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/foo.ts', count: 1 }],
-    })
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('foo.ts'))
-    expect(row).toBeTruthy()
-    await row!.trigger('click')
-    expect(wrapper.emitted('add-attached')).toBeFalsy()
-
-    await wrapper.find('[data-action="attach-ok"]').trigger('click')
-    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/foo.ts', false])
   })
 
   it('picking in the file picker only marks it selected (no emit)', async () => {
@@ -434,12 +389,14 @@ describe('AttachmentPicker', () => {
     expect(wrapper.emitted('add-attached')![0]).toEqual(['src/utils', true])
   })
 
-  it('emits file-open when clicking a reference row link', async () => {
-    const wrapper = mountDrawer({ recentReferencedFiles: [{ path: 'src/foo.ts', count: 1 }] })
+  it('emits file-open when clicking a share row link', async () => {
+    sharedRecentShares.value = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 1, modTime: '' }]
+    const wrapper = mountDrawer()
     await wrapper.findAll('.ad-tab')[1].trigger('click')
     await nextTick()
     await wrapper.find('.ad-file-row .ad-file-open').trigger('click')
-    expect(wrapper.emitted('file-open')![0]).toEqual(['src/foo.ts'])
+    expect(wrapper.emitted('file-open')![0]).toEqual(['.clawbench/share-in/a.txt'])
+    sharedRecentShares.value = []
   })
 
   it('isAttached returns true for attached file', () => {
@@ -965,7 +922,7 @@ describe('AttachmentPicker', () => {
     })
 
     async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
-      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await wrapper.findAll('.ad-tab')[2].trigger('click')
       await nextTick()
       await nextTick()
     }
@@ -1119,29 +1076,18 @@ describe('AttachmentPicker', () => {
     expect(typeof (wrapper.vm as any).handleFileDrop).toBe('function')
   })
 
-  it('renders references tab content after clicking tab', async () => {
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/foo.ts', count: 3 }],
-    })
-    // Click the references tab
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    // Check activeTab changed
-    const state = getRawState(wrapper)
-    expect(state.activeTab.value).toBe('references')
-  })
-
   it('renders shares tab empty state after clicking tab', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[2].trigger('click')
+    await wrapper.findAll('.ad-tab')[1].trigger('click')
     await nextTick()
     const state = getRawState(wrapper)
     expect(state.activeTab.value).toBe('shares')
+    expect(wrapper.text()).toContain('No shared files')
   })
 
   it('renders uploads tab empty state after clicking tab', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await wrapper.findAll('.ad-tab')[2].trigger('click')
     await nextTick()
     const state = getRawState(wrapper)
     expect(state.activeTab.value).toBe('uploads')
@@ -1161,7 +1107,7 @@ describe('AttachmentPicker', () => {
     })
 
     async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
-      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await wrapper.findAll('.ad-tab')[2].trigger('click')
       await nextTick()
       await nextTick()
     }
@@ -1398,7 +1344,7 @@ describe('AttachmentPicker', () => {
       { name: 'chat.png', path: '.clawbench/uploads/chat.png', size: 10, modTime: '', origin: 'uploads' },
     ]
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await wrapper.findAll('.ad-tab')[2].trigger('click')
     await nextTick()
 
     const icons = wrapper.findAll('.ad-file-delete')

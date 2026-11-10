@@ -84,7 +84,6 @@ const i18n = createI18n({
           uploadFile: 'Upload',
           currentFile: 'Current file',
           currentDir: 'Current dir',
-          recentReferences: 'Recent',
           uploading: 'Uploading...',
           currentTab: 'Tab',
         },

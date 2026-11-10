@@ -210,7 +210,6 @@
         :current-file="currentFile?.path"
         :current-dir="currentDir"
         :attached-files="attachedFiles"
-        :recent-referenced-files="recentReferencedFiles"
         @close="attachDrawer.close()"
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
@@ -1935,7 +1934,8 @@ const hasAttachmentTags = computed(() =>
   || visiblePendingFiles.value.some(f => f.uploading),
 )
 
-// Extract recently referenced files from message history
+// Recently referenced files, offered as candidates by the `@` file menu (NOT by
+// the attachment sheet — that tab was removed as noise).
 const recentReferencedFiles = computed(() => {
   return computeRecentReferencedFiles(props.messages, props.attachedFiles, props.currentFile?.path)
 })

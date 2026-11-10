@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
+import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 
 describe('computeRecentReferencedFiles', () => {
   it('returns empty for null messages', () => {
@@ -97,30 +97,6 @@ describe('computeRecentReferencedFiles', () => {
   })
 })
 
-describe('computeHasFileGroups', () => {
-  it('returns false when nothing to show', () => {
-    expect(computeHasFileGroups(null, null, [], [], 0)).toBe(false)
-  })
-  it('returns true when current file is not attached', () => {
-    expect(computeHasFileGroups('/a.go', null, [], [], 0)).toBe(true)
-  })
-  it('returns false when current file is already attached', () => {
-    expect(computeHasFileGroups('/a.go', null, [{ path: '/a.go', isDir: false }], [], 0)).toBe(false)
-  })
-  it('returns true when current dir is not attached', () => {
-    expect(computeHasFileGroups(null, '/src', [], [], 0)).toBe(true)
-  })
-  it('returns true when recent references exist', () => {
-    expect(computeHasFileGroups(null, null, [], [{ path: '/a.go', count: 1 }], 0)).toBe(true)
-  })
-  it('returns false when current dir is already attached', () => {
-    expect(computeHasFileGroups(null, '/src', [{ path: '/src', isDir: true }], [], 0)).toBe(false)
-  })
-  it('returns true when recent shares exist', () => {
-    expect(computeHasFileGroups(null, null, [], [], 2)).toBe(true)
-  })
-})
-
 describe('isImeCompositionEvent', () => {
   it('returns true when isComposing is set', () => {
     expect(isImeCompositionEvent({ isComposing: true })).toBe(true)
@@ -133,34 +109,5 @@ describe('isImeCompositionEvent', () => {
     expect(isImeCompositionEvent({ isComposing: false, keyCode: 13 })).toBe(false)
     expect(isImeCompositionEvent({})).toBe(false)
     expect(isImeCompositionEvent({ isComposing: false })).toBe(false)
-  })
-})
-
-describe('computeAttachMenuItemCount', () => {
-  it('counts upload button only when nothing else', () => {
-    expect(computeAttachMenuItemCount(null, null, [], [], 0)).toBe(1)
-  })
-  it('counts current file + upload button', () => {
-    expect(computeAttachMenuItemCount('/a.go', null, [], [], 0)).toBe(2)
-  })
-  it('counts current dir + upload button', () => {
-    expect(computeAttachMenuItemCount(null, '/src', [], [], 0)).toBe(2)
-  })
-  it('does not count already-attached current file', () => {
-    expect(computeAttachMenuItemCount('/a.go', null, [{ path: '/a.go', isDir: false }], [], 0)).toBe(1)
-  })
-  it('counts recent references', () => {
-    expect(computeAttachMenuItemCount(null, null, [], [
-      { path: '/a.go', count: 1 },
-      { path: '/b.go', count: 2 },
-    ], 0)).toBe(3) // 2 refs + 1 upload button
-  })
-  it('counts all groups together', () => {
-    expect(computeAttachMenuItemCount('/a.go', '/src', [], [
-      { path: '/c.go', count: 1 },
-    ], 0)).toBe(4) // 1 current + 1 dir + 1 ref + 1 upload
-  })
-  it('counts recent shares', () => {
-    expect(computeAttachMenuItemCount(null, null, [], [], 3)).toBe(4) // 3 shares + 1 upload
   })
 })

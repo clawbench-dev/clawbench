@@ -970,7 +970,6 @@ export default {
     attach: {
       currentFile: 'Current file',
       currentDir: 'Current directory',
-      recentReferences: 'Recent references',
       recentShares: 'Recently shared',
       recentUploads: 'Recently uploaded',
       filesTab: 'Files',
@@ -980,7 +979,6 @@ export default {
       pickImage: 'Photo',
       takePhoto: 'Camera',
       drawerTitle: 'Attachments',
-      emptyReferences: 'No recently referenced files',
       emptyShares: 'No recently shared files',
       emptyUploads: 'No recently uploaded files',
       deleteRecent: 'Delete this file',

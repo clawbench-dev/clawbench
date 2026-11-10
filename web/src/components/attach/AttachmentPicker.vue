@@ -72,28 +72,6 @@
     <!-- Tab content: the chat-only recent lists -->
     <div v-else class="ad-content">
 
-      <!-- Recently referenced -->
-      <template v-if="activeTab === 'references'">
-        <div v-if="!recentReferencedFiles?.length" class="ad-empty">{{ t('chat.attach.emptyReferences') }}</div>
-        <button
-          v-for="item in recentReferencedFiles" :key="item.path"
-          class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
-          @click="toggleAttached(item.path, item.isDir === true)"
-        >
-          <div class="ad-icon-wrap">
-            <img v-if="!item.isDir && isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
-              class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <FileIcon v-else :path="item.path" :is-dir="item.isDir === true" :size="28" class="ad-file-icon" />
-            <Check v-show="isAttached(item.path)" :size="12" class="ad-icon-check" />
-          </div>
-          <div class="ad-file-info">
-            <span class="ad-file-name">{{ baseName(item.path) }}</span>
-            <span class="ad-file-meta">{{ dirName(item.path) }} · x{{ item.count }}</span>
-          </div>
-          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
-        </button>
-      </template>
-
       <!-- Recently shared -->
       <template v-if="activeTab === 'shares'">
         <!-- Clear-all bar. Above the rows and only when there is something to
@@ -279,34 +257,24 @@ import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
 // rather than relying on BottomSheet having loaded it (design-guide rule).
 import '@/assets/modal-footer-btn.css'
 
-interface ReferencedFile {
-  path: string
-  count: number
-  /** Whether the referenced entry is a directory (drives the folder icon and
-   *  the isDir flag sent with the attachment). */
-  isDir?: boolean
-}
-
 const props = withDefaults(defineProps<{
   open: boolean
   currentFile?: string | null
   currentDir?: string | null
   attachedFiles?: FileEntry[]
-  recentReferencedFiles?: ReferencedFile[]
   /**
    * Which surface opened the sheet.
    *
-   * `chat` adds the "recent references" and "recent shares" tabs, which
-   * describe chat-side history and mean nothing in a mail composer. Both
-   * variants keep the file picker and the uploads tab (progress + recent
-   * uploads), so a mail attachment can be a project file or a fresh upload.
+   * `chat` adds the "recent shares" tab, which describes chat-side history and
+   * means nothing in a mail composer. Both variants keep the file picker and
+   * the uploads tab (progress + recent uploads), so a mail attachment can be a
+   * project file or a fresh upload.
    */
   variant?: 'chat' | 'mail'
 }>(), {
   currentFile: null,
   currentDir: null,
   attachedFiles: () => [],
-  recentReferencedFiles: () => [],
   variant: 'chat',
 })
 
@@ -356,15 +324,12 @@ const loading = ref(false)
 // the sheet stays mounted.
 const tabs = computed(() => {
   const list = [{ key: 'files', label: t('chat.attach.filesTab') }]
-  // The "recent …" history tabs describe chat-side history. `uploads` stays in
-  // both variants: it is where an in-flight transfer reports progress and where
-  // the terminate button lives, and a mail attachment can be a fresh upload
-  // just as well as a project file.
+  // The "recent shares" history tab describes chat-side history. `uploads`
+  // stays in both variants: it is where an in-flight transfer reports progress
+  // and where the terminate button lives, and a mail attachment can be a fresh
+  // upload just as well as a project file.
   if (props.variant === 'chat') {
-    list.push(
-      { key: 'references', label: t('chat.attach.recentReferences') },
-      { key: 'shares', label: t('chat.attach.recentShares') },
-    )
+    list.push({ key: 'shares', label: t('chat.attach.recentShares') })
   }
   list.push({ key: 'uploads', label: t('chat.attach.recentUploads') })
   return list

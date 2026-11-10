@@ -972,7 +972,6 @@ export default {
     attach: {
       currentFile: '当前文件',
       currentDir: '当前目录',
-      recentReferences: '最近引用',
       recentShares: '最近分享',
       recentUploads: '最近上传',
       filesTab: '文件',
@@ -982,7 +981,6 @@ export default {
       pickImage: '照片',
       takePhoto: '拍照',
       drawerTitle: '附件',
-      emptyReferences: '暂无最近引用文件',
       emptyShares: '暂无最近分享文件',
       emptyUploads: '暂无最近上传文件',
       deleteRecent: '删除该文件',
