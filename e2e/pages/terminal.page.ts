@@ -70,13 +70,26 @@ export class TerminalPage {
       btn = this.page.locator('.dock-btn[data-tab="terminal"]').filter({ visible: true }).first()
     }
 
-    if (await btn.isVisible({ timeout: 15000 }).catch(() => false)) {
-      // In wide mode clicking the ALREADY-ACTIVE tab collapses the left pane
-      // (VS Code-style), which would HIDE the terminal panel we want. The
-      // `active` class means "current tab AND pane expanded", so only click when
-      // it is not already active.
-      const isActive = await btn.evaluate((el) => el.classList.contains('active')).catch(() => false)
-      if (!isActive) await btn.click()
+    if (!(await btn.isVisible({ timeout: 15000 }).catch(() => false))) {
+      await expect(this.panel).toBeVisible({ timeout: 20000 })
+      return
+    }
+
+    // Converge on "panel visible" instead of reading the dock state once and
+    // clicking: the dock button is a TOGGLE (clicking the tab that is already
+    // current collapses the pane, VS Code-style), and the app switches tabs by
+    // itself while a project switch is still settling. A read-then-click
+    // therefore races the app's own restore — measured on the terminal
+    // project-switch spec: `active` was read while the app was still on
+    // `browse`, the app switched to `terminal` in the same tick, and our click
+    // arrived as the collapse. Clicking only while the panel is hidden (and
+    // re-checking after each attempt) makes that race self-correcting: a click
+    // that collapsed the pane is undone by the next iteration, and a genuinely
+    // broken panel still fails the assertion at the end.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (await this.panel.isVisible({ timeout: 1000 }).catch(() => false)) return
+      await btn.click({ timeout: 5000 }).catch(() => {})
+      await this.panel.waitFor({ state: 'visible', timeout: 4000 }).catch(() => {})
     }
 
     // Whether we clicked or not, the panel must end up visible. This also
