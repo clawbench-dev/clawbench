@@ -60,6 +60,8 @@
  * one is active.
  */
 
+import { getNativeHostPlatform } from '@/utils/clawbenchNative'
+
 /** Channel / lock name. Versioned so a future protocol change cannot collide. */
 const CHANNEL_NAME = 'clawbench-single-tab-v1'
 const LOCK_NAME = 'clawbench-single-tab-v1'
@@ -142,9 +144,9 @@ function getLockManager(): LockManager | null {
  *
  * - Child frames share the parent's storage and would otherwise fight it for
  *   ownership; they are always allowed through.
- * - The native app hosts a single WebView, so there is nothing to arbitrate.
- *   Its background service uses a separate `native-bg-*` id and never loads
- *   this page.
+ * - Android and HarmonyOS native apps use a primary WebView. Their background
+ *   event connections use a separate client identity.
+ * - Browser and Electron contexts retain single-tab arbitration.
  */
 function guardNotApplicable(): boolean {
   try {
@@ -153,7 +155,9 @@ function guardNotApplicable(): boolean {
     // Cross-origin top access throws — a child frame; skip the guard.
     return true
   }
-  return false
+  // The single-tab guard remains active for browser and Electron contexts.
+  const platform = getNativeHostPlatform()
+  return platform === 'android' || platform === 'harmonyos'
 }
 
 export function createSingleTabGuard(options: SingleTabGuardOptions = {}): SingleTabGuard {
