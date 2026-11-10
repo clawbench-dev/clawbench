@@ -326,6 +326,30 @@ func TestFileThumb(t *testing.T) {
 		assert.Equal(t, 12, bounds.Dy(), "thumbnail height should be 12 (4:1 ratio)")
 	})
 
+	t.Run("SmallImage_IsNotUpscaled", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// A small picture (an icon-sized PNG) asked for at the chat inline width.
+		// The thumbnail is a DOWNSCALE service: returning a 1200px-wide JPEG for
+		// a 64px source made the rendered <img> report an intrinsic width of
+		// 1200, so the chat bubble blew the icon up to the full column width.
+		createTestPNG(t, env.ProjectDir, "icon.png", 64, 48)
+
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=icon.png&w=1200", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(FileThumb, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		thumb, err := jpeg.Decode(bytes.NewReader(w.Body.Bytes()))
+		require.NoError(t, err)
+
+		bounds := thumb.Bounds()
+		assert.Equal(t, 64, bounds.Dx(), "a source narrower than the requested width must keep its own width")
+		assert.Equal(t, 48, bounds.Dy(), "height must follow the source ratio unchanged")
+	})
+
 	t.Run("SquareImage_OutputIsSquare_NoPaddingNeeded", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()

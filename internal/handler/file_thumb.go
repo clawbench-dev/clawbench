@@ -347,11 +347,16 @@ func serveThumbOfFile(w http.ResponseWriter, r *http.Request, absPath string, in
 		return
 	}
 
-	// Calculate scaled dimensions: width = targetWidth, height proportional
-	var scaledW, scaledH int
-	ratio := float64(targetWidth) / float64(srcW)
-	scaledW = targetWidth
-	scaledH = int(float64(srcH) * ratio)
+	// Calculate scaled dimensions: width = targetWidth, height proportional.
+	//
+	// NEVER upscale. `targetWidth` is a request for "at most this wide", not a
+	// demand: a 64px icon asked for at w=1200 stays 64px. This matters beyond
+	// wasted bytes — the inline chat image takes its rendered size from the
+	// decoded thumbnail's INTRINSIC size (CSS is `width: auto` + `max-width:
+	// 100%`, so a small picture must stay small), so an upscaled thumbnail made
+	// every small image fill the whole message column as a blurry mess.
+	scaledW := min(targetWidth, srcW)
+	scaledH := int(float64(srcH) * float64(scaledW) / float64(srcW))
 	if scaledH < 1 {
 		scaledH = 1
 	}
