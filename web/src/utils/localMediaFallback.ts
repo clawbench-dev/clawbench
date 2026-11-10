@@ -21,8 +21,8 @@
  *  - **pending** (no attribute) — nothing has arrived yet. `media-block.css`
  *    paints the loading placeholder for this state.
  *  - **settled** (`data-media-settled`) — the wait is over, one way or the
- *    other: `load` fired, or `error` fired for media that gets no placeholder
- *    (an external URL). Stamped by the listeners below.
+ *    other: `load` fired, or `error` fired for an image that is not content
+ *    media (see below). Stamped by the listeners below.
  *  - **missing** (`data-media-missing`) — the `error` listener swapped the
  *    `<img>` for the shared MediaLoadError component, mounted imperatively with
  *    `h()` + `render()` — this module runs on v-html surfaces (chat messages,
@@ -38,9 +38,11 @@
  * placeholder lives in the stylesheet, and duplicating it here is how the two
  * drift apart.
  *
- * External URLs, `data:` URIs and the file manager's own thumbnails (which
- * already degrade to a type icon) are left alone by the FALLBACK; they are
- * still stamped as settled, which is harmless (nothing styles them by it).
+ * EVERY failing content image gets the placeholder, local or remote: a broken
+ * remote URL used to keep the browser's glyph, which is the same ugly gap. The
+ * file manager's own thumbnails and the attachment chips (which carry no
+ * `lightbox-img` marker and degrade to a type icon on their own) are left
+ * alone; they are still stamped as settled, which is harmless.
  *
  * The original `<img>` is kept in the DOM but hidden, and the `load` listener
  * restores it. That makes the fallback reversible: if the file is created
@@ -55,37 +57,42 @@ import MediaLoadError from '@/components/media/MediaLoadError.vue'
 /** Marks an <img> that already has a placeholder, so a retry cannot stack them. */
 const MISSING_ATTR = 'data-media-missing'
 /**
- * Marks an <img> whose wait is over — loaded, or failed with no placeholder
- * substituted. Read by `media-block.css` to decide whether to paint the loading
- * placeholder — see the module doc.
+ * Marks an <img> whose wait is over — loaded, or failed (the failure path then
+ * swaps it for the placeholder). Read by `media-block.css` to decide whether to
+ * paint the loading placeholder — see the module doc.
  */
 export const MEDIA_SETTLED_ATTR = 'data-media-settled'
 /** Wrapper class hiding the figure's view/attach toolbar for missing media. */
 const WRAPPER_CLASS = 'image-block-missing'
 
 /**
- * True when the URL is served by one of our own local-file endpoints and can
- * therefore legitimately 404 (as opposed to an external image or inline data).
- */
-export function isLocalMediaUrl(url: string): boolean {
-    return /^\/api\/(fs|share)\//.test(url)
-}
-
-/**
- * The path a failed image was trying to render, for display. Derived from the
- * query param when present (`/api/fs/thumb?target=…`, `/api/fs/raw/?target=…`)
- * and from the path suffix otherwise (`/api/fs/raw/<rel>`). Returns '' when
- * nothing usable can be extracted.
+ * The path a failed image was trying to render, for display.
+ *
+ * Served URLs carry the real path in `?target=` / `?path=` or in the path
+ * suffix (`/api/fs/raw/<rel>`). Anything else — a relative path the pipeline
+ * has not rewritten yet (streaming), or a remote URL — falls back to the URL's
+ * own path, which is the only name available. `data:` / `blob:` URLs carry no
+ * filename at all and yield ''.
  */
 export function mediaPathFromSrc(src: string): string {
+    if (!src || /^(data|blob):/i.test(src)) return ''
     try {
         const parsed = new URL(src, window.location.origin)
         const target = parsed.searchParams.get('target') || parsed.searchParams.get('path')
         if (target) return target
         const m = parsed.pathname.match(/\/api\/(?:fs\/raw|share\/[^/]+\/local)\/(.+)$/)
-        return m ? decodeURIComponent(m[1]) : ''
+        return decodeOrRaw(m ? m[1] : parsed.pathname).replace(/^\/+/, '')
     } catch {
         return ''
+    }
+}
+
+/** `decodeURIComponent`, tolerating malformed escapes (shows the raw text). */
+function decodeOrRaw(value: string): string {
+    try {
+        return decodeURIComponent(value)
+    } catch {
+        return value
     }
 }
 
@@ -112,10 +119,10 @@ export function markMediaSettled(img: HTMLImageElement): void {
  * placeholder's identity is the component's root class, so there is exactly one
  * element to find (and to count).
  */
-function buildPlaceholder(src: string): { host: HTMLElement; dispose: () => void } {
+function buildPlaceholder(src: string, streaming: boolean): { host: HTMLElement; dispose: () => void } {
     const host = document.createElement('span')
     const name = baseName(mediaPathFromSrc(src))
-    render(h(MediaLoadError, { kind: 'image', name }), host)
+    render(h(MediaLoadError, { kind: 'image', name, streaming }), host)
     return {
         host,
         dispose: () => {
@@ -125,16 +132,26 @@ function buildPlaceholder(src: string): { host: HTMLElement; dispose: () => void
     }
 }
 
-/** Swap a failed local image for the placeholder, reversibly. */
+/**
+ * Swap a failed content image for the placeholder, reversibly.
+ *
+ * Every failing content image gets one — local or not. A remote image that
+ * 404s used to keep the browser's broken glyph (there was "no local file to
+ * name"), which is exactly the ugly gap this placeholder exists to replace.
+ *
+ * The variant follows the message's state: inside a still-streaming message
+ * the path has not been resolved yet, so the quiet variant is used; once the
+ * turn settles the same failure renders as the labelled card.
+ */
 export function applyMediaMissingFallback(img: HTMLImageElement): boolean {
     if (img.hasAttribute(MISSING_ATTR)) return false
     const src = img.getAttribute('src') || ''
-    if (!isLocalMediaUrl(src)) return false
 
     img.setAttribute(MISSING_ATTR, '1')
     img.classList.add('local-media-hidden')
 
-    const placeholder = buildPlaceholder(src)
+    const streaming = !!img.closest('[data-streaming="true"]')
+    const placeholder = buildPlaceholder(src, streaming)
     img.insertAdjacentElement('afterend', placeholder.host)
 
     const wrapper = img.closest('.image-block-wrapper')
@@ -163,11 +180,14 @@ let loadHandler: ((e: Event) => void) | null = null
  *
  * `load` stamps `data-media-settled` on EVERY `<img>` — the stylesheet decides
  * which images show a placeholder, so filtering here would need a second copy
- * of that selector list. `error` is scoped to `img.lightbox-img`: that marker is
- * stamped on every content image by the media-block factory (chat, file
- * preview, share, table modal) and by the image viewer. The file manager's own
- * thumbnails deliberately carry it NOT — they have a component-level `@error`
- * that falls back to a type icon, and two competing fallbacks would fight.
+ * of that selector list. `error` is scoped to CONTENT media, which is either
+ * `img.lightbox-img` (stamped by the media-block factory for chat, file
+ * preview, share and the table modal) or any `<img>` inside a message that is
+ * still streaming — those come from the bare markdown render, which skips the
+ * enhancements that stamp the marker (deliberately: streaming must stay cheap).
+ * The file manager's own thumbnails match neither — they have a component-level
+ * `@error` that falls back to a type icon, and two competing fallbacks would
+ * fight.
  *
  * The initial sweep matters as much as the listener: `load` fires ONCE, so an
  * image that finished decoding before this module ran (a cached image painted
@@ -191,13 +211,12 @@ export function installLocalMediaFallback(): () => void {
         const target = e.target as Element | null
         if (!target || target.tagName !== 'IMG') return
         const img = target as HTMLImageElement
-        // ANY error ends the pending state, whether or not a placeholder is
-        // substituted: a failed external image gets no card (there is no local
-        // file to name), and leaving the shimmer running would promise a load
-        // that is never coming. The broken glyph it degrades to is the same
-        // behaviour this module has always left for non-local media.
+        // ANY error ends the pending state: leaving the shimmer running would
+        // promise a load that is never coming.
         markMediaSettled(img)
-        if (!img.classList.contains('lightbox-img')) return
+        // See the doc above: a streaming message renders bare <img> without the
+        // `lightbox-img` marker, and every one of them is content.
+        if (!img.classList.contains('lightbox-img') && !img.closest('[data-streaming="true"]')) return
         applyMediaMissingFallback(img)
     }
 

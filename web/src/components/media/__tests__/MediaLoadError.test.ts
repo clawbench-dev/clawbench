@@ -69,4 +69,24 @@ describe('MediaLoadError', () => {
     const wrapper = mount(MediaLoadError, { props: { message: 'Custom failure' } })
     expect(wrapper.find('.media-load-error-text').text()).toBe('Custom failure')
   })
+
+  it('drops the verdict in the quiet streaming variant', () => {
+    // While a message is still streaming the local path has not been resolved
+    // yet — nothing is known to have failed, so the card must not say it did.
+    const wrapper = mount(MediaLoadError, { props: { streaming: true, name: 'a.png' } })
+    const root = wrapper.find('.media-load-error')
+
+    expect(root.classes()).toContain('media-load-error--streaming')
+    expect(wrapper.find('.media-load-error-text').exists()).toBe(false)
+    expect(wrapper.find('.media-load-error-name').text()).toBe('a.png')
+
+    // A neutral image glyph, not the crossed-out one.
+    const icon = wrapper.find('.media-load-error-icon svg')
+    expect(icon.classes()).toContain('lucide-image')
+    expect(icon.classes()).not.toContain('lucide-image-off')
+
+    // Still announced, so the placeholder is not a silent box.
+    expect(root.attributes('title')).toContain('a.png')
+    expect(root.attributes('aria-label')).toBe(root.attributes('title'))
+  })
 })

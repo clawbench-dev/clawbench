@@ -767,6 +767,33 @@
     background: transparent;
 }
 
+/* ─── Quiet variant: an image inside a message that is still STREAMING ────
+   While the AI is still writing, the markdown pipeline has not resolved the
+   local path into a served URL yet, so the <img> can legitimately fail for a
+   file that will exist a moment later. Saying "failed to load" there would be
+   a verdict on something that has not been tried properly.
+
+   So this variant drops the dashed frame and the verdict line, keeping just
+   the icon and the file name: it reads as "a picture goes here", not as an
+   error. The message element carries `data-streaming` until the turn settles,
+   at which point the re-render either shows the real image or the failed card.
+
+   Declared after `.media-load-error` on purpose — same specificity (0-1-0),
+   so source order is what lets these declarations win. */
+.media-load-error--streaming {
+    min-width: calc(120 * var(--dp));
+    min-height: calc(72 * var(--dp));
+    padding: var(--space-5) var(--space-6);
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--text-muted, #999) 5%, transparent);
+}
+
+.media-load-error--streaming .media-load-error-icon {
+    margin-bottom: 0;
+    background: color-mix(in srgb, var(--text-muted, #999) 10%, transparent);
+    opacity: var(--opacity-soft);
+}
+
 /* The figure must NOT draw its own frame around a failed image.
 
    localMediaFallback.ts inserts the placeholder INSIDE the figure

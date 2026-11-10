@@ -2735,6 +2735,10 @@ export default {
     // be loaded, instead of a silent broken-image glyph or an empty pane. Every
     // media surface renders the shared MediaLoadError.vue.
     loadFailed: 'Media failed to load',
+    // Read by screen readers for the quiet placeholder shown while a message is
+    // still streaming: the reference has not been resolved yet, so it must not
+    // claim a failure. The visible part is the icon + file name.
+    imageLoading: 'Loading image',
     // Announced while a Mermaid diagram renders. The visible placeholder is
     // purely decorative (skeleton nodes), so this is the only semantic content
     // — without it a screen reader hears nothing for those seconds.
