@@ -64,4 +64,27 @@ describe('extractImageName', () => {
     const result = extractImageName('/api/fs/raw/my%20image.png')
     expect(result).toBe('my image.png')
   })
+
+  // The query forms carry the real path in a parameter; their own pathname has
+  // no usable last segment (`/api/fs/raw/` or `thumb`), which used to yield an
+  // empty / extension-less name and an extension-less download.
+  it('extracts the basename from the ?target= absolute form', () => {
+    const result = extractImageName('/api/fs/raw/?target=%2Ftmp%2Fout%2Fchart.png')
+    expect(result).toBe('chart.png')
+  })
+
+  it('extracts the basename from the thumbnail endpoint', () => {
+    const result = extractImageName('/api/fs/thumb?target=docs%2Fimg%2Farch.png&w=400')
+    expect(result).toBe('arch.png')
+  })
+
+  it('extracts the basename from the share ?path= form', () => {
+    const result = extractImageName('/api/share/abc123/local?path=%2Fhome%2Fu%2Fa.jpg')
+    expect(result).toBe('a.jpg')
+  })
+
+  it('does not double-decode a literal percent in the target', () => {
+    const result = extractImageName('/api/fs/raw/?target=%2Ftmp%2F100%2525.png')
+    expect(result).toBe('100%25.png')
+  })
 })

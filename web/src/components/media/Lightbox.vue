@@ -633,7 +633,10 @@ function handleDownload() {
     const filePath = currentFilePath.value || localPathFromUrl(currentUrl.value)
 
     if (filePath) {
-        downloadFileByPath(filePath, currentFileName.value)
+        // Save under the file's own name. `currentFileName` is a DISPLAY label
+        // in the markdown-gallery flow — it is the image's alt text ("架构图"),
+        // which has no extension, so using it here saved extension-less files.
+        downloadFileByPath(filePath, baseName(filePath) || currentFileName.value)
         return
     }
 

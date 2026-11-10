@@ -911,6 +911,39 @@ describe('Lightbox', () => {
       expect(downloadFileByPath).toHaveBeenCalledWith('/tmp/out/chart.png', 'chart.png')
     })
 
+    /**
+     * A chat bubble with several images opens the gallery, which labels each
+     * item with the markdown alt text. That label is not a filename — saving it
+     * produced extension-less downloads ("架构图" instead of "arch.png").
+     */
+    it('names the saved file after the path, not the gallery label', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.openMdImages([
+        { src: '/api/fs/raw/docs/arch.png', name: '架构图' },
+        { src: '/api/fs/raw/docs/flow.png', name: '流程图' },
+      ], 0)
+      await nextTick()
+
+      vm.handleDownload()
+
+      expect(downloadFileByPath).toHaveBeenCalledWith('docs/arch.png', 'arch.png')
+    })
+
+    it('names the saved file after a thumbnail URL’s target', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.openMdImages([
+        { src: '/api/fs/thumb?target=docs%2Farch.png&w=400', name: '架构图' },
+        { src: '/api/fs/thumb?target=docs%2Fflow.png&w=400', name: '流程图' },
+      ], 0)
+      await nextTick()
+
+      vm.handleDownload()
+
+      expect(downloadFileByPath).toHaveBeenCalledWith('docs/arch.png', 'arch.png')
+    })
+
     it('resolves a markdown-gallery item that carries only a URL', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
