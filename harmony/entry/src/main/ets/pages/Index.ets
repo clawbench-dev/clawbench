@@ -10,7 +10,7 @@ import { APP_VERSION, isLocalLoginPage } from '../models/AppInfo';
 import { isTrustedAppUrl, parseServerAddress } from '../models/ServerAddress';
 import { normalizeBarColor, barContentColor } from '../models/SystemBars';
 import { SafeInsets, mergeSafeInsets } from '../models/SafeInsets';
-import { externalHttpUrl, portBrowserUrl, selectionText } from '../models/NativeActions';
+import { externalAppUrl, portBrowserUrl, selectionText } from '../models/NativeActions';
 import { clearServerCookies } from '../models/NativeCookies';
 import { NativeFailure, nativeMessage, formatNativeError } from '../models/NativeMessages';
 import { navigationEventName, NativeNavigation } from '../models/NativeEvents';
@@ -996,7 +996,15 @@ struct Index {
   }
 
   private async openExternal(url: string): Promise<void> {
-    const target = externalHttpUrl(url);
+    const target = externalAppUrl(url);
+    if (target.startsWith('mailto:')) {
+      try {
+        await this.context().startAbility({ action: 'ohos.want.action.sendToData', uri: target });
+      } catch (_) {
+        throw new NativeFailure('mail_app_unavailable', this.store.language);
+      }
+      return;
+    }
     try {
       await this.context().openLink(target);
     } catch (_) {

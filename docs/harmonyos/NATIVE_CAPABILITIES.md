@@ -1,6 +1,6 @@
 # 原生能力与平台边界
 
-核查日期：2026-11-09。当前开发版 `0.2.10 / 210`，沿用包名 `com.clawbench.harmony`，Manifest 保留手机、平板及 `2in1`，不接入 Push Kit。工具链为 DevEco Studio 26.0.0.851 / HarmonyOS SDK 26.0.0.105，应用兼容与目标 API 23，编译 API 26。
+核查日期：2026-11-10。当前开发版 `0.2.11 / 211`，沿用包名 `com.clawbench.harmony`，Manifest 保留手机、平板及 `2in1`，暂不接入 Push Kit。工具链为 DevEco Studio 26.0.0.851 / HarmonyOS SDK 26.0.0.105，应用兼容与目标 API 23，编译 API 26。
 
 本文中的 SDK 路径相对于 DevEco Studio 的 `sdk/default/`。这些是本轮实际使用的 SDK 声明和权限定义；后续 SDK 更新时应重新核查。编译器可以识别某个接口，并不表示当前签名配置具备调用资格。
 
@@ -24,15 +24,27 @@
 
 录屏能力探测只报告浏览器入口是否存在，不是捕获成功证明。0.2.8 仍保留该探测；用户已确认真机投屏可用，但系统音频、停止共享和权限拒绝仍须单独回归，不能将弹出授权对话框、同意授权或摄像头轨道 live 用作这些子场景的通过依据。
 
+## 0.2.11 系统邮件与新版共享界面
+
+上游 v0.137.0 分享中心的“用邮件发送”优先使用内置邮箱；没有可用账号时调用原生 `openExternalUrl(mailto:...)`。旧宿主只接受 HTTP(S)，因此回退失败。0.2.11 新增独立 `externalAppUrl` 校验，通过 `startAbility({ action: 'ohos.want.action.sendToData', uri })` 拉起系统邮件编辑页；仅预填草稿，不发送。沿用 OpenHarmony 官方 `start-email-apps-by-mailto.md` 的调用方式。
+
+邮件地址允许空收件人和编码后的中文 / 多行正文，仅允许 subject、body、cc、bcc 字段，拒绝其他 scheme、无效百分号、重复 / 未支持的头字段和控制字符注入。端口浏览器仍使用 `externalHttpUrl` / `portBrowserUrl`，不会接受 mailto 或其他外部协议。系统未安装邮件应用或拉起失败时，`mail_app_unavailable` 经 RPC 返回双语提示，并由 bootstrap 派发 `clawbench-native-error` 供工作台显示；桥接超时为五分钟，HTTP 外链原有 openLink / viewData 回退保留。
+
+新版分享中心直接复用现有 ShareKit 文本分享。语音引擎、会议画面质量、群聊停止、文件邮件附件和回复用量由服务端共享 Vue 提供；无新增必需原生接口。313 项鸿蒙回归和 97 项共享逻辑回归通过；没有在线设备，系统邮件拉起、ArkWeb 新 UI 及媒体路径没有新增设备验收。
+
 ## 聊天键盘输入
 
 0.2.10 修复系统软键盘“换行”被共享前端当成 Enter 发送的问题。`chat-keyboard.js` 仅在可信鸿蒙顶层工作台生效，并限定 `textarea.chat-textarea`；物理 Enter 通过 ArkWeb 原生按键入口标记，软键盘 Enter 保留默认换行，中文选词与其他输入区不拦截。模拟器已验证英文多行、中文候选选词、连续换行、发送按钮及物理 Enter 发送，行为测试同时覆盖修饰键、失效标记和离页清理。
 
-## 无云推送依赖
+## Push Kit 接入暂缓与原生通知边界
 
-按维护者决定停止 Push Kit 接入，应用沿用 `com.clawbench.harmony`，不使用云推送准备期间的新包身份。`entry/src/main/module.json5` 声明 `phone`、`tablet` 和 `2in1`；设备类型声明不等同于完整设备行为验收。
+2026-11-10 按维护者决定暂不接入 Push Kit；本次未修改应用身份或运行时代码。工程继续使用 `com.clawbench.harmony`，版本为 `0.2.10 / 210`。此前提出的 `com.clawbench.mobile` 仅对应 Push Kit 接入设想，尚未应用到工程。
 
-0.2.10 调整首次启动推送说明与系统通知授权顺序，并保存用户确认；覆盖启动默认 `push_mode=native`、明确切换、拒绝授权和重启后不重复提示。通知权限与进程运行期间行为按 HarmonyOS 模拟器回归验证，模拟器是这类非录屏可重复场景的主要验收环境。应用后台进入 Frozen 后的系统级投递能力不由这项验证推断，鸿蒙端仍未接入 Push Kit。版本构建、测试结果与 HAP 校验值见 [维护记录](MAINTENANCE.md)。
+当前原生通知仍由 `NotificationKit` 在本地发布，消息来源是应用进程获准运行期间的 WebSocket 订阅和 HTTP 补拉。HarmonyOS 将应用置于 Frozen 或结束进程后，这两种机制均不能保证送达。模拟器已验证的权限流程、进程内订阅和点击导航不构成冻结 / 结束进程后的推送验收。
+
+Push Kit 系统级投递目前未实现。后续接入至少需要：客户端获取并更新 Token；由已认证会话将 Token 登记到服务端，并在账号切换或解绑时维护归属；服务端安全保存华为发送凭据并调用 Push Kit REST API；在任务 / 会话事件产生时发送通知；校验点击数据并与现有 WebSocket / 补拉路径去重。当前客户端没有 Push Kit Token 生命周期处理，本地核对的服务端源码也没有 Harmony Token 登记 / 解绑接口和华为 Push Kit 发送器。仅开通 AGC 服务或重新构建 HAP 不会完成上述链路。
+
+0.2.10 调整首次启动推送说明与系统通知授权顺序，并保存用户确认；覆盖启动默认 `push_mode=native`、明确切换、拒绝授权和重启后不重复提示。通知权限与进程运行期间行为按 HarmonyOS 模拟器回归验证；Frozen 后的系统级投递不由这项验证推断。版本构建、测试结果与 HAP 校验值见 [维护记录](MAINTENANCE.md)。
 
 0.2.10 的推送说明不改变订阅行为：启动授权和显式切换到原生推送均先显示说明；仅在用户确认后持久化，然后进入系统权限流程。拒绝系统权限时说明仍已显示，通知偏好仍保留以便重新授权后恢复。全新安装默认 `push_mode=native` 也会在首次系统通知授权前看到说明；配置刷新只读取已保存的确认，不重复弹出。设置文案本身由服务端前端下发，HAP 不改写推送选择器。
 
@@ -44,7 +56,7 @@
 
 “关于”页由服务端下发，应用版本描述仍写“当前安装的 Android 应用版本号”。0.2.8 在 `harmony-bootstrap.js` 中只处理 `[data-settings-key="appVersion"] .settings-item__desc`：观察新增节点和该说明节点的文本更新，把 `Android 应用版本号` / `Android app version number` 替换为 HarmonyOS 对应文案。聊天消息、代码预览、可编辑区、textarea、script/JSON 和其他 Android 下载入口都不在替换范围内；jsdom 与真实浏览器 DOM 均做了区外文本不变的回归。
 
-应用内更新检测依赖上游先发布包含 HarmonyOS 安装包与版本清单的 release，再据此实现版本比较、下载与安装校验。当前上游 `v0.136.0` release 只有 Android、桌面和服务端资产，未发布鸿蒙 release 时无法取得可核实的鸿蒙版本来源，该项保持待上游发布，不伪造通过结果。
+应用内更新检测依赖上游先发布包含 HarmonyOS 安装包与版本清单的 release，再据此实现版本比较、下载与安装校验。当前上游 `v0.137.0` release 只有 Android、桌面和服务端资产，未发布鸿蒙 release 时无法取得可核实的鸿蒙版本来源，该项保持待上游发布，不伪造通过结果。
 
 ## 2026-11-09 测试服务器补验
 

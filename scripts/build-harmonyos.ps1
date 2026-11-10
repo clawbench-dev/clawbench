@@ -3,6 +3,16 @@ param(
   [ValidateSet('debug', 'release')][string]$Mode = 'debug'
 )
 $ErrorActionPreference = 'Stop'
+function Invoke-BuildTool([string]$Executable, [string[]]$ToolArguments) {
+  if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+    throw "Build tool not found: $Executable"
+  }
+  # Windows PowerShell treats native stderr as errors when output is redirected.
+  # Hvigor writes warnings there; the process exit code determines success.
+  $ErrorActionPreference = 'Continue'
+  & $Executable @ToolArguments
+  if ($LASTEXITCODE -ne 0) { throw "Build command failed with exit code ${LASTEXITCODE}: $Executable" }
+}
 $project = Join-Path $PSScriptRoot '../harmony'
 $env:DEVECO_SDK_HOME = Join-Path $DevEcoRoot 'sdk'
 $env:JAVA_HOME = Join-Path $DevEcoRoot 'jbr'
@@ -10,10 +20,11 @@ $env:NODE_HOME = Join-Path $DevEcoRoot 'tools/node'
 $env:Path = "$env:NODE_HOME;$env:JAVA_HOME/bin;$env:Path"
 Push-Location $project
 try {
-  & (Join-Path $DevEcoRoot 'tools/ohpm/bin/ohpm.bat') install
-  if ($LASTEXITCODE -ne 0) { throw 'ohpm install failed' }
-  & (Join-Path $DevEcoRoot 'tools/hvigor/bin/hvigorw.bat') --mode module -p product=default -p module=entry@default -p buildMode=$Mode assembleHap --no-daemon
-  if ($LASTEXITCODE -ne 0) { throw 'HAP build failed' }
+  Invoke-BuildTool (Join-Path $DevEcoRoot 'tools/ohpm/bin/ohpm.bat') @('install')
+  Invoke-BuildTool (Join-Path $DevEcoRoot 'tools/hvigor/bin/hvigorw.bat') @(
+    '--mode', 'module', '-p', 'product=default', '-p', 'module=entry@default',
+    '-p', "buildMode=$Mode", 'assembleHap', '--no-daemon'
+  )
   $appManifest = Get-Content -LiteralPath 'AppScope/app.json5' -Encoding UTF8 -Raw | ConvertFrom-Json
   $appName = [string]$appManifest.app.label
   if ($appName.StartsWith('$string:')) {
@@ -26,7 +37,7 @@ try {
   if (-not $appName -or $appVersion -notmatch '^[A-Za-z0-9._+-]+$') {
     throw 'App name or version cannot be used as an artifact filename'
   }
-  $artifactDirectory = Join-Path $PSScriptRoot '../release'
+  $artifactDirectory = Join-Path $PSScriptRoot '../bulid-hap'
   New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
   $packages = @(Get-ChildItem -LiteralPath 'entry/build/default/outputs/default' -Filter 'entry-default-*.hap')
   if ($packages.Count -eq 0) { throw 'No built HAP found' }

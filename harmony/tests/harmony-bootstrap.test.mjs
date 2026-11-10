@@ -49,6 +49,23 @@ function connectPort(page, channel = 'random-channel') {
   return { port, messages };
 }
 
+test('system mail RPC keeps its encoded draft and reports unavailable handlers to the workbench', async () => {
+  const page = createPage();
+  const { port, messages } = connectPort(page);
+  const uri = 'mailto:?subject=' + encodeURIComponent('会议 #1') +
+    '&body=' + encodeURIComponent('https://example.com/share/x\n备注');
+  const operation = page.window.ClawBenchHarmony.openExternalUrl(uri);
+  const request = messages[0];
+  assert.equal(request.method, 'openExternalUrl');
+  assert.equal(JSON.parse(request.args[0]), uri);
+  assert.equal([...page.timerDelays.values()][0], 300000);
+  port.onmessage({ data: JSON.stringify({ id: request.id, error: 'Unable to open a mail app.' }) });
+  await assert.rejects(operation, /Unable to open a mail app/);
+  assert.equal(page.dispatched[0].type, 'clawbench-native-error');
+  assert.equal(page.dispatched[0].detail.method, 'openExternalUrl');
+  assert.equal(page.dispatched[0].detail.message, 'Unable to open a mail app.');
+});
+
 test('bootstrap exposes no bridge to subframes, external sites or file previews', () => {
   for (const options of [{ subframe: true }, { origin: 'https://evil.example' }, { path: '/api/fs/raw/untrusted.html' }]) {
     assert.equal(createPage(options).window.ClawBenchHarmony, undefined);

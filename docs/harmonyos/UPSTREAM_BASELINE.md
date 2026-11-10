@@ -1,22 +1,22 @@
 # 上游基线记录
 
-当前参考源码已于 2026-11-09 覆盖同步到上游 `main` HEAD，也是正式 tag `v0.136.0` 的指向提交。同日再次通过 GitHub API 复核，`main`、最新 tag 与最新 release 仍为该提交，未出现更新，因此本轮没有再次覆盖源码。归档经 SHA-256 与 ZIP 路径校验后镜像到 `clawbench-source code/`；没有创建旧版本备份。该同步只更新分析用的参考源码，不自动升级鸿蒙 HAP。
+当前参考源码已于 2026-11-10 从 GitHub 下载并覆盖同步到上游 `main` / 正式 tag `v0.137.0`。相对上轮 `06a43010` 新增 45 个提交；主线和 tag 指向同一 commit。ZIP 经过路径、归档 SHA-256 和镜像后逐文件内容校验，参考目录没有创建旧版本备份。上游 `CLAUDE.md` 是指向 `AGENTS.md` 的归档符号链接；Windows ZIP 解压保留为普通文本文件，不创建文件系统链接。鸿蒙运行时改动独立审核、构建，不把服务器源码整体打入 HAP。
 
 ## 当前快照
 
 | 字段 | 当前值 |
 | --- | --- |
 | 上游仓库 | `https://github.com/clawbench-dev/clawbench` |
-| 上游分支 / commit | `main` / `06a43010cee4c5e04c0f6c32eb2a2d2651664d2c` |
-| 发布 tag | `v0.136.0`，tag 指向同一 commit |
-| 同步日期 | `2026-11-09` |
+| 上游分支 / commit | `main` / `21aeaff4c6ef066aa94ad50d884518b01b4744de` |
+| 发布 tag | `v0.137.0`，tag 指向同一 commit |
+| 同步日期 | `2026-11-10` |
 | 本地参考目录 | `clawbench-source code/` |
-| 归档 SHA-256 | `4a873a972a9ba1395edbc59a1de5a6c00c2c13476130e7bf241e2d18079e5995` |
-| 上游文件数 | 4,332 |
+| 归档 SHA-256 | `6d59d993249137c45bec992fde15072c25d5868aacc05b701ed87ab36c5af91a` |
+| 上游文件数 | 4,380 |
 | 客户端协议号 | `1`，来自 `internal/version/client_protocol.txt` |
-| 鸿蒙工程版本 | PR #653 更新为 `0.2.10 / 210`，包名 `com.clawbench.harmony` |
-| HarmonyOS 集成状态 | PR #631 与 #636 已合并进上游；此快照已包含鸿蒙宿主，不要再叠加历史补丁 |
-| 鸿蒙 release 资产 | `v0.136.0` release 只有 Android、桌面和服务端资产，没有 HarmonyOS HAP；应用内更新检测待上游发布鸿蒙 release 后再验收 |
+| 鸿蒙工程版本 | 本轮更新为 `0.2.11 / 211`，包名 `com.clawbench.harmony` |
+| HarmonyOS 集成状态 | PR #631 / #636 的集成及后续 0.2.10 修复已进入上游；此快照已包含鸿蒙宿主，不要再叠加历史补丁 |
+| 鸿蒙 release 资产 | `v0.137.0` release 只有 Android、桌面和服务端资产，没有 HarmonyOS HAP；应用内更新检测待上游发布鸿蒙 release 后再验收 |
 | 发布状态 | README 标注实验性支持，明确未达到 Android 全功能对等且暂不进入正式发布流水线 |
 
 历史 Harmony 集成补丁与校验材料属于维护方本地工作流，不随本仓库提交。上游主线已包含鸿蒙宿主时，无需也不应重放历史补丁。
@@ -38,7 +38,7 @@
 
 ## 主要文件指纹
 
-以下 SHA-256 用于识别 2026-11-09 当前快照中的关键文件，不能替代完整 commit，也不能单独证明整个目录来自同一版本。
+以下 SHA-256 用于识别 2026-11-10 当前快照中的关键文件，不能替代完整 commit，也不能单独证明整个目录来自同一版本。
 
 ```text
 android/app/src/main/java/com/clawbench/app/MainActivity.java

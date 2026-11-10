@@ -107,7 +107,7 @@
         reject(new Error('HarmonyOS bridge timed out: ' + method));
       }, ['downloadBlob', 'shareFile', 'shareFiles', 'shareText', 'readClipboardText',
         'showSelectionMenu', 'setNativePushEnabled', 'reconnectTunnel', 'reconnectTunnelAsync',
-        'addForwardedPort', 'addReverseForwardedPort', 'openInBrowser',
+        'addForwardedPort', 'addReverseForwardedPort', 'openExternalUrl', 'openInBrowser',
         'openInSandbox'].includes(method) ? 300000 : 20000);
       pending.set(id, { resolve, reject, timer });
       const message = JSON.stringify({ id, method, args: args.map(arg => JSON.stringify(arg)) });
@@ -249,7 +249,7 @@
     'addReverseForwardedPort', 'removeForwardedPort', 'removeReverseForwardedPort', 'forgetForwardedPorts']) {
     bridge[method] = (...args) => invoke(method, ...args);
   }
-  for (const method of ['openInBrowser', 'openInSandbox']) {
+  for (const method of ['openExternalUrl', 'openInBrowser', 'openInSandbox']) {
     bridge[method] = (...args) => invoke(method, ...args).catch(error => {
       if (!closed) window.dispatchEvent(new CustomEvent('clawbench-native-error', {
         detail: { method, message: error.message }

@@ -11,6 +11,33 @@ export function externalHttpUrl(value: string): string {
   return parseServerAddress(match[1]).origin + (match[2] || '/');
 }
 
+// The share center falls back to the system composer when no built-in mailbox
+// is available. Keep this separate from the HTTP-only port-browser policy.
+export function externalAppUrl(value: string): string {
+  if (typeof value !== 'string' || !/^mailto:/i.test(value)) {
+    return externalHttpUrl(value);
+  }
+  if (value.length > 8192 || /[\u0000-\u0020\\#]/.test(value)) {
+    throw new Error('Invalid mail URL');
+  }
+  const parts = value.substring(7).split('?');
+  if (parts.length > 2 || /[\u0000-\u0020:/\\?#]/.test(decodeURIComponent(parts[0]))) {
+    throw new Error('Invalid mail recipient');
+  }
+  const seen: string[] = [];
+  for (const field of parts[1] ? parts[1].split('&') : []) {
+    const separator = field.indexOf('=');
+    const key = decodeURIComponent(field.substring(0, separator)).toLowerCase();
+    const content = decodeURIComponent(field.substring(separator + 1));
+    if (separator < 1 || !['subject', 'body', 'cc', 'bcc'].includes(key) || seen.includes(key) ||
+        (key === 'body' ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/ : /[\u0000-\u001f\u007f]/).test(content)) {
+      throw new Error('Invalid mail field');
+    }
+    seen.push(key);
+  }
+  return 'mailto:' + value.substring(7);
+}
+
 export function portBrowserUrl(port: number, protocol: string, host: string, path: string): string {
   if (!Number.isInteger(port) || port < 1 || port > 65535 || !['http', 'https'].includes(protocol)) {
     throw new Error('Invalid browser address');
