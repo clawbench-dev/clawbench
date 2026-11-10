@@ -94,6 +94,22 @@ export function formatCompactCredit(v: number): string {
 }
 
 /**
+ * Money figure for the per-message "this turn cost" tail (backends that bill in
+ * money rather than credits).
+ *
+ * Two decimals are the familiar shape, but a single turn routinely costs a few
+ * cents or less — "$0.00" would claim the turn was free. Below one cent the
+ * figure keeps up to four decimals (trailing zeros trimmed), and below that it
+ * says so explicitly rather than rounding to zero.
+ */
+export function formatTailCost(v: number): string {
+  if (v == null || Number.isNaN(v) || v <= 0) return ''
+  if (v >= 0.01) return `$${v.toFixed(2)}`
+  if (v >= 0.0001) return `$${v.toFixed(4).replace(/0+$/, '')}`
+  return '<$0.0001'
+}
+
+/**
  * Compact value for space-constrained surfaces (header capsule, phone row):
  * K/M/B tiers with exactly one decimal, and no trailing ".0" below the K tier.
  *
