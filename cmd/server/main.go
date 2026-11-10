@@ -950,6 +950,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.ChatRecentProjectCardsMaxCount = cfg.Chat.RecentProjectCardsMaxCount
 	model.ChatRecentProjectCardsWindowHours = cfg.Chat.RecentProjectCardsWindowHours
+	model.ChatSessionSortRecent = cfg.Chat.SessionSortRecent
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

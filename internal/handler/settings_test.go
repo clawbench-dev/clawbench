@@ -503,6 +503,42 @@ func TestServeConfig_Patch_RecentProjectCardsWindowHours(t *testing.T) {
 	}
 }
 
+// chat.session_sort_recent round-trips through PATCH /api/config and is synced
+// into the model global so the session queries honor it without a restart.
+func TestServeConfig_Patch_SessionSortRecent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatSessionSortRecent
+	t.Cleanup(func() { model.ChatSessionSortRecent = orig })
+	model.ChatSessionSortRecent = false
+
+	body := `{"chat":{"session_sort_recent":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.Chat.SessionSortRecent,
+		"the value must be applied to ConfigInstance")
+	assert.True(t, model.ChatSessionSortRecent,
+		"applyHotReloadGlobals must sync the model global")
+
+	// GET must expose it so the settings switch renders the saved state.
+	getReq := newRequest(t, http.MethodGet, "/api/config", nil)
+	getW := callHandler(ServeConfig, getReq)
+	assertOK(t, getW)
+	var result struct {
+		Chat struct {
+			SessionSortRecent bool `json:"session_sort_recent"`
+		} `json:"chat"`
+	}
+	require.NoError(t, json.Unmarshal(getW.Body.Bytes(), &result))
+	assert.True(t, result.Chat.SessionSortRecent, "the switch must be part of GET /api/config")
+}
+
 // The window must reach the client, otherwise the settings row renders empty
 // even though the server honors it.
 func TestServeConfig_Get_ExposesRecentProjectCardsWindow(t *testing.T) {

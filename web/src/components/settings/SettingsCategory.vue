@@ -218,6 +218,7 @@ import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/compos
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
+import { store } from '@/stores/app.ts'
 import { appLog, setLogCaptureEnabled } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
@@ -649,6 +650,13 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
   }
   try {
     const result = await setServerValue(item.key, value as string | number | boolean)
+    // The session list is ordered server-side, so a saved order preference has
+    // to be re-fetched: nothing else bumps this counter while the settings
+    // overlay is open, and the list behind it would keep the old order until
+    // the next project switch or WS event.
+    if (item.key === 'chat.session_sort_recent') {
+      store.state.sessionListVersion++
+    }
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)
     }

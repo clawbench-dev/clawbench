@@ -3331,6 +3331,8 @@ export default {
       chatForkContextBudgetDesc: 'Max characters of conversation history re-injected when forking or rewinding a session. Older messages are omitted beyond this limit (default 100000).',
       sessionMaxCount: 'Max Sessions',
       sessionMaxCountDesc: 'Maximum number of concurrent chat sessions',
+      sessionSortRecent: 'Sort Sessions by Recent Activity',
+      sessionSortRecentDesc: 'Off: sessions stay in creation order and never move on their own. On: the session you last sent a message in floats to the top. A manual drag order always wins.',
       recentProjectCardsMaxCount: 'Other Project Cards Limit',
       recentProjectCardsMaxCountDesc: 'How many other-project cards the session list shows at the bottom. Projects with active sessions come first, then recently used ones (default 10).',
       recentProjectCardsWindowHours: 'Recency window (hours)',

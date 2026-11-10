@@ -701,8 +701,8 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Five sessions with strictly increasing updated_at (A oldest → E newest).
-	// created_at starts equal to updated_at, so the two are interchangeable
+	// Five sessions with strictly increasing created_at (A oldest → E newest).
+	// updated_at starts equal to created_at, so the two are interchangeable
 	// until the test deliberately diverges one below.
 	ids := make([]string, 0, 5)
 	for i := range 5 {
@@ -729,24 +729,24 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	require.Equal(t, ids[4], firstSessions[0].(map[string]interface{})["id"])
 	require.Equal(t, ids[3], firstSessions[1].(map[string]interface{})["id"])
 
-	// The cursor is the last page-1 row's updated_at: the paged endpoint
-	// orders/filters by updated_at (the session list's activity order, #635).
+	// The cursor is the last page-1 row's created_at: the default paged order
+	// is created_at (chat.session_sort_recent is off by default).
 	lastSession := firstSessions[1].(map[string]interface{})
-	cursorUpdatedAt := lastSession["updatedAt"].(string)
+	cursorCreatedAt := lastSession["createdAt"].(string)
 	cursorID := lastSession["id"].(string)
 
-	// Make the divergence discriminating: C (next in updated_at order) gets a
-	// created_at in the FUTURE relative to the cursor. A cursor predicate on
-	// created_at then drops C from page 2 entirely, while the correct
-	// updated_at predicate still returns it. Without this, created_at ==
-	// updated_at for message-less sessions and both columns produce the same
-	// page.
+	// Diverge C's updated_at from its created_at by a day. C is the first row of
+	// page 2 by creation order; a keyset predicate on updated_at would drop it
+	// (`updated_at < cursor` is false for a future timestamp) and return B, A
+	// instead — the gap this contract guards against. Without the divergence,
+	// created_at == updated_at for message-less sessions and the test cannot
+	// distinguish the two columns.
 	_, err := store.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET created_at = datetime('now', '+1 day') WHERE id = ?", ids[2])
+		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", ids[2])
 	require.NoError(t, err)
 
 	// Normalize cursor format (replace T/space, strip Z)
-	cursor := strings.ReplaceAll(cursorUpdatedAt, "T", " ")
+	cursor := strings.ReplaceAll(cursorCreatedAt, "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")
 
 	// Request second page using cursor (properly encode query params)
@@ -765,10 +765,10 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	secondSessions := secondPage["sessions"].([]interface{})
 	require.Len(t, secondSessions, 2, "second page should have remaining sessions")
 
-	// Exact ids, not just "no overlap": a created_at predicate would silently
-	// skip C and return B, A instead — still two rows, still non-overlapping.
+	// Exact ids, not just "no overlap": an updated_at predicate would return E
+	// again (its created_at is before D's updated_at + 1 day) and skip C.
 	assert.Equal(t, ids[2], secondSessions[0].(map[string]interface{})["id"],
-		"the cursor must compare updated_at: C is next by activity even though its created_at is in the future")
+		"the cursor must compare created_at: C is next by creation order")
 	assert.Equal(t, ids[1], secondSessions[1].(map[string]interface{})["id"])
 
 	// Verify no overlap between pages
@@ -785,15 +785,16 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 
 // TestServeSessionsPaginationWithPinned verifies the HTTP layer wires
 // cursor_pinned + cursor_sort_order through to the keyset cursor. Ordering is
-// (pinned DESC, sort_order ASC, updated_at DESC, id DESC); a pinned row leads
-// regardless of its position in the manual order, so paging on the timestamp
-// alone re-returns it on every page. Both keys must travel with the cursor.
+// (pinned DESC, sort_order ASC, created_at DESC, id DESC) by default; a pinned
+// row leads regardless of its position in the manual order, so paging on the
+// timestamp alone re-returns it on every page. Both keys must travel with the
+// cursor.
 func TestServeSessionsPaginationWithPinned(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	// Six sessions, oldest created first. Pin the OLDEST one: it must lead the
-	// list despite having the smallest updated_at — the case that a
+	// list despite having the smallest created_at — the case that a
 	// timestamp-only cursor mishandles.
 	allIDs := make([]string, 0, 6)
 	for i, title := range []string{"A", "B", "C", "D", "E", "F"} {
@@ -837,16 +838,17 @@ func TestServeSessionsPaginationWithPinned(t *testing.T) {
 	require.Equal(t, oldestID, page1[0]["id"], "the pinned session must lead the first page")
 	require.Equal(t, true, page1[0]["pinned"])
 
-	// Cursor-column divergence guard: D belongs on page 2 by activity, but give
-	// it a created_at beyond the cursor. A keyset predicate on created_at then
-	// drops it from page 2, and the "both pages cover every session" assertion
-	// below fails — a cursor on updated_at still returns it.
+	// Cursor-column divergence guard: D belongs on page 2 by creation order, but
+	// give it an updated_at beyond the cursor. A keyset predicate on updated_at
+	// would re-return E (whose created_at is before D's updated_at) and drop D,
+	// so the "both pages cover every session" assertion below fails; the correct
+	// created_at cursor still returns D.
 	_, err := store.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET created_at = '2025-01-01 00:00:00' WHERE id = ?", allIDs[3])
+		"UPDATE chat_sessions SET updated_at = '2025-01-01 00:00:00' WHERE id = ?", allIDs[3])
 	require.NoError(t, err)
 
 	last := page1[len(page1)-1]
-	cursor := strings.ReplaceAll(last["updatedAt"].(string), "T", " ")
+	cursor := strings.ReplaceAll(last["createdAt"].(string), "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")
 	// sortOrder is omitempty, so an absent field means 0 (the common case after
 	// a drag, where the rest of the list still shares the default).

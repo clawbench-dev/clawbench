@@ -195,6 +195,13 @@ type Config struct {
 		// session still gets one if it was used inside this window. (default:
 		// 24, minimum 1)
 		RecentProjectCardsWindowHours int `yaml:"recent_project_cards_window_hours"`
+		// SessionSortRecent breaks ties among sessions that share the same
+		// (pinned, sort_order) — i.e. any list the user has never dragged — by
+		// last activity (updated_at DESC) instead of creation time
+		// (created_at DESC). Off by default: ordering by activity reorders the
+		// sidebar under the user's eyes while they read it, which is disruptive
+		// for the common case. Manual drag order always wins regardless.
+		SessionSortRecent bool `yaml:"session_sort_recent"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -789,6 +796,10 @@ var (
 	// ChatRecentProjectCardsWindowHours is how far back a project counts as
 	// recently active for a collapsed card (default 24). Same hot-reload rule.
 	ChatRecentProjectCardsWindowHours int
+	// ChatSessionSortRecent orders never-dragged session rows by last activity
+	// instead of creation time (default false). Read by internal/service at
+	// query time so a change takes effect without a restart.
+	ChatSessionSortRecent bool
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

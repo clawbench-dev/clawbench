@@ -77,6 +77,7 @@ var hotReloadFields = map[string]bool{
 	"chat.group_max_speeches":                true,
 	"chat.recent_project_cards_max_count":    true,
 	"chat.recent_project_cards_window_hours": true,
+	"chat.session_sort_recent":               true,
 	"language":                               true,
 	"session.max_count":                      true,
 	"session.archive_retention_enabled":      true,
@@ -456,6 +457,7 @@ type configChat struct {
 	GroupMaxSpeeches         int  `json:"group_max_speeches"`
 	RecentProjectCardsMax    int  `json:"recent_project_cards_max_count"`
 	RecentProjectCardsWindow int  `json:"recent_project_cards_window_hours"`
+	SessionSortRecent        bool `json:"session_sort_recent"`
 }
 
 // configUser is the human user's identity as sent to the client. It is a
@@ -939,6 +941,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.group_max_speeches":                true,
 	"chat.recent_project_cards_max_count":    true,
 	"chat.recent_project_cards_window_hours": true,
+	"chat.session_sort_recent":               true,
 	"language":                               true,
 	"session.max_count":                      true,
 	"session.archive_retention_enabled":      true,
@@ -1157,6 +1160,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			GroupMaxSpeeches:         cfg.Chat.GroupMaxSpeeches,
 			RecentProjectCardsMax:    cfg.Chat.RecentProjectCardsMaxCount,
 			RecentProjectCardsWindow: cfg.Chat.RecentProjectCardsWindowHours,
+			SessionSortRecent:        cfg.Chat.SessionSortRecent,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -2508,6 +2512,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := chat["recent_project_cards_window_hours"].(float64); ok {
 			cfg.Chat.RecentProjectCardsWindowHours = int(v)
 		}
+		if v, ok := chat["session_sort_recent"].(bool); ok {
+			cfg.Chat.SessionSortRecent = v
+		}
 	}
 
 	if session, ok := patch["session"].(map[string]any); ok {
@@ -2950,6 +2957,7 @@ func applyHotReloadGlobals() {
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.ChatRecentProjectCardsMaxCount = cfg.Chat.RecentProjectCardsMaxCount
 	model.ChatRecentProjectCardsWindowHours = cfg.Chat.RecentProjectCardsWindowHours
+	model.ChatSessionSortRecent = cfg.Chat.SessionSortRecent
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

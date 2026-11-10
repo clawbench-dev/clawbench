@@ -1480,20 +1480,32 @@ const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.a
 		FROM chat_sessions s
 		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
-// GetSessions retrieves chat sessions for a given project path, ordered by
-// pinned DESC, sort_order ASC, updated_at DESC — pinned sessions are a fixed
-// block at the top, then the user's manual drag order, and rows the user has
-// never dragged (all still sort_order 0) fall back to "most recent activity
-// first". If backend is non-empty, filters by backend; otherwise returns all
-// backends.
+// sessionOrderColumn is the timestamp that breaks ties among rows sharing the
+// same (pinned, sort_order) — i.e. any row the user has never dragged.
 //
-// The final tiebreak is updated_at, not created_at: updated_at is bumped on
-// every message insert (insertChatMessageTx), so an untouched list floats the
-// session the user is actually working in to the top. Ordering by created_at
-// pinned the list to creation time, which buried long-running sessions that
-// had been active for days (#635). A manual drag still wins, because
-// ReorderSessions assigns distinct sort_order values and updated_at is only
-// consulted inside a sort_order tie.
+// Default is created_at DESC (creation order, stable: a session never moves on
+// its own). When chat.session_sort_recent is on it becomes updated_at DESC
+// (last activity), so the session the user is working in floats to the top —
+// convenient, but it also reorders the sidebar while it is being read, which is
+// why it is opt-in. Manual drag order still wins in both modes because
+// ReorderSessions assigns distinct sort_order values.
+//
+// The alias prefix is required: every caller joins/queries the session table as
+// `s` (including the ROW_NUMBER in ReorderSessions).
+func sessionOrderColumn() string {
+	if model.ChatSessionSortRecent {
+		return "s.updated_at"
+	}
+	return "s.created_at"
+}
+
+// GetSessions retrieves chat sessions for a given project path, ordered by
+// pinned DESC, sort_order ASC, then a timestamp DESC — pinned sessions are a
+// fixed block at the top, then the user's manual drag order, and rows the user
+// has never dragged (all still sort_order 0) fall back to creation order by
+// default, or to most-recent-activity-first when chat.session_sort_recent is
+// enabled (see sessionOrderColumn). If backend is non-empty, filters by
+// backend; otherwise returns all backends.
 //
 // Only returns interactive sessions (session_type in chat/group; excludes
 // scheduled and hidden group_member rows).
@@ -1512,7 +1524,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
 	}
-	query += " ORDER BY s.pinned DESC, s.sort_order ASC, s.updated_at DESC, s.id DESC"
+	query += " ORDER BY s.pinned DESC, s.sort_order ASC, " + sessionOrderColumn() + " DESC, s.id DESC"
 
 	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
@@ -1572,25 +1584,26 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 }
 
 // GetSessionsPaged retrieves chat sessions with cursor-based pagination,
-// ordered by pinned DESC, sort_order ASC, updated_at DESC — pinned sessions are
-// a fixed block at the top, then the user's manual drag order, and rows never
-// dragged fall back to most-recent-activity-first. limit=0 means no limit
-// (returns all sessions).
+// ordered by pinned DESC, sort_order ASC, then a timestamp DESC — pinned
+// sessions are a fixed block at the top, then the user's manual drag order, and
+// rows never dragged fall back to creation order by default, or to
+// most-recent-activity-first when chat.session_sort_recent is enabled (see
+// sessionOrderColumn). limit=0 means no limit (returns all sessions).
 //
 // The cursor is the full sort key of the last row of the previous page, not
-// just its timestamp. Ordering is (pinned DESC, sort_order ASC, updated_at
-// DESC, id DESC), so the keyset predicate must compare all four columns
+// just its timestamp. Ordering is (pinned DESC, sort_order ASC, <ts> DESC,
+// id DESC), so the keyset predicate must compare all four columns
 // lexicographically:
 //
 //	pinned < cursorPinned
 //	OR (pinned = cursorPinned AND (sort_order > cursorSortOrder
-//	      OR (sort_order = cursorSortOrder AND (updated_at < cursor
-//	            OR (updated_at = cursor AND id < cursorID)))))
+//	      OR (sort_order = cursorSortOrder AND (<ts> < cursor
+//	            OR (<ts> = cursor AND id < cursorID)))))
 //
-// The cursor column must match the ORDER BY column exactly: feeding a
-// created_at cursor into an updated_at filter (or vice versa) makes
-// `updated_at < cursor` match rows already returned on the previous page,
-// duplicating the list.
+// The cursor column must match the ORDER BY column exactly, and that column
+// depends on chat.session_sort_recent: feeding a created_at cursor into an
+// updated_at filter (or vice versa) makes `<ts> < cursor` match rows already
+// returned on the previous page, duplicating the list.
 // cursorSortOrder and cursorPinned are optional: when either is nil the legacy
 // timestamp-only predicate is used, so callers that do not track the full sort
 // key still page without error.
@@ -1642,26 +1655,29 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		args = append(args, tagName, projectID)
 	}
 	if cursor != "" && cursorID != "" {
+		// The keyset predicate must compare the same column the ORDER BY uses,
+		// or the page boundary lands in the wrong place (duplicates / gaps).
+		orderCol := sessionOrderColumn()
 		if cursorSortOrder != nil && cursorPinned != nil {
 			// Full keyset: pinned is the leading sort column (descending), then
-			// sort_order (ascending), then updated_at DESC / id DESC. A row is
+			// sort_order (ascending), then the timestamp DESC / id DESC. A row is
 			// "after" the cursor when it sits in a later pinned group, or in the
 			// same group with a greater sort_order, or with the same sort_order
-			// and an older updated_at / smaller id.
+			// and an older timestamp / smaller id.
 			pinnedInt := 0
 			if *cursorPinned {
 				pinnedInt = 1
 			}
-			query += " AND (s.pinned < ? OR (s.pinned = ? AND (s.sort_order > ? OR (s.sort_order = ? AND (s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))))))"
+			query += " AND (s.pinned < ? OR (s.pinned = ? AND (s.sort_order > ? OR (s.sort_order = ? AND (" + orderCol + " < ? OR (" + orderCol + " = ? AND s.id < ?))))))"
 			args = append(args, pinnedInt, pinnedInt, *cursorSortOrder, *cursorSortOrder, cursor, cursor, cursorID)
 		} else {
-			// Legacy cursor (updated_at + id only), for callers that do not
+			// Legacy cursor (timestamp + id only), for callers that do not
 			// track the full sort key.
-			query += " AND (s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))"
+			query += " AND (" + orderCol + " < ? OR (" + orderCol + " = ? AND s.id < ?))"
 			args = append(args, cursor, cursor, cursorID)
 		}
 	}
-	query += " ORDER BY s.pinned DESC, s.sort_order ASC, s.updated_at DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY s.pinned DESC, s.sort_order ASC, " + sessionOrderColumn() + " DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1)
 
 	rows, err := store.ReadDB().Query(query, args...)
@@ -2465,7 +2481,7 @@ func ReorderSessions(projectPath string, ids []string) error {
 
 	query := `WITH posted(id, ord) AS (VALUES ` + posted.String() + `),
 		rest AS (
-			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.updated_at DESC, s.id DESC) - 1 AS rn
+			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, ` + sessionOrderColumn() + ` DESC, s.id DESC) - 1 AS rn
 			FROM chat_sessions s
 			WHERE s.project_id = ? AND s.session_type IN (` + store.VisibleSessionTypeInClause + `) AND s.pinned = 0 AND s.archived = 0
 			  AND s.id NOT IN (SELECT id FROM posted)

@@ -200,7 +200,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 	}{
 		{
 			name:  "GetSessions",
-			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.updated_at DESC, s.id DESC",
+			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC",
 		},
 		{
 			name:  "GetOverviewSessions",
@@ -208,7 +208,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 		},
 		{
 			name:  "GetSessionsPaged",
-			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.updated_at DESC, s.id DESC LIMIT 11",
+			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC LIMIT 11",
 		},
 	}
 
@@ -607,9 +607,8 @@ func TestSchema_SortOrderMigration(t *testing.T) {
 	require.NoError(t, err)
 	// Three sessions: 'old' is oldest, 'pinned' is the oldest of all but pinned,
 	// 'new' is newest.
-	// updated_at mirrors created_at: the list orders unpinned rows by last
-	// activity (issue #635), so a fixture that leaves it at the CURRENT_TIMESTAMP
-	// default would order by insertion second rather than by these timestamps.
+	// updated_at mirrors created_at so this fixture stays valid if the opt-in
+	// activity ordering is ever exercised here; the default order is created_at.
 	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at, updated_at) VALUES ('old', 1, 'claude', 'Old', 0, '2024-01-01 00:00:00', '2024-01-01 00:00:00')")
 	require.NoError(t, err)
 	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at, updated_at) VALUES ('pinned', 1, 'claude', 'Pinned', 1, '2023-01-01 00:00:00', '2023-01-01 00:00:00')")

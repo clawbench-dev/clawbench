@@ -412,6 +412,16 @@ describe('settingsFieldMap', () => {
     expect(values).toEqual(['mixed', 'summary', 'original'])
   })
 
+  it('chat category has a server switch for recent-activity session ordering', () => {
+    const chatEntries = categoryItems['chat']
+    const entry = chatEntries.find(e => e.type === 'item' && e.spec.key === 'chat.session_sort_recent')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item')
+    expect(entry.spec.source).toBe('server')
+    expect(entry.spec.type).toBe('switch')
+    expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
+  })
+
   it('puts the other-project card settings in a card of their own', () => {
     // The two values are one feature (how many cards, how far back counts), so
     // they belong together — and NOT inside 消息与历史, where they read as yet

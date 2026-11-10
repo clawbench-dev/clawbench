@@ -3327,6 +3327,8 @@ export default {
       chatForkContextBudgetDesc: '创建分支或回溯会话时，重新注入的历史内容字符上限；超出部分从最早的消息开始省略（默认 100000）',
       sessionMaxCount: '最大会话数',
       sessionMaxCountDesc: '允许同时存在的聊天会话上限',
+      sessionSortRecent: '会话按最近活动排序',
+      sessionSortRecentDesc: '关闭时按创建时间排列，会话不会自己换位置；开启后最近发过消息的会话会浮到最上面。手动拖动过的顺序始终优先',
       recentProjectCardsMaxCount: '其他项目卡片上限',
       recentProjectCardsMaxCountDesc: '会话列表底部最多显示几个其他项目的卡片。优先显示有活跃会话的项目，其次是最近活跃过的项目（默认 10）',
       recentProjectCardsWindowHours: '活跃窗口（小时）',

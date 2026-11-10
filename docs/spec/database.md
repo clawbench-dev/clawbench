@@ -48,7 +48,7 @@ UNIQUE：`(backend, id)`
 
 索引：`idx_sessions_group(group_id, session_type)`、`idx_sessions_order(session_type, project_id, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC)`、`idx_sessions_project_backend(project_id, backend)`、`idx_sessions_source_session(source_session_id) WHERE source_session_id IS NOT NULL`、`idx_sessions_type(session_type, project_id, archived)`
 
-> 列表排序恒为 `pinned DESC, sort_order ASC, created_at DESC, id DESC`（`idx_sessions_order` 就是为这个 ORDER BY 建的覆盖索引，缺它就要 filesort）。
+> 列表默认排序为 `pinned DESC, sort_order ASC, created_at DESC, id DESC`（`idx_sessions_order` 就是为这个 ORDER BY 建的覆盖索引，缺它就要 filesort）。配置项 `chat.session_sort_recent` 开启后，时间列改为 `updated_at DESC`（最后活动优先，需要 filesort，属可选项）。
 
 ### chat_history（聊天消息）
 

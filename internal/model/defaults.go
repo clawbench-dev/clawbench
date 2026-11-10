@@ -282,6 +282,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.RecentProjectCardsWindowHours <= 0 {
 		cfg.Chat.RecentProjectCardsWindowHours = 24
 	}
+	// SessionSortRecent: bool zero-value (false) is the intentional default —
+	// ordering never-dragged rows by activity reshuffles the sidebar while the
+	// user reads it. Use the presence map to distinguish "user wrote false" from
+	// "user omitted the field".
+	if p, ok := presence["chat.session_sort_recent"]; !ok || !p {
+		cfg.Chat.SessionSortRecent = false
+	}
 
 	// --- Session ---
 	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is

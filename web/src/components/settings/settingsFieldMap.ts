@@ -293,6 +293,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
+    // Session list order. Off by default: ordering by activity reshuffles the
+    // sidebar while the user reads it, which was disruptive enough to be made
+    // opt-in. Manual drag order still wins in both modes.
+    { type: 'item', spec: { labelKey: 'settings.items.sessionSortRecent', descriptionKey: 'settings.items.sessionSortRecentDesc', key: 'chat.session_sort_recent', type: 'switch', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000 } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
