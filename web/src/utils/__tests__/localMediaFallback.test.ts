@@ -259,6 +259,141 @@ describe('installLocalMediaFallback', () => {
   })
 })
 
+describe('streaming re-render (placeholder must not flicker)', () => {
+  // A streaming turn rewrites its block through `v-html` on every chunk, so the
+  // placeholder built for the previous frame is destroyed and the next chunk
+  // inserts a brand-new <img>. The observations below are the invariant that
+  // keeps Android WebView (and any slow renderer) from blinking: the placeholder
+  // comes back in the same microtask, before the frame is painted.
+  const flushMutations = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  let host: HTMLElement
+
+  beforeEach(() => {
+    uninstallLocalMediaFallback()
+    document.body.innerHTML = ''
+    host = document.createElement('div')
+    host.className = 'chat-message'
+    host.setAttribute('data-streaming', 'true')
+    document.body.appendChild(host)
+  })
+  afterEach(() => {
+    uninstallLocalMediaFallback()
+  })
+
+  /** One `v-html` write for the next streaming chunk. */
+  const nextChunk = (markup: string) => { host.innerHTML = markup }
+
+  it('re-applies the placeholder to the replacement <img> without a second error', async () => {
+    installLocalMediaFallback()
+    nextChunk('<p><img src="https://example.com/a.png"></p>')
+    ;(host.querySelector('img') as HTMLImageElement).dispatchEvent(new Event('error'))
+    expect(host.querySelectorAll(`.${MEDIA_MISSING_CLASS}`)).toHaveLength(1)
+
+    nextChunk('<p><img src="https://example.com/a.png"></p>')
+    const replacement = host.querySelector('img') as HTMLImageElement
+    // The new node has not fired `error` (and in jsdom never would) — the
+    // placeholder has to come from the remembered failure alone.
+    await flushMutations()
+
+    expect(replacement.getAttribute('data-media-missing')).toBe('1')
+    expect(replacement.classList.contains('local-media-hidden')).toBe(true)
+    // Exactly one card, in the same place: not zero (the gap that flickers) and
+    // not two (a stacked duplicate).
+    expect(host.querySelectorAll(`.${MEDIA_MISSING_CLASS}`)).toHaveLength(1)
+    expect(replacement.nextElementSibling!.querySelector(`.${MEDIA_MISSING_CLASS}`)).not.toBeNull()
+  })
+
+  it('keeps the quiet streaming variant on the re-applied card', async () => {
+    installLocalMediaFallback()
+    nextChunk('<p><img src="https://example.com/a.png"></p>')
+    ;(host.querySelector('img') as HTMLImageElement).dispatchEvent(new Event('error'))
+
+    nextChunk('<p><img src="https://example.com/a.png"></p>')
+    await flushMutations()
+
+    const ph = host.querySelector(`.${MEDIA_MISSING_CLASS}`)!
+    expect(ph.classList.contains('media-load-error--streaming')).toBe(true)
+    expect(ph.querySelector('.media-load-error-text')).toBeNull()
+  })
+
+  it('does not touch an image whose src has not failed', async () => {
+    installLocalMediaFallback()
+    nextChunk('<p><img src="https://example.com/broken.png"><img src="https://example.com/other.png"></p>')
+    ;(host.querySelector('img') as HTMLImageElement).dispatchEvent(new Event('error'))
+
+    nextChunk('<p><img src="https://example.com/other.png"></p>')
+    await flushMutations()
+
+    const img = host.querySelector('img') as HTMLImageElement
+    expect(img.hasAttribute('data-media-missing')).toBe(false)
+    expect(host.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+  })
+
+  it('lets a settled message retry the resolved URL', async () => {
+    // After the turn ends the pipeline rewrites local paths into served URLs.
+    // Pre-applying the old failure there would hide an image that is about to
+    // load, so the memory is only consulted inside a streaming message.
+    installLocalMediaFallback()
+    nextChunk('<p><img src="docs/a.png"></p>')
+    ;(host.querySelector('img') as HTMLImageElement).dispatchEvent(new Event('error'))
+
+    host.removeAttribute('data-streaming')
+    nextChunk('<p><img src="/api/fs/raw/docs/a.png"></p>')
+    await flushMutations()
+
+    const img = host.querySelector('img') as HTMLImageElement
+    expect(img.hasAttribute('data-media-missing')).toBe(false)
+    expect(host.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+  })
+
+  it('forgets a failure once the image loads, so later chunks do not hide it', async () => {
+    installLocalMediaFallback()
+    nextChunk('<p><img src="https://example.com/later.png"></p>')
+    const img = host.querySelector('img') as HTMLImageElement
+    img.dispatchEvent(new Event('error'))
+    expect(host.querySelector(`.${MEDIA_MISSING_CLASS}`)).not.toBeNull()
+
+    // The file was written mid-turn: the browser retried and succeeded.
+    img.dispatchEvent(new Event('load'))
+    expect(host.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+
+    nextChunk('<p><img src="https://example.com/later.png"></p>')
+    await flushMutations()
+
+    expect((host.querySelector('img') as HTMLImageElement).hasAttribute('data-media-missing')).toBe(false)
+    expect(host.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+  })
+
+  it('paints the quiet card for a parked destination, with no request at all', async () => {
+    // The streaming pipeline never puts an unresolved local path in `src` (see
+    // mediaSrc.ts) — there is no request to wait for, so the card must appear
+    // without any `error` event, on the very first chunk.
+    installLocalMediaFallback()
+    nextChunk('<p><img data-local-src="docs/chart.png" alt="图"></p>')
+    await flushMutations()
+
+    const img = host.querySelector('img') as HTMLImageElement
+    expect(img.hasAttribute('src'), 'no src → no request').toBe(false)
+    expect(img.classList.contains('local-media-hidden')).toBe(true)
+
+    const ph = host.querySelector(`.${MEDIA_MISSING_CLASS}`)!
+    expect(ph.classList.contains('media-load-error--streaming')).toBe(true)
+    expect(ph.querySelector('.media-load-error-name')!.textContent).toBe('chart.png')
+  })
+
+  it('re-parks on every chunk without stacking cards', async () => {
+    installLocalMediaFallback()
+    for (let i = 0; i < 3; i++) {
+      nextChunk(`<p>chunk ${i}<img data-local-src="docs/chart.png"></p>`)
+      await flushMutations()
+    }
+
+    expect(host.querySelectorAll(`.${MEDIA_MISSING_CLASS}`)).toHaveLength(1)
+    expect((host.querySelector('img') as HTMLImageElement).hasAttribute('src')).toBe(false)
+  })
+})
+
 describe('pending media placeholder (data-media-settled)', () => {
   beforeEach(() => {
     document.body.innerHTML = ''

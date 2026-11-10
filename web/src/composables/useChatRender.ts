@@ -316,7 +316,7 @@ export function useChatRender(options: {
 
     // ── Streaming: pure markdown only (no detections/verification) ──
     if (streaming) {
-      return renderMarkdownHtml(text, { skipEnhancements: true, skipKatex: true })
+      return renderMarkdownHtml(text, { skipEnhancements: true, skipKatex: true, unresolvedLocalImages: true })
     }
 
     // ── Post-streaming: full pipeline ──

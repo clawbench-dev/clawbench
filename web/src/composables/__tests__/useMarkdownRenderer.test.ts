@@ -804,3 +804,48 @@ describe('useMarkdownRenderer', () => {
     expect(result).toBeDefined()
   })
 })
+
+// --- Streaming: unresolved local images are parked, not requested ---
+
+describe('renderMarkdown — unresolvedLocalImages', () => {
+  beforeEach(() => {
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+  })
+
+  it('parks a local destination during a streaming render', () => {
+    // A streaming turn has not rewritten local paths yet, so putting one in
+    // `src` can only 404 — once per chunk. Parking it is what keeps the request
+    // from being made at all.
+    mockMarkedParse.mockReturnValueOnce('<p><img src="docs/a.png"></p>')
+    const html = renderMarkdownHtml('![a](docs/a.png)', {
+      skipEnhancements: true,
+      skipKatex: true,
+      unresolvedLocalImages: true,
+    })
+
+    expect(html).toContain('data-local-src="docs/a.png"')
+    expect(html).not.toMatch(/<img[^>]*\ssrc=/)
+  })
+
+  it('still requests an image the browser can resolve on its own', () => {
+    mockMarkedParse.mockReturnValueOnce('<p><img src="https://example.com/a.png"></p>')
+    const html = renderMarkdownHtml('![a](https://example.com/a.png)', {
+      skipEnhancements: true,
+      skipKatex: true,
+      unresolvedLocalImages: true,
+    })
+
+    expect(html).toContain('src="https://example.com/a.png"')
+    expect(html).not.toContain('data-local-src')
+  })
+
+  it('does nothing unless the streaming caller asks for it', () => {
+    // Settled / deferred renders keep the path in `src`: the full pipeline
+    // rewrites it later, and the upgrade re-render must find it there.
+    mockMarkedParse.mockReturnValueOnce('<p><img src="docs/a.png"></p>')
+    const html = renderMarkdownHtml('![a](docs/a.png)', { skipEnhancements: true, skipKatex: true })
+
+    expect(html).toContain('src="docs/a.png"')
+    expect(html).not.toContain('data-local-src')
+  })
+})

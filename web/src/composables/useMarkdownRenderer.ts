@@ -4,6 +4,7 @@ import { injectTableRowAttrsIn } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeadersIn, annotateTableBlockHeadersIn } from '@/composables/useCodeBlockHeader.ts'
 import { rewriteImageUrls, markInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
 import { downgradeNonImageEmbedsIn } from '@/utils/nonImageEmbed.ts'
+import { parkUnresolvedImagesIn } from '@/utils/mediaSrc.ts'
 import { annotateMediaBlocksIn } from '@/utils/mediaBlockFactory.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { annotateFilePathsIn } from '@/composables/useFilePathAnnotation.ts'
@@ -29,6 +30,16 @@ export interface MarkdownRenderOptions {
     skipKatex?: boolean
     /** 图片路径修复函数，MarkdownPreview 用 */
     fixImagePaths?: (html: string) => string
+    /**
+     * 本地图片先不发请求（流式模式专用）。
+     *
+     * 流式回合里本地路径还没被改写成 `/api/fs/raw/…`，此刻请求必然 404，而整块
+     * 文本每个分片都会重渲染一次——于是一个不存在的文件会被反复请求、裂图先画出来
+     * 再被占位卡替换。置为 true 时把目的地挪到 `data-local-src`（不再放进 `src`），
+     * 由 `localMediaFallback.ts` 立刻渲染安静版占位卡；回合结束后走全量管线，
+     * 真正的图片照常加载。判定与改写共用 `isLocalMediaSrc`（`utils/mediaSrc.ts`）。
+     */
+    unresolvedLocalImages?: boolean
 }
 
 /** renderMarkdown 返回的检测结果，供调用方做异步 verify */
@@ -254,6 +265,7 @@ export function renderMarkdown(
         skipEnhancements = false,
         skipKatex,
         fixImagePaths,
+        unresolvedLocalImages = false,
     } = options
 
     let detectedPaths: string[] = []
@@ -335,6 +347,12 @@ export function renderMarkdown(
         // figure. Runs in the streaming path too — the placeholder is equally
         // wrong mid-stream, and skipEnhancements would otherwise leave it.
         downgradeNonImageEmbedsIn(doc)
+        // Streaming only: a local path cannot be served until the turn settles,
+        // so requesting it would 404 on every chunk for a file that exists.
+        // Park the destination and let localMediaFallback paint the quiet card
+        // immediately (see mediaSrc.ts). Must run AFTER the downgrade above —
+        // a `.html` embed is a link by now and no longer an image.
+        if (unresolvedLocalImages) parkUnresolvedImagesIn(doc)
         injectTableRowAttrsIn(doc)
         annotateCodeBlockHeadersIn(doc)
         annotateTableBlockHeadersIn(doc)
