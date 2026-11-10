@@ -4,6 +4,11 @@
  */
 
 import { parseAskQuestionXML } from '@/utils/xmlParser.ts'
+// `isLocalMediaSrc` is the ONE classifier for "this media src is a file we have
+// to serve ourselves". The streaming render asks the same question when it
+// decides whether to park an image destination (`parkUnresolvedImagesIn`), so
+// the two must never be able to disagree.
+import { isLocalMediaSrc } from '@/utils/mediaSrc.ts'
 
 /** Audio file extensions that should be converted to inline audio players */
 const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma', '.opus']
@@ -33,13 +38,6 @@ export function getThumbWidth(isWideScreen: boolean): number {
   return isWideScreen ? THUMB_DEFAULT_WIDTH : THUMB_MOBILE_WIDTH
 }
 
-/**
- * Media src forms that are NOT local files and must never be rewritten:
- * remote URLs, protocol-relative URLs, inline data URIs, and URLs already
- * served by one of our own file endpoints (a re-render can see these).
- */
-const NON_LOCAL_MEDIA_SRC_RE = /^(https?:|\/\/|data:|\/api\/fs\/)/i
-
 /** A media src resolved to the URL that serves its bytes. */
 interface ResolvedMediaSrc {
   /** URL the browser fetches. */
@@ -67,7 +65,7 @@ interface ResolvedMediaSrc {
  *   root and got a 404 — an AI-written `![](/tmp/chart.png)` never rendered.
  */
 function resolveMediaSrc(src: string, projectRoot?: string): ResolvedMediaSrc | null {
-  if (!src || NON_LOCAL_MEDIA_SRC_RE.test(src)) return null
+  if (!isLocalMediaSrc(src)) return null
 
   if (src.startsWith('/')) {
     // Absolute path. Decide project-internal vs external by prefix, so an

@@ -581,11 +581,14 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - **pending**——`data-media-settled` 与 `data-media-missing` **都不存在**。`<img>` 在拿到字节前固有尺寸是 0×0，于是整个 `.image-block-wrapper` 先塌成一根 1px 边框、图片到了再「弹」出来。缩略图让这成了常态而非例外：`/api/fs/thumb` 是**按需栅格化**，一张大 PNG 的首次绘制是真实的往返。占位复用 `.skeleton-block` 的同一套语言（`skeleton-shimmer` keyframes + `--skeleton-fill` / `--skeleton-sheen`，**只消费不声明**，理由同上一条）。
   - **settled**——`data-media-settled`，由 `localMediaFallback.ts` 的**文档级捕获**监听打上：`load` 打、`error` 也打（外部图失败没有兜底卡片，但微光必须停——否则它在承诺一个永远不来的加载）。`load` / `error` 都是 DOM 事件，任何渲染管线都看不到，所以只能这样标。监听对**所有** `<img>` 生效，由样式表负责把范围收窄到内容媒体——在这里再写一份选择器清单就是两处必然漂移。安装时还要**补扫一次** `complete && naturalWidth > 0` 的图（`load` 只发一次，命中缓存的首屏图片会永远停在 pending）；只看 `complete` 不够，它对视口外/无 src 的图也为真。
   - **missing**——`data-media-missing` + `.local-media-hidden` + 共享的 `MediaLoadError` 卡片（见下文）。
+  - **流式回合要同时挡住「请求」和「重渲染」**：流式每来一个分片就把整块文本用 `v-html` 重写一次，而本地路径要到回合结束才被改写成 `/api/fs/raw/…`，所以此刻的请求必然 404、且每次重写都会重来一遍。两条对策分工：
+    - **本地路径根本不发请求**——流式渲染（`unresolvedLocalImages: true`）把目的地挪到 `data-local-src`、并**从 `src` 里删掉**；没有 `src` 的 `<img>` 不会发起任何请求，`localMediaFallback.ts` 直接画安静版卡片。判定与回合结束后的改写共用 `isLocalMediaSrc`（`utils/mediaSrc.ts`），两处规则不可能不一致。
+    - **已经失败过的地址记住**——远程图 404、或服务端不认的绝对路径，重写后仍是同一个 `src`，于是新一轮分片又会请求一遍。`localMediaFallback.ts` 用一个有上限的 Set 记住「流式期间失败过的 src」，再用 MutationObserver 在**补丁之后、绘制之前**（微任务）把卡片重新贴回去，卡片就不会每个分片闪一下（安卓 WebView 上最明显）。只对流式消息里的图生效——回合结束后的 `src` 是另一个 key，必须让它重新请求。图片后来加载成功即从记忆里删掉，卡片依旧可逆。
   - 三个消费面：`.image-block-wrapper` 里的图（聊天 / 文档 / 分享 / 表格弹窗）、全屏图片查看器（`.image-preview-img`）、代码链接预览卡（`.code-preview-media-img`）。**文件管理器缩略图与附件小图刻意不在内**——它们是 40dp 图标且已有自己的失败兜底，微光只会是噪音。
   - **`min-width` 用定长、不用百分比**（figure 那一支）：figure 是 shrink-to-fit 包着图片的，百分比会重新引入 figure↔media 循环，把替换元素压回 300px 默认宽。两个单图面板相反，容器由 flex 给了确定宽度，`min(…, 100%)` 才不会在窄分栏里溢出。
   - **隐藏靠 `backwards` 填充的 0s 延迟 keyframe，不用基础 `opacity: 0`**：HTML 导出会序列化命中规则但只带少数几个具名 keyframes，基础 `opacity: 0` 一旦被导出而 keyframes 没跟过去，导出的文档里**每张图都是隐形的**；这样写缺 keyframes 时退化成「可见、无微光」。延迟 **200ms** 是刻意的：本地图片通常几毫秒就到，闪一帧的占位比没有更糟；延迟期间框是透明的但仍**占位**，布局只落一次。
   - **换 `src` 必须清掉 `data-media-settled`**：`useMediaWatch.patchImagesForPath`（后台重写同一路径）与两个 Vue 查看器的 `:key`（切到同目录另一张图）。不清的话新图在途时仍显示旧帧像素、且没有任何「在加载」的迹象。导出的静态文档没有 `load` 监听，由 `exportMarkdownHtml.ts` 无条件补上该标记，否则导出件看起来全是空的。
-  - 守卫：`localMediaFallback.test.ts`（打标 / 补扫 / 可逆）、`localMediaFallback.css.test.ts`（不用基础 opacity、排除 missing、复用变量、reduced-motion 只停微光、定长、覆盖两个面板）、`useMediaWatch.test.ts`（清标只作用于被 patch 的图）、`exportMarkdownHtml.test.ts`（导出必带标记）。
+  - 守卫：`localMediaFallback.test.ts`（打标 / 补扫 / 可逆 / 流式重渲染后卡片不消失）、`mediaSrc.test.ts`（本地 src 判定 + 挪走 `src` 不发请求）、`localMediaFallback.css.test.ts`（不用基础 opacity、排除 missing、复用变量、reduced-motion 只停微光、定长、覆盖两个面板）、`useMediaWatch.test.ts`（清标只作用于被 patch 的图）、`exportMarkdownHtml.test.ts`（导出必带标记）。
 - **分隔条的折叠手柄：离开是「先变半透明、停一会儿、再淡出」两步**（`SplitDivider.vue`）。三档：
   1. **静止**：完全不可见（`opacity: 0` / `pointer-events: none`），触屏同理（点击细线才 `--revealed`）。
   2. **活跃**：`:hover` / `:focus-within` → `opacity: 1`。

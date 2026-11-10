@@ -2071,7 +2071,7 @@ const _blockFlushScheduler = new StreamFrameScheduler()
  * branch and is annotated in full, and `reverifyAnnotations` covers the
  * paths `renderMarkdownHtml` discards.
  */
-const THINKING_STREAMING_OPTS = { skipEnhancements: true, skipKatex: true } as const
+const THINKING_STREAMING_OPTS = { skipEnhancements: true, skipKatex: true, unresolvedLocalImages: true } as const
 
 /**
  * The text a thinking block should render during streaming.
