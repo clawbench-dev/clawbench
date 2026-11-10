@@ -99,6 +99,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | 文档 | 说明 |
 |------|------|
 | [CodeBuddy ACP 非标准扩展接口清单](../dev/codebuddy_acp_extensions.md) | `codebuddy --acp` 在 ACP v1 之外的扩展面：17 个 `extMethod` 请求、19 个自定义 `session/*` 方法（steer / 消息队列 / inject_history / 回滚 / multitask）、10 个 agent→client 扩展通知、7 类非标准 `sessionUpdate`、163 个 `codebuddy.ai/*` meta key、`initialize` 双向能力协商与各接口门控条件；含**真机探针实测结论**（`session/steer` 可用、裸 JSON-RPC 通道可行、`_codebuddy.ai/question` 在 stdio 下不触发） |
+| [各后端模型提供商配置方式调研](../dev/multi_provider_config_research.md) | 全部已注册后端的提供商配置面逐项核实（本机实测 / 源码 / 仓库探针三档标注）：哪些能放进配置文件、哪些能同时挂多家提供商、各自的配置路径与「不碰用户家目录」的注入通道（`OPENCODE_CONFIG_CONTENT` / `MIMOCODE_CONFIG_CONTENT` / `--settings` / `--config` / `PI_CODING_AGENT_DIR` / `GROK_HOME` / `--profile`）、密钥能否只用环境变量引用；含**只生效一家的**（claude、deepseek、dsh）、**写多个但只生效一个的**（commandcode 全局单例）、**完全不能配的**（qoder、copilot、cursor、vecli），以及实施的三个难点（密钥落盘、多进程抢文件、数据结构由一对多改造）与推进顺序 |
 | [Claude ACP 扩展面（与 CodeBuddy 对比）](../dev/claude_acp_extensions.md) | `claude-agent-acp` 是桥接 Claude Agent SDK 的适配器，**无 `extMethod` 兜底**：无 steer / 队列 / inject_history 等私有方法，`sessionUpdate` 全为标准类型，扩展仅靠 `_meta`（`claudeCode` / `_claude/origin` / `terminal_*`）；但有内建 prompt 排队（`promptQueueing`，并发调标准 `session/prompt`）——注意 ClawBench 现有 `RegisterSession` 覆盖写不支持并发 |
 
 ## 核心技术栈

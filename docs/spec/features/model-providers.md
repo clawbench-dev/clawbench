@@ -150,6 +150,9 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 ## 已知限制
 
-- Codex 的配置文件是全局的：同一后端只能有一个生效 provider。
+- Codex 的配置文件是全局的：同一后端只能有一个生效 provider。其他后端各自的配置面、能否同时挂多家提供商，见
+  [`docs/dev/multi_provider_config_research.md`](../../dev/multi_provider_config_research.md)（环境变量是进程级的，
+  因此「一个智能体一个提供商」成立，「一个智能体多家提供商」只有 opencode / mimo / kimi / codex / codebuddy /
+  grok / hermes / pi / zcode / openclaw 这类自带按提供商（或按模型）配置的后端才做得到）。
 - 模型列表不随 provider 切换；模型 id 不属于该提供商时，错误由上游返回（401/404）。
 - `mimo` / `dsh` / `grok` 的变量名基于二进制/源码证据，尚未逐台真机验证；验证失败应降级为不支持，而不是保留「看起来支持」。
