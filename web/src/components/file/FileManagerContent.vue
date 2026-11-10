@@ -335,30 +335,25 @@
 
     <!-- Resident search dock. It belongs to the listing, not to the panel: it
          sits directly under the list/grid and therefore above the docked
-         preview pane, so opening a preview never pushes it around. -->
-    <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
-      <div class="fs-input-row">
-        <SearchInput
-          ref="searchInputRef"
-          v-model="search.state.query"
-          :placeholder="searchPlaceholder"
-          @enter="confirmSelected"
-          @down="moveSelection(1)"
-          @up="moveSelection(-1)"
-        />
-        <button class="fs-toggle-btn" :class="{ active: search.state.exact }" :title="t('file.search.exact')" @click="toggleExact">
-          <WholeWord :size="15" />
-        </button>
-        <!-- Recursive + global are paired: global implies recursive, so they sit
-             together (recursive to the left of global). -->
-        <button class="fs-toggle-btn" :class="{ active: isRecursiveEffective }" :disabled="isGlobalScope" :title="t('file.search.recursive')" @click="toggleRecursive">
-          <FolderTree :size="15" />
-        </button>
-        <button class="fs-toggle-btn" :class="{ active: search.state.scope === 'global' }" :title="t('file.search.scopeGlobal')" @click="toggleScope">
-          <Globe :size="15" />
-        </button>
-      </div>
-    </div>
+         preview pane, so opening a preview never pushes it around. The chrome
+         is shared with the standalone file picker (FileSearchDock). -->
+    <FileSearchDock
+      ref="searchDockRef"
+      :query="search.state.query"
+      :placeholder="searchPlaceholder"
+      :exact="search.state.exact"
+      :recursive-active="isRecursiveEffective"
+      :recursive-disabled="isGlobalScope"
+      :global-active="isGlobalScope"
+      @update:query="search.state.query = $event"
+      @enter="confirmSelected"
+      @down="moveSelection(1)"
+      @up="moveSelection(-1)"
+      @toggle-exact="toggleExact"
+      @toggle-recursive="toggleRecursive"
+      @toggle-global="toggleScope"
+      @escape="onSearchDockEscape"
+    />
       </template>
 
       <template #bottom>
@@ -523,7 +518,7 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode, Mail } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -548,8 +543,8 @@ import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
-import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
+import FileSearchDock from './FileSearchDock.vue'
 import ContentSearchDialog from './ContentSearchDialog.vue'
 import ShareLinkDialog from './ShareLinkDialog.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
@@ -1234,7 +1229,7 @@ const fileGridRef = ref(null)
 // shows the current directory listing (search acts as a filter over what you
 // are already looking at).
 const search = useFileSearch()
-const searchInputRef = ref(null)
+const searchDockRef = ref(null)
 
 /** True while the search box has a non-empty query (results view). */
 const searchHasQuery = computed(() => !!search.state.query.trim())
@@ -1308,7 +1303,7 @@ function onSearchDockEscape() {
 
 /** Focus the resident search box — used by App Ctrl+F. */
 function openSearch() {
-    nextTick(() => searchInputRef.value?.focus())
+    nextTick(() => searchDockRef.value?.focus())
 }
 
 // ── Content (grep) search dialog ──
@@ -1683,7 +1678,7 @@ defineExpose({
     openContentSearch,
     closeContentSearch,
     exitMultiSelect,
-    focusSearchInput() { searchInputRef.value?.focus() },
+    focusSearchInput() { searchDockRef.value?.focus() },
     // Called by App.vue AFTER a rename/delete/move finished: the search result
     // list is not derived from the browsed directory, so the store's reload
     // does not refresh it (see the function's own comment).
@@ -3632,91 +3627,6 @@ function scrollSelectedIntoView(path) {
 .paste-fade-enter-from,
 .paste-fade-leave-to {
     opacity: 0;
-}
-
-/* ── Resident search bar (listing footer) ── */
-/* Same material as the top toolbar (.dir-toolbar, --bg-tertiary) so the two
-   bars read as a matched pair framing the listing. Lives inside the top pane,
-   directly under the list/grid — so the docked preview pane opens below it
-   rather than pushing it to the bottom of the panel. */
-.fs-nav-bottom {
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-    border-top: 1px solid var(--border-color, #e5e5e5);
-    background: var(--bg-tertiary, #f5f5f5);
-    padding: calc(3 * var(--dp)) var(--space-5);
-    gap: var(--space-1);
-}
-
-.fs-input-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-}
-
-.fs-input-row :deep(.search-pill) {
-    flex: 1;
-    min-width: 0;
-    /* Flat field: the dock itself is the only surface, so the pill contributes
-       neither a fill nor an outline of its own. SearchInput's shared defaults
-       (--bg-primary fill + 1px border) would read as a nested box inside the
-       bar. The vertical padding is only there to give the text room to breathe
-       — with the default font the row lands at ~26px, matching the toggle
-       buttons beside it. */
-    background: transparent;
-    border: none;
-    padding: var(--space-2) var(--space-5);
-}
-
-/* Focus is deliberately invisible: the dock is a flat bar, so an accent outline
-   or a tinted fill would reintroduce exactly the box this field just shed. The
-   caret is the indicator. `:deep()` carries the parent's data-v onto
-   .fs-input-row, which keeps this rule specific enough to beat the child's own
-   .focused rule regardless of the order rollup emits the two style blocks in. */
-.fs-input-row :deep(.search-pill.focused) {
-    border: none;
-    box-shadow: none;
-    background: transparent;
-}
-
-.fs-toggle-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: calc(26 * var(--dp));
-    height: calc(26 * var(--dp));
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-muted, #999);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background var(--duration-base), color var(--duration-base);
-    padding: 0;
-}
-
-@media (hover: hover) {
-    .fs-toggle-btn:hover {
-        background: var(--bg-hover, rgba(0, 0, 0, 0.06));
-    }
-}
-
-.fs-toggle-btn.active {
-    color: var(--accent-color, #4a90d9);
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
-}
-
-/* Forced-on (global scope implies recursive) — stays visibly active but is not
-   user-operable. */
-.fs-toggle-btn:disabled {
-    cursor: default;
-    opacity: var(--opacity-muted);
-}
-
-.fs-toggle-btn:disabled:hover {
-    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
 }
 
 .fs-results-count {

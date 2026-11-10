@@ -33,6 +33,8 @@ test.describe('Chat attach — file picker tab', () => {
     // The picker lists the project root (the e2e project is the repo).
     const fileRows = sheet.locator('[data-role="fp-file"]')
     await expect(fileRows.first()).toBeVisible({ timeout: 10000 })
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: '/tmp/attach-picker-dock.png' })
 
     const target = fileRows.first()
     const path = await target.getAttribute('data-path')
@@ -60,7 +62,7 @@ test.describe('Chat attach — file picker tab', () => {
     const sheet = attachSheet(page)
     await expect(sheet).toBeVisible({ timeout: 10000 })
 
-    await sheet.locator('.fp-search input').fill('package.json')
+    await sheet.locator('.fs-nav-bottom .search-pill input').fill('package.json')
     // Results replace the listing; the exact file must be among them.
     await expect(sheet.locator('[data-path="package.json"]')).toBeVisible({ timeout: 10000 })
 

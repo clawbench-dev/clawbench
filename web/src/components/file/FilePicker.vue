@@ -118,32 +118,23 @@
       </div>
     </div>
 
-    <!-- Search dock, same shape as the file manager's: the query plus the
-         three toggles (exact / recursive / global). -->
-    <div class="fp-search">
-      <div class="fp-search-row">
-        <SearchInput
-          ref="searchInputRef"
-          v-model="search.state.query"
-          :placeholder="searchPlaceholder"
-          @enter="confirmHighlighted"
-          @down="moveHighlight(1)"
-          @up="moveHighlight(-1)"
-        />
-        <button class="fp-toggle" :class="{ active: search.state.exact }"
-          :title="t('file.search.exact')" @click="search.state.exact = !search.state.exact">
-          <WholeWord :size="15" />
-        </button>
-        <button class="fp-toggle" :class="{ active: isRecursiveEffective }" :disabled="isGlobalScope"
-          :title="t('file.search.recursive')" @click="search.state.recursive = !search.state.recursive">
-          <FolderTree :size="15" />
-        </button>
-        <button class="fp-toggle" :class="{ active: isGlobalScope }"
-          :title="t('file.search.scopeGlobal')" @click="toggleScope">
-          <Globe :size="15" />
-        </button>
-      </div>
-    </div>
+    <!-- Search dock: the same component the file manager uses, so the two
+         look and behave identically (flat field inside a tertiary bar). -->
+    <FileSearchDock
+      :query="search.state.query"
+      :placeholder="searchPlaceholder"
+      :exact="search.state.exact"
+      :recursive-active="isRecursiveEffective"
+      :recursive-disabled="isGlobalScope"
+      :global-active="isGlobalScope"
+      @update:query="search.state.query = $event"
+      @enter="confirmHighlighted"
+      @down="moveHighlight(1)"
+      @up="moveHighlight(-1)"
+      @toggle-exact="search.state.exact = !search.state.exact"
+      @toggle-recursive="search.state.recursive = !search.state.recursive"
+      @toggle-global="toggleScope"
+    />
   </div>
 </template>
 
@@ -166,11 +157,11 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Check, FileX, FolderTree, Globe, Plus, WholeWord } from 'lucide-vue-next'
-import SearchInput from '@/components/common/SearchInput.vue'
+import { ArrowLeft, Check, FileX, Plus } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
+import FileSearchDock from './FileSearchDock.vue'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { resolveDirRequest } from '@/utils/dirPath'
@@ -232,7 +223,6 @@ const loading = ref(false)
 const thumbErrors = ref(new Set<string>())
 const highlightIndex = ref(-1)
 const listRef = ref<HTMLElement | null>(null)
-const searchInputRef = ref<{ focus?: () => void } | null>(null)
 
 const search = useFileSearch()
 
@@ -617,37 +607,4 @@ onBeforeUnmount(() => search.cancelSearch())
   opacity: var(--opacity-muted);
 }
 
-/* ── Search dock ── */
-.fp-search {
-  flex-shrink: 0;
-  padding: var(--space-3) calc(14 * var(--dp));
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-}
-.fp-search-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.fp-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(30 * var(--dp));
-  height: calc(30 * var(--dp));
-  flex-shrink: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.fp-toggle.active {
-  color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-}
-.fp-toggle:disabled {
-  opacity: var(--opacity-disabled);
-  cursor: default;
-}
 </style>

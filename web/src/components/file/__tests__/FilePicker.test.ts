@@ -350,7 +350,7 @@ describe('FilePicker — search', () => {
   it('global scope is reported in the placeholder and forces recursion', async () => {
     const wrapper = mountPicker()
     await flushPromises()
-    await wrapper.findAll('.fp-toggle')[2].trigger('click')
+    await wrapper.findAll('.fs-toggle-btn')[2].trigger('click')
     expect(searchState.scope).toBe('global')
     expect(wrapper.find('.search-stub').attributes('placeholder')).toContain('in this project')
   })
