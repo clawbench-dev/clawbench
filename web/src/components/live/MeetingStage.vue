@@ -522,6 +522,7 @@ import {
   buildCaptureChoices,
   captureSourceIdOf,
 } from '@/utils/captureSourceChoices'
+import { recallCaptureSources, rememberCaptureSources } from '@/utils/captureSourceCache'
 import LiveAnnotateOverlay from '@/share/LiveAnnotateOverlay.vue'
 import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import MemberScreenSurface from './MemberScreenSurface.vue'
@@ -678,7 +679,9 @@ const loadingSources = ref(false)
  * The stage is mounted for the whole life of the meeting panel, so enumerating
  * screens here would raise the OS screen-share dialog the moment the panel is
  * opened — Wayland goes through the desktop portal, which asks its own question.
- * Nothing is enumerated until the host clicks "选择共享画面".
+ * Nothing is enumerated until the host clicks "选择共享画面"; a list the OS
+ * already gave (this meeting's create form, or an earlier visit) is reused from
+ * the cache instead of being asked for again.
  */
 const sourcesProbed = ref(false)
 
@@ -1067,6 +1070,7 @@ async function loadSources(): Promise<void> {
     const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
     sourcesProbed.value = true
     cameraAvailable.value = hasCamera
+    rememberCaptureSources(list)
     applyChoices(list)
   } catch (e) {
     appLog.e('MeetingStage', 'loadSources failed', e)
@@ -1278,7 +1282,15 @@ onMounted(() => {
   // native list is asked for when the host clicks "选择共享画面", not here — this
   // component is mounted for as long as the meeting panel is open, and on
   // Wayland enumerating screens makes the desktop portal raise its dialog.
-  applyChoices([])
+  //
+  // A list the OS already gave is drawn straight away instead: the host picked a
+  // source on the create page a moment ago, or this panel is being re-created
+  // (a project switch remounts it) while the meeting keeps running. Without it
+  // the grid collapsed back to a bare "选择共享画面" tile and the host had to ask
+  // a second time for screens the app had already listed.
+  const known = recallCaptureSources()
+  sourcesProbed.value = known !== null
+  applyChoices(known ?? [])
   void hasCameraDevice().then((has) => {
     cameraAvailable.value = has
   })

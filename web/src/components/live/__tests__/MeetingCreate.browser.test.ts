@@ -5,6 +5,7 @@ import enMessages from '@/i18n/locales/en'
 import { _resetMeetingOptions, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { _resetLiveSFUConfigForTest } from '@/composables/useLiveSFUConfig'
 import { listCaptureSources } from '@/composables/useLiveShare'
+import { _resetCaptureSources } from '@/utils/captureSourceCache'
 import MeetingCreate from '../MeetingCreate.vue'
 
 /**
@@ -224,6 +225,8 @@ beforeEach(() => {
   localStorage.clear()
   // The relay configuration is a module-level singleton too.
   _resetLiveSFUConfigForTest()
+  // So is the source list the OS handed over: each test starts unasked.
+  _resetCaptureSources()
   sfuApi.state = { url: '', hasSecret: false, configured: false }
   // The capture options are module-level singletons shared with the running
   // meeting; a test that flips the camera would otherwise leak into the next
@@ -800,6 +803,34 @@ describe('MeetingCreate in a browser', () => {
     expect(wrapper.find('[data-role="meeting-sources"]').text()).toContain(
       enMessages.liveShare.noSources,
     )
+  })
+
+  // Asking again on every visit is asking the OS again — on Wayland the request
+  // IS the "what do you want to share" dialog. The list the host already asked
+  // for is reused, so the tiles do not vanish when the form is opened twice.
+  it('reuses the list from the previous visit without asking the OS again', async () => {
+    stubCaptureApi(true)
+    nativeApi.value = { listCaptureSources: vi.fn(async () => '[]') }
+    ;(listCaptureSources as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: '' },
+      { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
+    ])
+
+    const first = mountPanel()
+    await flushPromises()
+    await first.find('[data-source="__pick__"]').trigger('click')
+    await flushPromises()
+    expect(first.findAll('.capture-source')).toHaveLength(3)
+    first.unmount()
+
+    const again = mountPanel()
+    await flushPromises()
+
+    expect(again.findAll('.capture-source')).toHaveLength(3)
+    expect(listCaptureSources).toHaveBeenCalledTimes(1)
+    // Restored, not re-chosen: a new meeting still starts with no picture, so a
+    // cached screen must not be silently selected on the host's behalf.
+    expect(again.find('[data-source="__off__"]').classes()).toContain('capture-source--on')
   })
 
   it('cannot start without a nickname, and says why', async () => {

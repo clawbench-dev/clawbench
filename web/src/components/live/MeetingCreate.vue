@@ -270,6 +270,7 @@ import {
   isInsecureCaptureContext,
 } from '@/utils/screenCaptureSupport'
 import { buildCaptureChoices, captureSourceIdOf } from '@/utils/captureSourceChoices'
+import { recallCaptureSources, rememberCaptureSources } from '@/utils/captureSourceCache'
 import { appLog } from '@/utils/appLog'
 import '@/assets/modal-footer-btn.css'
 // The section / field / hint / checkbox primitives, shared with the running
@@ -477,8 +478,12 @@ const selectedSourceId = computed(() => captureSourceIdOf(screenChoice.value))
  * always been) and the camera stays opt-IN — turning somebody's camera on
  * because they opened a form is exactly the surprise this must not give —
  * unless there is no screen capture at all, where it is the only picture left.
+ *
+ * `pickDefault` is off when the list comes from the cache: a new meeting starts
+ * with no picture (the host asks to share, this form does not decide for them),
+ * while a list this visit actually asked for is a fresh answer to that question.
  */
-function applyChoices(list: CaptureSource[]): void {
+function applyChoices(list: CaptureSource[], pickDefault = true): void {
   sources.value = buildCaptureChoices({
     list,
     android: isAndroidCapture.value,
@@ -487,6 +492,7 @@ function applyChoices(list: CaptureSource[]): void {
     browserSource: t('meeting.create.browserSource'),
   })
 
+  if (!pickDefault) return
   const stillThere = sources.value.some((s) => s.id === screenChoice.value)
   if (!stillThere) {
     const screen = sources.value.find((s) => s.kind === 'screen')
@@ -507,6 +513,7 @@ async function loadSources(): Promise<void> {
     const [list, hasCamera] = await Promise.all([listCaptureSources(), hasCameraDevice()])
     sourcesProbed.value = true
     cameraAvailable.value = hasCamera
+    rememberCaptureSources(list)
     applyChoices(list)
 
     // No screen to share: the camera is the only picture left, so it starts on.
@@ -620,7 +627,13 @@ onMounted(() => {
   // picker) and leave the native list unasked: enumerating screens here would
   // raise the OS screen-share dialog merely because this form was opened. The
   // camera probe only reads device kinds, so it may run.
-  applyChoices([])
+  //
+  // A list the OS gave earlier in this session is drawn as-is, without choosing
+  // a default: the tiles must not disappear on the second visit, but a new
+  // meeting still starts with no picture unless the host asks for one.
+  const known = recallCaptureSources()
+  sourcesProbed.value = known !== null
+  applyChoices(known ?? [], known === null)
   void hasCameraDevice().then((has) => {
     cameraAvailable.value = has
   })
