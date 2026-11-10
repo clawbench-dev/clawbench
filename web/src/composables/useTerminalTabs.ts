@@ -7,6 +7,7 @@ import type { Terminal as TerminalType } from '@xterm/xterm'
 import { stripSyncOutput } from '@/utils/terminalSessionUtils'
 import { confirmAndOpenExternalLink } from '@/utils/externalLinkClick'
 import { DEFAULT_TERMINAL_MONO_STACK } from '@/utils/fontConfig'
+import type { SavedTerminalTabs } from '@/utils/terminalProjectTabs'
 
 export interface TerminalTab {
   id: string
@@ -56,6 +57,17 @@ export function useTerminalTabs(
     toast?: (msg: string, opts?: Record<string, unknown>) => void
     /** Transform keyboard input through modifier key processing (Ctrl/Alt/Shift combos) */
     processInput?: (data: string) => string
+    /**
+     * Tabs to rebuild instead of starting a fresh one (see
+     * utils/terminalProjectTabs). Each entry reattaches to the backend session
+     * it names — the shell kept running while the user was in another project.
+     *
+     * `null`/omitted means "this project has no snapshot": start with one blank
+     * tab, as always. An EMPTY `tabs` array is different and deliberate: the
+     * user had closed every tab, so nothing is created and the panel shows its
+     * empty state.
+     */
+    restore?: SavedTerminalTabs | null
   },
 ) {
   const tabs: Ref<TerminalTab[]> = ref([])
@@ -100,11 +112,22 @@ export function useTerminalTabs(
     return { term, fit }
   }
 
-  function createTab(cwd?: string): TerminalTab {
+  /**
+   * Create a tab.
+   *
+   * `seed.sessionId` makes the tab reattach to an existing backend PTY instead
+   * of opening a new shell — that is how a project switch brings its terminals
+   * back. `seed.title` keeps the label the tab had (the cwd-derived fallback
+   * would be the LAUNCH directory, which is not where the shell may be now).
+   */
+  function createTab(cwd?: string, seed?: { sessionId?: string; title?: string }): TerminalTab {
     const id = generateTabId()
     const resolvedCwd = cwd || ''
-    const title = cwdToTitle(resolvedCwd)
+    const title = seed?.title || cwdToTitle(resolvedCwd)
     const session = useTerminalSession(() => getWsUrl(resolvedCwd, term.cols, term.rows), opts.errorMessages)
+    // Seed the id BEFORE anything can connect: `connect()` builds the WS URL
+    // from it, so a late assignment would open a second shell instead.
+    if (seed?.sessionId) session.sessionId.value = seed.sessionId
     const { term, fit } = createXtermInstance()
 
     // Mark xterm/addon instances as raw so Vue's reactive() does NOT wrap
@@ -114,7 +137,7 @@ export function useTerminalTabs(
     // that use alternate screen buffers and rapid updates (e.g. OpenCode).
     const tab = reactive<TerminalTab>({
       id,
-      sessionId: '',
+      sessionId: seed?.sessionId || '',
       cwd: resolvedCwd,
       title,
       hasUnread: false,
@@ -359,6 +382,41 @@ export function useTerminalTabs(
     activeTabId.value = ''
   }
 
+  /**
+   * Tear down the local view but KEEP the shells alive (project switch).
+   *
+   * The component is about to be destroyed by the keyed project subtree, but
+   * the PTYs live on the server and the user expects them still running when
+   * they come back. So every client is detached (never closed) and the xterm
+   * instances are disposed; the session ids survive in the snapshot taken
+   * immediately before this call.
+   */
+  function suspendAll() {
+    for (const tab of tabs.value) {
+      tab.session.disconnect()
+      if (tab.xterm) {
+        tab.xterm.dispose()
+      }
+    }
+    tabs.value = []
+    activeTabId.value = ''
+  }
+
+  /** What a project snapshot needs to rebuild these tabs later. */
+  function snapshotTabs(): SavedTerminalTabs {
+    const index = tabs.value.findIndex((t) => t.id === activeTabId.value)
+    return {
+      tabs: tabs.value.map((t) => ({
+        // `tab.session.sessionId` is the authoritative copy (the tab's own field
+        // is only synced at a few points); reactive() unwraps the Ref for us.
+        sessionId: (t.session.sessionId as unknown as string) || t.sessionId || '',
+        cwd: t.cwd,
+        title: t.title,
+      })),
+      activeIndex: index < 0 ? 0 : index,
+    }
+  }
+
   /** Update font size on all xterm instances. */
   function updateFontSize(size: number) {
     for (const tab of tabs.value) {
@@ -391,8 +449,19 @@ export function useTerminalTabs(
     return tabs.value.find((t) => t.id === id)
   }
 
-  // Initialize with one default tab
-  createTab()
+  // Initialize from the project's snapshot when there is one (a project switch
+  // brings its tabs back), otherwise with one blank tab.
+  if (opts.restore) {
+    for (const saved of opts.restore.tabs) {
+      createTab(saved.cwd, { sessionId: saved.sessionId, title: saved.title })
+    }
+    if (tabs.value.length > 0) {
+      const idx = Math.min(Math.max(opts.restore.activeIndex, 0), tabs.value.length - 1)
+      activeTabId.value = tabs.value[idx].id
+    }
+  } else {
+    createTab()
+  }
 
   return {
     tabs,
@@ -408,6 +477,8 @@ export function useTerminalTabs(
     connectTab,
     connectActiveTab,
     disposeAll,
+    suspendAll,
+    snapshotTabs,
     updateFontSize,
     updateFontFamily,
     updateTheme,

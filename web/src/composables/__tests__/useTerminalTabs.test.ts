@@ -128,6 +128,7 @@ function createTabManager(overrides?: {
   autoExecCommand?: ReturnType<typeof ref<{ command: string } | null>>
   onAutoExec?: (tabId: string, command: string) => void
   getXtermTheme?: () => Record<string, unknown>
+  restore?: { tabs: Array<{ sessionId: string; cwd: string; title: string }>; activeIndex: number } | null
 }) {
   return useTerminalTabs(
     (cwd?: string) => `ws://localhost:8080/api/terminal/ws${cwd ? `?cwd=${cwd}` : ''}`,
@@ -142,6 +143,7 @@ function createTabManager(overrides?: {
       autoExecCommand: overrides?.autoExecCommand,
       onAutoExec: overrides?.onAutoExec,
       toast: vi.fn(),
+      restore: overrides?.restore,
     },
   )
 }
@@ -460,6 +462,140 @@ describe('useTerminalTabs', () => {
       mgr.disposeAll()
       expect(rawSession1.sendClose).toHaveBeenCalled()
       expect(rawSession2.sendClose).toHaveBeenCalled()
+    })
+  })
+
+  describe('restore (project switch)', () => {
+    const saved = {
+      tabs: [
+        { sessionId: 'sess-a', cwd: '/work/a', title: 'a' },
+        { sessionId: 'sess-b', cwd: '/work/b', title: 'b' },
+      ],
+      activeIndex: 1,
+    }
+
+    it('rebuilds one tab per saved tab and reattaches its session id', () => {
+      const mgr = createTabManager({ restore: saved })
+
+      expect(mgr.tabs.value).toHaveLength(2)
+      // The id must be seeded on BOTH copies: `session.sessionId` builds the
+      // reconnect URL, the tab's own field drives data-session-id (drag-drop,
+      // "open current directory") before the first status message arrives.
+      expect(mgr.tabs.value[0].session.sessionId).toBe('sess-a')
+      expect(mgr.tabs.value[0].sessionId).toBe('sess-a')
+      expect(mgr.tabs.value[1].session.sessionId).toBe('sess-b')
+      expect(mgr.tabs.value[0].cwd).toBe('/work/a')
+      expect(mgr.tabs.value[1].cwd).toBe('/work/b')
+      expect(mgr.tabs.value[0].title).toBe('a')
+    })
+
+    it('restores the active tab from the snapshot', () => {
+      const mgr = createTabManager({ restore: saved })
+      expect(mgr.activeTabId.value).toBe(mgr.tabs.value[1].id)
+    })
+
+    it('clamps an out-of-range active index instead of leaving no active tab', () => {
+      const mgr = createTabManager({ restore: { ...saved, activeIndex: 9 } })
+      expect(mgr.activeTabId.value).toBe(mgr.tabs.value[1].id)
+    })
+
+    it('creates no tab when the snapshot has an empty list', () => {
+      // The user closed every tab before leaving: coming back must show the
+      // empty state, not silently spawn a shell.
+      const mgr = createTabManager({ restore: { tabs: [], activeIndex: 0 } })
+      expect(mgr.tabs.value).toHaveLength(0)
+      expect(mgr.activeTabId.value).toBe('')
+    })
+
+    it('starts with one blank tab when the project has no snapshot', () => {
+      const mgr = createTabManager({ restore: null })
+      expect(mgr.tabs.value).toHaveLength(1)
+      expect(mgr.tabs.value[0].session.sessionId).toBe('')
+    })
+
+    it('falls back to the cwd-derived title when the saved title is empty', () => {
+      const mgr = createTabManager({
+        restore: { tabs: [{ sessionId: 's', cwd: '/work/proj', title: '' }], activeIndex: 0 },
+      })
+      expect(mgr.tabs.value[0].title).toBe('proj')
+    })
+  })
+
+  describe('snapshotTabs', () => {
+    it('records session id, cwd and title of every tab', () => {
+      const mgr = createTabManager()
+      const tab = mgr.createTab('/work/x')
+      const raw = getRawSession(tabIndex(mgr, tab))
+      raw.sessionId.value = 'live-1'
+
+      const snap = mgr.snapshotTabs()
+
+      expect(snap.tabs).toHaveLength(2)
+      expect(snap.tabs[1]).toEqual({ sessionId: 'live-1', cwd: '/work/x', title: 'x' })
+    })
+
+    it('records the index of the active tab', () => {
+      const mgr = createTabManager()
+      const second = mgr.createTab('/work/b')
+      expect(mgr.activeTabId.value).toBe(second.id)
+
+      expect(mgr.snapshotTabs().activeIndex).toBe(1)
+    })
+
+    it('keeps an exited tab with an empty session id', () => {
+      // A tab whose shell exited has no id left; it must still be remembered so
+      // the user gets a fresh shell in the same directory instead of losing the
+      // tab entirely.
+      const mgr = createTabManager()
+      const tab = mgr.createTab('/work/dead')
+      const raw = getRawSession(tabIndex(mgr, tab))
+      raw.sessionId.value = ''
+
+      const snap = mgr.snapshotTabs()
+      expect(snap.tabs[1]).toEqual({ sessionId: '', cwd: '/work/dead', title: 'dead' })
+    })
+  })
+
+  describe('suspendAll', () => {
+    it('detaches every session without closing the shell', () => {
+      const onCloseViaHttp = vi.fn()
+      const mgr = createTabManager({ onCloseSessionViaHttp: onCloseViaHttp })
+      const tab1 = mgr.tabs.value[0]
+      const tab2 = mgr.createTab('/work/b')
+      const raw1 = getRawSession(tabIndex(mgr, tab1))
+      const raw2 = getRawSession(tabIndex(mgr, tab2))
+
+      mgr.suspendAll()
+
+      expect(raw1.disconnect).toHaveBeenCalled()
+      expect(raw2.disconnect).toHaveBeenCalled()
+      // Closing here would kill the PTY the user expects to find on return.
+      expect(raw1.sendClose).not.toHaveBeenCalled()
+      expect(raw2.sendClose).not.toHaveBeenCalled()
+      expect(onCloseViaHttp).not.toHaveBeenCalled()
+    })
+
+    it('disposes the xterm instances and clears the tab list', () => {
+      const mgr = createTabManager()
+      const tab = mgr.tabs.value[0]
+      const disposeSpy = vi.spyOn(tab.xterm!, 'dispose')
+
+      mgr.suspendAll()
+
+      expect(disposeSpy).toHaveBeenCalled()
+      expect(mgr.tabs.value).toHaveLength(0)
+      expect(mgr.activeTabId.value).toBe('')
+    })
+
+    it('keeps the session ids recoverable through snapshotTabs', () => {
+      const mgr = createTabManager()
+      const tab = mgr.tabs.value[0]
+      getRawSession(tabIndex(mgr, tab)).sessionId.value = 'keep-me'
+
+      const snap = mgr.snapshotTabs()
+      mgr.suspendAll()
+
+      expect(snap.tabs[0].sessionId).toBe('keep-me')
     })
   })
 
