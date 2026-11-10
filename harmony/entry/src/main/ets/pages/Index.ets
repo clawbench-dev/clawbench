@@ -996,7 +996,7 @@ struct Index {
   }
 
   private async openExternal(url: string): Promise<void> {
-    const target = externalAppUrl(url);
+    const target = externalAppUrl(url, this.store.language);
     if (target.startsWith('mailto:')) {
       try {
         await this.context().startAbility({ action: 'ohos.want.action.sendToData', uri: target });

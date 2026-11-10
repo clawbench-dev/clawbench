@@ -1,4 +1,5 @@
 import { parseServerAddress } from './ServerAddress.ts';
+import { NativeFailure } from './NativeMessages.ts';
 
 export function externalHttpUrl(value: string): string {
   if (typeof value !== 'string' || value.length > 8192 || /[\u0000-\u0020\\]/.test(value)) {
@@ -13,29 +14,38 @@ export function externalHttpUrl(value: string): string {
 
 // The share center falls back to the system composer when no built-in mailbox
 // is available. Keep this separate from the HTTP-only port-browser policy.
-export function externalAppUrl(value: string): string {
+export function externalAppUrl(value: string, language: string = 'zh'): string {
   if (typeof value !== 'string' || !/^mailto:/i.test(value)) {
     return externalHttpUrl(value);
   }
   if (value.length > 8192 || /[\u0000-\u0020\\#]/.test(value)) {
-    throw new Error('Invalid mail URL');
+    throw new NativeFailure('invalid_mail_url', language);
   }
   const parts = value.substring(7).split('?');
-  if (parts.length > 2 || /[\u0000-\u0020:/\\?#]/.test(decodeURIComponent(parts[0]))) {
-    throw new Error('Invalid mail recipient');
+  if (parts.length > 2 || /[\u0000-\u0020:/\\?#]/.test(decodeMailPart(parts[0], language))) {
+    throw new NativeFailure('invalid_mail_url', language);
   }
   const seen: string[] = [];
   for (const field of parts[1] ? parts[1].split('&') : []) {
+    if (!field) continue;
     const separator = field.indexOf('=');
-    const key = decodeURIComponent(field.substring(0, separator)).toLowerCase();
-    const content = decodeURIComponent(field.substring(separator + 1));
+    const key = decodeMailPart(field.substring(0, separator), language).toLowerCase();
+    const content = decodeMailPart(field.substring(separator + 1), language);
     if (separator < 1 || !['subject', 'body', 'cc', 'bcc'].includes(key) || seen.includes(key) ||
         (key === 'body' ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/ : /[\u0000-\u001f\u007f]/).test(content)) {
-      throw new Error('Invalid mail field');
+      throw new NativeFailure('invalid_mail_url', language);
     }
     seen.push(key);
   }
   return 'mailto:' + value.substring(7);
+}
+
+function decodeMailPart(value: string, language: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new NativeFailure('invalid_mail_url', language);
+  }
 }
 
 export function portBrowserUrl(port: number, protocol: string, host: string, path: string): string {

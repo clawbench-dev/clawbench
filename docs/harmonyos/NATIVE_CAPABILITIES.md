@@ -28,9 +28,9 @@
 
 上游 v0.137.0 分享中心的“用邮件发送”优先使用内置邮箱；没有可用账号时调用原生 `openExternalUrl(mailto:...)`。旧宿主只接受 HTTP(S)，因此回退失败。0.2.11 新增独立 `externalAppUrl` 校验，通过 `startAbility({ action: 'ohos.want.action.sendToData', uri })` 拉起系统邮件编辑页；仅预填草稿，不发送。沿用 OpenHarmony 官方 `start-email-apps-by-mailto.md` 的调用方式。
 
-邮件地址允许空收件人和编码后的中文 / 多行正文，仅允许 subject、body、cc、bcc 字段，拒绝其他 scheme、无效百分号、重复 / 未支持的头字段和控制字符注入。端口浏览器仍使用 `externalHttpUrl` / `portBrowserUrl`，不会接受 mailto 或其他外部协议。系统未安装邮件应用或拉起失败时，`mail_app_unavailable` 经 RPC 返回双语提示，并由 bootstrap 派发 `clawbench-native-error` 供工作台显示；桥接超时为五分钟，HTTP 外链原有 openLink / viewData 回退保留。
+邮件地址允许空收件人和编码后的中文 / 多行正文，仅允许 subject、body、cc、bcc 字段，拒绝其他 scheme、无效百分号、重复 / 未支持的头字段和控制字符注入。允许空查询分隔段（包括尾随 `&`），保留原始编码草稿。所有邮件校验失败统一转为 `invalid_mail_url`，按当前界面语言提示，不暴露 `URI malformed`。端口浏览器仍使用 `externalHttpUrl` / `portBrowserUrl`，不会接受 mailto 或其他外部协议。系统未安装邮件应用或拉起失败时，`mail_app_unavailable` 经 RPC 返回双语提示；`openExternalUrl`、`openInBrowser`、`openInSandbox` 的所有失败（包括被策略拒绝的链接）均有意派发一次 `clawbench-native-error`，同时保留 Promise 拒绝，避免共享调用方仅记录日志而无用户反馈。桥接超时为五分钟，HTTP 外链原有 openLink / viewData 回退保留。
 
-新版分享中心直接复用现有 ShareKit 文本分享。语音引擎、会议画面质量、群聊停止、文件邮件附件和回复用量由服务端共享 Vue 提供；无新增必需原生接口。313 项鸿蒙回归和 97 项共享逻辑回归通过；没有在线设备，系统邮件拉起、ArkWeb 新 UI 及媒体路径没有新增设备验收。
+新版分享中心直接复用现有 ShareKit 文本分享。语音引擎、会议画面质量、群聊停止、文件邮件附件和回复用量由服务端共享 Vue 提供；无新增必需原生接口。首轮 313 项鸿蒙回归和 97 项共享逻辑回归通过；用户后续于 2026-11-10 确认系统邮件与新版媒体流程真机验收通过。未提供设备与媒体子项明细，本次评审修复也不新增设备验收声明；构建和新增回归结果见维护记录。
 
 ## 聊天键盘输入
 
@@ -38,7 +38,7 @@
 
 ## Push Kit 接入暂缓与原生通知边界
 
-2026-11-10 按维护者决定暂不接入 Push Kit；本次未修改应用身份或运行时代码。工程继续使用 `com.clawbench.harmony`，版本为 `0.2.10 / 210`。此前提出的 `com.clawbench.mobile` 仅对应 Push Kit 接入设想，尚未应用到工程。
+2026-11-10 的暂缓 Push Kit 决策以当时 `0.2.10 / 210` 为历史背景；该决策本身没有修改应用身份或运行时代码。当前开发版已为 `0.2.11 / 211`，包含系统邮件运行时适配，工程继续使用 `com.clawbench.harmony`。此前提出的 `com.clawbench.mobile` 仅对应 Push Kit 接入设想，尚未应用到工程。
 
 当前原生通知仍由 `NotificationKit` 在本地发布，消息来源是应用进程获准运行期间的 WebSocket 订阅和 HTTP 补拉。HarmonyOS 将应用置于 Frozen 或结束进程后，这两种机制均不能保证送达。模拟器已验证的权限流程、进程内订阅和点击导航不构成冻结 / 结束进程后的推送验收。
 

@@ -32,9 +32,10 @@ test.describe('Chat scrolling during a streaming reply', () => {
     const rail = page.locator('[data-action="show-chat"]')
     if (await rail.isVisible().catch(() => false)) await rail.click()
     await expect(chat.textarea).toBeVisible({ timeout: 20000 })
-    // The suite shares one server and one default session: wait out whatever a
-    // previous spec left running so this send starts a turn of its own.
+    // Drain earlier work, then use a fresh session so history/prepending and
+    // mode changes from another spec cannot affect this geometry regression.
     await chat.waitForIdle(90000)
+    await chat.createSessionWithAgent('acp-mock')
   })
 
   async function geometry(page: Page) {
@@ -90,6 +91,10 @@ test.describe('Chat scrolling during a streaming reply', () => {
       return g.max - g.top
     }, { timeout: 10000 }).toBeLessThan(200)
     const atBottom = await geometry(page)
+    // WebKit animates one wheel event over several frames. A >120px movement
+    // is only the middle of a 200px notch, not the position where it stops.
+    // Observe a quiet scroll position before taking the parked baseline.
+    // scrollend is not emitted by every Playwright WebKit port.
     // One notch up. Before the fix this moved the viewport a couple of pixels
     // and the next streamed frame put it straight back at the bottom.
     await wheel(page, -200)
@@ -97,6 +102,16 @@ test.describe('Chat scrolling during a streaming reply', () => {
       timeout: 5000,
       intervals: [50, 100, 200],
     }).toBeGreaterThan(120)
+    let lastTop = Number.NaN
+    let lastMovement = Date.now()
+    await expect.poll(async () => {
+      const { top } = await geometry(page)
+      if (top !== lastTop) {
+        lastTop = top
+        lastMovement = Date.now()
+      }
+      return Date.now() - lastMovement
+    }, { timeout: 5000, intervals: [50] }).toBeGreaterThanOrEqual(250)
 
     // …and it STAYS there while the reply keeps streaming (this is the part
     // that failed: the latch never engaged, so every subsequent frame re-pinned).
@@ -116,24 +131,40 @@ test.describe('Chat scrolling during a streaming reply', () => {
     // nothing (no content growth, no pins).
     await expect(streaming).toBeVisible()
 
-    // Follow resumes on its own once the gesture is over and the viewport is
-    // back at the bottom. Done with the container's own scroll (not a wheel):
-    // what the wheel would land on depends on which message happens to sit
-    // under the pointer, and a nested scroller there swallows the gesture —
-    // engine-dependent noise that has nothing to do with this regression.
-    // The wheel→follow hand-off is covered by shouldPin's unit test.
-    //
-    // Asserted AFTER more content arrived: checking the gap right after the
-    // write would be true by construction (gap 0, latch or not). Only a reply
-    // that is still growing can show whether the pin resumed.
-    await page.locator('.chat-messages').evaluate((el) => { el.scrollTop = el.scrollHeight })
+    // Move far enough from the tail that the down FAB is available, then use
+    // the product action that explicitly resumes follow. A direct scrollTop
+    // write does not model this user intent or clear the follow latch.
+    for (let i = 0; i < 4; i++) {
+      const { max, top } = await geometry(page)
+      if (max - top > 500) break
+      await wheel(page, -200)
+    }
+    await expect.poll(async () => {
+      const g = await geometry(page)
+      return g.max - g.top
+    }, { timeout: 5000 }).toBeGreaterThan(500)
+    await wheel(page, 200)
+    const scrollToBottom = page.locator('.scroll-fab-group .scroll-fab-round').first()
+    await expect(scrollToBottom).toHaveAttribute('title', /bottom/i)
+    await scrollToBottom.click()
+    await expect.poll(async () => {
+      const resumed = await geometry(page)
+      return resumed.max - resumed.top
+    }, { timeout: 5000 }).toBeLessThanOrEqual(50)
+
+    // Asserted AFTER more content arrived: a bottom gap that stays small while
+    // the stream grows proves the follow latch resumed.
     const resumedBase = (await geometry(page)).max
     await expect.poll(async () => (await geometry(page)).max, {
       timeout: 15000,
       intervals: [100, 200, 500],
     }).toBeGreaterThan(resumedBase + 20)
-    const resumed = await geometry(page)
-    expect(resumed.max - resumed.top).toBeLessThan(80)
+    // ResizeObserver and the follow scheduler run after layout. Observe their
+    // result rather than sampling in the content-growth frame before they ran.
+    await expect.poll(async () => {
+      const resumed = await geometry(page)
+      return resumed.max - resumed.top
+    }, { timeout: 5000 }).toBeLessThan(80)
 
     await chat.waitForIdle(120000)
   })
