@@ -699,7 +699,9 @@ func (a *Agent) MergeProviderModels(resolved []AgentModel) []AgentModel {
 //
 // The agent's preferred model rides along because a backend that validates ids
 // against its own catalog needs the pin declared too, not only the curated list
-// (see withInlineConfig).
+// (see withInlineConfig). A pin that is one of the agent's own models is left
+// out: the backend resolves it natively, and declaring it would advertise that
+// model through the provider (see Agent.providerDeclarablePin).
 func ProviderEnvForAgent(agentID, backendID string) ([]string, error) {
 	p := AgentProvider(agentID)
 	if p == nil {
@@ -707,7 +709,7 @@ func ProviderEnvForAgent(agentID, backendID string) ([]string, error) {
 	}
 	pinned := ""
 	if agent := GetAgent(agentID); agent != nil {
-		pinned = agent.PreferredModel
+		pinned = agent.providerDeclarablePin()
 	}
 	return BuildProviderEnv(backendID, p, pinned)
 }

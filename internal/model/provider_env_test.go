@@ -496,6 +496,53 @@ func TestBuildProviderEnv_OpenCodeDeclaresPinnedModel(t *testing.T) {
 	}
 }
 
+// A pin that names one of the agent's OWN models must not be declared: the
+// backend resolves it without help, and declaring it under our provider would
+// advertise "clawbench-openai/opencode/<model>" — an entry whose selection goes
+// to an endpoint that never served that model (issue #651 group-chat follow-up).
+func TestProviderEnvForAgent_SkipsDeclaringNativePin(t *testing.T) {
+	t.Cleanup(func() {
+		ReplaceProviders(nil)
+		ReplaceAgents(nil, nil)
+	})
+	pid := int64(6)
+	ReplaceProviders([]*Provider{{
+		ID: 6, Name: "GW", Protocol: ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example/v1", APIKey: "sk-6", AuthMode: ProviderAuthAuto,
+		Models: []string{"glm-5.3-flash"},
+	}})
+	native := "opencode/deepseek-v4.1-flash-free"
+	agent := &Agent{
+		ID: "opencode-bound", Backend: "opencode", ProviderID: &pid,
+		PreferredModel: native,
+		Models:         []AgentModel{{ID: native, Name: "DeepSeek V4.1 Flash Free"}},
+	}
+	ReplaceAgents(map[string]*Agent{"opencode-bound": agent}, []*Agent{agent})
+
+	env, err := ProviderEnvForAgent("opencode-bound", "opencode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	models := inlineConfigContent(t, env)["provider"].(map[string]any)["clawbench-openai"].(map[string]any)["models"].(map[string]any)
+	if _, ok := models[native]; ok {
+		t.Fatalf("the native pin must not be declared under the provider: %v", models)
+	}
+	if _, ok := models["glm-5.3-flash"]; !ok {
+		t.Fatalf("the curated list is still declared, got %v", models)
+	}
+
+	// A custom (unlisted) pin is the escape hatch and must still be declared.
+	agent.PreferredModel = "gw-custom"
+	env, err = ProviderEnvForAgent("opencode-bound", "opencode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	models = inlineConfigContent(t, env)["provider"].(map[string]any)["clawbench-openai"].(map[string]any)["models"].(map[string]any)
+	if _, ok := models["gw-custom"]; !ok {
+		t.Fatalf("a custom pin must be declared, got %v", models)
+	}
+}
+
 // Each protocol gets its own provider id: opencode addresses a declared model as
 // "<provider id>/<declared key>", and the two protocols speak different wire
 // formats, so they cannot share one block.
