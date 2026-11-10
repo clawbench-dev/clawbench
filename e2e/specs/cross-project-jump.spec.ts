@@ -35,17 +35,28 @@ test.describe.serial('Cross-project session jump', () => {
   let projectB = ''
   let decoyId = ''
   let targetId = ''
+  /**
+   * A second throwaway project for the bottom-tabs test.
+   *
+   * It exists so that test does not depend on which project the page happens to
+   * open in: that one is whatever the previous test last switched to (a project
+   * switch is persisted server-side), and a card is only rendered for OTHER
+   * projects. Seeding a fresh project with an unread reply guarantees a card to
+   * click no matter where the page lands.
+   */
+  let projectC = ''
+  let tabTargetId = ''
 
-  /** Cookie header scoped to project B, built without touching the server default. */
-  async function projectBCookie(): Promise<string> {
+  /** Cookie header scoped to one project, built without touching the server default. */
+  async function projectCookie(path: string): Promise<string> {
     const session = await getSessionCookie()
     const name = `cb${process.env.E2E_PORT || '20100'}_clawbench_project`
-    return `${session}; ${name}=${encodeURIComponent(projectB)}`
+    return `${session}; ${name}=${encodeURIComponent(path)}`
   }
 
-  /** Create a session in project B and give it one finished reply (⇒ unread). */
-  async function seedSession(message: string): Promise<string> {
-    const cookie = await projectBCookie()
+  /** Create a session in `projectPath` and give it one finished reply (⇒ unread). */
+  async function seedSessionIn(projectPath: string, message: string): Promise<string> {
+    const cookie = await projectCookie(projectPath)
     const createResp = await fetch(`${getServerURL()}/api/ai/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -87,6 +98,11 @@ test.describe.serial('Cross-project session jump', () => {
     throw new Error(`session ${sessionId} never finished its seeded turn`)
   }
 
+  /** Convenience: seed into the project the jump tests use. */
+  function seedSession(message: string): Promise<string> {
+    return seedSessionIn(projectB, message)
+  }
+
   test.beforeAll(async () => {
     projectB = mkdtempSync(join(tmpdir(), 'clawbench-cross-project-'))
 
@@ -95,13 +111,17 @@ test.describe.serial('Cross-project session jump', () => {
     targetId = await seedSession('cross target ' + Date.now())
     decoyId = await seedSession('cross decoy ' + Date.now())
     expect(targetId).not.toBe(decoyId)
+
+    projectC = mkdtempSync(join(tmpdir(), 'clawbench-cross-project-tab-'))
+    tabTargetId = await seedSessionIn(projectC, 'tab target ' + Date.now())
   })
 
   test.afterAll(async () => {
-    // The jump persists project B as the server-side default (POST /api/project
-    // writes `is_default`), and that is GLOBAL: every later spec's fresh browser
-    // context would resolve its project to this temp directory. Restore first,
-    // then drop the registry row so the project list keeps no dead entry.
+    // The jump persists the target project as the server-side default (POST
+    // /api/project writes `is_default`), and that is GLOBAL: every later spec's
+    // fresh browser context would resolve its project to a temp directory.
+    // Restore first, then drop the registry rows so the project list keeps no
+    // dead entries.
     await apiFetch('/api/project', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -112,16 +132,19 @@ test.describe.serial('Cross-project session jump', () => {
       const listResp = await apiFetch('/api/projects/list')
       if (listResp.ok) {
         const data = (await listResp.json()) as { projects?: Array<{ id: number; path: string }> }
-        const entry = (data.projects || []).find((p) => p.path === projectB)
-        if (entry) {
-          await apiFetch(`/api/projects/detail?id=${entry.id}`, { method: 'DELETE' }).catch(() => {})
+        for (const path of [projectB, projectC]) {
+          const entry = (data.projects || []).find((p) => p.path === path)
+          if (entry) {
+            await apiFetch(`/api/projects/detail?id=${entry.id}`, { method: 'DELETE' }).catch(() => {})
+          }
         }
       }
     } catch {
       // Best effort — a leftover registry row for a deleted temp dir is inert.
     }
-    if (projectB) {
-      try { rmSync(projectB, { recursive: true, force: true }) } catch { /* best effort */ }
+    for (const path of [projectB, projectC]) {
+      if (!path) continue
+      try { rmSync(path, { recursive: true, force: true }) } catch { /* best effort */ }
     }
   })
 
@@ -166,7 +189,7 @@ test.describe.serial('Cross-project session jump', () => {
     // Read-marking is the adopt path's job now (the jump no longer goes through
     // switchSession). Without it the row keeps its unread badge forever.
     await expect.poll(async () => {
-      const cookie = await projectBCookie()
+      const cookie = await projectCookie(projectB)
       const resp = await fetch(`${getServerURL()}/api/ai/sessions/overview`, { headers: { Cookie: cookie } })
       if (!resp.ok) return -1
       const data = (await resp.json()) as {
@@ -187,9 +210,11 @@ test.describe.serial('Cross-project session jump', () => {
    * LAYOUT contract: the bar exists, the project pane holds no cards, and the
    * other pane is reachable and still jumps.
    *
-   * The previous test marked the seeded session read, so its card is now idle
-   * (no active rows) — the card header has to be opened first, which is also
-   * the only way an idle project's sessions are reachable at all.
+   * This test seeds its OWN throwaway project (`projectC`) instead of reusing
+   * the one above. Which project a fresh page opens in is decided server-side
+   * by the last project switch, so reusing project B would make the outcome
+   * depend on test order: if the page happens to open IN project B, there is no
+   * "other project" card for it at all (the current project is excluded).
    */
   test('tab mode separates the panes and still jumps', async ({ page }) => {
     await page.addInitScript(() => {
@@ -208,16 +233,16 @@ test.describe.serial('Cross-project session jump', () => {
     const crossPane = page.locator('.session-list-pane--cross:visible')
     await expect(crossPane).toBeVisible()
 
-    const card = crossPane.locator(`.pcard[data-project="${projectB}"]`)
+    const card = crossPane.locator(`.pcard[data-project="${projectC}"]`)
     await expect(card).toBeVisible({ timeout: 30000 })
     if (await card.locator('.pcard-row').count() === 0) {
       await card.locator('.pcard-head').click()
     }
-    const row = card.locator(`.pcard-row[data-session-id="${targetId}"]`)
+    const row = card.locator(`.pcard-row[data-session-id="${tabTargetId}"]`)
     await expect(row).toBeVisible({ timeout: 30000 })
     await row.click()
 
-    await expect(page.locator('.chat-message.user').filter({ hasText: /cross target/ }).first())
+    await expect(page.locator('.chat-message.user').filter({ hasText: /tab target/ }).first())
       .toBeVisible({ timeout: 30000 })
   })
 })

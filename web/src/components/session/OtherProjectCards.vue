@@ -463,6 +463,35 @@ watch(() => store.state.projectRoot, () => collapseProject())
   border-bottom: 0;
 }
 
+/* A collapsed idle card greys out: "this project has nothing going on right
+   now" should be visible at a glance, not inferred from "the slot shows a
+   timestamp instead of a count". `--pc` drives the band, the icon, the border
+   and the hover tint, so overriding it here desaturates the card in one move.
+   The dark rule has to be repeated: `:root[data-theme-base="dark"] .pcard`
+   re-points `--pc` at the dark palette and outranks a plain `.pcard.is-idle`. */
+.pcard.is-idle:not(.is-expanded) {
+  --pc: var(--text-muted, #6c757d);
+}
+
+:root[data-theme-base="dark"] .pcard.is-idle:not(.is-expanded) {
+  --pc: var(--text-muted, #6e7681);
+}
+
+/* The name stays one step above the hint greys. 12px at the hint token falls
+   under the 4.5:1 the rest of this list keeps itself to, and the card is still
+   a thing you can open and read. */
+.pcard.is-idle:not(.is-expanded) .pcard-name {
+  color: var(--text-secondary, #495057);
+}
+
+.pcard.is-idle:not(.is-expanded) .pcard-icon,
+.pcard.is-idle:not(.is-expanded) .pcard-path,
+.pcard.is-idle:not(.is-expanded) .pcard-recent,
+.pcard.is-idle:not(.is-expanded) .pcard-chev {
+  color: var(--text-hint, #8c959f);
+  opacity: 0.85;
+}
+
 .pcard-state {
   display: flex;
   align-items: center;
