@@ -53,6 +53,7 @@ const MESSAGES: Record<string, NativeMessage> = {
   file_save_failed: { zh: '无法保存文件，请重试', en: 'The file could not be saved. Please try again.' },
   share_text_invalid: { zh: '分享文本为空或超过长度限制', en: 'The shared text is empty or exceeds the length limit.' },
   mail_app_unavailable: { zh: '无法打开系统邮件应用，请安装或启用邮件应用后重试，也可复制链接手动发送', en: 'Unable to open a mail app. Install or enable one and try again, or copy the link to send it manually.' },
+  invalid_mail_url: { zh: '邮件链接格式不正确，请检查收件人、主题和正文后重试', en: 'Invalid mail link. Check the recipient, subject and body and try again.' },
   file_busy: { zh: '已有文件操作正在进行，请稍后重试', en: 'A file operation is already in progress. Please try again later.' },
   file_share_failed: { zh: '无法分享文件，请检查网络后重试', en: 'The file could not be shared. Check the network and try again.' },
   file_too_large: { zh: '文件超过传输大小限制', en: 'The file exceeds the transfer size limit.' },

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { externalAppUrl } from '../entry/src/main/ets/models/NativeActions.ts';
-import { NativeFailure, nativeMessage } from '../entry/src/main/ets/models/NativeMessages.ts';
+import { NativeFailure, nativeMessage, formatNativeError } from '../entry/src/main/ets/models/NativeMessages.ts';
 
 const source = readFileSync(new URL('../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
 const start = source.indexOf('  private async openExternal(');
@@ -12,11 +12,11 @@ const end = source.indexOf('  private async showSelectionMenu(', start);
 assert.ok(start >= 0 && end > start);
 const code = stripTypeScriptTypes('class Host {\n' + source.slice(start, end) + '\n}', { mode: 'strip' }) + '\nHost;';
 
-function host({ failLink = false, failAbility = false } = {}) {
+function host({ failLink = false, failAbility = false, language = 'en' } = {}) {
   const Host = runInNewContext(code, { externalAppUrl, NativeFailure });
   const instance = new Host();
   const calls = [];
-  instance.store = { language: 'en' };
+  instance.store = { language };
   instance.context = () => ({
     async openLink(uri) {
       calls.push({ api: 'openLink', uri });
@@ -64,4 +64,31 @@ test('invalid external URLs never invoke the operating system', async () => {
     await assert.rejects(h.instance.openExternal(uri));
   }
   assert.deepEqual(h.calls, []);
+});
+
+test('malformed mail encoding and rejected fields return localized RPC failures before OS dispatch', async () => {
+  for (const language of ['zh', 'en']) {
+    const h = host({ language });
+    for (const uri of ['mailto:100%@example.com', 'mailto:?subject=%',
+      'mailto:?%FF=x', 'mailto:?body=%E4', 'mailto:?subject=a&subject=b',
+      'mailto:?cc=a%0D%0Abcc:b@example.com']) {
+      await assert.rejects(h.instance.openExternal(uri), error => {
+        assert.equal(error.code, 'invalid_mail_url');
+        assert.equal(error.message, nativeMessage('invalid_mail_url', language));
+        assert.equal(formatNativeError(error, language), error.message);
+        assert.doesNotMatch(error.message, /URI malformed/);
+        return true;
+      });
+    }
+    assert.deepEqual(h.calls, []);
+  }
+});
+
+test('empty mail query separators preserve the encoded draft without admitting injected headers', async () => {
+  const h = host();
+  const uri = 'mailto:?subject=a&body=b&';
+  await h.instance.openExternal(uri);
+  assert.equal(h.calls[0].uri, uri);
+  await assert.rejects(h.instance.openExternal(uri + 'bcc=x%0D%0Ay'));
+  assert.equal(h.calls.length, 1);
 });

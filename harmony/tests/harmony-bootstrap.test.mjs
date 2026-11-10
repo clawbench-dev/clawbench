@@ -72,6 +72,22 @@ test('bootstrap exposes no bridge to subframes, external sites or file previews'
   }
 });
 
+test('external app and browser failures notify the workbench exactly once and still reject', async () => {
+  for (const [method, target] of [['openExternalUrl', 'https://example.com/'],
+    ['openExternalUrl', 'javascript:alert(1)'], ['openInBrowser', 8080], ['openInSandbox', 8080]]) {
+    const page = createPage();
+    const { port, messages } = connectPort(page);
+    const operation = page.window.ClawBenchHarmony[method](target);
+    assert.equal(messages.length, 1);
+    port.onmessage({ data: JSON.stringify({ id: messages[0].id, error: 'localized failure' }) });
+    await assert.rejects(operation, /localized failure/);
+    assert.equal(page.dispatched.length, 1);
+    assert.equal(page.dispatched[0].type, 'clawbench-native-error');
+    assert.equal(page.dispatched[0].detail.method, method);
+    assert.equal(page.timers.size, 0);
+  }
+});
+
 test('HarmonyOS has its own name; saved passwords never enter the facade', async () => {
   const { window } = createPage();
   assert.equal(window.ClawBenchNative, undefined);

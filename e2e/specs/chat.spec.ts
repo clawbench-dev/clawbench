@@ -16,12 +16,14 @@ test.describe('Chat', () => {
     // Default agent is acp-mock which uses real ACP stdio protocol
     const uniqueText = 'mocktest_' + Date.now()
 
-    // Count messages before sending to avoid stale matches from parallel tests
-    const userCountBefore = await page.locator('.chat-message.user').count()
+    await chat.waitForIdle()
+    await chat.createSessionWithAgent('acp-mock')
     const countBefore = await chat.sendMessage(uniqueText)
 
     // 1. User message appears immediately (synchronous POST) — match the new one
-    await expect(page.locator('.chat-message.user').nth(userCountBefore)).toContainText(uniqueText)
+    // History hydration/prepending changes row indexes; identify this send by
+    // its unique text rather than by the number of rows before hydration.
+    await expect(page.locator('.chat-message.user').filter({ hasText: uniqueText })).toHaveCount(1)
 
     // 2. Assistant response appears (async SSE stream from ACP mock agent)
     await chat.waitForReply(30000, countBefore)
@@ -174,12 +176,20 @@ test.describe('Chat', () => {
 
   test('should expand thinking block when clicking collapsed chip', async ({ page }) => {
     // Send a message and wait for full response + collapse
+    await chat.waitForIdle()
+    await chat.createSessionWithAgent('acp-mock')
     const countBefore = await chat.sendMessage('Think about this')
     await chat.waitForReply(30000, countBefore)
     await expect(chat.sendButton).toBeVisible({ timeout: 10000 })
+    await chat.waitForIdle()
 
     // Verify thinking block is collapsed
-    const thinkingBlock = chat.getLastAssistantMessage().locator('.chat-thinking')
+    const reply = chat.getLastAssistantMessage()
+    await expect(reply).not.toHaveAttribute('data-streaming', 'true')
+    await expect(reply).toHaveAttribute('data-msg-key', /^db-/)
+    const key = await reply.getAttribute('data-msg-key')
+    const thinkingBlock = page.locator(`.chat-message.assistant[data-msg-key=${JSON.stringify(key)}]`)
+      .locator('.chat-thinking')
     await expect(thinkingBlock).toHaveClass(/thinking-collapsed/, { timeout: 5000 })
 
     // Click the collapsed chip to expand — this expands the block INLINE

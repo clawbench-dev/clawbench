@@ -239,7 +239,7 @@
   };
   for (const method of ['getServerList', 'getSavedServerConfig', 'getServerUrl',
     'saveServer', 'saveServerNamed', 'removeServer', 'connectToServer',
-    'openExternalUrl', 'setKeepScreenOn', 'reloadApp', 'getPendingNavigation',
+    'setKeepScreenOn', 'reloadApp', 'getPendingNavigation',
     'getNativePushStatus', 'cancelDownload', 'downloadFile', 'downloadUrl', 'downloadBlob',
     'shareText', 'shareFile', 'shareFiles', 'readClipboardText', 'writeClipboardText',
     'openInBrowser', 'openInSandbox', 'startLogCapture', 'stopLogCapture',
@@ -249,6 +249,8 @@
     'addReverseForwardedPort', 'removeForwardedPort', 'removeReverseForwardedPort', 'forgetForwardedPorts']) {
     bridge[method] = (...args) => invoke(method, ...args);
   }
+  // Report every external-app/browser failure once, including rejected links;
+  // shared callers may only log a rejected Promise, leaving no visible feedback.
   for (const method of ['openExternalUrl', 'openInBrowser', 'openInSandbox']) {
     bridge[method] = (...args) => invoke(method, ...args).catch(error => {
       if (!closed) window.dispatchEvent(new CustomEvent('clawbench-native-error', {

@@ -1,6 +1,6 @@
 # HarmonyOS 客户端（实验性）
 
-基于 ArkTS / ArkUI Stage 和 ArkWeb，复用安卓本地登录页及服务端 Vue 工作台。当前开发版 `0.2.6 / 206`，客户端协议 `1`，沿用包名 `com.clawbench.harmony`，保留手机、平板和 `2in1` 的可安装范围。本轮包含凭据恢复、宿主桥契约、TLS 诊断、双语反馈及系统下载目录修复，保留文件、分享、通知、媒体授权和原生 SSH / HTTP2 隧道。启动与已有功能不依赖 Push Kit；后台原生通知仍不可用，鸿蒙 Frozen 冻结限制未解决。尚未达到 Android 全功能对等，暂不加入正式发布流水线。
+基于 ArkTS / ArkUI Stage 和 ArkWeb，复用安卓本地登录页及服务端 Vue 工作台。当前开发版 `0.2.11 / 211`，对齐上游 `v0.137.0`，客户端协议 `1`，沿用包名 `com.clawbench.harmony`，保留手机、平板和 `2in1` 的可安装范围。本版补齐 `mailto:` 系统邮件回退、畸形邮件链接双语提示和外链失败反馈，保留文件、分享、通知、媒体授权及原生 SSH / HTTP2 隧道。用户已确认系统邮件与新版媒体流程真机验收通过，具体设备及媒体子项未逐项列出。启动与已有功能不依赖 Push Kit；Frozen 或进程结束后不保证通知送达。尚未达到 Android 全功能对等，暂不加入正式发布流水线。
 
 0.2.6 为 ArkWeb 注册 `WebDownloadDelegate`，网页下载、原生认证流式下载与 Blob 保存统一使用系统 `Download/com.clawbench.harmony/`，重名自动增加序号，避免文件仅落入 Web 私有缓存。网页导航保留已开始的 Web 下载，应用页面销毁时取消未完成任务。2026-11-07 用户确认新的选择界面及原生下载桥已完成真机验证。
 
@@ -20,7 +20,7 @@
 ./scripts/build-harmonyos.ps1 -DevEcoRoot $env:DEVECO_ROOT
 ```
 
-也可以用 DevEco Studio 打开 `harmony/`。原始产物在 `harmony/entry/build/default/outputs/default/`，构建脚本另导出根目录 `release/ClawBench-0.2.6-unsigned.hap`，默认未签名；本地维护目录的交付包按维护约定存放在 `bulid-hap/`，实际构建结果和校验值见维护记录。签名配置应由开发者本地提供，不提交证书、私钥、密码、实际服务器地址或账户。Windows PowerShell 5.1 可能将 Hvigor 的 stderr 警告当成终止错误，本轮同工具链的成功调用方式见维护记录。
+也可以用 DevEco Studio 打开 `harmony/`。原始产物在 `harmony/entry/build/default/outputs/default/`，构建脚本直接导出根目录 `bulid-hap/ClawBench-0.2.11-unsigned.hap`，默认未签名；`bulid-hap` 是既有约定目录名，CI 上传路径使用同一目录。实际构建结果和校验值见维护记录。签名配置应由开发者本地提供，不提交证书、私钥、密码、实际服务器地址或账户。构建脚本已兼容 Windows PowerShell 5.1 下 Hvigor 的 stderr 警告，以进程退出码判断构建结果。
 
 原生 CMake 构建包含 arm64-v8a / x86_64，首次构建需联网获取固定版本及 SHA-256 的 libssh2、mbedTLS、nghttp2 等公开依赖和 CA 数据。SSH 使用 libssh2 + mbedTLS，HTTP2 使用 nghttp2；TLS 校验主机名与受信 CA，SSH 首次连接或主机密钥变化需确认。不能通过跳过证书 / 主机身份检查解决连接失败。
 
