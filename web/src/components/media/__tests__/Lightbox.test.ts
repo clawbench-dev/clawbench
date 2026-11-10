@@ -1,9 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createI18n } from 'vue-i18n'
 import Lightbox from '@/components/media/Lightbox.vue'
 import { bumpMediaVersion, resetMediaWatch, setMediaProjectRoot } from '@/composables/useMediaWatch.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
+import {
+  beginDownload, cancelDownload, endDownload, nextDownloadId, useDownloadProgress,
+} from '@/composables/useDownloadProgress'
 
 // ── Mocks ──
 
@@ -40,17 +44,24 @@ vi.mock('@/utils/path.ts', () => ({
   joinPath: (...parts: string[]) => parts.filter(Boolean).join('/'),
 }))
 
-vi.mock('@/utils/fileType.ts', () => ({
-  getFileType: (name: string) => ({
-    isMarkdown: name.endsWith('.md'),
-    isHtml: false,
-    isImage: /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(name),
-    isAudio: false,
-    isVideo: false,
-    isPdf: false,
-    color: '#000',
-  }),
-}))
+// Only `getFileType` needs stubbing, but the module is also where the byte/size
+// formatters live and the embedded download bar uses them — a whole-module mock
+// would make that bar throw during render.
+vi.mock('@/utils/fileType.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/fileType.ts')>()
+  return {
+    ...actual,
+    getFileType: (name: string) => ({
+      isMarkdown: name.endsWith('.md'),
+      isHtml: false,
+      isImage: /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(name),
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      color: '#000',
+    }),
+  }
+})
 
 vi.mock('@/utils/download.ts', () => ({
   downloadBlob: vi.fn(),
@@ -83,6 +94,17 @@ vi.mock('@/composables/useBackHandler', () => ({
   PRIORITY_OVERLAY: 1000,
 }))
 
+const mockToastShow = vi.fn()
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: mockToastShow }),
+}))
+
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en',
+  messages: { en: { common: { cancel: 'Cancel' } } },
+})
+
 describe('Lightbox', () => {
   // Track every mounted wrapper so each test unmounts on teardown. Lightbox
   // attaches document-level mousemove/mouseup/click listeners and removes them
@@ -95,8 +117,12 @@ describe('Lightbox', () => {
     mockSelectFile.mockClear()
     mockRegisterBackHandler.mockClear()
     mockUnregister.mockClear()
+    mockToastShow.mockClear()
     vi.mocked(downloadBlob).mockClear()
     vi.mocked(downloadFileByPath).mockClear()
+    // The progress state is a module singleton; a bar left visible by an
+    // earlier case would make `beginDownload` refuse to start.
+    cancelDownload()
     mockStoreState.currentDir = '/project'
     mockStoreState.currentFile = { path: '/project/image.png', name: 'image.png' }
     _dirEntries = [
@@ -114,6 +140,9 @@ describe('Lightbox', () => {
   function mountLightbox() {
     const wrapper = mount(Lightbox, {
       attachTo: document.body,
+      // The embedded download bar is a vue-i18n consumer; without a plugin it
+      // throws and takes the whole overlay's render down with it.
+      global: { plugins: [i18n] },
     })
     mountedWrappers.push(wrapper)
     return wrapper
@@ -907,6 +936,90 @@ describe('Lightbox', () => {
       vm.handleDownload()
       expect(downloadFileByPath).not.toHaveBeenCalled()
       expect(downloadBlob).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Download feedback ──
+
+  /**
+   * Downloading from the viewer used to produce no visible reaction at all: the
+   * app-level bar lives inside `.app-container`, which is `position: fixed` and
+   * therefore a stacking context, so no z-index can lift it above the lightbox;
+   * the completion toast sat below the lightbox too. The viewer now renders the
+   * same progress state itself and the toast tier moved above the overlay.
+   */
+  describe('download feedback', () => {
+    it('renders the progress bar inside the lightbox while a transfer runs', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.open('/api/fs/raw/image.png')
+      await nextTick()
+
+      expect(document.querySelector('.lb-download')).toBeNull()
+
+      const id = nextDownloadId()
+      expect(beginDownload(id, 'image.png', 2048)).toBe(true)
+      await nextTick()
+
+      // Inside the overlay, not in the app layer — that is what makes it visible.
+      const bar = document.querySelector('.lightbox .lb-download')
+      expect(bar).not.toBeNull()
+      expect(bar!.querySelector('.transfer-progress-label')!.textContent).toBe('image.png')
+      // Host-positioned: the fixed placement would land on the viewer toolbar.
+      expect(bar!.querySelector('.transfer-progress')!.classList.contains('transfer-progress--floating'))
+        .toBe(false)
+
+      endDownload(id)
+      await nextTick()
+      expect(document.querySelector('.lb-download')).toBeNull()
+    })
+
+    it('cancels the transfer from the bar', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.open('/api/fs/raw/image.png')
+      await nextTick()
+
+      const id = nextDownloadId()
+      beginDownload(id, 'image.png', 2048)
+      await nextTick()
+
+      const cancel = document.querySelector('.lb-download .transfer-progress-cancel') as HTMLElement
+      expect(cancel).not.toBeNull()
+      cancel.click()
+      await nextTick()
+
+      expect(useDownloadProgress().downloadVisible.value).toBe(false)
+      expect(document.querySelector('.lb-download')).toBeNull()
+    })
+
+    it('toasts after downloading an inline SVG (no progress channel)', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      vm.openSvg('<svg viewBox="0 0 10 10"></svg>')
+      await nextTick()
+
+      vm.handleDownload()
+
+      expect(downloadBlob).toHaveBeenCalledTimes(1)
+      expect(mockToastShow).toHaveBeenCalledTimes(1)
+    })
+
+    it('toasts after an external-URL download', async () => {
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+      try {
+        const wrapper = mountLightbox()
+        const vm = wrapper.vm as any
+        vm.open('https://example.com/remote.png')
+        await nextTick()
+
+        vm.handleDownload()
+
+        expect(clickSpy).toHaveBeenCalled()
+        expect(mockToastShow).toHaveBeenCalledTimes(1)
+      } finally {
+        clickSpy.mockRestore()
+      }
     })
   })
 

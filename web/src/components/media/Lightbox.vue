@@ -49,6 +49,23 @@
         <MediaLoadError v-if="imageFailed" :name="currentFileName" fill />
         <div v-if="currentSvg" ref="svgContainerRef" :style="imgStyle" v-html="currentSvg" />
       </div>
+      <!-- Download progress for a transfer started from this viewer. The
+           app-level bar cannot serve here: it lives inside `.app-container`,
+           which is `position: fixed` and therefore its own stacking context, so
+           no z-index can lift it above the lightbox — clicking Download used to
+           look like nothing happened at all. Same state, rendered in the one
+           place that is actually on screen. -->
+      <div v-if="downloadVisible" class="lb-download">
+        <DownloadProgressBar
+          :visible="downloadVisible"
+          :file-name="downloadFileName"
+          :received="downloadReceived"
+          :total="downloadTotal"
+          :speed="downloadSpeed"
+          :floating="false"
+          @cancel="cancelDownload"
+        />
+      </div>
       <div class="lightbox-bottom-bar">
         <template v-if="showNav">
           <button class="lb-btn" @click="navigatePrev" title="Previous">
@@ -69,14 +86,27 @@ import { X, ChevronLeft, ChevronRight, Download } from 'lucide-vue-next'
 import { ref, computed, provide, watch, onMounted, onUnmounted } from 'vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+import { useDownloadProgress } from '@/composables/useDownloadProgress'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
 import { extractImageName } from '@/utils/lightbox.ts'
 import { mediaPathFromUrl, mediaVersionFor, stripVersionParam, withVersionParam } from '@/composables/useMediaWatch.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+
+/**
+ * The single download bar is mounted in App.vue, but that copy is unreachable
+ * while this viewer is open (see the `.lb-download` block in the template), so
+ * the lightbox renders the same state itself.
+ */
+const {
+    downloadVisible, downloadFileName, downloadReceived, downloadTotal, downloadSpeed, cancelDownload,
+} = useDownloadProgress()
 
 let unregisterBack = null
 const lightboxVisible = ref(false)
@@ -575,12 +605,22 @@ function resetAndRefresh() {
     }
 }
 
+/**
+ * Feedback for the two download paths that hand the bytes to the platform
+ * without a progress channel (inline SVG, external URL). Without it the button
+ * looks dead — the streaming path ends with the same toast for that reason.
+ */
+function notifyDownloaded() {
+    useToast().show(gt('upload.downloaded', { count: 1 }), { icon: 'success', type: 'success' })
+}
+
 function handleDownload() {
     if (currentSvg.value) {
         // Download SVG content as .svg file
         const svgName = currentFileName.value || 'diagram.svg'
         const name = svgName.endsWith('.svg') ? svgName : svgName.replace(/\.\w+$/, '') + '.svg'
         downloadBlob(currentSvg.value, name, 'image/svg+xml')
+        notifyDownloaded()
         return
     }
     if (!currentUrl.value) return
@@ -605,6 +645,7 @@ function handleDownload() {
     document.body.appendChild(a)
     a.click()
     setTimeout(() => { document.body.removeChild(a) }, 1000)
+    notifyDownloaded()
 }
 
 function handleContentClick(e) {
@@ -1008,6 +1049,24 @@ onUnmounted(() => {
     z-index: 10;
     align-items: center;
     justify-content: center;
+}
+
+/* Progress for a download started here. Sits above the navigation row (40dp
+   buttons at 16dp from the bottom) and shares the viewer's stacking context,
+   so it is on screen where the app-level bar is not. */
+.lb-download {
+    position: absolute;
+    left: calc(16 * var(--dp));
+    right: calc(16 * var(--dp));
+    bottom: calc(68 * var(--dp));
+    z-index: 20;
+    display: flex;
+    justify-content: center;
+}
+
+.lb-download > * {
+    width: 100%;
+    max-width: calc(520 * var(--dp));
 }
 
 .lb-counter {

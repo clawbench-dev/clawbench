@@ -205,6 +205,7 @@ describe('stacking-order tokens (variables.css)', () => {
     expect(token('--z-popover-backdrop')).toBe('9998')
     expect(token('--z-popover')).toBe('9999')
     expect(token('--z-lightbox')).toBe('10000')
+    expect(token('--z-toast')).toBe('10100')
   })
 
   it('keeps each backdrop one below the surface it scrims', () => {
@@ -237,6 +238,14 @@ describe('stacking-order tokens (variables.css)', () => {
     // a dialog must not be clipped by it).
     expect(parseInt(token('--z-popover'))).toBeGreaterThan(parseInt(token('--z-modal')))
     expect(parseInt(token('--z-lightbox'))).toBeGreaterThan(parseInt(token('--z-popover')))
+  })
+
+  it('keeps result toasts above the lightbox', () => {
+    // The viewer covers the whole screen and can itself start actions
+    // (download). A toast sorted under it is invisible, so the action reads as
+    // "nothing happened" — the exact symptom this tier exists to prevent.
+    expect(parseInt(token('--z-toast'))).toBeGreaterThan(parseInt(token('--z-lightbox')))
+    expect(readCss('src/components/common/ToastNotification.vue')).toContain('z-index: var(--z-toast)')
   })
 })
 

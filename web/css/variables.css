@@ -230,8 +230,12 @@
     --z-context-menu: 2500;
     --z-modal: 3000;                /* install / generic dialog */
     --z-popover-backdrop: 9998;
-    --z-popover: 9999;              /* menus, dropdowns, tooltips, toasts */
-    --z-lightbox: 10000;            /* image lightbox — topmost */
+    --z-popover: 9999;              /* menus, dropdowns, tooltips */
+    --z-lightbox: 10000;            /* image lightbox — topmost surface */
+    /* Result feedback must outrank the lightbox: downloading from inside the
+       viewer is a normal action, and a toast hidden behind a full-screen
+       overlay reads as "the click did nothing". */
+    --z-toast: 10100;               /* transient result toasts — above all */
 
     /* ── Opacity for de-emphasised content. Named by *why* something is
        faded rather than by the number, since that is what the value is

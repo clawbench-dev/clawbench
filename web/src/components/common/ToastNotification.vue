@@ -68,7 +68,9 @@ function handleClick() {
     font-weight: var(--font-weight-medium);
     box-shadow: var(--shadow-md);
     cursor: pointer;
-    z-index: var(--z-popover);
+    /* Above --z-lightbox: the viewer can start actions (download) whose result
+       is reported by a toast, and the viewer covers the whole screen. */
+    z-index: var(--z-toast);
     white-space: normal;
     width: fit-content;
     min-width: calc(80 * var(--dp));
