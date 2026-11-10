@@ -64,6 +64,10 @@ const i18n = createI18n({
           micOff: '麦克风已关',
           micOnHint: '其他人可以听到你说话',
           micOffHint: '点击打开麦克风发言',
+          micUnavailable: '打不开麦克风',
+          micDenied: '浏览器拒绝了麦克风',
+          micLost: '麦克风已断开',
+          micUnsupported: '这个浏览器不能采集麦克风',
           statusConnecting: '连接中…',
           joinSubtitle: '主持人邀请你加入会议。填一个称谓，发布端与其他观众会看到它。',
           joinNick: '你的称谓',
@@ -463,6 +467,37 @@ describe('LiveShareView microphone toggle', () => {
     expect(w.find('[data-action="mic-toggle"]').attributes('aria-checked')).toBe('false')
     w.unmount()
   })
+
+  it('says why the microphone did not open instead of just bouncing back', async () => {
+    startTalkingResult = false
+    const w = mountView()
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onTalkEnabled?.(true)
+    await flushPromises()
+
+    await w.find('[data-action="mic-toggle"]').trigger('click')
+    await flushPromises()
+
+    // A toggle that flips back with no word reads as "the app did not notice my
+    // microphone" — which is exactly what the headset report sounded like.
+    expect(w.find('[data-role="mic-notice"]').text()).toContain('打不开麦克风')
+    w.unmount()
+  })
+
+  it('shows the specific cause the viewer reported', async () => {
+    const w = mountView()
+    await flushPromises()
+    lastViewer?.opts?.callbacks?.onTalkEnabled?.(true)
+    await flushPromises()
+
+    lastViewer?.opts?.callbacks?.onMicError?.('denied')
+    await flushPromises()
+
+    // "Denied" and "no device" need different fixes, so they must not share a
+    // line. This one is the permission gate.
+    expect(w.find('[data-role="mic-notice"]').text()).toContain('浏览器拒绝')
+    w.unmount()
+  })
 })
 
 describe('LiveShareView sound toggle', () => {
@@ -487,7 +522,12 @@ describe('LiveShareView sound toggle', () => {
     } as unknown as MediaStream)
     await flushPromises()
 
+    const audio = w.find('[data-role="live-audio"]').element as HTMLAudioElement
     const video = w.find('video').element as HTMLVideoElement
+    expect(audio.muted).toBe(true)
+    // The picture element never carries sound: it is hidden whenever there is
+    // no picture, and a hidden element must not be where the meeting's audio
+    // lives.
     expect(video.muted).toBe(true)
     expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已关')
     expect(w.find('[data-action="toggle-sound"]').attributes('aria-checked')).toBe('false')
@@ -495,7 +535,8 @@ describe('LiveShareView sound toggle', () => {
     await w.find('[data-action="toggle-sound"]').trigger('click')
     await flushPromises()
 
-    expect(video.muted).toBe(false)
+    expect(audio.muted).toBe(false)
+    expect(video.muted).toBe(true)
     // The button stays in the dock, relabelled: the way to mute again.
     expect(w.find('[data-action="toggle-sound"]').exists()).toBe(true)
     expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已开')
@@ -504,8 +545,24 @@ describe('LiveShareView sound toggle', () => {
     await w.find('[data-action="toggle-sound"]').trigger('click')
     await flushPromises()
 
-    expect(video.muted).toBe(true)
+    expect(audio.muted).toBe(true)
     expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已关')
+    w.unmount()
+  })
+
+  it('puts the stream on the audio element, not just the picture', async () => {
+    const w = mountView()
+    await flushPromises()
+    const audioStream = { getAudioTracks: () => [{}] } as unknown as MediaStream
+    lastViewer?.opts?.callbacks?.onStream?.(audioStream)
+    await flushPromises()
+
+    // A voice-only meeting has no picture at all. If the sound were attached to
+    // the <video> alone, that element would be hidden (`!videoEnabled`) and the
+    // member would hear nothing while the host's level chip said he was
+    // speaking.
+    const audio = w.find('[data-role="live-audio"]').element as HTMLAudioElement
+    expect(audio.srcObject).toBe(audioStream)
     w.unmount()
   })
 
@@ -525,7 +582,7 @@ describe('LiveShareView sound toggle', () => {
     lastViewer?.opts?.callbacks?.onStream?.(audioStream)
     await flushPromises()
 
-    expect((w.find('video').element as HTMLVideoElement).muted).toBe(false)
+    expect((w.find('[data-role="live-audio"]').element as HTMLAudioElement).muted).toBe(false)
     expect(w.find('[data-action="toggle-sound"]').text()).toBe('声音已开')
     w.unmount()
   })

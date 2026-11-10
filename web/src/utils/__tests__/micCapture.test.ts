@@ -119,4 +119,19 @@ describe('acquireMic', () => {
     await acquireMic(constraints)
     expect(getUserMedia).toHaveBeenCalledWith(constraints)
   })
+
+  it('uses an injected capture call, with the same single retry', async () => {
+    vi.useFakeTimers()
+    // The viewer page supplies its own `getUserMedia` seam; it must get the
+    // retry policy too instead of carrying a second, drifting copy.
+    const gum = vi.fn()
+      .mockRejectedValueOnce({ name: 'NotReadableError' })
+      .mockResolvedValueOnce({ id: 'stream' })
+
+    const pending = acquireMic({ audio: true }, gum)
+    await vi.advanceTimersByTimeAsync(400)
+
+    await expect(pending).resolves.toEqual({ id: 'stream' })
+    expect(gum).toHaveBeenCalledTimes(2)
+  })
 })

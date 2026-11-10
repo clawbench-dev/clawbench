@@ -20,6 +20,7 @@
  * The control-frame shapes are identical in both, so callers never branch.
  */
 import { appLog } from '@/utils/appLog'
+import { acquireMic, classifyMicError, describeMicError, logMicEnv } from '@/utils/micCapture'
 import { parseControlMessage, type ControlMessage } from './liveControl'
 import {
   applyContentHint,
@@ -179,6 +180,21 @@ export interface LiveViewerCallbacks {
   onTalkRevoked?: (reason: string) => void
   /** The publisher blocked (true) or released (false) our microphone. */
   onTalkMuted?: (muted: boolean) => void
+  /**
+   * Our own microphone could not be opened.
+   *
+   * `denied` is the permission gate (browser site setting, or the OS blocking
+   * the browser); `unavailable` is everything else — no input device at all, or
+   * one that refuses to start (busy, still initialising after being plugged
+   * in). The page needs the distinction because the two have different fixes.
+   */
+  onMicError?: (kind: 'denied' | 'unavailable') => void
+  /**
+   * The microphone we were using went away mid-speech (headset unplugged, the
+   * OS revoked the device). Speech has already been stopped by the time this
+   * fires; the page only has to say so.
+   */
+  onMicLost?: () => void
   /** Our own viewer id, once the room has accepted us. */
   onJoined?: (viewerId: string) => void
   /** The full participant list, on join and on every change. */
@@ -223,6 +239,25 @@ export class LiveViewer {
   /** The audio transceiver reserved for our own speech (sendrecv, track=null). */
   private talkTx: RTCRtpTransceiver | null = null
   private micTrack: MediaStreamTrack | null = null
+  /**
+   * The cached microphone is bound to a device that is no longer the default.
+   *
+   * A track does not follow the OS default: opening the microphone once pins it
+   * to whatever was default at that moment, so plugging a headset in afterwards
+   * would keep recording the built-in microphone (or a device that just
+   * disappeared). We keep the track while the person is still speaking — cutting
+   * them off mid-sentence to switch devices is worse — and drop it at the next
+   * mute so the following unmute opens the CURRENT default.
+   */
+  private micStale = false
+  /** Bound once so teardown removes exactly the listener it added. */
+  private readonly onDeviceChange = (): void => {
+    if (this._talking) {
+      this.micStale = true
+      return
+    }
+    this.dropMic()
+  }
   /**
    * Video m-line we SEND our screen on (and receive the host's picture).
    *
@@ -403,6 +438,9 @@ export class LiveViewer {
   connect(): void {
     if (this._closed || this.ws) return
     this.setState('connecting')
+    // Plugging a headset in is the whole reason this listener exists: the cached
+    // track must not outlive the device it was opened from.
+    navigator.mediaDevices?.addEventListener?.('devicechange', this.onDeviceChange)
 
     const factory =
       this.opts.wsFactory ?? ((url: string) => new WebSocket(url))
@@ -908,21 +946,36 @@ export class LiveViewer {
     // `talkTx` exists only on the p2p path; a relayed room has a LiveKit room
     // instead, and the microphone is published there.
     if (!this.talkTx && !this.relayRoom) return false
-    if (!this.micTrack) {
+    if (!this.micTrack || this.micTrack.readyState === 'ended') {
+      const gum =
+        this.opts.getUserMedia ??
+        ((c: MediaStreamConstraints) => navigator.mediaDevices.getUserMedia(c))
       try {
-        const gum =
-          this.opts.getUserMedia ??
-          ((c: MediaStreamConstraints) => navigator.mediaDevices.getUserMedia(c))
-        const mic = await gum({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        })
-        this.micTrack = mic.getAudioTracks()[0] ?? null
+        // Same retry policy as every other capture path: a device that was just
+        // plugged in (or whose driver is still starting) answers
+        // `NotReadableError` for a moment, and one retry covers it.
+        const mic = await acquireMic(
+          { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } },
+          gum,
+        )
+        const track = mic.getAudioTracks()[0] ?? null
+        if (track) this.watchMicTrack(track)
+        this.micTrack = track
+        this.micStale = false
       } catch (e) {
-        appLog.e(TAG, 'microphone unavailable', e)
+        // Nothing else reports this: the toggle just flips back, which reads as
+        // "the app did not notice my microphone". Log the environment (device
+        // list, permission state) and tell the page WHY.
+        appLog.w(TAG, `microphone unavailable: ${describeMicError(e)}`)
+        void logMicEnv('LiveViewer')
+        this.cb.onMicError?.(classifyMicError(e))
         return false
       }
     }
-    if (!this.micTrack) return false
+    if (!this.micTrack) {
+      this.cb.onMicError?.('unavailable')
+      return false
+    }
     if (this.relayRoom) {
       try {
         await publishMic(this.relayRoom, this.micTrack)
@@ -1183,6 +1236,31 @@ export class LiveViewer {
     }
   }
 
+  /**
+   * Notice when the microphone disappears under us.
+   *
+   * Unplugging a headset (or the OS revoking the device) ends the track. The
+   * sender would keep the dead track attached and the toggle would keep saying
+   * "on" while the room hears nothing, so speech is stopped and the page is told.
+   */
+  private watchMicTrack(track: MediaStreamTrack): void {
+    track.addEventListener('ended', () => {
+      if (this.micTrack !== track) return
+      this.micTrack = null
+      if (!this._talking) return
+      void this.stopTalking()
+      this.cb.onMicLost?.()
+    })
+  }
+
+  /** Throw away the cached microphone (stopping it, so the OS indicator clears). */
+  private dropMic(): void {
+    const track = this.micTrack
+    this.micTrack = null
+    this.micStale = false
+    track?.stop()
+  }
+
   /** Detach the microphone track without reporting it (used on mute). */
   private async detachMic(): Promise<void> {
     if (this.relayRoom) {
@@ -1197,6 +1275,10 @@ export class LiveViewer {
     } catch (e) {
       appLog.d(TAG, 'replaceTrack(null) failed', e)
     }
+    // A device change during speech only marks the cache stale (we do not cut a
+    // sentence in half). This is where that debt is paid: the next unmute opens
+    // the CURRENT default instead of the device we started with.
+    if (this.micStale) this.dropMic()
   }
 
   private send(payload: Record<string, unknown>): void {
@@ -1223,6 +1305,7 @@ export class LiveViewer {
   }
 
   private teardown(): void {
+    navigator.mediaDevices?.removeEventListener?.('devicechange', this.onDeviceChange)
     void this.stopTalking()
     this.releaseScreenTrack()
     // Clear the handle BEFORE closing: LiveKit reports the close through
@@ -1242,8 +1325,7 @@ export class LiveViewer {
     this.relayTrack = null
     this.memberScreenStream = null
     if (this.micTrack) {
-      this.micTrack.stop()
-      this.micTrack = null
+      this.dropMic()
     }
     if (this.pc) {
       try {

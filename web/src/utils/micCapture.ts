@@ -44,13 +44,22 @@ export function describeMicError(e: unknown): string {
  * the transient case; a persistent failure is a system-level block and must not
  * be retried forever.
  */
-export async function acquireMic(constraints: MediaStreamConstraints = { audio: true }): Promise<MediaStream> {
+export async function acquireMic(
+  constraints: MediaStreamConstraints = { audio: true },
+  /**
+   * The capture call to use. Only tests pass one — the viewer page injects its
+   * own `getUserMedia` seam, and routing it through here keeps ONE retry policy
+   * instead of a second copy that could drift.
+   */
+  gum: (c: MediaStreamConstraints) => Promise<MediaStream> = (c) =>
+    navigator.mediaDevices.getUserMedia(c),
+): Promise<MediaStream> {
   try {
-    return await navigator.mediaDevices.getUserMedia(constraints)
+    return await gum(constraints)
   } catch (e) {
     if ((e as { name?: string } | null)?.name !== 'NotReadableError') throw e
     await new Promise((resolve) => setTimeout(resolve, 400))
-    return navigator.mediaDevices.getUserMedia(constraints)
+    return gum(constraints)
   }
 }
 
