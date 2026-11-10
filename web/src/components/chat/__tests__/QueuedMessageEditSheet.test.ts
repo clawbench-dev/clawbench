@@ -21,7 +21,7 @@ vi.mock('@/composables/useFileUpload', () => ({
 // The file picker owns uploads and is covered by its own tests; here it only
 // has to exist as the place "add attachment" opens, and to forward its events.
 const AttachDrawerStub = defineComponent({
-  name: 'AttachDrawer',
+  name: 'AttachmentPicker',
   props: { open: Boolean, attachedFiles: { type: Array, default: () => [] } },
   emits: ['close', 'add-attached', 'remove-attached'],
   setup(_props, { expose }) {
@@ -61,7 +61,7 @@ function mountSheet(props: Record<string, unknown> = {}) {
     props: { open: true, entry: entry(), saving: false, ...props },
     global: {
       plugins: [i18n],
-      stubs: { BottomSheet: BottomSheetStub, AttachDrawer: AttachDrawerStub },
+      stubs: { BottomSheet: BottomSheetStub, AttachmentPicker: AttachDrawerStub },
     },
   })
 }

@@ -1,5 +1,8 @@
 <template>
-  <BottomSheet :open="open" :close-guard="filePickerOpen" auto @close="onDrawerClose">
+  <!-- `maximized` only while the picker tab is showing: the picker owns its
+       scrolling (list scrolls, search dock stays pinned at the bottom), which
+       needs a definite height. The other tabs hug their content as before. -->
+  <BottomSheet :open="open" :close-guard="filePickerOpen" auto :maximized="activeTab === 'files'" @close="onDrawerClose">
     <template #header>
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
@@ -43,8 +46,10 @@
       </button>
     </div>
 
-    <!-- Tab bar (horizontal scroll) -->
-    <div class="ad-tab-bar">
+    <!-- Tab bar (horizontal scroll). Hidden when there is nothing to switch
+         to — the mail variant has only the file picker, and a single inert tab
+         is chrome that cannot do anything. -->
+    <div v-if="tabs.length > 1" class="ad-tab-bar">
       <button
         v-for="tab in tabs" :key="tab.key"
         class="ad-tab" :class="{ 'ad-tab-active': activeTab === tab.key }"
@@ -52,48 +57,20 @@
       >{{ tab.label }}</button>
     </div>
 
-    <!-- Tab content -->
-    <div class="ad-content">
-      <!-- Current (file + directory) -->
-      <template v-if="activeTab === 'current'">
-        <!-- Current directory -->
-        <button v-if="effectiveCurrentDir"
-          class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(effectiveCurrentDir) }"
-          @click="toggleAttached(effectiveCurrentDir, true)">
-          <div class="ad-icon-wrap">
-            <FileIcon path="" :is-dir="true" :size="28" class="ad-file-icon" />
-            <Check v-show="isAttached(effectiveCurrentDir)" :size="12" class="ad-icon-check" />
-          </div>
-          <div class="ad-file-info">
-            <span class="ad-file-name">
-              <span class="ad-label">{{ t('chat.attach.currentDir') }}</span>
-              {{ currentDirDisplayName }}
-            </span>
-            <span class="ad-file-meta">{{ effectiveCurrentDir }}</span>
-          </div>
-          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', effectiveCurrentDir)" />
-        </button>
-        <!-- Current file -->
-        <button v-if="currentFile"
-          class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(currentFile) }"
-          @click="toggleAttached(currentFile)">
-          <div class="ad-icon-wrap">
-            <img v-if="isImageFile(currentFile) && isThumbableExt(currentFile) && !thumbErrors.has(currentFile)"
-              class="ad-thumb" :src="thumbUrl(currentFile)" loading="lazy" @error="onThumbError(currentFile)" />
-            <FileIcon v-else :path="currentFile" :size="28" class="ad-file-icon" />
-            <Check v-show="isAttached(currentFile)" :size="12" class="ad-icon-check" />
-          </div>
-          <div class="ad-file-info">
-            <span class="ad-file-name">
-              <span class="ad-label">{{ t('chat.attach.currentFile') }}</span>
-              {{ baseName(currentFile) }}
-            </span>
-            <span class="ad-file-meta">{{ dirName(currentFile) }}</span>
-          </div>
-          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', currentFile)" />
-        </button>
-        <div v-if="!currentFile && !effectiveCurrentDir" class="ad-empty">{{ t('chat.attach.emptyCurrent') }}</div>
-      </template>
+    <!-- Tab content. The picker owns its own scroll container (list + pinned
+         search dock), so it is NOT wrapped in .ad-content — nesting two
+         scrollers is how the search box ends up scrolling away with the list. -->
+    <FilePicker
+      v-if="activeTab === 'files'"
+      :open="open"
+      :start-dir="currentDir"
+      :current-file="currentFile"
+      :selected="draft"
+      @update:selected="draft = $event"
+    />
+
+    <!-- Tab content: the chat-only recent lists -->
+    <div v-else class="ad-content">
 
       <!-- Recently referenced -->
       <template v-if="activeTab === 'references'">
@@ -283,6 +260,7 @@ import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
+import FilePicker from '@/components/file/FilePicker.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { useI18n } from 'vue-i18n'
@@ -315,11 +293,21 @@ const props = withDefaults(defineProps<{
   currentDir?: string | null
   attachedFiles?: FileEntry[]
   recentReferencedFiles?: ReferencedFile[]
+  /**
+   * Which surface opened the sheet.
+   *
+   * `chat` adds the "recent references" and "recent shares" tabs, which
+   * describe chat-side history and mean nothing in a mail composer. Both
+   * variants keep the file picker and the uploads tab (progress + recent
+   * uploads), so a mail attachment can be a project file or a fresh upload.
+   */
+  variant?: 'chat' | 'mail'
 }>(), {
   currentFile: null,
   currentDir: null,
   attachedFiles: () => [],
   recentReferencedFiles: () => [],
+  variant: 'chat',
 })
 
 const emit = defineEmits<{
@@ -355,7 +343,7 @@ const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUpload
 // the selection only ever reached the caller, never the shared draft.
 const { pendingFiles, attachedFiles: chatAttachedFiles, handleFileSelect, handleFileDrop, readPickedCount, terminateChatUploadBatch, cancelChatUpload, chatUploadCancelled } = useFileUpload()
 
-const activeTab = ref('current')
+const activeTab = ref('files')
 const fileInputRef = ref<HTMLInputElement | null>(null)
 // Image-only and camera inputs. Kept separate from fileInputRef so each entry
 // opens the system picker in the mode its button promises (see the template).
@@ -364,18 +352,23 @@ const cameraInputRef = ref<HTMLInputElement | null>(null)
 const filePickerOpen = ref(false)
 const loading = ref(false)
 
-const tabs = [
-  { key: 'current', label: '' },
-  { key: 'references', label: '' },
-  { key: 'shares', label: '' },
-  { key: 'uploads', label: '' },
-]
-
-// Lazy-init tab labels
-tabs[0].label = t('chat.attach.currentTab')
-tabs[1].label = t('chat.attach.recentReferences')
-tabs[2].label = t('chat.attach.recentShares')
-tabs[3].label = t('chat.attach.recentUploads')
+// Computed (not a one-shot array) so the labels follow a locale change while
+// the sheet stays mounted.
+const tabs = computed(() => {
+  const list = [{ key: 'files', label: t('chat.attach.filesTab') }]
+  // The "recent …" history tabs describe chat-side history. `uploads` stays in
+  // both variants: it is where an in-flight transfer reports progress and where
+  // the terminate button lives, and a mail attachment can be a fresh upload
+  // just as well as a project file.
+  if (props.variant === 'chat') {
+    list.push(
+      { key: 'references', label: t('chat.attach.recentReferences') },
+      { key: 'shares', label: t('chat.attach.recentShares') },
+    )
+  }
+  list.push({ key: 'uploads', label: t('chat.attach.recentUploads') })
+  return list
+})
 
 // ── File icon and thumbnail helpers (imported from utils/fileIcon) ──
 const thumbUrl = buildPathThumbUrl
@@ -455,6 +448,8 @@ async function onFileSelect(e: Event) {
   // before awaiting, which is where the in-flight rows and the terminate
   // button live. A cancelled picker reports 0 and leaves the tab alone.
   if (readPickedCount(e) > 0) {
+    // Where the in-flight rows and the terminate button live. A cancelled
+    // picker reports 0 and leaves the tab alone.
     activeTab.value = 'uploads'
     // A fresh picker batch: the previous batch's committed paths are no longer
     // this batch's to clear. Only on a real pick — re-opening the picker and
@@ -844,13 +839,6 @@ function reportClearResult(
   toast.show(t(doneKey, { n: result.deleted }), { icon: 'delete', type: 'success', duration: 2000 })
 }
 
-// Effective current dir: always show something (even at project root)
-const effectiveCurrentDir = computed(() => props.currentDir || '.')
-const currentDirDisplayName = computed(() => {
-  const dir = effectiveCurrentDir.value
-  return dir === '.' ? '/' : baseName(dir)
-})
-
 // Fetch data when drawer opens
 watch(() => props.open, async (v) => {
   if (v) {
@@ -1226,23 +1214,6 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-row:active .ad-file-delete-forget,
 .ad-file-row:hover .ad-file-delete-forget {
   color: var(--text-secondary);
-}
-
-/* Current item label */
-.ad-label {
-  display: inline-block;
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  padding: 1px calc(5 * var(--dp));
-  border-radius: var(--radius-xs);
-  margin-right: var(--space-3);
-  vertical-align: middle;
-  letter-spacing: calc(0.3 * var(--dp));
-}
-.ad-current-item {
-  background: var(--bg-secondary);
 }
 
 /* Upload progress percent in icon slot */

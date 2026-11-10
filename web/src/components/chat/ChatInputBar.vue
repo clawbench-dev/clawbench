@@ -202,8 +202,9 @@
           @stop-all="handleStopAll"
         />
       </div>
-      <!-- Attach drawer (BottomSheet) -->
-      <AttachDrawer
+      <!-- Attachment picker (BottomSheet). Shared with the mail composer, so
+           it lives under components/attach/ rather than components/chat/. -->
+      <AttachmentPicker
         ref="attachDrawerRef"
         :open="attachDrawer.effectiveOpen.value"
         :current-file="currentFile?.path"
@@ -376,7 +377,7 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import CompletionMenu from '@/components/common/CompletionMenu.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import AttachDrawer from '@/components/chat/AttachDrawer.vue'
+import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'

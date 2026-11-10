@@ -543,7 +543,7 @@ const stubs = {
   // bound to (an undeclared prop would fall through to $attrs instead).
   PopupMenu: { name: 'PopupMenu', props: ['show'], template: '<div><slot /></div>' },
   SessionDrawer: true,
-  AttachDrawer: true,
+  AttachmentPicker: true,
   QuickSendDrawer: true,
   List: true,
   Plus: true,

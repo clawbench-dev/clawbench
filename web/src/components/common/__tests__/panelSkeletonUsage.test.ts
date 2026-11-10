@@ -59,7 +59,7 @@ const PANELS: Array<[file: string, why: string]> = [
   ['web/src/components/share/ShareCenterPanel.vue', 'share center'],
   ['web/src/components/TocPanel.vue', 'outline'],
   ['web/src/components/chat/MessageClustersDrawer.vue', 'message clusters'],
-  ['web/src/components/chat/AttachDrawer.vue', 'attachment drawer'],
+  ['web/src/components/attach/AttachmentPicker.vue', 'attachment drawer'],
   ['web/src/components/chat/UserMsgIndexDrawer.vue', 'user message index'],
   ['web/src/components/chat/AcpSessionDrawer.vue', 'ACP session list'],
   ['web/src/components/common/AgentSelectorDrawer.vue', 'agent picker'],

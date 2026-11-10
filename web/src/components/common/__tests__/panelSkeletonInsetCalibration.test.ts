@@ -270,7 +270,7 @@ const SURFACES: Surface[] = [
   },
   {
     name: 'attachment drawer',
-    file: 'src/components/chat/AttachDrawer.vue',
+    file: 'src/components/attach/AttachmentPicker.vue',
     skeleton: '.ad-content',
     row: '.ad-file-row',
   },

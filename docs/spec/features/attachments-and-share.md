@@ -10,7 +10,8 @@
 sequenceDiagram
     participant 用户
     participant 系统分享或文件选择器
-    participant AttachDrawer
+    participant AttachmentPicker
+    participant FilePicker
     participant Upload API
     participant 项目临时目录
     participant ChatInput
@@ -18,10 +19,13 @@ sequenceDiagram
     用户->>系统分享或文件选择器: 选择文件
     系统分享或文件选择器->>Upload API: 写入 share-in 或 uploads
     Upload API->>项目临时目录: 保存文件
-    AttachDrawer->>Upload API: 查询最近上传/分享文件
-    Upload API-->>AttachDrawer: 最近文件列表
-    用户->>AttachDrawer: 选择附件
-    AttachDrawer->>ChatInput: 加入待发送文件
+    AttachmentPicker->>Upload API: 查询最近上传/分享文件
+    Upload API-->>AttachmentPicker: 最近文件列表
+    AttachmentPicker->>FilePicker: 第一个页签（浏览项目目录 + 名称搜索）
+    用户->>FilePicker: 勾选文件 / 文件夹
+    FilePicker-->>AttachmentPicker: 选中路径（草稿）
+    用户->>AttachmentPicker: 点确定
+    AttachmentPicker->>ChatInput: 加入待发送文件
 ```
 
 普通上传和系统 Share In 使用不同来源目录，但在附件抽屉中汇合。发送消息时只引用已落盘文件，避免把大型二进制内容直接塞入聊天请求。
@@ -56,6 +60,11 @@ sequenceDiagram
 - **清单是项目里的普通文件，因此写入与读取两侧都要校验路径**：清单就在项目目录里，AI、工具或手改都能写进去，只在写入侧校验会让一条越界条目在渲染时解析到项目之外。**绝对路径按语法判定，不能用平台的 `filepath.IsAbs`**：Windows 上 `/etc/passwd` 不是绝对路径（它表示"当前盘根"），Linux 写下的条目会因此通过校验；前导 `/` 或 `\`、以及 `C:` 形式的盘符路径都一律拒绝——清单随项目在平台之间移动，判据必须与运行平台无关
 - **抽屉状态跨系统选择器保持**：启动原生文件选择器时不应把附件流程误判为用户关闭抽屉
 - **附件抽屉是「选择器」，点确定才进输入框**：打开时对当前已附加项拍一张快照，之后的勾选/上传都只写进抽屉自己的草稿（footer 逐张长出芯片），点确定时把草稿与快照做**差集**一次性交给输入框；取消 / 内划 / 点遮罩 / 返回 / × 都只是关掉，什么都不用撤回——本来就没交出去。**上传完成也不自动选中**：曾经是「传完就落地、取消再撤」，观感上就是输入框先闪出一张图再消失；真正的选择器语义是"没确认的东西不进消息"。抽屉开着时输入框也不显示上传中的卡片（进度只在抽屉的上传页签看），否则传完那一刻卡片被卸载，又变回「闪一下没了」。判定「真的选中了」必须在交给上传处理**之前**读文件数——处理函数会同步清空 `input.value`，之后读永远是 0；空 FileList（用户取消）不关抽屉，因为他可能还在浏览其它页签
+
+- **第一个页签是真正的文件选择器（`components/file/FilePicker.vue`）**：浏览项目目录 + 底部常驻名称搜索（精确 / 递归 / 全局三个开关），目录行点击进入、行尾按钮把整个文件夹作为附件。**它自带目录状态，不读写文件管理器的 store**——`store.state.currentDir` 是左栏的位置，选择器一旦共用它，用户在聊天里翻两下目录就会把左栏带跑。路径规则（项目内相对 vs 项目外绝对、走 `/api/dir` 还是 `/api/projects`）抽在 `utils/dirPath.ts`，与 store 共用同一份。搜索、图标、面包屑、缩略图都复用现成组件，不复制文件管理器的重命名/删除/右键菜单
+- **抽屉与邮件共用（`components/attach/AttachmentPicker.vue`）**：`variant='chat'` 额外提供最近引用/分享/上传三个页签，`variant='mail'` 只留文件选择器。**邮件不复用聊天上传管线的状态**：`useFileUpload` 的 `pendingFiles` 是全局单例（聊天输入条也在读），复用会让邮件上传的卡片出现在聊天输入框上方；邮件侧只把选中的**路径**交给 `POST /api/mail/attachments`（普通文件原地引用、文件夹打成 zip），拿回 `{filename, path, size}` 再入草稿，暂存期间该行显示加载态且「发送」不可用
+
+**已知边界**：选择器的底部搜索框贴在抽屉底边，安卓 App（`adjustResize`）键盘弹出时布局视口收缩、抽屉整体上移，没有问题；手机浏览器上布局视口不缩，靠浏览器对聚焦输入框的自动上推兜底——若真机验证不行，再给 `BottomSheet` 加可视视口 inset 补偿（会影响所有抽屉，须单独做）
 - **缩略图按需生成**：只为需要预览的图片生成缩略图，不复制所有附件内容
 - **项目隔离**：最近文件查询绑定当前项目，避免把一个项目的附件错误带入另一个项目
 - **文件夹上传使用 webkitGetAsEntry 递归遍历**：回退到 dataTransfer.files 扁平模式，保证兼容性
