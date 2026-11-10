@@ -1766,14 +1766,26 @@ describe('AttachmentPicker chrome (compact source strip, borderless clear-all)',
     return m![1]
   }
 
-  it('the three source entries are single-line pills, not stacked blocks', () => {
-    // "Compact but keep the icon and the label": icon and text side by side on
-    // one short row. A column layout with 44px min-height is what made the
-    // strip eat a fifth of the sheet on a phone.
-    const decls = declsOf('.ad-source-btn')
-    expect(decls).not.toMatch(/flex-direction\s*:\s*column/)
-    expect(decls).toMatch(/height\s*:\s*calc\(34 \* var\(--dp\)\)/)
-    expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
+  it('the source strip is a flat, full-width row of three equal parts', () => {
+    // Flat, not three cards: the strip itself is the only surface, each entry
+    // takes a third of the full width, and a hairline separates neighbours.
+    // Icon and label stay side by side — a column layout ate a fifth of the
+    // sheet on a phone.
+    const btn = declsOf('.ad-source-btn')
+    expect(btn).not.toMatch(/flex-direction\s*:\s*column/)
+    expect(btn).toMatch(/flex\s*:\s*1 1 0/)
+    expect(btn).toMatch(/border\s*:\s*none/)
+    expect(btn).toMatch(/border-radius\s*:\s*0/)
+    expect(btn).toMatch(/background\s*:\s*transparent/)
+
+    // 通栏: no outer inset, no gaps between the thirds.
+    const bar = declsOf('.ad-source-bar')
+    expect(bar).toMatch(/padding\s*:\s*0(;|\s)/)
+    expect(bar).not.toMatch(/gap\s*:/)
+
+    // The only separator is the hairline between two neighbours (never at the
+    // strip's outer edges).
+    expect(source).toMatch(/\.ad-source-btn \+ \.ad-source-btn\s*\{[^}]*border-left:\s*1px solid/)
   })
 
   it('clear-all is a borderless icon+label button like the other clear-alls', () => {

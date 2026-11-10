@@ -928,8 +928,8 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-source-bar {
   display: flex;
   align-items: stretch;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-6);
+  /* 通栏：不留外边距也不留间距，三个入口各占三分之一，整行就是热区 */
+  padding: 0;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -940,19 +940,22 @@ defineExpose({ activeTab, handleFileDrop })
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  height: calc(34 * var(--dp));
+  height: calc(40 * var(--dp));
   padding: 0 var(--space-2);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--accent-color);
   cursor: pointer;
   font-size: var(--font-size-sm);
-  transition: background var(--duration-fast), border-color var(--duration-fast);
+  transition: background var(--duration-fast);
+}
+/* 通栏三分的“分”：只在相邻项之间画发丝线，两端不留 */
+.ad-source-btn + .ad-source-btn {
+  border-left: 1px solid var(--border-color);
 }
 .ad-source-btn:active {
-  background: var(--bg-tertiary);
-  border-color: var(--accent-color);
+  background: var(--bg-hover);
 }
 /* The icon must never be the thing that gives way when the label is long. */
 .ad-source-btn svg {
@@ -960,8 +963,7 @@ defineExpose({ activeTab, handleFileDrop })
 }
 @media (hover: hover) {
   .ad-source-btn:hover {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-color);
+    background: var(--bg-hover);
   }
 }
 .ad-source-label {
