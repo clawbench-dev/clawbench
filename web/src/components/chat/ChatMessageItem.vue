@@ -1069,12 +1069,13 @@ const copyPayload = quotableText
 }
 
 /* Direction markers are ICONS, not ↑/↓ text, so they render identically on
-   every platform instead of inheriting a font's arrow shape. */
+   every platform instead of inheriting a font's arrow shape. No opacity of
+   their own: they sit on the same row as the money glyph, and a dimmed arrow
+   next to a full-strength coin read as two different tones. */
 .chat-usage-arrow {
     width: calc(12 * var(--dp));
     height: calc(12 * var(--dp));
     flex-shrink: 0;
-    opacity: 0.55;
 }
 
 /* The money figure is the headline of the tail but deliberately carries NO

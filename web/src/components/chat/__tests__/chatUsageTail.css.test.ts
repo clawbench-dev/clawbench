@@ -72,4 +72,11 @@ describe('in-bubble consumption figures', () => {
     const body = rule(css, '.chat-usage-money')
     expect(body).not.toMatch(/\bcolor\s*:/)
   })
+
+  it('paints the direction arrows at the same strength as the money glyph', () => {
+    // They share one row, so a dimmed arrow next to a full-strength coin reads
+    // as two different tones rather than as one group.
+    const body = rule(css, '.chat-usage-arrow')
+    expect(body).not.toMatch(/opacity\s*:/)
+  })
 })
