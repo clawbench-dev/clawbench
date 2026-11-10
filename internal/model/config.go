@@ -501,11 +501,10 @@ type STTEngineConfig struct {
 	// Language is passed to the engine per request. Empty means "let the server
 	// decide", which is what a multilingual Whisper deployment usually wants.
 	Language string `yaml:"language"` // default "zh"
-	// Streaming is the client-facing switch: the browser sends PCM frames
-	// instead of uploading one file. This engine cannot stream natively, so the
-	// server cuts the PCM into chunks on pauses.
-	Streaming bool `yaml:"streaming"` // true=streaming incremental, false=non-streaming full (default: false)
-	ChunkMs   int  `yaml:"chunk_ms"`  // Streaming slice interval in ms (default: 1000)
+	// This engine cannot decode live PCM, so it has no streaming switch: the
+	// dictation path always uploads one finished recording. Chunking below is
+	// only for the server-side chunker that continuous-conversation mode uses.
+	ChunkMs int `yaml:"chunk_ms"` // Streaming slice interval in ms (default: 1000)
 	// FinalRecheck re-transcribes the whole recording once the client sends
 	// "end", replacing the text it accumulated from the chunks. It is the only
 	// way a buffered engine's final answer can span chunk boundaries, but it

@@ -2796,12 +2796,11 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 			"provider":     "doubao",
 			"shortcut_key": "Ctrl+M",
 			"vllm": map[string]any{
-				"base_url":  "http://localhost:9000/v1",
-				"api_key":   "k",
-				"model":     "whisper-small",
-				"language":  "en",
-				"streaming": true,
-				"chunk_ms":  float64(800),
+				"base_url": "http://localhost:9000/v1",
+				"api_key":  "k",
+				"model":    "whisper-small",
+				"language": "en",
+				"chunk_ms": float64(800),
 			},
 			"doubao": map[string]any{
 				"api_key":     "volc-k",
@@ -2827,9 +2826,6 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 	}
 	if cfg2.STT.VLLM.Language != "en" {
 		t.Errorf("STT.VLLM.Language = %q, want en", cfg2.STT.VLLM.Language)
-	}
-	if !cfg2.STT.VLLM.Streaming {
-		t.Error("STT.VLLM.Streaming = false, want true")
 	}
 	if cfg2.STT.VLLM.ChunkMs != 800 {
 		t.Errorf("STT.VLLM.ChunkMs = %d, want 800", cfg2.STT.VLLM.ChunkMs)
@@ -2866,7 +2862,6 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	cfg.STT.VLLM.APIKey = "k"
 	cfg.STT.VLLM.Model = "whisper-small"
 	cfg.STT.VLLM.Language = "en"
-	cfg.STT.VLLM.Streaming = true
 	cfg.STT.VLLM.ChunkMs = 800
 	cfg.STT.Doubao.APIKey = "volc-k"
 	cfg.STT.Doubao.ResourceID = "volc.seedasr.sauc.duration"
@@ -2892,8 +2887,10 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	assert.Equal(t, "k", vllm["api_key"])
 	assert.Equal(t, "whisper-small", vllm["model"])
 	assert.Equal(t, "en", vllm["language"])
-	assert.Equal(t, true, vllm["streaming"])
 	assert.Equal(t, float64(800), vllm["chunk_ms"])
+	// The OpenAI-compatible engine has no streaming switch: it cannot decode
+	// live PCM, so the key must not come back in the config response.
+	assert.NotContains(t, vllm, "streaming")
 
 	doubao, ok := stt["doubao"].(map[string]any)
 	require.True(t, ok, "response should contain stt.doubao")

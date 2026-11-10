@@ -632,7 +632,6 @@ const serverDefaults: Record<string, unknown> = {
   'stt.vllm.api_key': '',
   'stt.vllm.model': 'openai/whisper-large-v3',
   'stt.vllm.language': 'zh',
-  'stt.vllm.streaming': false,
   'stt.vllm.chunk_ms': 1000,
   'stt.vllm.final_recheck': false,
   'stt.doubao.api_key': '',

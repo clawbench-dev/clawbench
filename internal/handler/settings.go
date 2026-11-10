@@ -113,7 +113,6 @@ var hotReloadFields = map[string]bool{
 	"stt.vllm.api_key":             true,
 	"stt.vllm.model":               true,
 	"stt.vllm.language":            true,
-	"stt.vllm.streaming":           true,
 	"stt.vllm.chunk_ms":            true,
 	"stt.vllm.final_recheck":       true,
 	"stt.doubao.api_key":           true,
@@ -537,7 +536,6 @@ type configSTTVLLM struct {
 	APIKey       string `json:"api_key"`
 	Model        string `json:"model"`
 	Language     string `json:"language"`
-	Streaming    bool   `json:"streaming"`
 	ChunkMs      int    `json:"chunk_ms"`
 	FinalRecheck bool   `json:"final_recheck"`
 }
@@ -971,7 +969,6 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.vllm.api_key":                       true,
 	"stt.vllm.model":                         true,
 	"stt.vllm.language":                      true,
-	"stt.vllm.streaming":                     true,
 	"stt.vllm.chunk_ms":                      true,
 	"stt.vllm.final_recheck":                 true,
 	"stt.doubao.api_key":                     true,
@@ -1197,7 +1194,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 				APIKey:       cfg.STT.VLLM.APIKey,
 				Model:        cfg.STT.VLLM.Model,
 				Language:     cfg.STT.VLLM.Language,
-				Streaming:    cfg.STT.VLLM.Streaming,
 				ChunkMs:      cfg.STT.VLLM.ChunkMs,
 				FinalRecheck: cfg.STT.VLLM.FinalRecheck,
 			},
@@ -1730,9 +1726,6 @@ func applySTTVLLMPatch(cfg *model.STTEngineConfig, patch map[string]any) {
 	}
 	if v, ok := patch["language"].(string); ok {
 		cfg.Language = v
-	}
-	if v, ok := patch["streaming"].(bool); ok {
-		cfg.Streaming = v
 	}
 	if v, ok := patch["chunk_ms"].(float64); ok {
 		cfg.ChunkMs = int(v)

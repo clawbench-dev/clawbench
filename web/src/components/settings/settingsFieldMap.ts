@@ -705,7 +705,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.vllm.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.vllm.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.vllm.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.vllm.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        // No 流式识别 switch here: this engine cannot decode live PCM, so the
+        // dictation path always uploads one finished recording. The row used to
+        // be rendered anyway and toggled a value nothing read.
         { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.vllm.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttFinalRecheck', descriptionKey: 'settings.items.sttFinalRecheckDesc', key: 'stt.vllm.final_recheck', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
 

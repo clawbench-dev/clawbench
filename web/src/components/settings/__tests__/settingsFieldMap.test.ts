@@ -645,8 +645,12 @@ describe('settingsFieldMap', () => {
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
     }
 
-    // The streaming switch exists once per engine, each gated on its own engine.
-    for (const engine of ['vllm', 'doubao', 'alibaba']) {
+    // The streaming switch exists only for the engines that can decode live
+    // PCM, each gated on its own engine. vLLM gets no row at all: its value was
+    // never read by any code path (dictation always uploads one recording), so
+    // the row was a switch that did nothing.
+    expect(keys).not.toContain('stt.vllm.streaming')
+    for (const engine of ['doubao', 'alibaba']) {
       const field = cfg.commonFields.find(f => f.key === `stt.${engine}.streaming`)
       expect(field, engine).toBeDefined()
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })

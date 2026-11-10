@@ -70,7 +70,7 @@ func TestMigrateLegacySTT(t *testing.T) {
 	if !cfg.STT.Doubao.Streaming {
 		t.Error("Doubao.Streaming = false, want the active engine to inherit it")
 	}
-	if cfg.STT.VLLM.Streaming || cfg.STT.Alibaba.Streaming {
+	if cfg.STT.Alibaba.Streaming {
 		t.Error("inactive engines gained streaming")
 	}
 
@@ -204,12 +204,36 @@ func TestDropLegacySTTKeys(t *testing.T) {
 	}
 }
 
+// TestMigrateLegacySTT_StreamingForVLLMIsDropped pins the removal of the vLLM
+// streaming switch: a legacy flat `streaming` aimed at that engine is dropped
+// rather than stored on an engine whose dictation path never reads it.
+func TestMigrateLegacySTT_StreamingForVLLMIsDropped(t *testing.T) {
+	raw := map[string]any{
+		"stt": map[string]any{
+			"provider":  "vllm",
+			"streaming": true,
+		},
+	}
+	cfg := Config{}
+	presence := map[string]bool{}
+	MigrateLegacySTT(raw, &cfg, presence)
+
+	if cfg.STT.ActiveStreaming() {
+		t.Error("ActiveStreaming = true, want false (the vLLM engine has no switch)")
+	}
+	for _, key := range []string{"stt.vllm.streaming", "stt.doubao.streaming", "stt.alibaba.streaming"} {
+		if presence[key] {
+			t.Errorf("presence[%q] = true, want the legacy value dropped", key)
+		}
+	}
+}
+
 // TestActiveAccessors covers the shared helpers that read "the selected
 // engine's" language and streaming flag.
 func TestActiveAccessors(t *testing.T) {
 	cfg := STTConfig{
 		Provider: "doubao",
-		VLLM:     STTEngineConfig{Language: "en", Streaming: true},
+		VLLM:     STTEngineConfig{Language: "en"},
 		Doubao:   STTDoubaoConfig{Streaming: false},
 		Alibaba:  STTAlibabaConfig{Language: "ja", Streaming: true},
 	}
@@ -232,8 +256,10 @@ func TestActiveAccessors(t *testing.T) {
 	if got := cfg.ActiveLanguage(); got != "en" {
 		t.Errorf("vllm ActiveLanguage = %q, want en", got)
 	}
-	if !cfg.ActiveStreaming() {
-		t.Error("vllm ActiveStreaming = false, want true")
+	// The OpenAI-compatible engine cannot decode live PCM, so it has no
+	// streaming switch and never reports streaming.
+	if cfg.ActiveStreaming() {
+		t.Error("vllm ActiveStreaming = true, want false")
 	}
 
 	// An unset provider behaves like the default engine.
