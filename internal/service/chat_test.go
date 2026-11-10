@@ -150,7 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_id, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS summaries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_type TEXT NOT NULL,
@@ -1347,11 +1347,13 @@ func TestAddChatMessage_WithFilePath(t *testing.T) {
 	assert.Equal(t, []model.FileEntry{{Path: "/src/main.go"}}, msgs[0].Files)
 }
 
-// TestGetSessions_OrderedByRecentActivity is the regression guard for #635:
-// the sidebar used to order by created_at, which buried a session created days
-// ago but still being worked in. A later interaction must float the session to
-// the top, even though it is the older one.
-func TestGetSessions_OrderedByRecentActivity(t *testing.T) {
+// TestGetSessions_OrderedByCreatedAt is the DEFAULT-order guard: with
+// chat.session_sort_recent OFF, a later interaction must NOT reorder the list.
+// Rows that share (pinned, sort_order) — every list the user has never dragged
+// — fall back to creation time, so the sidebar stays still while the user
+// works. Ordering by activity is opt-in (see the next test) because it made the
+// list reshuffle under the reader.
+func TestGetSessions_OrderedByCreatedAt(t *testing.T) {
 	setupDB(t)
 
 	sid1 := helperCreateSession(t, "/project", "claude", "First")
@@ -1363,8 +1365,38 @@ func TestGetSessions_OrderedByRecentActivity(t *testing.T) {
 	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", sid2)
 	assert.NoError(t, err)
 
-	// A later interaction on the older session must float it to the top: the
-	// list is ordered by last activity, not by creation time.
+	// A later interaction must NOT reorder the list: update sid1's updated_at to
+	// be newest, yet the order must remain by created_at.
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
+	assert.NoError(t, err)
+
+	sessions, err := service.GetSessions("/project", "claude")
+	assert.NoError(t, err)
+	assert.Len(t, sessions, 2)
+
+	// sid2 should be first since it was created most recently, regardless of interaction
+	assert.Equal(t, sid2, sessions[0].ID)
+	assert.Equal(t, sid1, sessions[1].ID)
+}
+
+// TestGetSessions_OrderedByRecentActivityWhenEnabled covers the opt-in mode:
+// with chat.session_sort_recent ON, the older session that was interacted with
+// last floats to the top.
+func TestGetSessions_OrderedByRecentActivityWhenEnabled(t *testing.T) {
+	setupDB(t)
+	orig := model.ChatSessionSortRecent
+	model.ChatSessionSortRecent = true
+	t.Cleanup(func() { model.ChatSessionSortRecent = orig })
+
+	sid1 := helperCreateSession(t, "/project", "claude", "First")
+	sid2 := helperCreateSession(t, "/project", "claude", "Second")
+
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds'), updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	assert.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", sid2)
+	assert.NoError(t, err)
+
+	// A later interaction on the older session must float it to the top.
 	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
@@ -3163,7 +3195,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 
 	// Use last session as cursor
 	lastSession := sessions[len(sessions)-1]
-	cursor := lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
 	// Second page: cursor from last session of first page
@@ -3198,7 +3230,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 
 	// Second page: cursor from last session
 	lastSession := sessions[len(sessions)-1]
-	cursor := lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
 	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil, nil, "")
@@ -3256,21 +3288,47 @@ func TestGetSessionsPaged_ExcludesScheduledSessions(t *testing.T) {
 	assert.Equal(t, "Chat", sessions[0].Title)
 }
 
-// TestGetSessionsPaged_OrderedByRecentActivity mirrors the GetSessions
-// contract on the paged path: last activity decides, not creation time (#635).
-func TestGetSessionsPaged_OrderedByRecentActivity(t *testing.T) {
+// TestGetSessionsPaged_OrderedByCreatedAt mirrors the default GetSessions
+// contract on the paged path: a later interaction must not reorder the list.
+func TestGetSessionsPaged_OrderedByCreatedAt(t *testing.T) {
 	setupDB(t)
 
 	sid1 := helperCreateSession(t, "/project", "claude", "Old")
 	sid2 := helperCreateSession(t, "/project", "claude", "New")
 
-	// Set explicit timestamps to guarantee ordering (SQLite time precision is seconds)
+	// Set explicit created_at timestamps to guarantee ordering (SQLite time precision is seconds)
 	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds'), updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", sid2)
 	assert.NoError(t, err)
 
-	// A later interaction on the older session must float it to the top.
+	// A later interaction on the older session must NOT change ordering.
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
+	assert.NoError(t, err)
+
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
+	assert.NoError(t, err)
+	assert.Len(t, sessions, 2)
+	assert.Equal(t, sid2, sessions[0].ID) // most recently created first
+	assert.Equal(t, sid1, sessions[1].ID)
+}
+
+// TestGetSessionsPaged_OrderedByRecentActivityWhenEnabled mirrors the opt-in
+// GetSessions contract on the paged path: last activity decides.
+func TestGetSessionsPaged_OrderedByRecentActivityWhenEnabled(t *testing.T) {
+	setupDB(t)
+	orig := model.ChatSessionSortRecent
+	model.ChatSessionSortRecent = true
+	t.Cleanup(func() { model.ChatSessionSortRecent = orig })
+
+	sid1 := helperCreateSession(t, "/project", "claude", "Old")
+	sid2 := helperCreateSession(t, "/project", "claude", "New")
+
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds'), updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	assert.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", sid2)
+	assert.NoError(t, err)
+
 	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
@@ -3314,7 +3372,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 		}
 
 		lastSession := sessions[len(sessions)-1]
-		cursor = lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+		cursor = lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 		cursorID = lastSession.ID
 		page++
 
@@ -3362,7 +3420,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 
 	// Second page: cursor from last session of page 1
 	lastSession := sessions[len(sessions)-1]
-	cursor := lastSession.UpdatedAt.Format("2006-01-02 15:04:05")
+	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
 	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, nil, "")
@@ -3380,14 +3438,75 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	}
 }
 
-// TestGetSessionsPaged_CursorMatchesUpdatedAtOrder pins the pagination
-// contract: the paged query orders and filters by updated_at (the session
-// list's activity order, #635), so the cursor must be updated_at. Using
-// created_at as the cursor makes the `updated_at < cursor` filter match rows
-// already returned on the previous page, duplicating the list — the regression
-// that produced duplicate sessions in the UI.
-func TestGetSessionsPaged_CursorMatchesUpdatedAtOrder(t *testing.T) {
+// TestGetSessionsPaged_CursorMatchesCreatedAtOrder pins the DEFAULT pagination
+// contract: the paged query orders and filters by created_at, so the cursor
+// must be created_at. Using updated_at (which is >= created_at and bumped on
+// every message) as the cursor makes the `created_at < cursor` filter match
+// rows already returned on the previous page, duplicating the list — the
+// regression that produced duplicate sessions in the UI.
+func TestGetSessionsPaged_CursorMatchesCreatedAtOrder(t *testing.T) {
 	setupDB(t)
+
+	// Three sessions ordered by created_at: oldest → newest.
+	sidOld := helperCreateSession(t, "/project", "claude", "Old")
+	sidMid := helperCreateSession(t, "/project", "claude", "Mid")
+	sidNew := helperCreateSession(t, "/project", "claude", "New")
+	for id, offset := range map[string]int{sidOld: -120, sidMid: -60, sidNew: 0} {
+		_, err := store.UnsafeDBForTest().Exec(
+			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds'), updated_at = datetime('now', ? || ' seconds') WHERE id = ?",
+			fmt.Sprintf("%d", offset), fmt.Sprintf("%d", offset), id,
+		)
+		assert.NoError(t, err)
+	}
+
+	// Push the OLDEST session's updated_at far into the future. If the cursor
+	// were updated_at, page 2 would re-return it (and its neighbors) because
+	// their created_at is < that future timestamp.
+	_, err := store.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld,
+	)
+	assert.NoError(t, err)
+
+	// Page 1 (limit=1) → newest created session.
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil, nil, "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 1)
+	assert.Equal(t, sidNew, page1[0].ID)
+	assert.True(t, hasMore)
+
+	// Page 2 uses the created_at cursor — must be the middle session, NOT a
+	// repeat of page 1.
+	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil, nil, "")
+	assert.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Equal(t, sidMid, page2[0].ID)
+
+	// Sanity: feeding an updated_at value as the cursor re-returns page 1's row.
+	// sidOld.updated_at is +1 day, so `created_at < <that>` matches sidNew —
+	// the exact duplicate-producing behavior this contract guards against.
+	var oldUpdatedAt string
+	err = store.UnsafeDBForTest().QueryRow(
+		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld,
+	).Scan(&oldUpdatedAt)
+	require.NoError(t, err)
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil, nil, "")
+	assert.NoError(t, err)
+	require.Len(t, badCursor, 1)
+	assert.Equal(t, sidNew, badCursor[0].ID,
+		"an updated_at cursor must re-return page 1 (demonstrating the duplicate bug)")
+}
+
+// TestGetSessionsPaged_CursorMatchesUpdatedAtOrderWhenEnabled pins the opt-in
+// contract: with chat.session_sort_recent ON the paged query orders and filters
+// by updated_at, so the cursor must be updated_at. Using created_at as the
+// cursor makes the `updated_at < cursor` filter match rows already returned on
+// the previous page, duplicating the list.
+func TestGetSessionsPaged_CursorMatchesUpdatedAtOrderWhenEnabled(t *testing.T) {
+	setupDB(t)
+	orig := model.ChatSessionSortRecent
+	model.ChatSessionSortRecent = true
+	t.Cleanup(func() { model.ChatSessionSortRecent = orig })
 
 	// Three sessions ordered by updated_at: oldest → newest.
 	sidOld := helperCreateSession(t, "/project", "claude", "Old")
@@ -3423,11 +3542,6 @@ func TestGetSessionsPaged_CursorMatchesUpdatedAtOrder(t *testing.T) {
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.Equal(t, sidMid, page2[0].ID)
-
-	// The cursor-column mismatch itself (a created_at value fed into the
-	// updated_at predicate) is asserted at the HTTP layer by
-	// TestServeSessions_Get_CursorAndCursorID: it diverges the cursor row's
-	// created_at by a day and checks the second page does not overlap the first.
 }
 
 // ---------- GetSessionTitlesBatch ----------
@@ -6630,9 +6744,9 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	db := setupDB(t)
 	projectPath := "/test/pinned-sort"
 
-	// Create sessions with different pinned states. created_at/updated_at are
-	// set explicitly so the newest-first tiebreak (all default to sort_order 0)
-	// is deterministic — updated_at is the tiebreak column (#635).
+	// Create sessions with different pinned states. created_at is set explicitly
+	// so the newest-first tiebreak (all default to sort_order 0) is
+	// deterministic — created_at is the default tiebreak column.
 	s1 := helperCreateSession(t, projectPath, "claude", "First")
 	s2 := helperCreateSession(t, projectPath, "claude", "Second")
 	s3 := helperCreateSession(t, projectPath, "claude", "Third")
@@ -6838,21 +6952,21 @@ func TestNewSessionLandsOnTop(t *testing.T) {
 
 	a := helperCreateSession(t, projectPath, "claude", "A")
 	b := helperCreateSession(t, projectPath, "claude", "B")
-	// Ordering is (pinned DESC, sort_order ASC, updated_at DESC, id DESC) — the
-	// tiebreak column is updated_at, NOT created_at. Backdate updated_at so every
-	// step below is deterministic instead of depending on the second-precision
-	// CURRENT_TIMESTAMP (which used to make fresh-vs-b fall through to the random
-	// id DESC comparison and fail intermittently).
-	_, err := store.WriteExec("UPDATE chat_sessions SET updated_at = '2024-01-01 00:00:00' WHERE id = ?", a)
+	// Ordering is (pinned DESC, sort_order ASC, created_at DESC, id DESC) — the
+	// default tiebreak column is created_at. Backdate it so every step below is
+	// deterministic instead of depending on the second-precision CURRENT_TIMESTAMP
+	// (which used to make fresh-vs-b fall through to the random id DESC
+	// comparison and fail intermittently).
+	_, err := store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", a)
 	require.NoError(t, err)
-	_, err = store.WriteExec("UPDATE chat_sessions SET updated_at = '2024-01-02 00:00:00' WHERE id = ?", b)
+	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", b)
 	require.NoError(t, err)
 	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a}))
 
 	fresh := helperCreateSession(t, projectPath, "claude", "Fresh")
 	// The fresh session defaults to sort_order 0, tied with b; give it a newer
-	// updated_at so the tiebreak is deterministic.
-	_, err = store.WriteExec("UPDATE chat_sessions SET updated_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
+	// created_at so the tiebreak is deterministic.
+	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions(projectPath, "")
@@ -6873,7 +6987,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	setupDB(t)
 	projectPath := "/test/pinned-pagination"
 
-	// Six sessions with strictly increasing updated_at (helperCreateSession
+	// Six sessions with strictly increasing created_at (helperCreateSession
 	// assigns CURRENT_TIMESTAMP, so make the order deterministic explicitly).
 	ids := make([]string, 0, 6)
 	for _, title := range []string{"A", "B", "C", "D", "E", "F"} {
@@ -6887,7 +7001,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 
 	// Force a shared sort_order, which is what an un-dragged list looks like
 	// (and what the migration backfill produces). Ties then fall back to
-	// updated_at DESC, id DESC — so the newest session (ids[5]) leads.
+	// created_at DESC, id DESC — so the newest session (ids[5]) leads.
 	_, err := store.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projectPath)
 	require.NoError(t, err)
 
@@ -6908,7 +7022,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	lastPinned := last1.Pinned
 	page2, _, err := service.GetSessionsPaged(
 		projectPath, "", 3,
-		last1.UpdatedAt.Format("2006-01-02 15:04:05"), last1.ID, &lastOrder, &lastPinned, "",
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &lastOrder, &lastPinned, "",
 	)
 	require.NoError(t, err)
 

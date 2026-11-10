@@ -236,6 +236,8 @@ const i18n = createI18n({
           chatRecommendContextMessagesDesc: '推荐上下文消息数',
           sessionMaxCount: '最大会话数',
           sessionMaxCountDesc: '最大会话数',
+          sessionSortRecent: '会话按最近活动排序',
+          sessionSortRecentDesc: '会话按最近活动排序',
           archiveRetentionEnabled: '自动清理归档会话',
           archiveRetentionEnabledDesc: '归档会话到期后自动物理删除',
           archiveRetentionDays: '留存天数',
@@ -568,6 +570,25 @@ describe('SettingsCategory', () => {
       expect(item).toBeTruthy()
       // session.max_count is hot-reloadable via applyHotReloadGlobals, no restart needed
       expect(item!.props().needsRestart).toBe(false)
+    })
+
+    it('PATCHes chat.session_sort_recent and bumps sessionListVersion', async () => {
+      const { store } = await import('@/stores/app')
+      const before = store.state.sessionListVersion
+      const wrapper = mountCategory('chat')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '会话按最近活动排序')
+      expect(item).toBeTruthy()
+      expect(item!.props().type).toBe('switch')
+
+      await item!.vm.$emit('update:modelValue', true)
+      await wrapper.vm.$nextTick()
+
+      expect(mockSetServerValue).toHaveBeenCalledWith('chat.session_sort_recent', true)
+      // The list order is computed server-side; without this bump the sidebar
+      // behind the settings overlay would keep the old order until some other
+      // event reloaded it.
+      expect(store.state.sessionListVersion).toBe(before + 1)
     })
   })
 

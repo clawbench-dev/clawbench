@@ -22,8 +22,9 @@
  *     panel, the markdown preview bar and the HTML preview bar. Matches the
  *     replace input too; `refocusSearchField` routes back to the search field.
  *   - `.code-preview-search-input` — the code-preview card's inline bar.
- *   - `.fs-nav-bottom .search-pill input` — the file manager's resident filter
- *     (browse tab).
+ *   - `.fs-nav-bottom .search-pill input` — the resident name filter, shared
+ *     by the file manager's listing footer and the attachment sheet's file
+ *     picker (both render FileSearchDock).
  *   - `.session-search-input-row .search-pill input` — the chat tab's session
  *     search drawer.
  *   - `.search-input-row .search-pill input` — the view tab's fallback

@@ -37,31 +37,46 @@
       :placeholder="t('mail.compose.bodyPlaceholder')"
     />
 
-    <div v-if="attachments.length > 0" class="mail-compose__attachments">
-      <span v-for="(a, i) in attachments" :key="a.path" class="mail-compose__attachment">
-        <Paperclip class="mail-compose__attachment-icon" />
-        <span class="mail-compose__attachment-name">{{ a.filename }}</span>
+    <div v-if="picked.length > 0" class="mail-compose__attachments">
+      <span v-for="p in picked" :key="p.source.path" class="mail-compose__attachment"
+        :class="{ 'mail-compose__attachment--staging': !p.staged }">
+        <LoadingIndicator v-if="!p.staged" size="sm" inline />
+        <Paperclip v-else class="mail-compose__attachment-icon" />
+        <span class="mail-compose__attachment-name">{{ p.staged?.filename ?? baseName(p.source.path) }}</span>
         <button class="mail-compose__attachment-remove" type="button" :title="t('mail.compose.removeAttachment')"
-          @click="attachments.splice(i, 1)">
+          @click="removeAttached(p.source)">
           <X />
         </button>
       </span>
     </div>
 
     <p v-if="error" class="mail-compose__error">{{ error }}</p>
-    <input ref="fileInput" type="file" multiple hidden @change="onFilesPicked" />
 
     <div class="mail-compose__actions">
       <button class="fbtn fbtn--ghost" :disabled="sending" @click="close">{{ t('mail.compose.cancel') }}</button>
       <span class="mail-compose__spacer" />
-      <button class="fbtn" :disabled="sending" @click="attach">
+      <button class="fbtn" data-action="mail-attach" :disabled="sending" @click="attachOpen = true">
         {{ t('mail.compose.attach') }}
       </button>
-      <button class="fbtn fbtn--primary" :disabled="sending || uploading" @click="send">
+      <button class="fbtn fbtn--primary" :disabled="sending || stagingCount > 0" @click="send">
         {{ sending ? t('mail.compose.sending') : t('mail.compose.send') }}
       </button>
     </div>
   </div>
+
+  <!-- Same picker the chat composer uses (browse + search + upload), with the
+       chat-only "recent …" tabs hidden. What it hands back is PATHS: a mail
+       attachment has to be readable by the server, so each path is staged
+       through /api/mail/attachments, which uses a file in place and packs a
+       folder into one zip. -->
+  <AttachmentPicker
+    :open="attachOpen"
+    variant="mail"
+    :attached-files="attachFiles"
+    @close="attachOpen = false"
+    @add-attached="addAttached"
+    @remove-attached="removeAttached"
+  />
 </template>
 
 <script setup lang="ts">
@@ -82,8 +97,13 @@ import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Paperclip, X } from 'lucide-vue-next'
 import { apiPatch, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
+import { baseName } from '@/utils/path'
 import { mailErrorMessage, parseAddressList, type MailDraftFile, type MailReplyContext } from '@/utils/mailTypes'
+import { stageMailAttachments } from '@/utils/mailAttach'
 import { refreshMailUnread } from '@/composables/useMailUnread'
+import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 const props = defineProps<{
   accountId: number
@@ -102,13 +122,33 @@ const form = reactive({
   inReplyTo: '',
   references: '',
 })
-const attachments = ref<MailDraftFile[]>([])
+/**
+ * One attachment, as picked and as staged.
+ *
+ * `source` is what the picker shows as selected (the path the user chose — for
+ * a folder that is the folder itself), `staged` is what the server will send
+ * (for a folder, the zip it packed). Keeping both is what lets the picker
+ * re-open with the folder still ticked: the staged path is a different file.
+ */
+interface PickedAttachment {
+  source: FileEntry
+  staged: MailDraftFile | null
+}
+
+const picked = ref<PickedAttachment[]>([])
+/** What actually goes out: only entries the server has finished staging. */
+const attachments = computed(() => picked.value
+  .map(p => p.staged)
+  .filter((a): a is MailDraftFile => !!a))
+/** The picker's "already attached" view — source paths, not staged ones. */
+const attachFiles = computed(() => picked.value.map(p => p.source))
+const attachOpen = ref(false)
 const draftId = ref(0)
 const sending = ref(false)
-const uploading = ref(false)
+/** How many picked paths are still being staged (folder zipping is not instant). */
+const stagingCount = ref(0)
 const error = ref('')
 const showCc = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
 const bodyRef = ref<HTMLTextAreaElement | null>(null)
 
 const title = computed(() => t('mail.compose.title'))
@@ -127,7 +167,7 @@ function resetFromInitial(): void {
   form.references = init.references ?? ''
   // Copied, not referenced: the composer mutates its list (remove attachment)
   // and must not reach back into the caller's request object.
-  attachments.value = (init.attachments ?? []).map((a) => ({ ...a }))
+  picked.value = (init.attachments ?? []).map((a) => ({ source: { path: a.path }, staged: { ...a } }))
   draftId.value = init.draftId ?? 0
   error.value = ''
   showCc.value = !!(init.cc ?? '')
@@ -148,7 +188,7 @@ onBeforeUnmount(() => {
 
 // Autosave: the timer only runs while the composer is mounted and something changed.
 watch(
-  () => [form.to, form.cc, form.bcc, form.subject, form.text, attachments.value.length],
+  () => [form.to, form.cc, form.bcc, form.subject, form.text, picked.value.length],
   () => {
     dirty = true
     if (saveTimer) clearTimeout(saveTimer)
@@ -158,7 +198,7 @@ watch(
 
 function isEmptyDraft(): boolean {
   return !form.to.trim() && !form.cc.trim() && !form.bcc.trim() &&
-    !form.subject.trim() && !form.text.trim() && attachments.value.length === 0
+    !form.subject.trim() && !form.text.trim() && picked.value.length === 0
 }
 
 async function flushDraft(): Promise<void> {
@@ -188,34 +228,35 @@ async function flushDraft(): Promise<void> {
   }
 }
 
-function attach(): void {
-  fileInput.value?.click()
+/**
+ * A path came back from the picker: stage it, then show it.
+ *
+ * Staging is what makes a path sendable — a file is referenced in place, a
+ * folder is packed into one zip. It happens per path (not once per confirm)
+ * because the picker reports one entry at a time; each request is independent
+ * and the row appears with a spinner until its own request lands.
+ */
+async function addAttached(path: string, isDir?: boolean): Promise<void> {
+  if (picked.value.some(p => p.source.path === path)) return
+  picked.value = [...picked.value, { source: { path, isDir: isDir === true }, staged: null }]
+  stagingCount.value++
+  try {
+    const staged = await stageMailAttachments([path])
+    if (staged.length === 0) throw new Error(t('mail.compose.uploadFailed'))
+    picked.value = picked.value.map(p => (p.source.path === path ? { ...p, staged: staged[0] } : p))
+  } catch (err) {
+    appLog.w('MailCompose', 'stage attachment failed', path, err)
+    // Drop the row: leaving an attachment that can never be sent would only
+    // fail later, at send time, with a less useful message.
+    picked.value = picked.value.filter(p => p.source.path !== path)
+    error.value = (err as Error)?.message || t('mail.compose.uploadFailed')
+  } finally {
+    stagingCount.value--
+  }
 }
 
-async function onFilesPicked(e: Event): Promise<void> {
-  const input = e.target as HTMLInputElement
-  const files = Array.from(input.files ?? [])
-  input.value = ''
-  if (files.length === 0) return
-  uploading.value = true
-  error.value = ''
-  try {
-    for (const file of files) {
-      const fd = new FormData()
-      fd.append('file', file)
-      const resp = await fetch('/api/upload/file', { method: 'POST', body: fd })
-      const data = await resp.json().catch(() => ({}))
-      if (!resp.ok || !data?.ok) {
-        throw new Error(data?.error || t('mail.compose.uploadFailed'))
-      }
-      attachments.value.push({ filename: file.name, path: String(data.path), size: file.size })
-    }
-  } catch (err) {
-    appLog.w('MailCompose', 'upload failed', err)
-    error.value = (err as Error).message || t('mail.compose.uploadFailed')
-  } finally {
-    uploading.value = false
-  }
+function removeAttached(entry: FileEntry): void {
+  picked.value = picked.value.filter(p => p.source.path !== entry.path)
 }
 
 async function send(): Promise<void> {
@@ -354,6 +395,11 @@ function close(): void {
 .mail-compose__attachment-icon {
   width: calc(11 * var(--dp));
   height: calc(11 * var(--dp));
+}
+/* Still being staged (a folder is zipped server-side): the row exists so the
+   user sees the pick landed, but it is not part of the message yet. */
+.mail-compose__attachment--staging {
+  color: var(--text-hint);
 }
 .mail-compose__attachment-name {
   overflow: hidden;

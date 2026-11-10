@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
@@ -81,6 +85,67 @@ func TestServeACPLoadSession_ReplayWriteFail(t *testing.T) {
 
 	// The replay goroutine sleeps ~500ms before persisting; give it time to run.
 	time.Sleep(1200 * time.Millisecond)
+}
+
+// TestServeACPLoadSession_BroadcastsDerivedTitle covers the "restored session
+// has no name" symptom: the title is derived in the async replay tail, i.e.
+// AFTER the frontend has already listed the new session (the HTTP response
+// returns first, and the row renders the blank title the session was created
+// with). Nothing else re-reads the session list when a title lands, so the
+// handler must broadcast it exactly like the automatic rename does — otherwise
+// the restored session keeps showing no name until an unrelated reload.
+func TestServeACPLoadSession_BroadcastsDerivedTitle(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "title-broadcast-client", "")
+	require.NotNil(t, sub)
+
+	agentID := setupACPReplayAgent(t)
+	restore := newACPReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
+		{
+			SessionId: "acp-title",
+			Update: acp.SessionUpdate{
+				UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+					Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "帮我排查登录失败"}},
+				},
+			},
+		},
+	})
+	defer restore()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-load", map[string]string{
+		"agentId":      agentID,
+		"acpSessionId": "acp-title",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPLoadSession(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// The replay goroutine sleeps ~500ms before deriving + persisting the title.
+	assert.Eventually(t, func() bool {
+		for _, msg := range sub.GetBufferedEvents() {
+			if msg.Event != "session_title_update" {
+				continue
+			}
+			b, err := json.Marshal(msg)
+			if err != nil {
+				continue
+			}
+			if strings.Contains(string(b), "帮我排查登录失败") {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 50*time.Millisecond,
+		"expected a session_title_update carrying the title derived from the replay")
 }
 
 // TestServeACPLoadSession_ReplayToolCallPersistFail drops chat_tool_calls so

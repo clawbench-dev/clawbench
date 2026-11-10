@@ -176,17 +176,18 @@
     </template>
     <!-- This turn's consumption, inside the bubble at its bottom right: it
          belongs to the reply, so it rides with it instead of competing with the
-         action buttons for the row below. Rendered only when the turn was billed
-         in CREDIT — that is what makes this a CodeBuddy-style "this turn cost"
-         tail; backends that report a monetary costUsd keep no tail at all. -->
+         action buttons for the row below. Tokens show for every backend. The
+         money figure is ONE unit: credits for backends that bill in credits,
+         otherwise the monetary cost with its $ sign. -->
     <div v-if="usageTail" class="chat-usage-inline" :title="usageTailTooltip">
       <span v-if="usageTail.input || usageTail.output" class="chat-usage-tokens">
         <span v-if="usageTail.input" class="chat-usage-tok"><ArrowUp class="chat-usage-arrow" aria-hidden="true" />{{ usageTail.input }}</span>
         <span v-if="usageTail.output" class="chat-usage-tok"><ArrowDown class="chat-usage-arrow" aria-hidden="true" />{{ usageTail.output }}</span>
       </span>
-      <span class="chat-usage-credit">
+      <span v-if="usageTail.credit" class="chat-usage-money">
         <Coins aria-hidden="true" />{{ usageTail.credit }}
       </span>
+      <span v-else-if="usageTail.cost" class="chat-usage-money is-cost">{{ usageTail.cost }}</span>
     </div>
     </div><!-- /.msg-card -->
 
@@ -329,7 +330,7 @@ import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
-import { formatCompactCount, formatCompactCredit } from '@/utils/usageFormat.ts'
+import { formatCompactCount, formatCompactCredit, formatTailCost } from '@/utils/usageFormat.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -628,27 +629,34 @@ const copyableUserText = computed(() => {
 })
 
 /**
- * This turn's consumption, rendered as the meta bar's trailing group.
+ * This turn's consumption, rendered inside the bubble.
  *
- * Only CREDIT makes a tail. CodeBuddy bills in credits and reports them per
- * turn (metadata.credit, already accumulated over every model call of the
- * turn); every other backend reports a monetary costUsd, which is a different
- * unit and would be misread next to a credit figure. So a turn without credit
- * renders nothing at all — no empty group, no zero.
+ * Two parts, independent of each other:
+ *   - tokens (input/output): reported by every backend, so they show whenever
+ *     the turn reported any;
+ *   - money: ONE figure, in the unit the backend bills in. Credit wins when
+ *     present (CodeBuddy reports it per turn, already accumulated over every
+ *     model call); otherwise a backend that reports a monetary costUsd shows
+ *     that instead, prefixed with $. The two units never appear together, so
+ *     the number is never ambiguous.
  *
- * Input/output tokens ride along because they are the same "what did this turn
- * cost" question; both are omitted individually when the backend reported none.
+ * A turn that reported no money and no tokens renders nothing at all — no
+ * empty group, no zero.
  */
 const usageTail = computed(() => {
   if (props.msg?.role !== 'assistant') return null
   const meta = props.msg?.metadata
   if (!meta) return null
   const credit = Number(meta.credit) || 0
-  if (credit <= 0) return null
+  const cost = Number(meta.costUsd) || 0
   const input = Number(meta.inputTokens) || 0
   const output = Number(meta.outputTokens) || 0
+  if (credit <= 0 && cost <= 0 && input <= 0 && output <= 0) return null
   return {
-    credit: formatCompactCredit(credit),
+    // One money figure only: credit when the backend bills in credits,
+    // otherwise the monetary cost with its $ sign.
+    credit: credit > 0 ? formatCompactCredit(credit) : '',
+    cost: credit <= 0 && cost > 0 ? formatTailCost(cost) : '',
     input: input > 0 ? formatCompactCount(input) : '',
     output: output > 0 ? formatCompactCount(output) : '',
   }
@@ -659,7 +667,14 @@ const usageTail = computed(() => {
 const usageTailTooltip = computed(() => {
   if (!usageTail.value) return ''
   const meta = props.msg?.metadata || {}
-  const parts = [t('chat.message.creditUsed', { value: Number(meta.credit).toLocaleString('en-US', { maximumFractionDigits: 2 }) })]
+  const parts = []
+  const credit = Number(meta.credit) || 0
+  if (credit > 0) {
+    parts.push(t('chat.message.creditUsed', { value: credit.toLocaleString('en-US', { maximumFractionDigits: 2 }) }))
+  } else if (usageTail.value.cost) {
+    const cost = Number(meta.costUsd) || 0
+    parts.push(t('chat.message.costUsed', { value: `$${cost.toLocaleString('en-US', { maximumFractionDigits: 4 })}` }))
+  }
   const input = Number(meta.inputTokens) || 0
   const output = Number(meta.outputTokens) || 0
   if (input > 0 || output > 0) {
@@ -1054,26 +1069,28 @@ const copyPayload = quotableText
 }
 
 /* Direction markers are ICONS, not ↑/↓ text, so they render identically on
-   every platform instead of inheriting a font's arrow shape. */
+   every platform instead of inheriting a font's arrow shape. No opacity of
+   their own: they sit on the same row as the money glyph, and a dimmed arrow
+   next to a full-strength coin read as two different tones. */
 .chat-usage-arrow {
     width: calc(12 * var(--dp));
     height: calc(12 * var(--dp));
     flex-shrink: 0;
-    opacity: 0.55;
 }
 
-/* Credit is the headline figure of the tail but deliberately carries NO colour
-   of its own: it inherits the row's muted meta tone, so the icons alone mark
-   where the consumption group starts instead of a tint competing with the
-   reply text. */
-.chat-usage-credit {
+/* The money figure is the headline of the tail but deliberately carries NO
+   colour of its own: it inherits the row's muted meta tone, so the icons alone
+   mark where the consumption group starts instead of a tint competing with the
+   reply text. Same rule serves both units (credit with the coin glyph, $ cost
+   without one). */
+.chat-usage-money {
     display: inline-flex;
     align-items: center;
     gap: calc(2 * var(--dp));
     font-weight: var(--font-weight-medium);
 }
 
-.chat-usage-credit svg {
+.chat-usage-money svg {
     width: calc(12 * var(--dp));
     height: calc(12 * var(--dp));
     flex-shrink: 0;

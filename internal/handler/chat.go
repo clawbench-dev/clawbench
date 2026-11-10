@@ -15,6 +15,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 
 	"clawbench/internal/store"
 
@@ -25,6 +26,62 @@ import (
 )
 
 const maxChatBodySize = 10 << 20 // 10MB
+
+// implicitSessionMu serializes the "recover this project's session, create one
+// when there is none" decision in resolveOrCreateProjectSession.
+//
+// Opening a project fires two of those GETs at almost the same instant: the
+// identity recovery in App.vue (initSessionFromAPI) and the remounted chat
+// panel's first loadHistory. Both read "no sessions" before either INSERT
+// lands, so each creates its own — a brand-new project then shows two empty
+// "New Session" rows, and the loser is never cleaned up because nothing deletes
+// empty sessions. A single process-wide mutex is enough: it is only taken when
+// a project has no visible sessions at all, and every write already funnels
+// through the store's process-wide write lock.
+var implicitSessionMu sync.Mutex
+
+// resolveOrCreateProjectSession returns the project's most recently updated
+// visible session, creating one (with the default agent for THIS project) when
+// the project has none. Reports false after writing the error response itself.
+func resolveOrCreateProjectSession(w http.ResponseWriter, r *http.Request, projectPath string) (sessionID, backend string, ok bool) {
+	latestID, latestBackend, err := service.GetLatestSessionID(projectPath)
+	if err == nil {
+		return latestID, latestBackend, true
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to find latest session")))
+		return "", "", false
+	}
+
+	implicitSessionMu.Lock()
+	defer implicitSessionMu.Unlock()
+	// Re-check under the lock: a concurrent recovery request may have created
+	// the session while this one waited.
+	if id, be, retryErr := service.GetLatestSessionID(projectPath); retryErr == nil {
+		return id, be, true
+	} else if !errors.Is(retryErr, sql.ErrNoRows) {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to find latest session")))
+		return "", "", false
+	}
+
+	// No sessions exist, create a new one with default agent.
+	// Don't pre-fill agent default model — leave empty so frontend
+	// falls back to global localStorage preference (cross-project).
+	// Scope-aware: the configured default may be scoped to another
+	// project, so resolve to the first agent visible here.
+	agentID := resolveDefaultAgentForProject(projectPath)
+	agentBackend, _, _, _, agentOK := resolveAgentConfig(agentID)
+	if !agentOK {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
+		return "", "", false
+	}
+	createdID, err := service.CreateSession(projectPath, agentBackend, newUnnamedSessionTitle(r, projectPath), agentID, "", "default", "chat")
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
+		return "", "", false
+	}
+	return createdID, agentBackend, true
+}
 
 // AIChat handles GET (status/history) and POST (send message) for AI chat.
 func AIChat(w http.ResponseWriter, r *http.Request) {
@@ -58,31 +115,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// No specific session requested — use lightweight query to find the most recent session
-			latestID, latestBackend, err := service.GetLatestSessionID(projectPath)
-			if err != nil {
-				if !errors.Is(err, sql.ErrNoRows) {
-					model.WriteError(w, model.Internal(fmt.Errorf("failed to find latest session")))
-					return
-				}
-				// No sessions exist, create a new one with default agent.
-				// Don't pre-fill agent default model — leave empty so frontend
-				// falls back to global localStorage preference (cross-project).
-				// Scope-aware: the configured default may be scoped to another
-				// project, so resolve to the first agent visible here.
-				agentID := resolveDefaultAgentForProject(projectPath)
-				sessionBackend2, _, _, _, ok := resolveAgentConfig(agentID)
-				if !ok {
-					writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
-					return
-				}
-				sessionID, err = service.CreateSession(projectPath, sessionBackend2, newUnnamedSessionTitle(r, projectPath), agentID, "", "default", "chat")
-				if err != nil {
-					model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
-					return
-				}
-			} else {
-				sessionID = latestID
-				sessionBackend = latestBackend
+			var resolved bool
+			sessionID, sessionBackend, resolved = resolveOrCreateProjectSession(w, r, projectPath)
+			if !resolved {
+				return
 			}
 		}
 

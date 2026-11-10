@@ -76,7 +76,7 @@
        add/remove-attached when the user confirms. A second, sheet-local picker
        would have to re-implement all of that — the exact "inline file selector"
        the feature was scoped to avoid. -->
-  <AttachDrawer
+  <AttachmentPicker
     :open="attachOpen"
     :attached-files="draftFiles"
     @close="attachOpen = false"
@@ -92,7 +92,7 @@ import { Paperclip } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
-import AttachDrawer from '@/components/chat/AttachDrawer.vue'
+import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { fileEntryKey, isQuoteEntry, type FileEntry } from '@/utils/fileAttachmentUtils'

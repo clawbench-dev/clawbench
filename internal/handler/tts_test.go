@@ -211,8 +211,13 @@ func TestTTSGenerate_SummarizeFailure(t *testing.T) {
 	env, teardown := setupTTSTest(t, mockProvider, mockSum)
 	defer teardown()
 
-	text := "这是一段需要总结的长文本内容，但由于摘要失败会直接报错。内容足够长以触发摘要流程。"
-	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	// Long enough that a cap would bite: a failed condensation must read the
+	// WHOLE reply, not a fragment (a tail-keeping cap made playback start in the
+	// middle of the answer).
+	head := "开头这一句必须被读出来。"
+	tail := "结尾这一句也不能被丢掉。"
+	text := head + strings.Repeat("中间是完整的一段发言内容。", 100) + tail
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{"text": text, "messageId": 777})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -231,10 +236,16 @@ func TestTTSGenerate_SummarizeFailure(t *testing.T) {
 		}
 	}
 
-	// Summarizer was called, and since it failed, the fallback SimpleSummarizer
-	// is used — synthesize SHOULD be called with the fallback text
 	assert.True(t, mockSum.called)
-	assert.True(t, mockProvider.synthesizeCalled, "synthesize should be called with fallback summary when LLM summarizer fails")
+	assert.True(t, mockProvider.synthesizeCalled, "synthesize should be called with the full text when the LLM summarizer fails")
+	assert.Equal(t, text, mockProvider.lastSynthText,
+		"a failed condensation must speak the whole text, head and tail included")
+
+	// The raw text is not a summary: caching it would pin a transient model
+	// failure to this message, so every later read would replay the long
+	// version instead of retrying the model.
+	_, cached := service.GetTTSSummaryByMessageID(777)
+	assert.False(t, cached, "a degraded fallback must not be stored as the message summary")
 }
 
 // --- TTSGenerate: synthesize failure returns error via SSE stream ---

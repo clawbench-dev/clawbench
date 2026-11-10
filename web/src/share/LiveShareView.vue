@@ -75,6 +75,16 @@
               @loadedmetadata="syncInkRect"
             />
 
+            <!-- Sound has its own element, deliberately.
+                 The <video> above is hidden whenever there is no picture (a
+                 voice meeting, or the host stopped sharing), and sound must not
+                 depend on the picture being rendered: a member who joined a
+                 meeting with no screen heard nothing while the host was
+                 clearly speaking. An <audio> without `controls` draws nothing,
+                 so this is invisible — and the <video> stays muted, so there is
+                 still exactly one sound path. -->
+            <audio ref="audioRef" data-role="live-audio" autoplay muted />
+
             <!-- A member's screen, forwarded by the host. Its own element rather than
                  swapping srcObject: switching back to the host must not depend on
                  re-attaching a stream that is still live. -->
@@ -246,6 +256,13 @@
              No `brand`: the topbar above the picture already carries the logo
              and the title, and two marks a few dp apart read as a mistake. The
              "live" dot it also rendered is already in the status overlay. -->
+        <!-- Why the microphone did not turn on, or why it cannot be turned on at
+             all. A disabled button with only a `title` explains nothing: hovering
+             is not available on a phone, and a disabled button does not reliably
+             show a tooltip even on a desktop. -->
+        <div v-if="micHint" class="live-mic-notice" data-role="mic-notice" data-local-ui>
+          {{ micHint }}
+        </div>
         <LiveDock>
           <!-- Autoplay with audio is blocked without a user gesture, so playback
                starts muted and the viewer opts in here. A switch, labelled by
@@ -570,6 +587,8 @@ const { t } = useI18n()
 /** The layout component — its root is the shell, which fullscreen targets. */
 const layoutRef = ref<InstanceType<typeof LiveStageLayout> | null>(null)
 const videoRef = ref<HTMLVideoElement | null>(null)
+/** The meeting's sound. Separate from the picture on purpose — see the template. */
+const audioRef = ref<HTMLAudioElement | null>(null)
 /** The picture-in-picture tile carrying the publisher's camera. */
 const cameraVideoRef = ref<HTMLVideoElement | null>(null)
 const state = ref<LiveViewerState>('connecting')
@@ -646,8 +665,8 @@ const mutedByHost = ref(false)
  * Sound is a two-state toggle, not a one-shot prompt.
  *
  * `hasAudio` decides whether the button exists at all (a silent share has
- * nothing to toggle); `soundMuted` mirrors the <video> element, which is the
- * real owner of the mute state.
+ * nothing to toggle); `soundMuted` mirrors the audio element, which is the real
+ * owner of the mute state.
  */
 const hasAudio = ref(false)
 const soundMuted = ref(true)
@@ -1261,6 +1280,8 @@ const screenSharer = ref('')
 const sharingScreen = ref(false)
 const viewMode = ref<'host' | 'member'>('host')
 const screenError = ref('')
+/** Why our own microphone did not open (or went away), shown next to the dock. */
+const micNotice = ref('')
 /** True when this page runs inside the desktop shell. */
 const clientMode = computed(() => Boolean(getNative()?.isNativeApp?.()))
 /** Client mode picks a source through the native picker, not the browser's. */
@@ -1299,6 +1320,22 @@ const canTalk = computed(
     (clientMode.value || window.isSecureContext) &&
     !!navigator.mediaDevices?.getUserMedia,
 )
+
+/**
+ * The one line shown above the dock about the microphone.
+ *
+ * A failed attempt wins over the standing reason: the reader just pressed the
+ * button, so the specific failure is what they need. Otherwise, when speech is
+ * allowed but this browser can never capture, say why — the button is disabled
+ * and a `title` on a disabled button is not something anyone can rely on.
+ */
+const micHint = computed(() => {
+  if (micNotice.value) return micNotice.value
+  if (!talkEnabled.value || canTalk.value) return ''
+  return window.isSecureContext
+    ? t('share.live.micUnsupported')
+    : t('share.live.micNeedsHttps')
+})
 
 /**
  * Whether this page may ask for control of the host screen.
@@ -1492,18 +1529,33 @@ const overlayDesc = computed(() => {
 })
 
 function attachStream(stream: MediaStream): void {
-  const el = videoRef.value
-  if (!el) return
-  el.srcObject = stream
+  const tracks = stream.getAudioTracks()
+  hasAudio.value = tracks.length > 0
+
+  // Picture and sound go to two elements. The <video> is hidden whenever there
+  // is no picture, so it cannot be the place the meeting's audio lives: a
+  // member in a meeting with no screen heard nothing while the host's level
+  // chip said he was talking. The <video> stays muted (the template's static
+  // attribute), so the audio element below is the ONLY sound path.
+  const video = videoRef.value
+  if (video) {
+    video.srcObject = stream
+    void video.play().catch((e) => {
+      appLog.w(TAG, 'autoplay blocked', e)
+    })
+  }
+
+  const audio = audioRef.value
+  if (!audio) return
+  audio.srcObject = hasAudio.value ? stream : null
   // The mute state lives on the ELEMENT (imperative, not tracked by Vue), so a
   // re-attach — the publisher swapping source, or a renegotiation — must read it
   // back instead of assuming: the viewer may already have turned the sound on,
   // and re-muting them would be a silent regression.
-  hasAudio.value = stream.getAudioTracks().length > 0
-  soundMuted.value = el.muted
-  void el.play().catch((e) => {
-    appLog.w(TAG, 'autoplay blocked', e)
-  })
+  soundMuted.value = audio.muted
+  if (hasAudio.value) {
+    void audio.play().catch((e) => appLog.w(TAG, 'sound play blocked', e))
+  }
 }
 
 /**
@@ -1514,7 +1566,7 @@ function attachStream(stream: MediaStream): void {
  * this function.
  */
 function toggleSound(): void {
-  const el = videoRef.value
+  const el = audioRef.value
   if (!el) return
   el.muted = !el.muted
   soundMuted.value = el.muted
@@ -1677,6 +1729,15 @@ function start(): void {
       onTalkMuted: (muted) => {
         mutedByHost.value = muted
       },
+      onMicError: (kind) => {
+        micNotice.value = t(
+          kind === 'denied' ? 'share.live.micDenied' : 'share.live.micUnavailable',
+        )
+      },
+      onMicLost: () => {
+        talking.value = false
+        micNotice.value = t('share.live.micLost')
+      },
       onJoined: (id) => {
         myViewerId.value = id
       },
@@ -1712,8 +1773,14 @@ function toggleMic(): void {
   // optimistic flip from flashing "on" for a frame before the refusal arrives.
   if (mutedByHost.value) return
   talking.value = true
+  micNotice.value = ''
   void viewer.startTalking().then((ok) => {
-    if (!ok) talking.value = false
+    if (ok) return
+    talking.value = false
+    // The viewer reports the specific cause through `onMicError`. Falling back
+    // here covers the paths that return false without one (no transport, an
+    // audio track missing from the stream), so the button never just bounces.
+    if (!micNotice.value) micNotice.value = t('share.live.micUnavailable')
   })
 }
 
@@ -1959,6 +2026,8 @@ onBeforeUnmount(() => {
   viewer = null
   const el = videoRef.value
   if (el) el.srcObject = null
+  const audio = audioRef.value
+  if (audio) audio.srcObject = null
 })
 </script>
 
@@ -2334,6 +2403,29 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-xs, 11px);
   z-index: 7;
   white-space: nowrap;
+}
+
+/* Why the microphone is not available: a floating pill ABOVE the dock, so it
+   never covers the controls it is talking about. Wraps (unlike the banner,
+   which is one short name) because these are full sentences. */
+.live-mic-notice {
+  position: absolute;
+  left: 50%;
+  bottom: calc(
+    var(--live-dock-height, 40px) + var(--space-6, 12px) + var(--space-3, 6px) +
+      env(safe-area-inset-bottom, 0px)
+  );
+  transform: translateX(-50%);
+  max-width: min(calc(100vw - 2 * var(--space-6, 12px)), 360px);
+  padding: var(--space-2, 4px) var(--space-4, 8px);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--bg-secondary, #161b22) 92%, transparent);
+  border: 1px solid var(--border-color, #30363d);
+  color: var(--text-primary, #e6edf3);
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.5;
+  text-align: center;
+  z-index: 7;
 }
 
 .live-screen-banner-btn {

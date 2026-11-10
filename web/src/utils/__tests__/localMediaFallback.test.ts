@@ -3,7 +3,6 @@ import {
   applyMediaMissingFallback,
   installLocalMediaFallback,
   uninstallLocalMediaFallback,
-  isLocalMediaUrl,
   mediaPathFromSrc,
   MEDIA_SETTLED_ATTR,
 } from '@/utils/localMediaFallback'
@@ -28,23 +27,6 @@ function figure(src: string): string {
     + `<span class="lightbox-img-wrap"><img class="chat-img lightbox-img" src="${src}"></span></div>`
 }
 
-describe('isLocalMediaUrl', () => {
-  it('accepts the local file-serving endpoints', () => {
-    expect(isLocalMediaUrl('/api/fs/raw/a.png')).toBe(true)
-    expect(isLocalMediaUrl('/api/fs/thumb?target=a.png&w=1200')).toBe(true)
-    expect(isLocalMediaUrl('/api/fs/raw/?target=/tmp/a.png')).toBe(true)
-    // Share pages serve local media through the token-scoped endpoint.
-    expect(isLocalMediaUrl('/api/share/tok123/local/a.png')).toBe(true)
-  })
-
-  it('rejects external and embedded srcs', () => {
-    expect(isLocalMediaUrl('https://example.com/a.png')).toBe(false)
-    expect(isLocalMediaUrl('//cdn.example.com/a.png')).toBe(false)
-    expect(isLocalMediaUrl('data:image/png;base64,AAAA')).toBe(false)
-    expect(isLocalMediaUrl('assets/a.png')).toBe(false)
-  })
-})
-
 describe('mediaPathFromSrc', () => {
   it('extracts the target query param', () => {
     expect(mediaPathFromSrc('/api/fs/thumb?target=img/logo.png&w=1200')).toBe('img/logo.png')
@@ -57,9 +39,18 @@ describe('mediaPathFromSrc', () => {
     expect(mediaPathFromSrc('/api/fs/raw/%E4%B8%AD%E6%96%87/a.png')).toBe('中文/a.png')
   })
 
+  it('falls back to the URL path for srcs the pipeline has not rewritten', () => {
+    // Streaming: the src is still the raw markdown destination.
+    expect(mediaPathFromSrc('docs/img/a.png')).toBe('docs/img/a.png')
+    // Remote failure: the last path segment is the only name available.
+    expect(mediaPathFromSrc('https://example.com/img/a.png?x=1')).toBe('img/a.png')
+  })
+
   it('returns an empty string when nothing can be derived', () => {
     expect(mediaPathFromSrc('')).toBe('')
-    expect(mediaPathFromSrc('https://example.com/a.png')).toBe('')
+    // Inline bytes have no filename — the placeholder must not print base64.
+    expect(mediaPathFromSrc('data:image/png;base64,AAAA')).toBe('')
+    expect(mediaPathFromSrc('blob:https://example.com/abcd')).toBe('')
   })
 })
 
@@ -107,13 +98,45 @@ describe('applyMediaMissingFallback', () => {
     expect(document.querySelectorAll(`.${MEDIA_MISSING_CLASS}`)).toHaveLength(1)
   })
 
-  it('ignores external and embedded images', () => {
+  it('gives a failed remote image the same card instead of the browser glyph', () => {
+    // A remote URL has no local file to name, but the broken glyph is the same
+    // ugly gap — the placeholder is for every failing content image.
     document.body.innerHTML = figure('https://example.com/a.png')
     const img = document.querySelector('img') as HTMLImageElement
 
-    expect(applyMediaMissingFallback(img)).toBe(false)
-    expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
-    expect(img.hasAttribute('data-media-missing')).toBe(false)
+    expect(applyMediaMissingFallback(img)).toBe(true)
+    expect(img.classList.contains('local-media-hidden')).toBe(true)
+
+    const ph = document.querySelector(`.${MEDIA_MISSING_CLASS}`)!
+    expect(ph.textContent).toContain(LOAD_FAILED)
+    expect(ph.textContent).toContain('a.png')
+  })
+
+  it('uses the quiet variant while the message is still streaming', () => {
+    // Streaming: the local path has not been resolved yet, so "failed" would be
+    // a verdict on something that was never properly tried. The card keeps the
+    // icon and the name but drops the verdict text.
+    document.body.innerHTML = `<div class="chat-message" data-streaming="true">${figure('docs/a.png')}</div>`
+    const img = document.querySelector('img') as HTMLImageElement
+
+    expect(applyMediaMissingFallback(img)).toBe(true)
+
+    const ph = document.querySelector(`.${MEDIA_MISSING_CLASS}`)!
+    expect(ph.classList.contains('media-load-error--streaming')).toBe(true)
+    expect(ph.querySelector('.media-load-error-text')).toBeNull()
+    expect(ph.querySelector('.media-load-error-name')!.textContent).toBe('a.png')
+  })
+
+  it('uses the labelled card once the turn has settled', () => {
+    // Same src, no streaming marker: the request was made properly and failed.
+    document.body.innerHTML = `<div class="chat-message">${figure('docs/a.png')}</div>`
+    const img = document.querySelector('img') as HTMLImageElement
+
+    applyMediaMissingFallback(img)
+
+    const ph = document.querySelector(`.${MEDIA_MISSING_CLASS}`)!
+    expect(ph.classList.contains('media-load-error--streaming')).toBe(false)
+    expect(ph.querySelector('.media-load-error-text')!.textContent).toBe(LOAD_FAILED)
   })
 
   it('restores the image if it later loads successfully', async () => {
@@ -201,6 +224,22 @@ describe('installLocalMediaFallback', () => {
     img.dispatchEvent(new Event('error'))
 
     expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+  })
+
+  it('catches a bare <img> inside a streaming message (no marker class yet)', () => {
+    // Streaming renders skip the enhancement block — the one that stamps
+    // `lightbox-img` — so the marker is absent for the whole turn. The picture
+    // is content all the same, and it is exactly the one that 404s (the local
+    // path is not resolved until the message settles).
+    installLocalMediaFallback()
+    document.body.innerHTML = '<div class="chat-message" data-streaming="true"><p><img src="docs/a.png"></p></div>'
+    const img = document.querySelector('img') as HTMLImageElement
+
+    img.dispatchEvent(new Event('error'))
+
+    const ph = document.querySelector(`.${MEDIA_MISSING_CLASS}`)
+    expect(ph).not.toBeNull()
+    expect(ph!.classList.contains('media-load-error--streaming')).toBe(true)
   })
 
   it('is idempotent and uninstall stops handling', () => {
@@ -299,9 +338,9 @@ describe('pending media placeholder (data-media-settled)', () => {
     expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
   })
 
-  it('an error ends the pending state even when no placeholder is substituted', () => {
-    // External images get no failure card (there is no local file to name), but
-    // leaving the shimmer on would promise a load that is never coming.
+  it('a remote failure also ends the pending state and gets the card', () => {
+    // Leaving the shimmer on would promise a load that is never coming; the
+    // card is what replaces the browser's broken glyph for remote media too.
     installLocalMediaFallback()
     document.body.innerHTML = figure('https://example.com/a.png')
     const img = document.querySelector('img') as HTMLImageElement
@@ -309,6 +348,6 @@ describe('pending media placeholder (data-media-settled)', () => {
     img.dispatchEvent(new Event('error'))
 
     expect(img.getAttribute(MEDIA_SETTLED_ATTR)).toBe('1')
-    expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).toBeNull()
+    expect(document.querySelector(`.${MEDIA_MISSING_CLASS}`)).not.toBeNull()
   })
 })

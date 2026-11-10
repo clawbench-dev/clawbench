@@ -556,3 +556,45 @@ func TestCatalogStale_PrePriceSnapshotIsRefetched(t *testing.T) {
 		t.Fatal("a snapshot predating price parsing must be refetched once")
 	}
 }
+
+// The summarizer asks the catalog for a model's output ceiling; a wrong answer
+// here is either a truncated answer (too low) or a hard API error (too high).
+func TestCatalogOutputLimitForModel(t *testing.T) {
+	catalogTestEnv(t)
+
+	if got := CatalogOutputLimitForModel("claude-a"); got != 0 {
+		t.Fatalf("no snapshot must yield 0, got %d", got)
+	}
+
+	cat, err := parseCatalog([]byte(catalogFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ReplaceCatalog(cat)
+
+	if got := CatalogOutputLimitForModel("claude-a"); got != 64000 {
+		t.Fatalf("claude-a = %d, want 64000", got)
+	}
+	// The fixture publishes no limit for claude-b: "unknown" must be 0, not a guess.
+	if got := CatalogOutputLimitForModel("claude-b"); got != 0 {
+		t.Fatalf("claude-b = %d, want 0 (no published limit)", got)
+	}
+	if got := CatalogOutputLimitForModel(""); got != 0 {
+		t.Fatalf("empty id = %d, want 0", got)
+	}
+	if got := CatalogOutputLimitForModel("unknown"); got != 0 {
+		t.Fatalf("unknown id = %d, want 0", got)
+	}
+
+	// The same model id can appear under several providers (a BYOK endpoint has
+	// no catalog entry of its own). The lookup is by id alone and takes the
+	// largest limit: callers use it as a ceiling, and over-asking is the error
+	// that breaks a request.
+	ReplaceCatalog(&Catalog{Providers: map[string]CatalogProvider{
+		"p1": {ID: "p1", Models: []CatalogModel{{ID: "shared", Output: 8000}}},
+		"p2": {ID: "p2", Models: []CatalogModel{{ID: "shared", Output: 32000}}},
+	}})
+	if got := CatalogOutputLimitForModel("shared"); got != 32000 {
+		t.Fatalf("shared = %d, want the largest published limit 32000", got)
+	}
+}

@@ -200,8 +200,25 @@ function makeTrack(kind = 'audio'): MediaStreamTrack & { fireEnded: () => void }
   return track as unknown as MediaStreamTrack & { fireEnded: () => void }
 }
 
-function setup(overrides: Record<string, unknown> = {}) {
-  const states: Array<{ state: LiveViewerState; reason?: string }> = []
+/**
+ * jsdom has no `mediaDevices`. The viewer only needs the `devicechange` event,
+ * so this installs exactly that and returns the trigger.
+ */
+function installMediaDevices(): () => void {
+  const listeners: Array<() => void> = []
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      addEventListener: (_type: string, cb: () => void) => listeners.push(cb),
+      removeEventListener: () => undefined,
+    },
+  })
+  return () => {
+    for (const cb of [...listeners]) cb()
+  }
+}
+
+function setup(overrides: Record<string, unknown> = {}) {  const states: Array<{ state: LiveViewerState; reason?: string }> = []
   const streams: MediaStream[] = []
   const viewer = new LiveViewer({
     token: 'tok123',
@@ -252,6 +269,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  // @ts-expect-error -- jsdom has no real implementation to restore to.
+  delete navigator.mediaDevices
 })
 
 describe('control bus', () => {
@@ -601,6 +620,100 @@ describe('LiveViewer talk', () => {
     expect(ok).toBe(false)
     expect(viewer.talking).toBe(false)
     expect(lastWS().sentJSON().some((m) => m.type === 'talk-start')).toBe(false)
+  })
+
+  it('reports WHY the microphone could not be opened', async () => {
+    const kinds: string[] = []
+    const getUserMedia = vi.fn(async () => {
+      throw { name: 'NotAllowedError' }
+    })
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      name: 'n',
+      callbacks: { onMicError: (k) => kinds.push(k) },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+      getUserMedia,
+    })
+    joinRoom(viewer, { talkEnabled: true })
+
+    await viewer.startTalking()
+
+    // "Denied" and "no device" need different fixes, so the page must be told
+    // which one happened instead of showing one generic line for both.
+    expect(kinds).toEqual(['denied'])
+  })
+
+  it('retries once when the device is still starting (just plugged in)', async () => {
+    vi.useFakeTimers()
+    try {
+      const micTrack = makeTrack('audio')
+      const getUserMedia = vi.fn()
+        .mockRejectedValueOnce({ name: 'NotReadableError' })
+        .mockResolvedValueOnce({ getAudioTracks: () => [micTrack] } as unknown as MediaStream)
+      const { viewer } = setup({ getUserMedia })
+      joinRoom(viewer, { talkEnabled: true })
+
+      const pending = viewer.startTalking()
+      await vi.advanceTimersByTimeAsync(400)
+
+      await expect(pending).resolves.toBe(true)
+      expect(getUserMedia).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-opens the CURRENT default after the device set changes', async () => {
+    const fire = installMediaDevices()
+    const first = makeTrack('audio')
+    const second = makeTrack('audio')
+    const getUserMedia = vi.fn()
+      .mockResolvedValueOnce({ getAudioTracks: () => [first] } as unknown as MediaStream)
+      .mockResolvedValueOnce({ getAudioTracks: () => [second] } as unknown as MediaStream)
+    const { viewer } = setup({ getUserMedia })
+    joinRoom(viewer, { talkEnabled: true })
+
+    await viewer.startTalking()
+    await viewer.stopTalking()
+
+    // A headset was plugged in while the microphone was muted. The cached track
+    // is still bound to the old device, so it must not be reused.
+    fire()
+
+    await viewer.startTalking()
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2)
+    expect(first.stop).toHaveBeenCalled()
+    expect(lastPC().transceivers[0].sender.track).toBe(second)
+  })
+
+  it('stops speaking when the device disappears mid-sentence', async () => {
+    const lost: boolean[] = []
+    const micTrack = makeTrack('audio')
+    const getUserMedia = vi.fn(async () => ({ getAudioTracks: () => [micTrack] }) as unknown as MediaStream)
+    const viewer = new LiveViewer({
+      token: 'tok123',
+      name: 'n',
+      callbacks: { onMicLost: () => lost.push(true) },
+      wsFactory: (url) => new FakeWS(url) as unknown as WebSocket,
+      pcFactory: (cfg) => new FakePC(cfg) as unknown as RTCPeerConnection,
+      getUserMedia,
+    })
+    joinRoom(viewer, { talkEnabled: true })
+    await viewer.startTalking()
+
+    // Headset unplugged: the OS ends the track. Leaving it attached would keep
+    // the toggle "on" while the room hears silence.
+    micTrack.fireEnded()
+
+    await vi.waitFor(() => expect(viewer.talking).toBe(false))
+    expect(lost).toEqual([true])
+    // `stopTalking` reports AFTER detaching, so this is the frame that proves
+    // the room was told, not just the local flag.
+    await vi.waitFor(() =>
+      expect(lastWS().sentJSON()).toContainEqual({ type: 'talk-end' }),
+    )
   })
 
   it('stops sending when the publisher mutes us', async () => {

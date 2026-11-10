@@ -202,14 +202,14 @@
           @stop-all="handleStopAll"
         />
       </div>
-      <!-- Attach drawer (BottomSheet) -->
-      <AttachDrawer
+      <!-- Attachment picker (BottomSheet). Shared with the mail composer, so
+           it lives under components/attach/ rather than components/chat/. -->
+      <AttachmentPicker
         ref="attachDrawerRef"
         :open="attachDrawer.effectiveOpen.value"
         :current-file="currentFile?.path"
         :current-dir="currentDir"
         :attached-files="attachedFiles"
-        :recent-referenced-files="recentReferencedFiles"
         @close="attachDrawer.close()"
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
@@ -376,7 +376,7 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import CompletionMenu from '@/components/common/CompletionMenu.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import AttachDrawer from '@/components/chat/AttachDrawer.vue'
+import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
@@ -1934,7 +1934,8 @@ const hasAttachmentTags = computed(() =>
   || visiblePendingFiles.value.some(f => f.uploading),
 )
 
-// Extract recently referenced files from message history
+// Recently referenced files, offered as candidates by the `@` file menu (NOT by
+// the attachment sheet — that tab was removed as noise).
 const recentReferencedFiles = computed(() => {
   return computeRecentReferencedFiles(props.messages, props.attachedFiles, props.currentFile?.path)
 })

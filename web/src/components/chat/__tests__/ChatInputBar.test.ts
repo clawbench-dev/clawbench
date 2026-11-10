@@ -84,7 +84,6 @@ const i18n = createI18n({
           uploadFile: 'Upload',
           currentFile: 'Current file',
           currentDir: 'Current dir',
-          recentReferences: 'Recent',
           uploading: 'Uploading...',
           currentTab: 'Tab',
         },
@@ -543,7 +542,7 @@ const stubs = {
   // bound to (an undeclared prop would fall through to $attrs instead).
   PopupMenu: { name: 'PopupMenu', props: ['show'], template: '<div><slot /></div>' },
   SessionDrawer: true,
-  AttachDrawer: true,
+  AttachmentPicker: true,
   QuickSendDrawer: true,
   List: true,
   Plus: true,

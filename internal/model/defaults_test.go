@@ -1084,6 +1084,26 @@ func TestApplyDefaults_ChatRecommendEnabledPresenceTrue(t *testing.T) {
 	}
 }
 
+// chat.session_sort_recent is opt-in: activity ordering reshuffles the sidebar
+// while it is being read, so an omitted field must mean "off" while an explicit
+// true in config.yaml must survive ApplyDefaults.
+func TestApplyDefaults_ChatSessionSortRecent(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Chat.SessionSortRecent {
+		t.Error("Chat.SessionSortRecent should default to false")
+	}
+
+	cfg = Config{}
+	cfg.Chat.SessionSortRecent = true
+	ApplyDefaults(&cfg, map[string]bool{"chat.session_sort_recent": true})
+	if !cfg.Chat.SessionSortRecent {
+		t.Error("Chat.SessionSortRecent should stay true when explicitly set")
+	}
+}
+
 func TestApplyDefaults_ChatAutoContinueDefaults(t *testing.T) {
 	setupTestBinDir(t)
 

@@ -24,6 +24,9 @@ func (c STTConfig) ActiveLanguage() string {
 }
 
 // ActiveStreaming reports whether the selected engine uses live streaming.
+//
+// The vLLM/OpenAI-compatible engine has no switch: it cannot decode live PCM,
+// so its dictation path always uploads one finished recording.
 func (c STTConfig) ActiveStreaming() bool {
 	switch c.Provider {
 	case "doubao":
@@ -31,7 +34,7 @@ func (c STTConfig) ActiveStreaming() bool {
 	case "alibaba":
 		return c.Alibaba.Streaming
 	default:
-		return c.VLLM.Streaming
+		return false
 	}
 }
 
@@ -154,10 +157,9 @@ func migrateLegacyActiveEngine(v legacySTTValues, cfg *Config, section map[strin
 		case "alibaba":
 			cfg.STT.Alibaba.Streaming = v.streaming
 			markPresence(presence, "stt.alibaba.streaming")
-		default:
-			cfg.STT.VLLM.Streaming = v.streaming
-			markPresence(presence, "stt.vllm.streaming")
 		}
+		// The vLLM engine has no streaming switch (it cannot decode live PCM),
+		// so a legacy value aimed at it is dropped rather than stored.
 	}
 	// Language: vLLM used it per request and Alibaba as a hint; Doubao ignored
 	// it. Copying it to both is faithful — neither engine gains a value it was

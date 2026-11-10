@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
+import { _resetCaptureSources, rememberCaptureSources } from '@/utils/captureSourceCache'
 import MeetingStage from '../MeetingStage.vue'
 
 /**
@@ -104,6 +105,9 @@ vi.mock('@/composables/useLiveShare', async () => {
     sendControlTo: vi.fn(),
     onControl: vi.fn(() => () => undefined),
     switchSource: vi.fn(async () => true),
+    // Unmounting the stage closes the annotation surface, which clears the ink
+    // mirror it kept.
+    clearInkMirror: vi.fn(),
     // The panel pushes the native injector probe into the room so
     // viewers can grey their "request control" button.
     setControlSupported: vi.fn(),
@@ -182,6 +186,9 @@ async function openPicker() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The enumerated list is cached module-wide (so a remount does not collapse
+  // the grid); each test has to start from "the OS was never asked".
+  _resetCaptureSources()
   // A desktop host: only it can enumerate sources, and only it shows the
   // picker (a browser goes straight to its own dialog).
   nativeBridge.current = { listCaptureSources: vi.fn(async () => '[]') }
@@ -250,5 +257,48 @@ describe('MeetingStage source picker', () => {
     // The toast is the ONLY surface: a persistent copy under the tabs outlived
     // the toast and stayed there until the next successful action.
     expect(wrapper.find('.live-dialog-error').exists()).toBe(false)
+  })
+
+  // The panel is re-created whenever the project changes (the app container is
+  // keyed by project), and the meeting keeps running through it. The grid used
+  // to come back as a single "选择共享画面" tile, so the host had to ask the OS a
+  // second time for screens it had already listed.
+  it('keeps the grid after the panel is re-created', async () => {
+    listSources.mockResolvedValue([
+      { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: '' },
+      { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
+    ])
+
+    const first = await openPicker()
+    expect(first.findAll('.capture-source')).toHaveLength(3)
+    first.unmount()
+
+    const again = mountPanel()
+    await flushPromises()
+
+    // The tiles are back without a second enumeration — asking again would
+    // raise the OS screen-share dialog on every remount (the whole reason the
+    // list is not probed at mount time).
+    expect(again.findAll('.capture-source')).toHaveLength(3)
+    expect(listSources).toHaveBeenCalledTimes(1)
+    expect(again.find('[data-source="__pick__"]').exists()).toBe(false)
+  })
+
+  // A meeting started from 创建会议: the form already asked the OS for the list,
+  // so the stage draws the same tiles instead of an empty picker.
+  it('draws the list the create form already asked for', async () => {
+    rememberCaptureSources([
+      { id: 'screen:0:0', name: 'Entire Screen', kind: 'screen', thumbnail: '' },
+      { id: 'window:1:0', name: 'Terminal', kind: 'window', thumbnail: '' },
+    ])
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.findAll('.capture-source')).toHaveLength(3)
+    expect(wrapper.find('[data-source="__pick__"]').exists()).toBe(false)
+    expect(listSources).not.toHaveBeenCalled()
+    // The live source is the selected tile, as before.
+    expect(wrapper.find('[data-source="screen:0:0"]').classes()).toContain('capture-source--on')
   })
 })

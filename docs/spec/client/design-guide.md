@@ -152,8 +152,9 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 --z-context-menu: 2500
 --z-modal: 3000                安装/通用对话框
 --z-popover-backdrop: 9998
---z-popover: 9999              菜单、下拉、tooltip、toast
---z-lightbox: 10000            图片灯箱——最高
+--z-popover: 9999              菜单、下拉、tooltip
+--z-lightbox: 10000            图片灯箱——最高的**表面**
+--z-toast: 10100               结果提示（toast）——压过灯箱
 ```
 
 **`--z-overlay` 之上留了一条 1000..1049 的带**给 BottomSheet 按**打开顺序**叠放
@@ -166,6 +167,12 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 两条不变量（`designTokens.css.test.ts:156`）：
 1. 每个 `-backdrop` **恰好比它的表面小 1**——相等会让遮罩盖住自己的菜单。
 2. popover / lightbox **必须高于 modal**——从对话框里打开的菜单不能被对话框裁掉。
+
+**反馈层（`--z-toast`）高于灯箱**：灯箱铺满整屏，而用户在里面也会触发动作（下载、导出）。
+提示被压在灯箱下面＝「点了没反应」，所以 toast 单独提到 10100，不再借用 `--z-popover`。
+同理，**`position: fixed` 的元素自己就是层叠上下文**——灯箱打开时，挂在 `.app-container`
+（同样是 fixed）里的进度条无论 z-index 多大都压不过灯箱，只能在灯箱内部再渲染一份（见
+`Lightbox.vue` 的 `.lb-download`）。新增全屏浮层时先想清楚它里面的操作反馈从哪来。
 
 ### 透明度
 

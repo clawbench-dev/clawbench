@@ -80,6 +80,7 @@ var allowedCJKFiles = map[string]string{
 	"internal/askquestion/markdown.go":           "ordered-list marker regex (CJK numerals)",
 	"internal/ai/backends/deepseek/discovery.go": "model-list output parser (（默认：/ 的模型)",
 	"internal/rag/chunker.go":                    "sentence-boundary detector (。！？) for chunking",
+	"internal/speech/edge_tts.go":                "TTS segmentation: sentence/segment boundary punctuation (。！？；…，) is matched, never rendered",
 	// Mail protocol layer. The CJK strings here are IMAP folder names that are
 	// MATCHED to infer special-use on servers without SPECIAL-USE (Chinese
 	// providers localize "Sent"/"Trash"), never rendered: the folder's display

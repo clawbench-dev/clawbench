@@ -8,7 +8,7 @@
     :indeterminate="indeterminate"
     :value-title="sizeLabel"
     :cancel-title="t('common.cancel')"
-    floating
+    :floating="floating"
     @cancel="emit('cancel')"
   />
 </template>
@@ -31,15 +31,25 @@ import { formatByteRate, formatFileSize } from '@/utils/fileType'
  * rate is still unknown (0), so a just-started bar does not flash "0 B/s".
  *
  * All visuals come from `TransferProgressBar`, which uploads use too.
+ *
+ * `floating` is true for the app-level bar (pinned under the header). The
+ * lightbox passes false and positions the bar itself: the app-level one lives
+ * inside `.app-container`, which is a stacking context, so it can never paint
+ * above the full-screen viewer.
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   fileName: string
   received: number
   total: number
   /** Bytes per second, as measured by `useDownloadProgress`. */
   speed: number
-}>()
+  /** Pin under the app header; false lets the host position the bar. */
+  floating?: boolean
+}>(), {
+  // The app-level bar is the common case and has always floated.
+  floating: true,
+})
 
 const emit = defineEmits<{
   cancel: []

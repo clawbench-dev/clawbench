@@ -970,16 +970,15 @@ export default {
     attach: {
       currentFile: 'Current file',
       currentDir: 'Current directory',
-      recentReferences: 'Recent references',
       recentShares: 'Recently shared',
       recentUploads: 'Recently uploaded',
-      currentTab: 'Current',
-      emptyCurrent: 'No current file or directory',
+      filesTab: 'Files',
+      pickDir: 'Attach this whole folder',
+      unpickDir: 'Deselect this folder',
       uploadFile: 'Upload file',
       pickImage: 'Photo',
       takePhoto: 'Camera',
       drawerTitle: 'Attachments',
-      emptyReferences: 'No recently referenced files',
       emptyShares: 'No recently shared files',
       emptyUploads: 'No recently uploaded files',
       deleteRecent: 'Delete this file',
@@ -1094,6 +1093,7 @@ export default {
       summaryViewSummary: 'Summary',
       deepThinking: 'Thinking',
       creditUsed: 'Credits used this turn: {value}',
+      costUsed: 'Cost this turn: {value}',
       tokenUsed: 'Input {input} / Output {output}',
     },
     fileChanges: {
@@ -1451,6 +1451,9 @@ export default {
     browseFailed: 'Failed to load this project’s sessions',
     expandProject: 'Show all sessions',
     collapseProject: 'Collapse',
+    tabProject: 'This project',
+    tabCross: 'Other projects',
+    crossEmpty: 'No sessions to show from other projects right now',
     reorderFailed: 'Failed to save session order',
     forkGroupTitle: 'Forked from this session — click to collapse',
     forkCount: '{n} fork(s)',
@@ -2732,6 +2735,10 @@ export default {
     // be loaded, instead of a silent broken-image glyph or an empty pane. Every
     // media surface renders the shared MediaLoadError.vue.
     loadFailed: 'Media failed to load',
+    // Read by screen readers for the quiet placeholder shown while a message is
+    // still streaming: the reference has not been resolved yet, so it must not
+    // claim a failure. The visible part is the icon + file name.
+    imageLoading: 'Loading image',
     // Announced while a Mermaid diagram renders. The visible placeholder is
     // purely decorative (skeleton nodes), so this is the only semantic content
     // — without it a screen reader hears nothing for those seconds.
@@ -3330,10 +3337,16 @@ export default {
       chatForkContextBudgetDesc: 'Max characters of conversation history re-injected when forking or rewinding a session. Older messages are omitted beyond this limit (default 100000).',
       sessionMaxCount: 'Max Sessions',
       sessionMaxCountDesc: 'Maximum number of concurrent chat sessions',
+      sessionSortRecent: 'Sort Sessions by Recent Activity',
+      sessionSortRecentDesc: 'Off: sessions stay in creation order and never move on their own. On: the session you last sent a message in floats to the top. A manual drag order always wins.',
       recentProjectCardsMaxCount: 'Other Project Cards Limit',
       recentProjectCardsMaxCountDesc: 'How many other-project cards the session list shows at the bottom. Projects with active sessions come first, then recently used ones (default 10).',
       recentProjectCardsWindowHours: 'Recency window (hours)',
       recentProjectCardsWindowHoursDesc: 'How recently a project must have been used to still get a collapsed card in the session list (default 24 hours).',
+      sessionOtherProjectMode: 'Other-project sessions',
+      sessionOtherProjectModeDesc: 'Strip: the other projects\' cards sit under this project\'s sessions and scroll with them. Tabs: a bar at the bottom of the list switches between this project and the others. Per-device setting.',
+      sessionOtherProjectModeStrip: 'Strip under the list',
+      sessionOtherProjectModeTabs: 'Tabs at the bottom',
       archiveRetentionSectionHeader: 'Archive Retention',
       archiveRetentionEnabled: 'Auto-Purge Archived Sessions',
       archiveRetentionEnabledDesc: 'Automatically delete archived sessions after the retention period expires',
@@ -3500,7 +3513,7 @@ export default {
       meetingFileExcerpts: 'Read contents of files opened in the meeting',
       meetingFileExcerptsDesc: 'Sends a short excerpt of up to 5 opened files (about 1500 characters each) to the minutes model. Turning it off keeps the file timeline but withholds the contents',
       meetingMinutesMaxTokens: 'Minutes output limit',
-      meetingMinutesMaxTokensDesc: 'In tokens, default 3000. 1500 is concise, 3000 standard, 6000 detailed. Too low makes generation fail when the minutes exceed the limit',
+      meetingMinutesMaxTokensDesc: 'In tokens. 0 = auto, following the summary model\'s published output limit (recommended). A number sets it manually: 1500 is concise, 3000 standard, 6000 detailed; too low makes generation fail when the minutes exceed the limit',
       meetingDefaultsSection: 'New meeting defaults',
       meetingDefaultNotes: 'Enable AI notes by default',
       meetingDefaultNotesDesc: 'Pre-checks AI notes when creating a meeting; applies to this device only, and can still be toggled during the meeting',
@@ -4444,6 +4457,7 @@ export default {
     totalDuration: 'Total {duration}',
     exportJson: 'Export snapshot as JSON',
     exportFailed: 'Could not export the snapshot',
+    loadMore: 'Show more messages',
     live: {
       title: 'Live share',
       joinSubtitle: 'The host invited you to this meeting. Pick a name — the host and other viewers will see it.',
@@ -4482,6 +4496,10 @@ export default {
       soundOnHint: 'Playing the meeting audio',
       soundOffHint: 'Tap to turn the sound on',
       micNeedsHttps: 'The microphone needs HTTPS (this page is plain HTTP)',
+      micUnsupported: 'This browser cannot capture audio; try Chrome / Edge / Safari',
+      micDenied: 'The browser refused the microphone: open the icon at the left of the address bar, set Microphone to Allow, then try again',
+      micUnavailable: 'Cannot open the microphone: check that the headset microphone is plugged in and enabled in the system sound settings',
+      micLost: 'The microphone was disconnected (headset unplugged or taken away by the system), so speaking was turned off',
       micMutedByHost: 'The host muted you',
       fullscreen: 'Fullscreen',
       exitFullscreen: 'Exit fullscreen',

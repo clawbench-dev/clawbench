@@ -77,6 +77,7 @@ var hotReloadFields = map[string]bool{
 	"chat.group_max_speeches":                true,
 	"chat.recent_project_cards_max_count":    true,
 	"chat.recent_project_cards_window_hours": true,
+	"chat.session_sort_recent":               true,
 	"language":                               true,
 	"session.max_count":                      true,
 	"session.archive_retention_enabled":      true,
@@ -113,7 +114,6 @@ var hotReloadFields = map[string]bool{
 	"stt.vllm.api_key":             true,
 	"stt.vllm.model":               true,
 	"stt.vllm.language":            true,
-	"stt.vllm.streaming":           true,
 	"stt.vllm.chunk_ms":            true,
 	"stt.vllm.final_recheck":       true,
 	"stt.doubao.api_key":           true,
@@ -457,6 +457,7 @@ type configChat struct {
 	GroupMaxSpeeches         int  `json:"group_max_speeches"`
 	RecentProjectCardsMax    int  `json:"recent_project_cards_max_count"`
 	RecentProjectCardsWindow int  `json:"recent_project_cards_window_hours"`
+	SessionSortRecent        bool `json:"session_sort_recent"`
 }
 
 // configUser is the human user's identity as sent to the client. It is a
@@ -537,7 +538,6 @@ type configSTTVLLM struct {
 	APIKey       string `json:"api_key"`
 	Model        string `json:"model"`
 	Language     string `json:"language"`
-	Streaming    bool   `json:"streaming"`
 	ChunkMs      int    `json:"chunk_ms"`
 	FinalRecheck bool   `json:"final_recheck"`
 }
@@ -941,6 +941,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.group_max_speeches":                true,
 	"chat.recent_project_cards_max_count":    true,
 	"chat.recent_project_cards_window_hours": true,
+	"chat.session_sort_recent":               true,
 	"language":                               true,
 	"session.max_count":                      true,
 	"session.archive_retention_enabled":      true,
@@ -971,7 +972,6 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.vllm.api_key":                       true,
 	"stt.vllm.model":                         true,
 	"stt.vllm.language":                      true,
-	"stt.vllm.streaming":                     true,
 	"stt.vllm.chunk_ms":                      true,
 	"stt.vllm.final_recheck":                 true,
 	"stt.doubao.api_key":                     true,
@@ -1160,6 +1160,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			GroupMaxSpeeches:         cfg.Chat.GroupMaxSpeeches,
 			RecentProjectCardsMax:    cfg.Chat.RecentProjectCardsMaxCount,
 			RecentProjectCardsWindow: cfg.Chat.RecentProjectCardsWindowHours,
+			SessionSortRecent:        cfg.Chat.SessionSortRecent,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -1197,7 +1198,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 				APIKey:       cfg.STT.VLLM.APIKey,
 				Model:        cfg.STT.VLLM.Model,
 				Language:     cfg.STT.VLLM.Language,
-				Streaming:    cfg.STT.VLLM.Streaming,
 				ChunkMs:      cfg.STT.VLLM.ChunkMs,
 				FinalRecheck: cfg.STT.VLLM.FinalRecheck,
 			},
@@ -1731,9 +1731,6 @@ func applySTTVLLMPatch(cfg *model.STTEngineConfig, patch map[string]any) {
 	if v, ok := patch["language"].(string); ok {
 		cfg.Language = v
 	}
-	if v, ok := patch["streaming"].(bool); ok {
-		cfg.Streaming = v
-	}
 	if v, ok := patch["chunk_ms"].(float64); ok {
 		cfg.ChunkMs = int(v)
 	}
@@ -1856,7 +1853,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := meeting["minutes_max_tokens"].(float64); ok {
 			n := int(v)
-			if n < model.MinMeetingMinutesMaxTokens || n > model.MaxMeetingMinutesMaxTokens {
+			// 0 = auto (follow the summary model's published output limit);
+			// anything else is a manual cap inside the advertised range.
+			if n != 0 && (n < model.MinMeetingMinutesMaxTokens || n > model.MaxMeetingMinutesMaxTokens) {
 				return &configValueError{
 					MsgKey: "MeetingMinutesMaxTokensRange",
 					Field:  "meeting.minutes_max_tokens",
@@ -2513,6 +2512,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := chat["recent_project_cards_window_hours"].(float64); ok {
 			cfg.Chat.RecentProjectCardsWindowHours = int(v)
 		}
+		if v, ok := chat["session_sort_recent"].(bool); ok {
+			cfg.Chat.SessionSortRecent = v
+		}
 	}
 
 	if session, ok := patch["session"].(map[string]any); ok {
@@ -2955,6 +2957,7 @@ func applyHotReloadGlobals() {
 	model.ChatGroupMaxSpeeches = cfg.Chat.GroupMaxSpeeches
 	model.ChatRecentProjectCardsMaxCount = cfg.Chat.RecentProjectCardsMaxCount
 	model.ChatRecentProjectCardsWindowHours = cfg.Chat.RecentProjectCardsWindowHours
+	model.ChatSessionSortRecent = cfg.Chat.SessionSortRecent
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

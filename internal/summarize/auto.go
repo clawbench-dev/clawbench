@@ -19,13 +19,12 @@ import (
 var AutoJunkRatio = 0.5
 
 // autoMaxKeptRunes is the second routing axis: even a spotless message is sent
-// to the LLM when its cleaned prose exceeds this many runes. The simple
-// summarizer truncates to SimpleMaxSummarizeRunes (1000) by keeping the LAST
-// 1000 runes and discarding the head — speaking 3000 runes of clean prose
-// verbatim is worse than a 1000-rune condensation, and the truncation would
-// silently drop the opening. Kept equal to SimpleMaxSummarizeRunes so "too long
-// for simple to handle" and "simple would truncate" coincide.
-const autoMaxKeptRunes = SimpleMaxSummarizeRunes
+// to the LLM when its cleaned prose exceeds this many runes. Speaking 3000 runes
+// of clean prose verbatim is worse than a 1000-rune condensation — but "worse"
+// is all it is: when the LLM is unavailable or fails, the caller reads the whole
+// text rather than a fragment, so this threshold only decides when condensing is
+// worth a model call.
+const autoMaxKeptRunes = MaxVerbatimReadRunes
 
 // AutoSummarizer routes each text between a cheap non-LLM cleaner and an LLM
 // summarizer based on the content itself:

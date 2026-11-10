@@ -18,9 +18,10 @@ import { join } from 'node:path'
  *   3. The recency label is plain text, not the fixed-size count badge: a
  *      18dp circle would clip "23 小时前" or leave a hole.
  *
- * jsdom does not apply scoped styles, so this is a source guard.
+ * jsdom does not apply scoped styles, so this is a source guard. The cards live
+ * in their own component (both layouts render it), so the guard reads that file.
  */
-const src = readFileSync(join(__dirname, '..', 'SessionList.vue'), 'utf8')
+const src = readFileSync(join(__dirname, '..', 'OtherProjectCards.vue'), 'utf8')
 
 /** The declaration block for one selector, or '' when absent. */
 function block(selector: string): string {
@@ -55,5 +56,38 @@ describe('other-project card — idle shape', () => {
   it('shows the count badge only when the card has sessions', () => {
     expect(src).toContain('v-if="group.sessions.length > 0" class="pcard-count"')
     expect(src).toContain('v-else class="pcard-recent"')
+  })
+
+  /**
+   * A collapsed idle card is greyed out so "nothing going on here" is legible
+   * without reading the slot. Two ways to get this wrong, both silent:
+   *  - greying the OPEN card too, which makes its rows read as disabled;
+   *  - overriding `--pc` on light only — the dark palette rule outranks a plain
+   *    `.pcard.is-idle`, so the card would stay in full project colour at night.
+   */
+  it('desaturates a collapsed idle card through its one colour variable', () => {
+    const rule = block('.pcard.is-idle:not(.is-expanded)')
+    expect(rule, 'the idle grey rule must exist').not.toBe('')
+    // One override: _pc_ feeds the band, the icon, the border and the hover.
+    expect(rule).toMatch(/--pc:\s*var\(--text-muted/)
+  })
+
+  it('greys the dark palette too', () => {
+    expect(src).toContain(':root[data-theme-base="dark"] .pcard.is-idle:not(.is-expanded)')
+  })
+
+  it('keeps every grey rule out of the open state', () => {
+    const selectors = [...src.matchAll(/^\.pcard\.is-idle([^{]*)\{/gm)].map((m) => m[1])
+    expect(selectors.length).toBeGreaterThan(0)
+    for (const selector of selectors) {
+      expect(selector, `${selector} must not grey an open card`).toContain(':not(.is-expanded)')
+    }
+  })
+
+  it('keeps the idle name readable instead of dropping it to the hint grey', () => {
+    const rule = block('.pcard.is-idle:not(.is-expanded) .pcard-name')
+    expect(rule, 'the idle name rule must exist').not.toBe('')
+    expect(rule).toContain('--text-secondary')
+    expect(rule).not.toContain('--text-hint')
   })
 })

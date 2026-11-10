@@ -71,6 +71,14 @@ describe('DownloadProgressBar', () => {
     expect(wrapper.find('.transfer-progress').classes()).toContain('transfer-progress--floating')
   })
 
+  it('stays in flow when the host positions it (lightbox)', () => {
+    // The app-level bar is pinned under the header; the lightbox renders the
+    // same bar inside its own overlay, where a fixed position would land on top
+    // of the viewer's toolbar.
+    const wrapper = mountBar({ received: 1, total: 2, floating: false })
+    expect(wrapper.find('.transfer-progress').classes()).not.toContain('transfer-progress--floating')
+  })
+
   it('emits cancel when the button is clicked', async () => {
     const wrapper = mountBar({ received: 1, total: 2 })
     await wrapper.find('.transfer-progress-cancel').trigger('click')

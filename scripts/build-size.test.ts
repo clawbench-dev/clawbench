@@ -210,6 +210,18 @@ describe('Build output verification (Issue #328)', () => {
             //     files, so this is dictionary growth, not a heavy module
             //     leaking into the entry. Measured, then budget raised by the
             //     same ~40KB headroom the earlier entries kept.
+            //   - 2026-11-10 re-measured at 4,020,782 (+43,468 over the 11-08
+            //     number) — the 24-commit local backlog (terminal theme
+            //     presets + project tab restore, the shared file picker /
+            //     search dock, other-project session cards + tab strip, the
+            //     attachment picker rewrite, share-page pagination, mail
+            //     compose). Attribution checked before raising: the preload
+            //     set is still the same 9 files (no katex/mermaid/CodeMirror
+            //     re-entry) and web/package.json + package-lock.json are
+            //     untouched by the whole backlog. What grew is source + the
+            //     eagerly bundled i18n pair (both locales, so every new UI
+            //     string is paid twice). Budget raised by the same ~40KB
+            //     headroom as before.
             //   - 2026-11-04 re-measured at 3,878,725 (+144,789 over the 11-02
             //     number) after the built-in mail client landed. Attribution:
             //     the panel itself stays async (MailPanel.vue is a
@@ -231,7 +243,7 @@ describe('Build output verification (Issue #328)', () => {
             // Going lower needs one of: lazy katex (582KB, invasive — the
             // render path is synchronous), per-locale i18n chunks (270KB), or
             // trimming the eager highlight.js language set.
-            const firstScreenThreshold = 4_020_000
+            const firstScreenThreshold = 4_060_000
 
             console.log(`  First-screen JS payload:`)
             for (const d of details) console.log(`    ${d}`)

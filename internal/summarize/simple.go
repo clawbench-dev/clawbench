@@ -2,55 +2,39 @@ package summarize
 
 import "context"
 
-// SimpleSummarizer performs no AI-based summarization.
-// It can strip markdown formatting and truncate long text,
-// making it a zero-cost, zero-latency summarizer suitable for
-// cases where raw cleaned text is acceptable for TTS.
-// When preserveMarkdown is true, StripMarkdown is skipped — used
-// for display summaries (chat/task execution) where formatting matters.
+// SimpleSummarizer performs no AI-based summarization at all: it only cleans the
+// text up so it can be read aloud. It is the zero-cost, zero-latency path used
+// when no LLM summarizer is configured, and the fallback when one fails.
+//
+// It deliberately does NOT truncate. The caller's contract is "if you could not
+// condense it, read the whole thing" — a cap here silently turned a long reply
+// into a fragment, and because the audio starts at the first character kept, a
+// tail-keeping cap made playback begin mid-sentence ("前半段没读，直接从中段读").
+// Deciding that a text is too long to read verbatim is a ROUTING decision made
+// by AutoSummarizer (autoMaxKeptRunes), not something this cleaner may do.
+//
+// When preserveMarkdown is true, StripMarkdown is skipped — used for display
+// summaries (chat/task execution) where formatting matters.
 type SimpleSummarizer struct {
 	preserveMarkdown bool
-	maxRunes         int
 }
 
 // NewSimple creates a SimpleSummarizer that strips markdown (for TTS).
 func NewSimple() *SimpleSummarizer {
-	return &SimpleSummarizer{
-		preserveMarkdown: false,
-		maxRunes:         SimpleMaxSummarizeRunes,
-	}
+	return &SimpleSummarizer{preserveMarkdown: false}
 }
 
 // NewSimplePreserveMarkdown creates a SimpleSummarizer that preserves markdown
 // formatting (for display summaries where code blocks and formatting matter).
 func NewSimplePreserveMarkdown() *SimpleSummarizer {
-	return &SimpleSummarizer{
-		preserveMarkdown: true,
-		maxRunes:         SimpleMaxSummarizeRunes,
-	}
+	return &SimpleSummarizer{preserveMarkdown: true}
 }
 
-// Summarize condenses text without calling any AI model.
-// When preserveMarkdown is false (TTS mode), StripMarkdown is applied before truncation.
-// When preserveMarkdown is true (display mode), raw text is truncated as-is.
-// Uses SimpleMaxSummarizeRunes (1000) as the default truncation limit.
+// Summarize returns the cleaned text, uncut.
 // The language parameter is ignored — simple summarizer has no language awareness.
 func (s *SimpleSummarizer) Summarize(_ context.Context, text string, _ string) (string, error) {
-	var cleaned string
 	if s.preserveMarkdown {
-		cleaned = text
-	} else {
-		cleaned = StripMarkdown(text)
+		return text, nil
 	}
-
-	maxR := s.maxRunes
-	if maxR <= 0 {
-		maxR = SimpleMaxSummarizeRunes
-	}
-	runes := []rune(cleaned)
-	if len(runes) > maxR {
-		cleaned = string(runes[len(runes)-maxR:])
-	}
-
-	return cleaned, nil
+	return StripMarkdown(text), nil
 }

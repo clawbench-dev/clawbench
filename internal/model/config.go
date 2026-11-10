@@ -195,6 +195,13 @@ type Config struct {
 		// session still gets one if it was used inside this window. (default:
 		// 24, minimum 1)
 		RecentProjectCardsWindowHours int `yaml:"recent_project_cards_window_hours"`
+		// SessionSortRecent breaks ties among sessions that share the same
+		// (pinned, sort_order) — i.e. any list the user has never dragged — by
+		// last activity (updated_at DESC) instead of creation time
+		// (created_at DESC). Off by default: ordering by activity reorders the
+		// sidebar under the user's eyes while they read it, which is disruptive
+		// for the common case. Manual drag order always wins regardless.
+		SessionSortRecent bool `yaml:"session_sort_recent"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -501,11 +508,10 @@ type STTEngineConfig struct {
 	// Language is passed to the engine per request. Empty means "let the server
 	// decide", which is what a multilingual Whisper deployment usually wants.
 	Language string `yaml:"language"` // default "zh"
-	// Streaming is the client-facing switch: the browser sends PCM frames
-	// instead of uploading one file. This engine cannot stream natively, so the
-	// server cuts the PCM into chunks on pauses.
-	Streaming bool `yaml:"streaming"` // true=streaming incremental, false=non-streaming full (default: false)
-	ChunkMs   int  `yaml:"chunk_ms"`  // Streaming slice interval in ms (default: 1000)
+	// This engine cannot decode live PCM, so it has no streaming switch: the
+	// dictation path always uploads one finished recording. Chunking below is
+	// only for the server-side chunker that continuous-conversation mode uses.
+	ChunkMs int `yaml:"chunk_ms"` // Streaming slice interval in ms (default: 1000)
 	// FinalRecheck re-transcribes the whole recording once the client sends
 	// "end", replacing the text it accumulated from the chunks. It is the only
 	// way a buffered engine's final answer can span chunk boundaries, but it
@@ -635,9 +641,16 @@ type SummarizeConfig struct {
 // Meeting minutes output limits. Exported so the settings PATCH validator and
 // the frontend's number field agree on the same range.
 const (
-	DefaultMeetingMinutesMaxTokens = 3000
-	MinMeetingMinutesMaxTokens     = 1000
-	MaxMeetingMinutesMaxTokens     = 8000
+	// DefaultMeetingMinutesMaxTokens is the "auto" sentinel: 0 means the budget
+	// follows the summary model's published output limit (see
+	// summarize.OutputBudgetForModel) instead of a fixed number. A fixed default
+	// starved reasoning models — they spend the budget thinking and answer with
+	// an empty response, which fails minutes generation outright.
+	DefaultMeetingMinutesMaxTokens = 0
+	// MinMeetingMinutesMaxTokens is the smallest MANUAL value. 0 itself is the
+	// auto sentinel and is always allowed.
+	MinMeetingMinutesMaxTokens = 1000
+	MaxMeetingMinutesMaxTokens = 8000
 )
 
 // MeetingConfig holds the defaults and output limits for AI meeting notes.
@@ -664,9 +677,10 @@ type MeetingConfig struct {
 	// CONTENT off the machine; the file timeline itself is still included when
 	// it is off.
 	FileExcerpts bool `yaml:"file_excerpts"`
-	// MinutesMaxTokens caps the final minutes output. The map-reduce chunk
-	// extraction has its own fixed budget: this only controls how long the
-	// final document may be, and it is a cap rather than a target.
+	// MinutesMaxTokens caps the final minutes output. 0 means auto: the budget
+	// follows the summary model's published output limit. A positive value is a
+	// manual cap (still clamped to that limit, since asking for more than a
+	// model supports is an API error). It is a cap rather than a target.
 	MinutesMaxTokens int `yaml:"minutes_max_tokens"`
 }
 
@@ -782,6 +796,10 @@ var (
 	// ChatRecentProjectCardsWindowHours is how far back a project counts as
 	// recently active for a collapsed card (default 24). Same hot-reload rule.
 	ChatRecentProjectCardsWindowHours int
+	// ChatSessionSortRecent orders never-dragged session rows by last activity
+	// instead of creation time (default false). Read by internal/service at
+	// query time so a change takes effect without a restart.
+	ChatSessionSortRecent bool
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

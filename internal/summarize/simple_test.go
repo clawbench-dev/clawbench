@@ -22,15 +22,19 @@ func TestSimpleSummarizer_ShortText(t *testing.T) {
 	assert.Equal(t, text, result)
 }
 
-func TestSimpleSummarizer_LongText_Truncation(t *testing.T) {
+// The cleaner is the "could not condense it" path, so it must hand back the
+// WHOLE text. A cap here made a long reply read as a fragment, and a
+// tail-keeping cap made the audio start mid-sentence ("前半段没读，直接从中段读").
+func TestSimpleSummarizer_LongText_IsNotTruncated(t *testing.T) {
 	s := NewSimple()
 
-	longText := strings.Repeat("a", 1500)
+	longText := strings.Repeat("这是一句完整的发言。", 200) // 2000 runes
 	result, err := s.Summarize(context.Background(), longText, "zh")
 	assert.NoError(t, err)
 
-	assert.LessOrEqual(t, len([]rune(result)), SimpleMaxSummarizeRunes)
-	assert.Equal(t, strings.Repeat("a", 1000), result)
+	assert.Equal(t, longText, result)
+	assert.Greater(t, len([]rune(result)), MaxVerbatimReadRunes,
+		"a text past the routing threshold is still returned in full")
 }
 
 func TestSimpleSummarizer_BoundaryExactly1000(t *testing.T) {
@@ -112,11 +116,11 @@ func TestSimpleSummarizer_Default_StripsCodeBlocks(t *testing.T) {
 	assert.NotContains(t, result, "Deploy v0.60")
 }
 
-func TestSimpleSummarizer_PreserveMarkdown_Truncation(t *testing.T) {
+func TestSimpleSummarizer_PreserveMarkdown_LongTextIsNotTruncated(t *testing.T) {
 	s := NewSimplePreserveMarkdown()
 
 	longText := strings.Repeat("a", 1500)
 	result, err := s.Summarize(context.Background(), longText, "zh")
 	assert.NoError(t, err)
-	assert.LessOrEqual(t, len([]rune(result)), SimpleMaxSummarizeRunes)
+	assert.Equal(t, longText, result)
 }

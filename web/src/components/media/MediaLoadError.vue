@@ -8,7 +8,7 @@
        to the imperative mount, which renders outside any component tree. -->
   <div
     class="media-load-error"
-    :class="{ 'media-load-error--fill': fill }"
+    :class="[{ 'media-load-error--fill': fill }, { 'media-load-error--streaming': streaming }]"
     role="img"
     :title="title"
     :aria-label="title"
@@ -16,14 +16,17 @@
     <span class="media-load-error-icon" aria-hidden="true">
       <component :is="icon" :size="18" />
     </span>
-    <span class="media-load-error-text">{{ message }}</span>
+    <!-- A message is a verdict ("failed"). While the turn is still streaming the
+         image has not been resolved yet, so stating a verdict would be wrong —
+         the quiet variant shows the icon and the file name only. -->
+    <span v-if="!streaming" class="media-load-error-text">{{ message }}</span>
     <span v-if="name" class="media-load-error-name">{{ name }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ImageOff, VideoOff, AudioLines, FileWarning } from 'lucide-vue-next'
+import { ImageOff, Image as ImageIcon, VideoOff, AudioLines, FileWarning } from 'lucide-vue-next'
 import { gt } from '@/composables/useLocale'
 import i18n from '@/i18n'
 
@@ -49,11 +52,18 @@ const props = withDefaults(defineProps<{
   message?: string
   /** Stretch to fill a pane that has no other content (viewer / preview card). */
   fill?: boolean
+  /**
+   * Quiet variant for an image whose turn is still streaming: the reference has
+   * not been resolved yet, so nothing is known to have failed. Drops the
+   * verdict text and the dashed "failed" frame, keeping icon + file name.
+   */
+  streaming?: boolean
 }>(), {
   kind: 'image',
   name: '',
   message: '',
   fill: false,
+  streaming: false,
 })
 
 const ICONS = {
@@ -63,12 +73,13 @@ const ICONS = {
   file: FileWarning,
 } as const
 
-const icon = computed(() => ICONS[props.kind] ?? ICONS.file)
+const icon = computed(() => (props.streaming ? ImageIcon : ICONS[props.kind] ?? ICONS.file))
 
 const message = computed(() => {
   // Touch the locale so a language switch re-resolves the label.
   void i18n.global.locale.value
-  return props.message || gt('media.loadFailed')
+  if (props.message) return props.message
+  return gt(props.streaming ? 'media.imageLoading' : 'media.loadFailed')
 })
 
 /** Names the file in the tooltip, which the truncated name line may hide. */

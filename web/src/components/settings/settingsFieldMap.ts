@@ -293,6 +293,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
+    // Session list order. Off by default: ordering by activity reshuffles the
+    // sidebar while the user reads it, which was disruptive enough to be made
+    // opt-in. Manual drag order still wins in both modes.
+    { type: 'item', spec: { labelKey: 'settings.items.sessionSortRecent', descriptionKey: 'settings.items.sessionSortRecentDesc', key: 'chat.session_sort_recent', type: 'switch', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000 } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
@@ -314,6 +318,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // **连续段**分组，所以这两行必须紧挨着，中间不能插别的 header。
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsMaxCount', descriptionKey: 'settings.items.recentProjectCardsMaxCountDesc', key: 'chat.recent_project_cards_max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsWindowHours', descriptionKey: 'settings.items.recentProjectCardsWindowHoursDesc', key: 'chat.recent_project_cards_window_hours', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
+    // How those cards are laid out. Local (per device): the same person may
+    // want the always-visible strip on a desktop and separate tabs on a phone.
+    // Kept inside the same section as the two rows above — the renderer groups
+    // by consecutive runs of the same sectionHeader.
+    { type: 'item', spec: { labelKey: 'settings.items.sessionOtherProjectMode', descriptionKey: 'settings.items.sessionOtherProjectModeDesc', key: 'sessionOtherProjectMode', type: 'select', source: 'local', sectionHeader: 'settings.items.recentProjectCardsSectionHeader', options: [
+      { labelKey: 'settings.items.sessionOtherProjectModeStrip', value: 'strip' },
+      { labelKey: 'settings.items.sessionOtherProjectModeTabs', value: 'tabs' },
+    ]}},
     // Group chat: the cap on how many times the agents may speak to each other
     // before the floor returns to the user. A global server setting (same value
     // on every device). The user nickname now lives in the 身份 category — it
@@ -705,7 +717,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.sttModel', descriptionKey: 'settings.items.sttModelDesc', key: 'stt.vllm.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttApiKey', descriptionKey: 'settings.items.sttApiKeyDesc', key: 'stt.vllm.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttLanguage', descriptionKey: 'settings.items.sttLanguageDesc', key: 'stt.vllm.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
-        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.vllm.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
+        // No 流式识别 switch here: this engine cannot decode live PCM, so the
+        // dictation path always uploads one finished recording. The row used to
+        // be rendered anyway and toggled a value nothing read.
         { labelKey: 'settings.items.sttChunkMs', descriptionKey: 'settings.items.sttChunkMsDesc', key: 'stt.vllm.chunk_ms', type: 'number', source: 'server', min: 200, max: 10000, step: 100, dependsOn: { key: 'stt.provider', value: 'vllm' } },
         { labelKey: 'settings.items.sttFinalRecheck', descriptionKey: 'settings.items.sttFinalRecheckDesc', key: 'stt.vllm.final_recheck', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'vllm' } },
 
@@ -783,7 +797,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.meetingLanguageEn', value: 'en' },
     ]} },
     { type: 'item', spec: { labelKey: 'settings.items.meetingFileExcerpts', descriptionKey: 'settings.items.meetingFileExcerptsDesc', key: 'meeting.file_excerpts', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingMinutesMaxTokens', descriptionKey: 'settings.items.meetingMinutesMaxTokensDesc', key: 'meeting.minutes_max_tokens', type: 'number', source: 'server', min: 1000, max: 8000, step: 500, sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingMinutesMaxTokens', descriptionKey: 'settings.items.meetingMinutesMaxTokensDesc', key: 'meeting.minutes_max_tokens', type: 'number', source: 'server', min: 0, max: 8000, step: 500, sectionHeader: 'settings.items.meetingSummarySection' } },
     // New-meeting defaults. These are local (per device) because they seed the
     // create form; the room-level value is still chosen per meeting and can be
     // changed in the stage's 会议管理 tab.

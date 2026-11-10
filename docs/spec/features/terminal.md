@@ -56,6 +56,8 @@ sequenceDiagram
 - **多标签 PTY 会话**：支持同时打开多个终端标签页，每个标签页对应独立的 PTY 会话，最多 10 个并发会话。用户可以在不同标签页执行不同任务，切换时不丢失状态。终端命令以独立进程组启动（`Setsid:true`），避免 sudo 等命令阻塞在 `/dev/tty` 密码提示。非活跃标签页在后台产生新输出时显示未读圆点，用户无需逐个切换就能发现哪个终端有新输出
 - **可配置空闲超时**：空闲超时可配置（默认 0 = 永不超时），超时后自动关闭 PTY 释放资源。用户可根据需要选择"一直开着"或"自动清理"
 - **断线重连与回放**：终端输出存储在 RingBuffer（2000 行、4MB 上限），WebSocket 重连后自动回放断线期间的输出，用户不会丢失已执行命令的结果
+- **切换项目 / 刷新页面都不杀会话**：PTY 活在服务端，本地只持有它的会话 id。切换项目会销毁整个前端组件树（App 按项目路径 `:key` 重建），刷新则连卸载钩子都不会跑，所以终端面板把每个标签的 `{sessionId, cwd, title}` **在每次变化时同步写进浏览器 localStorage**（`utils/terminalProjectTabs`，按项目路径分键），挂载时读回来按 id 重连——服务端回放离开期间积累的输出，正在跑的命令继续跑。四条边界：显式关标签（含「全部关闭」）仍然真的杀 PTY；记录里**空的标签列表是有效状态**（用户关光了所有标签，回来应看到空状态而不是自动新建一个）；记录**不能只在卸载时写**（刷新没有卸载），所以是同步 watcher 在标签/会话号/当前标签变化时写，且卸载时先停掉 watcher 再清空标签列表，否则会把"空"写回去；记录的 key 必须在 setup 时取——`switchProject` 先写 `store.setProject()` 再换树 key，卸载时读到的已经是「要切去的那个项目」。**为什么不放服务端**：服务端会把它交给所有登录同一台服务器的设备，而一个 PTY 同一时刻只接受一个客户端（新连接踢掉旧的），手机和电脑会互相踢；这份「这台设备开了哪几个标签」本来就属于设备本地，localStorage 也能跨刷新、跨应用重启
+
 - **输出抑制**：重连后回放 buffer 期间自动抑制新输出，避免因 SIGWINCH 触发的重复提示符。50ms 后自动清除抑制，500ms 安全兜底防止永久抑制
 - **TUI 应用支持**：设置 `TERM=xterm-256color` 和 `COLORTERM=truecolor` 环境变量，初始 PTY 尺寸 80x24，确保 vim、htop、OpenCode 等 TUI 应用正常渲染
 - **布局变化自动重排**：容器尺寸变化（拖动分隔条改宽度、宽屏布局切换、窗口缩放）会触发 xterm `fit()` 并把新尺寸经 `HandleResize` 送给后端 → `SIGWINCH`，PTY 按新宽度重新换行。没有这条链路时，拖动分隔条后 xterm 的 `cols` 仍是旧值，PTY 会一直按旧宽度折行，长输出在视觉上错位
@@ -67,7 +69,7 @@ sequenceDiagram
 - **键盘避让**：`useTerminalKeyboard` 跟踪 Android 软键盘高度，键盘关闭时自动复位为 0；`useTerminalViewport` 检测 adjustResize 模式（`innerHeight` 缩小时 `fullScreenHeight - currentInnerHeight` 为正），此模式下浏览器自动调整 `position:fixed` 容器，无需额外 CSS 补偿。视口调整使用 `visualViewport` 高度，PC 端跳过键盘检测避免将窗口缩放误判为键盘弹出。焦点切换时通过 `shouldAutoRefocusTerminal` 判断是否重新聚焦 xterm，避免 Android WebView 键盘闪烁
 - **键位与符号配置**：自定义虚拟键盘的按键和符号布局，配置持久化到数据库。用户可以添加常用的特殊符号，调整修饰键的排列
 - **快捷指令**：预设常用命令一键发送（如 `git status`、`docker ps`），通过 `useCrudList` 管理 CRUD。与聊天快捷发送共享基础设施
-- **终端主题切换**：内置 157 个 xterm-theme 主题（如 Dracula、Solarized、Catppuccin 等），支持 `auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀。选择入口有两个：终端工具栏的主题按钮（带各主题 bg/fg/accent 实时配色预览）和 Settings → 终端面板的"配色主题"下拉。该计数与 `node_modules/xterm-theme` 具名导出数保持一致，升级 xterm-theme 时需同步
+- **终端主题切换**：内置 15 套精选 xterm-theme 主题（Dracula、Gruvbox Dark、One Half Dark/Light、Monokai Soda、Solarized Dark 高对比版/Light、Tomorrow Night/Tomorrow、ayu、Cobalt2、JetBrains Darcula、SpaceGray、Material、Terminal Basic），支持 `auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage，懒加载 xterm-theme 模块避免首屏体积膨胀。选择入口有两个：终端工具栏的主题按钮（带各主题 bg/fg/accent 实时配色预览）和 Settings → 终端面板的"配色主题"下拉。**列表是人工精选的经典款，不是包里的全量**：包里 156 套全列出来挑不过来，且不少配色本身看不清——只收录通过 `isReadableTheme` 的（正文与背景 ≥ 4.5:1，且红/绿/黄/蓝/紫/青任一色与背景 ≥ 1.6:1，否则 `ls`、`git diff` 的彩色输出会消失）。同一判据也用于 `auto` 模式挑主题，否则「跟随应用」会把未收录的低对比度主题自动选回来。`terminalThemeContrast.test.ts` 对着真实 xterm-theme 数据校验每条都过门槛、且列表保持精简
 - **终端输入抽屉**：移动端多行文本输入的 BottomSheet，支持从剪贴板粘贴填充、清空和发送。解决移动端虚拟键盘在 xterm 中输入长命令的体验问题
 - **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目。帮助入口嵌入终端工具栏，一键查看无需记忆
 - **拖拽文件上传到当前目录**：把系统文件管理器里的文件（含整个文件夹，保留嵌套结构与空目录）拖到终端面板上，即上传到 shell **当前所在目录**。复用文件管理器的上传逻辑与 UI（`useFileUpload` 的目录上传模式 + 共享的 `DropOverlay`/`UploadProgressBar` 组件），上传不会附加到聊天会话。同名文件走 `/api/upload/check` 预检后由用户选择覆盖或保留两者；**覆盖时保留目标文件的权限位**——`os.Create` 原地截断本身保住 rwx，但内核会在非特权写入时清掉 setuid/setgid，故上传前后显式 stat + chmod 还原（`existingFileMode`）。覆盖失败（内容没拷完）时不删除已存在的文件，只清理本次新建的半成品

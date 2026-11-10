@@ -61,7 +61,7 @@ describe('in-bubble consumption figures', () => {
   })
 
   it('sizes both glyphs in --dp so they scale with the numbers', () => {
-    for (const sel of ['.chat-usage-arrow', '.chat-usage-credit svg']) {
+    for (const sel of ['.chat-usage-arrow', '.chat-usage-money svg']) {
       const body = rule(css, sel)
       expect(body, sel).toMatch(/width:\s*calc\(12 \* var\(--dp\)\)/)
       expect(body, sel).toMatch(/height:\s*calc\(12 \* var\(--dp\)\)/)
@@ -69,7 +69,14 @@ describe('in-bubble consumption figures', () => {
   })
 
   it('leaves the credit figure uncoloured so it inherits the row tone', () => {
-    const body = rule(css, '.chat-usage-credit')
+    const body = rule(css, '.chat-usage-money')
     expect(body).not.toMatch(/\bcolor\s*:/)
+  })
+
+  it('paints the direction arrows at the same strength as the money glyph', () => {
+    // They share one row, so a dimmed arrow next to a full-strength coin reads
+    // as two different tones rather than as one group.
+    const body = rule(css, '.chat-usage-arrow')
+    expect(body).not.toMatch(/opacity\s*:/)
   })
 })

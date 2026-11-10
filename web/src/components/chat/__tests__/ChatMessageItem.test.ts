@@ -127,6 +127,7 @@ const i18n = createI18n({
           speaking: '正在朗读',
           viewDetails: '详情',
           creditUsed: '本次消耗 {value} 积分',
+          costUsed: '本次花费 {value}',
           tokenUsed: '输入 {input} / 输出 {output}',
         },
         contentBlocks: { cancelled: '已中断' },
@@ -395,7 +396,7 @@ describe('ChatMessageItem', () => {
       expect(tail.findAll('.chat-usage-arrow').length).toBe(2)
       // Credit keeps its decimals (a turn is routinely fractional) and carries
       // the coin glyph rather than the word "积分".
-      const credit = tail.find('.chat-usage-credit')
+      const credit = tail.find('.chat-usage-money')
       expect(credit.text()).toBe('2.79')
       expect(credit.find('svg').exists()).toBe(true)
     })
@@ -414,10 +415,10 @@ describe('ChatMessageItem', () => {
       expect(wrapper.find('.chat-meta-bar .chat-usage-inline').exists()).toBe(false)
     })
 
-    it('renders nothing at all when the turn has no credit', () => {
-      // Every non-CodeBuddy backend reports a monetary costUsd, not credit.
-      // Showing an empty group (or a bare "0") would claim this turn cost
-      // nothing, so the whole tail must be absent.
+    it('falls back to the dollar cost when the backend does not bill in credits', () => {
+      // Every non-CodeBuddy backend reports a monetary costUsd instead of
+      // credit. The tail still shows what the turn cost — just in dollars, with
+      // no coin glyph, so the two units can never be confused for each other.
       const wrapper = createWrapper({
         msg: {
           id: 'c2', role: 'assistant', content: 'response',
@@ -425,8 +426,46 @@ describe('ChatMessageItem', () => {
           metadata: { wallMs: 100, costUsd: 0.42, inputTokens: 1000, outputTokens: 20 },
         },
       })
-      expect(wrapper.find('.chat-usage-inline').exists()).toBe(false)
+      const tail = wrapper.find('.chat-usage-inline')
+      expect(tail.exists()).toBe(true)
+      expect(tail.find('.chat-usage-tokens').text()).toContain('1.0K')
+      expect(tail.find('.chat-usage-tokens').text()).toContain('20')
+      const money = tail.find('.chat-usage-money')
+      expect(money.text()).toBe('$0.42')
+      // No coin glyph: the $ prefix already says which unit this is.
+      expect(money.find('svg').exists()).toBe(false)
+      expect(tail.attributes('title')).toContain('$0.42')
+      expect(tail.attributes('title')).toContain('1,000')
       // The pre-existing meta items are untouched.
+      expect(wrapper.find('.chat-meta-duration').exists()).toBe(true)
+    })
+
+    it('prefers credit over the dollar cost when both are reported', () => {
+      // One money figure only — otherwise the row would show two currencies for
+      // the same turn.
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c2c', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { credit: 1.5, costUsd: 0.42, inputTokens: 1000, outputTokens: 20 },
+        },
+      })
+      const money = wrapper.find('.chat-usage-money')
+      expect(money.text()).toBe('1.5')
+      expect(money.text()).not.toContain('$')
+      expect(money.find('svg').exists()).toBe(true)
+      expect(wrapper.find('.chat-usage-inline').attributes('title')).toContain('1.5')
+    })
+
+    it('renders nothing at all when the turn reported no money and no tokens', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'c2b', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { wallMs: 100, credit: 0, costUsd: 0 },
+        },
+      })
+      expect(wrapper.find('.chat-usage-inline').exists()).toBe(false)
       expect(wrapper.find('.chat-meta-duration').exists()).toBe(true)
     })
 
@@ -439,7 +478,7 @@ describe('ChatMessageItem', () => {
         },
       })
       const tail = wrapper.find('.chat-usage-inline')
-      expect(tail.find('.chat-usage-credit').text()).toBe('15.0K')
+      expect(tail.find('.chat-usage-money').text()).toBe('15.0K')
       expect(tail.find('.chat-usage-tokens').text()).toContain('6.8M')
       expect(tail.find('.chat-usage-tokens').text()).toContain('26.2K')
     })

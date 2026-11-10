@@ -29,7 +29,7 @@ describe('i18n sessionShare keys completeness', () => {
   // The viewer-side keys live in the shared `share` namespace alongside the
   // file-share ones.
   it('the share namespace has the session-viewer keys in both locales', () => {
-    for (const key of ['sharedConversation', 'messageCount', 'totalDuration', 'exportJson', 'exportFailed']) {
+    for (const key of ['sharedConversation', 'messageCount', 'totalDuration', 'exportJson', 'exportFailed', 'loadMore']) {
       expect((en.share as Record<string, string>)[key], `en.share.${key}`).toBeTruthy()
       expect((zh.share as Record<string, string>)[key], `zh.share.${key}`).toBeTruthy()
     }

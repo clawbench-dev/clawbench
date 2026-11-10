@@ -741,8 +741,8 @@ func TestGenerateLiveNotesMinutes_LongMeetingIsMapReduced(t *testing.T) {
 	require.Len(t, bodies, 3, "two chunk passes plus one final pass")
 	assert.Contains(t, bodies[0], "第 1/2 段", "chunk prompt carries its position")
 	assert.Contains(t, bodies[1], "第 2/2 段")
-	assert.Contains(t, bodies[0], `"max_tokens":4800`,
-		"the extraction budget must scale with the chunk size")
+	assert.Contains(t, bodies[0], `"max_tokens":16384`,
+		"the extraction budget follows the model (auto), not a fixed ratio to the chunk")
 	assert.Contains(t, bodies[2], "要点1", "the final pass sees the condensed chunks")
 	assert.Contains(t, bodies[2], "要点2")
 }
@@ -2865,7 +2865,37 @@ func TestGenerateLiveNotesMinutes_DefaultLanguageFollowsTranscript(t *testing.T)
 	body := bodies()[0]
 	assert.NotContains(t, body, "Output language:")
 	assert.NotContains(t, body, "输出语言：")
-	assert.Contains(t, body, `"max_tokens":3000`, "the default cap must stay the documented 3000")
+	// The default is 0 = auto: the budget follows the summary model's published
+	// output limit (no catalog entry here, so the ceiling), not the old fixed
+	// 3000 that starved reasoning models into an empty answer.
+	assert.NotContains(t, body, `"max_tokens":3000`)
+	assert.Contains(t, body, `"max_tokens":16384`)
+}
+
+// 0 = auto must follow the model, and a manual value must stay manual. Both are
+// clamped to what the model actually supports — asking for more is an API error.
+func TestGenerateLiveNotesMinutes_BudgetFollowsModelLimit(t *testing.T) {
+	orig := model.CatalogSnapshot()
+	t.Cleanup(func() { model.ReplaceCatalog(orig) })
+
+	bodies := captureSummaryBodies(t, "## 概要\n\n纪要")
+	model.ConfigInstance.AISummary.Model = "minutes-test-model"
+	model.ReplaceCatalog(&model.Catalog{Providers: map[string]model.CatalogProvider{
+		"p": {ID: "p", Models: []model.CatalogModel{{ID: "minutes-test-model", Output: 5000}}},
+	}})
+
+	_, err := GenerateLiveNotesMinutes(context.Background(), "季度会", "[00:00] 我：内容", "", LiveNotesSpeaker{})
+	require.NoError(t, err)
+	assert.Contains(t, bodies()[0], `"max_tokens":5000`,
+		"auto must use the model's published output limit")
+
+	_, err = GenerateLiveNotesMinutesWithOptions(
+		context.Background(), "季度会", "[00:00] 我：内容", "", LiveNotesSpeaker{},
+		LiveNotesMinutesOptions{MaxTokens: 6000},
+	)
+	require.NoError(t, err)
+	assert.Contains(t, bodies()[1], `"max_tokens":5000`,
+		"a manual cap above the model's limit must be clamped down")
 }
 
 // A low cap must fail visibly. Before this, AskAboutContext discarded the

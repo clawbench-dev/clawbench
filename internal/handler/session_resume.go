@@ -594,6 +594,14 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		if title := deriveSessionTitleForAgent(agent, projectPath, req.AcpSessionID, messages); title != "" {
 			if err := service.SetSessionTitleLocked(sessionID, title); err != nil {
 				slog.Warn("handler: failed to set title for acp-load session", "session_id", sessionID, "error", err)
+			} else {
+				// The frontend already switched to this session (the HTTP
+				// response returned before this replay tail ran) and listed its
+				// row with the blank title the session was created with. Nothing
+				// else re-reads the list when a title lands, so without this
+				// broadcast the restored session keeps showing no name until an
+				// unrelated reload. Same event the automatic rename uses.
+				service.BroadcastSessionTitleUpdate(sessionID, title)
 			}
 		}
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/url"
 	"strings"
+
+	"clawbench/internal/model"
 )
 
 // IsAnthropicURL detects whether a URL is an Anthropic API endpoint based on
@@ -188,11 +190,12 @@ Rules:
 	// Configurable via config/config.yaml tts.max_summarize_runes.
 	DefaultMaxSummarizeRunes = 10000
 
-	// SimpleMaxSummarizeRunes is the maximum number of runes for the "simple" summarizer,
-	// which does no AI-based summarization — just strips markdown and truncates.
-	// Lower than the AI summarizer because without AI condensation, longer text
-	// would be too verbose for TTS.
-	SimpleMaxSummarizeRunes = 1000
+	// MaxVerbatimReadRunes is the length above which a text is too long to read
+	// aloud as-is, so the LLM summarizer is asked to condense it (see
+	// AutoSummarizer). It is a ROUTING threshold only: the non-AI cleaner never
+	// truncates, because "could not condense" must mean "read all of it", not
+	// "read part of it".
+	MaxVerbatimReadRunes = 1000
 
 	// CacheKeyHexLen is the number of hex characters used for the cache filename.
 	CacheKeyHexLen = 16
@@ -205,6 +208,51 @@ Rules:
 	// (first pass + optional re-summarization).
 	maxSummarizePasses = 2
 )
+
+// summarizeBudgetCeiling is the output budget a summarization pass may use when
+// the model's own limit is unknown or larger.
+//
+// The budget must cover the model's REASONING as well as the answer: a
+// reasoning model spends the same budget thinking first, and when it runs out
+// the API returns an empty `content` with finish_reason=length. The old
+// hardcoded 1024 was measured to do exactly that on a 2600-rune message (1024 →
+// empty, 2048 → empty, 4096 → content), so every long TTS summary silently fell
+// back to the non-AI cleaner.
+//
+// 16384 covers the worst case this pipeline can be handed: inputs are capped at
+// MaxSummarizeRunes (10000 runes), reasoning costs roughly 1.2 tokens per input
+// rune (measured), and the answer itself is a few hundred tokens.
+const summarizeBudgetCeiling = 16384
+
+// summarizePassBudget returns the max_tokens to request for one summarization
+// pass of modelID (auto: the model's own limit, capped at the ceiling).
+func summarizePassBudget(modelID string) int {
+	return OutputBudgetForModel(modelID, 0)
+}
+
+// OutputBudgetForModel returns the max_tokens to request for one model call on
+// modelID.
+//
+// requested <= 0 means "auto": as much as the model allows, capped at the
+// ceiling above. A positive requested is a caller's own cap (a user setting) and
+// is still clamped to the model's published limit — asking for more than a model
+// supports is a hard API error, not a longer answer.
+//
+// The limit is read from the model catalog rather than hardcoded: models differ
+// by orders of magnitude (the catalog publishes 8192 for some and 384000 for
+// others), and an unknown model (a local proxy, a model the catalog has never
+// seen) gets the ceiling, which is only an upper bound — a model that does not
+// need it simply stops earlier.
+func OutputBudgetForModel(modelID string, requested int) int {
+	budget := requested
+	if budget <= 0 {
+		budget = summarizeBudgetCeiling
+	}
+	if limit := model.CatalogOutputLimitForModel(modelID); limit > 0 && limit < budget {
+		budget = limit
+	}
+	return budget
+}
 
 // MaxSummarizeRunes is the maximum number of runes for summarization input.
 // Texts longer than this are truncated to the last N characters.

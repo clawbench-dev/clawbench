@@ -242,3 +242,53 @@ func TestDefaultModelID_HonoursUnlistedPinForDeclaringBackend(t *testing.T) {
 		t.Fatalf("default = %q, want the provider default for a backend that cannot declare a pin", got)
 	}
 }
+
+// Binding a provider does not take the backend's OWN models away: the picker
+// still lists them, so picking one must run it as-is. Namespacing it sends the
+// gateway a model name it never served (400) — and because only the fallback
+// path goes through here, the same agent kept working in a 1:1 chat (which
+// reuses the stored session model) while its group member failed (issue #651,
+// group-chat follow-up).
+func TestDefaultModelID_KeepsNativeModelUnnamespaced(t *testing.T) {
+	pid := int64(97)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 97, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"glm-5.3-flash"}, DefaultModel: "glm-5.3-flash",
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	nativeID := "opencode/deepseek-v4.1-flash-free"
+	agent := &model.Agent{
+		Backend:        "opencode",
+		ProviderID:     &pid,
+		PreferredModel: nativeID,
+		Models: []model.AgentModel{
+			{ID: nativeID, Name: "DeepSeek V4.1 Flash Free"},
+			{ID: "opencode/glm-5.3", Name: "GLM"},
+		},
+	}
+	if got := agent.DefaultModelID(); got != nativeID {
+		t.Fatalf("default = %q, want the native id unchanged", got)
+	}
+
+	// An uncurated provider (the "custom…" escape hatch) behaves the same way.
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 97, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k",
+	}})
+	if got := agent.DefaultModelID(); got != nativeID {
+		t.Fatalf("default = %q, want the native id on an uncurated provider too", got)
+	}
+
+	// The provider's own list still wins when a pin names it, even if a native
+	// model happens to share the name — that binding is what the user asked for.
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 97, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		APIKey: "k", Models: []string{"glm-5.3-flash"}, DefaultModel: "glm-5.3-flash",
+	}})
+	agent.PreferredModel = "glm-5.3-flash"
+	agent.Models = append(agent.Models, model.AgentModel{ID: "glm-5.3-flash"})
+	if got := agent.DefaultModelID(); got != "clawbench-openai/glm-5.3-flash" {
+		t.Fatalf("default = %q, want the provider form for a listed provider model", got)
+	}
+}

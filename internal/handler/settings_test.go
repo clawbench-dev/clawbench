@@ -503,6 +503,42 @@ func TestServeConfig_Patch_RecentProjectCardsWindowHours(t *testing.T) {
 	}
 }
 
+// chat.session_sort_recent round-trips through PATCH /api/config and is synced
+// into the model global so the session queries honor it without a restart.
+func TestServeConfig_Patch_SessionSortRecent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	orig := model.ChatSessionSortRecent
+	t.Cleanup(func() { model.ChatSessionSortRecent = orig })
+	model.ChatSessionSortRecent = false
+
+	body := `{"chat":{"session_sort_recent":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.Chat.SessionSortRecent,
+		"the value must be applied to ConfigInstance")
+	assert.True(t, model.ChatSessionSortRecent,
+		"applyHotReloadGlobals must sync the model global")
+
+	// GET must expose it so the settings switch renders the saved state.
+	getReq := newRequest(t, http.MethodGet, "/api/config", nil)
+	getW := callHandler(ServeConfig, getReq)
+	assertOK(t, getW)
+	var result struct {
+		Chat struct {
+			SessionSortRecent bool `json:"session_sort_recent"`
+		} `json:"chat"`
+	}
+	require.NoError(t, json.Unmarshal(getW.Body.Bytes(), &result))
+	assert.True(t, result.Chat.SessionSortRecent, "the switch must be part of GET /api/config")
+}
+
 // The window must reach the client, otherwise the settings row renders empty
 // even though the server honors it.
 func TestServeConfig_Get_ExposesRecentProjectCardsWindow(t *testing.T) {
@@ -2796,12 +2832,11 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 			"provider":     "doubao",
 			"shortcut_key": "Ctrl+M",
 			"vllm": map[string]any{
-				"base_url":  "http://localhost:9000/v1",
-				"api_key":   "k",
-				"model":     "whisper-small",
-				"language":  "en",
-				"streaming": true,
-				"chunk_ms":  float64(800),
+				"base_url": "http://localhost:9000/v1",
+				"api_key":  "k",
+				"model":    "whisper-small",
+				"language": "en",
+				"chunk_ms": float64(800),
 			},
 			"doubao": map[string]any{
 				"api_key":     "volc-k",
@@ -2827,9 +2862,6 @@ func TestApplyConfigPatch_STT(t *testing.T) {
 	}
 	if cfg2.STT.VLLM.Language != "en" {
 		t.Errorf("STT.VLLM.Language = %q, want en", cfg2.STT.VLLM.Language)
-	}
-	if !cfg2.STT.VLLM.Streaming {
-		t.Error("STT.VLLM.Streaming = false, want true")
 	}
 	if cfg2.STT.VLLM.ChunkMs != 800 {
 		t.Errorf("STT.VLLM.ChunkMs = %d, want 800", cfg2.STT.VLLM.ChunkMs)
@@ -2866,7 +2898,6 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	cfg.STT.VLLM.APIKey = "k"
 	cfg.STT.VLLM.Model = "whisper-small"
 	cfg.STT.VLLM.Language = "en"
-	cfg.STT.VLLM.Streaming = true
 	cfg.STT.VLLM.ChunkMs = 800
 	cfg.STT.Doubao.APIKey = "volc-k"
 	cfg.STT.Doubao.ResourceID = "volc.seedasr.sauc.duration"
@@ -2892,8 +2923,10 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	assert.Equal(t, "k", vllm["api_key"])
 	assert.Equal(t, "whisper-small", vllm["model"])
 	assert.Equal(t, "en", vllm["language"])
-	assert.Equal(t, true, vllm["streaming"])
 	assert.Equal(t, float64(800), vllm["chunk_ms"])
+	// The OpenAI-compatible engine has no streaming switch: it cannot decode
+	// live PCM, so the key must not come back in the config response.
+	assert.NotContains(t, vllm, "streaming")
 
 	doubao, ok := stt["doubao"].(map[string]any)
 	require.True(t, ok, "response should contain stt.doubao")
@@ -3640,6 +3673,24 @@ func TestServeConfig_Patch_MeetingMinutesMaxTokensRange(t *testing.T) {
 			assert.Equal(t, "meeting.minutes_max_tokens", detail["field"])
 		})
 	}
+}
+
+// 0 is the "auto" sentinel (follow the summary model's published limit), not an
+// out-of-range value: rejecting it would make the recommended setting unusable.
+func TestServeConfig_Patch_MeetingMinutesMaxTokensAcceptsAuto(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	req := httptest.NewRequest(http.MethodPatch, "/api/config",
+		strings.NewReader(`{"meeting":{"minutes_max_tokens":0}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Locale", "en")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Zero(t, model.ConfigInstance.Meeting.MinutesMaxTokens)
 }
 
 func TestServeConfig_Patch_MeetingRejectsUnknownLanguage(t *testing.T) {

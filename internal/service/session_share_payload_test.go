@@ -244,16 +244,19 @@ func contentBlocks(t *testing.T, msg map[string]any) []map[string]any {
 // stripped and thinking blocks with only a think_id. A snapshot that does not
 // re-inline them from the side tables renders empty tool cards and thinking
 // chips with no text.
-// The cap must be enforced by BuildSessionSharePayload itself, not merely
-// available as a helper: the trimmer being correct is useless if the entry
-// point stops calling it. Asserts on the returned bytes, which is what the
-// handler stores.
-func TestSessionSharePayload_TrimsOverCapAtTheEntryPoint(t *testing.T) {
+// The payload is served WHOLE — no cap, no trimming. The old trimmer halved
+// tool outputs until the payload fit an arbitrary 16 MiB ceiling, which on a
+// real long session meant dozens of full re-serializations (~11s per request)
+// and STILL came out over the cap, because thinking text and message bodies
+// dominate and cannot be trimmed at all. What the share serves is now exactly
+// the conversation; keeping the cost down is the viewer's job (it mounts in
+// pages) rather than something that silently edits the transcript.
+func TestSessionSharePayload_ServesOversizedToolOutputVerbatim(t *testing.T) {
 	db := setupTestDBForSessionSharePayload(t)
 	defer func() { _ = db.Close() }()
 
 	seedSession(t, db, "s1")
-	huge := strings.Repeat("x", 18<<20) // 18 MiB, over the 16 MiB cap on its own
+	huge := strings.Repeat("x", 18<<20) // 18 MiB in one tool output
 	msgID := seedMessage(t, db, "s1", "assistant", `{"blocks":[
 		{"type":"tool_use","id":"toolu_cap","name":"Read","status":"success","done":true}
 	],"metadata":{}}`, 0, 0)
@@ -268,16 +271,12 @@ func TestSessionSharePayload_TrimsOverCapAtTheEntryPoint(t *testing.T) {
 	raw, _, err := buildAllForSession(t, "s1")
 	require.NoError(t, err)
 
-	require.LessOrEqual(t, len(raw), 16<<20,
-		"the entry point must enforce the cap, not just the helper")
-
-	// The trim must reach the stored bytes: marker present, block flagged.
 	blocks := contentBlocks(t, payloadMessages(t, raw)[0])
 	require.NotEmpty(t, blocks)
-	assert.Equal(t, true, blocks[0]["truncated"],
-		"the viewer needs the flag to say the content was cut")
-	assert.Contains(t, blocks[0]["output"], "truncated for sharing",
-		"the output must carry the marker so the cut is visible")
+	out, _ := blocks[0]["output"].(string)
+	assert.Len(t, out, len(huge), "the tool output must arrive byte for byte")
+	assert.NotContains(t, out, "truncated for sharing")
+	assert.NotContains(t, blocks[0], "truncated")
 }
 
 // Summaries, summary cards and inline tool inputs are carried VERBATIM. These

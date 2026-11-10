@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions, isDependsOnMet, formatAnchorForDisplay } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
 import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { readLiveQuality } from '@/utils/liveQualityPrefs'
 import i18n from '@/i18n'
 import en from '@/i18n/locales/en'
@@ -412,6 +413,16 @@ describe('settingsFieldMap', () => {
     expect(values).toEqual(['mixed', 'summary', 'original'])
   })
 
+  it('chat category has a server switch for recent-activity session ordering', () => {
+    const chatEntries = categoryItems['chat']
+    const entry = chatEntries.find(e => e.type === 'item' && e.spec.key === 'chat.session_sort_recent')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item')
+    expect(entry.spec.source).toBe('server')
+    expect(entry.spec.type).toBe('switch')
+    expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
+  })
+
   it('puts the other-project card settings in a card of their own', () => {
     // The two values are one feature (how many cards, how far back counts), so
     // they belong together — and NOT inside 消息与历史, where they read as yet
@@ -645,8 +656,12 @@ describe('settingsFieldMap', () => {
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
     }
 
-    // The streaming switch exists once per engine, each gated on its own engine.
-    for (const engine of ['vllm', 'doubao', 'alibaba']) {
+    // The streaming switch exists only for the engines that can decode live
+    // PCM, each gated on its own engine. vLLM gets no row at all: its value was
+    // never read by any code path (dictation always uploads one recording), so
+    // the row was a switch that did nothing.
+    expect(keys).not.toContain('stt.vllm.streaming')
+    for (const engine of ['doubao', 'alibaba']) {
       const field = cfg.commonFields.find(f => f.key === `stt.${engine}.streaming`)
       expect(field, engine).toBeDefined()
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
@@ -1300,6 +1315,43 @@ describe('usage meter cycle type', () => {
     expect(modeAt).toBe(0)
     expect(keys.indexOf('usage_meter.anchor_date')).toBeGreaterThan(modeAt)
     expect(keys.indexOf('usage_meter.period_days')).toBeGreaterThan(modeAt)
+  })
+})
+
+
+// The session list's "other projects" placement is a LOCAL setting read directly
+// by two components (`SessionList` for the panes, `SessionListTabs` for the bar).
+// Pin the panel row to the values those components compare against, so a rename
+// in one place cannot silently turn the tab bar into a no-op.
+describe('session list other-project placement', () => {
+  function spec() {
+    const items = categoryItems['chat'] ?? []
+    const found = items
+      .map(entry => (entry as any).spec)
+      .find(s => s?.key === 'sessionOtherProjectMode')
+    expect(found, 'the row must exist in 设置 → 聊天').toBeTruthy()
+    return found
+  }
+
+  it('is a local select with exactly the two values the components understand', () => {
+    const row = spec()
+    expect(row.source).toBe('local')
+    expect(row.type).toBe('select')
+    expect(row.options.map(o => o.value)).toEqual(['strip', 'tabs'])
+  })
+
+  it('defaults to the strip, so an untouched device keeps the current layout', () => {
+    expect(localConfig.sessionOtherProjectMode).toBe('strip')
+  })
+
+  it('has both locales for the row and its options', () => {
+    const row = spec()
+    for (const locale of [zh, en]) {
+      const items = (locale as any).settings.items
+      expect(items.sessionOtherProjectMode).toBeTruthy()
+      expect(items.sessionOtherProjectModeDesc).toBeTruthy()
+      for (const opt of row.options) expect(items[opt.labelKey.split('.').pop()]).toBeTruthy()
+    }
   })
 })
 

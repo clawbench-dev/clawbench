@@ -77,7 +77,7 @@ func TestAnthropicSummarizer_APICall(t *testing.T) {
 	assert.Equal(t, "claude-3-5-haiku-latest", receivedReq.Model)
 	assert.Equal(t, "user", receivedReq.Messages[0].Role)
 	assert.NotEmpty(t, receivedReq.System) // system prompt at top level
-	assert.Equal(t, 1024, receivedReq.MaxTokens)
+	assert.Equal(t, summarizePassBudget(s.Model), receivedReq.MaxTokens)
 }
 
 func TestAnthropicSummarizer_MultiPass(t *testing.T) {
@@ -133,6 +133,28 @@ func TestAnthropicSummarizer_ConnectionRefused(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "anthropic request")
+}
+
+// See the OpenAI counterpart: the budget covers reasoning too, and 1024 made
+// reasoning models answer with an empty `content`.
+func TestAnthropicSummarizer_SummarizeBudgetCoversReasoning(t *testing.T) {
+	var receivedReq anthropicRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&receivedReq))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{{Type: "text", Text: "总结。"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "")
+	_, err := s.Summarize(context.Background(), "短文本", "zh")
+	assert.NoError(t, err)
+
+	assert.Equal(t, summarizePassBudget(s.Model), receivedReq.MaxTokens)
+	// 1024 was measured to leave a reasoning model with no budget for the answer.
+	assert.GreaterOrEqual(t, receivedReq.MaxTokens, 4096)
 }
 
 func TestAnthropicSummarizer_EmptyResponse(t *testing.T) {

@@ -626,7 +626,7 @@ func TestGetSessionsPaged_TagFilterPaginatesWithoutDuplicates(t *testing.T) {
 			break
 		}
 		last := got[len(got)-1]
-		cursor = last.UpdatedAt.Format("2006-01-02 15:04:05")
+		cursor = last.CreatedAt.Format("2006-01-02 15:04:05")
 		cursorID = last.ID
 		o := last.SortOrder
 		cursorSortOrder = &o

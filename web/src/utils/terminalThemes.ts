@@ -5,37 +5,41 @@ export const TERMINAL_THEME_AUTO = 'auto'
 export const TERMINAL_THEME_STORAGE_KEY = 'terminalTheme'
 
 /**
- * 157 个主题 id 的静态列表（构建期硬编码，不触发 xterm-theme 加载）。
- * 用于渲染选择列表。来源：node_modules/xterm-theme/index.js 的所有具名导出。
+ * 精选后的 16 个主题 id（构建期硬编码，不触发 xterm-theme 加载）。
+ * 用于渲染选择列表。包里共有 156 套，全量列表太长且不少配色本身看不清，
+ * 这里只留各家的经典款（都已通过 isReadableTheme 的对比度门槛）：
+ *   深色：Dracula、Gruvbox Dark、One Half Dark、Monokai Soda、
+ *         Solarized Dark（高对比版）、Tomorrow Night、ayu、Cobalt2、
+ *         JetBrains Darcula、SpaceGray
+ *   浅色：Material、One Half Light、Solarized Light、Tomorrow、Terminal Basic
+ *   default：占位项，实际解析时回落到 Catppuccin（随 App 深/浅色）
+ * 想加回某个主题：确认它能过 isReadableTheme，再补进 THEME_IDS 与
+ * THEME_BACKGROUNDS 两处（顺序由背景亮度自动排，不用手排）。
  */
 export const THEME_IDS: string[] = [
-  'AdventureTime', 'Afterglow', 'AlienBlood', 'Argonaut', 'Arthur', 'AtelierSulphurpool',
-  'Atom', 'Batman', 'Belafonte_Night', 'BirdsOfParadise', 'Blazer', 'Borland',
-  'Bright_Lights', 'Broadcast', 'Brogrammer', 'C64', 'Chalk', 'Chalkboard', 'Ciapre',
-  'Cobalt2', 'Cobalt_Neon', 'CrayonPonyFish', 'Dark_Pastel', 'Darkside', 'Desert',
-  'DimmedMonokai', 'DotGov', 'Dracula', 'Duotone_Dark', 'ENCOM', 'Earthsong', 'Elemental',
-  'Elementary', 'Espresso', 'Espresso_Libre', 'Fideloper', 'FirefoxDev', 'Firewatch',
-  'FishTank', 'Flat', 'Flatland', 'Floraverse', 'ForestBlue', 'FrontEndDelight',
-  'FunForrest', 'Galaxy', 'Github', 'Glacier', 'Grape', 'Grass', 'Gruvbox_Dark',
-  'Hardcore', 'Harper', 'Highway', 'Hipster_Green', 'Homebrew', 'Hurtado', 'Hybrid',
-  'IC_Green_PPL', 'IC_Orange_PPL', 'IR_Black', 'Jackie_Brown', 'Japanesque', 'Jellybeans',
-  'JetBrains_Darcula', 'Kibble', 'Later_This_Evening', 'Lavandula', 'LiquidCarbon',
-  'LiquidCarbonTransparent', 'LiquidCarbonTransparentInverse', 'Man_Page', 'Material',
-  'MaterialDark', 'Mathias', 'Medallion', 'Misterioso', 'Molokai', 'MonaLisa',
-  'Monokai_Soda', 'Monokai_Vivid', 'N0tch2k', 'Neopolitan', 'Neutron', 'NightLion_v1',
-  'NightLion_v2', 'Night_3024', 'Novel', 'Obsidian', 'Ocean', 'OceanicMaterial', 'Ollie',
-  'OneHalfDark', 'OneHalfLight', 'Pandora', 'Paraiso_Dark', 'Parasio_Dark', 'PaulMillr',
-  'PencilDark', 'PencilLight', 'Piatto_Light', 'Pnevma', 'Pro', 'Red_Alert', 'Red_Sands',
-  'Rippedcasts', 'Royal', 'Ryuuko', 'SeaShells', 'Seafoam_Pastel', 'Seti', 'Shaman',
-  'Slate', 'Smyck', 'SoftServer', 'Solarized_Darcula', 'Solarized_Dark',
-  'Solarized_Dark_Higher_Contrast', 'Solarized_Dark_Patched', 'Solarized_Light', 'SpaceGray',
-  'SpaceGray_Eighties', 'SpaceGray_Eighties_Dull', 'Spacedust', 'Spiderman', 'Spring',
-  'Square', 'Sundried', 'Symfonic', 'Teerb', 'Terminal_Basic', 'Thayer_Bright', 'The_Hulk',
-  'Tomorrow', 'Tomorrow_Night', 'Tomorrow_Night_Blue', 'Tomorrow_Night_Bright',
-  'Tomorrow_Night_Eighties', 'ToyChest', 'Treehouse', 'Ubuntu', 'UnderTheSea', 'Urple',
-  'Vaughn', 'VibrantInk', 'Violet_Dark', 'Violet_Light', 'WarmNeon', 'Wez', 'WildCherry',
-  'Wombat', 'Wryan', 'Zenburn', 'ayu', 'deep', 'default', 'idleToes',
+  // 深色
+  'Dracula',
+  'Gruvbox_Dark',
+  'OneHalfDark',
+  'Monokai_Soda',
+  'Solarized_Dark_Higher_Contrast',
+  'Tomorrow_Night',
+  'ayu',
+  'Cobalt2',
+  'JetBrains_Darcula',
+  'SpaceGray',
+  // 浅色
+  'Material',
+  'OneHalfLight',
+  'Solarized_Light',
+  'Tomorrow',
+  'Terminal_Basic',
+  // 占位（回落 Catppuccin）
+  'default',
 ]
+
+/** THEME_IDS 的查找版，供 auto 模式判断「这个 id 是不是精选主题」。 */
+const CURATED_THEME_IDS = new Set(THEME_IDS)
 
 /** App 深色主题默认值（Catppuccin Mocha，迁移自 TerminalPanelContent.vue）。 */
 export const darkTheme: ITheme = {
@@ -128,6 +132,69 @@ export function colorDistance(a: string, b: string): number {
   )
 }
 
+// ── 可读性（对比度）────────────────────────────────────────────────────────
+
+/** 正文与背景的最小对比度（WCAG AA 正文标准 4.5:1）。低于此值在 12px 等宽字下糊成一片。 */
+export const MIN_FOREGROUND_CONTRAST = 4.5
+
+/**
+ * 常用 ANSI 色（红/绿/黄/蓝/紫/青）与背景的最小对比度。
+ * 低于此值时 `ls`、`git diff` 这类彩色输出直接看不见，等同于没有输出。
+ * 不检查 black / brightBlack：它们在多数主题里本就按背景色设计（注释、暗色块）。
+ */
+export const MIN_ANSI_CONTRAST = 1.6
+
+/** 参与「彩色输出能不能看见」检查的 ANSI 槽位。 */
+const READABLE_ANSI_KEYS = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan'] as const
+
+/** 计算 WCAG 相对亮度（0 黑 ~ 1 白）。 */
+function relativeLuminance(rgb: [number, number, number]): number {
+  const [r, g, b] = rgb.map((v) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/**
+ * 两色的 WCAG 对比度（1:1 ~ 21:1）。任一颜色不可解析 → null（无法判断）。
+ */
+export function contrastRatio(fg: string, bg: string): number | null {
+  const a = parseHexColor(fg)
+  const b = parseHexColor(bg)
+  if (!a || !b) return null
+  const la = relativeLuminance(a)
+  const lb = relativeLuminance(b)
+  const hi = Math.max(la, lb)
+  const lo = Math.min(la, lb)
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/**
+ * 这套配色能不能看清：正文够不够亮，以及常用彩色输出会不会消失。
+ *
+ * 缺 foreground / background 时返回 true——判断不了就不拦（xterm 自带的
+ * 默认黑白配色本身是可读的，而测试里也常只给背景色做匹配）。
+ *
+ * 同一个判据被两处共用：THEME_IDS 的筛选口径，以及 auto 模式挑主题时
+ * 排除不可读项（否则「跟随应用」仍可能自动选到已从列表里删掉的那几个）。
+ */
+export function isReadableTheme(theme: ITheme): boolean {
+  const bg = theme.background
+  const fg = theme.foreground
+  if (!bg || !fg) return true
+  const fgRatio = contrastRatio(fg, bg)
+  if (fgRatio == null) return true
+  if (fgRatio < MIN_FOREGROUND_CONTRAST) return false
+  for (const key of READABLE_ANSI_KEYS) {
+    const color = theme[key]
+    if (!color) continue
+    const ratio = contrastRatio(color, bg)
+    if (ratio != null && ratio < MIN_ANSI_CONTRAST) return false
+  }
+  return true
+}
+
 // ── 选区底色补齐 ────────────────────────────────────────────────────────────
 
 /** 浅色背景下的选区底色（半透明黑，叠在 #fafafa 上约 #bbbbbb）。 */
@@ -158,16 +225,19 @@ export function ensureVisibleSelection(theme: ITheme): ITheme {
 /**
  * 在所有终端主题里找背景色与 targetBg 最接近的一个，返回其 id。
  * 主题无 background 或不可解析 → 跳过；themes 为空 → 返回 null。
+ * accept 可进一步过滤候选（auto 用它排除不可读主题）。
  */
 export function findClosestThemeByBackground(
   targetBg: string,
   themes: Record<string, ITheme>,
+  accept?: (id: string, theme: ITheme) => boolean,
 ): string | null {
   let best: string | null = null
   let bestDist = Number.POSITIVE_INFINITY
   for (const [id, theme] of Object.entries(themes)) {
     const bg = theme.background
     if (!bg) continue
+    if (accept && !accept(id, theme)) continue
     const dist = colorDistance(targetBg, bg)
     if (dist < bestDist) {
       bestDist = dist
@@ -178,15 +248,25 @@ export function findClosestThemeByBackground(
 }
 
 /**
- * 解析 auto 主题（跟随 App）：在全部终端主题里找背景色与当前 App 主题
- * 最接近的一个；themes 未加载或为空（懒加载失败）→ 回退 Catppuccin。
+ * 解析 auto 主题（跟随 App）：在精选主题里找背景色与当前 App 主题最接近的
+ * 一个；themes 未加载或为空（懒加载失败）→ 回退 Catppuccin。
+ *
+ * 候选必须是 THEME_IDS 里的（包里还有 140 多套没收录的配色，若按背景色全量
+ * 匹配，「跟随应用」会用上用户在菜单里看不见、也选不回来的颜色），并且要过
+ * 可读性门槛。
  */
 export function resolveAutoTheme(
   appThemeBg: string,
   themes: Record<string, ITheme> | null | undefined,
   isAppDark: boolean,
 ): ITheme {
-  const id = themes ? findClosestThemeByBackground(appThemeBg, themes) : null
+  const id = themes
+    ? findClosestThemeByBackground(
+        appThemeBg,
+        themes,
+        (themeId, theme) => CURATED_THEME_IDS.has(themeId) && isReadableTheme(theme),
+      )
+    : null
   if (!id) return ensureVisibleSelection(isAppDark ? darkTheme : lightTheme)
   return ensureVisibleSelection(themes![id])
 }
@@ -279,166 +359,25 @@ export function isAppDarkTheme(): boolean {
 
 /**
  * 每个主题 id 对应的背景色（构建期从 xterm-theme 提取，硬编码避免触发懒加载）。
- * 用于主题选择列表按背景明暗从浅到深排序。`default` 是模块默认导出（无独立背景），为 null。
+ * 用于主题选择列表按背景明暗从浅到深排序。`default` 是占位项（包里没有对应
+ * 配色数据），故意不在这里登记，排序时按「无背景」落到末尾。
  */
 const THEME_BACKGROUNDS: Record<string, string | null> = {
-  AdventureTime: '#1f1d45',
-  Afterglow: '#212121',
-  AlienBlood: '#0f1610',
-  Argonaut: '#0e1019',
-  Arthur: '#1c1c1c',
-  AtelierSulphurpool: '#202746',
-  Atom: '#161719',
-  Batman: '#1b1d1e',
-  Belafonte_Night: '#20111b',
-  BirdsOfParadise: '#2a1f1d',
-  Blazer: '#0d1926',
-  Borland: '#0000a4',
-  Bright_Lights: '#191919',
-  Broadcast: '#2b2b2b',
-  Brogrammer: '#131313',
-  C64: '#40318d',
-  Chalk: '#2b2d2e',
-  Chalkboard: '#29262f',
-  Ciapre: '#191c27',
-  Cobalt2: '#132738',
-  Cobalt_Neon: '#142838',
-  CrayonPonyFish: '#150707',
-  Dark_Pastel: '#000000',
-  Darkside: '#222324',
-  Desert: '#333333',
-  DimmedMonokai: '#1f1f1f',
-  DotGov: '#262c35',
   Dracula: '#1e1f29',
-  Duotone_Dark: '#1f1d27',
-  ENCOM: '#000000',
-  Earthsong: '#292520',
-  Elemental: '#22211d',
-  Elementary: '#181818',
-  Espresso: '#323232',
-  Espresso_Libre: '#2a211c',
-  Fideloper: '#292f33',
-  FirefoxDev: '#0e1011',
-  Firewatch: '#1e2027',
-  FishTank: '#232537',
-  Flat: '#002240',
-  Flatland: '#1d1f21',
-  Floraverse: '#0e0d15',
-  ForestBlue: '#051519',
-  FrontEndDelight: '#1b1c1d',
-  FunForrest: '#251200',
-  Galaxy: '#1d2837',
-  Github: '#f4f4f4',
-  Glacier: '#0c1115',
-  Grape: '#171423',
-  Grass: '#13773d',
   Gruvbox_Dark: '#1e1e1e',
-  Hardcore: '#121212',
-  Harper: '#010101',
-  Highway: '#222225',
-  Hipster_Green: '#100b05',
-  Homebrew: '#000000',
-  Hurtado: '#000000',
-  Hybrid: '#161719',
-  IC_Green_PPL: '#3a3d3f',
-  IC_Orange_PPL: '#262626',
-  IR_Black: '#000000',
-  Jackie_Brown: '#2c1d16',
-  Japanesque: '#1e1e1e',
-  Jellybeans: '#121212',
-  JetBrains_Darcula: '#202020',
-  Kibble: '#0e100a',
-  Later_This_Evening: '#222222',
-  Lavandula: '#050014',
-  LiquidCarbon: '#303030',
-  LiquidCarbonTransparent: '#000000',
-  LiquidCarbonTransparentInverse: '#000000',
-  Man_Page: '#fef49c',
-  Material: '#eaeaea',
-  MaterialDark: '#232322',
-  Mathias: '#000000',
-  Medallion: '#1d1908',
-  Misterioso: '#2d3743',
-  Molokai: '#121212',
-  MonaLisa: '#120b0d',
-  Monokai_Soda: '#1a1a1a',
-  Monokai_Vivid: '#121212',
-  N0tch2k: '#222222',
-  Neopolitan: '#271f19',
-  Neutron: '#1c1e22',
-  NightLion_v1: '#000000',
-  NightLion_v2: '#171717',
-  Night_3024: '#090300',
-  Novel: '#dfdbc3',
-  Obsidian: '#283033',
-  Ocean: '#224fbc',
-  OceanicMaterial: '#1c262b',
-  Ollie: '#222125',
   OneHalfDark: '#282c34',
-  OneHalfLight: '#fafafa',
-  Pandora: '#141e43',
-  Paraiso_Dark: '#2f1e2e',
-  Parasio_Dark: '#2f1e2e',
-  PaulMillr: '#000000',
-  PencilDark: '#212121',
-  PencilLight: '#f1f1f1',
-  Piatto_Light: '#ffffff',
-  Pnevma: '#1c1c1c',
-  Pro: '#000000',
-  Red_Alert: '#762423',
-  Red_Sands: '#7a251e',
-  Rippedcasts: '#2b2b2b',
-  Royal: '#100815',
-  Ryuuko: '#2c3941',
-  SeaShells: '#09141b',
-  Seafoam_Pastel: '#243435',
-  Seti: '#111213',
-  Shaman: '#001015',
-  Slate: '#222222',
-  Smyck: '#1b1b1b',
-  SoftServer: '#242626',
-  Solarized_Darcula: '#3d3f41',
-  Solarized_Dark: '#001e27',
+  Monokai_Soda: '#1a1a1a',
   Solarized_Dark_Higher_Contrast: '#001e27',
-  Solarized_Dark_Patched: '#001e27',
-  Solarized_Light: '#fcf4dc',
-  SpaceGray: '#20242d',
-  SpaceGray_Eighties: '#222222',
-  SpaceGray_Eighties_Dull: '#222222',
-  Spacedust: '#0a1e24',
-  Spiderman: '#1b1d1e',
-  Spring: '#ffffff',
-  Square: '#1a1a1a',
-  Sundried: '#1a1818',
-  Symfonic: '#000000',
-  Teerb: '#262626',
-  Terminal_Basic: '#ffffff',
-  Thayer_Bright: '#1b1d1e',
-  The_Hulk: '#1b1d1e',
-  Tomorrow: '#ffffff',
   Tomorrow_Night: '#1d1f21',
-  Tomorrow_Night_Blue: '#002451',
-  Tomorrow_Night_Bright: '#000000',
-  Tomorrow_Night_Eighties: '#2d2d2d',
-  ToyChest: '#24364b',
-  Treehouse: '#191919',
-  Ubuntu: '#300a24',
-  UnderTheSea: '#011116',
-  Urple: '#1b1b23',
-  Vaughn: '#25234f',
-  VibrantInk: '#000000',
-  Violet_Dark: '#1c1d1f',
-  Violet_Light: '#fcf4dc',
-  WarmNeon: '#404040',
-  Wez: '#000000',
-  WildCherry: '#1f1726',
-  Wombat: '#171717',
-  Wryan: '#101010',
-  Zenburn: '#3f3f3f',
   ayu: '#0f1419',
-  deep: '#000000',
-  default: null,
-  idleToes: '#323232',
+  Cobalt2: '#132738',
+  JetBrains_Darcula: '#202020',
+  SpaceGray: '#20242d',
+  Material: '#eaeaea',
+  OneHalfLight: '#fafafa',
+  Solarized_Light: '#fcf4dc',
+  Tomorrow: '#ffffff',
+  Terminal_Basic: '#ffffff',
 }
 
 /**

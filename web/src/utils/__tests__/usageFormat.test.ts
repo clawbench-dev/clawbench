@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCompactCount, formatCompactCredit, formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
+import { formatCompactCount, formatCompactCredit, formatTailCost, formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
 
 describe('formatCompactCredit', () => {
   it('keeps a turn\'s fractional credit instead of rounding it away', () => {
@@ -20,6 +20,26 @@ describe('formatCompactCredit', () => {
 
   it('returns a placeholder for non-numbers', () => {
     expect(formatCompactCredit(Number.NaN)).toBe('—')
+  })
+})
+
+describe('formatTailCost', () => {
+  it('keeps the cents of an ordinary turn', () => {
+    expect(formatTailCost(0.42)).toBe('$0.42')
+    expect(formatTailCost(2.5)).toBe('$2.50')
+  })
+
+  it('does not round a sub-cent turn down to a free-looking $0.00', () => {
+    // ACP turns routinely cost fractions of a cent; "$0.00" would read as
+    // "this turn cost nothing".
+    expect(formatTailCost(0.005)).toBe('$0.005')
+    expect(formatTailCost(0.0004)).toBe('$0.0004')
+    expect(formatTailCost(0.00001)).toBe('<$0.0001')
+  })
+
+  it('renders nothing for zero or missing cost', () => {
+    expect(formatTailCost(0)).toBe('')
+    expect(formatTailCost(Number.NaN)).toBe('')
   })
 })
 

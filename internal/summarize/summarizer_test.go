@@ -5,8 +5,52 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/model"
+
 	"github.com/stretchr/testify/assert"
 )
+
+// --- summarizePassBudget ---
+
+// The budget must follow the model's published output limit instead of a
+// hardcoded number: limits differ by orders of magnitude, and asking for more
+// than the model supports is a hard API error.
+func TestSummarizePassBudget_FollowsModelCatalog(t *testing.T) {
+	orig := model.CatalogSnapshot()
+	t.Cleanup(func() { model.ReplaceCatalog(orig) })
+
+	model.ReplaceCatalog(nil)
+	assert.Equal(t, summarizeBudgetCeiling, summarizePassBudget("anything"),
+		"an unknown model (no catalog) gets the ceiling — a cap only bounds the model")
+
+	model.ReplaceCatalog(&model.Catalog{Providers: map[string]model.CatalogProvider{
+		"p": {ID: "p", Models: []model.CatalogModel{
+			{ID: "small-output", Output: 3000},
+			{ID: "huge-output", Output: 384000},
+		}},
+	}})
+	assert.Equal(t, 3000, summarizePassBudget("small-output"),
+		"a model that publishes a lower limit must not be asked for more")
+	assert.Equal(t, summarizeBudgetCeiling, summarizePassBudget("huge-output"),
+		"a model that allows more is still capped by the ceiling")
+	assert.Equal(t, summarizeBudgetCeiling, summarizePassBudget("unknown-model"))
+}
+
+// A caller's own cap (the meeting minutes setting) survives, but never exceeds
+// what the model supports: the provider rejects that instead of answering.
+func TestOutputBudgetForModel_ManualCapIsClampedToModel(t *testing.T) {
+	orig := model.CatalogSnapshot()
+	t.Cleanup(func() { model.ReplaceCatalog(orig) })
+
+	model.ReplaceCatalog(&model.Catalog{Providers: map[string]model.CatalogProvider{
+		"p": {ID: "p", Models: []model.CatalogModel{{ID: "m", Output: 5000}}},
+	}})
+
+	assert.Equal(t, 1500, OutputBudgetForModel("m", 1500), "a manual cap below the limit is used as-is")
+	assert.Equal(t, 5000, OutputBudgetForModel("m", 6000), "a manual cap above the limit is clamped down")
+	assert.Equal(t, 5000, OutputBudgetForModel("m", 0), "0 means auto: the model's limit")
+	assert.Equal(t, 2000, OutputBudgetForModel("unknown", 2000))
+}
 
 // --- languageName ---
 

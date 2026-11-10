@@ -205,6 +205,9 @@ type Agent struct {
 // (opencode) address a model as "<provider>/<model>", so the bare id the
 // provider stores would be rejected on the first turn (issue #651).
 //
+// A pin that names one of the agent's OWN models is the exception — see
+// providerModelID: a binding does not take the backend's native models away.
+//
 // The preference is checked in BOTH forms. The picker hands back the namespaced
 // id while the provider may store either form (a gateway that namespaces its own
 // ids, like "openai/gpt-4o", stores the namespaced one) — comparing a single
@@ -212,7 +215,7 @@ type Agent struct {
 func (a *Agent) DefaultModelID() string {
 	if p := a.Provider(); p != nil && len(p.Models) > 0 {
 		if pref := a.PreferredModel; pref != "" && a.providerAcceptsPin(p, pref) {
-			return ProviderModelIDFor(a.Backend, p.Protocol, pref)
+			return a.providerModelID(p, pref)
 		}
 		if p.DefaultModel != "" {
 			return ProviderModelIDFor(a.Backend, p.Protocol, p.DefaultModel)
@@ -222,12 +225,68 @@ func (a *Agent) DefaultModelID() string {
 	// An uncurated provider still has to honor a pin: the "custom…" escape
 	// hatch exists exactly for an endpoint that publishes no model list.
 	if p := a.Provider(); p != nil && a.PreferredModel != "" && a.providerAcceptsPin(p, a.PreferredModel) {
-		return ProviderModelIDFor(a.Backend, p.Protocol, a.PreferredModel)
+		return a.providerModelID(p, a.PreferredModel)
 	}
 	if a.PreferredModel != "" {
 		return a.PreferredModel
 	}
 	return a.BaseModelID()
+}
+
+// providerModelID renders a preferred model in the form the backend accepts for
+// a bound provider.
+//
+// A binding means "run the models this endpoint serves", but it does NOT remove
+// the backend's own catalog from the picker: opencode's native models
+// ("opencode/<model>") sit in the same list as the provider's, and picking one
+// of those is a deliberate choice to keep using it. Namespacing such an id
+// pushes it through the provider instead — the endpoint then gets a model name
+// it never served and answers 400, which is what made a group member fail while
+// the same agent worked in a 1:1 chat (the 1:1 chat reuses the model the session
+// already stored, the group member row falls back to this default).
+//
+// So only ids that are NEITHER in the provider's list NOR in the agent's own
+// catalog are the "custom…" escape hatch, and those must be namespaced to be
+// declared to the backend (see providerAcceptsPin / withInlineConfig).
+func (a *Agent) providerModelID(p *Provider, id string) string {
+	listed := containsString(p.Models, id) ||
+		containsString(p.Models, ProviderBareModelID(a.Backend, p.Protocol, id))
+	if !listed && a.ownsModelID(id) {
+		return id
+	}
+	return ProviderModelIDFor(a.Backend, p.Protocol, id)
+}
+
+// ownsModelID reports whether id names a model in this agent's own catalog, as
+// opposed to one the bound provider serves.
+//
+// Agent.Models is the discovered list (CLI probe, plus whatever a model refresh
+// persisted), so it is available on a cold start — before any session has
+// reported its models. ACP-only models are NOT in it; they live in the ACP
+// capability registry, which this package cannot reach (ai imports model).
+func (a *Agent) ownsModelID(id string) bool {
+	for _, m := range a.Models {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// providerDeclarablePin returns the preferred model that has to be declared to a
+// backend validating ids against its own catalog, or "" when there is nothing
+// extra to declare.
+//
+// A pin that names one of the agent's OWN models needs no declaration — the
+// backend already resolves it — and declaring it would advertise that model
+// through the provider block, where selecting it goes to an endpoint that never
+// served it. Only the "custom…" escape hatch has to be declared (see
+// withInlineConfig).
+func (a *Agent) providerDeclarablePin() string {
+	if a.PreferredModel == "" || a.ownsModelID(a.PreferredModel) {
+		return ""
+	}
+	return a.PreferredModel
 }
 
 // providerAcceptsPin reports whether a preferred model should be used as-is

@@ -26,6 +26,7 @@
       </div>
       <SessionList
         ref="listRef"
+        v-model:active-tab="activeTab"
         :current-session-id="currentSessionId"
         :running-session-ids="runningSessionIds"
         :is-active="isActive"
@@ -33,6 +34,10 @@
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"
       />
+      <!-- Bottom tab bar (设置 → 聊天 → 其他项目卡片 → 底部页签). Rendered here,
+           outside the list's scroll area, so it stays pinned; it hides itself
+           when the setting is 'strip' or there are no other projects. -->
+      <SessionListTabs v-model:active-tab="activeTab" />
     </div>
     <!-- Shared-conversation management lives in the 分享 tab now, so this
          component no longer mounts a drawer. The root stays a single element:
@@ -47,6 +52,7 @@ import { useI18n } from 'vue-i18n'
 import { X } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
+import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
@@ -63,6 +69,10 @@ const { t } = useI18n()
 
 const listRef = ref(null)
 const rootRef = ref(null)
+// Which pane the list shows. Owned here (not in SessionList) because the tab bar
+// is rendered outside the scroll area, and intentionally not persisted: the list
+// always opens on the current project.
+const activeTab = ref('project')
 // Tracks a manual refresh so the sidebar refresh button can spin for the real
 // load duration (SessionList keeps its list visible during background reloads,
 // so `loading` alone can't drive the button).

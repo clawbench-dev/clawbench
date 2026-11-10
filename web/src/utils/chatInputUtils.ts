@@ -20,7 +20,10 @@ export function isImeCompositionEvent(e: { isComposing?: boolean; keyCode?: numb
 /**
  * Extract recently referenced files from message history.
  * Counts occurrences, excludes current file and already-attached files,
- * returns top 5 by frequency.
+ * returns the top 20 by frequency.
+ *
+ * Feeds the `@` file menu's "recent references" source — the attachment sheet
+ * has no such tab.
  */
 export function computeRecentReferencedFiles(
   messages: { role: string; files?: (string | FileEntry)[] }[] | null,
@@ -49,38 +52,4 @@ export function computeRecentReferencedFiles(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20)
     .map(([path, count]) => ({ path, count, isDir: dirMap.get(path) === true }))
-}
-
-/**
- * Check if any file groups (current file, current dir, recent shares, or recent references) should be shown.
- */
-export function computeHasFileGroups(
-  currentFilePath: string | null | undefined,
-  currentDir: string | null | undefined,
-  attachedFiles: FileEntry[],
-  recentReferencedFiles: { path: string; count: number }[],
-  recentShareCount: number = 0
-): boolean {
-  const attachedPaths = attachedFiles.map(f => f.path)
-  const hasCurrent = currentFilePath && !attachedPaths.includes(currentFilePath)
-  const hasDir = currentDir && !attachedPaths.includes(currentDir)
-  return !!hasCurrent || !!hasDir || recentShareCount > 0 || recentReferencedFiles.length > 0
-}
-
-/**
- * Compute the number of items in the attach menu for layout purposes.
- */
-export function computeAttachMenuItemCount(
-  currentFilePath: string | null | undefined,
-  currentDir: string | null | undefined,
-  attachedFiles: FileEntry[],
-  recentReferencedFiles: { path: string; count: number }[],
-  recentShareCount: number = 0
-): number {
-  const attachedPaths = attachedFiles.map(f => f.path)
-  let count = recentReferencedFiles.length + recentShareCount
-  if (currentFilePath && !attachedPaths.includes(currentFilePath)) count++
-  if (currentDir && !attachedPaths.includes(currentDir)) count++
-  count++ // Upload file button
-  return count
 }

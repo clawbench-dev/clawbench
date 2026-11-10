@@ -172,7 +172,46 @@ vi.mock('@/composables/usePlatformDetect', () => ({
   },
 }))
 
-import AttachDrawer from '../AttachDrawer.vue'
+/**
+ * Stub for the file picker.
+ *
+ * Its own behaviour (browsing, search, folder selection) is covered by
+ * FilePicker.test.ts; here it only has to hand paths back the way the real one
+ * does, so the sheet's draft / OK-delta contract stays under test without a
+ * second copy of the picker's network stack.
+ */
+vi.mock('@/components/file/FilePicker.vue', () => ({
+  default: {
+    name: 'FilePicker',
+    props: {
+      open: { type: Boolean, default: false },
+      startDir: { type: String, default: null },
+      currentFile: { type: String, default: null },
+      selected: { type: Array, default: () => [] },
+      allowDir: { type: Boolean, default: true },
+    },
+    emits: ['update:selected'],
+    setup(props: any, { emit }: any) {
+      const add = (entry: Record<string, unknown>) => {
+        const current = (props.selected as any[]) ?? []
+        if (current.some(e => e.path === entry.path)) return
+        emit('update:selected', [...current, entry])
+      }
+      const remove = (path: string) => {
+        const current = (props.selected as any[]) ?? []
+        emit('update:selected', current.filter(e => e.path !== path))
+      }
+      return { add, remove }
+    },
+    template: `<div class="file-picker-stub" :data-open="open" :data-start-dir="startDir" :data-current-file="currentFile">
+      <button class="fp-stub-file" @click="add({ path: 'src/foo.ts', isDir: false })">pick file</button>
+      <button class="fp-stub-dir" @click="add({ path: 'src/utils', isDir: true })">pick dir</button>
+      <button class="fp-stub-unpick" @click="remove('src/foo.ts')">unpick file</button>
+    </div>`,
+  },
+}))
+
+import AttachmentPicker from '../AttachmentPicker.vue'
 
 const i18n = createI18n({
   legacy: false,
@@ -186,13 +225,14 @@ const i18n = createI18n({
           pickImage: 'Photo',
           takePhoto: 'Camera',
           currentTab: 'Current',
-          recentReferences: 'References',
+          filesTab: 'Files',
+          pickDir: 'Attach this folder',
+          unpickDir: 'Deselect this folder',
           recentShares: 'Shares',
           recentUploads: 'Uploads',
           currentDir: 'Dir',
           currentFile: 'File',
           emptyCurrent: 'No current file or directory',
-          emptyReferences: 'No referenced files',
           emptyShares: 'No shared files',
           emptyUploads: 'No uploaded files',
           uploading: 'Uploading...',
@@ -219,7 +259,7 @@ const i18n = createI18n({
 })
 
 function mountDrawer(props: Record<string, any> = {}) {
-  return mount(AttachDrawer, {
+  return mount(AttachmentPicker, {
     props: { open: true, ...props },
     global: { plugins: [i18n] },
   })
@@ -246,7 +286,7 @@ function mockPickedFiles(paths: string[]) {
   })
 }
 
-describe('AttachDrawer', () => {
+describe('AttachmentPicker', () => {
   beforeEach(() => {
     mockDeleteRecentShare.mockClear()
     mockDeleteRecentUpload.mockClear()
@@ -272,129 +312,91 @@ describe('AttachDrawer', () => {
     expect(wrapper.text()).toContain('Attach Files')
   })
 
-  it('shows current tab by default', () => {
+  it('shows the file picker tab by default', () => {
     const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.ad-tab')
-    expect(tabs.length).toBe(4)
+    expect(tabs.length).toBe(3)
     expect(tabs[0].classes()).toContain('ad-tab-active')
+    expect(wrapper.find('.file-picker-stub').exists()).toBe(true)
   })
 
-  it('switches activeTab to references on click', async () => {
-    const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    expect(getRawState(wrapper).activeTab.value).toBe('references')
+  it('hands the current location and selection to the picker', () => {
+    // The picker starts where the caller is looking and must show what is
+    // already attached, otherwise re-opening the sheet looks like it lost them.
+    const wrapper = mountDrawer({
+      currentDir: 'src/components',
+      currentFile: 'src/main.ts',
+      attachedFiles: [{ path: 'src/foo.ts' }],
+    })
+    const stub = wrapper.find('.file-picker-stub')
+    expect(stub.attributes('data-start-dir')).toBe('src/components')
+    expect(stub.attributes('data-current-file')).toBe('src/main.ts')
+    const picker = wrapper.findComponent({ name: 'FilePicker' })
+    expect(picker.props('selected')).toEqual([{ path: 'src/foo.ts' }])
   })
 
   it('switches activeTab to shares on click', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[2].trigger('click')
+    await wrapper.findAll('.ad-tab')[1].trigger('click')
     await nextTick()
     expect(getRawState(wrapper).activeTab.value).toBe('shares')
   })
 
   it('switches activeTab to uploads on click', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await wrapper.findAll('.ad-tab')[2].trigger('click')
     await nextTick()
     expect(getRawState(wrapper).activeTab.value).toBe('uploads')
   })
 
-  it('shows "/" as display name when currentDir is null (effectiveCurrentDir=".")', () => {
-    const wrapper = mountDrawer({ currentDir: null })
-    expect(wrapper.text()).toContain('/')
+  it('has no "recent references" tab any more', () => {
+    // Removed for good: the file picker covers "pick a file you used before",
+    // and the tab only ever listed the same few paths.
+    const wrapper = mountDrawer()
+    expect(wrapper.findAll('.ad-tab').map(t => t.text())).toEqual(['Files', 'Shares', 'Uploads'])
   })
 
-  it('shows baseName as display name for non-root currentDir', () => {
-    const wrapper = mountDrawer({ currentDir: 'src/components' })
-    expect(wrapper.text()).toContain('components')
+  it('mail variant drops the chat-only history tabs but keeps uploads', () => {
+    const wrapper = mountDrawer({ variant: 'mail' })
+    const tabs = wrapper.findAll('.ad-tab')
+    expect(tabs.map(t => t.text())).toEqual(['Files', 'Uploads'])
+    expect(wrapper.find('.file-picker-stub').exists()).toBe(true)
   })
 
-  it('shows current file row when currentFile is set', () => {
-    const wrapper = mountDrawer({ currentFile: 'src/main.ts' })
-    expect(wrapper.text()).toContain('main.ts')
+  it('mail variant never renders the chat-only recent tabs', async () => {
+    const wrapper = mountDrawer({ variant: 'mail' })
+    expect(wrapper.text()).not.toContain('Shares')
   })
 
-  it('does not show empty current message when effectiveCurrentDir is "."', () => {
-    const wrapper = mountDrawer({ currentFile: null, currentDir: null })
-    expect(wrapper.find('.ad-empty').exists()).toBe(false)
-  })
-
-  it('renders referenced files on current tab when provided', () => {
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/foo.ts', count: 3 }],
-    })
-    expect(wrapper.props('recentReferencedFiles')).toEqual([{ path: 'src/foo.ts', count: 3 }])
-  })
-
-  it('selects a referenced directory in the draft, applied on OK with isDir=true', async () => {
-    // A referenced directory must carry its isDir flag, otherwise it is attached
-    // as a file and shows a file icon instead of a folder. Selection is local,
-    // so the flag has to survive until OK — not just until the click.
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/utils', count: 2, isDir: true }],
-    })
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('utils'))
-    expect(row).toBeTruthy()
-    await row!.trigger('click')
-    // Nothing reaches the composer before OK.
+  it('picking in the file picker only marks it selected (no emit)', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await wrapper.find('.fp-stub-file').trigger('click')
     expect(wrapper.emitted('add-attached')).toBeFalsy()
-    expect(row!.classes()).toContain('ad-file-attached')
+    expect(getRawState(wrapper).draft.value.map((e: any) => e.path)).toEqual(['src/foo.ts'])
+  })
 
+  it('unpicking in the file picker only unmarks it (no emit)', async () => {
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/foo.ts' }] })
+    await wrapper.find('.fp-stub-unpick').trigger('click')
+    expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    expect(getRawState(wrapper).draft.value).toEqual([])
+  })
+
+  it('a folder picked in the file picker keeps its isDir flag through OK', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.find('.fp-stub-dir').trigger('click')
     await wrapper.find('[data-action="attach-ok"]').trigger('click')
     expect(wrapper.emitted('add-attached')![0]).toEqual(['src/utils', true])
   })
 
-  it('selects a referenced file in the draft, applied on OK with isDir=false', async () => {
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/foo.ts', count: 1 }],
-    })
+  it('emits file-open when clicking a share row link', async () => {
+    sharedRecentShares.value = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 1, modTime: '' }]
+    const wrapper = mountDrawer()
     await wrapper.findAll('.ad-tab')[1].trigger('click')
     await nextTick()
-    const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('foo.ts'))
-    expect(row).toBeTruthy()
-    await row!.trigger('click')
-    expect(wrapper.emitted('add-attached')).toBeFalsy()
-
-    await wrapper.find('[data-action="attach-ok"]').trigger('click')
-    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/foo.ts', false])
-  })
-
-  it('clicking an unselected row only marks it selected (no emit)', async () => {
-    const wrapper = mountDrawer({
-      currentDir: 'src',
-      attachedFiles: [],
-    })
-    await wrapper.find('.ad-current-item').trigger('click')
-    expect(wrapper.emitted('add-attached')).toBeFalsy()
-    expect(wrapper.find('.ad-current-item').classes()).toContain('ad-file-attached')
-  })
-
-  it('clicking a selected row only unmarks it (no emit)', async () => {
-    const wrapper = mountDrawer({
-      currentDir: 'src',
-      attachedFiles: [{ path: 'src', isDir: true }],
-    })
-    await wrapper.find('.ad-current-item').trigger('click')
-    expect(wrapper.emitted('remove-attached')).toBeFalsy()
-    expect(wrapper.find('.ad-current-item').classes()).not.toContain('ad-file-attached')
-  })
-
-  it('emits file-open when clicking external link on current dir row', async () => {
-    const wrapper = mountDrawer({ currentDir: 'src' })
-    await wrapper.find('.ad-current-item .ad-file-open').trigger('click')
-    expect(wrapper.emitted('file-open')).toBeTruthy()
-    expect(wrapper.emitted('file-open')![0]).toEqual(['src'])
-  })
-
-  it('applies ad-file-attached class to attached items', () => {
-    const wrapper = mountDrawer({
-      currentDir: 'src',
-      attachedFiles: [{ path: 'src', isDir: true }],
-    })
-    expect(wrapper.find('.ad-current-item').classes()).toContain('ad-file-attached')
+    await wrapper.find('.ad-file-row .ad-file-open').trigger('click')
+    expect(wrapper.emitted('file-open')![0]).toEqual(['.clawbench/share-in/a.txt'])
+    sharedRecentShares.value = []
   })
 
   it('isAttached returns true for attached file', () => {
@@ -407,14 +409,13 @@ describe('AttachDrawer', () => {
     expect(getRawState(wrapper).isAttached('src/main.ts')).toBe(false)
   })
 
-  it('effectiveCurrentDir falls back to "." when currentDir is null', () => {
-    const wrapper = mountDrawer({ currentDir: null })
-    expect(getRawState(wrapper).effectiveCurrentDir.value).toBe('.')
-  })
-
-  it('currentDirDisplayName shows "/" for "."', () => {
-    const wrapper = mountDrawer({ currentDir: null })
-    expect(getRawState(wrapper).currentDirDisplayName.value).toBe('/')
+  it('keeps the composer list untouched when the picker removes an entry', async () => {
+    // OK is a delta: removing something the caller already had must emit
+    // remove-attached, not silently rewrite the whole list.
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/foo.ts' }] })
+    await wrapper.find('.fp-stub-unpick').trigger('click')
+    await wrapper.find('[data-action="attach-ok"]').trigger('click')
+    expect(wrapper.emitted('remove-attached')![0][0]).toMatchObject({ path: 'src/foo.ts' })
   })
 
   it('renders the three source entries (camera, photo, file) on mobile', () => {
@@ -562,7 +563,7 @@ describe('AttachDrawer', () => {
     const state = getRawState(wrapper)
     state.filePickerOpen.value = true
     await state.onFileSelect({ target: { files: [] } })
-    expect(state.activeTab.value).toBe('current')
+    expect(state.activeTab.value).toBe('files')
   })
 
   it('onFileSelect keeps the sheet open and puts the upload in the draft, not the composer', async () => {
@@ -852,7 +853,7 @@ describe('AttachDrawer', () => {
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
     expect(wrapper.findAll('.ad-footer .attachment-filename')).toHaveLength(0)
     expect(wrapper.emitted('add-attached')).toBeFalsy()
-    expect(getRawState(wrapper).activeTab.value).toBe('current')
+    expect(getRawState(wrapper).activeTab.value).toBe('files')
   })
 
   it('terminate drops the cards of the uploads it just aborted', async () => {
@@ -921,7 +922,7 @@ describe('AttachDrawer', () => {
     })
 
     async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
-      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await wrapper.findAll('.ad-tab')[2].trigger('click')
       await nextTick()
       await nextTick()
     }
@@ -1002,7 +1003,7 @@ describe('AttachDrawer', () => {
   it('open watcher calls fetch when open changes to true', async () => {
     const openRef = ref(false)
     const WrapperComp = defineComponent({
-      components: { AttachDrawer },
+      components: { AttachDrawer: AttachmentPicker },
       setup() { return { openRef } },
       template: '<AttachDrawer :open="openRef" />',
     })
@@ -1024,12 +1025,12 @@ describe('AttachDrawer', () => {
   it('open watcher resets state when open changes to false', async () => {
     const openRef = ref(true)
     const WrapperComp = defineComponent({
-      components: { AttachDrawer },
+      components: { AttachDrawer: AttachmentPicker },
       setup() { return { openRef } },
       template: '<AttachDrawer :open="openRef" />',
     })
     const wrapper = mount(WrapperComp, { global: { plugins: [i18n] } })
-    const drawer = wrapper.findComponent(AttachDrawer)
+    const drawer = wrapper.findComponent(AttachmentPicker)
     const state = (drawer.vm as any).$.devtoolsRawSetupState
     state.filePickerOpen.value = true
     state.onThumbError('img/photo.png')
@@ -1075,41 +1076,23 @@ describe('AttachDrawer', () => {
     expect(typeof (wrapper.vm as any).handleFileDrop).toBe('function')
   })
 
-  it('renders references tab content after clicking tab', async () => {
-    const wrapper = mountDrawer({
-      recentReferencedFiles: [{ path: 'src/foo.ts', count: 3 }],
-    })
-    // Click the references tab
-    await wrapper.findAll('.ad-tab')[1].trigger('click')
-    await nextTick()
-    // Check activeTab changed
-    const state = getRawState(wrapper)
-    expect(state.activeTab.value).toBe('references')
-  })
-
   it('renders shares tab empty state after clicking tab', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[2].trigger('click')
+    await wrapper.findAll('.ad-tab')[1].trigger('click')
     await nextTick()
     const state = getRawState(wrapper)
     expect(state.activeTab.value).toBe('shares')
+    expect(wrapper.text()).toContain('No shared files')
   })
 
   it('renders uploads tab empty state after clicking tab', async () => {
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await wrapper.findAll('.ad-tab')[2].trigger('click')
     await nextTick()
     const state = getRawState(wrapper)
     expect(state.activeTab.value).toBe('uploads')
   })
 
-  it('emits file-open on current file external link', async () => {
-    const wrapper = mountDrawer({ currentFile: 'src/main.ts' })
-    const fileRow = wrapper.findAll('.ad-current-item')[1] // second current item is the file
-    await fileRow.find('.ad-file-open').trigger('click')
-    expect(wrapper.emitted('file-open')).toBeTruthy()
-    expect(wrapper.emitted('file-open')![0]).toEqual(['src/main.ts'])
-  })
 
   describe('uploads tab content', () => {
     beforeEach(() => {
@@ -1124,7 +1107,7 @@ describe('AttachDrawer', () => {
     })
 
     async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
-      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await wrapper.findAll('.ad-tab')[2].trigger('click')
       await nextTick()
       await nextTick()
     }
@@ -1263,16 +1246,6 @@ describe('AttachDrawer', () => {
     expect(state.isAttached('src/foo.ts')).toBe(false)
   })
 
-  it('currentDirDisplayName shows baseName for non-root dir', () => {
-    const wrapper = mountDrawer({ currentDir: 'src/components' })
-    expect(getRawState(wrapper).currentDirDisplayName.value).toBe('components')
-  })
-
-  it('effectiveCurrentDir uses currentDir when provided', () => {
-    const wrapper = mountDrawer({ currentDir: 'src' })
-    expect(getRawState(wrapper).effectiveCurrentDir.value).toBe('src')
-  })
-
   it('wires delete handlers and delete API calls into setup state', () => {
     const wrapper = mountDrawer()
     const state = getRawState(wrapper)
@@ -1371,7 +1344,7 @@ describe('AttachDrawer', () => {
       { name: 'chat.png', path: '.clawbench/uploads/chat.png', size: 10, modTime: '', origin: 'uploads' },
     ]
     const wrapper = mountDrawer()
-    await wrapper.findAll('.ad-tab')[3].trigger('click')
+    await wrapper.findAll('.ad-tab')[2].trigger('click')
     await nextTick()
 
     const icons = wrapper.findAll('.ad-file-delete')
@@ -1383,7 +1356,7 @@ describe('AttachDrawer', () => {
   })
 })
 
-describe('AttachDrawer selected-badge CSS', () => {
+describe('AttachmentPicker selected-badge CSS', () => {
   // jsdom has no CSS engine, so this is a source-sniffing guard (same pattern
   // as countBadge.css.test.ts / wrapCheck.css.test.ts).
   //
@@ -1393,7 +1366,7 @@ describe('AttachDrawer selected-badge CSS', () => {
   // white ring — along the image edge, so a selected image showed a chopped
   // tick. The wrapper must NOT clip; the thumbnail rounds itself instead.
   const source = readFileSync(
-    join(__dirname, '..', 'AttachDrawer.vue'),
+    join(__dirname, '..', 'AttachmentPicker.vue'),
     'utf8',
   )
 
@@ -1402,7 +1375,7 @@ describe('AttachDrawer selected-badge CSS', () => {
     const m = source.match(
       new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'),
     )
-    expect(m, `${selector} rule must exist in AttachDrawer.vue`).not.toBeNull()
+    expect(m, `${selector} rule must exist in AttachmentPicker.vue`).not.toBeNull()
     return m![1]
   }
 
@@ -1454,7 +1427,7 @@ describe('AttachDrawer selected-badge CSS', () => {
   })
 })
 
-describe('AttachDrawer clear-all (最近上传 / 最近分享 顶部一键清空)', () => {
+describe('AttachmentPicker clear-all (最近上传 / 最近分享 顶部一键清空)', () => {
   // This is a top-level describe, so it does not inherit the one above. Without
   // its own reset the mocks accumulate across cases and the assertions below
   // would read call counts from a previous test.
@@ -1500,7 +1473,7 @@ describe('AttachDrawer clear-all (最近上传 / 最近分享 顶部一键清空
     sharedRecentShares.value = [{ name: 'a.txt', path: '.clawbench/share-in/a.txt', size: 1, modTime: '' }]
     const wrapper = mountDrawer()
     const state = getRawState(wrapper)
-    state.activeTab.value = 'current'
+    state.activeTab.value = 'files'
     await nextTick()
     expect(wrapper.find('.ad-clear-btn').exists()).toBe(false)
   })
@@ -1634,7 +1607,7 @@ describe('AttachDrawer clear-all (最近上传 / 最近分享 顶部一键清空
   })
 })
 
-describe('AttachDrawer footer actions', () => {
+describe('AttachmentPicker footer actions', () => {
   beforeEach(() => {
     sharedRecentShares.value = []
     sharedRecentUploads.value = []
@@ -1781,26 +1754,38 @@ describe('AttachDrawer footer actions', () => {
   })
 })
 
-describe('AttachDrawer chrome (compact source strip, borderless clear-all)', () => {
-  const source = readFileSync(join(__dirname, '..', 'AttachDrawer.vue'), 'utf8')
+describe('AttachmentPicker chrome (compact source strip, borderless clear-all)', () => {
+  const source = readFileSync(join(__dirname, '..', 'AttachmentPicker.vue'), 'utf8')
 
   /** Declarations of the first `<selector> {` rule in the SFC. */
   function declsOf(selector: string): string {
     const m = source.match(
       new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'),
     )
-    expect(m, `${selector} rule must exist in AttachDrawer.vue`).not.toBeNull()
+    expect(m, `${selector} rule must exist in AttachmentPicker.vue`).not.toBeNull()
     return m![1]
   }
 
-  it('the three source entries are single-line pills, not stacked blocks', () => {
-    // "Compact but keep the icon and the label": icon and text side by side on
-    // one short row. A column layout with 44px min-height is what made the
-    // strip eat a fifth of the sheet on a phone.
-    const decls = declsOf('.ad-source-btn')
-    expect(decls).not.toMatch(/flex-direction\s*:\s*column/)
-    expect(decls).toMatch(/height\s*:\s*calc\(34 \* var\(--dp\)\)/)
-    expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
+  it('the source strip is a flat, full-width row of three equal parts', () => {
+    // Flat, not three cards: the strip itself is the only surface, each entry
+    // takes a third of the full width, and a hairline separates neighbours.
+    // Icon and label stay side by side — a column layout ate a fifth of the
+    // sheet on a phone.
+    const btn = declsOf('.ad-source-btn')
+    expect(btn).not.toMatch(/flex-direction\s*:\s*column/)
+    expect(btn).toMatch(/flex\s*:\s*1 1 0/)
+    expect(btn).toMatch(/border\s*:\s*none/)
+    expect(btn).toMatch(/border-radius\s*:\s*0/)
+    expect(btn).toMatch(/background\s*:\s*transparent/)
+
+    // 通栏: no outer inset, no gaps between the thirds.
+    const bar = declsOf('.ad-source-bar')
+    expect(bar).toMatch(/padding\s*:\s*0(;|\s)/)
+    expect(bar).not.toMatch(/gap\s*:/)
+
+    // The only separator is the hairline between two neighbours (never at the
+    // strip's outer edges).
+    expect(source).toMatch(/\.ad-source-btn \+ \.ad-source-btn\s*\{[^}]*border-left:\s*1px solid/)
   })
 
   it('clear-all is a borderless icon+label button like the other clear-alls', () => {

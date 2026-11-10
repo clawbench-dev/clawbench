@@ -5,6 +5,7 @@ import { nextTick, ref, shallowRef } from 'vue'
 import enMessages from '@/i18n/locales/en'
 import { appLog } from '@/utils/appLog'
 import { listAudioInputs, listCaptureSources } from '@/composables/useLiveShare'
+import { _resetCaptureSources } from '@/utils/captureSourceCache'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
 import { LIVE_CHAT_MAX } from '@/share/liveControl'
 import MeetingStage from '../MeetingStage.vue'
@@ -229,6 +230,9 @@ function tab(wrapper: ReturnType<typeof mountPanel>, key: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The enumerated source list is cached module-wide; a test that asked for it
+  // would otherwise leave the next mount's grid already filled.
+  _resetCaptureSources()
   nativeBridge.current = null
   archivedChat.messages = []
   archivedChat.pending = null

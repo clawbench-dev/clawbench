@@ -3570,6 +3570,70 @@ func TestAIChat_Get_NoSessionID_NoSessionsCreatesNew(t *testing.T) {
 	assert.NotEmpty(t, resp["sessionId"])
 }
 
+// TestAIChat_Get_ConcurrentRecoveryCreatesOneSession pins that the implicit
+// "recover this project's session, create one when there is none" branch is
+// atomic.
+//
+// A project switch fires TWO of these GETs at the same moment: App.vue's
+// initSessionFromAPI (identity recovery) and the remounted chat panel's first
+// loadHistory. Both arrive before either has created anything, so an unlocked
+// check-then-create hands each one its own session — a brand-new project ends
+// up with two empty "New Session" rows, and the leftover never goes away
+// because nothing cleans up empty sessions.
+func TestAIChat_Get_ConcurrentRecoveryCreatesOneSession(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const callers = 8
+	requests := make([]*http.Request, callers)
+	for i := range requests {
+		req := newRequest(t, http.MethodGet, "/api/ai/chat?limit=20", nil)
+		withProjectCookie(req, env.ProjectDir)
+		withAuthCookie(req, "")
+		requests[i] = req
+	}
+
+	start := make(chan struct{})
+	ids := make([]string, callers)
+	var wg sync.WaitGroup
+	for i, req := range requests {
+		wg.Add(1)
+		go func(i int, req *http.Request) {
+			defer wg.Done()
+			<-start
+			w := callHandlerWithAuth(AIChat, req)
+			if w.Code != http.StatusOK {
+				return
+			}
+			var resp map[string]interface{}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				return
+			}
+			ids[i], _ = resp["sessionId"].(string)
+		}(i, req)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, id := range ids {
+		require.NotEmpty(t, id, "caller %d should receive a session", i)
+	}
+	// Every caller must be handed the same session — otherwise the UI shows
+	// one project with two "current" conversations depending on which request
+	// resolved last.
+	for i, id := range ids {
+		assert.Equal(t, ids[0], id, "caller %d got a different session", i)
+	}
+
+	projectID := store.ProjectIDForTest(t, env.ProjectDir)
+	var rows int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		`SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'`,
+		projectID,
+	).Scan(&rows))
+	assert.Equal(t, 1, rows, "concurrent recovery must create exactly one session")
+}
+
 // TestAIChat_Get_NoSessionsAutoTitleIsNumbered pins that the implicit session
 // created for an empty project is titled with the SAME numbered placeholder the
 // manual "new session" endpoint produces. Before the shared helper, this path

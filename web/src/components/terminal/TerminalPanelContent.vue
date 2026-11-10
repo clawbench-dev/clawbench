@@ -308,6 +308,7 @@ import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
 import TerminalHelpDrawer from '@/components/terminal/TerminalHelpDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
+import { readTerminalTabs, saveTerminalTabs } from '@/utils/terminalProjectTabs'
 import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText } from '@/utils/clipboard.ts'
 import { isCopySelectionShortcut } from '@/utils/terminalClipboardUtils'
@@ -648,6 +649,19 @@ const terminalKeys = useTerminalKeys((data: string) => {
   activeTab.value?.session.sendInput(data)
 })
 
+/**
+ * The project this component instance belongs to.
+ *
+ * Captured at setup because the value must not be re-read later: App.vue keys
+ * the whole tree by project path, and `switchProject` calls `store.setProject()`
+ * BEFORE changing that key — so by the time onBeforeUnmount runs, the store
+ * already points at the project being switched TO. Reading it there would file
+ * this project's shells under the wrong key.
+ */
+const projectPathAtMount = store.state.projectRoot || ''
+// Tabs recorded for this project by a previous visit or an earlier page load.
+const savedTabsAtMount = readTerminalTabs(projectPathAtMount)
+
 // 选中即复制 — read the setting at copy time so toggling it in Settings takes
 // effect on already-open terminals without a remount.
 const copyOnSelect = computed(() => localConfig.terminalCopyOnSelect !== false)
@@ -812,9 +826,33 @@ const tabManager = useTerminalTabs(getWsUrl, {
     tabManager.getTab(tabId)?.session.sendInput(command + '\r')
   },
   processInput: terminalKeys.processInput,
+  restore: savedTabsAtMount,
 })
 
 const { tabs, activeTabId, activeTab } = tabManager
+
+/**
+ * Record this project's tabs on every change that matters.
+ *
+ * Persisting on unmount alone is NOT enough: a page reload never unmounts the
+ * component (the page just goes away), and surviving a reload is the whole
+ * point of writing to storage. So this runs as the tabs change, synchronously,
+ * and only depends on the fields worth remembering — a signature over them
+ * keeps per-output updates (`hasUnread`) and connection-state churn from
+ * touching storage at all.
+ *
+ * `flush: 'sync'` is required for the teardown order below: suspendAll clears
+ * the tab list, and a deferred callback would record that empty list as the
+ * project's tabs.
+ */
+const stopTabsPersistence = watch(
+  // Both id copies are tracked: the session's own ref is the authoritative one
+  // (it is what `snapshotTabs` prefers), while the tab's copy is what the
+  // connect path syncs — watching only one would miss the other's updates.
+  () => [tabs.value.map((t) => [t.id, t.sessionId, t.session.sessionId, t.cwd, t.title]), activeTabId.value],
+  () => saveTerminalTabs(projectPathAtMount, tabManager.snapshotTabs()),
+  { flush: 'sync' },
+)
 
 // ── Drag-and-drop upload into the shell's live cwd ──
 // Dropped OS files are uploaded into whatever directory the shell is currently
@@ -1489,6 +1527,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  // Stop recording BEFORE the tab list is cleared: the record on disk is what
+  // the next mount (or the next page load) reattaches to, so it must describe
+  // the tabs as the user left them, not an empty list.
+  stopTabsPersistence()
   // The gesture hint is a 600ms one-shot; unmounting mid-window would otherwise
   // fire its callback against a torn-down instance (ISS-169). Clearing the
   // pending timer also releases the ref it closes over.
@@ -1502,7 +1544,11 @@ onBeforeUnmount(() => {
   gestures.detach()
   disableVolumeKeys()
   delete (window as unknown as { __onVolumeKey?: unknown }).__onVolumeKey
-  tabManager.disposeAll()
+  // Project switch (the only reason this component is ever destroyed besides
+  // app teardown) must NOT kill the shells: they keep running on the server.
+  // Detach only — the next mount reattaches by id and the server replays
+  // whatever the shell printed meanwhile.
+  tabManager.suspendAll()
 })
 
 defineExpose({ activate: () => {}, deactivate: () => {} })
