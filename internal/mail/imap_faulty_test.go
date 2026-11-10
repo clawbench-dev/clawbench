@@ -407,9 +407,16 @@ func TestTakeDecoderError_DistinguishesMalformedReplyFromDroppedSocket(t *testin
 		}
 		_, _ = cl.c.Fetch(set, opts).Collect()
 
-		// A clean peer close leaves the decoder's error nil: nothing was parsed
-		// wrong, the connection simply went away.
-		if derr := cl.takeDecoderError(); derr != nil {
+		// A dropped socket must not leave a DECODER error behind. Which shape
+		// that takes depends on how the kernel delivers the peer's close: a FIN
+		// leaves go-imap's decoder error nil (the read loop breaks on EOF
+		// without recording it), while a RST (the server closed with the request
+		// still unread, which is what returning from the handler does here)
+		// surfaces as *net.OpError{ECONNRESET}. Both mean "nothing was parsed
+		// wrong", which is exactly the distinction classifyFetchError draws, so
+		// asserting nil-only made this case depend on a scheduling detail
+		// instead of on behavior.
+		if derr := cl.takeDecoderError(); derr != nil && !isTransportFailure(derr) {
 			t.Fatalf("a clean drop must leave no decoder error, got %v", derr)
 		}
 	})
