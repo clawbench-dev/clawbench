@@ -29,7 +29,8 @@ import (
 
 // sessionShareMaxConcurrent bounds simultaneous payload assemblies.
 //
-// An assembly is several queries plus up to 16 MiB of JSON, and the read pool is
+// An assembly is several queries plus the whole conversation as JSON (no cap —
+// see session_share_payload.go), and the read pool is
 // only two connections (store/db.go). The public endpoint is unauthenticated and
 // unthrottled, so one hot link pasted into a group chat would otherwise starve
 // every other reader in the process.
@@ -252,7 +253,7 @@ func serveSessionShareCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only the SELECTION is resolved and stored — the payload is assembled on
-	// every public read, so creating a share never builds (or trims) 16 MiB of
+	// every public read, so creating a share never builds the whole conversation
 	// JSON just to record which messages the user picked.
 	ids, err := service.ResolveSessionShareSelection(req.SessionID, req.MessageIDs)
 	if err != nil {

@@ -97,7 +97,7 @@
             @mousedown="interactions.onContainerMouseDown"
             @touchstart.passive="interactions.onContainerTouchStart"
           >
-            <template v-for="(msg, i) in messages" :key="msg.id">
+            <template v-for="(msg, i) in renderedMessages" :key="msg.id">
               <!-- Gap divider. A share can select non-adjacent messages, and the
                    payload only carries the selection — without this the reader
                    sees "question" immediately followed by an answer from six
@@ -137,6 +137,14 @@
                 @file-tag-click="() => {}"
               />
             </template>
+            <!-- Next page. The observer appends automatically as the reader
+                 approaches; the button is what remains when
+                 IntersectionObserver is unavailable. -->
+            <div v-if="hasMoreMessages" ref="moreSentinel" class="share-more-row">
+              <button type="button" class="share-more-btn" @click="renderMore">
+                {{ t('share.loadMore') }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -282,6 +290,68 @@ const messageCount = ref(0)
 const messages = ref<Record<string, unknown>[]>([])
 
 /**
+ * How many messages are MOUNTED at once.
+ *
+ * This page used to mount the whole conversation in one go. On a long thread
+ * that meant running the markdown pipeline for every block before the first
+ * paint — a 345-message share blocked the main thread for ~3s on a desktop and
+ * far longer on a phone, which is what "点开分享就卡住" was.
+ *
+ * The chat area never does that: it mounts `chatInitialMessages` and appends as
+ * the reader scrolls. This is the same window with the same rule — nothing is
+ * dropped or truncated, it is only mounted later. A shared conversation is read
+ * top-down, so the window grows at the BOTTOM (the chat area grows at the top
+ * because it opens on the newest message).
+ */
+const SHARE_MESSAGE_PAGE = 20
+const visibleCount = ref(SHARE_MESSAGE_PAGE)
+const renderedMessages = computed(() => messages.value.slice(0, visibleCount.value))
+const hasMoreMessages = computed(() => visibleCount.value < messages.value.length)
+
+/** Mount the next page (observer callback and the fallback button both call it). */
+function renderMore() {
+  if (!hasMoreMessages.value) return
+  visibleCount.value = Math.min(messages.value.length, visibleCount.value + SHARE_MESSAGE_PAGE)
+}
+
+const moreSentinel = ref<HTMLElement | null>(null)
+let moreObserver: IntersectionObserver | null = null
+
+/**
+ * Append the next page when the sentinel gets close to the viewport.
+ *
+ * rootMargin runs ahead of the scroll so the reader does not reach the end of
+ * the mounted list and stop. Environments without IntersectionObserver (jsdom,
+ * very old WebViews) keep the button, which is the whole mechanism there.
+ */
+function setupMoreObserver() {
+  teardownMoreObserver()
+  const el = moreSentinel.value
+  const root = contentRef.value
+  if (!el || !root || typeof IntersectionObserver !== 'function') return
+  moreObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) renderMore()
+  }, { root, rootMargin: '800px 0px', threshold: 0 })
+  moreObserver.observe(el)
+}
+
+function teardownMoreObserver() {
+  if (moreObserver) {
+    moreObserver.disconnect()
+    moreObserver = null
+  }
+}
+
+// Each append is a fresh batch of rows: wire them into the scroll-spy and
+// re-arm the sentinel (the previous observation was consumed by the element
+// moving out of range).
+watch(visibleCount, async () => {
+  await nextTick()
+  observeNewMessages()
+  setupMoreObserver()
+})
+
+/**
  * How many messages the share skipped immediately before this one.
  *
  * `messages` is typed as the loose `Record<string, unknown>` the parse pipeline
@@ -298,16 +368,22 @@ function skippedBefore(msg: Record<string, unknown>): number {
 /**
  * The snapshot payload as served, kept for the JSON export.
  *
- * This must be a DEEP COPY taken before `parseMessages` runs. That function
- * mutates every message IN PLACE — it assigns `blocks`, `metadata` and
- * `showingSummary` onto the very objects the payload owns — and the view then
- * flips `showingSummary` on toggle. Re-serializing the live payload would
- * therefore export a mutated, view-state-dependent document in which each
- * message carries its content twice (the original `content` JSON string plus
- * the derived `blocks`), which is not what the link serves.
+ * This must be a COPY taken before `parseMessages` runs. That function mutates
+ * every message IN PLACE — it assigns `blocks`, `metadata` and `showingSummary`
+ * onto the very objects the payload owns — and the view then flips
+ * `showingSummary` on toggle. Re-serializing the live payload would therefore
+ * export a mutated, view-state-dependent document in which each message carries
+ * its content twice (the original `content` JSON string plus the derived
+ * `blocks`), which is not what the link serves.
  *
- * The round-trip through JSON also preserves key order (JS keeps insertion
- * order for string keys), so the exported document matches the API's field
+ * The copy is one level deep PER MESSAGE, not a full JSON round-trip: every
+ * write parseMessages and the summary toggle make is a top-level key of a
+ * message object, and a deep copy of a long conversation's payload (tens of MB
+ * of inlined tool output) costs a full serialize + parse on the main thread for
+ * no benefit.
+ *
+ * Key order is preserved either way (the spread keeps the original insertion
+ * order and appends nothing), so the exported document matches the API's field
  * order as well as its data.
  */
 const snapshot = ref<Record<string, unknown> | null>(null)
@@ -475,10 +551,21 @@ const activeTocId = ref<number | string | null>(null)
  * Scrolls ONLY the content container (never the outer page / topbar), matching
  * ShareView.scrollToHeading — a bare scrollIntoView would also move the
  * topbar and every other scrollable ancestor.
+ *
+ * A jump into the not-yet-mounted tail has to extend the window first: the
+ * element does not exist until its page is mounted. Mounting up to the target
+ * (plus one page, so the reader does not land on the very last row) is the same
+ * work the reader would have done by scrolling there, just in one step.
  */
-function scrollToMessage(msgId: number | string) {
+async function scrollToMessage(msgId: number | string) {
   const root = contentRef.value
   if (!root) return
+  const index = messages.value.findIndex((m) => m.id === msgId)
+  if (index < 0) return
+  if (index >= visibleCount.value) {
+    visibleCount.value = Math.min(messages.value.length, index + SHARE_MESSAGE_PAGE)
+    await nextTick()
+  }
   // Match on the dataset rather than building a selector with the id: ids are
   // free-form (string ids may contain quotes), and CSS.escape is not available
   // in every environment the view is rendered in (jsdom).
@@ -529,6 +616,24 @@ function setupTocObserver() {
     threshold: 0,
   })
   for (const el of root.querySelectorAll<HTMLElement>('[data-msg-key]')) {
+    el.dataset.msgId = String(el.dataset.msgKey).replace(/^db-/, '')
+    tocObserver.observe(el)
+  }
+}
+
+/**
+ * Observe rows mounted by a later page.
+ *
+ * The observer is created once, over the first window; every appended message
+ * is a brand-new element the observer has never seen. Re-running the full setup
+ * would tear the spy down and clear its visible set on every page, so only the
+ * unobserved rows (no msgId yet) are added.
+ */
+function observeNewMessages() {
+  const root = contentRef.value
+  if (!root || !tocObserver) return
+  for (const el of root.querySelectorAll<HTMLElement>('[data-msg-key]')) {
+    if (el.dataset.msgId != null) continue
     el.dataset.msgId = String(el.dataset.msgKey).replace(/^db-/, '')
     tocObserver.observe(el)
   }
@@ -786,7 +891,6 @@ function indexInlinedData(payloadMessages: Record<string, unknown>[]) {
           done: typeof block.done === 'boolean' ? block.done : undefined,
           durationMs: typeof block.duration_ms === 'number' ? block.duration_ms : undefined,
           summary: typeof block.summary === 'string' ? block.summary : undefined,
-          truncated: block.truncated === true,
         })
       }
     }
@@ -804,9 +908,14 @@ async function loadSnapshot() {
       return
     }
     const payload = await resp.json()
-    // Deep-copy BEFORE parseMessages mutates the payload's message objects in
-    // place; see the `snapshot` declaration for why the live object is unusable.
-    snapshot.value = JSON.parse(JSON.stringify(payload))
+    // Copy BEFORE parseMessages mutates the payload's message objects in place;
+    // see the `snapshot` declaration for why the live object is unusable.
+    snapshot.value = {
+      ...payload,
+      messages: Array.isArray(payload?.messages)
+        ? payload.messages.map((m: Record<string, unknown>) => ({ ...m }))
+        : payload?.messages,
+    }
 
     title.value = payload?.session?.title || t('share.sharedConversation')
     backendLabel.value = payload?.session?.backend || ''
@@ -841,6 +950,9 @@ async function loadSnapshot() {
     for (const m of parsed) {
       if (m.summary != null && m.summary !== '') m.showingSummary = true
     }
+    // Every load starts from the first page again: the window is per-reading,
+    // not per-session state.
+    visibleCount.value = SHARE_MESSAGE_PAGE
     messages.value = parsed
 
     // Keep the store's roots empty so markdown path annotations cannot resolve
@@ -863,6 +975,7 @@ async function loadSnapshot() {
   if (!error.value) {
     await nextTick()
     setupTocObserver()
+    setupMoreObserver()
   }
 }
 
@@ -877,6 +990,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   teardownTocObserver()
+  teardownMoreObserver()
   window.removeEventListener(UI_SCALE_EVENT, rebuildNarrowQuery)
   tocMq?.removeEventListener('change', syncNarrow)
   tocMq = null
@@ -923,6 +1037,34 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
+}
+
+/* ── Next page ──
+   The conversation continues below, so this reads as "there is more" rather
+   than as an action bar: a quiet centred pill on the page background. */
+.share-more-row {
+  display: flex;
+  justify-content: center;
+  padding: calc(4 * var(--dp)) 0 calc(20 * var(--dp));
+}
+
+.share-more-btn {
+  height: calc(30 * var(--dp));
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+@media (hover: hover) {
+  .share-more-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
 }
 
 /* ── Gap divider ──

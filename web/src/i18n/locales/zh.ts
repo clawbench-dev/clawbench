@@ -4439,6 +4439,7 @@ export default {
     totalDuration: '总耗时 {duration}',
     exportJson: '导出快照 JSON',
     exportFailed: '导出快照失败',
+    loadMore: '显示更多消息',
     live: {
       title: '实时共享',
       joinSubtitle: '主持人邀请你加入会议。填一个称谓，发布端与其他观众会看到它。',

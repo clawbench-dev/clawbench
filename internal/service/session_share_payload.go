@@ -47,25 +47,25 @@ const (
 	// changes every live link at once (there is no per-row stored shape).
 	sessionSharePayloadVersion = 1
 
-	// maxSessionSharePayloadBytes caps the assembled payload. Tool outputs
-	// dominate the size, so over the cap the longest outputs are trimmed first
-	// (see trimPayloadToCap) rather than failing the request outright.
-	maxSessionSharePayloadBytes = 16 << 20 // 16 MiB
-
-	// sessionShareOutputTrimFloor is the size below which a tool output is never
-	// trimmed, so trimming degrades gracefully instead of gutting everything.
-	sessionShareOutputTrimFloor = 4 << 10 // 4 KiB
-
 	// sessionSharePreviewRunes bounds one selection-list preview line.
 	sessionSharePreviewRunes = 200
-
-	// maxSessionShareTrimIterations bounds the per-candidate halving loop. Each
-	// iteration must at least halve one output, so the natural bound is ~log2 of
-	// the largest output; this is a belt-and-braces stop so a future regression
-	// in the shrink invariant fails fast instead of spinning forever inside a
-	// request. 64 is far above what any real payload needs.
-	maxSessionShareTrimIterations = 64
 )
+
+// The payload is served WHOLE. There is deliberately no size cap and no
+// trimming: the share is the conversation, and gutting tool outputs to fit an
+// arbitrary ceiling produced a page that silently lied about what happened
+// while costing far more than it saved. A 24 MB payload took ~11s to trim and
+// still came out over the old 16 MiB cap (thinking text and message bodies —
+// the bulk of a long session — are not trimmable at all), so every request paid
+// that price for nothing.
+//
+// Two things keep the cost bounded instead:
+//   - the assembly is one marshal (no repeated re-serialization), and
+//   - the viewer mounts the conversation in pages, so a huge payload no longer
+//     means a huge first paint (see SessionShareView's visibleCount).
+//
+// Concurrent assemblies are still limited by sessionShareMaxConcurrent in the
+// handler, which is what actually bounds peak memory.
 
 // ErrSessionShareEmptySelection is returned when the requested selection
 // resolves to no shareable messages (e.g. every selected message is still
@@ -398,7 +398,6 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, createdAt ti
 	if err != nil {
 		return "", 0, fmt.Errorf("marshal session share payload: %w", err)
 	}
-	raw = trimPayloadToCap(raw, &out)
 	return string(raw), len(out.Messages), nil
 }
 
@@ -708,158 +707,6 @@ func prepareSummaryCards(cards *model.SummaryCards) *model.SummaryCards {
 	out := *cards
 	out.TaskIDs = nil
 	return &out
-}
-
-// trimPayloadToCap reduces an over-cap payload by shortening the longest tool
-// outputs, then re-marshals. A share that degrades is better than a share that
-// fails: the alternative (rejecting the request) leaves the user with no way to
-// share a long session at all.
-//
-// Returns the payload to store (possibly trimmed) and, when trimming happened,
-// the affected blocks carry truncated=true so the viewer can say so.
-func trimPayloadToCap(raw []byte, payload *SessionSharePayload) []byte {
-	if len(raw) <= maxSessionSharePayloadBytes {
-		return raw
-	}
-
-	candidates := collectTrimCandidates(payload)
-	if len(candidates) == 0 {
-		// Nothing trimmable (size comes from many small blocks or long text).
-		// Store as-is rather than destroying content.
-		return raw
-	}
-
-	// Longest first, so the cut lands on whatever dominates the size.
-	sort.SliceStable(candidates, func(i, j int) bool {
-		a, _ := candidates[i].block["output"].(string)
-		b, _ := candidates[j].block["output"].(string)
-		return len(a) > len(b)
-	})
-
-	// Halve one output at a time and re-measure after each cut. The previous
-	// version re-measured only once per full pass, so the inner early-exit read
-	// a stale size and every candidate got halved in lockstep — gutting short
-	// outputs even when trimming the single longest would have sufficed.
-	for _, c := range candidates {
-		next, ok := trimCandidateToFit(raw, payload, c)
-		if !ok {
-			return raw // re-marshaling failed: keep the last good payload
-		}
-		if raw = next; len(raw) <= maxSessionSharePayloadBytes {
-			break
-		}
-	}
-	return raw
-}
-
-// trimCandidate identifies one trimmable tool output.
-//
-// A message body is a JSON *string*, so a candidate must remember which message
-// it came from: trimming happens on the decoded wrapper map, and that change
-// only reaches the stored payload once it is written back into
-// payload.Messages[msgIndex].Content. Skipping the write-back made the trimmer
-// a no-op — it re-marshaled the original strings and returned an over-cap
-// payload, while truncated=true was discarded along with the mutation.
-type trimCandidate struct {
-	msgIndex int
-	wrapper  map[string]any
-	block    map[string]any
-}
-
-// collectTrimCandidates finds every tool_use block whose output is large enough
-// to be worth trimming.
-func collectTrimCandidates(payload *SessionSharePayload) []trimCandidate {
-	var candidates []trimCandidate
-	for i := range payload.Messages {
-		trimmed := strings.TrimSpace(payload.Messages[i].Content)
-		if !strings.HasPrefix(trimmed, "{") {
-			continue
-		}
-		var wrapper map[string]any
-		if json.Unmarshal([]byte(trimmed), &wrapper) != nil {
-			continue
-		}
-		blocks, ok := wrapper["blocks"].([]any)
-		if !ok {
-			continue
-		}
-		for _, b := range blocks {
-			block, ok := b.(map[string]any)
-			if !ok || block["type"] != eventTypeToolUse {
-				continue
-			}
-			if out, ok := block["output"].(string); ok && len(out) > sessionShareOutputTrimFloor {
-				candidates = append(candidates, trimCandidate{msgIndex: i, wrapper: wrapper, block: block})
-			}
-		}
-	}
-	return candidates
-}
-
-// trimCandidateToFit halves one candidate's output repeatedly until the payload
-// fits or this output reaches the floor. Each cut is written back into the
-// message body and the whole payload re-marshaled, so the measured size is the
-// size that will actually be stored.
-//
-// Reaching the floor stops trimming THIS candidate but must not stop the outer
-// loop: the remaining (shorter) outputs are still trimmable and may be what
-// brings the payload under the cap. ok=false means a re-marshal failed, so the
-// caller must keep its last good payload rather than serving a truncated one.
-func trimCandidateToFit(raw []byte, payload *SessionSharePayload, c trimCandidate) ([]byte, bool) {
-	// Bound the loop independently of the size check: the cut must strictly
-	// shrink the output for the loop to be guaranteed to terminate, and a
-	// future edit that breaks that invariant should fail fast rather than
-	// spin forever holding the request (see the rune/byte note below).
-	for i := 0; len(raw) > maxSessionSharePayloadBytes; i++ {
-		if i > maxSessionShareTrimIterations {
-			break
-		}
-		out, _ := c.block["output"].(string)
-		if len(out) <= sessionShareOutputTrimFloor {
-			break
-		}
-		// Halve by RUNE count, not byte length. clipRunes clips runes, so
-		// passing len(out)/2 (bytes) made every iteration a no-op for any
-		// output whose bytes-per-rune exceeds 1: len(out)/2 >= rune count, so
-		// clipRunes returned the string unchanged and each pass only appended
-		// the marker — the output GREW and the size check never came true.
-		// A CJK tool output (3 bytes/rune) therefore hung the request forever.
-		// Trimming is not allowed to increase the output, so the marker is only
-		// appended when the cut actually removed something.
-		runes := []rune(out)
-		if len(runes) <= 1 {
-			break
-		}
-		clipped := string(runes[:len(runes)/2]) + "\n…[truncated for sharing]"
-		// The cut must be a strict shrink including the marker, otherwise the
-		// loop could make no progress.
-		if len(clipped) >= len(out) {
-			break
-		}
-		c.block["output"] = clipped
-		c.block["truncated"] = true
-
-		encoded, err := json.Marshal(c.wrapper)
-		if err != nil {
-			return raw, false
-		}
-		payload.Messages[c.msgIndex].Content = string(encoded)
-
-		next, err := json.Marshal(payload)
-		if err != nil {
-			return raw, false
-		}
-		raw = next
-	}
-	return raw, true
-}
-
-// TrimPayloadToCapForTest exposes the size trimmer so its behavior can be
-// asserted directly. It has no production caller outside BuildSessionSharePayload
-// and the trim is invisible from the outside once stored, so without this hook
-// the cap could regress silently again.
-func TrimPayloadToCapForTest(raw []byte, payload *SessionSharePayload) []byte {
-	return trimPayloadToCap(raw, payload)
 }
 
 // clipRunes returns at most n runes of s, rune-safe so multi-byte text is

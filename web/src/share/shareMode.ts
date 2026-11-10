@@ -105,7 +105,6 @@ export interface ShareToolCallData {
     done?: boolean
     durationMs?: number
     summary?: string
-    truncated?: boolean
 }
 
 let shareThinking: Map<string, string> | null = null

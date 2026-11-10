@@ -143,6 +143,7 @@ const i18n = createI18n({
         skippedMessages: '{count} messages skipped',
         exportJson: 'Export snapshot as JSON',
         exportFailed: 'Could not export the snapshot',
+        loadMore: 'Show more messages',
       },
       common: { loading: 'Loading...' },
       group: { you: 'you' },
@@ -202,8 +203,23 @@ function makePayload() {
 const originalFetch = globalThis.fetch
 const mounted: Array<{ unmount: () => void }> = []
 let fetchCalls: string[] = []
+/** What the next mount serves. Tests that need a long conversation replace it. */
+let payloadFactory: () => Record<string, unknown> = makePayload
+
+/** A payload with `n` alternating messages, for the paging tests. */
+function makeLongPayload(n: number) {
+  const base = makePayload()
+  const messages = Array.from({ length: n }, (_, i) => ({
+    id: 1000 + i,
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    content: i % 2 === 0 ? `question ${i}` : JSON.stringify({ blocks: [{ type: 'text', text: `answer ${i}` }] }),
+    createdAt: '2026-09-22T09:00:00Z',
+  }))
+  return { ...base, messages }
+}
 
 beforeEach(() => {
+  payloadFactory = makePayload
   window.history.replaceState({}, '', '/share/tokSessionTest')
   setShareToken('tokSessionTest')
   clearShareSessionData()
@@ -212,7 +228,7 @@ beforeEach(() => {
     const u = String(url)
     fetchCalls.push(u)
     if (u.includes('/session')) {
-      return { ok: true, json: async () => makePayload() } as Response
+      return { ok: true, json: async () => payloadFactory() } as Response
     }
     // Any other URL is a bug in this test's setup, but returning 404 makes the
     // failure legible rather than hanging.
@@ -1227,4 +1243,54 @@ describe('SessionShareView', () => {
       await expect(wrapper.find('.emit-toggle-tool').trigger('click')).resolves.toBeUndefined()
     })
   })
+
+  // ── Message window ──────────────────────────────────────────────────────
+  // The page mounts the conversation in pages instead of all at once: mounting
+  // a whole long thread is what made a big share block the main thread for
+  // seconds. Nothing is dropped — the rest is mounted on scroll (or on a TOC
+  // jump), which these tests pin down.
+  describe('message window', () => {
+    beforeEach(() => {
+      payloadFactory = () => makeLongPayload(45)
+      // jsdom implements neither Element.scrollTo nor IntersectionObserver.
+      Element.prototype.scrollTo = vi.fn()
+    })
+
+    it('mounts only the first page of a long conversation', async () => {
+      const wrapper = await mountView()
+      expect(wrapper.findAll('.chat-message-stub')).toHaveLength(20)
+      expect(wrapper.find('.share-more-btn').exists()).toBe(true)
+      expect(wrapper.find('.share-more-btn').text()).toBe('Show more messages')
+    })
+
+    it('appends the next page on demand and never drops the tail', async () => {
+      const wrapper = await mountView()
+      await wrapper.find('.share-more-btn').trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('.chat-message-stub')).toHaveLength(40)
+
+      await wrapper.find('.share-more-btn').trigger('click')
+      await flushPromises()
+      expect(wrapper.findAll('.chat-message-stub')).toHaveLength(45)
+      // Nothing left to mount, so the affordance goes away.
+      expect(wrapper.find('.share-more-btn').exists()).toBe(false)
+    })
+
+    it('lists every message in the TOC even when only one page is mounted', async () => {
+      const wrapper = await mountView()
+      expect(wrapper.findAll('.msg-item')).toHaveLength(45)
+      expect(wrapper.findAll('.chat-message-stub')).toHaveLength(20)
+    })
+
+    it('mounts up to the target when the TOC jumps into the unmounted tail', async () => {
+      const wrapper = await mountView()
+      // The 45th row (index 44) is far past the mounted window.
+      await wrapper.findAll('.msg-item')[44].trigger('click')
+      await flushPromises()
+      await nextTick()
+      expect(wrapper.findAll('.chat-message-stub')).toHaveLength(45)
+      expect(wrapper.find('.share-more-btn').exists()).toBe(false)
+    })
+  })
+
 })

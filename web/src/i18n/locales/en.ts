@@ -4445,6 +4445,7 @@ export default {
     totalDuration: 'Total {duration}',
     exportJson: 'Export snapshot as JSON',
     exportFailed: 'Could not export the snapshot',
+    loadMore: 'Show more messages',
     live: {
       title: 'Live share',
       joinSubtitle: 'The host invited you to this meeting. Pick a name — the host and other viewers will see it.',
