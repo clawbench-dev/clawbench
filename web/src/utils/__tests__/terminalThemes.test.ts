@@ -10,7 +10,7 @@ vi.mock('xterm-theme', () => ({
       blue: '#bd93f9', brightBlue: '#bd93f9', magenta: '#ff79c6', brightMagenta: '#ff79c6',
       cyan: '#8be9fd', brightCyan: '#8be9fd', white: '#bbbbbb', brightWhite: '#ffffff',
     },
-    LightTheme: {
+    OneHalfLight: {
       foreground: '#333333', background: '#ffffff', cursor: '#000000',
       black: '#000000', brightBlack: '#555555', red: '#ff5555', brightRed: '#ff5555',
       green: '#50fa7b', brightGreen: '#50fa7b', yellow: '#f1fa8c', brightYellow: '#f1fa8c',
@@ -59,8 +59,8 @@ describe('terminalThemes', () => {
     document.documentElement.removeAttribute('data-theme-base')
   })
 
-  it('exports 157 theme ids and the auto/storage constants', () => {
-    expect(THEME_IDS.length).toBe(157)
+  it('exports the curated 16 theme ids and the auto/storage constants', () => {
+    expect(THEME_IDS.length).toBe(16)
     expect(TERMINAL_THEME_AUTO).toBe('auto')
     expect(TERMINAL_THEME_STORAGE_KEY).toBe('terminalTheme')
     expect(THEME_IDS).toContain('Dracula')
@@ -111,6 +111,33 @@ describe('terminalThemes', () => {
     expect(resolveAutoTheme('#ffffff', null, true).background).toBe(darkTheme.background)
     expect(resolveAutoTheme('#ffffff', undefined, false).background).toBe(lightTheme.background)
     expect(resolveAutoTheme('#ffffff', {}, true).background).toBe(darkTheme.background)
+  })
+
+  it('resolveAutoTheme only picks themes that are in the curated list', () => {
+    // 包里还有 140 多套没收录的配色，「跟随应用」不能自己用上去——否则
+    // 用户在主题菜单里根本看不到、也选不回当前这套颜色。
+    const themes = {
+      NotListed: { background: '#0f0f0f', foreground: '#eeeeee' },
+      Dracula: { background: '#1e1f29', foreground: '#f8f8f2' },
+    } as unknown as Record<string, import('@xterm/xterm').ITheme>
+    // NotListed 的背景离目标更近，但不是精选主题 → 让位给 Dracula。
+    expect(resolveAutoTheme('#0f0f0f', themes, true).background).toBe('#1e1f29')
+  })
+
+  it('resolveAutoTheme skips a listed theme whose text is unreadable', () => {
+    const themes = {
+      // 正文与背景几乎同色 → 不能选，回落到 Catppuccin。
+      Dracula: { background: '#1e1f29', foreground: '#1e1f2a' },
+    } as unknown as Record<string, import('@xterm/xterm').ITheme>
+    const picked = resolveAutoTheme('#1e1f29', themes, true).background
+    expect(picked).toBe(darkTheme.background)
+    expect(picked).not.toBe('#1e1f29')
+  })
+
+  it('resolveAutoTheme keeps a listed theme that only declares a background', () => {
+    // 只给背景色时无从判断可读性，按原样参与匹配（测试夹具常见形态）。
+    const theme = resolveAutoTheme('#101010', { Dracula: { background: '#101010' } }, true)
+    expect(theme.background).toBe('#101010')
   })
 
   it('resolveTheme("auto") picks closest background among loaded themes', async () => {
@@ -261,9 +288,9 @@ describe('terminalThemes', () => {
 
   describe('selection visibility through the resolve paths', () => {
     it('resolveAutoTheme injects a visible selection on the matched light preset', () => {
-      // LightTheme (#ffffff) is nearest to a white app background and, like all
+      // OneHalfLight (#ffffff) is nearest to a white app background and, like all
       // xterm-theme presets, carries no selectionBackground.
-      const theme = resolveAutoTheme('#ffffff', { LightTheme: { background: '#ffffff' } }, false)
+      const theme = resolveAutoTheme('#ffffff', { OneHalfLight: { background: '#ffffff' } }, false)
       expect(theme.selectionBackground).toBe('#00000040')
     })
 
@@ -278,7 +305,7 @@ describe('terminalThemes', () => {
     })
 
     it('resolveTheme injects a selection for a fixed preset', async () => {
-      const theme = await resolveTheme('LightTheme', false)
+      const theme = await resolveTheme('OneHalfLight', false)
       expect(theme.selectionBackground).toBe('#00000040')
     })
 
@@ -298,8 +325,8 @@ describe('terminalThemes', () => {
 
     it('orders ids from light background to dark background', () => {
       // Known light themes must appear before known dark themes.
-      const lightOnes = ['Github', 'OneHalfLight', 'Solarized_Light', 'Tomorrow']
-      const darkOnes = ['Dracula', 'Gruvbox_Dark', 'ayu', 'deep']
+      const lightOnes = ['Terminal_Basic', 'OneHalfLight', 'Solarized_Light', 'Material']
+      const darkOnes = ['Dracula', 'Gruvbox_Dark', 'ayu', 'SpaceGray']
       const lightIdx = lightOnes.map(id => SORTED_THEME_IDS.indexOf(id))
       const darkIdx = darkOnes.map(id => SORTED_THEME_IDS.indexOf(id))
       for (const li of lightIdx) {
@@ -349,11 +376,11 @@ describe('terminalThemes', () => {
     it('wires loaded themes to each entry and none to auto', () => {
       const themes = {
         Dracula: { background: '#1e1f29' },
-        Github: { background: '#ffffff' },
+        OneHalfLight: { background: '#fafafa' },
       } as unknown as Record<string, import('@xterm/xterm').ITheme>
       const map = buildTerminalThemePreviews(themes)
       expect(map.Dracula.theme).toEqual({ background: '#1e1f29' })
-      expect(map.Github.theme).toEqual({ background: '#ffffff' })
+      expect(map.OneHalfLight.theme).toEqual({ background: '#fafafa' })
       expect(map[TERMINAL_THEME_AUTO].theme).toBeUndefined()
     })
 
