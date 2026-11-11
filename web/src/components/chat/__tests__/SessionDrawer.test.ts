@@ -10,9 +10,10 @@ import { readWebFile } from '@/testUtils/readWebFile'
 
 // Shared mock for the named applyRefreshedModelList export — used by both the
 // vi.mock factory and the assertions below (the component imports it directly).
-const { mockApplyRefreshedModelList, mockApplyRefreshedACPState } = vi.hoisted(() => ({
+const { mockApplyRefreshedModelList, mockApplyRefreshedACPState, mockToastShow } = vi.hoisted(() => ({
   mockApplyRefreshedModelList: vi.fn(),
   mockApplyRefreshedACPState: vi.fn(),
+  mockToastShow: vi.fn(),
 }))
 
 // Mock BottomSheet to render slot content inline (skip Teleport).
@@ -88,7 +89,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
   patchAgentPref: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: mockToastShow }),
 }))
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
@@ -208,6 +209,7 @@ describe('SessionDrawer', () => {
     // previous test would make the negative case pass for the wrong reason.
     mockApplyRefreshedModelList.mockClear()
     mockApplyRefreshedACPState.mockClear()
+    mockToastShow.mockClear()
     // Tests that push temporary agents clean up in their own `finally`; this is
     // a belt-and-braces reset so a thrown assertion cannot leak one forward.
     mockAgents.agents.value = mockAgents.agents.value.filter(a => !a.id.startsWith('tmp-'))
@@ -1440,6 +1442,48 @@ describe('SessionDrawer', () => {
       // The shared identity action must NOT have been used (it writes the
       // current session, i.e. the group).
       expect(wrapper.emitted('switch-mode')).toBeFalsy()
+    })
+
+    // A running group keeps the member's connection busy, so the server STORES
+    // the model instead of applying it (issue #671). The panel must say so —
+    // otherwise the reloaded list marks the new model current and the user
+    // believes the turn in flight already switched.
+    it('says a mid-turn member model switch applies on the next turn', async () => {
+      mockApiPatch.mockResolvedValue({ ok: true, modelSwitchDeferred: true })
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-item')[0].trigger('click')
+      await nextTick()
+      await nextTick()
+      expect(mockApiPatch).toHaveBeenCalledWith('/api/ai/session/settings', {
+        sessionId: 'member-1',
+        modelId: 'claude-sonnet-4-6',
+      })
+      expect(mockToastShow).toHaveBeenCalledWith(
+        'chat.modelSwitcher.deferredMember',
+        expect.objectContaining({ type: 'info' }),
+      )
+    })
+
+    it('does not claim deferral when the member switch was applied', async () => {
+      mockApiPatch.mockResolvedValue({ ok: true, modelSwitchDeferred: false })
+      const wrapper = mountTargeted()
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-item')[0].trigger('click')
+      await nextTick()
+      await nextTick()
+      // Guards the negative below against passing vacuously (click never
+      // reaching selectModel).
+      expect(mockApiPatch).toHaveBeenCalledWith('/api/ai/session/settings', {
+        sessionId: 'member-1',
+        modelId: 'claude-sonnet-4-6',
+      })
+      expect(mockToastShow).not.toHaveBeenCalledWith(
+        'chat.modelSwitcher.deferredMember',
+        expect.anything(),
+      )
     })
 
     it('compacts the member through the group endpoint', async () => {

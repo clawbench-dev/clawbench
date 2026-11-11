@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"clawbench/internal/model"
@@ -131,27 +132,95 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requireMemberConfigWritable refuses a config write while the member's
-// connection is busy, writing the response itself.
+// memberConfigWritable reports whether a config write may proceed, and whether
+// it must be DEFERRED — stored in the DB but NOT pushed to the member's agent.
 //
 // A group member's connection is busy during a group turn, and compaction drives
-// it directly. Writing config mid-turn would interleave with the running prompt
-// (the agent rejects it, or worse, applies it to the turn in flight). Refuse
-// instead of silently deferring: the drawer is interactive, so the user can
-// retry when the group is idle. Non-member sessions are always writable here.
-func requireMemberConfigWritable(w http.ResponseWriter, r *http.Request, sessionID string) bool {
+// it directly. Pushing config at it mid-turn would interleave with the running
+// prompt (the agent rejects it, or worse, applies it to the turn in flight).
+//
+// A MODEL switch, however, does not need that push: the next member turn reads
+// the persisted model back (service.applySessionOverrides) and applies it before
+// its prompt, which is exactly the "remember and defer" path a busy single-chat
+// agent already takes (issue #671). So a model-only write is accepted with
+// deferred=true; everything else still needs the connection and is refused with
+// 409, as before. Compaction always refuses — it is the same connection being
+// driven right now, not a state we can just store.
+//
+// The caller writes the 409 itself (needs the request fields to decide), so this
+// helper only answers the question.
+func memberConfigWritable(sessionID string) (deferOnly, ok bool) {
 	if !service.IsGroupMemberSession(sessionID) {
-		return true
-	}
-	if parent := service.ResolveGroupTimelineID(sessionID); parent != sessionID && service.IsSessionRunning(parent) {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
-		return false
+		return false, true
 	}
 	if service.IsGroupMemberCompacting(sessionID) {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberCompacting")
-		return false
+		return false, false
 	}
-	return true
+	if parent := service.ResolveGroupTimelineID(sessionID); parent != sessionID && service.IsSessionRunning(parent) {
+		return true, true
+	}
+	return false, true
+}
+
+// sessionSettingsPatch is the PATCH /api/ai/session/settings body.
+type sessionSettingsPatch struct {
+	SessionID      string `json:"sessionId"`
+	ModelID        string `json:"modelId"`
+	ThinkingEffort string `json:"thinkingEffort"`
+	ModeID         string `json:"modeId"`
+	Transport      string `json:"transport"`
+	AutoApprove    *bool  `json:"autoApprove"`
+	Cruise         *bool  `json:"cruise"`
+	// ConfigOptions sets agent-specific select options by the agent's own
+	// config-option id (e.g. {"fast-mode": "on"}). Same semantics as
+	// PATCH /api/ai/session — see applyExtraConfigOptions.
+	ConfigOptions map[string]string `json:"configOptions"`
+}
+
+// isModelOnly reports whether the request touches nothing but the model. The
+// other fields all need the member's live connection (mode / effort / config
+// options are pushed at it, transport decides the next spawn), so they cannot be
+// "stored and deferred" while a group turn owns that connection.
+func (req sessionSettingsPatch) isModelOnly() bool {
+	return req.ModelID != "" &&
+		req.ThinkingEffort == "" &&
+		req.ModeID == "" &&
+		req.Transport == "" &&
+		req.AutoApprove == nil &&
+		req.Cruise == nil &&
+		len(req.ConfigOptions) == 0
+}
+
+// checkMemberConfigWrite applies the group-member concurrency guard, writing the
+// 409 itself. It reports whether the write may proceed, and whether it must be
+// DEFERRED (stored in the DB but not pushed to the member's agent).
+func checkMemberConfigWrite(w http.ResponseWriter, r *http.Request, req sessionSettingsPatch) (deferOnly, ok bool) {
+	deferOnly, writable := memberConfigWritable(req.SessionID)
+	if !writable {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberCompacting")
+		return false, false
+	}
+	// A group turn owns the member's connection. Only a model switch can be
+	// stored without pushing at it; anything else is still refused so the user
+	// retries when the group is idle.
+	if deferOnly && !req.isModelOnly() {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
+		return false, false
+	}
+	return deferOnly, true
+}
+
+// applySessionModelForSettings switches the model, or — when deferOnly — only
+// stores it. deferOnly is the "the member's connection is mid-turn" case: a push
+// would either be rejected or rewrite the model of the turn in flight, while the
+// next member turn re-reads the column and applies it before its prompt.
+func applySessionModelForSettings(ctx context.Context, sessionID, modelID string, deferOnly bool) (deferred bool, err error) {
+	if !deferOnly {
+		return applyAndPersistSessionModel(ctx, sessionID, modelID)
+	}
+	//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+	service.UpdateSessionModel(sessionID, modelID)
+	return true, nil
 }
 
 // ServeSessionSettingsUpdate applies one setting to an arbitrary session,
@@ -177,19 +246,7 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req struct {
-		SessionID      string `json:"sessionId"`
-		ModelID        string `json:"modelId"`
-		ThinkingEffort string `json:"thinkingEffort"`
-		ModeID         string `json:"modeId"`
-		Transport      string `json:"transport"`
-		AutoApprove    *bool  `json:"autoApprove"`
-		Cruise         *bool  `json:"cruise"`
-		// ConfigOptions sets agent-specific select options by the agent's own
-		// config-option id (e.g. {"fast-mode": "on"}). Same semantics as
-		// PATCH /api/ai/session — see applyExtraConfigOptions.
-		ConfigOptions map[string]string `json:"configOptions"`
-	}
+	var req sessionSettingsPatch
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -201,7 +258,8 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !requireMemberConfigWritable(w, r, req.SessionID) {
+	deferOnly, writable := checkMemberConfigWrite(w, r, req)
+	if !writable {
 		return
 	}
 
@@ -230,7 +288,7 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	effectiveEffort := ""
 	if req.ModelID != "" {
 		var err error
-		deferred, err = applyAndPersistSessionModel(r.Context(), req.SessionID, req.ModelID)
+		deferred, err = applySessionModelForSettings(r.Context(), req.SessionID, req.ModelID, deferOnly)
 		if err != nil {
 			writeModelSwitchError(w, r, err)
 			return

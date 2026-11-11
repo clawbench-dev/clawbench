@@ -11,7 +11,7 @@ import zh from '@/i18n/locales/zh'
  * it, so parity is asserted here instead of trusted.
  */
 describe('model switcher keys', () => {
-  const KEYS = ['switching', 'deferred', 'switchFailed', 'switchFailedDetail', 'effortChanged'] as const
+  const KEYS = ['switching', 'deferred', 'deferredMember', 'switchFailed', 'switchFailedDetail', 'effortChanged'] as const
 
   it('defines every model-switcher key in both locales', () => {
     for (const key of KEYS) {

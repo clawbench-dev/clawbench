@@ -2167,8 +2167,12 @@ paths:
         复用同一套写入实现（模型最后应用、按模型记忆思考深度、巡航→自动批准单向硬
         默认、deferred vs rejected 的区分），避免两条路径漂移。
 
-        **群成员行的并发守卫**：群回合进行中该成员的连接是忙的，压缩也会直接驱动它，
-        因此这两种情况下返回 409，而不是静默排队——抽屉是交互式的，用户可以稍后重试。
+        **群成员行的并发守卫**：群回合进行中该成员的连接是忙的，压缩也会直接驱动它。
+        其中**模型切换**例外：它不需要碰那条连接——下一回合读回 `chat_sessions.model`
+        并在发 prompt 前应用，所以只落库、响应 `modelSwitchDeferred=true`，由前端提示
+        「下一回合生效」。其余字段（模式 / 思考深度 / 传输 / 配置项 / 自动批准 / 巡航）
+        仍需要活连接，返回 409 `GroupRunning`；成员正在压缩时一律 409
+        `GroupMemberCompacting`。抽屉是交互式的，用户可以稍后重试。
       operationId: sessionSettingsUpdate
       requestBody:
         required: true
@@ -2218,7 +2222,7 @@ paths:
         "403":
           description: 该会话属于其他项目
         "409":
-          description: 群回合进行中（`GroupRunning`）或该成员正在压缩（`GroupMemberCompacting`）
+          description: 群回合进行中且请求含模型以外的字段（`GroupRunning`），或该成员正在压缩（`GroupMemberCompacting`）
         "422":
           description: 模型切换被 agent 拒绝（`ModelSwitchFailed`）
         "500":
