@@ -3861,13 +3861,33 @@ func summarizeContentForView(content string) string {
 // enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
 // assistant messages by batch-querying the summaries table. Only messages with
 // role "assistant" are queried. The heavy content of messages that have a
-// reading summary and are not streaming is stripped to save bandwidth.
+// reading summary and are not streaming is stripped to save bandwidth — EXCEPT
+// the newest assistant reply in the slice, which is always sent whole (see the
+// newestAssistantID comment below).
 func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	// Collect IDs of assistant messages
 	assistantIDs := make([]int64, 0, len(messages))
+	// The newest assistant reply in this slice: never stripped. It is the row a
+	// live client is looking at, and the only row it can check its own streamed
+	// copy against. Finalize summarizes SYNCHRONOUSLY before the terminal `done`
+	// is emitted, so this row arrives stripped in the post-done reload — and the
+	// frontend's rebuild then has nothing to compare the live bubble with. It
+	// keeps the live blocks (anti-flicker) and a reply that lost its tail in
+	// transit (dropped frame / reconnect mid-stream) stayed truncated until a
+	// full rebuild (switch session, next turn). Sending the row whole lets the
+	// existing merge see the authoritative text and repair it in place.
+	//
+	// Not a bandwidth regression in the common case: the default 'mixed' display
+	// mode renders the newest reply as ORIGINAL text, so the client used to
+	// fetch exactly this row back from /api/rag/message — one round-trip that
+	// this replaces.
+	newestAssistantID := int64(0)
 	for _, msg := range messages {
-		if msg.Role == "assistant" {
+		if msg.Role == roleAssistant {
 			assistantIDs = append(assistantIDs, msg.ID)
+			if msg.ID > newestAssistantID {
+				newestAssistantID = msg.ID
+			}
 		}
 	}
 	if len(assistantIDs) == 0 {
@@ -3930,7 +3950,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 			if cards, ok := cardMap[messages[i].ID]; ok {
 				messages[i].SummaryCards = cards
 			}
-			if !isGroup && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
+			if !isGroup && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming && messages[i].ID != newestAssistantID {
 				messages[i].Content = summarizeContentForView(messages[i].Content)
 			}
 		}

@@ -1004,26 +1004,36 @@ func TestGetSessionResponsePreviewRaw_IgnoresSummaryStripping(t *testing.T) {
 	}
 	contentJSON, _ := json.Marshal(map[string]any{"blocks": blocks})
 	insertTestMessage(t, db, "session-preview-summary", "user", "问题")
+
+	// An OLDER assistant reply — stripping only applies to older ones now (the
+	// newest is always sent whole so a live client can reconcile against it).
+	var olderID int64
+	require.NoError(t, db.QueryRow(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-preview-summary', 'claude', 0) RETURNING id",
+		string(contentJSON)).Scan(&olderID))
+	_, err := db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, '旧回复摘要')", olderID)
+	require.NoError(t, err)
+
 	var asstID int64
 	require.NoError(t, db.QueryRow(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-preview-summary', 'claude', 0) RETURNING id",
 		string(contentJSON)).Scan(&asstID))
 
-	// Insert a reading summary for the assistant message — this causes
-	// GetMessagesBySessionID to strip content to empty blocks.
-	_, err := db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, '修复完成，测试全部通过')", asstID)
+	// Insert a reading summary for the newest assistant message as well.
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, '修复完成，测试全部通过')", asstID)
 	require.NoError(t, err)
 
 	// getSessionResponsePreviewRaw must still see the original blocks.
 	raw := getSessionResponsePreviewRaw("session-preview-summary")
 	assert.Equal(t, "修复完成，测试全部通过", raw)
 
-	// GetMessagesBySessionID keeps its bandwidth-optimized stripping behavior.
+	// GetMessagesBySessionID keeps its bandwidth-optimized stripping behavior
+	// for OLDER replies.
 	messages, err := GetMessagesBySessionID("session-preview-summary")
 	require.NoError(t, err)
 	var stripped string
 	for _, m := range messages {
-		if m.Role == "assistant" {
+		if m.Role == "assistant" && m.ID == olderID {
 			stripped = m.Content
 		}
 	}
@@ -1031,7 +1041,7 @@ func TestGetSessionResponsePreviewRaw_IgnoresSummaryStripping(t *testing.T) {
 		Blocks []model.ContentBlock `json:"blocks"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(stripped), &parsed))
-	assert.Empty(t, parsed.Blocks, "GetMessagesBySessionID should still strip content to empty blocks")
+	assert.Empty(t, parsed.Blocks, "GetMessagesBySessionID should still strip OLDER summarized content")
 }
 
 func TestGetAssistantRawContents_ReturnsUnmodifiedContent(t *testing.T) {

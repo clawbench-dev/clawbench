@@ -6226,25 +6226,41 @@ func TestGetChatHistoryPaged_SummaryStripsContent(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Summary View")
 
-	asstID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
-		`{"blocks":[{"type":"text","text":"long assistant answer"}]}`, nil, false, "")
-	assert.NoError(t, err)
+	// An OLDER summarized reply: this is the one the view still strips.
+	olderID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"text","text":"older assistant answer"}]}`, nil, false, "")
+	require.NoError(t, err)
 
 	cards := &model.SummaryCards{
 		Tools: []model.SummaryTool{{Name: "Bash", ID: "tool_bash"}},
 	}
-	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
+	assert.NoError(t, service.SaveSummaryWithCards("chat_message", olderID, "reading summary", cards))
+
+	// The NEWEST reply is never stripped, even when summarized: it is what the
+	// client renders as original text and the only row it can reconcile a live
+	// bubble against.
+	newestID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"text","text":"long assistant answer"}]}`, nil, false, "")
+	require.NoError(t, err)
+	assert.NoError(t, service.SaveSummaryWithCards("chat_message", newestID, "reading summary 2", nil))
 
 	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
-	assert.NoError(t, err)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, "assistant", msgs[0].Role)
-	assert.Equal(t, `{"blocks":[]}`, msgs[0].Content, "summarized messages must strip blocks")
-	require.NotNil(t, msgs[0].Summary)
-	assert.Equal(t, "reading summary", *msgs[0].Summary)
-	require.NotNil(t, msgs[0].SummaryCards)
-	require.Len(t, msgs[0].SummaryCards.Tools, 1)
-	assert.Equal(t, "Bash", msgs[0].SummaryCards.Tools[0].Name)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+
+	older := msgs[0]
+	require.Equal(t, olderID, older.ID)
+	assert.Equal(t, "assistant", older.Role)
+	assert.Equal(t, `{"blocks":[]}`, older.Content, "summarized OLDER messages must strip blocks")
+	require.NotNil(t, older.Summary)
+	assert.Equal(t, "reading summary", *older.Summary)
+	require.NotNil(t, older.SummaryCards)
+	require.Len(t, older.SummaryCards.Tools, 1)
+	assert.Equal(t, "Bash", older.SummaryCards.Tools[0].Name)
+
+	newest := msgs[1]
+	require.Equal(t, newestID, newest.ID)
+	assert.Contains(t, newest.Content, "long assistant answer", "the newest reply must arrive whole")
 }
 
 func TestGetChatHistoryPaged_SummaryPreservesMetadata(t *testing.T) {
@@ -6252,14 +6268,21 @@ func TestGetChatHistoryPaged_SummaryPreservesMetadata(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Summary View Metadata")
 
-	asstID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
+	// Stripping only applies to OLDER replies now, so the metadata-preserving
+	// view is exercised on one of those.
+	olderID, err := service.AddChatMessage("/project", "claude", sid, "assistant",
 		`{"blocks":[{"type":"text","text":"answer"}],"metadata":{"transport":"cli","model":"glm-5.1","inputTokens":54494,"outputTokens":16,"durationMs":2965,"wallMs":7890,"sessionId":"ext-123"},"cancelled":true}`, nil, false, "")
-	assert.NoError(t, err)
-	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", nil))
+	require.NoError(t, err)
+	assert.NoError(t, service.SaveSummaryWithCards("chat_message", olderID, "reading summary", nil))
+
+	_, err = service.AddChatMessage("/project", "claude", sid, "assistant",
+		`{"blocks":[{"type":"text","text":"newest answer"}]}`, nil, false, "")
+	require.NoError(t, err)
 
 	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
-	require.Len(t, msgs, 1)
+	require.Len(t, msgs, 2)
+	require.Equal(t, olderID, msgs[0].ID)
 
 	var parsed struct {
 		Blocks    []any          `json:"blocks"`
