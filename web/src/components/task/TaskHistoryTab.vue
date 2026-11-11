@@ -54,7 +54,11 @@
               </div>
               <div v-if="exec.metadata && (exec.metadata.model || exec.metadata.inputTokens || exec.metadata.outputTokens)" class="exec-meta-row">
                 <span v-if="exec.metadata.model" class="exec-meta-tag">{{ exec.metadata.model }}</span>
-                <span v-if="exec.metadata.inputTokens || exec.metadata.outputTokens" class="exec-meta-tag">{{ formatTokens(exec.metadata) }}</span>
+                <span
+                  v-if="exec.metadata.inputTokens || exec.metadata.outputTokens"
+                  class="exec-meta-tag"
+                  :title="tokenTooltip(exec.metadata)"
+                >{{ formatTokens(exec.metadata) }}</span>
               </div>
             </template>
           </div>
@@ -88,6 +92,7 @@ import { useTaskHistory } from '@/composables/useTaskHistory.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents.ts'
 import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import { formatDuration, formatDateTime } from '@/utils/format.ts'
+import { formatCompactCount } from '@/utils/usageFormat.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 
@@ -130,9 +135,19 @@ const {
 
 function formatTokens(meta) {
   const parts = []
-  if (meta.inputTokens) parts.push(`${meta.inputTokens.toLocaleString()}↑`)
-  if (meta.outputTokens) parts.push(`${meta.outputTokens.toLocaleString()}↓`)
+  if (meta.inputTokens) parts.push(`${formatCompactCount(meta.inputTokens)}↑`)
+  if (meta.outputTokens) parts.push(`${formatCompactCount(meta.outputTokens)}↓`)
   return parts.join(' ')
+}
+
+/** Hover text for the token chip. The compact form is what fits beside the
+ *  model name, but it rounds ("12.3K"), so the tooltip carries the exact
+ *  counts — same split the per-message usage tail uses. */
+function tokenTooltip(meta) {
+  return t('chat.message.tokenUsed', {
+    input: Number(meta.inputTokens || 0).toLocaleString('en-US'),
+    output: Number(meta.outputTokens || 0).toLocaleString('en-US'),
+  })
 }
 
 /** Compact "owner/repo PR #123" for an event-triggered run, or '' when the run
