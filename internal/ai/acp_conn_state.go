@@ -622,6 +622,117 @@ func IsACPResourceNotFound(err error) bool {
 	return strings.Contains(strings.ToLower(reqErr.Message), "resource not found")
 }
 
+// isSessionGoneError reports whether the agent answered that it does not have
+// this session at all (as opposed to failing to reach its session store).
+//
+// This is the difference between "the context still exists, we just could not
+// get to it" and "the context is gone": only the second one may be followed by
+// a fresh session. Agents express it in three shapes:
+//
+//   - -32002 "Resource not found" — the canonical ACP code, accepted under the
+//     same message constraint as IsACPResourceNotFound (the code is generic, so
+//     an agent reporting a missing file with it must not be read as a lost
+//     session).
+//   - -32602 "Invalid params: session not found" — what opencode's ACP server
+//     answers for an id it no longer holds (issue #669). -32602 is a generic
+//     "invalid params" code, so the message must also name the session; a
+//     genuinely malformed request must NOT be read as a lost session.
+//   - -32603 "Session ... not found" — a business error wrapped in the generic
+//     internal-error code (measured on openclaw's bridge).
+//
+// Plain (non-JSON-RPC) errors are matched by explicit phrase only. They reach
+// here through recoveryFailure's own wrappers ("... failed for session <id>:
+// <cause>"), which ALWAYS contain the word "session" — so a loose
+// session+not-found rule would read a wrapped "config file not found" as a lost
+// session and throw the conversation away.
+func isSessionGoneError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var reqErr *acp.RequestError
+	if !errors.As(err, &reqErr) {
+		return containsSessionGonePhrase(strings.ToLower(err.Error()))
+	}
+	if reqErr.Code == -32002 {
+		// The canonical wording (IsACPResourceNotFound) or an explicit
+		// "Session <id> not found": some agents report a lost session with the
+		// generic resource code and their own message.
+		return IsACPResourceNotFound(err) || sessionSubjectNotFound(strings.ToLower(reqErr.Message))
+	}
+	if reqErr.Code != -32602 && reqErr.Code != -32603 {
+		return false
+	}
+	// The agent's own message is not a wrapper, so a "session <id> not found"
+	// form is safe to accept here (openclaw's bridge).
+	if sessionSubjectNotFound(strings.ToLower(reqErr.Message)) {
+		return true
+	}
+	// data carries details on some agents (CodeBuddy). It also echoes request
+	// parameters, so only the explicit phrase counts there — not the looser
+	// adjacency rule used for the message.
+	if reqErr.Data != nil {
+		return containsSessionGonePhrase(strings.ToLower(fmt.Sprint(reqErr.Data)))
+	}
+	return false
+}
+
+// containsSessionGonePhrase reports whether text contains a phrase that makes
+// the SESSION the missing subject. Deliberately a fixed phrase list rather than
+// "session" + "not found": wrappers and echoed request parameters contain the
+// word "session" regardless of what actually failed.
+func containsSessionGonePhrase(text string) bool {
+	for _, phrase := range []string{
+		"session not found",
+		"unknown session",
+		"no such session",
+		"session does not exist",
+		"session no longer exists",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionSubjectNotFound additionally accepts "session <id> not found" — how
+// openclaw's bridge words it. The gap must be a single id-shaped token, so
+// "session cwd /work not found" (a resource belonging to the session) is not
+// read as "the session itself is gone".
+//
+// A missing backing store ("session store not found") IS accepted: the session
+// cannot be loaded from it either way, which is what this classification is
+// about.
+func sessionSubjectNotFound(text string) bool {
+	if containsSessionGonePhrase(text) {
+		return true
+	}
+	search := 0
+	for {
+		i := strings.Index(text[search:], "session")
+		if i < 0 {
+			return false
+		}
+		i += search
+		rest := text[i+len("session"):]
+		if j := strings.Index(rest, "not found"); j >= 0 && j <= 64 && looksLikeSessionIDToken(rest[:j]) {
+			return true
+		}
+		search = i + len("session")
+	}
+}
+
+// looksLikeSessionIDToken reports whether gap is a single token that could be a
+// session id (optionally quoted) rather than a phrase.
+func looksLikeSessionIDToken(gap string) bool {
+	t := strings.TrimSpace(gap)
+	if t == "" || len(t) > 50 {
+		return false
+	}
+	t = strings.Trim(t, "\"'\x60")
+	return t != "" && !strings.ContainsAny(t, " \t/")
+}
+
 // buildPromptBlocks constructs ACP ContentBlock list from the chat request.
 // If a system prompt should be injected, it's prepended as the first text block.
 // Slash commands (e.g. /reload-plugins) are sent as-is — ACP agents detect

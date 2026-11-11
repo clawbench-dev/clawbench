@@ -73,21 +73,23 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 					"session_id", req.SessionID, "agent_id", b.agent.ID, "error", err)
 				conn, isNew, err = mgr.GetOrCreateConn(ctx, b.agent, req.SessionID, req.WorkDir)
 			}
-			if err != nil && isACPPeerDisconnected(err) && shouldNewSessionFallback(req.HasConversationHistory) {
-				// Session cannot be restored (process keeps dying / load keeps
-				// failing). Only fall back to a brand-new session when the
-				// session has no conversation history at all — rebuilding a
-				// session that already has history would lose it (amnesia).
-				// In that case the error below is surfaced and the user retries,
-				// preserving the original session mapping.
+			if err != nil && shouldStartFreshSession(err, req.HasConversationHistory) {
+				// The session cannot be served as-is. Two cases reach here:
+				//   - the agent said it no longer HAS the session (business
+				//     error, e.g. opencode's -32602 "session not found" after a
+				//     restart — issue #669). Its copy of the context is already
+				//     gone, so a fresh session loses nothing that still exists;
+				//     refusing instead leaves the user permanently unable to
+				//     talk to that agent (a group member would never speak again).
+				//   - a peer disconnect with no conversation history to preserve.
+				// Rebuilding a session that DOES have history after a mere
+				// disconnect is still forbidden (amnesia prevention) — that
+				// case is surfaced as an error below.
 				slog.Error("acp: session recovery failed, starting new session",
 					"session_id", req.SessionID, "agent_id", b.agent.ID, "error", err)
 				if fb := mgr.NewSessionFallback(ctx, b.agent, req.SessionID, req.WorkDir); fb != nil {
 					conn, isNew, err = fb, true, nil
-					forwardACPEvent(ch, StreamEvent{
-						Type:    "warning",
-						Content: i18n.T(i18n.LocalizerForLocale(model.Language), "ACPSessionRecoveredNew"), Reason: ReasonBackendExit,
-					})
+					forwardACPEvent(ch, sessionResetNotice())
 				}
 			}
 		}
@@ -138,6 +140,11 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			forwardACPEvent(ch, StreamEvent{Type: "error", Error: fmt.Sprintf("acp: connection: %v", err), Reason: ReasonBackendExit})
 			return
 		}
+
+		// A brand-new agent session has no context, so this turn must carry the
+		// system prompt (skills, user identity, media rules). See
+		// applyFreshSessionResumeRule.
+		applyFreshSessionResumeRule(&req, isNew)
 
 		acpSessionID := conn.AcpSID()
 
@@ -249,6 +256,10 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				b.emitSessionAndCacheState(conn2, isNew2, ch)
 				// Re-sync autoApprove for the respawned connection
 				conn2.SetAutoApprove(getSessionAutoApprove(req.SessionID))
+				// The retry may also have landed on a brand-new session (the
+				// pool entry can be gone, or the persisted id cleared), and a
+				// new session needs the system prompt like the first attempt.
+				applyFreshSessionResumeRule(&req, isNew2)
 				promptBlocks2 := b.buildPromptBlocks(req)
 				retryPromptErr := conn2.Prompt(ctx, promptBlocks2, ch, req)
 				if retryPromptErr != nil {
@@ -372,6 +383,65 @@ func (b *ACPBackend) emitSessionAndCacheState(conn *ACPConn, isNew bool, ch chan
 // error and let the user retry, preserving the original session mapping.
 func shouldNewSessionFallback(hasHistory bool) bool {
 	return !hasHistory
+}
+
+// applyFreshSessionResumeRule marks a request that will run on a BRAND-NEW agent
+// session as a non-resume, so the turn carries the system prompt (skills, user
+// identity, media rules).
+//
+// Resume only suppresses that re-injection, and its other consumers are CLI-side,
+// so clearing it here has no other effect. It must be applied at every point that
+// can hand back a fresh session: the first connection, a rebuild after the agent
+// lost the old session, and a prompt-retry respawn.
+//
+// The prompt may already carry the user-identity section (BuildChatRequest puts it
+// there for turns that look like a resume); one duplicated section is harmless
+// next to sending no system prompt at all.
+func applyFreshSessionResumeRule(req *ChatRequest, isNew bool) {
+	if isNew {
+		req.Resume = false
+	}
+}
+
+// sessionResetNotice builds the user-visible warning emitted when a turn
+// continues on a brand-new session because the agent no longer had the old one.
+//
+// The reason is ReasonSessionReset, NOT ReasonBackendExit: this turn is about to
+// run normally, so auto-continue must not re-send it (which would duplicate the
+// answer) and a group member's turn must still count as clean (its seen_cursor
+// advances; an abnormal result would re-inject the same context next round).
+// The text is localized here because the frontend renders the block's Text
+// whenever it has no i18n label for the reason.
+func sessionResetNotice() StreamEvent {
+	return StreamEvent{
+		Type:    "warning",
+		Content: i18n.T(i18n.LocalizerForLocale(model.Language), "ACPSessionRecoveredNew"),
+		Reason:  ReasonSessionReset,
+	}
+}
+
+// shouldStartFreshSession reports whether a failed session recovery may be
+// retried immediately on a brand-new session.
+//
+// The amnesia rule is not abandoned here — it is refined by WHAT the agent said:
+//
+//   - "The session does not exist" (errSessionGone) means the agent's copy of the
+//     context is already gone. There is nothing left to preserve, so starting
+//     fresh loses nothing, while refusing leaves the session permanently broken
+//     (issue #669: a group member whose in-memory session died with the backend
+//     process could never speak again).
+//   - Any other failure keeps the old rule: only a peer disconnect on a session
+//     with NO history may be rebuilt, because there a retry could still recover
+//     the conversation and rebuilding would lose it.
+func shouldStartFreshSession(err error, hasHistory bool) bool {
+	if err == nil {
+		// isACPPeerDisconnected dereferences the error.
+		return false
+	}
+	if errors.Is(err, errSessionGone) {
+		return true
+	}
+	return isACPPeerDisconnected(err) && shouldNewSessionFallback(hasHistory)
 }
 
 // acpErrorText formats an ACP error for the UI warning banner, preserving both

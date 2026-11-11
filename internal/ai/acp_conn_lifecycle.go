@@ -529,6 +529,15 @@ func isRecoveryTimeout(err error) bool {
 	return isACPDeadlineMsg(err.Error())
 }
 
+// errSessionGone marks a failed recovery whose cause is "the agent does not have
+// this session any more" (see isSessionGoneError).
+//
+// It is a sentinel rather than a re-classification at the caller because only a
+// RECOVERY RPC can prove the session is gone. The same JSON-RPC codes can come
+// back from session/new or Initialize for an unrelated missing resource, and
+// acting on those would drop a session that still exists.
+var errSessionGone = errors.New("the agent no longer has this session")
+
 // recoveryFailure reports a failed session-recovery RPC and turns it into the
 // error the caller returns.
 //
@@ -536,6 +545,14 @@ func isRecoveryTimeout(err error) bool {
 // — after a failed load/resume it cannot be trusted to serve the next turn —
 // but a timeout is reported as retryable and a refusal as unrecoverable (see
 // errSessionRecoveryTimeout).
+//
+// A refusal that says the session does not exist (isSessionGoneError) also
+// DROPS the mapping, in memory and in the DB. Unlike a timeout there is nothing
+// left to retry, and keeping the id is actively harmful: every later turn (and
+// every server restart, which re-reads external_session_id) would re-attempt the
+// same dead id and fail the same way — the group member of issue #669 that could
+// never speak again. Dropping it lets the caller start a fresh session, and lets
+// captureExternalSessionID persist the replacement id.
 func (c *ACPConn) recoveryFailure(rpc, acpSID string, timeout time.Duration, cause error) error {
 	c.killAndMarkDeadLocked()
 	if isRecoveryTimeout(cause) {
@@ -547,6 +564,32 @@ func (c *ACPConn) recoveryFailure(rpc, acpSID string, timeout time.Duration, cau
 	}
 	slog.Error("acp conn: session recovery failed, session is unrecoverable",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "rpc", rpc, "error", cause)
+	if isSessionGoneError(cause) {
+		// Compare-and-clear: killAndMarkDeadLocked released c.mu while reaping
+		// the process, so another caller (the acp-load endpoint, EnsureAlive)
+		// may have established a session in that window. Wiping its id would
+		// destroy a session that is alive.
+		//
+		// c.acpSID is normally EMPTY here (spawnLocked cleared it before the
+		// recovery RPC), so the empty case is the ordinary path, not a guard
+		// that never fires.
+		//
+		// The DB write below runs with c.mu held, so the lock order is
+		// c.mu → store write lock — the same order recoverableSessionIDLocked
+		// already uses for its read, and no service path takes them in reverse.
+		// It must happen HERE, before the caller's NewSessionFallback, because
+		// that rebuild re-reads this column.
+		if c.acpSID == "" || c.acpSID == acpSID {
+			c.acpSID = ""
+			clearExternalSessionID(c.clawbenchSID)
+			slog.Warn("acp conn: agent no longer has this session, dropped the stale mapping so the next attempt starts fresh",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "rpc", rpc)
+		}
+		// Two %w verbs: the caller must be able to see BOTH the sentinel (to
+		// decide on a fresh session) and the original business error (which
+		// names the code and the agent's own wording).
+		return fmt.Errorf("acp: session %s %s failed: %w: %w", acpSID, rpc, errSessionGone, cause)
+	}
 	return fmt.Errorf("acp: session %s %s failed: %w", acpSID, rpc, cause)
 }
 
@@ -568,11 +611,14 @@ func (c *ACPConn) recoveryFailure(rpc, acpSID string, timeout time.Duration, cau
 // to the standard session/load only on a -32601 Method not found response — the
 // authoritative runtime signal.
 //
-// On failure we deliberately do NOT silently start a new session (amnesia): the
-// error is surfaced so the user knows the context was lost. Every failure goes
-// through recoveryFailure, which kills the process but preserves acpSID (it uses
-// killAndMarkDeadLocked, not killProcessLocked) so a later prompt can retry —
-// and which reports a TIMEOUT as retryable rather than unrecoverable.
+// On failure this helper does NOT start a new session itself (amnesia): it
+// returns the error so the caller decides. Every failure goes through
+// recoveryFailure, which kills the process and distinguishes three outcomes:
+//   - a timeout keeps acpSID (killAndMarkDeadLocked, not killProcessLocked) so a
+//     later prompt can retry, and is reported as retryable;
+//   - "the agent does not have this session" (isSessionGoneError) drops acpSID
+//     AND the persisted id, so the caller may continue on a fresh session;
+//   - any other refusal is reported as unrecoverable and keeps the mapping.
 func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
 	// An agent whose session/resume is process-local answers a cross-process
 	// resume with a BUSINESS error, not -32601, so the fallback below would

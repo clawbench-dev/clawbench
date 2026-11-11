@@ -20,6 +20,26 @@ func SetExternalSessionIDGetter(fn func(clawbenchSID string) string) {
 	getExternalSessionID = fn
 }
 
+// clearExternalSessionID drops the persisted ACP session id for a ClawBench
+// session. Set by the application startup via SetExternalSessionIDClearer.
+//
+// Recovery needs it when the agent says the session no longer exists: the id
+// must stop being retried, and it must stop being re-read on the NEXT process
+// start (GetOrCreateConn pre-populates acpSID from this column, and
+// recoverableSessionIDLocked falls back to it). Clearing it is also what lets
+// captureExternalSessionID persist the replacement id — that write is
+// deliberately skipped while an id is already stored.
+var clearExternalSessionID = func(clawbenchSID string) {
+	// no-op until SetExternalSessionIDClearer is called
+}
+
+// SetExternalSessionIDClearer sets the function used to drop a stale ACP session
+// id from the database. Must be called once during application startup, after
+// service.InitDB().
+func SetExternalSessionIDClearer(fn func(clawbenchSID string)) {
+	clearExternalSessionID = fn
+}
+
 // getSessionAutoApprove is the global function for looking up auto-approve state
 // from the database. Set by the application startup via SetAutoApproveGetter.
 var getSessionAutoApprove = func(clawbenchSID string) bool {
