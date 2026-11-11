@@ -1077,6 +1077,9 @@ var PatchableConfigPaths = map[string]bool{
 	"usage_meter.quota":       true,
 	// Agent process environment (opt-in, off by default).
 	"shell_env.inherit": true,
+	// draw.io editor download source. Validated and applied below; without this
+	// entry the settings field is rejected with 400 and can never be saved.
+	"drawio.download_url": true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
