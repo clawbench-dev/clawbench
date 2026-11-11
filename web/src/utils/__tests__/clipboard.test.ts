@@ -37,6 +37,7 @@ vi.stubGlobal('document', {
     removeChild: vi.fn(),
   },
   execCommand: mockExecCommand,
+  activeElement: null,
 })
 
 import { copyText, readClipboardText } from '@/utils/clipboard.ts'
@@ -243,5 +244,99 @@ describe('readClipboardText', () => {
     copyText('second', success, failure)
     await vi.waitFor(() => expect(failure).toHaveBeenCalledOnce())
     expect(success).toHaveBeenCalledOnce()
+  })
+})
+
+/**
+ * Focus restoration around the `execCommand` fallbacks.
+ *
+ * Both fallbacks have to focus a throwaway textarea, and both are reachable from
+ * background work (copy-on-select runs after a terminal drag, with no click of
+ * its own). Leaving focus on that textarea strands the user on `<body>`: the
+ * terminal stops receiving keystrokes, so Shift+Insert and every other chord
+ * aimed at it silently do nothing. Asserted on the real element that had focus,
+ * not on a call count, because "restored" is the behaviour under test.
+ */
+describe('execCommand fallbacks keep keyboard focus where it was', () => {
+  /** A stand-in for the terminal's hidden textarea. */
+  function makeFocusedElement() {
+    return { tagName: 'TEXTAREA', focus: vi.fn() }
+  }
+
+  function stubFallbackEnvironment(execResult: boolean) {
+    Object.defineProperty(globalThis.navigator, 'clipboard', { value: undefined, writable: true })
+    mockExecCommand.mockReturnValue(execResult)
+    mockTextarea.value = 'clipboard payload'
+  }
+
+  afterEach(() => {
+    ;(globalThis as any).document.activeElement = null
+    ;(globalThis as any).ClawBenchNative = undefined
+    delete (window as any).ClawBenchHarmony
+  })
+
+  it('refocuses the previously focused element after a fallback copy', () => {
+    stubFallbackEnvironment(true)
+    const previous = makeFocusedElement()
+    ;(globalThis as any).document.activeElement = previous
+
+    copyText('selection')
+
+    expect(mockExecCommand).toHaveBeenCalledWith('copy')
+    expect(previous.focus).toHaveBeenCalled()
+  })
+
+  it('refocuses the previously focused element after a fallback paste', async () => {
+    stubFallbackEnvironment(true)
+    const previous = makeFocusedElement()
+    ;(globalThis as any).document.activeElement = previous
+
+    await expect(readClipboardText()).resolves.toBe('clipboard payload')
+    expect(previous.focus).toHaveBeenCalled()
+  })
+
+  it('refocuses even when the fallback itself throws', () => {
+    stubFallbackEnvironment(false)
+    mockExecCommand.mockImplementation(() => {
+      throw new Error('exec failed')
+    })
+    const previous = makeFocusedElement()
+    ;(globalThis as any).document.activeElement = previous
+
+    copyText('selection', undefined, () => {})
+
+    expect(previous.focus).toHaveBeenCalled()
+  })
+
+  it('does not try to refocus <body> (that is the "nothing was focused" case)', () => {
+    stubFallbackEnvironment(true)
+    // `document.body` is the sentinel for "nothing was focused": focusing it is
+    // a no-op that would only fight the browser's own default.
+    const body = (globalThis as any).document.body
+    body.focus = vi.fn()
+    ;(globalThis as any).document.activeElement = body
+
+    copyText('selection')
+
+    expect(body.focus).not.toHaveBeenCalled()
+  })
+
+  it('does not try to refocus when nothing was focused at all', () => {
+    stubFallbackEnvironment(true)
+    ;(globalThis as any).document.activeElement = null
+
+    expect(() => copyText('selection')).not.toThrow()
+    expect(mockExecCommand).toHaveBeenCalledWith('copy')
+  })
+
+  it('survives an element that refuses focus', () => {
+    stubFallbackEnvironment(true)
+    const previous = { tagName: 'TEXTAREA', focus: vi.fn(() => { throw new Error('detached') }) }
+    ;(globalThis as any).document.activeElement = previous
+
+    // A copy must still succeed: focus restoration is best-effort.
+    const onSuccess = vi.fn()
+    copyText('selection', onSuccess)
+    expect(onSuccess).toHaveBeenCalled()
   })
 })
