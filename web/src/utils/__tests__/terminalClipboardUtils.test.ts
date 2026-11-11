@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isCopySelectionShortcut, type CopyKeyEvent } from '@/utils/terminalClipboardUtils'
+import {
+  isCopySelectionShortcut,
+  isPasteSelectionShortcut,
+  type CopyKeyEvent,
+} from '@/utils/terminalClipboardUtils'
 
 /** Build a keydown event with sensible defaults; override per case. */
 function ev(partial: Partial<CopyKeyEvent> = {}): CopyKeyEvent {
@@ -73,5 +77,45 @@ describe('isCopySelectionShortcut', () => {
       expect(isCopySelectionShortcut(ev({ key: 'v', ctrlKey: true }), true, false)).toBe(false)
       expect(isCopySelectionShortcut(ev({ key: 'a', metaKey: true }), true, true)).toBe(false)
     })
+  })
+})
+
+describe('isPasteSelectionShortcut', () => {
+  /** Shift+Insert keydown, the chord this predicate exists for. */
+  const pasteChord = (partial: Partial<CopyKeyEvent> = {}) =>
+    ev({ key: 'Insert', shiftKey: true, ...partial })
+
+  it('claims Shift+Insert', () => {
+    expect(isPasteSelectionShortcut(pasteChord())).toBe(true)
+  })
+
+  it('falls back to keyCode 45 when the browser reports no usable key', () => {
+    // Some IMEs / older WebViews leave `key` empty for non-character keys; the
+    // chord must still work there rather than silently doing nothing.
+    expect(isPasteSelectionShortcut(pasteChord({ key: '', keyCode: 45 }))).toBe(true)
+  })
+
+  it('does not claim plain Insert (the PTY wants it as ESC[2~)', () => {
+    expect(isPasteSelectionShortcut(ev({ key: 'Insert' }))).toBe(false)
+    expect(isPasteSelectionShortcut(ev({ key: '', keyCode: 45 }))).toBe(false)
+  })
+
+  it('leaves Ctrl+Insert to the copy chord', () => {
+    expect(isPasteSelectionShortcut(pasteChord({ ctrlKey: true }))).toBe(false)
+  })
+
+  it('leaves Alt/Meta combinations to their normal meaning', () => {
+    expect(isPasteSelectionShortcut(pasteChord({ altKey: true }))).toBe(false)
+    expect(isPasteSelectionShortcut(pasteChord({ metaKey: true }))).toBe(false)
+  })
+
+  it('only reacts to keydown, so a chord cannot paste three times', () => {
+    expect(isPasteSelectionShortcut(pasteChord({ type: 'keypress' }))).toBe(false)
+    expect(isPasteSelectionShortcut(pasteChord({ type: 'keyup' }))).toBe(false)
+  })
+
+  it('ignores other shifted keys', () => {
+    expect(isPasteSelectionShortcut(pasteChord({ key: 'Delete' }))).toBe(false)
+    expect(isPasteSelectionShortcut(pasteChord({ key: 'v' }))).toBe(false)
   })
 })

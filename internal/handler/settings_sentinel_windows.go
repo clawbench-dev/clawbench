@@ -27,7 +27,7 @@ func launchSentinel() (*exec.Cmd, error) {
 	// process came up on the default port and default data directory.
 	// buildWindowsSentinelScript applies the CommandLineToArgvW rules instead;
 	// see settings_winarg.go for why they live outside the build tag.
-	sentinelScript := buildWindowsSentinelScript(exe, os.Args[1:])
+	sentinelScript := buildWindowsSentinelScript(exe, os.Args[1:], os.Getpid())
 	cmd := exec.Command("cmd", "/c", sentinelScript)
 
 	cmd.Stdout = os.Stdout

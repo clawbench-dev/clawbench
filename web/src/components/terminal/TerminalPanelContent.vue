@@ -2,20 +2,27 @@
   <div class="terminal-panel">
 
     <!-- Platform unsupported state (top priority) -->
-    <div v-if="platformUnsupported" class="terminal-empty-state terminal-platform-unsupported">
-      <TerminalIcon class="terminal-empty-icon empty-state__icon" />
-      <p class="terminal-empty-text">{{ t('terminal.platformUnsupported') }}</p>
-    </div>
+    <EmptyState
+      v-if="platformUnsupported"
+      :icon="TerminalIcon"
+      :title="t('terminal.platformUnsupported')"
+      :desc="t('terminal.platformUnsupportedDesc')"
+    />
 
     <!-- Empty state when all tabs are closed -->
-    <div v-else-if="tabs.length === 0" class="terminal-empty-state">
-      <TerminalIcon class="terminal-empty-icon empty-state__icon" />
-      <p class="terminal-empty-text">{{ t('terminal.noSessions') }}</p>
-      <button class="terminal-empty-create-btn" @click="handleCreateTab">
-        <PlusIcon :size="16" />
-        <span>{{ t('terminal.createSession') }}</span>
-      </button>
-    </div>
+    <EmptyState
+      v-else-if="tabs.length === 0"
+      :icon="TerminalIcon"
+      :title="t('terminal.noSessions')"
+      :desc="t('terminal.noSessionsDesc')"
+    >
+      <template #action>
+        <button class="fbtn fbtn-primary" @click="handleCreateTab">
+          <PlusIcon :size="16" />
+          <span>{{ t('terminal.createSession') }}</span>
+        </button>
+      </template>
+    </EmptyState>
 
     <template v-else>
     <!-- Tab bar (replaces old header) -->
@@ -300,6 +307,7 @@ import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import DropOverlay from '@/components/common/DropOverlay.vue'
 import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
@@ -310,8 +318,8 @@ import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import { readTerminalTabs, saveTerminalTabs } from '@/utils/terminalProjectTabs'
 import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
-import { copyText } from '@/utils/clipboard.ts'
-import { isCopySelectionShortcut } from '@/utils/terminalClipboardUtils'
+import { copyText, readClipboardText } from '@/utils/clipboard.ts'
+import { isCopySelectionShortcut, isPasteSelectionShortcut } from '@/utils/terminalClipboardUtils'
 import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
 import ActionBar from '@/components/common/ActionBar.vue'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
@@ -772,6 +780,36 @@ function handleSelectionExtend(anchorCol: number, anchorRow: number, currentCol:
   updateSelectionFromTerm(term)
 }
 
+/**
+ * Paste into the terminal for the Shift+Insert chord.
+ *
+ * The terminal's own selection comes first: in a traditional terminal
+ * Shift+Insert pastes the PRIMARY selection, i.e. "whatever is highlighted
+ * right now". That is also what copy-on-select puts on the clipboard, so the
+ * two agree in the normal case — but with the setting off, the highlighted text
+ * is still unambiguously what the user meant to insert. With nothing selected
+ * it falls back to the clipboard, which is the Windows Terminal behaviour.
+ *
+ * `term.paste()` — not `sendInput` — so xterm applies its normal paste path
+ * (CRLF normalisation and bracketed-paste wrapping) and the text lands at the
+ * cursor WITHOUT being executed.
+ */
+async function pasteIntoTerminal(term: TerminalType) {
+  const selected = term.getSelection() ?? ''
+  if (selected) {
+    term.paste(selected)
+    return
+  }
+  try {
+    const text = await readClipboardText()
+    // An empty clipboard is a silent no-op in every terminal; only a real read
+    // failure is worth telling the user about.
+    if (text) term.paste(text)
+  } catch {
+    toast.show(t('terminal.clipboardReadFailed'), { icon: 'warning', type: 'error' })
+  }
+}
+
 // Quick commands
 const {
   visibleCommands,
@@ -798,6 +836,16 @@ const tabManager = useTerminalTabs(getWsUrl, {
     // Intercept the copy chord here and copy the selection ourselves; without a
     // selection we return true so Ctrl+C still interrupts (SIGINT).
     term.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+      // Shift+Insert pastes at the cursor. Claimed explicitly because the
+      // browser's own default for this chord is unreliable across the hosts we
+      // run in (Safari, Android WebView, Electron with a menu accelerator) —
+      // and preventing the default is also what stops a double paste where the
+      // native path DOES fire.
+      if (isPasteSelectionShortcut(ev)) {
+        ev.preventDefault()
+        void pasteIntoTerminal(term)
+        return false
+      }
       if (!isCopySelectionShortcut(ev, term.hasSelection(), isMacDesktopUA)) return true
       const text = term.getSelection()
       if (!text) return true
@@ -1561,41 +1609,6 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   height: 100%;
   overflow: hidden;
   position: relative;
-}
-
-/* Empty state */
-.terminal-empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: var(--space-6);
-  padding: calc(32 * var(--dp));
-}
-
-.terminal-empty-text {
-  font-size: var(--font-size-lg);
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.terminal-empty-create-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-7);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  cursor: pointer;
-  transition: background var(--duration-base) ease;
-}
-
-.terminal-empty-create-btn:active {
-  background: var(--bg-tertiary);
 }
 
 /* Tab bar */

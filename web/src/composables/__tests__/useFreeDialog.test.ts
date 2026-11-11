@@ -35,6 +35,8 @@ let wakeRelease: ReturnType<typeof vi.fn>
 let wakeHeld: { value: boolean }
 /** The cues are the only thing this module needs from the sound layer. */
 let cuePlayed: ReturnType<typeof vi.fn>
+/** The context unlock requested on entry (see `unlockVoiceAudio`). */
+let cueUnlocked: ReturnType<typeof vi.fn>
 
 function installFakes() {
   sockets = []
@@ -150,8 +152,10 @@ function installFakes() {
 
   // Cues are synthesized audio; only the decision to play one is under test.
   cuePlayed = vi.fn()
+  cueUnlocked = vi.fn()
   vi.doMock('@/composables/useNotificationSound', () => ({
     playVoiceModeCue: cuePlayed,
+    unlockVoiceAudio: cueUnlocked,
     playNotificationSound: vi.fn(),
   }))
 }
@@ -1218,6 +1222,71 @@ describe('useFreeDialog', () => {
     await flush()
     cuePlayed.mockClear()
     speak('发送')
+    expect(cuePlayed).not.toHaveBeenCalled()
+  })
+
+  it('beeps when the user cuts the generation short', async () => {
+    // "It went quiet" is indistinguishable from a dropped connection or a TTS
+    // failure, and the user is not looking at the screen: the cut-in needs its
+    // own confirmation.
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(500)
+    await flush()
+    cuePlayed.mockClear()
+    speak('等等', 'partial')
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+    expect(cuePlayed).toHaveBeenCalledWith('interrupt')
+  })
+
+  it('beeps when the user cuts the read-aloud short', async () => {
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    mod.setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    cuePlayed.mockClear()
+    speak('等一下，先别改那个文件', 'partial')
+    expect(autoSpeech.stopAudio).toHaveBeenCalled()
+    expect(cuePlayed).toHaveBeenCalledWith('interrupt')
+  })
+
+  it('unlocks the cue audio while the starting tap is still the gesture', async () => {
+    // The cues fire from speech recognition and turn events — never from a tap.
+    // A context first created there stays `suspended` under a strict autoplay
+    // policy, and every cue in the session is silent while the mode otherwise
+    // looks perfectly healthy. The unlock must happen synchronously in start().
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(cueUnlocked).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not beep when the heard speech is ignored', async () => {
+    // The cue means "your interruption landed". Playing it for a fragment the
+    // loop decided to ignore (the assistant's own voice here) would tell the
+    // user they had been heard when nothing happened.
+    const { startFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.speakingText.value = '好的我来帮你检查一下这个配置文件里的端口设置'
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    cuePlayed.mockClear()
+    const barge = sockets[sockets.length - 1]
+    barge.onmessage?.({ data: JSON.stringify({ type: 'partial', text: '帮你检查一下这个配置文件' }) })
+    expect(autoSpeech.stopAudio).not.toHaveBeenCalled()
     expect(cuePlayed).not.toHaveBeenCalled()
   })
 

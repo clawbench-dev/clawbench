@@ -48,7 +48,7 @@
       <!-- The empty state speaks the card language the other dock tabs use:
            a muted glyph, a title, and one line about what lands here. The
            footer's two buttons are the action, so the card stays text-only. -->
-      <MeetingEmpty
+      <EmptyState
         v-else-if="sessions.length === 0"
         :icon="MEETING_ICON"
         :title="t('meeting.list.empty')"
@@ -114,10 +114,24 @@
 
             <!-- What it produced. Hidden entirely when there is nothing to
                  say yet (a meeting that is still running), rather than leaving
-                 an empty third line on the card. -->
-            <div v-if="r.artifacts.length || r.showEmpty" class="meeting-row__tags">
-              <span v-for="label in r.artifacts" :key="label" class="meeting-pill is-soft">{{ label }}</span>
+                 an empty third line on the card. A shared record always shows
+                 the line: "anyone with the link can read this" is worth a row
+                 even before anything has been produced. -->
+            <div
+              v-if="r.artifacts.length || r.showEmpty || r.record.shareEnabled"
+              class="meeting-row__tags"
+            >
+              <span v-for="a in r.artifacts" :key="a.kind" class="meeting-pill is-soft">
+                <component :is="a.icon" :size="10" />{{ a.label }}
+              </span>
               <span v-if="r.showEmpty" class="meeting-pill is-empty">{{ t('meeting.list.noArtifacts') }}</span>
+              <span
+                v-if="r.record.shareEnabled"
+                class="meeting-pill is-shared"
+                data-role="meeting-row-shared"
+              >
+                <Globe :size="10" />{{ t('meeting.list.shared') }}
+              </span>
             </div>
           </div>
           <!-- Right rail: delete on top, quote in the bottom-right corner. The
@@ -243,10 +257,14 @@ import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   ArrowLeft,
+  Captions,
   Check,
+  FileText,
+  Globe,
   Link as LinkIcon,
   MessageSquare,
   Plus,
+  SpellCheck,
   Trash2,
   Upload,
 } from 'lucide-vue-next'
@@ -256,7 +274,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { getNative } from '@/utils/clawbenchNative'
 import { isHttpOrigin } from '@/utils/screenCaptureSupport'
@@ -599,11 +617,15 @@ function rowState(s: MeetingRecord): RowState {
 }
 
 /** What a meeting produced, as pills, in reading order. */
-function artifactsOf(s: MeetingRecord): string[] {
-  const out: string[] = []
-  if (s.hasMinutes) out.push(t('meeting.list.pillMinutes'))
-  if (s.hasTranscript) out.push(t('meeting.list.pillTranscript'))
-  if (s.hasRevised) out.push(t('meeting.list.pillRevised'))
+function artifactsOf(s: MeetingRecord): Array<{
+  kind: 'minutes' | 'transcript' | 'revised'
+  icon: typeof FileText
+  label: string
+}> {
+  const out: Array<{ kind: 'minutes' | 'transcript' | 'revised'; icon: typeof FileText; label: string }> = []
+  if (s.hasMinutes) out.push({ kind: 'minutes', icon: FileText, label: t('meeting.list.pillMinutes') })
+  if (s.hasTranscript) out.push({ kind: 'transcript', icon: Captions, label: t('meeting.list.pillTranscript') })
+  if (s.hasRevised) out.push({ kind: 'revised', icon: SpellCheck, label: t('meeting.list.pillRevised') })
   return out
 }
 
@@ -740,14 +762,15 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-5, 10px);
-  padding: var(--space-4, 8px) var(--space-5, 10px) var(--space-6, 12px);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
 }
 
 .meeting-list { display: flex; flex-direction: column; gap: var(--space-4, 8px); }
 
-/* Square card, hairline border, 8px gap — the task tab's row language. The
-   card stays sharp while its labels are pills: the container is structure, the
-   pills are metadata. */
+/* Card radius is shared with every other dock panel's card (--radius-md). The
+   card is a rounded container while its labels stay pills: the container is
+   structure, the pills are metadata. `overflow: hidden` keeps the left state
+   stripe inside that rounded corner. */
 .meeting-row {
   position: relative;
   display: flex;
@@ -755,9 +778,10 @@ onMounted(() => {
   gap: var(--space-4, 8px);
   padding: var(--space-4, 8px) var(--space-4, 8px) var(--space-4, 8px) var(--space-5, 10px);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary, #f8f9fa);
   cursor: pointer;
+  overflow: hidden;
   transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
     box-shadow var(--duration-base) ease;
 }
@@ -879,6 +903,13 @@ onMounted(() => {
   color: var(--color-red);
   background: color-mix(in srgb, var(--color-red) 13%, transparent);
   border-color: color-mix(in srgb, var(--color-red) 38%, transparent);
+}
+/* Sharing is not a lifecycle state, so it does not get an edge stripe — only a
+   green pill, the same hue the record's own card uses for the same fact. */
+.meeting-pill.is-shared {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-green) 38%, transparent);
 }
 .meeting-pill__dot {
   width: calc(5 * var(--dp));

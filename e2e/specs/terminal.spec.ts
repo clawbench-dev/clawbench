@@ -133,7 +133,10 @@ test.describe('Terminal multi-tab', () => {
     // Closing the last tab does NOT auto-create a replacement: the panel shows
     // its empty state and the user starts a new tab explicitly.
     await terminal.expectTabCount(0)
-    await expect(page.locator('.terminal-empty-state')).toBeVisible({ timeout: 5000 })
+    // The panel draws the shared EmptyState (it replaced the bespoke
+    // `.terminal-empty-state` block); scope to the panel because the same
+    // component also renders for the unsupported-platform case.
+    await expect(page.locator('.terminal-panel .empty-state')).toBeVisible({ timeout: 5000 })
   })
 
   test('each tab should connect to its own PTY session', async ({ page }) => {
@@ -162,5 +165,159 @@ test.describe('Terminal multi-tab', () => {
     }
 
     await terminal.expectTabCount(3)
+  })
+
+  test('Shift+Insert inserts the selected text at the cursor without running it', async ({ page }) => {
+    await terminal.ensureTerminalConnected(0, 15000)
+
+    /** Trimmed text of every visible xterm row (the DOM renderer keeps them as text). */
+    const rows = () =>
+      page.evaluate(() => {
+        const container = Array.from(document.querySelectorAll('.terminal-container .xterm-rows'))
+          .find((el) => (el as HTMLElement).offsetParent !== null)
+        if (!container) return [] as string[]
+        return Array.from(container.children).map((el) => (el.textContent || '').trim())
+      })
+
+    // Print a bare COMMAND line (no prompt prefix) so a triple-click selects
+    // exactly `echo <marker>` — the selection is what Shift+Insert must insert.
+    const marker = `paste-marker-${Date.now()}`
+    await terminal.getTerminalContainer(0).click()
+    await page.keyboard.type(`echo echo ${marker}`)
+    await page.keyboard.press('Enter')
+
+    const command = `echo ${marker}`
+    await expect.poll(() => rows(), { timeout: 15000 }).toContain(command)
+
+    // Triple-click the line to select it (xterm's multi-click line selection).
+    // Match the row EXACTLY: the prompt line above also contains the command as
+    // a substring ("echo echo <marker>"), and selecting that would paste the
+    // prompt along with it.
+    const line = page
+      .locator('.terminal-container .xterm-rows:visible div')
+      .filter({ hasText: new RegExp(`^\\s*${command}\\s*$`) })
+      .first()
+    const box = await line.boundingBox()
+    if (!box) throw new Error(`could not locate the rendered row for "${command}"`)
+    // Click through the xterm screen (the row divs sit underneath it and do not
+    // receive pointer events themselves).
+    await page.mouse.click(box.x + 4, box.y + box.height / 2, { clickCount: 3 })
+
+    // Paste and run. The pasted text must land at the cursor — nothing is sent
+    // until Enter, which is the whole point of the chord.
+    await page.keyboard.press('Shift+Insert')
+    await page.keyboard.press('Enter')
+
+    // The command ran, so the marker now appears on a line of its own. Before
+    // the paste the only line containing it also contained `echo `.
+    await expect.poll(() => rows(), { timeout: 15000 }).toContain(marker)
+  })
+
+  /**
+   * Copy-on-select must hand keyboard focus back to the terminal.
+   *
+   * Regression guard for a real defect: when the async Clipboard API is
+   * unavailable or refuses the write, `copyText` falls back to `execCommand`,
+   * which needs a focused textarea — so it focuses a throwaway one. Leaving
+   * focus there stranded the user on `<body>`: the terminal stopped receiving
+   * keystrokes entirely, so Shift+Insert (and every other chord) silently did
+   * nothing right after selecting text.
+   *
+   * The clipboard write is forced to fail here on purpose. On a plain
+   * http/localhost origin `writeText` usually succeeds and the fallback never
+   * runs, which is exactly why the original Shift+Insert test could not see
+   * this bug.
+   */
+  test('copy-on-select keeps terminal focus when the clipboard write falls back', async ({ page }) => {
+    await terminal.ensureTerminalConnected(0, 15000)
+
+    // Simulate a browser that denies the async clipboard write (permission
+    // refused / insecure context) AND record when the execCommand fallback
+    // actually runs. Must be installed before the app loads so every copy from
+    // this point takes the fallback path.
+    //
+    // Counting the fallback is what makes this test deterministic: the copy is
+    // deferred (copy-on-select waits for the selection to settle), so asserting
+    // focus immediately after mouseup can sample the state BEFORE the copy has
+    // taken focus — which is how the original version of this test passed even
+    // with the bug present.
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: () => Promise.reject(new Error('Write permission denied')),
+          readText: () => Promise.reject(new Error('Read permission denied')),
+        },
+      })
+      const w = window as unknown as { __execCommandCalls: number }
+      w.__execCommandCalls = 0
+      const original = document.execCommand.bind(document)
+      document.execCommand = ((...args: Parameters<Document['execCommand']>) => {
+        w.__execCommandCalls++
+        return original(...args)
+      }) as Document['execCommand']
+    })
+    await page.reload()
+    await page.waitForLoadState('domcontentloaded')
+    await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 15000 })
+    await terminal.ensureTerminalConnected(0, 15000)
+
+    const rows = () =>
+      page.evaluate(() => {
+        const container = Array.from(document.querySelectorAll('.terminal-container .xterm-rows'))
+          .find((el) => (el as HTMLElement).offsetParent !== null)
+        if (!container) return [] as string[]
+        return Array.from(container.children).map((el) => (el.textContent || '').trim())
+      })
+
+    const marker = `focus-marker-${Date.now()}`
+    await terminal.getTerminalContainer(0).click()
+    await page.keyboard.type(`echo ${marker}`)
+    await page.keyboard.press('Enter')
+    await expect.poll(() => rows(), { timeout: 15000 }).toContain(marker)
+
+    // Drag-select the output line, which triggers copy-on-select.
+    const line = page
+      .locator('.terminal-container .xterm-rows:visible div')
+      .filter({ hasText: new RegExp(`^\\s*${marker}\\s*$`) })
+      .first()
+    const box = await line.boundingBox()
+    if (!box) throw new Error(`could not locate the rendered row for "${marker}"`)
+    await page.mouse.move(box.x + 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 12 })
+    await page.mouse.up()
+
+    // Wait for the deferred copy to have actually gone through the fallback —
+    // only then is "did focus survive?" a meaningful question.
+    await expect
+      .poll(
+        () => page.evaluate(() => (window as unknown as { __execCommandCalls: number }).__execCommandCalls),
+        { timeout: 10000 },
+      )
+      .toBeGreaterThan(0)
+
+    // Focus must still be the terminal's own input, not <body>.
+    await expect
+      .poll(
+        () => page.evaluate(() => document.activeElement?.className ?? ''),
+        { timeout: 10000 },
+      )
+      .toContain('xterm-helper-textarea')
+
+    // And the terminal must still accept typing — the user-visible symptom of
+    // the stranded-focus bug was that nothing could be typed or pasted.
+    //
+    // Joined, not matched per row: xterm hard-wraps at the pane width, so a
+    // phrase can be split across two rows ("typed-after-cop" / "y") depending
+    // on the viewport. A per-row assertion would then fail for a reason that has
+    // nothing to do with focus.
+    const allText = () => page.evaluate(() => {
+      const container = Array.from(document.querySelectorAll('.terminal-container .xterm-rows'))
+        .find((el) => (el as HTMLElement).offsetParent !== null)
+      return container ? (container.textContent || '').replace(/\s+/g, '') : ''
+    })
+    await page.keyboard.type('typed-after-copy')
+    await expect.poll(allText, { timeout: 10000 }).toContain('typed-after-copy')
   })
 })

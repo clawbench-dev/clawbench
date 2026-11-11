@@ -291,11 +291,11 @@
              participant and the publisher appear as different speakers. -->
         <div v-else-if="activeTab === 'notes'" class="live-tab-pane" data-role="notes-pane">
           <!-- Two different empty states, both drawn as the shared card (the
-               same `MeetingEmpty` the record's tabs and the viewer's panel use):
+               same `EmptyState` the record's tabs and the viewer's panel use):
                "听记 is off" is a setting to change before the next share, while
                "listening" is a live state that fills itself. As one muted line
                in the corner they both read as a pane that failed to render. -->
-          <MeetingEmpty
+          <EmptyState
             v-if="notes.phase.value !== 'recording'"
             :icon="Captions"
             :title="t('liveShare.notes.notEnabledTitle')"
@@ -317,7 +317,7 @@
               :segments="notes.segments.value.length"
               @retry="share.retryMicrophone()"
             />
-            <MeetingEmpty
+            <EmptyState
               v-if="noteBlocks.length === 0 && notes.health.value === 'ok'"
               :icon="Captions"
               :title="t('liveShare.notes.listening')"
@@ -483,7 +483,7 @@ import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import NotesStatusBar from '@/components/live/NotesStatusBar.vue'
 import MeetingParticipants from '@/components/live/MeetingParticipants.vue'
 import { useToast } from '@/composables/useToast'
@@ -1006,6 +1006,14 @@ function grantControl(viewerId: string): void {
   if (share.captureKind.value !== 'screen') {
     toast.show(t('liveShare.controlWindowUnsupported'), { type: 'error', icon: 'warning' })
     return
+  }
+  // One desktop has one pointer, so a second grant REPLACES the first. The
+  // shell enforces that silently (it keeps a single granted viewer), which
+  // left the previous controller with a "正在控制" page that swallowed its
+  // pointer while every event was dropped here. Hand over explicitly instead.
+  const previous = controlledBy.value
+  if (previous && previous !== viewerId) {
+    share.sendControlTo(previous, { t: 'ctrl-grant', viewerId: previous, granted: false })
   }
   controlledBy.value = viewerId
   controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
@@ -1720,7 +1728,7 @@ watch(
   gap: var(--space-3, 6px);
   min-width: 0;
   padding: var(--space-3, 6px) var(--space-5, 10px);
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary, #f6f8fa);
   font-size: var(--font-size-xs, 11px);
 }
@@ -2055,7 +2063,7 @@ watch(
   width: calc(200 * var(--dp));
   max-width: 100%;
   aspect-ratio: 4 / 3;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary, #21262d);
   overflow: hidden;
   border: 1px solid var(--border-color, rgb(255 255 255 / 10%));

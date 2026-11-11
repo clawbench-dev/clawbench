@@ -82,6 +82,30 @@ sequenceDiagram
 
 ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写入文件）。系统通过 WebSocket 推送 `permission_pending` 事件，前端离线时缓冲事件等待重连。用户批准或拒绝后，前端调用 `/api/ai/permission/respond` 回传结果，系统将响应转发给 ACP 连接。未决的审批请求不会被会话切换/回合结束取消——权限保留到用户响应或 agent 连接死亡时自动清理，避免"审批永远失效"。
 
+### ACP 表单提问（elicitation）
+
+```mermaid
+sequenceDiagram
+    participant Agent as ACP Agent
+    participant Client as ACP 客户端
+    participant ws as StreamHub
+    participant 前端
+    participant API as POST /api/ai/elicitation/respond
+
+    Agent->>Client: elicitation/create（JSON Schema 表单）
+    Client->>Client: 转成提问卡，挂起本轮（上限 30 分钟）
+    Client->>ws: tool_use（带 elicitationId）
+    ws->>前端: 卡片出现在对话里
+    前端->>API: 提交选择
+    API->>Client: 交回该次请求
+    Client-->>Agent: RPC 结果（用户的选择）
+    Client->>ws: tool_result（卡片收起）
+```
+
+有些智能体（OpenCode）不用权限请求、也不用 `<clawbench-ask-question>` 标签，而是通过 `elicitation/create` 让用户回答问题，并**阻塞在这个 RPC 上**直到拿到答案。因此它不能走"提交后作为一条用户消息发回去"的常规路径——那会排在正在阻塞的这一轮后面，永远轮不到。正确做法是把表单渲染成对话里那张**普通的提问卡**，用户的答案直接作为 RPC 结果交回智能体；卡片只声明 `form` 模式，URL 形式的提问直接拒绝。卡片表达不了的字段（数字、布尔、多问题表单里的自由文本）留空，智能体会按"未作答"转述给模型，这是降级而不是报错。
+
+等待用户是合法的，所以停摆看门狗对挂起中的提问不生效；但没有上限会让无人值守的回合（定时任务、用户离开）永久卡住，故设 30 分钟超时，超时或回合被取消时以"未作答 / 取消"收场，绝不伪造一个答案。群聊里提问可能挂在任一成员连接上，提交时按成员连接反查持有者。
+
 ### 子智能体内容分组链路
 
 ```mermaid
@@ -102,6 +126,8 @@ sequenceDiagram
 父 Agent 卡片就是那条发起子智能体的工具调用（前端渲染为 Agent 胶囊）。子智能体产出的 thinking/text/tool 全部收进同一张卡片，折叠时只显示步数摘要、展开才挂载并递归复用主渲染组件——这样一条"派发多个子智能体并行探索"的长轨迹不会淹没主对话。归属靠 Agent 在 `_meta` 上打的父工具调用 id 精确判定，不靠时间窗口推断。
 
 **团队（Agent Teams）走同一套分组，但关联键是成员名**：CodeBuddy 的具名团队**不给成员帧打 `parentToolCallId`**（实测 116/116 全无该键），因此后端桥接层（`codebuddy_team_bridge.go`）用**成员名**把成员内容挂到它的派发工具调用上，再回填 `ParentToolCallID`——前端分组逻辑零改动即可生效。团队状态另走 `team_update` 事件驱动一个会话级团队面板（见[AI 后端抽象](ai-backend.md)与前端 `useTeamState` / `TeamPanel`）。**团队快照必须随历史一起下发**：`team_update` 是纯实时事件、只在回合开始重发，中途打开或重连的客户端永远收不到，面板就不出现（执行计划面板没这个问题，因为 `/api/ai/chat` 返回 `planState`）。所以会话快照里要带团队状态、历史响应也要带 `teamState`；前端还必须在「消息没变」的变更检测**之前**更新它，否则一次 WS 重连触发的空刷新又会把面板丢掉。
+
+**OpenCode v2 是第三种关联键：子会话，而且需要客户端自己补出父 id**。它把 `subagent` 工具跑在独立的子会话里，子会话的内容帧被投影到父会话的流上，但只带 `_meta["opencode/child-session"]`（子会话 id / 父 id / 深度 / 标题），**没有父工具调用 id**。若不处理，这些帧会被当成顶层内容铺在发起它的那张工具卡之后（issue #639：看起来像 AI 又把整段分析重讲了一遍）。因此客户端在宿主侧解析归属并回填成自己的父 id 键：先按子会话标题（= 调用参数里的 description）配对，工具结果到达后再用确切的子会话 id 精确纠正；解析不出父调用的子帧一律丢弃——宁可少显示，也不污染主对话。
 
 **父卡片解析不到时必须按成员名兜底，而不是平铺进主对话**：有两条路径会打断上面那条关联——① Agent 卡片在**上一条消息**里（中断后继续、同一连接上的后续回合），而每条消息渲染自己的 `ContentBlocks` 实例，父 id 在本实例中永远解析不到；② **连接重建**后内存里的「成员 → 工具调用」映射丢失，成员帧根本没有父 id。两种情况下若不兜底，所有成员的内容会混进 lead 的流里、彼此无法区分。兜底的做法是把**父 id 无法解析**的成员内容按成员名归入各自的合成分组，锚定在该成员本消息的第一个块上；父 id 可解析时仍走原有 Agent 卡片分组，健康消息的渲染完全不变；嵌套实例一律不参与兜底（否则会无限递归，或把普通子代理的内容抢进假分组）。
 
@@ -128,10 +154,12 @@ sequenceDiagram
 - **异常终止自动续接**：会话因**进程崩溃（无终止事件）、本轮零产出、或后端报错**（backend_exit / parse_error / request_failed / refused / agent_no_run）而意外中断时，系统自动发一条本地化的「继续」并接着跑；聊天与任务两条路径都生效。**手动终止永不续接**——user / interrupt / cancel / disconnect / restart / panic / timeout / agent_init_timeout 以及建后端/起流的确定性早期失败都不触发，取消判定优先于一切。**部分产出不抑制续接**：长 agentic 任务跑到一半被杀时模型已产出大量叙述与工具调用，旧逻辑"有可读文本就不续接"会把未完成的工作误判为已完成，正是本功能要消除的手动操作。自动消息以 **`role='system'` 系统行**落库并广播（`AddSystemMessage` + `system_message`），与重启恢复同一形态——**不再伪造用户气泡**（用户没打过这句话，且系统行不会进模型上下文）；发给智能体的提示词仍是本地化的「继续」，只作为该轮 Prompt 注入、**永不落库**（用户可见文案与模型指令是两个独立 i18n 键：`AutoContinueNotice` / `AutoContinue`）。每次续接写一条独立行（按 DB id 去重），不会互相吞掉。开关 `chat.auto_continue_enabled` 默认关，`chat.auto_continue_max_retries` 默认 3（`-1` 不限，服务端硬上限 50）。**注意 `restart` 在此处仍是"不续接"**——那是同一进程内的判定；跨进程的重启恢复是另一条路径（见下条与 [会话生命周期](session-lifecycle.md)），它在启动时用 `streaming=1` 这一精确信号重新识别被打断的会话
 - **重启后自动恢复被打断的会话**：服务启动时若发现 `chat_history.streaming=1` 的行（只可能由上一个进程中途死掉留下）**或**某会话最后一条 assistant 行带 `reason=restart` 警告块（优雅重启留下；限 `chat.restart_resume_window_minutes` 内、其后无新消息、且会话未归档），除把崩溃留下的行改写成 `cancelled + restart warning` 外，还会在主监听端口绑定后 5s 为每个受影响的会话（仅单聊与群聊，跳过定时任务）起一轮「重新评估当前状态并继续」的回合，用户无需手点「继续」。**每会话只落一行 `role='system'` 恢复提示，内容是给用户看的**（"已通知智能体继续执行"），与发给 AI 的指令是两个独立键（指令只注入不落库），**不落 user 消息**；**不是重放原请求**（中断可能发生在工具调用之后，重放会重复动手）。与上条共用 `chat.auto_continue_enabled` 开关。详见 [会话生命周期](session-lifecycle.md)
 - **自动巡航（单聊）**：一个**会话级正交开关**（存 `chat_sessions.context_state` 的 `$.cruise`，与群聊同列同键），把单聊的收敛从「回复结束即交回用户」改为「AI 确认任务已完成」。单聊只有**一个**「交回用户」点（回复自然结束），故巡航是**确认轮循环**：首轮是用户消息（巡航 addendum 拼进 Prompt），此后每轮都是**隐藏注入的确认轮**（确认提示词前置到该轮 Prompt、不落库）。**严格规则**：只有**确认轮**里发出 `<clawbench-goal-satisfied/>` 才结束，普通回复里的标签**既不终止也不显示徽章**（单聊已移除「已完成」徽章——只有一个人时是冗余噪音，群聊才保留用于标识投票成员）——防的是模型过早收工。每确认轮前写「正在确认」系统行、确认通过写「任务已确认完成，共 N 轮」、撞上限写「已达自动续跑上限」（独立 i18n 键，不复用群聊文案）。**开启巡航强制打开自动批准**（单向联动，与群聊同一规则）：巡航无人值守，若 AI 弹出权限确认无人应答会卡住整轮，由后端在 cruise PATCH 上强制 `applyAutoApprove(true)`（放在 autoApprove 分支之后，使 `{autoApprove:false, cruise:true}` 同发时仍以巡航为准），前端 ref 同步置真；关闭巡航不动自动批准。上限复用 `chat.group_max_speeches`（计**确认轮数**）；drain 循环每 dequeue 一条真实用户消息即**归零**（预算是「每个用户轮次」的，与 `autoContinueAttempts` 同构）。与「异常终止自动续接」互斥：`AbnormalReason != ""` 时巡航守卫为假、`AbnormalReason == ""` 时续接守卫为假（先续接后巡航）。前端在**会话信息栏**（`ChatInputBar` 的 `.chat-session-info`，仅单聊）显示巡航 chip，点击 PATCH `/api/ai/session/update` 的 `cruise` 字段；`GET /api/ai/chat` 响应带 `cruise` 供初始化。**只解析/剥离 `<clawbench-goal-satisfied/>`，绝不启用 mention 剥离**（否则会重演「单聊正文里讨论标签语法被截断」）。巡航进行中用户发消息 → 排队
+- **承接智能体自发的后台续轮**：CodeBuddy 在后台任务（`run_in_background` 的 Bash、脱离的子智能体）跑完时，会在空闲会话上**自己开一轮**汇报。宿主原先只在用户发消息期间注册事件路由，于是这一整轮的所有帧都命中「无路由即丢弃」，用户看到的是「说好会回来通知我」之后永远没有下文（issue #644）。现在公告帧（`session_info_update._meta["codebuddy.ai/unsolicitedTurn"]`，reason 只认 `background_drain`）到达时先为该轮开一条路由，再按**普通回合的完整生命周期**落库与广播：占位行、`stream_start`、事件循环、Finalize、终态事件一应俱全；群成员的自发轮换算成群时间线并带发言人。终态由 CodeBuddy 的非标准 `session_end` 帧给出（SDK 不识别，走 raw 通知路径），且必须先 flush 工具调用防抖再收尾，否则末帧会丢。**这类轮次的 requestId 会与上一轮完全相同**（实测同一会话两次一致），会被宿主的「重放过滤」当成旧帧整轮吞掉（表现：只剩一张工具卡片、没有任何正文），因此承接时把该 id 记进白名单，轮次结束或用户接管时只清匹配的那个
 - **「显示执行中但其实没在跑」**：会话状态条与气泡的"运行中"判定曾经只看 `chat_history.streaming=1`（`GetLiveRunStates`），而这一行在崩溃、优雅重启、或某条 finalize 未能改写占位符时会**残留**，于是客户端渲染出一个永远"工作中"的气泡、点终止才能恢复。判据改为**runner 注册表**：`GetLiveRunStates` 在返回任何 live state 之前先确认该会话有 runner（群聊的 runner 注册在群 id 上，一次检查覆盖该时间线上所有并发成员流）。DB 行只说明"曾经开始过"，注册表才说明"此刻真在跑"
 - **消息详情弹窗**：点击助手消息可查看元数据弹窗，展示消息的后端原生会话 ID（`external_session_id` 注入 response metadata）、时间、token 等上下文信息，帮助用户理解消息来源与消耗。弹窗字段与上下文面板对齐——从 `chat_metadata` 读取缓存的 _meta 扩展信息（缓存命中/额度/追踪标识等）
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择。**「模式会悄悄掉回 Always Ask」是四条缺口叠加**：①`POST /api/ai/chat` 不落库 mode——model 有独立列会被写，mode 只活在 `context_state` 里，而 PATCH 是客户端 best-effort，于是只有第一轮用显式 override 跑了用户选的 mode，巡航确认轮 / 队列 drain / 后续消息都从 `context_state` 继承旧值；②前端把 PATCH 失败吞成 null，芯片已乐观改了、DB 却没写，重启或空闲连接被回收后就显示成 agent 默认；③新连接不预填 mode，`reapplyConfigAfterResume` 对空值直接 return，ResumeSession 后 agent 保持自己的默认；④**agent 级能力注册表里存了会话级的「当前值」**——`ConfigOptionState.currentValueId` 被放进按 agent 共享的 registry，并在每次回合开始 / 订阅时以 `config_update` 下发，前端采纳后芯片跳到**另一个会话**的模式；`config_update` 不落库，所以表现为「切走再切回又恢复」。**不变量：registry 只存可选项（options），任何 current 值只能来自会话连接或 DB**——per-session 下发统一走 `ACPConn.SessionConfigState()`，前端 `config_update` 只更新可用列表（当前值只认 `mode_update` / `thinking_effort_update`）；另外会话建立 / 恢复期间（`establishingSession`）agent 自报的默认模式只更新会话缓存、不向前端广播，建立完成后再由 `EmitSessionStateEvents` 发真相。四处任一都足以让模式掉回去，因此必须同时修（模式属于会话级持久状态，不是当次请求绑定）
 - **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户，避免因未审批而阻塞执行
+- **ACP 表单提问（elicitation）**：部分智能体（OpenCode）把"问用户"实现成阻塞式 RPC `elicitation/create` 而不是普通提问标签。宿主声明 `form` 能力后，这类请求渲染成与提问卡完全相同的界面，答案经 `POST /api/ai/elicitation/respond` 直接作为 RPC 结果交回——**不走聊天消息**，因为被阻塞的正是当前这一轮，发消息只会排在自己后面。不声明能力时智能体会走自己的兜底（模型自行编一个答案，issue #633），声明了却无人应答则 30 分钟后按"未作答"放行。详见上方「ACP 表单提问」流程图
 - **ask-question 解析容错契约**：`<clawbench-ask-question>` 载荷的解析收敛到单一实现——Go 侧 `internal/askquestion`，前端 `web/src/utils/askQuestion.ts`（互为镜像，由 `internal/askquestion/testdata/parity_corpus.json` 双向固化）。此前有五份独立实现且判据不一致，最严重的后果是**静默丢内容**：检测用宽松正则、解析用严格 DOMParser，两者分歧时调用方仍无条件剥离标签，于是问题既不成卡也不留文本，直接从对话里消失。现在的契约是：**检测即解析**（`isValidAskContent` 定义为「能解析出至少一个 item」）；**不可解析时剥离标签、把标签内文字交给 Markdown 渲染**（`Match.Parsed=false` 时 `Match.Fallback` 承载去壳后的正文），因此失败只会退化成正常排版的文字，既不丢内容也不露出原始标记。**标签内部是原生 Markdown**：一标签一问题，`**加粗**` 独立成行作标题，其余非列表行是问题正文，`- 选项` 为单选、`- [ ] 选项` 为多选，选项可用 ` — `/` – ` 接描述（模板现在**要求**每个选项都带描述——只有标题的选项很少足以支撑知情选择；多选示例也从逗号内联文本改为 Markdown 列表项，问题组与补充文字用空行分隔成独立段落）。**只接受这一种载荷**：旧的 XML 子元素格式（`<item>`/`<option>`/`<label>` 等）与标签内 JSON 均已不再解析，会退化成可见文字。**解析对模型实际写法高度容错**：列表符号接受 `-`/`*`/`+`/`－`、`1.`/`1)`/`1、`/`一、`，允许破折号后无空格（`-甲`）与全角空格缩进；复选框接受 `[ ]`/`[x]`/`［ ］`/`【 】`；标题接受 `**粗**`/`__粗__`/`# ~ ######`；所有放宽都配反向守卫（`-5`、`---`、`1.5`、`**粗**` 不会被误判成列表），误判即回落到 Markdown 渲染。同时：一个文本块内的**所有**标签都转换（实测 27% 的文本块含 2 个以上，旧实现只转最后一个、其余泄漏为原始 XML），并**合并为一张卡**；区间定界只认标准闭合标签 `</clawbench-ask-question>`，且不会把载荷自身文字里对该标签的提及误判为兄弟标签（围栏代码块、缩进示例、行内提及、引用块都已覆盖）。标记为列表项却解析不出选项时**整体判为解析失败**而非丢弃该项——否则该项会同时从卡片和可见文字里消失。旧标签名 `<ask-question>`（改名前的调用）**不再转卡片**，而是降级为可读 Markdown：标题变加粗行、正文变段落、每个 `<option>` 变列表项（`label — description`），而仅供解析器使用的 `<multi-select>` 字段被丢弃。此前它是静默损坏的：外层标签被剥离后内层文本交给 Markdown 渲染，DOMPurify 删掉未知 XML 元素却保留其文本节点，于是 `false` 这类字段值裸露给用户、且 label 与 description 因失去分隔符而粘连。实测生产库 431 个旧格式载荷中，旧行为在 68.5% 泄露 `false`/`true`、在 62.0% 丢失分隔符；降级渲染后 100% 可读且无字段泄露。TTS/推荐提示词同走该解析器，不可解析时只剥离标签、不朗读原始标记。可选补充见下方「交互式提问卡」——每个问题一张卡，选项可单选或多选，带可选的自由文本补充栏（多行 `textarea`：随内容自适应长高，6 行封顶后框内滚动；Enter 换行、提交仍走按钮）、"推荐"按钮（反向询问 AI 建议选哪个）和"提交"按钮。用户提交后，所选标签（加补充文本）作为一条普通用户消息发回，AI 继续对话。单选模式下再次点击已选中的选项即取消选中，误触可撤销而不被迫改选其他项；提交按钮在未作答时保持禁用，作答后启用。把"AI 提问—用户选择"从纯文本往返变成结构化交互，显著降低移动端打字成本。**用户已填的答案由独立的模块级存储承载**：卡片正文是 `v-html` 注入的 HTML 字符串，任何渲染字符串变化（前后台切换触发的强制重载、列表重挂载、合并卡分支翻转、`block.input` 异步回填、抽屉重赋值）都会整体替换子树，DOM 里的输入随之丢失——因此补充信息、选项勾选、已提交状态三项都写入按卡片身份（`data-ask-key`）索引的模块级存储，在挂载与更新时回填。存储必须是模块级而非组件级（组件级 Map 会随子树重建被回收），提交后不删条目（删了重载会恢复成未答），发送失败必须回滚持久化的已提交标志（否则失败的发送永久卡在已提交、无法重试）
 - **消息元信息区在气泡外**：耗时/时间/操作按钮等元信息渲染为气泡的**兄弟节点**而非子节点，落在面板底色上——此前它在气泡内部，会被背景、圆角与 `overflow:hidden` 包裹。用户消息同样有元信息区（友好相对时间 + 复制 + 查看详情），助手独有操作（摘要切换/朗读/分叉/回溯）不进入用户行；排队中的消息不显示元信息。行级内缩只作用于气泡本身，元信息行右边缘与助手消息对齐
 - **ACP 计划模式**：ACP 后端在执行前展示计划（步骤列表），用户可以跟踪进度。让用户理解 AI 将要做什么，而非只能看到结果
@@ -185,6 +213,7 @@ sequenceDiagram
 - **`/btw` 走独立表而不写对话历史**：旁路问答的答案存 `btw_questions`（按 `session_id` + `anchor_message_id` 定位，用于在聊天区放锚点），不写 `chat_history`/`chat_sessions`——它回答的是"顺便问一句"，不该成为会话的一部分、也不该被后续 agent 看到。回答由摘要模型基于分叉压缩上下文生成，与会话 agent 完全解耦，因此**在 agent 忙时仍可用**，这正是它存在的理由。模型失败仍落库（带 `error`）并返回 200，是为了让用户真的问过的那个问题在列表里留下可见的锚点——把失败伪装成"没问过"会让用户以为消息丢了
 - **取消耗时被度量**：从点击取消到终态事件到达的间隔由模块级时间戳记录（而非 composable 内的 ref）——终态可能由两条独立路径抵达（聊天流的 terminal 事件与 `session_update` 兜底），点击发生在前者而后者可能赢得竞态，共享时间戳保证无论哪条先到都只上报一次。会话执行的 Finalize 阶段同样分阶段计时，仅慢路径输出
 - **触摸防抖避免阅读干扰**：用户在阅读历史消息时，自动滚动应暂停，等用户停止触摸后恢复。这是移动端场景的关键体验——AI 持续输出时用户常需要回看上方内容，自动滚动会打断阅读。防抖机制通过检测触摸事件暂停自动滚动，在触摸结束后延迟恢复，平衡了"实时追踪新输出"和"自由回看历史"两个需求
+- **没人替它注册路由的轮次，必须由宿主补一条，而不是让 agent 重发**：后台续轮的内容帧与用户轮完全同构，差别只在「谁发起」。若把它当成异常帧丢掉，agent 已经认为汇报完成了，没有任何重试机制能补回这段输出——用户等到的就是静默。因此承接点选在**公告帧**（内容帧之前），而不是事后从工具卡片推断；承接之后一切按普通回合走，不为它另写一套持久化。反过来说，只认 `background_drain` 这一种 reason：未来的新 reason 需要自己的策略，静默套用会得到一个语义不明的回合
 - **自动续接的判定与消息构造只有一份实现**：`internal/service/auto_continue.go` 同时持有分类器（`classifyTurnAbnormality`）与续接消息构造。它存在的原因与 `run_turn.go` 统一三条入口相同——这个决策要在两个**无法共用调用方**的地方做：交互式 drain 循环（`handler/chat.go` 与 `session_command.go` 最终都进 `RunDrainLoop`）和 scheduler 的 `executeTask`。三份"是否异常、是否该重试"的副本必然会像当年三份 turn 实现那样漂移，因此两个调用方只各自提供 turn runner。**取消原因排在最前且无条件优先**：用户按了停止、或"打断并重发"改写了回合方向，绝不能被自动续接覆盖，这是本功能最硬的约束。分类器把"干净结束"与"不可重试的失败"折叠成同一个返回值（空），因为对重试循环而言它们是同一个决策。循环守卫有四条——会话仍在运行、用户无排队消息、每用户轮次独立预算、hook panic 兜底
 - **巡航与自动续接是同构的两条钩子，共用 drain 循环而不各自成环**：`internal/service/cruise.go` 的 `NewCruiseRunner` 与 `auto_continue.go` 的 `NewAutoContinueRunner` 形状对称（都返回一个 `(attempt, prev) → (next, ok)` 钩子，都靠 `DrainConfig` 注入），存在理由也相同——单聊巡航与群聊巡航的差异只是「交回用户点」有几个，判定逻辑若各写一份必然漂移。二者在循环里**互斥且有序**（先续接后巡航），因为一个管异常恢复、一个管正常续跑，`AbnormalReason` 恰好把两种情况分开，不需要额外优先级字段。**预算按用户轮次而非会话**：`cruiseRounds` 与 `autoContinueAttempts` 都在 dequeue 真实用户消息时归零——否则「用户中途追问一次」会把上一个任务的巡航预算一并吃掉，长会话里巡航越用越早失效
 - **巡航 addendum 拼进 Prompt 而非 SystemPrompt**：`BuildChatRequest` 在巡航开启时把 addendum **前置**到 `ChatRequest.Prompt` 开头。理由是 CLI resume 时 `SystemPrompt` 未必重新发送（`ShouldInjectSystemPrompt` 在 resume + interval=0 时返回 false），而 `Prompt` 每次都发；`Prompt` 又是**瞬态字段**（持久化的是 `req.Message`），故拼进去不会污染用户气泡或历史。群聊成员提示词正因同一原因拼进 prompt。斜杠命令（`/` 开头）除外——ACP agent 靠前导 `/` 识别命令，前置任何文字都会让它把命令当普通消息路由给 LLM，命令静默失效；巡航是会话级的，addendum 会在下一个普通轮次补上

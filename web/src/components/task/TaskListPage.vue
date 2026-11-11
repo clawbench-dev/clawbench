@@ -24,10 +24,19 @@
       <div v-if="loading && tasks.length === 0" class="task-loading task-loading--skeleton">
         <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
       </div>
-      <div v-else-if="tasks.length === 0" class="task-empty">
-        <CalendarX class="empty-icon empty-state__icon" />
-        <span>{{ t('task.noTasks') }}</span>
-      </div>
+      <EmptyState
+        v-else-if="tasks.length === 0"
+        :icon="CalendarX"
+        :title="t('task.noTasks')"
+        :desc="t('task.noTasksDesc')"
+      >
+        <template #action>
+          <button class="fbtn fbtn-primary" data-action="task-empty-create" @click="onCreate">
+            <Plus :size="14" />
+            <span>{{ t('task.form.createTitle') }}</span>
+          </button>
+        </template>
+      </EmptyState>
       <div v-else class="task-items-container">
         <div
           v-for="task in tasks"
@@ -141,6 +150,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { startQuoteDrag, taskDragPayload } from '@/utils/quoteDrag'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
@@ -213,10 +223,15 @@ const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
 const loading = ref(false)
 
-defineEmits<{
+const emit = defineEmits<{
   create: []
   select: [taskId: number]
 }>()
+
+/** Empty-state action: same event the header's create button sends. */
+function onCreate() {
+  emit('create')
+}
 
 /**
  * Start dragging a scheduled task into the chat: dropping it stages a quote card
@@ -329,7 +344,11 @@ onMounted(refresh)
 .task-list-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-4);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
+  /* Column flex so the shared empty state can take the body height; the card
+     list is a single auto-height child, so it still starts at the top. */
+  display: flex;
+  flex-direction: column;
 }
 
 .task-items-container {
@@ -338,8 +357,7 @@ onMounted(refresh)
   gap: var(--space-4);
 }
 
-.task-loading,
-.task-empty {
+.task-loading {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -361,8 +379,6 @@ onMounted(refresh)
   --panel-skeleton-inset: calc(10 * var(--dp));
 }
 
-/* Size, stroke and colour come from the global `.empty-state__icon` rule. */
-
 .task-item {
   display: flex;
   align-items: center;
@@ -370,7 +386,7 @@ onMounted(refresh)
   padding: var(--space-5);
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--duration-slow) ease;
   position: relative;

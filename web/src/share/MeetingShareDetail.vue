@@ -27,7 +27,7 @@
       {{ t('common.loading') }}
     </div>
 
-    <MeetingEmpty
+    <EmptyState
       v-else-if="!record"
       :icon="FileQuestion"
       :title="t('meeting.detail.notFoundTitle')"
@@ -72,7 +72,7 @@
             path=""
             @copy="copy"
           />
-          <MeetingEmpty
+          <EmptyState
             v-else
             :icon="FileText"
             :title="t('meeting.detail.emptyMinutesTitle')"
@@ -88,7 +88,7 @@
             readonly
             data-role="transcript"
           />
-          <MeetingEmpty
+          <EmptyState
             v-else
             :icon="Captions"
             :title="t('meeting.detail.emptyTranscriptTitle')"
@@ -107,7 +107,7 @@
           <div v-else-if="generating" class="share-meeting__hint-row">
             <span class="share-meeting__spinner" />{{ t('liveShare.notes.proofreading') }}
           </div>
-          <MeetingEmpty
+          <EmptyState
             v-else
             :icon="SpellCheck"
             :title="t('meeting.detail.emptyRevisedTitle')"
@@ -117,10 +117,11 @@
         </template>
 
         <template v-else>
-          <MeetingEmpty
+          <EmptyState
             v-if="chat.length === 0"
             :icon="MessagesSquare"
             :title="t('meeting.detail.emptyChatTitle')"
+            :desc="t('meeting.detail.emptyChatDesc')"
             data-role="chat-empty"
           />
           <!-- The same row component the live chat and the host's record use:
@@ -175,7 +176,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageRow from '@/components/live/ChatMessageRow.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import MeetingMarkdown from '@/components/live/MeetingMarkdown.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useToast } from '@/composables/useToast'
 import {
   groupNoteSegments,

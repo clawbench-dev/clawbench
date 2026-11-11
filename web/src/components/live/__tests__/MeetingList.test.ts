@@ -19,13 +19,17 @@ vi.mock('lucide-vue-next', () => {
   return {
     AlertTriangle: stub,
     ArrowLeft: stub,
+    Captions: stub,
     MonitorUp: stub,
     Check: stub,
     CheckCircle2: stub,
+    FileText: stub,
+    Globe: stub,
     Link: stub,
     MessageSquare: stub,
     Mic: stub,
     Plus: stub,
+    SpellCheck: stub,
     Video: stub,
     RefreshCw: stub,
     RotateCw: stub,
@@ -241,11 +245,11 @@ describe('MeetingList', () => {
     // 28px icon over a sentence, stuck to the top of the scroll area.
     const w = mountList()
 
-    const card = w.find('.meeting-empty')
+    const card = w.find('.empty-state')
     expect(card.exists()).toBe(true)
     expect(card.findComponent(MonitorUp).exists()).toBe(true)
-    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.list.empty)
-    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.list.emptyDesc)
+    expect(card.find('.empty-state__title').text()).toBe(enMessages.meeting.list.empty)
+    expect(card.find('.empty-state__desc').text()).toBe(enMessages.meeting.list.emptyDesc)
   })
 
   it('previews the record rows while the first load is in flight', () => {
@@ -343,6 +347,27 @@ describe('MeetingList rows', () => {
       enMessages.meeting.list.pillTranscript,
     ])
     expect(w.find('.meeting-row').attributes('data-state')).toBe('')
+  })
+
+  it('marks a shared record, even before it has produced anything', () => {
+    // Sharing is not a lifecycle state and not an artifact, so it gets its own
+    // pill — and it must show on a record whose artifact line would otherwise
+    // be hidden (still running, nothing produced yet).
+    sessions.value = [record({
+      hasMinutes: false,
+      hasTranscript: false,
+      hasRevised: false,
+      endedAt: 0,
+      shareEnabled: true,
+    })]
+    const w = mountList()
+
+    const pill = w.find('[data-role="meeting-row-shared"]')
+    expect(pill.exists()).toBe(true)
+    expect(pill.text()).toBe(enMessages.meeting.list.shared)
+    // Unshared rows stay unmarked.
+    sessions.value = [record()]
+    expect(mountList().find('[data-role="meeting-row-shared"]').exists()).toBe(false)
   })
 
   it('marks a failed minutes job instead of calling it "no artifacts"', () => {

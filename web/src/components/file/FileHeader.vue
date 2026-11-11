@@ -324,7 +324,7 @@ const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || i
 const effectiveViewMode = computed(() => (isMarkdownRendered.value) ? 'rendered' : 'raw')
 const isMediaFile = computed(() => {
     const ft = fileType.value
-    return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || ft?.isExcalidraw || false
+    return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || ft?.isExcalidraw || ft?.isDrawio || false
 })
 // File has usable text content for code-specific features.
 // An empty (but loaded) file has content === '' and must still be editable;
@@ -364,7 +364,7 @@ const hasToc = computed(() => fileSupportsToc(props.file, effectiveViewMode.valu
 // own search panel. Media/binary files without content have no search.
 const hasSearch = computed(() => {
     if (!props.file) return false
-    if (props.file.isPdf || props.file.isOffice || props.file.isExcalidraw) return false
+    if (props.file.isPdf || props.file.isOffice || props.file.isExcalidraw || props.file.isDrawio) return false
     return hasTextContent.value
 })
 

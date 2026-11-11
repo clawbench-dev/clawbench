@@ -105,12 +105,27 @@ function makeTask(overrides: Record<string, unknown> = {}) {
 // promise chain settles before the test ends.
 async function mountWith(tasks: unknown[]) {
   mockStore.state.tasks = tasks
-  vi.useFakeTimers()
+  // Fake ONLY timers: faking microtasks (queueMicrotask) leaves Vue's render
+  // flush pending, so a click on slot-rendered content lands on an element
+  // whose listener was never attached.
+  vi.useFakeTimers({ toFake: ['setTimeout'] })
   const wrapper = mount(TaskListPage)
   await vi.runAllTimersAsync()
   vi.useRealTimers()
   return wrapper
 }
+
+describe('TaskListPage — empty state', () => {
+  it('offers the create action', async () => {
+    const wrapper = await mountWith([])
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+
+    const button = wrapper.find('[data-action="task-empty-create"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('create')).toHaveLength(1)
+  })
+})
 
 describe('TaskListPage — trigger-type distinction', () => {
   beforeEach(() => {

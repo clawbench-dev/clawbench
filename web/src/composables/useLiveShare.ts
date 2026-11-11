@@ -840,10 +840,47 @@ async function publishRelayPicture(): Promise<void> {
   applyContentHint(main, screen ? 'text' : 'motion')
 }
 
-/** A control frame from a viewer, over LiveKit's data channel. */
-function handleRelayData(payload: Uint8Array): void {
+/**
+ * Attach the authenticated sender to a viewer's frame.
+ *
+ * `from` is taken from the identity, never from the frame itself, and a chat
+ * line's display name is replaced with the roster name the server accepted at
+ * join: other viewers render that name verbatim, so a viewer could otherwise
+ * label itself "主持人".
+ *
+ * Both control topologies converge here: the per-viewer socket knows who sent
+ * the frame, and the relay gets the same thing from the SFU's participant id.
+ */
+function stampViewerFrame(viewerId: string, msg: ControlMessage): ControlMessage {
+  if (msg.t !== 'chat') return { ...msg, from: viewerId } as ControlMessage
+  return {
+    t: 'chat',
+    id: msg.id,
+    from: viewerId,
+    name: viewers.value.find((v) => v.id === viewerId)?.name ?? '',
+    text: msg.text,
+    at: msg.at,
+  }
+}
+
+/** A control frame from a room participant, over LiveKit's data channel. */
+function handleRelayData(payload: Uint8Array, from: string): void {
   const msg = parseControlMessage(new TextDecoder().decode(payload))
-  if (msg) controlHandlers.forEach((cb) => cb(msg))
+  if (!msg) return
+  // A relayed room has no per-viewer channel to learn the sender from, but the
+  // SFU authenticates the participant identity, which is the same trustworthy
+  // source the per-viewer socket gives `onViewerControl`. Stamping it is not
+  // cosmetic: the publisher drops a `ctrl-ev` whose `from` is not the viewer it
+  // granted, so without this a remote-control grant travelled over the relay
+  // and every pointer event was silently discarded.
+  const viewerId = relayViewerId(from)
+  if (!viewerId) {
+    controlHandlers.forEach((cb) => cb(msg))
+    return
+  }
+  if (!VIEWER_MESSAGE_TYPES.has(msg.t)) return
+  const frame = stampViewerFrame(viewerId, msg)
+  controlHandlers.forEach((cb) => cb(frame))
 }
 
 /**
@@ -879,11 +916,27 @@ export function relaySpeakerFrames(
  * It is also the only path by which the host can HEAR that guest: the relay
  * delivers tracks, not sound (see `monitorRelayAudio`).
  */
-function handleRelayTrack(track: MediaStreamTrack, _source: unknown, identity: string): void {
+function handleRelayTrack(track: MediaStreamTrack, source: unknown, identity: string): void {
   const viewerId = relayViewerId(identity)
   if (viewerId && track.kind === 'audio') {
     useLiveNotes().addViewer(viewerId, new MediaStream([track]))
     monitorRelayAudio(track)
+  }
+  // A member's own screen, for the host's member-screen card and key frames.
+  // The relay hands every participant's tracks to everybody, so unlike the
+  // peer-to-peer topology the host is not the one forwarding it — but it still
+  // has to be able to WATCH it. This is the counterpart of the `ontrack`
+  // handler above; `screenSharer` remains the server's call, this only fills
+  // the picture.
+  if (viewerId && track.kind === 'video' && source === 'screen_share') {
+    remoteScreenTrack = track
+    remoteScreenStream.value = new MediaStream([track])
+    applyContentHint(track, 'text')
+    track.addEventListener('ended', () => {
+      if (remoteScreenTrack !== track) return
+      remoteScreenTrack = null
+      remoteScreenStream.value = null
+    })
   }
 }
 
@@ -2485,6 +2538,16 @@ export function useLiveShare() {
     // `controlledBy` regardless, and a viewer that vanishes right after being
     // granted still has to be cleaned up.
     if (msg.t === 'ctrl-grant') controlGrantee = msg.granted ? viewerId : ''
+    // A relayed room has ONE data channel for everybody, so there is no
+    // per-viewer path to look up. Broadcast instead: `ctrl-grant` carries the
+    // target and each viewer ignores frames addressed to somebody else,
+    // `chat-history` merges by message id (a duplicate replay is harmless).
+    // Looking up `peers` here used to make every remote-control grant a no-op
+    // in relay mode, because that map is empty by design.
+    if (relayMode) {
+      if (relayRoom) void sendRelayData(relayRoom, msg)
+      return
+    }
     const peer = peers.get(viewerId)
     if (peer?.channel?.readyState !== 'open') return
     try {
@@ -2506,22 +2569,7 @@ export function useLiveShare() {
     const msg = parseControlMessage(String(raw))
     if (!msg) return
     if (!VIEWER_MESSAGE_TYPES.has(msg.t)) return
-    const tagged = { ...msg, from: viewerId } as ControlMessage
-    // `from` alone is not enough: a chat line carries a display name, and the
-    // other viewers render it verbatim — a viewer could label itself "主持人".
-    // The roster name the server accepted at join is the only trustworthy one,
-    // and it is what the publisher's own chat list already uses.
-    const frame: ControlMessage =
-      msg.t === 'chat'
-        ? {
-            t: 'chat',
-            id: msg.id,
-            from: viewerId,
-            name: viewers.value.find((v) => v.id === viewerId)?.name ?? '',
-            text: msg.text,
-            at: msg.at,
-          }
-        : tagged
+    const frame = stampViewerFrame(viewerId, msg)
     controlHandlers.forEach((cb) => cb(frame))
     // A viewer's strokes are part of the picture too; mirror them so a frame
     // captured while somebody else is drawing still carries the annotation.

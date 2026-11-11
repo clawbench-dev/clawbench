@@ -71,6 +71,11 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 		// socket it opens must be too. The LiveKit token it carries is the
 		// credential, and the handler only ever dials the configured relay.
 		"/livekit/",
+		// The draw.io editor files themselves are served unauthenticated (they
+		// hold no user data), so whether the editor is installed is already
+		// observable from a HEAD request on that path. The share page needs it
+		// to decide whether a shared .drawio file can render at all.
+		"/api/drawio/status",
 	}
 	for _, p := range publicPatterns {
 		auth, ok := got[p]
@@ -90,7 +95,8 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 func isPublicPattern(p string) bool {
 	switch p {
 	case "/", "/login", "/api/health", "/api/me", "/api/share/", "/share/",
-		"/api/apk", "/api/desktop/latest", "/api/ssh/info", "/livekit/":
+		"/api/apk", "/api/desktop/latest", "/api/ssh/info", "/livekit/",
+		"/api/drawio/status":
 		return true
 	}
 	return false

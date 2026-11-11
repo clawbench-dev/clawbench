@@ -495,6 +495,23 @@ describe('selectFile excalidraw detection', () => {
     expect(store.state.currentFile?.content).toContain('excalidraw')
   })
 
+  it('flags .drawio files based on backend subtype', async () => {
+    // The viewer branches on `file.isDrawio`, not on the extension, so this
+    // mapping is what decides between the editor and the plain-text view.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: 'flow.drawio',
+        path: '/tmp/project/flow.drawio',
+        content: '<mxfile/>',
+        subtype: 'drawio',
+      }),
+    })
+    const ok = await store.selectFile('/tmp/project/flow.drawio')
+    expect(ok).toBe(true)
+    expect(store.state.currentFile?.isDrawio).toBe(true)
+  })
+
   it('does not flag non-excalidraw files', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

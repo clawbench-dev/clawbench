@@ -173,10 +173,10 @@ function onTaskSelect(taskId: number) {
 .task-pending--skeleton {
   align-items: stretch;
   justify-content: flex-start;
-  /* 18dp = `.task-list-body`'s 8dp + `.task-item`'s 10dp — the placeholder
-     stands in for a list this tab has not fetched yet, so it has to land where
-     that list's rows land. */
-  --panel-skeleton-inset: calc(18 * var(--dp));
+  /* 20dp = `.task-list-body`'s 10dp (--panel-body-pad) + `.task-item`'s 10dp —
+     the placeholder stands in for a list this tab has not fetched yet, so it
+     has to land where that list's rows land. */
+  --panel-skeleton-inset: calc(20 * var(--dp));
   padding: var(--space-4) 0;
 }
 

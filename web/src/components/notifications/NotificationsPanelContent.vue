@@ -95,11 +95,12 @@
         <span>{{ error }}</span>
       </div>
 
-      <div v-else-if="items.length === 0" class="notif-state">
-        <Inbox class="empty-state__icon" />
-        <span>{{ isFiltered ? t('notifications.emptyFiltered') : t('notifications.empty') }}</span>
-        <span v-if="!isFiltered" class="notif-state-hint">{{ t('notifications.emptyHint') }}</span>
-      </div>
+      <EmptyState
+        v-else-if="items.length === 0"
+        :icon="Inbox"
+        :title="isFiltered ? t('notifications.emptyFiltered') : t('notifications.empty')"
+        :desc="isFiltered ? '' : t('notifications.emptyHint')"
+      />
 
       <template v-else>
         <!-- Grouped timeline: one bucket per local calendar day, rows carry
@@ -194,6 +195,7 @@ import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/compo
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -686,7 +688,7 @@ function forgeTargetFromItemKey(key: string) {
   /* No top padding: the sticky day header would stick BELOW it, leaving an
      unpainted band above through which the previous card scrolls into view.
      The first header's own top padding provides the inset instead. */
-  padding: 0 var(--space-6) var(--space-9);
+  padding: 0 var(--panel-body-pad, var(--space-5, 10px)) var(--space-9);
   display: flex;
   flex-direction: column;
   /* The panel can be dragged narrow (the splitter goes to 320px) and is the
@@ -707,7 +709,6 @@ function forgeTargetFromItemKey(key: string) {
   font-size: var(--font-size-lg);
   text-align: center;
 }
-.notif-state-hint { font-size: var(--font-size-sm); }
 .notif-error { color: var(--color-red); }
 
 /* First load: preview the row shape in place of a lone spinner. */
@@ -872,7 +873,7 @@ function forgeTargetFromItemKey(key: string) {
   padding: var(--space-5) var(--space-5) var(--space-4);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   min-width: 0;
   transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
     box-shadow var(--duration-base) ease;

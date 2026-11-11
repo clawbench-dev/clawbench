@@ -86,9 +86,20 @@ const (
 	schemeHTTPS = "https"
 
 	// instanceLockWait is how long a starting process waits for the outgoing
-	// one to release the data directory. It only has to cover a restart's
-	// shutdown drain (build.sh starts us as soon as the PORT is free).
-	instanceLockWait = 10 * time.Second
+	// one to release the data directory.
+	//
+	// It must cover the outgoing process's FULL shutdown, not just the port:
+	// the lock is held until the process exits, while the port is released at
+	// the start of the drain. A replacement therefore waits on this lock, not
+	// on the port — which is why 10s was not enough on 2026-11-11: ten open
+	// terminals took 30s to close (3s SIGTERM grace each, serially), the new
+	// process gave up after 10s and exited, and the service stayed down with
+	// nobody left to start it. Terminal sessions now close concurrently
+	// (internal/terminal/manager.go), so the drain is ~3s, but a stuck session
+	// still costs its full 4s SIGTERM+SIGKILL budget and the process has final
+	// writes after that. 30s keeps a real second instance from hanging around
+	// while leaving generous headroom over the worst observed drain.
+	instanceLockWait = 30 * time.Second
 )
 
 // forgeNotifierAdapter bridges the service package's ForgeNotifier interface to
@@ -1133,6 +1144,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		if errors.Is(lockErr, platform.ErrDataDirInUse) {
 			slog.Error("refusing to start: another ClawBench instance is using this data directory",
 				slog.String("data_dir", model.DataDir),
+				slog.Duration("waited", instanceLockWait),
 				slog.String("hint", "stop the running instance, or start this one with a different --data-dir"))
 		} else {
 			slog.Error("refusing to start: cannot lock the data directory",
@@ -1162,6 +1174,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Inject external session ID getter for ResumeSession recovery
 	ai.SetExternalSessionIDGetter(service.GetExternalSessionID)
+
+	// Inject the clearer for the same column: when the agent answers that it no
+	// longer has a session (e.g. an in-memory session lost with the backend
+	// process), the stale id must be dropped or every later turn — and every
+	// server restart — retries a session that cannot come back.
+	ai.SetExternalSessionIDClearer(service.ClearExternalSessionID)
 
 	// Inject auto-approve getter for ACP permission auto-approval
 	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)

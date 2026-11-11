@@ -66,7 +66,7 @@ import { acquireMic, classifyMicError, describeMicError } from '@/utils/micCaptu
 import { PcmStreamer } from '@/utils/pcmCapture'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { useAutoSpeech } from '@/composables/useAutoSpeech'
-import { playVoiceModeCue } from '@/composables/useNotificationSound'
+import { playVoiceModeCue, unlockVoiceAudio } from '@/composables/useNotificationSound'
 import { useWakeLock } from '@/composables/useWakeLock'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -880,6 +880,13 @@ async function openBargeListener(): Promise<void> {
         turnCancelledByUser = true
         onInterrupt?.()
       }
+      // Confirm the cut-in landed. The user is not looking at the screen, and
+      // "the reply went quiet" is indistinguishable from a network hiccup or a
+      // TTS failure — without this they cannot tell whether they were heard.
+      // Played strictly after the action, so it never overlaps the reply it
+      // just stopped; and short enough (≈155 ms) to be over before dictation
+      // reopens 250 ms later, which keeps it out of the next transcript.
+      playVoiceModeCue('interrupt')
     } catch { /* ignore malformed */ }
   }
   sock.onclose = () => { /* the playback watcher owns the lifecycle */ }
@@ -904,6 +911,11 @@ export async function startFreeDialog(opts: {
   // noise, and the toast slot only holds one message anyway. The cue is
   // silenced too — the mode is about to start, not end.
   stop({ notify: false, silent: true })
+  // The cues fire from speech recognition and turn events, never from a tap.
+  // Unlock the audio context HERE, while the tap that started the mode is still
+  // the current gesture: browsers that gate Web Audio on a gesture leave the
+  // context suspended otherwise, and every cue in the session is silent.
+  unlockVoiceAudio()
   // stop() released the lock, so take it again for this run.
   void wakeLock.acquire(WAKE_LOCK_REASON)
   warnIfScreenCannotStayAwake()

@@ -5,11 +5,16 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import enMessages from '@/i18n/locales/en'
 
-const { openFilePath, requestAttachmentTarget, startAttachDrag, cleanupDragGhost } = vi.hoisted(() => ({
+const { openFilePath, requestAttachmentTarget, startAttachDrag, cleanupDragGhost, confirmDialog } = vi.hoisted(() => ({
   openFilePath: vi.fn(),
   requestAttachmentTarget: vi.fn(),
   startAttachDrag: vi.fn(),
   cleanupDragGhost: vi.fn(),
+  confirmDialog: vi.fn(),
+}))
+
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: confirmDialog }),
 }))
 
 vi.mock('@/composables/useFilePathAnnotation', () => ({
@@ -79,6 +84,10 @@ const GROUPS: MeetingResourceGroup[] = [
   },
 ]
 
+const LINKS = [
+  { url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' as const } },
+]
+
 function mountResources(props: Record<string, unknown> = {}) {
   return mount(MeetingResources, {
     props: {
@@ -98,6 +107,7 @@ beforeEach(() => {
   requestAttachmentTarget.mockReset()
   startAttachDrag.mockReset()
   cleanupDragGhost.mockReset()
+  confirmDialog.mockReset()
 })
 
 describe('MeetingResources', () => {
@@ -124,10 +134,7 @@ describe('MeetingResources', () => {
   })
 
   it('keeps the meeting link above the files, with the retention note', () => {
-    const wrapper = mountResources({
-      shareToken: 'tok-9',
-      links: [{ url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' } }],
-    })
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
 
     const block = wrapper.find('[data-role="meeting-link"]')
     expect(block.exists()).toBe(true)
@@ -135,36 +142,97 @@ describe('MeetingResources', () => {
       'http://10.0.0.5:20000/share/tok-9',
     )
     // The sentence that answers "how long does this keep working" is the whole
-    // point of showing the link here rather than in the running stage. It now
-    // depends on the publish switch, and the default is NOT published — so the
+    // point of showing the link here rather than in the running stage. It
+    // depends on the publish state, and the default is NOT published — so the
     // honest sentence is the one saying the link dies with the meeting.
-    expect(block.text()).toContain(enMessages.shareCenter.meetingPrivateHint)
+    expect(block.text()).toContain(enMessages.meeting.detail.sharePrivateDesc)
   })
 
   it('says the link is permanent once the record is published', () => {
-    const wrapper = mountResources({
-      shareToken: 'tok-9',
-      shareEnabled: true,
-      links: [{ url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' } }],
-    })
-    expect(wrapper.find('[data-role="meeting-link"]').text()).toContain(
-      enMessages.shareCenter.meetingSharedHint,
+    const wrapper = mountResources({ shareToken: 'tok-9', shareEnabled: true, links: LINKS })
+    const block = wrapper.find('[data-role="meeting-link"]')
+
+    expect(block.text()).toContain(enMessages.meeting.detail.sharePublicDesc)
+    expect(block.find('[data-role="meeting-share-badge"]').text()).toBe(
+      enMessages.meeting.detail.shareBadgePublic,
     )
   })
 
-  it('renders the publish switch off by default and reports a toggle', async () => {
-    const wrapper = mountResources({
-      shareToken: 'tok-9',
-      links: [{ url: 'http://10.0.0.5:20000/share/tok-9', address: { ip: '10.0.0.5', interface: '', kind: 'lan' } }],
-    })
+  it('lists what a visitor can read, in the share page order', () => {
+    // The card answers "共享出去到底是什么" — the four tabs of the public page,
+    // in the order that page shows them. The sentence alone never made it
+    // obvious, and it used to claim the recording was included.
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
 
-    const toggle = wrapper.find('[data-role="meeting-share-toggle"]')
-    expect(toggle.exists()).toBe(true)
-    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+    expect(wrapper.findAll('.res-share-cap').map((c) => c.text())).toEqual([
+      enMessages.meeting.detail.tabMinutes,
+      enMessages.meeting.detail.tabTranscript,
+      enMessages.meeting.detail.tabRevised,
+      enMessages.meeting.detail.tabChat,
+    ])
+    // Colour marks the shared state; the unshared card carries no green.
+    expect(wrapper.find('[data-role="meeting-link"]').attributes('data-state')).toBe('private')
+  })
 
-    await toggle.setValue(true)
-    // The parent owns the request; the component only reports the intent.
+  it('states the visibility as a badge, not as a checkbox', () => {
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
+
+    const badge = wrapper.find('[data-role="meeting-share-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe(enMessages.meeting.detail.shareBadgePrivate)
+    // The badge reports; it must not be a second way to publish.
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+  })
+
+  it('asks before publishing, and reports the intent once confirmed', async () => {
+    confirmDialog.mockResolvedValue(true)
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
+
+    const action = wrapper.find('[data-role="meeting-share-toggle"]')
+    expect(action.text()).toBe(enMessages.meeting.detail.sharePublish)
+    // Unpublished is the state that needs an action, so it is the one painted
+    // as the block's single primary button.
+    expect(action.classes()).toContain('fbtn-primary')
+
+    await action.trigger('click')
+    await flushPromises()
+
+    expect(confirmDialog).toHaveBeenCalledTimes(1)
+    expect(confirmDialog.mock.calls[0][0]).toBe(enMessages.meeting.detail.shareConfirmBody)
     expect(wrapper.emitted('update:shareEnabled')?.[0]).toEqual([true])
+  })
+
+  it('publishes nothing when the confirmation is dismissed', async () => {
+    confirmDialog.mockResolvedValue(false)
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
+
+    await wrapper.find('[data-role="meeting-share-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(confirmDialog).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('update:shareEnabled')).toBeUndefined()
+  })
+
+  it('unpublishes straight away — closing a door needs no confirmation', async () => {
+    const wrapper = mountResources({ shareToken: 'tok-9', shareEnabled: true, links: LINKS })
+
+    const action = wrapper.find('[data-role="meeting-share-toggle"]')
+    expect(action.text()).toBe(enMessages.meeting.detail.shareStop)
+    expect(action.classes()).not.toContain('fbtn-primary')
+
+    await action.trigger('click')
+    await flushPromises()
+
+    expect(confirmDialog).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:shareEnabled')?.[0]).toEqual([false])
+  })
+
+  it('disables the action and shows a spinner while the server decides', () => {
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS, shareSaving: true })
+
+    const action = wrapper.find('[data-role="meeting-share-toggle"]')
+    expect(action.attributes('disabled')).toBeDefined()
+    expect(action.find('.li-spinner').exists()).toBe(true)
   })
 
   it('hides the link block when there is no record token', () => {
@@ -208,12 +276,12 @@ describe('MeetingResources', () => {
     const wrapper = mountResources({ groups: [], total: 0, folderPath: '' })
 
     expect(wrapper.find('.res-row').exists()).toBe(false)
-    const card = wrapper.find('.meeting-empty')
+    const card = wrapper.find('.empty-state')
     expect(card.exists()).toBe(true)
     // Filled, so it centres in the tab body like the other three tabs' empty
     // states instead of hugging the top edge.
     expect(card.classes()).toContain('is-fill')
-    expect(wrapper.find('.meeting-empty__title').text()).toBe(enMessages.meeting.resources.emptyTitle)
+    expect(wrapper.find('.empty-state__title').text()).toBe(enMessages.meeting.resources.emptyTitle)
     expect(wrapper.text()).toContain(enMessages.meeting.resources.empty)
   })
 
@@ -222,7 +290,7 @@ describe('MeetingResources', () => {
     // full card would repeat it; the hint is the right weight there.
     const wrapper = mountResources({ groups: [], total: 0 })
 
-    expect(wrapper.find('.meeting-empty').exists()).toBe(false)
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
     expect(wrapper.find('.res-hint').text()).toContain(enMessages.meeting.resources.empty)
   })
 

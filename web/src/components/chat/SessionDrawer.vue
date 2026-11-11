@@ -673,9 +673,10 @@ watch(() => props.open, (val) => {
 // current session keeps using the shared identity actions, which own the
 // optimistic chips in the info bar. Both paths land on the same server code.
 async function persistTargeted(payload) {
-  await apiPatch('/api/ai/session/settings', { sessionId: props.targetSessionId, ...payload })
+  const res = await apiPatch('/api/ai/session/settings', { sessionId: props.targetSessionId, ...payload })
   emit('changed')
   await loadTarget()
+  return res
 }
 
 function applyAutoApprove(checked) {
@@ -767,7 +768,16 @@ function selectModel(model) {
     return
   }
   if (isTargeted.value) {
-    persistTargeted({ modelId: model.id }).catch((err) => {
+    persistTargeted({ modelId: model.id }).then((res) => {
+      // The member's connection is busy (a group turn is running), so the
+      // server stored the choice instead of applying it: the switch lands on
+      // that member's next turn, which the group can start without the user
+      // sending anything. Say so rather than letting the reloaded panel imply
+      // the running turn already changed model (issue #671).
+      if (res?.modelSwitchDeferred) {
+        toast.show(t('chat.modelSwitcher.deferredMember'), { icon: 'pending', type: 'info' })
+      }
+    }).catch((err) => {
       appLog.w('SessionDrawer', 'switch model failed', err)
       toast.show(err?.message || t('chat.modelSwitcher.switchFailed'), { icon: 'warning', type: 'error' })
     })

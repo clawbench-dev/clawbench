@@ -429,19 +429,54 @@ func TestEnrichMessagesWithSummaries_GroupKeepsBlocks(t *testing.T) {
 	assert.Contains(t, messages[0].Content, "blocks")
 }
 
-// The ordinary chat path still strips (unchanged behavior).
-func TestEnrichMessagesWithSummaries_ChatStillStrips(t *testing.T) {
+// The post-done reload shape: the ONLY assistant row in the snapshot is the
+// reply the client just finished, and it already carries a summary (Finalize
+// summarizes before it emits `done`). It must arrive with its blocks intact —
+// otherwise the client's rebuild keeps whatever its live stream happened to
+// hold, with nothing to compare against, and a reply that lost its tail in
+// transit can never be repaired.
+func TestEnrichMessagesWithSummaries_SingleNewestReplyKeepsBlocks(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('c2', 1, 'claude', 'Chat', 'chat')")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 70, '摘要')")
+	assert.NoError(t, err)
+
+	messages := []model.ChatMessage{
+		{ID: 69, Role: "user", Content: "question", SessionID: "c2"},
+		{ID: 70, Role: "assistant", Content: `{"blocks":[{"type":"text","text":"the complete reply"}]}`, SessionID: "c2"},
+	}
+	enrichMessagesWithSummaries(messages)
+
+	assert.NotNil(t, messages[1].Summary)
+	assert.Contains(t, messages[1].Content, "the complete reply")
+}
+
+// The ordinary chat path still strips OLDER replies, but never the newest one.
+func TestEnrichMessagesWithSummaries_ChatStripsOlderKeepsNewest(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
 
 	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('c1', 1, 'claude', 'Chat', 'chat')")
 	assert.NoError(t, err)
-	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 60, '摘要')")
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 60, '摘要一')")
+	assert.NoError(t, err)
+	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 62, '摘要二')")
 	assert.NoError(t, err)
 
 	messages := []model.ChatMessage{
-		{ID: 60, Role: "assistant", Content: `{"blocks":[{"type":"text","text":"long answer"}]}`, SessionID: "c1"},
+		{ID: 60, Role: "assistant", Content: `{"blocks":[{"type":"text","text":"old answer"}]}`, SessionID: "c1"},
+		{ID: 61, Role: "user", Content: "next question", SessionID: "c1"},
+		{ID: 62, Role: "assistant", Content: `{"blocks":[{"type":"text","text":"long answer"}]}`, SessionID: "c1"},
 	}
 	enrichMessagesWithSummaries(messages)
-	assert.NotContains(t, messages[0].Content, "long answer")
+
+	// Older summarized replies are still stripped — that is the bandwidth win.
+	assert.NotContains(t, messages[0].Content, "old answer")
+	// The newest reply keeps its blocks: it is the row the client renders as
+	// original text and the only one it can reconcile a live bubble against.
+	assert.Contains(t, messages[2].Content, "long answer")
+	assert.NotNil(t, messages[2].Summary)
 }

@@ -78,6 +78,7 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermInterrupt', keys: ['Ctrl+C'], actionKey: 'appHeader.shortcutTip.actionTermInterrupt' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermCopy', keys: ['Ctrl+C', 'Ctrl+Shift+C'], actionKey: 'appHeader.shortcutTip.actionTermCopy' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermCopyInsert', keys: ['Ctrl+Insert'], actionKey: 'appHeader.shortcutTip.actionTermCopyInsert' },
+  { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermPasteInsert', keys: ['Shift+Insert'], actionKey: 'appHeader.shortcutTip.actionTermPasteInsert' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermCopyOnSelect', actionKey: 'appHeader.shortcutTip.actionTermCopyOnSelect' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermRightClick', actionKey: 'appHeader.shortcutTip.actionTermRightClick' },
   { context: 'terminal', contextKey: 'appHeader.shortcutTip.contextTermZoom', keys: ['Ctrl+Wheel'], actionKey: 'appHeader.shortcutTip.actionTermZoom' },

@@ -70,6 +70,8 @@ tags:
     description: 客户端日志回传
   - name: APK
     description: Android 安装包
+  - name: Drawio
+    description: 按需下载的 draw.io 编辑器
 
 security:
   - cookieAuth: []
@@ -2165,8 +2167,12 @@ paths:
         复用同一套写入实现（模型最后应用、按模型记忆思考深度、巡航→自动批准单向硬
         默认、deferred vs rejected 的区分），避免两条路径漂移。
 
-        **群成员行的并发守卫**：群回合进行中该成员的连接是忙的，压缩也会直接驱动它，
-        因此这两种情况下返回 409，而不是静默排队——抽屉是交互式的，用户可以稍后重试。
+        **群成员行的并发守卫**：群回合进行中该成员的连接是忙的，压缩也会直接驱动它。
+        其中**模型切换**例外：它不需要碰那条连接——下一回合读回 `chat_sessions.model`
+        并在发 prompt 前应用，所以只落库、响应 `modelSwitchDeferred=true`，由前端提示
+        「下一回合生效」。其余字段（模式 / 思考深度 / 传输 / 配置项 / 自动批准 / 巡航）
+        仍需要活连接，返回 409 `GroupRunning`；成员正在压缩时一律 409
+        `GroupMemberCompacting`。抽屉是交互式的，用户可以稍后重试。
       operationId: sessionSettingsUpdate
       requestBody:
         required: true
@@ -2216,7 +2222,7 @@ paths:
         "403":
           description: 该会话属于其他项目
         "409":
-          description: 群回合进行中（`GroupRunning`）或该成员正在压缩（`GroupMemberCompacting`）
+          description: 群回合进行中且请求含模型以外的字段（`GroupRunning`），或该成员正在压缩（`GroupMemberCompacting`）
         "422":
           description: 模型切换被 agent 拒绝（`ModelSwitchFailed`）
         "500":
@@ -7611,6 +7617,75 @@ paths:
       responses:
         "200":
           description: 进度
+
+  # ── draw.io 编辑器（按需下载，不随二进制分发）─────────────────────────────
+  /api/drawio/status:
+    get:
+      tags: [Drawio]
+      summary: draw.io 编辑器安装状态
+      description: |
+        编辑器约 118MB，不随二进制分发：首次打开 `.drawio` 文件时才由服务端
+        下载并解压到 `<数据目录>/vendor/drawio/<版本>/`，此后所有设备共用。
+
+        `state` 取值 `idle` / `downloading` / `installing` / `ready` / `failed`；
+        `installed` 为真时 `basePath` 给出 iframe 应加载的路径前缀。安装完成后
+        以磁盘为准（重启不会让它变回未安装）。
+      operationId: drawioStatus
+      # Public: the share page must know whether the editor is installed before
+      # it can render a shared .drawio file, and it has no session.
+      security: []
+      responses:
+        "200":
+          description: 状态
+
+  /api/drawio/install:
+    post:
+      tags: [Drawio]
+      summary: 开始下载并安装 draw.io 编辑器
+      description: |
+        立即返回（202），下载与解压在后台进行，进度通过 `/api/drawio/status` 轮询。
+        下载源顺序：配置里的 `drawio.download_url`（若填）→ 内置加速镜像 →
+        github.com。单个源 10 分钟无结果即换下一个。
+        同一时刻只允许一个安装任务。
+      operationId: drawioInstall
+      responses:
+        "200":
+          description: 已安装，无需重复下载
+        "202":
+          description: 已开始
+        "409":
+          description: 已有安装任务在进行中（响应体为当前状态）
+
+  /api/drawio/upload:
+    post:
+      tags: [Drawio]
+      summary: 上传 draw.war 安装编辑器（离线部署）
+      description: |
+        服务器连不上外网时用这条路：在别的机器上把 `draw.war` 下好，在这里上传。
+        `multipart/form-data`，字段名 `file`，上限 200MB。
+
+        同步返回：上传完成后服务端还要校验与解压（几秒）。校验值仍是内置的那串，
+        与在线下载完全一致——手工提供的文件同样不能是别的内容。
+        安装任务进行中返回 409。
+      operationId: drawioUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: 安装完成（响应体为最新状态）
+        "400":
+          description: 文件缺失、超过 200MB、校验不通过或不是可解压的包
+        "409":
+          description: 已有安装任务在进行中（响应体为当前状态）
 
   # ── Proxy ─────────────────────────────────────────────────────────────────
   /api/proxy/ports:

@@ -38,6 +38,14 @@ func TestIsSupportedFile(t *testing.T) {
 }
 
 func TestDetectSubtype(t *testing.T) {
+	t.Run("drawio extension", func(t *testing.T) {
+		// The extension alone decides: a blank diagram is "<mxfile/>" and a
+		// diagram with embedded images is far past the content-sniff limit, so
+		// sniffing would drop both back to plain text.
+		assert.Equal(t, model.SubtypeDrawio, model.DetectSubtype("flow.drawio", "<mxfile/>"))
+		assert.Equal(t, model.SubtypeDrawio, model.DetectSubtype("FLOW.DRAWIO", ""))
+	})
+
 	t.Run("YAML with openapi key", func(t *testing.T) {
 		got := model.DetectSubtype("openapi.yaml", "openapi: '3.0.0'\ninfo:\n  title: Test\npaths: {}")
 		assert.Equal(t, model.SubtypeOpenAPI, got)
@@ -228,6 +236,10 @@ func TestIsTextFile(t *testing.T) {
 		// XML
 		{"xml .xml", "pom.xml", true},
 		{"plist .plist", "Info.plist", true},
+
+		// draw.io — served as text so the viewer can read the diagram XML
+		{"drawio", "flow.drawio", true},
+		{"drawio uppercase", "FLOW.DRAWIO", true},
 
 		// Config
 		{"ini", "app.ini", true},

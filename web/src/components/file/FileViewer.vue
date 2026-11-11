@@ -95,6 +95,13 @@
         :file="file"
       />
 
+      <!-- draw.io diagram (editor is downloaded on first use, then iframed) -->
+      <DrawioViewer
+        v-else-if="file.isDrawio"
+        ref="drawioViewerRef"
+        :file="file"
+      />
+
       <!-- Too large -->
       <div v-else-if="file.tooLarge" class="raw-content-viewer">
         <UnsupportedFileBody
@@ -301,6 +308,7 @@ import VideoPreview from '@/components/media/VideoPreview.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./ExcalidrawViewer.vue') }))
+const DrawioViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./DrawioViewer.vue') }))
 import MarkdownPreview from './MarkdownPreview.vue'
 import TablePreviewBody from './TablePreviewBody.vue'
 import PreviewSearchBar from './PreviewSearchBar.vue'
@@ -372,7 +380,7 @@ const isTableRenderedView = computed(
 // views (iframe/ReDoc) fall back to the SearchDrawer as well. Media/binary/
 // oversized/errored files never render CodeMirror.
 const isCodeMirrorView = computed(() => {
-    if (!props.file || props.file.isExcalidraw) return false
+    if (!props.file || props.file.isExcalidraw || props.file.isDrawio) return false
     if (props.file.isImage || props.file.isAudio || props.file.isVideo || props.file.isPdf || props.file.isOffice) return false
     if (props.file.isBinary || props.file.tooLarge || props.file.error) return false
     if (isMarkdown.value) return editing.value || props.markdownViewMode !== 'rendered'
@@ -547,6 +555,7 @@ const isUntitled = computed(() => !!props.file?.untitled)
 const { saving, saveFile } = useCodeEditorSave()
 const cmEditorRef = ref(null)
 const excalidrawViewerRef = ref(null)
+const drawioViewerRef = ref(null)
 const mdPreviewRef = ref(null)
 /**
  * Resolves when an in-flight first save of an Untitled buffer finishes (true on
@@ -569,6 +578,10 @@ let untitledSavePromise = null
 // dedicated 'closeUntitled' event. The other exit paths (header X / nav) already
 // navigate through guardExitEdit's action, so they need nothing extra.
 function handleExitEditRequest() {
+    if (props.file?.isDrawio) {
+        drawioViewerRef.value?.requestExit?.()
+        return
+    }
     if (props.file?.isExcalidraw) {
         excalidrawViewerRef.value?.requestExit?.()
         return
@@ -727,6 +740,14 @@ function handleToggleEdit() {
 // (save completed or changes discarded). Returns true if the action may
 // proceed, false if the user cancelled or a save failed.
 async function guardExitEdit(action) {
+    // draw.io behaves like Excalidraw: the editor IS the view, so there is no
+    // edit-mode bookkeeping — just confirm the diagram is saved.
+    if (props.file?.isDrawio) {
+        const exited = await drawioViewerRef.value?.requestExit?.()
+        if (exited !== true) return false
+        action()
+        return true
+    }
     // Excalidraw opens directly in the editor and never leaves "edit mode",
     // so the CodeMirror editing/exit bookkeeping doesn't apply — just confirm
     // the scene is saved (requestExit resolves once the write completes).
@@ -902,7 +923,7 @@ watch(() => props.file, (f, oldF) => {
         scrollRestore.onFileChanged(null, false)
         return
     }
-    if (f.isImage || f.isPdf || f.isAudio || f.isVideo || f.isOffice || f.isExcalidraw || f.isBinary || f.tooLarge || f.error) {
+    if (f.isImage || f.isPdf || f.isAudio || f.isVideo || f.isOffice || f.isExcalidraw || f.isDrawio || f.isBinary || f.tooLarge || f.error) {
         loading.value = false
     } else {
         loading.value = f.content == null
@@ -912,7 +933,7 @@ watch(() => props.file, (f, oldF) => {
 
 watch(() => props.file?.content, (content) => {
     if (!props.file) return
-    if (props.file.isImage || props.file.isPdf || props.file.isAudio || props.file.isVideo || props.file.isOffice || props.file.isExcalidraw || props.file.isBinary || props.file.tooLarge || props.file.error) return
+    if (props.file.isImage || props.file.isPdf || props.file.isAudio || props.file.isVideo || props.file.isOffice || props.file.isExcalidraw || props.file.isDrawio || props.file.isBinary || props.file.tooLarge || props.file.error) return
     loading.value = content == null
     // Content loaded, try restore or attach listener
     if (content != null) {

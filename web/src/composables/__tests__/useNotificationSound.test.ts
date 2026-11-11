@@ -153,6 +153,10 @@ describe('useNotificationSound', () => {
     // answer to "did it send?".
     playVoiceModeCue('exit')
     expect(chimes()).toBe(2)
+    // The interruption cue is its own shape and must not be dropped as a
+    // duplicate of either neighbour.
+    playVoiceModeCue('interrupt')
+    expect(chimes()).toBe(3)
     vi.unstubAllGlobals()
   })
 
@@ -178,5 +182,35 @@ describe('useNotificationSound', () => {
       await import('@/composables/useNotificationSound')
     _resetSoundThrottleForTesting()
     expect(() => playVoiceModeCue('exit')).not.toThrow()
+  })
+
+  // ── unlocking the cue context ──
+  //
+  // Cues fire from speech/turn events, never a tap, so a context first created
+  // there can stay suspended under a strict autoplay policy — the whole mode
+  // then has no sound at all while looking perfectly healthy.
+
+  it('resumes a suspended context when the mode is entered', async () => {
+    const resume = vi.fn(() => Promise.resolve())
+    class SuspendedContext {
+      state = 'suspended'
+      currentTime = 0
+      destination = {}
+      resume = resume
+    }
+    vi.stubGlobal('AudioContext', SuspendedContext as unknown as typeof AudioContext)
+    const { unlockVoiceAudio, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+
+    unlockVoiceAudio()
+
+    expect(resume).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('never throws when there is no Web Audio to unlock', async () => {
+    const { unlockVoiceAudio } = await import('@/composables/useNotificationSound')
+    expect(() => unlockVoiceAudio()).not.toThrow()
   })
 })

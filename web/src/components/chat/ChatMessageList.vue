@@ -19,7 +19,7 @@
   </div>
 
   <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onContainerMouseDown" @touchstart.passive="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @wheel.passive="onWheelScroll" @scroll="handleScroll">
-    <div class="chat-messages-list" :key="listKey">
+    <div class="chat-messages-list" :class="{ 'is-empty': messages.length === 0 && !props.switching }" :key="listKey">
       <!-- Session switching in progress: the old messages were cleared but the
            new session's history is still loading — show simulated message
            bubbles in place of the empty state instead of a full-area overlay
@@ -28,62 +28,73 @@
         v-if="props.switching && messages.length === 0"
         class="chat-switching-indicator"
       />
-      <div v-else-if="messages.length === 0" class="chat-empty">
-      <template v-if="agents && agents.length === 0">
-        <Bot class="no-agents-icon empty-state__icon" />
-        <span class="no-agents-title">{{ t('chat.messageList.noAgentsTitle') }}</span>
-        <span class="no-agents-desc">{{ t('chat.messageList.noAgentsDesc') }}</span>
-        <button class="no-agents-btn" @click="openWelcome">
-          <Settings :size="16" />
-          <span>{{ t('chat.messageList.noAgentsAction') }}</span>
-        </button>
-      </template>
-      <template v-else-if="isGroupSession">
-        <!-- Group empty state. Same card language as the single-agent welcome
-             (surface + border + radius + 280px cap). The card leads with the
-             roster stack + the group's MODE chip, then explains how that mode
-             works — the two modes route completely differently (a host decides
-             who speaks; free mode relays via @-mentions) and that difference is
-             invisible from the roster alone. The group name and member list are
-             already in the header, so they are not repeated here. -->
-        <div class="group-welcome">
-          <div class="group-welcome-head">
-            <AvatarStack :members="groupStackMembers" size="lg" :max="4" />
-            <span class="group-welcome-mode" :class="`group-welcome-mode--${groupMode}`">
-              <component :is="groupModeIcon" :size="11" />
-              {{ groupModeTitle }}
+      <template v-else-if="messages.length === 0">
+        <EmptyState
+          v-if="agents && agents.length === 0"
+          :icon="Bot"
+          :title="t('chat.messageList.noAgentsTitle')"
+          :desc="t('chat.messageList.noAgentsDesc')"
+        >
+          <template #action>
+            <button class="fbtn fbtn-primary" @click="openWelcome">
+              <Settings :size="16" />
+              <span>{{ t('chat.messageList.noAgentsAction') }}</span>
+            </button>
+          </template>
+        </EmptyState>
+
+        <!-- Group empty state. The card leads with the mode's glyph and name,
+             then explains how that mode works — the two modes route completely
+             differently (a host decides who speaks; free mode relays via
+             @-mentions) and that difference is invisible from the roster alone.
+             The group name and member list are already in the header, so they
+             are not repeated here. -->
+        <EmptyState v-else-if="isGroupSession" :icon="groupModeIcon" :title="groupModeTitle">
+          <template #desc>
+            <div class="group-welcome">
+              <span class="group-welcome-hint">{{ groupModeDesc }}</span>
+              <!-- A host group may legitimately have the host as its only member
+                   (the backend allows it; only FREE groups require two). It routes
+                   exactly like a single chat, so the user who built one needs to
+                   know why nobody else is answering — and that the fix is adding a
+                   member, not that the group is broken. -->
+              <span v-if="isSoloGroup" class="group-welcome-solo">
+                {{ hasOnlyDisabledPeers ? t('chat.messageList.groupSoloDisabledHint') : t('chat.messageList.groupSoloMemberHint') }}
+              </span>
+              <ul class="group-welcome-tips">
+                <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
+              </ul>
+            </div>
+          </template>
+        </EmptyState>
+
+        <EmptyState v-else-if="currentAgent && !isGroupSession" :title="currentAgent.name">
+          <template #icon>
+            <span class="agent-welcome-icon">
+              <AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="xxl" />
             </span>
-          </div>
-          <span class="group-welcome-hint">{{ groupModeDesc }}</span>
-          <!-- A host group may legitimately have the host as its only member
-               (the backend allows it; only FREE groups require two). It routes
-               exactly like a single chat, so the user who built one needs to
-               know why nobody else is answering — and that the fix is adding a
-               member, not that the group is broken. -->
-          <span v-if="isSoloGroup" class="group-welcome-solo">
-            {{ hasOnlyDisabledPeers ? t('chat.messageList.groupSoloDisabledHint') : t('chat.messageList.groupSoloMemberHint') }}
-          </span>
-          <ul class="group-welcome-tips">
-            <li v-for="(tip, i) in groupModeTips" :key="i">{{ tip }}</li>
-          </ul>
-        </div>
-      </template>
-      <template v-else-if="currentAgent && !isGroupSession">
-        <div class="agent-welcome">
-          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="lg" /></span>
-          <div class="agent-welcome-info">
-            <span class="agent-welcome-name">{{ currentAgent.name }}</span>
+          </template>
+          <template #desc>
             <span class="agent-welcome-specialty">{{ currentAgent.specialty }}</span>
             <div class="agent-welcome-tags">
-              <span class="agent-welcome-tag agent-welcome-backend">{{ currentAgent.backend }}</span>
+              <!-- The bare backend id ("opencode", "claude") reads as an
+                   unexplained word, so the tag says what the value is. -->
+              <span class="agent-welcome-tag agent-welcome-backend">
+                <span class="agent-welcome-tag-label">{{ t('chat.messageList.backendTag') }}</span>{{ currentAgent.backend }}
+              </span>
               <span v-if="currentAgent.model" class="agent-welcome-tag agent-welcome-model"><ProviderIcon :model-name="currentAgent.model" :size="11" />{{ currentAgent.model }}</span>
             </div>
-          </div>
-        </div>
-        <span class="agent-welcome-hint">{{ t('chat.messageList.startConversation') }}</span>
+            <div class="agent-welcome-hint">{{ t('chat.messageList.startConversation') }}</div>
+          </template>
+        </EmptyState>
+
+        <EmptyState
+          v-else
+          :icon="Bot"
+          :title="t('chat.messageList.startConversationAI')"
+          :desc="t('chat.messageList.startConversationAIDesc')"
+        />
       </template>
-      <span v-else>{{ t('chat.messageList.startConversationAI') }}</span>
-    </div>
 
     <!-- Key strategy:
       - DB messages: 'db-{numericId}' (stable, never changes)
@@ -135,7 +146,7 @@
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
         @file-tag-click="$emit('file-tag-click', $event)"
-        @quote-message="$emit('quote-message', $event)"
+        @quote-message="(msg, el) => $emit('quote-message', msg, el)"
         @task-card-click="$emit('task-card-click', $event)"
         @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
         @render-flush="emit('render-flush')"
@@ -231,7 +242,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings, MessageCircleQuestion, Crown, AtSign } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import AvatarStack from '@/components/common/AvatarStack.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatSkeleton from './ChatSkeleton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -1964,6 +1975,15 @@ defineExpose({
   gap: var(--space-8);
 }
 
+/* Empty transcript: the list has no rows, so it can take the scroll area's
+   height and let the shared empty state centre itself. Without this the block
+   is content-height and hugs the top of the pane (which is what it used to do).
+   Only applied when there is nothing to show — with messages the list must stay
+   content-sized or the scroll container would clip it. */
+.chat-messages-list.is-empty {
+  flex: 1;
+}
+
 /* ── /btw anchor ──
    A small pill marking "here I asked a side question". It is a sibling of the
    message rows (a direct child of .chat-messages-list), so it participates in
@@ -2035,71 +2055,14 @@ defineExpose({
   flex-shrink: 0;
 }
 
-.chat-empty {
-  text-align: center;
-  padding: calc(32 * var(--dp)) var(--space-7);
-  color: var(--text-muted);
-  font-size: var(--font-size-md);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-7);
-  flex: 1;
-}
-
-.agent-welcome {
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: calc(14 * var(--dp)) var(--space-7);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  max-width: calc(280 * var(--dp));
-  width: 100%;
-  text-align: left;
-}
-
-/* Group empty state. Mirrors .agent-welcome's card (surface, border, radius,
-   280px cap) so both empty states read as one family. Unlike the single-agent
-   card this is a vertical stack: a head row (roster + mode chip), the mode's
-   one-line description, then its bullet tips — the mode's routing rules need
-   more than a single line to explain. */
+/* The agent/group detail under the shared empty state's title. It is the
+   description slot, so it is a plain centred stack — the card surface the old
+   welcome used is gone (the empty state is one shape across the app now). */
 .group-welcome {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: var(--space-4);
-  padding: calc(14 * var(--dp)) var(--space-7);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  max-width: calc(300 * var(--dp));
-  width: 100%;
-  text-align: left;
-}
-
-.group-welcome-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-5);
-}
-
-/* Mode chip: same neutral recipe as the session list's mode chip (muted
-   tertiary surface), with the icon carrying the host/free distinction. */
-.group-welcome-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  padding: calc(2 * var(--dp)) var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  white-space: nowrap;
 }
 
 .group-welcome-hint {
@@ -2124,6 +2087,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* The block above is centred; bullet text reads better left-aligned. */
+  text-align: left;
+  max-width: calc(300 * var(--dp));
 }
 
 .group-welcome-tips li {
@@ -2146,10 +2112,13 @@ defineExpose({
   opacity: var(--opacity-muted);
 }
 
+/* Same size as every other empty-state glyph (see --empty-icon-size): the
+   group welcome, the "no agents" welcome and this one are the same block, so a
+   smaller tile here would read as a different kind of thing. */
 .agent-welcome-icon {
   flex-shrink: 0;
-  width: calc(40 * var(--dp));
-  height: calc(40 * var(--dp));
+  width: var(--empty-icon-size);
+  height: var(--empty-icon-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2157,24 +2126,11 @@ defineExpose({
   border-radius: var(--radius-md);
 }
 
-.agent-welcome-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: calc(3 * var(--dp));
-  min-width: 0;
-}
-
-.agent-welcome-name {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-}
-
 .agent-welcome-specialty {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   line-height: var(--line-height-snug);
+  text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -2184,16 +2140,28 @@ defineExpose({
 
 .agent-welcome-tags {
   display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
-  margin-top: var(--space-1);
+  margin-top: var(--space-3);
 }
 
 .agent-welcome-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font-size: var(--font-size-2xs);
   padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
+}
+
+/* "后端" in front of the id: the value alone does not say what it is. Muted so
+   the id stays the thing you read. */
+.agent-welcome-tag-label {
+  opacity: var(--opacity-soft);
+  font-weight: var(--font-weight-normal);
 }
 
 .agent-welcome-backend {
@@ -2210,51 +2178,17 @@ defineExpose({
   white-space: nowrap;
 }
 
+/* The closing line ("send a message to start") is a different kind of statement
+   from the facts above it, so it gets its own air instead of stacking into the
+   same block — that density is what made the bottom half read as cramped. */
 .agent-welcome-hint {
+    margin-top: var(--space-6);
     font-size: var(--font-size-sm);
     color: color-mix(in srgb, var(--text-muted) 70%, transparent);
 }
 
-/* No agents empty state */
-.no-agents-title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-}
-
-.no-agents-desc {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  max-width: calc(240 * var(--dp));
-  text-align: center;
-  line-height: var(--line-height-normal);
-}
-
-.no-agents-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-7);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-  cursor: pointer;
-  transition: background var(--duration-base) ease, border-color var(--duration-base) ease;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.no-agents-btn:active {
-  background: var(--bg-tertiary);
-}
-
-@media (hover: hover) {
-  .no-agents-btn:hover {
-    background: var(--bg-tertiary);
-    border-color: var(--accent-color);
-  }
-}
+/* No agents empty state: the action uses the shared `.fbtn` pill, so nothing
+   local to declare here. */
 
 /* Lazy load feedback area — floating pill pinned to the top of the message
    area. Sits above the scroll container (absolute, no layout footprint) so

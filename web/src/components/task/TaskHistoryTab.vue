@@ -3,10 +3,13 @@
     <div v-if="loading && allExecutions.length === 0" class="history-skeleton">
       <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
     </div>
-    <div v-else-if="allExecutions.length === 0" class="history-empty">
-      <History class="empty-icon empty-state__icon" />
-      <span>{{ t('task.exec.noExecutions') }}</span>
-    </div>
+    <EmptyState
+      v-else-if="allExecutions.length === 0"
+      :icon="History"
+      :title="t('task.exec.noExecutions')"
+      :desc="t('task.exec.noExecutionsDesc')"
+      :fill="false"
+    />
     <div v-else class="history-list">
       <div v-for="exec in allExecutions" :key="exec.id" class="execution-item" :class="{ running: isRunning(exec), unread: !isRunning(exec) && isUnreadDisplay(exec), 'just-completed': isJustCompleted(exec) }" @click="openDetail(exec)">
         <div class="execution-row">
@@ -54,7 +57,11 @@
               </div>
               <div v-if="exec.metadata && (exec.metadata.model || exec.metadata.inputTokens || exec.metadata.outputTokens)" class="exec-meta-row">
                 <span v-if="exec.metadata.model" class="exec-meta-tag">{{ exec.metadata.model }}</span>
-                <span v-if="exec.metadata.inputTokens || exec.metadata.outputTokens" class="exec-meta-tag">{{ formatTokens(exec.metadata) }}</span>
+                <span
+                  v-if="exec.metadata.inputTokens || exec.metadata.outputTokens"
+                  class="exec-meta-tag"
+                  :title="tokenTooltip(exec.metadata)"
+                >{{ formatTokens(exec.metadata) }}</span>
               </div>
             </template>
           </div>
@@ -88,8 +95,10 @@ import { useTaskHistory } from '@/composables/useTaskHistory.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents.ts'
 import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import { formatDuration, formatDateTime } from '@/utils/format.ts'
+import { formatCompactCount } from '@/utils/usageFormat.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const props = defineProps({
   task: Object,
@@ -130,9 +139,19 @@ const {
 
 function formatTokens(meta) {
   const parts = []
-  if (meta.inputTokens) parts.push(`${meta.inputTokens.toLocaleString()}↑`)
-  if (meta.outputTokens) parts.push(`${meta.outputTokens.toLocaleString()}↓`)
+  if (meta.inputTokens) parts.push(`${formatCompactCount(meta.inputTokens)}↑`)
+  if (meta.outputTokens) parts.push(`${formatCompactCount(meta.outputTokens)}↓`)
   return parts.join(' ')
+}
+
+/** Hover text for the token chip. The compact form is what fits beside the
+ *  model name, but it rounds ("12.3K"), so the tooltip carries the exact
+ *  counts — same split the per-message usage tail uses. */
+function tokenTooltip(meta) {
+  return t('chat.message.tokenUsed', {
+    input: Number(meta.inputTokens || 0).toLocaleString('en-US'),
+    output: Number(meta.outputTokens || 0).toLocaleString('en-US'),
+  })
 }
 
 /** Compact "owner/repo PR #123" for an event-triggered run, or '' when the run
@@ -368,25 +387,12 @@ defineExpose({
   min-height: 0;
 }
 
-/* ── Empty state ── */
-.history-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-6);
-  padding: calc(24 * var(--dp)) 0;
-  color: var(--text-muted, #999);
-  font-size: var(--font-size-lg);
-}
-
 .history-skeleton {
   /* 12dp is `.execution-row`'s inset. */
   --panel-skeleton-inset: calc(12 * var(--dp));
   padding: var(--space-2) 0;
 }
 
-/* Size, stroke and colour come from the global `.empty-state__icon` rule. */
 
 /* ── Execution items ── */
 .history-list {
@@ -398,7 +404,7 @@ defineExpose({
 .execution-item {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   overflow: hidden;
   transition: all var(--duration-slow) ease;
 }

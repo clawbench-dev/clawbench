@@ -20,10 +20,12 @@
           :chart="true"
           :label="t('common.loading')"
         />
-        <div v-else-if="clocLanguages.length === 0" class="stats-empty">
-          <FileCode2 class="stats-empty-icon empty-state__icon" />
-          <span>{{ t('gitStats.clocNoData') }}</span>
-        </div>
+        <EmptyState
+          v-else-if="clocLanguages.length === 0"
+          :icon="FileCode2"
+          :title="t('gitStats.clocNoData')"
+          :desc="t('gitStats.clocNoDataDesc')"
+        />
         <template v-else>
           <div class="cloc-totals">
             <div class="stats-total">
@@ -123,6 +125,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Files, FileCode2, Code2, MessageSquare, Space, FileStack } from 'lucide-vue-next'
 import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
@@ -231,7 +234,7 @@ onMounted(() => {
 .cloc-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-5);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -242,7 +245,7 @@ onMounted(() => {
 .stats-card-panel {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
@@ -263,20 +266,10 @@ onMounted(() => {
 }
 .stats-error {
   padding: calc(9 * var(--dp)) var(--space-6);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
-  font-size: var(--font-size-md);
-}
-.stats-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  padding: calc(48 * var(--dp)) 0;
-  color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
 .cloc-totals {
@@ -288,7 +281,7 @@ onMounted(() => {
 .stats-total {
   background: var(--bg-elevated, var(--bg-primary));
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;

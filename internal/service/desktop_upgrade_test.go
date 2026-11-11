@@ -242,6 +242,19 @@ func TestReleaseAssetURLs_AlwaysIncludesDirectGitHub(t *testing.T) {
 	assert.True(t, hasDirect, "direct github.com URL must always be a candidate")
 }
 
+func TestGitHubReleaseMirrors_ArePrefixProxiesWithTrailingSlash(t *testing.T) {
+	// The prefix is concatenated with the canonical URL, so a missing trailing
+	// slash silently produces "https://ghfast.tophttps://github.com/..." — which
+	// still CONTAINS the canonical URL as a substring and would therefore pass
+	// the well-formedness check above.
+	seen := map[string]bool{}
+	for _, m := range githubReleaseMirrors {
+		assert.Truef(t, strings.HasSuffix(m, "/"), "mirror prefix must end with a slash: %q", m)
+		assert.Falsef(t, seen[m], "duplicate mirror: %q", m)
+		seen[m] = true
+	}
+}
+
 func TestReleaseAssetURLs_MirrorPrefixesAreWellFormed(t *testing.T) {
 	const asset = "clawbench-desktop-linux-x64-v0.98.0.zip"
 	urls := releaseAssetURLs("v0.98.0", asset)

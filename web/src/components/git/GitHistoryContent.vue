@@ -64,7 +64,14 @@
         <div v-if="filesLoading" class="git-history-loading git-history-loading--skeleton">
           <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
         </div>
-        <div v-else-if="totalFileCount === 0" class="git-history-empty">{{ t('git.history.noFileChanges') }}</div>
+        <div v-else-if="totalFileCount === 0" class="git-history-empty">
+          <EmptyState
+            :icon="FileText"
+            :title="t('git.history.noFileChanges')"
+            :desc="t('git.history.noFileChangesDesc')"
+            :fill="false"
+          />
+        </div>
         <!-- Merge commit: grouped by parent branch -->
         <div v-else-if="mergeGroups.length > 0" class="drilldown-list">
           <div v-for="group in mergeGroups" :key="group.label" class="merge-group">
@@ -189,9 +196,10 @@
 </template>
 
 <script setup>
-import { Plus, Minus, ChevronUp, ChevronDown } from 'lucide-vue-next'
+import { Plus, Minus, ChevronUp, ChevronDown, FileText } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'

@@ -15,11 +15,13 @@ import { svgToDataUri } from '@/utils/svgDataUri'
 // causing wrong colors/shapes.
 const uid = `_${Math.random().toString(36).slice(2, 8)}`
 
-/** Size steps. Each maps to a --icon-size-* token (see variables.css) via a
- *  CSS class, so callers never pass raw pixels. Chosen to match the text each
- *  icon sits beside: sm=14 (dense meta), md=18 (default rows), lg=24 (larger
- *  list/avatar contexts), xl=40 (settings-detail preview). */
-export type AgentIconSize = 'sm' | 'md' | 'lg' | 'xl'
+/** Size steps. Each maps to a token via a CSS class, so callers never pass raw
+ *  pixels. Chosen to match the text each icon sits beside: sm=14 (dense meta),
+ *  md=18 (default rows), lg=24 (larger list/avatar contexts), xl=40
+ *  (settings-detail preview), xxl=56 (`--empty-icon-size`, the one size every
+ *  empty state draws its glyph at — an avatar standing in for that glyph has to
+ *  match it, and no step of the text-adjacent ladder comes close). */
+export type AgentIconSize = 'sm' | 'md' | 'lg' | 'xl' | 'xxl'
 
 const props = withDefaults(defineProps<{
     backend: string
@@ -64,15 +66,19 @@ const initial = computed(() => {
 </script>
 
 <style scoped>
-/* Size classes set --ai-size from the --icon-size-* tokens and drive the box.
-   Written as element-agnostic rules so the same class sizes whichever of the
-   three render paths (svg / img / initial span) is active. A single source
-   (--ai-size) also lets the initial glyph scale from the box without repeating
-   the calc per class. */
+/* Size classes set --ai-size from a token and drive the box. Written as
+   element-agnostic rules so the same class sizes whichever of the three render
+   paths (svg / img / initial span) is active. A single source (--ai-size) also
+   lets the initial glyph scale from the box without repeating the calc per
+   class. */
 .agent-icon--sm { --ai-size: var(--icon-size-sm); }
 .agent-icon--md { --ai-size: var(--icon-size-md); }
 .agent-icon--lg { --ai-size: var(--icon-size-lg); }
 .agent-icon--xl { --ai-size: var(--icon-size-xl); }
+/* Deliberately the empty-state token, not a rung of the --icon-size ladder:
+   the welcome card's avatar IS that empty state's glyph and must not drift from
+   the rest of the app's empty states. */
+.agent-icon--xxl { --ai-size: var(--empty-icon-size); }
 
 .agent-icon-svg,
 .agent-icon-img,

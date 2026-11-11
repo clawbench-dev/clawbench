@@ -380,6 +380,48 @@ describe('MeetingStage tabs', () => {
     expect(tab(wrapper, 'participants').find('.live-count').exists()).toBe(false)
   })
 
+  it('hands control over instead of leaving the previous controller stuck', async () => {
+    remoteControlOk.value = true
+    ;(shareApi.viewers as { value: unknown[] }).value = [
+      { id: 'v1', name: '', talk: 'muted' },
+      { id: 'v2', name: '', talk: 'muted' },
+    ]
+    try {
+      const wrapper = mountPanel()
+      await flushPromises()
+      const relay = controlRelay()
+      relay({ t: 'ctrl-req', from: 'v1' })
+      relay({ t: 'ctrl-req', from: 'v2' })
+      await tab(wrapper, 'participants').trigger('click')
+      await nextTick()
+
+      const allow = (id: string) =>
+        wrapper.find(`[data-viewer-id="${id}"] [data-action="control-allow"]`)
+      await allow('v1').trigger('click')
+      await nextTick()
+      await allow('v2').trigger('click')
+      await nextTick()
+
+      const calls = (shareApi.sendControlTo as ReturnType<typeof vi.fn>).mock.calls as Array<
+        [string, { t: string; viewerId?: string; granted?: boolean }]
+      >
+      const revoke = calls.findIndex(
+        ([id, frame]) => id === 'v1' && frame.t === 'ctrl-grant' && frame.granted === false,
+      )
+      const grant = calls.findIndex(
+        ([id, frame]) => id === 'v2' && frame.t === 'ctrl-grant' && frame.granted === true,
+      )
+      // The shell only ever holds ONE grantee, and a page left in "granted"
+      // keeps swallowing its own pointer while every event is dropped here.
+      // v1 must therefore be told BEFORE v2 is granted.
+      expect(revoke).toBeGreaterThanOrEqual(0)
+      expect(grant).toBeGreaterThan(revoke)
+    } finally {
+      remoteControlOk.value = false
+      ;(shareApi.viewers as { value: unknown[] }).value = [{ id: 'v1', name: '', talk: 'muted' }]
+    }
+  })
+
   it('keeps 听记, 允许成员发言 and 允许成员共享屏幕 in one switch group', async () => {
     const wrapper = mountPanel()
     await flushPromises()
@@ -458,7 +500,7 @@ describe('MeetingStage tabs', () => {
     expect(pane.text()).toContain('AI notes were off')
     // The same centred card the record's tabs draw, not a muted line in the
     // corner — that read as a pane that failed to render.
-    expect(pane.find('[data-role="notes-off"]').classes()).toContain('meeting-empty')
+    expect(pane.find('[data-role="notes-off"]').classes()).toContain('empty-state')
   })
 
   it('draws the listening card while 听记 runs but nothing was transcribed yet', async () => {
@@ -471,7 +513,7 @@ describe('MeetingStage tabs', () => {
     const pane = wrapper.find('[data-role="notes-pane"]')
     const card = pane.find('[data-role="notes-listening"]')
     expect(card.exists()).toBe(true)
-    expect(card.classes()).toContain('meeting-empty')
+    expect(card.classes()).toContain('empty-state')
     expect(card.text()).toContain('Listening')
     // Not the "it was off" copy: the recorder is running, the lines just have
     // not arrived.

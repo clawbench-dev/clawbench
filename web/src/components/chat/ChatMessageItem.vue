@@ -180,6 +180,13 @@
          money figure is ONE unit: credits for backends that bill in credits,
          otherwise the monetary cost with its $ sign. -->
     <div v-if="usageTail" class="chat-usage-inline" :title="usageTailTooltip">
+      <!-- Which model produced THIS reply. Pinned to the row's left edge while
+           the figures keep their flush-right home, so the two never collide;
+           long ids (provider/model pairs, dated snapshots) ellipsize instead of
+           squeezing the numbers. The value is the per-turn snapshot the backend
+           wrote with the reply — deliberately NOT the session's current model,
+           which would relabel old replies after a mid-session switch. -->
+      <span v-if="usageTail.model" class="chat-usage-model" :title="usageTail.model">{{ usageTail.model }}</span>
       <span v-if="usageTail.input || usageTail.output" class="chat-usage-tokens">
         <span v-if="usageTail.input" class="chat-usage-tok"><ArrowUp class="chat-usage-arrow" aria-hidden="true" />{{ usageTail.input }}</span>
         <span v-if="usageTail.output" class="chat-usage-tok"><ArrowDown class="chat-usage-arrow" aria-hidden="true" />{{ usageTail.output }}</span>
@@ -227,12 +234,13 @@
         <button
           v-if="!readOnly && !msg.streaming && quotableText"
           class="chat-action-btn"
+          data-action="quote-message"
           :title="t('quoteBar.quoteMessage')"
           :aria-label="t('quoteBar.quoteMessage')"
           :draggable="quoteDragEnabled"
           @dragstart="onQuoteDragStart"
           @dragend="cleanupDragGhost()"
-          @click="$emit('quote-message', msg)"
+          @click="$emit('quote-message', msg, $event.currentTarget)"
         >
           <MessageSquare :size="14" />
         </button>
@@ -331,6 +339,7 @@ import { useI18n } from 'vue-i18n'
 import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { formatCompactCount, formatCompactCredit, formatTailCost } from '@/utils/usageFormat.ts'
+import { formatModelIdForDisplay } from '@/utils/modelDisplay.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -631,7 +640,11 @@ const copyableUserText = computed(() => {
 /**
  * This turn's consumption, rendered inside the bubble.
  *
- * Two parts, independent of each other:
+ * Three parts, independent of each other:
+ *   - model: the model THIS reply came from (the backend's per-turn snapshot),
+ *     rendered on the row's left edge. Absent when the backend did not report
+ *     one — never backfilled from the session's current model, which would
+ *     relabel old replies after a mid-session switch;
  *   - tokens (input/output): reported by every backend, so they show whenever
  *     the turn reported any;
  *   - money: ONE figure, in the unit the backend bills in. Credit wins when
@@ -640,8 +653,8 @@ const copyableUserText = computed(() => {
  *     that instead, prefixed with $. The two units never appear together, so
  *     the number is never ambiguous.
  *
- * A turn that reported no money and no tokens renders nothing at all — no
- * empty group, no zero.
+ * A turn that reported none of the three renders nothing at all — no empty
+ * group, no zero.
  */
 const usageTail = computed(() => {
   if (props.msg?.role !== 'assistant') return null
@@ -651,8 +664,11 @@ const usageTail = computed(() => {
   const cost = Number(meta.costUsd) || 0
   const input = Number(meta.inputTokens) || 0
   const output = Number(meta.outputTokens) || 0
-  if (credit <= 0 && cost <= 0 && input <= 0 && output <= 0) return null
+  const rawModel = typeof meta.model === 'string' ? meta.model : ''
+  const model = rawModel ? formatModelIdForDisplay(rawModel) : ''
+  if (!model && credit <= 0 && cost <= 0 && input <= 0 && output <= 0) return null
   return {
+    model,
     // One money figure only: credit when the backend bills in credits,
     // otherwise the monetary cost with its $ sign.
     credit: credit > 0 ? formatCompactCredit(credit) : '',
@@ -1002,8 +1018,14 @@ const copyPayload = quotableText
 /* Chat Meta Bar — the message's footer: duration/timestamp on the left, actions
    on the right. Sits OUTSIDE the bubble (sibling of .msg-card), so it always
    renders on the panel background and never inherits the user bubble's
-   white-on-accent text. The hairline turns it into a footer rather than a loose
-   row floating under the reply. */
+   white-on-accent text.
+
+   NO rule above it, deliberately. A 1px border here was meant to "turn the row
+   into a footer", but it only spanned the row's own (fit-content) width, so on
+   a user message it capped nothing and read as a stray line under the bubble.
+   The footer reading comes from the muted small text and the icon row itself,
+   plus the bubble's own fill and radius — the same way every chat UI separates
+   a bubble from its actions. */
 .chat-meta-bar {
     display: flex;
     align-items: center;
@@ -1011,7 +1033,6 @@ const copyPayload = quotableText
     margin-top: var(--space-2);
     gap: var(--space-3);
     padding: var(--space-2) var(--space-6) 0;
-    border-top: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
     min-width: 0;
 }
 
@@ -1060,6 +1081,21 @@ const copyPayload = quotableText
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
+}
+
+/* The model that produced this reply. Left edge of the row, while the figures
+   stay flush right: `margin-right: auto` (rather than `space-between`) keeps a
+   row that has NO model flush right exactly as before. `min-width: 0` +
+   `overflow: hidden` is what makes `text-overflow` reachable at all — a flex
+   item refuses to shrink below its content otherwise, and long ids
+   (`["provider","model"]` pairs, dated snapshots) would push the numbers out. */
+.chat-usage-model {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-right: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .chat-usage-tok {

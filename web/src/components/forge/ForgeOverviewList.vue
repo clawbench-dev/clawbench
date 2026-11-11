@@ -28,14 +28,15 @@
   </div>
 
   <div v-else-if="unread.items.value.length === 0" class="forge-state">
-    <div class="forge-empty-card">
-      <Rss class="forge-empty-icon empty-state__icon" />
-      <!-- The empty state names the view it belongs to: "nothing unread" and
-           "nothing read yet" are different facts, and one shared string would
-           read as a bug in whichever view it did not describe. -->
-      <div class="forge-empty-title">{{ t(`forge.overview.empty.${unread.filter.value}`) }}</div>
-      <div class="forge-empty-hint">{{ t(`forge.overview.emptyHint.${unread.filter.value}`) }}</div>
-    </div>
+    <!-- The empty state names the view it belongs to: "nothing unread" and
+         "nothing read yet" are different facts, and one shared string would
+         read as a bug in whichever view it did not describe. -->
+    <EmptyState
+      :icon="Rss"
+      :title="t(`forge.overview.empty.${unread.filter.value}`)"
+      :desc="t(`forge.overview.emptyHint.${unread.filter.value}`)"
+      :fill="false"
+    />
   </div>
 
   <div v-else class="forge-list">
@@ -84,6 +85,7 @@ import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, MessageSquare, Rss } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useForge'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
 import type { ForgeUnreadItem } from '@/utils/forgeApi'

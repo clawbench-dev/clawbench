@@ -344,8 +344,7 @@ import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
-import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { requestTarget, mintPendingQuoteId } from '@/composables/useConversationTarget.ts'
+import { resetQuotePin, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
 import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
@@ -638,6 +637,10 @@ const freeDialog = useFreeDialog()
 const theme = inject('theme', ref('light'))
 const { openFilePath } = useFilePathAnnotation()
 const quoteDetail = useQuoteDetail()
+// The message meta bar's 引用问答 button opens the floating quote bar in
+// composer mode (see handleQuoteMessage) — the same surface a text selection
+// uses, so the destination row and the question input come for free.
+const quoteQuestion = useQuoteQuestion()
 
 async function handleFileTagClick(fileEntry) {
     // A quote card routes here through the shared file-tag-click event (the
@@ -660,7 +663,7 @@ async function handleFileTagClick(fileEntry) {
 }
 
 /**
- * Quote a whole chat message (the meta bar's 引用 button).
+ * Quote a whole chat message (the meta bar's 引用问答 button).
  *
  * The captured text is what the user reads: for an assistant reply that is
  * extractSpeakableText (which skips tool/thinking noise), for a user message its
@@ -672,12 +675,18 @@ async function handleFileTagClick(fileEntry) {
  * and message id included). They were built separately before and had drifted:
  * this one carried no session id at all, which made the quote unopenable.
  *
- * The destination is the conversation the user is reading (issue #560): a
- * comment on a message is about that conversation, so it lands in the active
- * session without a dialog. Cross-conversation delivery stays reachable from
- * the quote bar's long-press, which forces the picker.
+ * The button OPENS the floating quote bar (composer mode) instead of staging the
+ * card silently: quoting a message is almost always "I want to ask something
+ * about this", so the user gets the question input immediately, plus the
+ * destination row — which is the only way to send it to a DIFFERENT
+ * conversation (the bar's 发送到 row). Staging straight into the active session
+ * (the previous behaviour) forced a session switch to reach any other chat.
+ *
+ * Composer mode is deliberately opened with a pre-built payload rather than by
+ * staging a card: nothing enters the chat draft until the user commits, so
+ * dismissing the bar leaves the input untouched.
  */
-function handleQuoteMessage(msg) {
+function handleQuoteMessage(msg, anchorEl) {
     if (!msg) return
     // Shared with ChatMessageItem: strips the host's private notes (bcc) — a
     // quote becomes an attachment that is rendered into every member's injected
@@ -687,23 +696,29 @@ function handleQuoteMessage(msg) {
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
-    requestTarget({
-        mode: 'add',
-        quotes: [{
-            ...buildMessageQuote(
-                text,
-                { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
-                // Optimistic/local messages have no DB id; the quote is still
-                // valid, it just cannot be addressed later (and the drawer hides
-                // the jump action).
-                Number.isFinite(id) && id > 0 ? id : undefined,
-            ),
-            note: '',
-            id: mintPendingQuoteId(),
-        }],
-        attachments: [],
-        text: '',
-    }, { deliverTo: 'active' })
+    const quote = buildMessageQuote(
+        text,
+        { id: identity.currentSessionId.value, title: identity.currentSessionTitle.value },
+        // Optimistic/local messages have no DB id; the quote is still valid, it
+        // just cannot be addressed later (and the drawer hides the jump action).
+        Number.isFinite(id) && id > 0 ? id : undefined,
+    )
+
+    // This button means "the WHOLE message", so a live text selection must not
+    // be adopted as the quote — openComposer would otherwise prefer it (the
+    // select-then-click habit from the selection flow).
+    const sel = window.getSelection()
+    if (sel) sel.removeAllRanges()
+
+    quoteQuestion.openComposer({
+        quote,
+        label: quote.filePath
+            ? `${t('quoteBar.messageQuote')} · ${quote.filePath}`
+            : t('quoteBar.messageQuote'),
+        // Show WHAT is being quoted: a chat message has no path/address the
+        // label could point at, so the snippet is the only identification.
+        previewText: text,
+    }, { anchorEl })
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer

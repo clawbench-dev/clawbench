@@ -1,4 +1,4 @@
-//nolint:errcheck,gocyclo,gosec,goconst,noctx,rowserrcheck // legacy file, nolint-only approach for diff stability
+//nolint:errcheck,gocyclo,gosec,goconst,noctx // legacy file, nolint-only approach for diff stability
 package service
 
 import (
@@ -3619,8 +3619,17 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 // Called when transport switches from CLI to ACP — ACP manages its own session
 // mapping internally, so the CLI's external_session_id must not leak into the
 // ACP connection pool's GetOrCreateConn pre-population logic.
+//
+// Also called by ACP session recovery when the agent answers that the session no
+// longer exists. There the clear is load-bearing rather than hygienic: the pool
+// falls back to this column when its in-memory id is empty, so a failed write
+// makes the rebuild retry the dead id. Hence the log — a silent failure would
+// leave only "NewSessionFallback failed" with no hint why.
 func ClearExternalSessionID(sessionID string) {
-	_, _ = store.WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
+	if _, err := store.WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID); err != nil {
+		slog.Warn("clearExternalSessionID: write failed, a stale ACP session id may be retried",
+			slog.String("session", sessionID), slog.String("err", err.Error()))
+	}
 }
 
 // GetAgentTakeoverFrom returns the display name of the agent this session was
@@ -3858,26 +3867,32 @@ func summarizeContentForView(content string) string {
 	return string(b)
 }
 
-// enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
-// assistant messages by batch-querying the summaries table. Only messages with
-// role "assistant" are queried. The heavy content of messages that have a
-// reading summary and are not streaming is stripped to save bandwidth.
-func enrichMessagesWithSummaries(messages []model.ChatMessage) {
-	// Collect IDs of assistant messages
-	assistantIDs := make([]int64, 0, len(messages))
+// assistantMessageIDs returns the ids of the assistant messages in the slice
+// (the only rows summaries exist for) and the largest of them.
+func assistantMessageIDs(messages []model.ChatMessage) ([]int64, int64) {
+	ids := make([]int64, 0, len(messages))
+	newest := int64(0)
 	for _, msg := range messages {
-		if msg.Role == "assistant" {
-			assistantIDs = append(assistantIDs, msg.ID)
+		if msg.Role == roleAssistant {
+			ids = append(ids, msg.ID)
+			if msg.ID > newest {
+				newest = msg.ID
+			}
 		}
 	}
-	if len(assistantIDs) == 0 {
-		return
-	}
+	return ids, newest
+}
 
-	// Batch query summaries for all assistant messages
+// loadMessageSummaries batch-queries the summaries table for the given chat
+// message ids. A failed query yields empty maps: summaries are an enrichment,
+// and a history response must not fail because of them.
+func loadMessageSummaries(ids []int64) (map[int64]string, map[int64]*model.SummaryCards) {
+	summaries := make(map[int64]string, len(ids))
+	cards := make(map[int64]*model.SummaryCards)
+
 	query := "SELECT target_id, summary, COALESCE(summary_cards, '') FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("
-	args := make([]any, len(assistantIDs))
-	for i, id := range assistantIDs {
+	args := make([]any, len(ids))
+	for i, id := range ids {
 		if i > 0 {
 			query += ","
 		}
@@ -3888,13 +3903,10 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 
 	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
-		return
+		return summaries, cards
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
-	// Build map of message ID -> summary
-	summaryMap := make(map[int64]string)
-	cardMap := make(map[int64]*model.SummaryCards)
 	for rows.Next() {
 		var targetID int64
 		var summary string
@@ -3902,14 +3914,47 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 		if err := rows.Scan(&targetID, &summary, &cardsJSON); err != nil {
 			continue
 		}
-		summaryMap[targetID] = summary
+		summaries[targetID] = summary
 		if cardsJSON != "" {
-			var cards model.SummaryCards
-			if jerr := json.Unmarshal([]byte(cardsJSON), &cards); jerr == nil {
-				cardMap[targetID] = &cards
+			var parsed model.SummaryCards
+			if jerr := json.Unmarshal([]byte(cardsJSON), &parsed); jerr == nil {
+				cards[targetID] = &parsed
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return summaries, cards
+	}
+	return summaries, cards
+}
+
+// enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
+// assistant messages by batch-querying the summaries table. Only messages with
+// role "assistant" are queried. The heavy content of messages that have a
+// reading summary and are not streaming is stripped to save bandwidth — EXCEPT
+// the newest assistant reply in the slice, which is always sent whole (see the
+// newestAssistantID comment below).
+func enrichMessagesWithSummaries(messages []model.ChatMessage) {
+	// The newest assistant reply in this slice: never stripped. It is the row a
+	// live client is looking at, and the only row it can check its own streamed
+	// copy against. Finalize summarizes SYNCHRONOUSLY before the terminal `done`
+	// is emitted, so this row arrives stripped in the post-done reload — and the
+	// frontend's rebuild then has nothing to compare the live bubble with. It
+	// keeps the live blocks (anti-flicker) and a reply that lost its tail in
+	// transit (dropped frame / reconnect mid-stream) stayed truncated until a
+	// full rebuild (switch session, next turn). Sending the row whole lets the
+	// existing merge see the authoritative text and repair it in place.
+	//
+	// Not a bandwidth regression in the common case: the default 'mixed' display
+	// mode renders the newest reply as ORIGINAL text, so the client used to
+	// fetch exactly this row back from /api/rag/message — one round-trip that
+	// this replaces.
+	assistantIDs, newestAssistantID := assistantMessageIDs(messages)
+	if len(assistantIDs) == 0 {
+		return
+	}
+
+	summaryMap, cardMap := loadMessageSummaries(assistantIDs)
 
 	// Enrich messages
 	//
@@ -3930,7 +3975,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 			if cards, ok := cardMap[messages[i].ID]; ok {
 				messages[i].SummaryCards = cards
 			}
-			if !isGroup && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
+			if !isGroup && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming && messages[i].ID != newestAssistantID {
 				messages[i].Content = summarizeContentForView(messages[i].Content)
 			}
 		}

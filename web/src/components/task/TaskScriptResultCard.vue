@@ -64,7 +64,7 @@ const durationLabel = computed(() => {
   --src-accent: #10b981;
   margin: 0 var(--space-6) var(--space-5);
   border: 1px solid color-mix(in srgb, var(--src-accent) 25%, var(--border-color));
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--src-accent) 5%, var(--bg-primary));
   overflow: hidden;
 }

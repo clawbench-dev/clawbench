@@ -82,6 +82,12 @@ const asyncComponentStubs = {
     props: { file: Object, readonly: { type: Boolean, default: false } },
     template: '<div class="excalidrawviewer-stub" :data-readonly="String(readonly)" />',
   },
+  // draw.io editor host. Also mounted read-only on the share page.
+  DrawioViewer: {
+    name: 'DrawioViewer',
+    props: { file: Object, readonly: { type: Boolean, default: false } },
+    template: '<div class="drawioviewer-stub" :data-readonly="String(readonly)" />',
+  },
 }
 
 import ShareView from '@/share/ShareView.vue'
@@ -885,6 +891,7 @@ const PREVIEW_FLAGS: Record<string, string> = {
   isVideo: 'video',
   isOffice: 'office',
   isExcalidraw: 'excalidraw',
+  isDrawio: 'drawio',
 }
 
 /** Branches that are fallbacks rather than previews (download cards). */
@@ -914,6 +921,7 @@ const PREVIEW_FIXTURES: Array<{
   { kind: 'openapi', file: { name: 'api.yaml', path: '/repo/api.yaml', content: 'openapi: 3.0.0', subtype: 'openapi' }, selector: '.openapipreview-stub' },
   { kind: 'html', file: { name: 'a.html', path: '/repo/a.html', content: '<h1>x</h1>' }, selector: '.share-html-iframe' },
   { kind: 'excalidraw', file: { name: 'flow.xdraw', path: '/repo/flow.xdraw', content: '{"type":"excalidraw","elements":[]}', subtype: 'excalidraw' }, selector: '.excalidrawviewer-stub' },
+  { kind: 'drawio', file: { name: 'flow.drawio', path: '/repo/flow.drawio', content: '<mxfile/>', subtype: 'drawio' }, selector: '.drawioviewer-stub' },
   { kind: 'code', file: { name: 'a.go', path: '/repo/a.go', content: 'package main' }, selector: '.cm-viewer-stub' },
 ]
 

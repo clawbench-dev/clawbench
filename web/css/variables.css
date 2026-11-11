@@ -72,6 +72,16 @@
        row's own vertical padding. */
     --toolbar-btn-size: calc(26 * var(--dp));
     --toolbar-row-height: calc(32 * var(--dp));
+    /* ── Panel body inset. ONE value for every dock panel whose scroll body
+       holds cards: the meeting list and a meeting record, tasks, the share
+       centre, notifications and the three stats pages.
+
+       It used to be re-invented per panel — 8 / 10 / 12 / 16 — so two views of
+       the SAME tab (the meeting list and a record opened from it) inset their
+       cards by different amounts, and the record read as "wider" for no
+       reason. Row lists that are deliberately denser (file manager, mail) keep
+       their own tighter inset: they are rows, not cards. ── */
+    --panel-body-pad: var(--space-5);
     /* The safe-area inset is a DEVICE measurement, so it must NOT be scaled —
        a notch is the same physical size whatever the UI scale. */
     --header-safe-area-top: env(safe-area-inset-top, 0px);
@@ -371,8 +381,8 @@
        each matches the text it sits beside: sm (14) rides 10–12px meta, md (18)
        the default 13–15px rows, lg (24) larger list/avatar contexts, xl (40)
        the single settings-detail preview. Passed to AgentIcon as `size` enum
-       (sm|md|lg|xl), which resolves to these vars. Prefer the closest step over
-       a new one. ── */
+       (sm|md|lg|xl; its extra `xxl` step resolves to --empty-icon-size, not to
+       this ladder). Prefer the closest step over a new one. ── */
     --icon-size-sm: calc(14 * var(--dp));
     --icon-size-md: calc(18 * var(--dp));
     --icon-size-lg: calc(24 * var(--dp));

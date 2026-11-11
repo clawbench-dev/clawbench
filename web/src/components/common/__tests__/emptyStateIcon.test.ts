@@ -1,11 +1,15 @@
 /**
- * One glyph size for every empty state.
+ * One empty state, one glyph size, one shape.
  *
- * The app had drifted to nine sizes (24 → 56) and three opacities across ~20
- * "nothing here yet" surfaces, so the size now lives in `--empty-icon-size` and
- * every call site opts into the same global `.empty-state__icon` rule. jsdom
- * has no layout engine, so the contract is read off the sources: a regression
- * here is "someone passed `:size` again", which no rendered test would notice.
+ * The app used to draw "nothing here yet" ~20 times: nine glyph sizes (24 → 56),
+ * three opacities, ten container class names, and seven blocks that hugged the
+ * top of their pane because they had padding but no height to centre in. The
+ * glyph size was unified first (tokens + a global rule); this file now also pins
+ * the *shape*: every tab and sub-tab renders the shared `EmptyState`.
+ *
+ * jsdom has no layout engine, so the contract is read off the sources: a
+ * regression here is "someone hand-rolled another empty block" or "someone
+ * sized the glyph again", neither of which a rendered test would notice.
  */
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -25,37 +29,53 @@ function stripComments(css: string): string {
 /** Declarations of the first rule whose selector list is exactly `selector`. */
 function ruleDecls(css: string, selector: string): string | null {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const m = css.match(new RegExp(`(?:^|[},])\\s*${escaped}\\s*\\{([^}]*)\\}`))
+  // `m` so `^` also anchors at the start of a line: the first rule in a SFC's
+  // <style> block is preceded by markup, not by `}`.
+  const m = css.match(new RegExp(`(?:^|[},])\\s*${escaped}\\s*\\{([^}]*)\\}`, 'm'))
   return m ? m[1] : null
 }
 
+const COMPONENT = 'src/components/common/EmptyState.vue'
+
 /**
- * Every surface that draws an empty-state glyph. Adding one means adding it
- * here too — that is the point: the list is the inventory of the convention.
+ * Every tab / sub-tab surface that draws an empty state. Adding one means adding
+ * it here too — that is the point: the list is the inventory of the convention.
+ *
+ * Drawers and dialogs are deliberately out of scope: they still render their own
+ * centred block with the shared glyph, which is the same visual without the
+ * pane-height contract.
  */
 const EMPTY_STATES = [
-  'src/components/live/MeetingEmpty.vue',
-  'src/components/live/MeetingStage.vue',
+  'src/App.vue',
   'src/components/chat/ChatMessageList.vue',
-  'src/components/chat/QuickSendDrawer.vue',
-  'src/components/chat/UserMsgIndexDrawer.vue',
-  'src/components/chat/MessageClustersDrawer.vue',
   'src/components/file/FileManagerContent.vue',
-  'src/components/file/ContentSearchDialog.vue',
-  'src/components/file/InertPathPicker.vue',
-  'src/components/share/ShareCenterPanel.vue',
-  'src/components/git/GitCommitList.vue',
   'src/components/forge/ForgeOverviewList.vue',
   'src/components/forge/ForgePanelContent.vue',
-  'src/components/task/TaskListPage.vue',
-  'src/components/task/TaskHistoryTab.vue',
-  'src/components/terminal/TerminalPanelContent.vue',
-  'src/components/terminal/QuickCommandDrawer.vue',
-  'src/components/proxy/ProxyPanelContent.vue',
+  'src/components/git/GitBranchList.vue',
+  'src/components/git/GitCommitList.vue',
+  'src/components/git/GitHistoryContent.vue',
+  'src/components/git/GitTagList.vue',
+  'src/components/git/GitWorktreeList.vue',
+  'src/components/live/MeetingDetail.vue',
+  'src/components/live/MeetingList.vue',
+  'src/components/live/MeetingResources.vue',
+  'src/components/live/MeetingStage.vue',
+  'src/components/live/MemberScreenSurface.vue',
+  'src/components/mail/MailList.vue',
+  'src/components/mail/MailPanel.vue',
+  'src/components/mail/MailReader.vue',
   'src/components/notifications/NotificationsPanelContent.vue',
+  'src/components/proxy/ProxyPanelContent.vue',
+  'src/components/share/ShareCenterPanel.vue',
+  'src/components/stats/ClocStatsPanel.vue',
   'src/components/stats/GitCodeStatsPanel.vue',
   'src/components/stats/UsageStatsPanel.vue',
-  'src/components/stats/ClocStatsPanel.vue',
+  'src/components/task/TaskHistoryTab.vue',
+  'src/components/task/TaskListPage.vue',
+  'src/components/terminal/TerminalPanelContent.vue',
+  'src/share/LiveChatPanel.vue',
+  'src/share/LiveShareView.vue',
+  'src/share/MeetingShareDetail.vue',
 ]
 
 describe('the empty-state glyph is one size, declared once', () => {
@@ -78,54 +98,125 @@ describe('the empty-state glyph is one size, declared once', () => {
     expect(decls!).toMatch(/stroke-width:\s*var\(--empty-icon-stroke\)/)
   })
 
-  it('is opted into by every empty state', () => {
-    // Either the file puts the class on its own glyph, or it renders the shared
-    // `MeetingEmpty` — which does it for the caller. Both end at the same rule.
-    const missing = EMPTY_STATES.filter((f) => {
-      const src = read(f)
-      return !src.includes('empty-state__icon') && !src.includes('<MeetingEmpty')
-    })
-    expect(missing, 'these surfaces still draw their own empty glyph').toEqual([])
+  it('is opted into by the shared component', () => {
+    // The glyph comes either from the `icon` prop or the `#icon` slot; both are
+    // the component's business now, so the opt-in is checked once, here.
+    const src = read(COMPONENT)
+    expect(src).toContain('class="empty-state__icon"')
   })
 
-  it('puts the class on the glyph of each .empty-state container', () => {
-    // The file-level check above is necessary but blind: FileManagerContent has
-    // TWO empty states (search + directory) and only the search one carried the
-    // class, so "the file mentions empty-state__icon" stayed true while the
-    // directory glyph rendered at full opacity. Anchor on the container and
-    // require the opt-in on the glyph that follows it.
-    //
-    // The window is bounded so a sibling empty state further down the file
-    // cannot satisfy the check on this one's behalf; the glyph is the
-    // container's first child, so 400 characters is ample.
-    const WINDOW = 400
-    const offenders: string[] = []
-    let containers = 0
-    for (const f of EMPTY_STATES) {
-      const src = read(f)
-      for (const m of src.matchAll(/class="empty-state(?:[\s"][^"]*)?"/g)) {
-        containers++
-        const block = src.slice(m.index, m.index + WINDOW)
-        if (!/empty-state__icon|<MeetingEmpty/.test(block)) {
-          const line = src.slice(0, m.index).split('\n').length
-          offenders.push(`${f}:${line}: ${block.split('\n')[1]?.trim() ?? ''}`)
-        }
-      }
-    }
-    expect(containers, 'no .empty-state container was found — the anchors moved').toBeGreaterThan(0)
-    expect(offenders, 'these glyphs are not covered by .empty-state__icon').toEqual([])
+  it('sizes the chat welcome avatar from the same token', () => {
+    // The single-chat welcome puts an agent avatar where the glyph would go.
+    // It used to be a 40dp tile of its own, so the same surface drew two
+    // different sizes depending on whether it was a chat or a group.
+    const src = stripComments(read('src/components/chat/ChatMessageList.vue'))
+    const box = ruleDecls(src, '.agent-welcome-icon')
+    expect(box, '.agent-welcome-icon must exist').not.toBeNull()
+    expect(box!).toMatch(/width:\s*var\(--empty-icon-size\)/)
+    expect(box!).toMatch(/height:\s*var\(--empty-icon-size\)/)
+
+    // The avatar is an AgentIcon, whose ladder is sized for text; `xxl` is the
+    // step that resolves to the empty-state token rather than a second number.
+    expect(src).toMatch(/<AgentIcon[^>]*\ssize="xxl"/)
+    const agentIcon = stripComments(read('src/components/common/AgentIcon.vue'))
+    const xxl = ruleDecls(agentIcon, '.agent-icon--xxl')
+    expect(xxl, 'AgentIcon must declare the xxl step').not.toBeNull()
+    expect(xxl!).toMatch(/--ai-size:\s*var\(--empty-icon-size\)/)
   })
 
   it('leaves no call site sizing its own glyph', () => {
     // A `:size` on the empty glyph is dead code (CSS wins) that reads like a
-    // decision, and it is exactly how the nine sizes drifted apart. Checked
-    // per file, on the element that carries the shared class.
+    // decision, and it is exactly how the nine sizes drifted apart. Still
+    // checked app-wide: drawers render their own block with the shared class.
     const offenders: string[] = []
-    for (const f of EMPTY_STATES) {
+    for (const f of [...EMPTY_STATES, COMPONENT]) {
       const src = read(f)
       const re = /<[^>]*empty-state__icon[^>]*>/g
       for (const tag of src.match(re) ?? []) {
         if (/:size=/.test(tag)) offenders.push(`${f}: ${tag.replace(/\s+/g, ' ').slice(0, 80)}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('the empty-state shape is declared once', () => {
+  it('owns the container rule and the vertical-fill contract', () => {
+    const src = stripComments(read(COMPONENT))
+    const container = ruleDecls(src, '.empty-state')
+    expect(container, 'EmptyState must declare .empty-state').not.toBeNull()
+    expect(container!).toMatch(/display:\s*flex/)
+    expect(container!).toMatch(/flex-direction:\s*column/)
+    expect(container!).toMatch(/align-items:\s*center/)
+    expect(container!).toMatch(/justify-content:\s*center/)
+    expect(container!).toMatch(/text-align:\s*center/)
+
+    // `fill` is what makes a pane-level block sit in the middle instead of
+    // hugging the header.
+    const fill = ruleDecls(src, '.empty-state.is-fill')
+    expect(fill, 'EmptyState must declare .empty-state.is-fill').not.toBeNull()
+    expect(fill!).toMatch(/flex:\s*1/)
+  })
+
+  it('is the only declaration of the container class', () => {
+    // A second `.empty-state { … }` in a component's scoped block would silently
+    // win for that component and re-open the drift this file exists to stop.
+    const offenders: string[] = []
+    const roots = [
+      'src/App.vue',
+      ...EMPTY_STATES,
+      COMPONENT,
+    ]
+    for (const f of roots) {
+      const src = stripComments(read(f))
+      const matches = src.match(/\.empty-state\s*\{/g) ?? []
+      // The component itself is allowed exactly one.
+      const allowed = f === COMPONENT ? 1 : 0
+      if (matches.length > allowed) offenders.push(`${f}: ${matches.length}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('is used by every tab and sub-tab surface', () => {
+    const missing = EMPTY_STATES.filter((f) => !read(f).includes('<EmptyState'))
+    expect(missing, 'these surfaces still hand-roll their empty state').toEqual([])
+  })
+
+  it('gives every empty-state action the shared .fbtn pill', () => {
+    // The buttons had drifted the same way the glyph did: three hand-rolled
+    // variants (terminal, chat, mail) with their own height, radius and colour
+    // next to the shared pill everyone else used. The pill is the convention,
+    // `fbtn-primary` marks the one main action.
+    const offenders: string[] = []
+    // `[^/]>` skips self-closing `<EmptyState … />` — otherwise the match would
+    // run on to the NEXT component's closing tag and inspect its buttons.
+    const blockRe = /<EmptyState\b[^>]*[^/]>([\s\S]*?)<\/EmptyState>/g
+    for (const f of EMPTY_STATES) {
+      const src = read(f)
+      for (const m of src.matchAll(blockRe)) {
+        const body = m[1]
+        const at = body.indexOf('#action')
+        if (at === -1) continue
+        for (const b of body.slice(at).matchAll(/<button\b[^>]*>/g)) {
+          if (!/class="[^"]*\bfbtn\b/.test(b[0])) {
+            offenders.push(`${f}: ${b[0].replace(/\s+/g, ' ').slice(0, 90)}`)
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps the tab empty states from sizing or colouring their own block', () => {
+    // The type scale, gap and padding all belong to the component. A local
+    // `font-size` on the empty block is how the copy drifted to four scales.
+    // (`.share-hint` and `.notif-state` are excluded on purpose: they survived
+    // as the *error* blocks, which are not empty states.)
+    const offenders: string[] = []
+    for (const f of EMPTY_STATES) {
+      const src = read(f)
+      for (const m of src.matchAll(/\.(?:chat-empty|task-empty|history-empty|stats-empty|proxy-empty|forge-empty-card|section-empty|empty-state-card)\s*\{/g)) {
+        offenders.push(`${f}: ${m[0]}`)
       }
     }
     expect(offenders).toEqual([])

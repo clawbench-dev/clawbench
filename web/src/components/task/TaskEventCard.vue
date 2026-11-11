@@ -238,7 +238,7 @@ const contextRows = computed(() =>
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
   color: var(--color-yellow, #a16207);
@@ -331,7 +331,7 @@ const contextRows = computed(() =>
 }
 .event-context-preview {
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-primary, #fff);
   padding: var(--space-4) var(--space-5);
   display: flex;

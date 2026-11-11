@@ -193,6 +193,38 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('autoCopy.dispose()')
   })
 
+  it('pastes at the cursor with Shift+Insert', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // The chord is claimed in the same custom handler as the copy chord, and it
+    // must preventDefault BEFORE handing off: where the browser's native
+    // Shift+Insert paste does fire, letting both paths run would paste twice.
+    expect(source).toContain('isPasteSelectionShortcut')
+    const handler = source.slice(
+      source.indexOf('term.attachCustomKeyEventHandler'),
+      source.indexOf('onCloseSessionViaHttp'),
+    )
+    expect(handler).toContain('isPasteSelectionShortcut(ev)')
+    expect(handler).toContain('ev.preventDefault()')
+    expect(handler).toContain('void pasteIntoTerminal(term)')
+
+    // The paste itself: the terminal's own selection first (traditional
+    // Shift+Insert pastes "what is highlighted"), the clipboard as the fallback
+    // when nothing is selected. `term.paste()` so xterm normalises line endings
+    // / brackets the paste and nothing executes.
+    const pasteFn = source.slice(
+      source.indexOf('async function pasteIntoTerminal'),
+      source.indexOf('// Quick commands'),
+    )
+    expect(pasteFn).toContain("term.getSelection() ?? ''")
+    expect(pasteFn).toContain('await readClipboardText()')
+    expect(pasteFn.indexOf('term.getSelection()')).toBeLessThan(pasteFn.indexOf('readClipboardText()'))
+    expect(pasteFn).toContain('term.paste(selected)')
+    expect(pasteFn).toContain('term.paste(text)')
+    // An empty clipboard is a silent no-op; a failed READ is surfaced.
+    expect(pasteFn).toContain("t('terminal.clipboardReadFailed')")
+  })
+
   it('provides a help button that opens the terminal help drawer', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 

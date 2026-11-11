@@ -234,8 +234,9 @@ const SURFACES: Surface[] = [
     skeleton: '.task-pending--skeleton',
     rowFile: 'src/components/task/TaskListPage.vue',
     row: '.task-item',
-    // The list this placeholder stands in for is wrapped in `.task-list-body`.
-    extra: 8,
+    // The list this placeholder stands in for is wrapped in `.task-list-body`,
+    // whose inset is `--panel-body-pad` (10 design px).
+    extra: 10,
   },
   {
     name: 'task list',

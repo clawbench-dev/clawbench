@@ -18,30 +18,69 @@
 
     <template v-else>
       <!-- The meeting link outlives the room only when the owner publishes the
-           record. The switch lives HERE, next to the link, because this is
-           where someone decides to send it on: the state and the action belong
-           in one place. Off by default — the token exists so people could join,
-           which is not the same as publishing the minutes. -->
-      <div v-if="shareToken && shareLinks.length > 0" class="res-link" data-role="meeting-link">
-        <div class="res-group__label">
-          <Link2 :size="11" />
-          {{ t('meeting.resources.linkTitle') }}
-          <label class="res-share-toggle">
-            <input
-              type="checkbox"
-              class="res-share-check"
-              data-role="meeting-share-toggle"
-              :checked="shareEnabled"
-              :disabled="shareSaving"
-              @change="onToggleShare(($event.target as HTMLInputElement).checked)"
-            />
-            <span>{{ shareEnabled ? t('shareCenter.meetingSwitchOn') : t('shareCenter.meetingSwitchOff') }}</span>
-          </label>
+           record. The state and the action live HERE, next to the link, because
+           this is where someone decides to send it on. Off by default — the
+           token exists so people could join, which is not the same as
+           publishing the minutes.
+
+           Drawn as a card (same frame as the folder header below) because the
+           old 15px checkbox at the end of a grey label row was the only
+           interactive thing in the block and read as a list option, while the
+           decision it makes is "anyone with this link can read the minutes
+           forever". The badge states, the button acts — the badge is NOT
+           clickable on purpose, so a stray tap on a status cannot publish.
+
+           Shared state is green, not the theme accent: three of the 36 themes
+           paint the accent orange, which everywhere else means "running". The
+           edge stripe is absolutely positioned so it costs no layout shift. -->
+      <div
+        v-if="shareToken && shareLinks.length > 0"
+        class="res-share-card"
+        :data-state="shareEnabled ? 'shared' : 'private'"
+        data-role="meeting-link"
+      >
+        <div class="res-share-head">
+          <span class="res-share-icon"><Link2 :size="15" /></span>
+          <span class="res-share-title">{{ t('meeting.resources.linkTitle') }}</span>
+          <span
+            class="res-share-badge"
+            :class="shareEnabled ? 'res-share-badge--shared' : 'res-share-badge--private'"
+            data-role="meeting-share-badge"
+          >
+            <Globe v-if="shareEnabled" :size="11" />
+            <Lock v-else :size="11" />
+            {{ shareEnabled ? t('meeting.detail.shareBadgePublic') : t('meeting.detail.shareBadgePrivate') }}
+          </span>
         </div>
-        <ShareAddressList :links="shareLinks" />
-        <div class="res-hint">
-          <Info :size="12" />
-          {{ shareEnabled ? t('shareCenter.meetingSharedHint') : t('shareCenter.meetingPrivateHint') }}
+
+        <ShareAddressList :links="shareLinks" leading-icon :copy-label="t('shareAddress.copy')" />
+
+        <!-- What a visitor actually gets. The list is the answer to "共享出去
+            到底是什么", which the sentence alone never made obvious. -->
+        <div class="res-share-caps" data-role="meeting-share-caps">
+          <span v-for="cap in shareCaps" :key="cap.key" class="res-share-cap">
+            <component :is="cap.icon" :size="10" />
+            {{ cap.label }}
+          </span>
+        </div>
+
+        <div class="res-share-note">
+          <Info :size="11" />
+          <span>{{ shareEnabled ? t('meeting.detail.sharePublicDesc') : t('meeting.detail.sharePrivateDesc') }}</span>
+        </div>
+
+        <div class="res-share-foot">
+          <button
+            class="fbtn"
+            :class="{ 'fbtn-primary': !shareEnabled }"
+            type="button"
+            data-role="meeting-share-toggle"
+            :disabled="shareSaving"
+            @click="onToggleShare"
+          >
+            <span v-if="shareSaving" class="li-spinner res-share-spin" aria-hidden="true" />
+            {{ shareEnabled ? t('meeting.detail.shareStop') : t('meeting.detail.sharePublish') }}
+          </button>
         </div>
       </div>
 
@@ -68,7 +107,7 @@
            centres like the other three tabs' empty states. When a folder does
            exist the header above already explains the zero, and a small hint is
            the right weight. -->
-      <MeetingEmpty
+      <EmptyState
         v-if="total === 0 && !folderPath"
         :icon="FolderOpen"
         :title="t('meeting.resources.emptyTitle')"
@@ -179,19 +218,30 @@ import { computed, reactive, toRefs, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AudioLines,
+  Captions,
   Copy,
   ExternalLink,
+  FileText,
   Folder,
   FolderOpen,
+  Globe,
   Image as ImageIcon,
   Info,
   Link2,
+  Lock,
+  MessagesSquare,
   Paperclip,
+  SpellCheck,
 } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
-import MeetingEmpty from './MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+// The publish action wears the shared pill. A component that uses `.fbtn`
+// without going through ModalDialog loads the sheet itself — an ancestor
+// happening to import it is not a contract.
+import '@/assets/modal-footer-btn.css'
+import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import type { MeetingResourceGroup, MeetingResourceItem } from '@/composables/useMeetingResources'
 import type { ShareLink } from '@/composables/useShareLinks'
@@ -233,6 +283,7 @@ const { isWideScreen } = useWideScreenLayout()
 
 const { t, locale } = useI18n()
 const toast = useToast()
+const dialog = useDialog()
 // Read through the composable (not a module-level named import) so tests can
 // mock one module and every surface resolves the same primitive.
 const { openFilePath } = useFilePathAnnotation()
@@ -241,9 +292,36 @@ const { groups, loading, error, total } = toRefs(props)
 const reload = () => emit('reload')
 const shareLinks = computed(() => props.links ?? [])
 
-/** The parent owns the request; this only reports the intent. */
-function onToggleShare(checked: boolean): void {
-  emit('update:shareEnabled', checked)
+/**
+ * What a visitor to the shared link can read. Four tabs, in the order the share
+ * page shows them — the same labels, so the card and the page agree.
+ */
+const shareCaps = computed(() => [
+  { key: 'minutes', icon: FileText, label: t('meeting.detail.tabMinutes') },
+  { key: 'transcript', icon: Captions, label: t('meeting.detail.tabTranscript') },
+  { key: 'revised', icon: SpellCheck, label: t('meeting.detail.tabRevised') },
+  { key: 'chat', icon: MessagesSquare, label: t('meeting.detail.tabChat') },
+])
+
+/**
+ * The parent owns the request; this only reports the intent.
+ *
+ * Publishing is confirmed first: it turns a link that dies with the meeting
+ * into one that outlives it, and the only way back is pressing the same button
+ * again. Unpublishing is not confirmed — it takes nothing away from the user,
+ * it closes a door.
+ */
+async function onToggleShare(): Promise<void> {
+  if (props.shareSaving) return
+  if (!props.shareEnabled) {
+    const ok = await dialog.confirm(t('meeting.detail.shareConfirmBody'), {
+      title: t('meeting.detail.shareConfirmTitle'),
+      confirmText: t('meeting.detail.sharePublish'),
+      cancelText: t('common.cancel'),
+    })
+    if (!ok) return
+  }
+  emit('update:shareEnabled', !props.shareEnabled)
 }
 
 const summary = computed(() => {
@@ -390,11 +468,123 @@ function metaFor(item: MeetingResourceItem): string {
 .res-head__meta { margin-top: calc(3 * var(--dp)); font-size: var(--font-size-2xs); color: var(--text-hint); }
 .res-head__actions { display: flex; gap: var(--space-1); flex-shrink: 0; }
 
-/* The meeting link block: same column rhythm as a resource group, but it is
-   not a group — it holds one control (the address list) and the sentence that
-   says how long it stays valid. */
-.res-link { display: flex; flex-direction: column; gap: var(--space-2); }
-.res-link .res-hint { margin-top: 0; }
+/* The meeting link card: same frame, icon tile and radius as the folder header
+   below, so the two blocks read as siblings. */
+.res-share-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  transition: border-color var(--duration-base) ease;
+}
+/* Edge stripe marks "this record is readable by anyone with the link". It is
+   absolutely positioned, so turning sharing on shifts nothing. */
+.res-share-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--space-5);
+  bottom: var(--space-5);
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  transition: background var(--duration-base) ease;
+}
+.res-share-card[data-state='shared']::before { background: var(--color-green); }
+.res-share-card[data-state='shared'] .res-share-icon {
+  background: color-mix(in srgb, var(--color-green) 14%, transparent);
+  color: var(--color-green);
+}
+
+.res-share-head { display: flex; align-items: center; gap: var(--space-4); }
+.res-share-icon {
+  display: grid;
+  place-items: center;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
+}
+.res-share-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+/* Status badge: read-only. Shape + icon + word, never colour alone — three of
+   the themes paint the accent orange, which would read as "warning" on its
+   own. */
+.res-share-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  height: calc(20 * var(--dp));
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background var(--duration-base) ease, color var(--duration-base) ease;
+}
+.res-share-badge--private { background: var(--bg-tertiary); color: var(--text-muted); }
+.res-share-badge--shared {
+  background: color-mix(in srgb, var(--color-green) 16%, transparent);
+  color: var(--color-green);
+}
+
+/* The address field keeps its own grey fill everywhere else; on this card the
+   card itself is grey, so the field would vanish into it. */
+.res-share-card :deep(.share-addr-input) { background: var(--bg-primary); }
+
+/* What a visitor can read: the four tabs of the share page, in its order. */
+.res-share-caps { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.res-share-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: calc(20 * var(--dp));
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.res-share-cap svg { flex-shrink: 0; color: var(--text-hint); }
+.res-share-card[data-state='shared'] .res-share-cap svg { color: var(--color-green); }
+
+/* The sentence that answers "how long does this keep working" — an inset block
+   rather than a bare paragraph, so it reads as a note and not as body copy. */
+.res-share-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  line-height: 1.6;
+}
+.res-share-note svg { flex-shrink: 0; margin-top: 1px; color: var(--text-hint); }
+
+.res-share-foot { display: flex; justify-content: flex-end; }
+/* The ring is the global `.li-spinner`; a call site only sets its size. Inside
+   a pill the 28dp default would push the label out of the 30dp height. */
+.res-share-spin { --li-size: calc(12 * var(--dp)); }
 
 .res-group { display: flex; flex-direction: column; gap: 1px; }.res-group__label {
   display: flex;
@@ -413,7 +603,7 @@ function metaFor(item: MeetingResourceItem): string {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
   min-width: 0;
@@ -522,65 +712,6 @@ function metaFor(item: MeetingResourceItem): string {
 }
 .res-hint :deep(svg) { flex-shrink: 0; margin-top: 1px; color: var(--text-hint); }
 .res-hint--group { margin-top: var(--space-1); }
-
-/* ── Share switch ──
-   Sits at the right end of the link's label row: it belongs to the link, not to
-   the file list below. Native checkbox replaced with the app's custom box, the
-   same construction every other toggle in the app uses (an OS-drawn checkbox
-   ignores the theme entirely). */
-.res-share-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-left: auto;
-  padding: 0;
-  font-weight: var(--font-weight-normal);
-  letter-spacing: 0;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.res-share-check {
-  -webkit-appearance: none;
-  appearance: none;
-  flex-shrink: 0;
-  width: calc(15 * var(--dp));
-  height: calc(15 * var(--dp));
-  margin: 0;
-  border: 1.5px solid color-mix(in srgb, var(--text-secondary) 55%, transparent);
-  border-radius: var(--radius-xs);
-  background: var(--bg-primary);
-  cursor: pointer;
-  position: relative;
-  transition: background var(--duration-base), border-color var(--duration-base);
-}
-
-.res-share-check:checked {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-}
-
-.res-share-check:checked::after {
-  content: '';
-  position: absolute;
-  left: calc(3.5 * var(--dp));
-  top: 0.5px;
-  width: calc(4 * var(--dp));
-  height: calc(8 * var(--dp));
-  border: solid #fff;
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
-}
-
-.res-share-check:disabled {
-  cursor: default;
-  opacity: var(--opacity-muted);
-}
-
-.res-share-check:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
 
 /* Touch devices have no hover: the row actions must be visible without it.
    The narrow layout also hides the chat column, so the paperclip is the only

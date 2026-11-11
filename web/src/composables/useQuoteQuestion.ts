@@ -41,6 +41,17 @@ export interface QuoteComposerContext {
   filePath?: string
   quote?: QuoteData
   label: string
+  /**
+   * A short preview of the quoted content, shown above the input.
+   *
+   * Only meaningful together with `quote`, and only when the caller has content
+   * that reads well as a snippet (a chat message). It is deliberately NOT the
+   * live `quoteData`: that ref is the chat draft's active quote, and parking a
+   * hidden copy there resurfaces as a phantom card after a session switch (see
+   * `lastSelectionQuote`). This is display-only — the card is built from
+   * `quote` on commit.
+   */
+  previewText?: string
 }
 
 /**
@@ -52,6 +63,8 @@ export interface ComposerAttachment {
   label: string
   url?: string
   path?: string
+  /** Read-only preview of the quoted content (see `previewText`). */
+  text?: string
 }
 
 // Module-level singleton: bar visibility state shared across all consumers.
@@ -85,6 +98,17 @@ const anchorRect = ref<DOMRect | null>(null)
  * dismisses" behaviour, which is the safe direction.
  */
 const quoteAnchorEl = ref<Element | null>(null)
+/**
+ * The control a floating surface is attached to, when it is NOT a text
+ * selection (the message meta bar's 引用问答 opens the bar next to its own
+ * button).
+ *
+ * Held so the bar can FOLLOW that button: the chat transcript auto-scrolls
+ * while a reply streams, and a bar left at the old rect would drift away from
+ * the control it belongs to. `quoteAnchorEl` cannot serve here — it answers a
+ * different question (whose scroll invalidates the anchor).
+ */
+const followAnchorEl = ref<Element | null>(null)
 // Non-null while the bar was opened by an entry point rather than by a text
 // selection. In this mode the bar is useful even with no quote.
 const composerContext = ref<QuoteComposerContext | null>(null)
@@ -148,7 +172,15 @@ const composerAttachment = computed<ComposerAttachment | null>(() => {
   if (!ctx) return null
   if (ctx.url) return { kind: 'url', label: ctx.label, url: ctx.url }
   if (ctx.filePath) return { kind: 'file', label: ctx.label, path: ctx.filePath }
-  if (ctx.quote) return { kind: 'quote', label: ctx.label }
+  if (ctx.quote) {
+    return {
+      kind: 'quote',
+      label: ctx.label,
+      // A chat message has no path or address, so the snippet IS the only thing
+      // that tells the user which message they are quoting.
+      ...(ctx.previewText ? { text: ctx.previewText } : {}),
+    }
+  }
   return null
 })
 
@@ -184,6 +216,20 @@ function selectionAnchorRect(sel: Selection): DOMRect | null {
   const u = unionRectOfRects(rects)
   if (!u) return null
   return new DOMRect(u.left, u.top, u.right - u.left, u.bottom - u.top)
+}
+
+/**
+ * The rect of a plain element, in the same raw (zoom-scaled) space as
+ * `selectionAnchorRect` — so `computeSelectionToolbarStyle` normalises both the
+ * same way.
+ *
+ * Used when a floating surface is anchored to the CONTROL that opened it rather
+ * than to a text selection (the message meta bar's 引用问答).
+ */
+function rectOfElement(el: Element): DOMRect | null {
+  const r = el.getBoundingClientRect()
+  if (r.width === 0 && r.height === 0) return null
+  return new DOMRect(r.left, r.top, r.width, r.height)
 }
 
 // Active pointer (mouse/touch) tracking. Browsers fire selectionchange while the
@@ -296,6 +342,9 @@ function evaluateSelection() {
   // here — every quotable branch below (labelled source, chat message, file)
   // surfaces the same bar and wants the same anchor.
   anchorRect.value = selectionAnchorRect(sel)
+  // A live selection supersedes a control the bar was following (see
+  // `followAnchorEl`): the anchor is now the text, not the button.
+  followAnchorEl.value = null
   // ...and which surface it belongs to, so a scroll elsewhere cannot dismiss it.
   quoteAnchorEl.value = container
 
@@ -607,6 +656,15 @@ function onScroll(e: Event) {
   if (pointerCount > 0) lastPointerActivity = Date.now()
 
   if (!barVisible.value) return
+  // The bar is attached to a BUTTON (a message's 引用问答), not to text: the
+  // button moves whenever the transcript scrolls — which it does on its own
+  // while a reply streams — so re-measure instead of dismissing. Dismissing here
+  // would close the bar the user is typing into, one frame after opening it.
+  if (followAnchorEl.value) {
+    const rect = rectOfElement(followAnchorEl.value)
+    if (rect) anchorRect.value = rect
+    return
+  }
   if (barPinned.value || composerContext.value) return
   const target = e.target
   if (target instanceof Element && target.closest('.quote-question-bar')) return
@@ -751,6 +809,7 @@ export function useQuoteQuestion() {
     composerContext.value = null
     setQuoteData(null)
     anchorRect.value = null
+    followAnchorEl.value = null
     lastSelectionQuote.value = null
   }
 
@@ -759,21 +818,34 @@ export function useQuoteQuestion() {
    * header). The bar previews the attachment as a chip; nothing reaches the chat
    * context until the user commits (send or the add button), so dismissing the
    * bar leaves the chat input untouched.
+   *
+   * `anchorEl` is the control that opened it. When given, the bar floats next to
+   * that button instead of parking at the pinned top position — the same
+   * treatment a text selection gets (issue #544). Without it the bar can appear
+   * far from the button the user just pressed (a message's 引用问答 sits at the
+   * bottom of the transcript, while the pinned position is the top of the page).
+   * The rect is measured NOW: opening the bar can scroll or reflow the host, and
+   * the anchor has to be where the button was when it was pressed.
    */
-  function openComposer(ctx: QuoteComposerContext) {
+  function openComposer(ctx: QuoteComposerContext, opts: { anchorEl?: Element | null } = {}) {
     if (!ctx?.url && !ctx?.filePath && !ctx?.quote) return
     composerContext.value = ctx
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
     const sel = window.getSelection()
     const live = sel && !sel.isCollapsed && sel.toString().trim()
-    if (!live) {
-      setQuoteData(null)
-      // No selection behind the bar → keep it on the pinned top position. A
-      // stale anchor from an earlier selection must not drag it off.
-      anchorRect.value = null
-    } else {
+    if (live) {
       anchorRect.value = selectionAnchorRect(sel)
+      quoteAnchorEl.value = closestElement(sel.anchorNode, '*')
+    } else {
+      setQuoteData(null)
+      // No selection behind the bar: attach it to the opening control when the
+      // caller named one, else keep the pinned top position (a stale anchor from
+      // an earlier selection must not drag it off).
+      const anchorEl = opts.anchorEl ?? null
+      anchorRect.value = anchorEl ? rectOfElement(anchorEl) : null
+      quoteAnchorEl.value = anchorEl
+      followAnchorEl.value = anchorEl
     }
     barVisible.value = true
     barPinned.value = true
@@ -835,6 +907,7 @@ export function useQuoteQuestion() {
     barVisible.value = false
     barPinned.value = false
     anchorRect.value = null
+    followAnchorEl.value = null
     lastSelectionQuote.value = null
   }
 
@@ -847,6 +920,7 @@ export function useQuoteQuestion() {
     barPinned.value = false
     setQuoteData(null)
     anchorRect.value = null
+    followAnchorEl.value = null
     lastSelectionQuote.value = null
   }
 
@@ -877,6 +951,7 @@ export function useQuoteQuestion() {
     barPinned.value = false
     setQuoteData(null)
     anchorRect.value = null
+    followAnchorEl.value = null
     lastSelectionQuote.value = null
   }
 
@@ -939,12 +1014,17 @@ export function useQuoteQuestion() {
         // actually picks an action from that menu.
         anchorRect.value = rect
         quoteAnchorEl.value = sourceEl
+        followAnchorEl.value = null
         return
       }
       setQuoteData(data)
       barVisible.value = true
       anchorRect.value = rect
       quoteAnchorEl.value = sourceEl
+      // A selection supersedes any control the bar was following: this anchor
+      // is the text itself, and the follow path would overwrite it on the next
+      // scroll with the old button's rect.
+      followAnchorEl.value = null
     }, opts.delay ?? 400)
   }
 

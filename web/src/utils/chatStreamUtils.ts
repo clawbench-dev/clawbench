@@ -1631,6 +1631,14 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       // `_finalizedLocally` flag is what tells them apart — it is set by
       // forceCleanupStreamingState, i.e. only for a turn THIS client watched to
       // completion.
+      //
+      // Keeping the live blocks is safe only because the server never strips
+      // the NEWEST assistant reply (enrichMessagesWithSummaries): its blocks are
+      // the authoritative copy, and the merge branch below uses them whenever
+      // they are a superset of what the live stream delivered. Without that
+      // guarantee a live bubble that lost its tail had no repair path at all —
+      // this branch kept the prefix, and non-empty blocks suppressed both the
+      // summary view and the lazy-original fetch.
       const locallyComplete = live._finalizedLocally === true && !liveIsEmpty
       if (db.streaming !== true && dbBlocksEmpty && db.summary && !locallyComplete) {
         live.blocks = []

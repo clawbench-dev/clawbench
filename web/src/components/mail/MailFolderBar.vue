@@ -5,7 +5,7 @@
          it would measure them as fixed items and then squash them with the
          icon-button box, and their length would decide how many buttons fold.
          Same split as the git history toolbar's branch picker. -->
-    <div class="mail-bar__top">
+    <div v-if="!searchOpen" class="mail-bar__top">
       <!-- Two pickers, deliberately not drawn as two equal boxes. The account
            is switched rarely, so it collapses to a small avatar; the folder is
            where the user is, so it gets the name, its unread count and the
@@ -88,16 +88,40 @@
         </MenuSelect>
       </div>
 
+      <!-- Order is the fold order: ActionBar keeps what fits from the left and
+           moves the rest into "more", so the primary action comes first and the
+           rare one (account settings) is the first to go. -->
       <ActionBar class="mail-bar__actions" mode="menu" align="end" size="bar">
-        <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')">
-          <span class="action-label">{{ t('mail.bar.refresh') }}</span>
-        </RefreshButton>
         <!-- `is-primary`: composing is this row's one stand-out action, the same
              marking the task / session / proxy headers give their create entry.
-             Everything else here (refresh, settings) stays neutral. -->
+             Everything else here stays neutral. -->
         <button class="mail-icon-btn is-primary" :title="t('mail.bar.compose')" @click="emit('compose')">
           <PenLine />
           <span class="action-label">{{ t('mail.bar.compose') }}</span>
+        </button>
+        <button
+          class="mail-icon-btn"
+          data-action="search"
+          :title="t('mail.bar.search')"
+          :aria-label="t('mail.bar.search')"
+          @click="openSearch"
+        >
+          <Search />
+          <span class="action-label">{{ t('mail.bar.search') }}</span>
+        </button>
+        <RefreshButton class="mail-icon-btn" :loading="refreshing" :title="t('mail.bar.refresh')" @click="emit('refresh')">
+          <span class="action-label">{{ t('mail.bar.refresh') }}</span>
+        </RefreshButton>
+        <button
+          class="mail-icon-btn"
+          data-action="mark-all-read"
+          :disabled="marking || currentUnread === 0"
+          :title="t('mail.bar.markAllRead')"
+          :aria-label="t('mail.bar.markAllRead')"
+          @click="emit('mark-all-read')"
+        >
+          <MailCheck />
+          <span class="action-label">{{ t('mail.bar.markAllRead') }}</span>
         </button>
         <button class="mail-icon-btn" :title="t('mail.bar.manage')" @click="emit('setup')">
           <Settings />
@@ -106,32 +130,26 @@
       </ActionBar>
     </div>
 
-    <div class="mail-bar__search-row">
-      <div class="mail-bar__search">
-        <Search class="mail-bar__search-icon" />
-        <input
-          :value="query"
-          class="mail-bar__search-input"
-          type="search"
-          :placeholder="t('mail.bar.search')"
-          @input="onSearchInput"
-        />
-      </div>
-      <button
-        class="mail-read-all"
-        :disabled="marking || currentUnread === 0"
-        :title="t('mail.bar.markAllRead')"
-        @click="emit('mark-all-read')"
-      >
-        {{ t('mail.bar.markAllRead') }}
-      </button>
+    <!-- Search REPLACES the toolbar rather than floating over it: same row, same
+         height, so the list below never shifts. Closing clears the query — a
+         hidden filter is a lie (the list would stay filtered with nothing on
+         screen saying why). Same rule as the git history search. -->
+    <div v-else class="mail-bar__search-row" @keydown.esc="closeSearch">
+      <SearchInput
+        ref="searchRef"
+        class="mail-bar__search"
+        :model-value="searchText"
+        :placeholder="t('mail.bar.searchPlaceholder')"
+        @update:model-value="onSearchInput"
+      />
+      <button class="mail-bar__search-cancel" @click="closeSearch">{{ t('common.cancel') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * Account switcher + folder picker + search.
+ * One toolbar: account switcher + folder picker + the actions.
  *
  * Two different questions, two different weights: the account ("who am I") is
  * changed rarely and collapses to a 22dp avatar; the folder ("where am I") is
@@ -139,13 +157,17 @@
  * Both keep their dropdown — the folder list can be a dozen entries on QQ mail,
  * and a chip strip above the list cost a whole row of vertical space.
  *
+ * Search and "mark all read" are ordinary buttons in the row, not a second row
+ * of their own: search expands in place over the whole toolbar.
+ *
  * Unread counts live on the trigger (badge) and at the right edge of every menu
  * row, instead of being folded into the label as "收件箱 (12)": the count is
  * what the eye is looking for, so it should not sit inside a sentence.
  */
-import { computed, type Component } from 'vue'
+import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ActionBar from '@/components/common/ActionBar.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import {
   Archive,
   Check,
@@ -153,6 +175,7 @@ import {
   FileText,
   Folder,
   Inbox,
+  MailCheck,
   MailX,
   PenLine,
   Search,
@@ -268,9 +291,48 @@ function chooseAccount(id: number): void {
   if (id !== props.accountId) emit('update:accountId', id)
 }
 
+/**
+ * The search field is not a permanent resident of the toolbar.
+ *
+ * It used to take a row of its own, which is why the bar was two rows tall.
+ * Collapsing it to a button buys that row back; opening it replaces the whole
+ * toolbar with the field, so the bar height never changes and the list below
+ * does not jump. Same arrangement as the git history toolbar.
+ */
+const searchOpen = ref(!!props.query)
+const searchText = ref(props.query)
+const searchRef = ref<InstanceType<typeof SearchInput> | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
-function onSearchInput(e: Event): void {
-  const value = (e.target as HTMLInputElement).value
+
+async function openSearch(): Promise<void> {
+  searchOpen.value = true
+  await nextTick()
+  searchRef.value?.focus?.()
+}
+
+function closeSearch(): void {
+  searchOpen.value = false
+  searchText.value = ''
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = null
+  // A hidden filter is a lie: the list would stay filtered with nothing on
+  // screen saying why. Closing the field therefore clears the query.
+  emit('update:query', '')
+}
+
+// The query can also change from outside (the panel resets it when a folder is
+// switched). Keep the field in step, and re-open it if a query arrives while
+// the toolbar is showing — otherwise the list would be filtered invisibly.
+watch(
+  () => props.query,
+  (q) => {
+    searchText.value = q
+    if (q) searchOpen.value = true
+  },
+)
+
+function onSearchInput(value: string): void {
+  searchText.value = value
   // Debounce: the list request hits SQLite, but typing at speed would still
   // queue one query per keystroke.
   if (searchTimer) clearTimeout(searchTimer)
@@ -282,17 +344,21 @@ function onSearchInput(e: Event): void {
 .mail-bar {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2, 4px);
   padding: var(--space-2, 4px) var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
-.mail-bar__top {
+/* Both states are one row of the same height, so swapping the toolbar for the
+   search field does not move the list below. */
+.mail-bar__top,
+.mail-bar__search-row {
   display: flex;
   align-items: center;
-  /* The ActionBar used to supply this gap between its children; the pickers are
-     outside it now, so the row states it. */
+  min-height: calc(26 * var(--dp));
   gap: var(--space-4);
+}
+.mail-bar__search-row {
+  gap: var(--space-3);
 }
 
 .mail-bar__actions {
@@ -511,59 +577,37 @@ function onSearchInput(e: Event): void {
 }
 
 
-.mail-bar__search-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 4px);
-}
+/* The field takes the width left over between the row's edges and the cancel
+   button. No max-width: filling the remaining space is the point. */
 .mail-bar__search {
-  position: relative;
-  display: flex;
-  align-items: center;
   flex: 1;
   min-width: 0;
 }
-.mail-read-all {
+/* Match the toolbar row's height exactly (26dp, the icon-button size): the pill
+   is a couple of pixels taller on its own, and that difference would show up as
+   the list below jumping when the field opens. */
+.mail-bar__search :deep(.search-pill) {
+  height: calc(26 * var(--dp));
+  padding-top: 0;
+  padding-bottom: 0;
+}
+/* Closing the field is a text action, not another square icon: it belongs to
+   the field it dismisses (same as the git history search). */
+.mail-bar__search-cancel {
   flex: none;
-  padding: calc(4 * var(--dp)) calc(9 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--accent-color);
   font-family: inherit;
-  font-size: var(--font-size-sm, 12px);
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm, 4px);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  white-space: nowrap;
 }
-.mail-read-all:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
-}
-.mail-read-all:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.mail-bar__search-icon {
-  position: absolute;
-  left: calc(8 * var(--dp));
-  width: calc(13 * var(--dp));
-  height: calc(13 * var(--dp));
-  color: var(--text-hint);
-  pointer-events: none;
-}
-.mail-bar__search-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: calc(4 * var(--dp)) calc(8 * var(--dp)) calc(4 * var(--dp)) calc(26 * var(--dp));
-  font-size: var(--font-size-sm, 12px);
-  color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm, 4px);
-  outline: none;
-}
-.mail-bar__search-input:focus {
-  border-color: var(--accent-color);
+.mail-bar__search-cancel:hover {
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 /* Size, radius, colour, hover and icon size come from the shared ActionBar row
    rules (size="bar"); this block keeps only what is specific to the bar. */

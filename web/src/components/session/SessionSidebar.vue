@@ -13,7 +13,7 @@
           @create="handleCreateClick"
         >
           <!-- Close sits in the trailing slot so it is the right-most control in
-               the header, after search/create/refresh. It is a plain utility
+               the header, after create/search/refresh. It is a plain utility
                action like refresh — no accent tint — and uses the close (X)
                glyph so it reads as "collapse this panel". -->
           <template #actions-end>

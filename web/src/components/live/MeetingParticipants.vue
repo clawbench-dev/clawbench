@@ -250,7 +250,7 @@ function subline(v: LiveViewerInfo): string {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
 }
 
@@ -408,7 +408,7 @@ function subline(v: LiveViewerInfo): string {
 .mp-empty {
   margin: 0;
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-size: var(--font-size-sm);

@@ -734,7 +734,9 @@ public class MainActivity extends AppCompatActivity {
      */
     private void cancelSplashFailSafe() {
         if (splashFailSafeRunnable != null) {
-            webView.removeCallbacks(splashFailSafeRunnable);
+            // webView is null once destroyWebView() has run; a stale timer must
+            // still be dropped, it just has nothing to be removed from.
+            if (webView != null) webView.removeCallbacks(splashFailSafeRunnable);
             splashFailSafeRunnable = null;
         }
     }
@@ -1654,7 +1656,9 @@ public class MainActivity extends AppCompatActivity {
      */
     private void cancelConnectionTimeout() {
         if (connectionTimeoutRunnable != null) {
-            webView.removeCallbacks(connectionTimeoutRunnable);
+            // webView is null once destroyWebView() has run; a stale timer must
+            // still be dropped, it just has nothing to be removed from.
+            if (webView != null) webView.removeCallbacks(connectionTimeoutRunnable);
             connectionTimeoutRunnable = null;
         }
     }
@@ -2672,6 +2676,8 @@ public class MainActivity extends AppCompatActivity {
         // Do NOT stop BackgroundService here — it should survive Activity lifecycle
         // so the SSH tunnel continues running when the app is in background.
         cancelConnectionTimeout();
+        // Must run before destroyWebView(): it removes its timer from the WebView.
+        cancelSplashFailSafe();
         if (sweepAnimator != null) {
             sweepAnimator.cancel();
             sweepAnimator = null;
@@ -2680,9 +2686,60 @@ public class MainActivity extends AppCompatActivity {
         splashProgress = null;
         splashCancelButton = null;
         splashScreen = null;
+        destroyWebView();
         cleanupSharedCacheDir();
         instance = null; // Clear static reference to prevent memory leak / stale access
         super.onDestroy();
+    }
+
+    /**
+     * Release the WebView when the Activity goes away.
+     *
+     * Why this is not optional: the frontend's single-tab guard
+     * ({@code web/src/composables/useSingleTab.ts}) holds a Web Lock for as long
+     * as its document is alive — that is the whole contract behind "the lock is
+     * released automatically when the page dies". A WebView that is merely
+     * dropped on the floor keeps its document (and therefore the lock) alive for
+     * the life of the process, and this process deliberately outlives the
+     * Activity: {@link BackgroundService} is {@code stopWithTask="false"} so the
+     * SSH tunnel keeps running after the task is swiped away. The next launch
+     * then loads a fresh document that finds the lock taken by a page the user
+     * can no longer see, shows the blocking screen, and the app looks broken
+     * until the process is killed by hand (issue #666).
+     *
+     * Clearing the Java reference is not enough — WebView owns native resources
+     * that the GC never frees on its own; {@code destroy()} is what drops the
+     * document. Order matters: detach from the view system first (the documented
+     * precondition), and drop the service's WeakReference so a late
+     * {@code evaluateJavascript()} cannot land on a destroyed instance.
+     */
+    void destroyWebView() {
+        WebView view = webView;
+        if (view == null) return;
+        webView = null;
+        webViewConnected = false;
+        BackgroundService.updateWebViewRef(null);
+        try {
+            // Gives the page a chance to run its own unload handlers (the guard
+            // releases the lock on pagehide). When the navigation does not get
+            // to commit before destroy() below, the document teardown releases
+            // the lock anyway — this is a belt, not the braces.
+            view.loadUrl("about:blank");
+        } catch (Exception e) {
+            AppLog.w(TAG, "destroyWebView: about:blank failed", e);
+        }
+        try {
+            if (view.getParent() instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) view.getParent()).removeView(view);
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "destroyWebView: removeView failed", e);
+        }
+        try {
+            view.destroy();
+        } catch (Exception e) {
+            AppLog.w(TAG, "destroyWebView: destroy failed", e);
+        }
     }
 
     @Override
@@ -4306,7 +4363,8 @@ public class MainActivity extends AppCompatActivity {
                 // Trigger the DownloadListener by asking WebView to load the URL
                 // The ?download=1 param makes the server return Content-Disposition: attachment
                 // which forces WebView to trigger the DownloadListener instead of rendering inline
-                activity.webView.loadUrl(url);
+                // webView is null once destroyWebView() has run (Activity teardown).
+                if (activity.webView != null) activity.webView.loadUrl(url);
             });
         }
 
@@ -4406,6 +4464,9 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void openSession(String sessionId) {
             activity.runOnUiThread(() -> {
+                // Null after Activity teardown; a tap on a stale notification
+                // must not NPE.
+                if (activity.webView == null) return;
                 activity.webView.evaluateJavascript(
                     "window.dispatchEvent(new CustomEvent('clawbench-open-session', { detail: { sessionId: '" + sessionId + "' } }))",
                     null

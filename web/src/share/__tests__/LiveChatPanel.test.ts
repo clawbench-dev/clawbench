@@ -77,11 +77,11 @@ describe('LiveChatPanel', () => {
 
   it('keeps the empty state when there is nothing to show', () => {
     const w = mountPanel({ messages: [] })
-    // The shared empty block (MeetingEmpty), not a bare muted line: a lone
+    // The shared empty block (EmptyState), not a bare muted line: a lone
     // sentence in the top corner reads as a message that failed to render.
     const empty = w.find('[data-role="chat-empty"]')
     expect(empty.exists()).toBe(true)
-    expect(empty.classes()).toContain('meeting-empty')
+    expect(empty.classes()).toContain('empty-state')
     expect(w.findAll('.chat-row')).toHaveLength(0)
   })
 

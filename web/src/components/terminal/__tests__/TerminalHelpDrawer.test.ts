@@ -25,6 +25,8 @@ const i18n = createI18n({
         helpCommonCopyDesc: '选区复制',
         helpCommonCopyInsert: 'Ctrl+Insert',
         helpCommonCopyInsertDesc: '任意情况下复制',
+        helpCommonPasteInsert: 'Shift+Insert',
+        helpCommonPasteInsertDesc: '插入到光标位置',
         helpCommonRightClick: '右键菜单',
         helpCommonRightClickDesc: '右键复制',
         helpVolumeKeys: '音量键',
@@ -129,6 +131,7 @@ describe('TerminalHelpDrawer', () => {
       const labels = copyLabels()
       expect(labels).toContain('Ctrl+C / Ctrl+Shift+C')
       expect(labels).toContain('Ctrl+Insert')
+      expect(labels).toContain('Shift+Insert')
       expect(labels).toContain('右键菜单')
     })
 

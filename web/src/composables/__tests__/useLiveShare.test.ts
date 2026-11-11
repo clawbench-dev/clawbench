@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { ControlMessage } from '@/share/liveControl'
 
 /**
  * Publisher-side live share: room creation, capture wiring, per-viewer peer
@@ -2629,6 +2630,95 @@ describe('relay mode', () => {
       expect.anything(),
       expect.objectContaining({ t: 'chat' }),
     )
+  })
+
+  /**
+   * A grant is addressed to one viewer, but a relayed room has ONE data channel
+   * for everybody. Looking up the per-viewer PeerConnection here used to turn
+   * every remote-control grant into a silent no-op in relay mode, because that
+   * map is empty by design; the frame now goes out on the relay instead.
+   */
+  it('delivers a control grant through the relay channel', async () => {
+    relayApi.sendRelayData.mockClear()
+    respondWithRelay()
+
+    const { share } = await startSharing()
+    share.sendControlTo('v1', { t: 'ctrl-grant', viewerId: 'v1', granted: true })
+
+    expect(relayApi.sendRelayData).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ t: 'ctrl-grant', viewerId: 'v1', granted: true }),
+    )
+  })
+
+  /**
+   * The mirror of the grant above: what the granted viewer sends back.
+   *
+   * Relay frames used to reach the publisher with no `from` at all, and the
+   * panel only injects a `ctrl-ev` whose sender is the viewer it granted — so a
+   * relay-mode grant arrived, the page showed "正在控制", and the pointer did
+   * nothing. The SFU authenticates the participant identity, so that is where
+   * the stamp has to come from.
+   */
+  it('attributes relay frames to the participant that sent them', async () => {
+    respondWithRelay()
+    const { share } = await startSharing()
+    lastWS().emit({ type: 'viewer-join', viewerId: 'v1', name: '小明' })
+    await vi.waitFor(() =>
+      expect(share.viewers.value.find((v) => v.id === 'v1')?.name).toBe('小明'),
+    )
+
+    const seen: ControlMessage[] = []
+    const off = share.onControl((m) => seen.push(m))
+
+    const calls = relayApi.openRelay.mock.calls as unknown as Array<
+      [
+        string,
+        string,
+        { onData: (payload: Uint8Array, from: string) => void },
+      ]
+    >
+    const handlers = calls.at(-1)?.[2]
+    const deliver = (frame: unknown, from = 'viewer:v1') =>
+      handlers?.onData(new TextEncoder().encode(JSON.stringify(frame)), from)
+
+    deliver({ t: 'ctrl-ev', kind: 'move', x: 0.5, y: 0.5 })
+    // A chat line's display name comes from the roster, never from the frame
+    // (otherwise a viewer can label itself "主持人").
+    deliver({ t: 'chat', id: 'm1', from: 'v1', name: '主持人', text: '早', at: 1 })
+
+    expect(seen).toContainEqual(expect.objectContaining({ t: 'ctrl-ev', from: 'v1' }))
+    expect(seen).toContainEqual(expect.objectContaining({ t: 'chat', from: 'v1', name: '小明' }))
+    off()
+  })
+
+  /**
+   * The host does not forward anybody's picture in relay mode — every viewer
+   * subscribes to the relay directly — but it still has to be able to WATCH a
+   * member's screen in the meeting panel and grab key frames from it.
+   */
+  it('surfaces a member’s relayed screen on the host', async () => {
+    respondWithRelay()
+    const { share } = await startSharing()
+
+    const calls = relayApi.openRelay.mock.calls as unknown as Array<
+      [string, string, { onTrack: (track: FakeTrack, source: string, identity: string) => void }]
+    >
+    const handlers = calls.at(-1)?.[2]
+    const screen = new FakeTrack('video', 'member-screen')
+    handlers?.onTrack(screen, 'screen_share', 'viewer:v1')
+
+    expect(share.remoteScreenStream.value?.getVideoTracks()).toEqual([screen])
+
+    // The host's own picture never travels through this path: `host` has no
+    // viewer id, and replacing the member surface with our own screen would
+    // make the panel show an echo of what the host already presents.
+    const own = new FakeTrack('video', 'host-screen')
+    handlers?.onTrack(own, 'screen_share', 'host')
+    expect(share.remoteScreenStream.value?.getVideoTracks()).toEqual([screen])
+
+    screen.emitEnded()
+    expect(share.remoteScreenStream.value).toBeNull()
   })
 
   /**

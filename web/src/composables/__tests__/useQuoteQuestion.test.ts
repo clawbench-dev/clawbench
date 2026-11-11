@@ -622,6 +622,108 @@ describe('useQuoteQuestion', () => {
       expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
+    /**
+     * Opening next to the CONTROL that was pressed, instead of at the pinned top
+     * position.
+     *
+     * A message's 引用问答 sits at the bottom of the transcript; the pinned
+     * position is the top of the page, so the bar appeared far from the button.
+     * The caller hands over the pressed element.
+     */
+    describe('anchored to the opening control', () => {
+      /**
+       * Mount a host so the module's scroll listener is actually registered.
+       *
+       * `useQuoteQuestion` attaches its document listeners in `onMounted` and
+       * detaches them when the last consumer unmounts. Without a mount, a
+       * dispatched `scroll` reaches nobody and the two scroll tests below would
+       * pass no matter what the handler does.
+       */
+      function mountHost() {
+        const Host = defineComponent({
+          setup() { useQuoteQuestion(); return () => h('div') },
+        })
+        return mount(Host)
+      }
+
+      /** A real element in the document, with a measurable rect. */
+      function makeButton(): HTMLElement {
+        const el = document.createElement('button')
+        el.textContent = '引用问答'
+        document.body.appendChild(el)
+        // jsdom lays nothing out, so the rect is stubbed. Values are in the same
+        // (raw, zoom-scaled) space a real getBoundingClientRect returns.
+        el.getBoundingClientRect = () => ({
+          left: 120, top: 300, right: 160, bottom: 320, width: 40, height: 20,
+          x: 120, y: 300, toJSON: () => ({}),
+        }) as DOMRect
+        return el
+      }
+
+      it('takes the button rect as the anchor', () => {
+        const qq = useQuoteQuestion()
+        const btn = makeButton()
+
+        qq.openComposer({ quote: MEETING_QUOTE, label: '引用问答' }, { anchorEl: btn })
+
+        expect(qq.anchorRect.value).toMatchObject({ left: 120, top: 300, width: 40, height: 20 })
+        expect(qq.visible.value).toBe(true)
+      })
+
+      it('keeps the pinned top position when no button is named', () => {
+        // The older entry points (file header, issue detail) pass no element;
+        // they must not start floating next to a stale anchor.
+        const qq = useQuoteQuestion()
+
+        qq.openComposer({ quote: MEETING_QUOTE, label: '引用问答' })
+
+        expect(qq.anchorRect.value).toBeNull()
+      })
+
+      it('follows the button when the transcript scrolls instead of dismissing', () => {
+        // The chat list auto-scrolls while a reply streams. Dismissing on scroll
+        // (the selection rule) would close the bar one frame after it opened.
+        const wrapper = mountHost()
+        const qq = useQuoteQuestion()
+        const btn = makeButton()
+        qq.openComposer({ quote: MEETING_QUOTE, label: '引用问答' }, { anchorEl: btn })
+
+        // The transcript scrolls: the button is now higher on screen.
+        btn.getBoundingClientRect = () => ({
+          left: 120, top: 100, right: 160, bottom: 120, width: 40, height: 20,
+          x: 120, y: 100, toJSON: () => ({}),
+        }) as DOMRect
+        document.dispatchEvent(new Event('scroll'))
+
+        expect(qq.visible.value).toBe(true)
+        expect(qq.anchorRect.value).toMatchObject({ top: 100 })
+        wrapper.unmount()
+      })
+
+      it('stops following once it is dismissed', () => {
+        // A leftover follow target would re-anchor the NEXT bar (a text
+        // selection) to a button from an unrelated interaction.
+        const wrapper = mountHost()
+        const qq = useQuoteQuestion()
+        const btn = makeButton()
+        qq.openComposer({ quote: MEETING_QUOTE, label: '引用问答' }, { anchorEl: btn })
+        qq.hideComposer()
+
+        qq.showBar({ text: 'hello', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 })
+        vi.advanceTimersByTime(400)
+        const selectionAnchor = qq.anchorRect.value
+        // The old button moves; the selection anchor must not follow it.
+        btn.getBoundingClientRect = () => ({
+          left: 0, top: 0, right: 1, bottom: 1, width: 1, height: 1,
+          x: 0, y: 0, toJSON: () => ({}),
+        }) as DOMRect
+        document.dispatchEvent(new Event('scroll'))
+
+        expect(qq.anchorRect.value).toEqual(selectionAnchor)
+        wrapper.unmount()
+      })
+    })
+
     it('previews a pre-built payload when the composer is opened with one', () => {
       // A meeting record is addressed by token, so the card's content has to be
       // fetched before the bar can exist. The caller that awaited the fetch
@@ -637,6 +739,32 @@ describe('useQuoteQuestion', () => {
       })
       expect(ctx.quoteData.value).toBeNull()
       expect(ctx.stagedQuotes.value).toHaveLength(0)
+    })
+
+    it('carries the payload text into the chip preview when given one', () => {
+      // Quoting a chat message: the label names the source session, so the
+      // snippet is the only thing that says WHICH message is being quoted.
+      const qq = useQuoteQuestion()
+      qq.openComposer({
+        quote: { ...MEETING_QUOTE, sourceKind: 'message', text: 'the assistant reply' },
+        label: '引用问答 · 每日构建',
+        previewText: 'the assistant reply',
+      })
+
+      expect(qq.composerAttachment.value).toEqual({
+        kind: 'quote', label: '引用问答 · 每日构建', text: 'the assistant reply',
+      })
+      // Still only a preview: nothing is staged until the user commits.
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(ctx.quoteData.value).toBeNull()
+    })
+
+    it('omits the chip preview when the caller has no snippet', () => {
+      // A meeting card's text lives behind the token; the bar only names it.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ quote: MEETING_QUOTE, label: 'Meeting · Standup · 11-01 09:00' })
+
+      expect(qq.composerAttachment.value).not.toHaveProperty('text')
     })
 
     it('drops the previewed attachment when the composer is dismissed', () => {

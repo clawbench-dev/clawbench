@@ -12,6 +12,8 @@ export interface FileType {
     isVideo?: boolean
     isOffice?: boolean
     isExcalidraw?: boolean
+    /** draw.io diagram (.drawio) — rendered by the on-demand downloaded editor. */
+    isDrawio?: boolean
     /** Delimited text (CSV/TSV) — rendered as a data table, not raw text. */
     isTable?: boolean
 }
@@ -248,6 +250,9 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.pptx'], lang: 'pptx', label: 'PPTX', color: '#d24726', isMarkdown: false, isOffice: true },
     { exts: ['.xls'], lang: 'xls', label: 'XLS', color: '#217346', isMarkdown: false, isOffice: true },
     { exts: ['.excalidraw', '.xdraw'], lang: 'plaintext', label: 'DRAW', color: '#6965db', isMarkdown: false, isExcalidraw: true },
+    // draw.io. The editor is not bundled (the official webapp is ~118MB), so
+    // this only routes the file to the viewer that downloads it on first use.
+    { exts: ['.drawio'], lang: 'xml', label: 'DRAWIO', color: '#f08705', isMarkdown: false, isDrawio: true },
 ]
 export function getFileType(name: string): FileType {
     const lower = name.toLowerCase()

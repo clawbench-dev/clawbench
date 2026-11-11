@@ -89,7 +89,7 @@
     <template #notes>
       <!-- Same three-way honesty as the member's own panel: waiting while the
            recorder runs, "nothing was recorded" once it stopped. -->
-      <MeetingEmpty
+      <EmptyState
         v-if="noteBlocks.length === 0"
         :icon="Captions"
         :title="t(notesEnabled ? 'share.live.notesWaiting' : 'share.live.notesOffTitle')"
@@ -117,7 +117,7 @@ import LiveChatPanel, { type ChatMessage } from '@/share/LiveChatPanel.vue'
 import LiveDock from '@/share/LiveDock.vue'
 import LiveDockButton from '@/share/LiveDockButton.vue'
 import LiveStageLayout from '@/share/LiveStageLayout.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import type { NoteBlock } from '@/composables/liveNotes'
 

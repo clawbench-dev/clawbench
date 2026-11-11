@@ -65,10 +65,30 @@ func (m *Manager) Close() {
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
-	for _, s := range sessions {
-		s.Close()
-	}
+	closeSessions(sessions)
 	slog.Info("terminal: manager closed", slog.Int("sessions", len(sessions)))
+}
+
+// closeSessions closes every session concurrently.
+//
+// Session.Close waits up to 3s for SIGTERM before escalating to SIGKILL, and
+// interactive shells routinely ignore SIGTERM — so a serial loop costs N×3s.
+// That is not a cosmetic delay: the data-directory lock is held until the
+// process exits, so with 10 terminals open the outgoing server blocked the
+// replacement for 30s, longer than the new process waits for the lock, and the
+// restart left the service down. Sessions share no state (each has its own
+// mutex, PTY and process group), so closing them in parallel collapses the
+// drain to the slowest single session (~3s).
+func closeSessions(sessions map[string]*Session) {
+	var wg sync.WaitGroup
+	wg.Add(len(sessions))
+	for _, s := range sessions {
+		go func(s *Session) {
+			defer wg.Done()
+			s.Close()
+		}(s)
+	}
+	wg.Wait()
 }
 
 // HandleWebSocket handles a WebSocket connection request.
@@ -305,9 +325,7 @@ func (m *Manager) CloseAllSessions() {
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
-	for _, s := range sessions {
-		s.Close()
-	}
+	closeSessions(sessions)
 }
 
 // SessionStatus returns info about a specific session.

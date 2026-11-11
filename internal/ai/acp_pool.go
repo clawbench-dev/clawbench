@@ -573,9 +573,12 @@ func (m *ACPConnManager) GetOrCreateConnForLoad(ctx context.Context, agent *mode
 // rather than hard-failing the request.
 //
 // It clears acpSID and loadTargetSID so ensureAliveWithSession creates a new
-// session instead of retrying the dead one. Returns the conn on success, or
-// nil if even a new session could not be established (the pool entry is
-// cleaned up so a later request starts fresh).
+// session instead of retrying the dead one. NOTE: ensureAliveWithSession falls
+// back to the DB's external_session_id when the in-memory id is empty, so the
+// caller must also have cleared that column (recoveryFailure does it for a
+// session the agent reports as gone). Returns the conn on success, or nil if
+// even a new session could not be established (the pool entry is cleaned up so
+// a later request starts fresh).
 func (m *ACPConnManager) NewSessionFallback(ctx context.Context, agent *model.Agent, clawbenchSID, cwd string) *ACPConn {
 	m.mu.Lock()
 	conn, ok := m.conns[clawbenchSID]

@@ -89,7 +89,7 @@ test.describe('File manager search results', () => {
 
     // The re-scan finished with nothing left: the row is gone AND the results
     // layer shows its empty state (which only renders when searching === false).
-    await expect(page.locator('.fs-search-empty')).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('[data-role="file-search-empty"]')).toBeVisible({ timeout: 15000 })
     await expect(row).toHaveCount(0)
     await expect.poll(() => existsInProject(NAME), { timeout: 15000 }).toBe('none')
   })

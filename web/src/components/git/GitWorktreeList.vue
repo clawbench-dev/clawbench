@@ -16,7 +16,12 @@
         <span>{{ t('git.manage.loadError') }}</span>
         <button class="retry-btn" @click="$emit('retry')">{{ t('git.manage.retry') }}</button>
       </div>
-      <div v-else-if="worktrees.length === 0" class="section-empty">{{ t('git.manage.noWorktrees') }}</div>
+      <EmptyState
+        v-else-if="worktrees.length === 0"
+        :icon="GitFork"
+        :title="t('git.manage.noWorktrees')"
+        :desc="t('git.manage.noWorktreesDesc')"
+      />
       <div v-else class="wt-list-body">
         <GitWorktreeCard
           v-for="wt in worktrees"
@@ -33,8 +38,9 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, GitFork } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import GitWorktreeCard from './GitWorktreeCard.vue'
 import { layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 
@@ -82,10 +88,23 @@ function toggleCollapse() {
   border-bottom: 1px solid var(--border-color, #dee2e6);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Column flex so the body can take the pane height and centre the shared
+     empty state. */
+  display: flex;
+  flex-direction: column;
 }
 
 .git-worktree-list.no-header {
   border-bottom: none;
+}
+
+/* Takes the free height in the manage tab so the empty state can centre; rows
+   do not grow, so they still stack from the top. */
+.section-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .section-header {
@@ -149,12 +168,6 @@ function toggleCollapse() {
   background: transparent;
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
-}
-
-.section-empty {
-  font-size: var(--font-size-md);
-  color: var(--text-muted, #999);
-  padding: var(--space-4) 0;
 }
 
 .wt-list-body {

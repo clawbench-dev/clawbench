@@ -124,6 +124,7 @@ interface CurrentFile {
     isHtml?: boolean
     isOffice?: boolean
     isExcalidraw?: boolean
+    isDrawio?: boolean
     isBinary?: boolean
     tooLarge?: boolean
     truncated?: boolean
@@ -566,6 +567,12 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         // Detect Excalidraw files (backend reports subtype="excalidraw")
         if (data.subtype === 'excalidraw') {
             data.isExcalidraw = true
+        }
+        // draw.io diagrams (backend reports subtype="drawio"). Without this the
+        // file falls through to the plain-text viewer even though the extension
+        // is registered — the viewer branches on the flag, not the name.
+        if (data.subtype === 'drawio') {
+            data.isDrawio = true
         }
         // Backend may also mark as binary if the file somehow passes frontend check
         // When refreshing the same file (auto-refresh from file watcher),

@@ -1218,7 +1218,7 @@ watch(localValues, () => {
 
 /* Compact iOS-style card container */
 .group-panel__card {
-  border-radius: 0;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-primary);
   margin-bottom: var(--space-4);

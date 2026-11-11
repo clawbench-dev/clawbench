@@ -705,6 +705,20 @@ function urlKey(url: string): string {
 }
 
 /**
+ * How long an archive download may make no progress before the walk moves on.
+ *
+ * The candidate walk only advances when a download FAILS, and a mirror that is
+ * alive but trickling never does. Measured 2026-11-11: one proxy served the
+ * 125MB desktop package at 38 KB/s — 55 minutes — and the user would have sat
+ * there instead of trying the next source. 30 KB/s is below any usable rate for
+ * an archive this size, so abandoning is always the better trade.
+ *
+ * Only archives get this: the small JSON calls (`/api/desktop/latest`) keep
+ * their previous no-timeout behaviour.
+ */
+const ARCHIVE_PROGRESS_GUARD = { idleMs: 20_000, minBytesPerSecond: 30 * 1024 }
+
+/**
  * Try each candidate URL in order, returning the first body that downloads AND
  * looks like an archive.
  *
@@ -718,10 +732,13 @@ function urlKey(url: string): string {
  * After the server's candidates are exhausted, npm tarballs are retried through
  * the local mirror (see mirrorFallbackUrls). `registryBase` is injectable so
  * tests do not depend on the machine's ~/.npmrc; pass '' to disable the retry.
+ * `progressGuard` is injectable for the same reason — pass null to download with
+ * no deadline, which is what the tests that predate the guard rely on.
  */
 export async function downloadFirstAvailable(
   urls: string[],
   registryBase?: string,
+  progressGuard: { idleMs: number; minBytesPerSecond: number } | null = ARCHIVE_PROGRESS_GUARD,
 ): Promise<Buffer> {
   const base =
     registryBase ??
@@ -739,7 +756,7 @@ export async function downloadFirstAvailable(
     }
     let buf: Buffer
     try {
-      buf = await httpGetBuffer(url)
+      buf = await httpGetBuffer(url, progressGuard ? { progressGuard } : {})
     } catch (err) {
       errs.push(`${url}: ${(err as Error)?.message || err}`)
       continue

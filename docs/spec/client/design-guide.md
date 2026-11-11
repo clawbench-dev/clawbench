@@ -118,6 +118,12 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 数字是**步号不是尺寸**，同一个步号在密集行里是"内边距"、在卡片间是"间距"，所以刻意不起语义名。
 
+**卡片面板的滚动区内边距只有一个值：`--panel-body-pad`（= `--space-5`，10px）。**
+适用于左栏里"滚动区装卡片"的面板：会议列表与会议详情、任务列表、分享中心、通知中心、统计三个子页。它以前是各面板自己发明的（会议列表 8/10/12、会议详情 12/16、任务 8、分享 8/12、通知 0/12/24），结果同一个页签里**打开一条记录就换了密度**——详情比列表宽 6px，看上去像两个不同的界面。
+- 例外是**行列表**：文件管理器、邮件这些一行挨一行的密集列表保持自己更小的内边距，它们不是卡片。
+- 通知中心的顶部仍是 `0`（粘性日期头要靠卡片自己的上内边距，见 `NotificationsPanelContent.vue` 的注释）。
+- 守卫：`web/src/__tests__/panelBodyPadding.test.ts` 钉住「token 只声明一次」与「每个面板的 body 规则确实花它」；改某个面板的骨架屏内边距时，`panelSkeletonInsetCalibration.test.ts` 会连带报错（占位块要和真行对齐）。
+
 ### 圆角
 
 | Token | 值 | 用途 |
@@ -129,6 +135,8 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 | `--radius-full` | 999px | 药丸、头像、图标按钮 |
 
 `0`（直角）**刻意不 token 化**——写死 `0` 是在表达"这里就是要方"这个决定。
+
+**卡片一律用 `--radius-md`**：左栏各面板（会议、任务、统计、分享、端口映射、通知中心）与设置页的分组卡片共用一个圆角，不要按页面另写 `0` / `--radius-sm` / `--radius-lg`。卡片内部的按钮、输入框、标签仍按各自档位（`--radius-sm` / `--radius-xs` / `--radius-full`）。
 
 ### 动效时长
 
@@ -189,7 +197,17 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - 用户气泡：`--user-msg-color`
 - 阴影：`--shadow-sm` / `--shadow-md` / `--shadow-lg`（**每套主题都必须定义全三档**，`designTokens.css.test.ts:176` 钉死）
 - 字号以外还有 `--font-ui` / `--font-mono`（用户可在设置里改，运行时覆盖到 `<html>` 内联样式）
-- 空状态图标：`--empty-icon-size`（56 设计 px）/ `--empty-icon-stroke`（1.25）。**全站空状态只用一个字形尺寸**，由全局 `.empty-state__icon`（`css/components.css`）消费——调用方只加这个类，**不得再传 `:size`**（曾经漂到 24/26/30/32/34/36/40/48/56 九个尺寸）。守卫：`components/common/__tests__/emptyStateIcon.test.ts`（含全站空状态清单）。
+- 空状态图标：`--empty-icon-size`（56 设计 px）/ `--empty-icon-stroke`（1.25）。**全站空状态只用一个字形尺寸**，由全局 `.empty-state__icon`（`css/components.css`）消费——调用方只加这个类，**不得再传 `:size`**（曾经漂到 24/26/30/32/34/36/40/48/56 九个尺寸）。守卫：`components/common/__tests__/emptyStateIcon.test.ts`（含全站空状态清单）。聊天欢迎页里的**智能体头像**占的就是这个字形的位置，因此也必须是 56：`AgentIcon` 的 `xxl` 档直接取这个 token（它的 sm/md/lg/xl 是跟着文字排的，别拿 `xl` 凑）。
+
+### 空状态只有一种形状：`EmptyState`
+
+所有页签、子页签、子分区的"这里还没有东西"一律用 `components/common/EmptyState.vue`，**不要自己拼一个块**：
+
+- 形状固定为「大图标 → 标题 → 说明（可选）→ 操作按钮（可选）」，整块在容器里**水平垂直居中**。
+- `fill`（默认开）让整块吃掉剩余高度——页签级空状态靠它才落在正中间而不是贴着页眉。它要求父级是纵向 flex：`TabPanel → .bs-body` 已经是，少数滚动区（`.file-list`、`.share-body`、`.drilldown-body`、`.proxy-zone-registered`、`.task-list-body` 等）为此显式改成了纵向 flex。区块级（折叠分区、详情页里已有内容上方的空状态）传 `:fill="false"`，只做水平居中。
+- 图标走 `icon` 属性，或 `#icon` 插槽（需要自带 props 的图标，例如 `FileIcon`、智能体头像）。**尺寸、描边、颜色由全局 `.empty-state__icon` 决定**，调用方不传 `:size`。
+- 多行说明用 `#desc` 插槽，操作入口用 `#action` 插槽。
+- 字号、间距、内边距都在组件里，调用方**不要再声明** `.empty-state` 或自造 `.xxx-empty` 块——守卫会拒绝重复声明（`.share-hint` / `.notif-state` 只剩错误分支，不算空状态）。
 
 ---
 

@@ -20,7 +20,7 @@ defineProps<{
 
 /* Compact iOS-style card: white rounded body on the grey page background */
 .settings-card__body {
-  border-radius: 0;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-primary);
 }

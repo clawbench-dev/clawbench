@@ -243,6 +243,7 @@ type Config struct {
 	Mail        MailConfig        `yaml:"mail"`         // Built-in mail client master switch
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
+	Drawio      DrawioConfig      `yaml:"drawio"`       // On-demand draw.io editor (downloaded, not embedded)
 	// MCP is the global MCP server list shared by every ACP agent. Agents only
 	// store a policy (all / none / selected), never the definitions — see
 	// internal/model/mcp.go. CLI backends ignore it: they have no mcpServers

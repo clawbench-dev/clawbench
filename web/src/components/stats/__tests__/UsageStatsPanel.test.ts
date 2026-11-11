@@ -72,6 +72,7 @@ const zhMessages = {
     emptyLabel: '未标注',
     unknown: '未知',
     noData: '所选时间段内暂无用量数据',
+    noDataDesc: '换个时间段或筛选条件试试。',
     loadFailed: '统计加载失败',
   },
   common: { loading: '加载中' },
