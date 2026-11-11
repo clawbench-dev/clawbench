@@ -70,7 +70,7 @@ func ServeDrawioUpload(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing file field (or larger than 200MB)"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{strReqError: "missing file field (or larger than 200MB)"})
 		return
 	}
 	defer func() { _ = file.Close() }()
@@ -83,7 +83,7 @@ func ServeDrawioUpload(w http.ResponseWriter, r *http.Request) {
 		// The message carries the reason the user needs (checksum mismatch,
 		// not an archive, disk full), so it is passed through rather than
 		// flattened into a generic failure.
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{strReqError: err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, drawioGetStatus())

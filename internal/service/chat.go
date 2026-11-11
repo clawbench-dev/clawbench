@@ -1,4 +1,4 @@
-//nolint:errcheck,gocyclo,gosec,goconst,noctx,rowserrcheck // legacy file, nolint-only approach for diff stability
+//nolint:errcheck,gocyclo,gosec,goconst,noctx // legacy file, nolint-only approach for diff stability
 package service
 
 import (
@@ -3867,6 +3867,67 @@ func summarizeContentForView(content string) string {
 	return string(b)
 }
 
+// assistantMessageIDs returns the ids of the assistant messages in the slice
+// (the only rows summaries exist for) and the largest of them.
+func assistantMessageIDs(messages []model.ChatMessage) ([]int64, int64) {
+	ids := make([]int64, 0, len(messages))
+	newest := int64(0)
+	for _, msg := range messages {
+		if msg.Role == roleAssistant {
+			ids = append(ids, msg.ID)
+			if msg.ID > newest {
+				newest = msg.ID
+			}
+		}
+	}
+	return ids, newest
+}
+
+// loadMessageSummaries batch-queries the summaries table for the given chat
+// message ids. A failed query yields empty maps: summaries are an enrichment,
+// and a history response must not fail because of them.
+func loadMessageSummaries(ids []int64) (map[int64]string, map[int64]*model.SummaryCards) {
+	summaries := make(map[int64]string, len(ids))
+	cards := make(map[int64]*model.SummaryCards)
+
+	query := "SELECT target_id, summary, COALESCE(summary_cards, '') FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		if i > 0 {
+			query += ","
+		}
+		query += "?"
+		args[i] = id
+	}
+	query += ")"
+
+	rows, err := store.ReadDB().Query(query, args...)
+	if err != nil {
+		return summaries, cards
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var targetID int64
+		var summary string
+		var cardsJSON string
+		if err := rows.Scan(&targetID, &summary, &cardsJSON); err != nil {
+			continue
+		}
+		summaries[targetID] = summary
+		if cardsJSON != "" {
+			var parsed model.SummaryCards
+			if jerr := json.Unmarshal([]byte(cardsJSON), &parsed); jerr == nil {
+				cards[targetID] = &parsed
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return summaries, cards
+	}
+	return summaries, cards
+}
+
 // enrichMessagesWithSummaries populates the Summary and SummaryCards fields for
 // assistant messages by batch-querying the summaries table. Only messages with
 // role "assistant" are queried. The heavy content of messages that have a
@@ -3874,8 +3935,6 @@ func summarizeContentForView(content string) string {
 // the newest assistant reply in the slice, which is always sent whole (see the
 // newestAssistantID comment below).
 func enrichMessagesWithSummaries(messages []model.ChatMessage) {
-	// Collect IDs of assistant messages
-	assistantIDs := make([]int64, 0, len(messages))
 	// The newest assistant reply in this slice: never stripped. It is the row a
 	// live client is looking at, and the only row it can check its own streamed
 	// copy against. Finalize summarizes SYNCHRONOUSLY before the terminal `done`
@@ -3890,55 +3949,12 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	// mode renders the newest reply as ORIGINAL text, so the client used to
 	// fetch exactly this row back from /api/rag/message — one round-trip that
 	// this replaces.
-	newestAssistantID := int64(0)
-	for _, msg := range messages {
-		if msg.Role == roleAssistant {
-			assistantIDs = append(assistantIDs, msg.ID)
-			if msg.ID > newestAssistantID {
-				newestAssistantID = msg.ID
-			}
-		}
-	}
+	assistantIDs, newestAssistantID := assistantMessageIDs(messages)
 	if len(assistantIDs) == 0 {
 		return
 	}
 
-	// Batch query summaries for all assistant messages
-	query := "SELECT target_id, summary, COALESCE(summary_cards, '') FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("
-	args := make([]any, len(assistantIDs))
-	for i, id := range assistantIDs {
-		if i > 0 {
-			query += ","
-		}
-		query += "?"
-		args[i] = id
-	}
-	query += ")"
-
-	rows, err := store.ReadDB().Query(query, args...)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	// Build map of message ID -> summary
-	summaryMap := make(map[int64]string)
-	cardMap := make(map[int64]*model.SummaryCards)
-	for rows.Next() {
-		var targetID int64
-		var summary string
-		var cardsJSON string
-		if err := rows.Scan(&targetID, &summary, &cardsJSON); err != nil {
-			continue
-		}
-		summaryMap[targetID] = summary
-		if cardsJSON != "" {
-			var cards model.SummaryCards
-			if jerr := json.Unmarshal([]byte(cardsJSON), &cards); jerr == nil {
-				cardMap[targetID] = &cards
-			}
-		}
-	}
+	summaryMap, cardMap := loadMessageSummaries(assistantIDs)
 
 	// Enrich messages
 	//

@@ -138,7 +138,7 @@ func collectYAMLPaths(t reflect.Type, prefix string, out map[string]bool) {
 	}
 	switch t.Kind() {
 	case reflect.Struct:
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			field := t.Field(i)
 			tag := strings.Split(field.Tag.Get("yaml"), ",")[0]
 			if tag == "" || tag == "-" {

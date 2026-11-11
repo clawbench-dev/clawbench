@@ -2008,7 +2008,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					// http/https/ws; the scheme check keeps it to the two the
 					// ACP transports actually use.
 					u, err := url.ParseRequestURI(srv.URL)
-					if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+					if err != nil || (u.Scheme != relayProxySchemeHTTP && u.Scheme != relayProxySchemeHTTPS) {
 						return fmt.Errorf("mcp.servers[%d].url must be an http(s) URL", i)
 					}
 					continue
@@ -2377,7 +2377,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if drawioVal, ok := patch["drawio"].(map[string]any); ok {
 		if v, ok := drawioVal["download_url"].(string); ok && strings.TrimSpace(v) != "" {
 			u, err := url.Parse(strings.TrimSpace(v))
-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			if err != nil || (u.Scheme != relayProxySchemeHTTP && u.Scheme != relayProxySchemeHTTPS) || u.Host == "" {
 				return fmt.Errorf("drawio.download_url must be an absolute http(s) URL")
 			}
 		}

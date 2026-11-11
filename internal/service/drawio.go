@@ -2,6 +2,7 @@ package service
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -52,6 +53,16 @@ const (
 	//
 	// It changes whenever drawioVersion changes; update both together.
 	drawioSHA256 = "a57b06b3b6a876a351dacfe65d027d9509319cd030e9bacf6ae04a034d66a38f"
+
+	// drawioStateFailed is the terminal state of a failed install. Named (and
+	// deliberately separate from the live-notes status constants) because the
+	// same literal appears in more than one service file.
+	drawioStateFailed = "failed"
+	// maxDrawioEntryBytes caps one extracted archive member. The archive is
+	// checksum-verified, but the unpack step must still not be able to write an
+	// unbounded file from a reader (a repacked archive, or a checksum variable
+	// pointed at a test fixture).
+	maxDrawioEntryBytes = 512 << 20
 )
 
 // drawioMirrorPrefixes are prefix proxies prepended to the canonical GitHub
@@ -171,7 +182,7 @@ func StartDrawioInstall() error {
 		drawioMu.Lock()
 		drawioInstalling = false
 		if err != nil {
-			drawioState = "failed"
+			drawioState = drawioStateFailed
 			drawioError = err.Error()
 		} else {
 			drawioState = "ready"
@@ -247,7 +258,13 @@ func installDrawioFrom(urls []string) error {
 // downloadDrawioArchive streams one candidate to a temp file, reporting progress
 // as it goes, and returns the file path.
 func downloadDrawioArchive(url string) (string, error) {
-	resp, err := drawioHTTPClient.Get(url)
+	// A request with a context (rather than Get) so a cancelled install does not
+	// keep the connection open until the client's own timeout fires.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return "", err
+	}
+	resp, err := drawioHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -334,7 +351,7 @@ func InstallDrawioFromReader(r io.Reader, total int64) error {
 	drawioMu.Lock()
 	drawioInstalling = false
 	if err != nil {
-		drawioState = "failed"
+		drawioState = drawioStateFailed
 		drawioError = err.Error()
 	} else {
 		drawioState = "ready"
@@ -456,13 +473,20 @@ func extractDrawioEntry(f *zip.File, root string) error {
 	}
 	defer func() { _ = rc.Close() }()
 
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, rc); err != nil {
+	// CopyN with an explicit ceiling, not Copy: the reader is an archive member
+	// whose declared size can lie, and a decompression bomb would fill the disk.
+	// limit+1 bytes written means the member exceeded the cap.
+	if _, err := io.CopyN(out, rc, maxDrawioEntryBytes+1); err != nil && !errors.Is(err, io.EOF) {
 		_ = out.Close()
 		return err
+	}
+	if info, statErr := out.Stat(); statErr == nil && info.Size() > maxDrawioEntryBytes {
+		_ = out.Close()
+		return fmt.Errorf("archive entry %q is larger than %d bytes", f.Name, maxDrawioEntryBytes)
 	}
 	return out.Close()
 }
