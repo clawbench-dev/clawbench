@@ -633,7 +633,7 @@ onMounted(() => {
 .stats-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-5);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
   display: flex;
   flex-direction: column;
   gap: var(--space-5);

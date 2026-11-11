@@ -329,7 +329,7 @@ onMounted(refresh)
 .task-list-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-4);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
 }
 
 .task-items-container {

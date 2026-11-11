@@ -686,7 +686,7 @@ function forgeTargetFromItemKey(key: string) {
   /* No top padding: the sticky day header would stick BELOW it, leaving an
      unpainted band above through which the previous card scrolls into view.
      The first header's own top padding provides the inset instead. */
-  padding: 0 var(--space-6) var(--space-9);
+  padding: 0 var(--panel-body-pad, var(--space-5, 10px)) var(--space-9);
   display: flex;
   flex-direction: column;
   /* The panel can be dragged narrow (the splitter goes to 320px) and is the

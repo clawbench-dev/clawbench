@@ -555,7 +555,7 @@ watch(
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4) var(--space-6);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
 }
 
 .share-skeleton {

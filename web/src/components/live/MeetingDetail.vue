@@ -1236,7 +1236,7 @@ onMounted(() => {
 .meeting-body {
   flex: 1; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--space-5);
-  padding: var(--space-6) var(--space-7);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
 }
 
 .meeting-md {
