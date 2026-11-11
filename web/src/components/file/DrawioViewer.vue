@@ -12,25 +12,45 @@
           <p class="drawio-gate-title">{{ t('file.viewer.drawioTitle') }}</p>
           <p class="drawio-gate-desc">{{ t('file.viewer.drawioDesc') }}</p>
 
-          <div v-if="phase === 'installing'" class="drawio-progress">
+          <div v-if="phase === 'installing' || uploading" class="drawio-progress">
             <div class="drawio-progress-track">
-              <div class="drawio-progress-fill" :style="{ width: percent + '%' }" />
+              <div class="drawio-progress-fill" :style="{ width: busyPercent + '%' }" />
             </div>
-            <span class="drawio-progress-text">{{ progressText }}</span>
+            <span class="drawio-progress-text">{{ busyText }}</span>
           </div>
 
           <p v-if="phase === 'failed' && errorText" class="drawio-error">{{ errorText }}</p>
 
           <button
-            v-if="phase !== 'installing' && !readonly"
+            v-if="phase !== 'installing' && !uploading && !readonly"
             class="drawio-action"
             @click="startInstall"
           >
             {{ phase === 'failed' ? t('file.viewer.drawioRetry') : t('file.viewer.drawioInstall') }}
           </button>
-          <p v-else-if="phase !== 'installing' && readonly" class="drawio-gate-desc">
+          <p v-else-if="phase !== 'installing' && !uploading && readonly" class="drawio-gate-desc">
             {{ t('file.viewer.drawioReadonlyMissing') }}
           </p>
+
+          <!-- Offline path: the server may have no route to github.com at all,
+               so the archive can also be handed over from this machine. -->
+          <div v-if="!readonly" class="drawio-upload">
+            <span class="drawio-upload-hint">{{ t('file.viewer.drawioUploadHint') }}</span>
+            <button
+              class="drawio-upload-btn"
+              :disabled="uploading || phase === 'installing'"
+              @click="pickFile"
+            >
+              {{ t('file.viewer.drawioPickFile') }}
+            </button>
+            <input
+              ref="fileInputRef"
+              class="drawio-file-input"
+              type="file"
+              accept=".war,.zip"
+              @change="onFileChosen"
+            />
+          </div>
         </template>
       </div>
     </div>
@@ -88,12 +108,15 @@ const fileEditor = useFileEditor()
 const { saveFile } = useCodeEditorSave()
 
 const frameRef = ref(null)
+const fileInputRef = ref(null)
 // 'checking' | 'absent' | 'installing' | 'ready' | 'failed'
 const phase = ref('checking')
 const basePath = ref('')
 const downloaded = ref(0)
 const total = ref(0)
 const errorText = ref('')
+const uploading = ref(false)
+const uploadPercent = ref(0)
 
 let pollTimer = null
 let iframeReady = false
@@ -123,6 +146,79 @@ const progressText = computed(() => {
   const mb = (n) => (n / 1048576).toFixed(1)
   return t('file.viewer.drawioProgress', { done: mb(downloaded.value), total: mb(total.value) })
 })
+
+// Uploading and downloading share one bar: only one of them can be running, and
+// the user does not care which side the bytes are counted on.
+const busyPercent = computed(() => (uploading.value ? uploadPercent.value : percent.value))
+const busyText = computed(() =>
+  uploading.value
+    ? t('file.viewer.drawioUploading', { percent: uploadPercent.value })
+    : progressText.value
+)
+
+function pickFile() {
+  fileInputRef.value?.click()
+}
+
+async function onFileChosen(e) {
+  const input = e.target
+  const picked = input?.files?.[0]
+  // Reset first so picking the same file twice still fires `change`.
+  if (input) input.value = ''
+  if (!picked) return
+
+  uploading.value = true
+  uploadPercent.value = 0
+  errorText.value = ''
+  try {
+    await uploadArchive(picked)
+    await refreshStatus()
+  } catch (err) {
+    // The server's message names the actual reason (checksum mismatch, not an
+    // archive), which is far more useful than "upload failed".
+    phase.value = 'failed'
+    errorText.value = (err && err.message) || t('file.viewer.drawioUploadFailed')
+  } finally {
+    uploading.value = false
+  }
+}
+
+/**
+ * POST the archive as multipart and report byte progress.
+ *
+ * Raw XHR rather than apiPost: fetch has no upload-progress event, and 48MB over
+ * a slow link needs a bar. The timeout is generous because this also covers the
+ * server's verification and unpacking after the last byte is sent.
+ */
+function uploadArchive(file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/drawio/upload')
+    xhr.timeout = 300000
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) uploadPercent.value = Math.round((ev.loaded / ev.total) * 100)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+        return
+      }
+      let message = ''
+      try {
+        message = JSON.parse(xhr.responseText)?.error || ''
+      } catch {
+        // Non-JSON body (proxy error page): fall back to the status code below.
+      }
+      reject(new Error(message || `${t('file.viewer.drawioUploadFailed')} (HTTP ${xhr.status})`))
+    }
+    xhr.onerror = () => reject(new Error(t('file.viewer.drawioUploadFailed')))
+    xhr.ontimeout = () => reject(new Error(t('file.viewer.drawioUploadFailed')))
+
+    const form = new FormData()
+    form.append('file', file)
+    xhr.send(form)
+  })
+}
 
 function stopPolling() {
   if (pollTimer) {
@@ -460,5 +556,44 @@ defineExpose({ requestExit, isDirty: () => dirty })
 
 .drawio-action:hover {
   opacity: 0.9;
+}
+
+.drawio-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(8 * var(--dp));
+  margin-top: calc(6 * var(--dp));
+  padding-top: calc(10 * var(--dp));
+  border-top: 1px dashed var(--border-color);
+}
+
+.drawio-upload-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.drawio-upload-btn {
+  padding: calc(4 * var(--dp)) calc(10 * var(--dp));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.drawio-upload-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.drawio-upload-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The real control is the button above; this stays out of the layout. */
+.drawio-file-input {
+  display: none;
 }
 </style>

@@ -1,8 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -173,4 +178,75 @@ func TestApplyConfigPatch_DrawioDownloadURL(t *testing.T) {
 	// Surrounding whitespace is stripped on write: a pasted URL with a trailing
 	// space would otherwise fail the request the next time it is used.
 	assert.Equal(t, "https://mirror.internal/draw.war", model.ConfigInstance.Drawio.DownloadURL)
+}
+
+// multipartUpload builds a request carrying one form file.
+func multipartUpload(t *testing.T, field, name string, content []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile(field, name)
+	require.NoError(t, err)
+	_, err = fw.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/drawio/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	return req
+}
+
+func TestServeDrawioUpload_InstallsTheProvidedArchive(t *testing.T) {
+	defer func() { drawioInstallFrom = service.InstallDrawioFromReader }()
+	var gotSize int64
+	drawioInstallFrom = func(r io.Reader, total int64) error {
+		gotSize = total
+		_, err := io.ReadAll(r)
+		return err
+	}
+	drawioGetStatus = func() service.DrawioStatus {
+		return service.DrawioStatus{Installed: true, State: "ready"}
+	}
+	defer func() { drawioGetStatus = service.GetDrawioStatus }()
+
+	w := callHandler(ServeDrawioUpload, multipartUpload(t, "file", "draw.war", []byte("archive-bytes")))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, int64(len("archive-bytes")), gotSize, "the size hint must reach the installer")
+}
+
+func TestServeDrawioUpload_RejectsAMissingFile(t *testing.T) {
+	// A form without the expected field is a client bug, not a server failure.
+	req := httptest.NewRequest(http.MethodPost, "/api/drawio/upload", bytes.NewReader(nil))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+
+	w := callHandler(ServeDrawioUpload, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeDrawioUpload_ReportsARejectedArchive(t *testing.T) {
+	defer func() { drawioInstallFrom = service.InstallDrawioFromReader }()
+	drawioInstallFrom = func(io.Reader, int64) error {
+		return errors.New("checksum mismatch: got aa, want bb")
+	}
+
+	w := callHandler(ServeDrawioUpload, multipartUpload(t, "file", "draw.war", []byte("x")))
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	// The reason has to reach the user: "upload failed" alone would leave them
+	// guessing whether the file was wrong or the server broke.
+	assert.Contains(t, w.Body.String(), "checksum mismatch")
+}
+
+func TestServeDrawioUpload_ConflictWhileAnInstallRuns(t *testing.T) {
+	defer func() { drawioInstallFrom = service.InstallDrawioFromReader }()
+	drawioInstallFrom = func(io.Reader, int64) error { return service.ErrDrawioInstallBusy }
+	drawioGetStatus = func() service.DrawioStatus {
+		return service.DrawioStatus{State: "downloading"}
+	}
+	defer func() { drawioGetStatus = service.GetDrawioStatus }()
+
+	w := callHandler(ServeDrawioUpload, multipartUpload(t, "file", "draw.war", []byte("x")))
+
+	assert.Equal(t, http.StatusConflict, w.Code)
 }

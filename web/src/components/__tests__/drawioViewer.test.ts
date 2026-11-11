@@ -217,3 +217,87 @@ describe('DrawioViewer bridge', () => {
     expect(useFileEditor().isEditing()).toBe(false)
   })
 })
+
+describe('DrawioViewer offline upload', () => {
+  class FakeXHR {
+    static instances: FakeXHR[] = []
+    upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {}
+    status = 200
+    responseText = '{}'
+    timeout = 0
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    ontimeout: (() => void) | null = null
+    sentBody: FormData | null = null
+
+    constructor() {
+      FakeXHR.instances.push(this)
+    }
+    open() {}
+    send(body: FormData) {
+      this.sentBody = body
+      this.upload.onprogress?.({ lengthComputable: true, loaded: 25, total: 100 })
+      queueMicrotask(() => this.onload?.())
+    }
+  }
+
+  let originalXHR: typeof XMLHttpRequest
+
+  beforeEach(() => {
+    originalXHR = globalThis.XMLHttpRequest
+    FakeXHR.instances = []
+    ;(globalThis as unknown as { XMLHttpRequest: unknown }).XMLHttpRequest = FakeXHR
+  })
+
+  afterEach(() => {
+    ;(globalThis as unknown as { XMLHttpRequest: unknown }).XMLHttpRequest = originalXHR
+  })
+
+  async function mountAbsent() {
+    apiGetMock.mockResolvedValueOnce(statusOf())
+    const wrapper = mount(DrawioViewer, { props: { file } })
+    await nextTick()
+    await nextTick()
+    return wrapper
+  }
+
+  async function chooseFile(wrapper: Awaited<ReturnType<typeof mountAbsent>>) {
+    const input = wrapper.find('input[type="file"]')
+    const picked = new File(['war-bytes'], 'draw.war')
+    Object.defineProperty(input.element, 'files', { value: [picked], configurable: true })
+    await input.trigger('change')
+    return picked
+  }
+
+  it('uploads the chosen archive and switches to the editor once installed', async () => {
+    const wrapper = await mountAbsent()
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+
+    const picked = await chooseFile(wrapper)
+    await vi.waitFor(() => expect(wrapper.find('iframe').exists()).toBe(true))
+
+    expect(FakeXHR.instances).toHaveLength(1)
+    expect(FakeXHR.instances[0].sentBody?.get('file')).toBe(picked)
+    wrapper.unmount()
+  })
+
+  it('shows the reason the server rejected the archive', async () => {
+    const wrapper = await mountAbsent()
+    const reject = FakeXHR.prototype.send
+    FakeXHR.prototype.send = function sendRejected(this: FakeXHR) {
+      this.status = 400
+      this.responseText = JSON.stringify({ error: 'checksum mismatch: got aa, want bb' })
+      queueMicrotask(() => this.onload?.())
+    }
+
+    try {
+      await chooseFile(wrapper)
+      await vi.waitFor(() => expect(wrapper.text()).toContain('checksum mismatch'))
+      // The gate must stay up: a rejected upload is not a silent success.
+      expect(wrapper.find('iframe').exists()).toBe(false)
+    } finally {
+      FakeXHR.prototype.send = reject
+      wrapper.unmount()
+    }
+  })
+})

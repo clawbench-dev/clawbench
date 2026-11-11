@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -12,7 +13,13 @@ var (
 	drawioGetStatus    = service.GetDrawioStatus
 	drawioStartInstall = service.StartDrawioInstall
 	drawioIsReady      = service.DrawioReady
+	drawioInstallFrom  = service.InstallDrawioFromReader
 )
+
+// drawioUploadMaxBytes caps the uploaded archive. The real file is ~48MB; the
+// ceiling leaves room for a repacked build without letting an authenticated
+// caller stream gigabytes into a temp file.
+const drawioUploadMaxBytes = 200 << 20
 
 // ServeDrawioStatus handles GET /api/drawio/status.
 //
@@ -44,6 +51,42 @@ func ServeDrawioInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, drawioGetStatus())
+}
+
+// ServeDrawioUpload handles POST /api/drawio/upload.
+//
+// The offline path: the user downloads draw.war on a machine that has internet
+// access and hands it to a server that does not. The body is a multipart form
+// with one field, `file`.
+//
+// Synchronous on purpose — the bytes are already in flight while the client
+// uploads, so what remains is verification and unpacking (a few seconds). The
+// client shows its own upload progress and then waits for this response.
+func ServeDrawioUpload(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, drawioUploadMaxBytes)
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing file field (or larger than 200MB)"})
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	if err := drawioInstallFrom(file, header.Size); err != nil {
+		if errors.Is(err, service.ErrDrawioInstallBusy) {
+			writeJSON(w, http.StatusConflict, drawioGetStatus())
+			return
+		}
+		// The message carries the reason the user needs (checksum mismatch,
+		// not an archive, disk full), so it is passed through rather than
+		// flattened into a generic failure.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, drawioGetStatus())
 }
 
 // ServeDrawioAsset serves the unpacked editor under /vendor/drawio/<version>/.

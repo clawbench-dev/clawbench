@@ -104,6 +104,10 @@ var (
 	drawioExpectedChecksum = drawioSHA256
 )
 
+// ErrDrawioInstallBusy is returned when an install (or an upload) is already
+// running. The handler maps it to 409.
+var ErrDrawioInstallBusy = errors.New("drawio install already in progress")
+
 // DrawioVersion returns the pinned release, for display and for tests.
 func DrawioVersion() string { return drawioVersion }
 
@@ -153,7 +157,7 @@ func StartDrawioInstall() error {
 	drawioMu.Lock()
 	if drawioInstalling {
 		drawioMu.Unlock()
-		return errors.New("drawio install already in progress")
+		return ErrDrawioInstallBusy
 	}
 	drawioInstalling = true
 	drawioState = "downloading"
@@ -258,44 +262,103 @@ func downloadDrawioArchive(url string) (string, error) {
 	}
 	tmpPath := tmp.Name()
 
-	// Hash while streaming: a 48MB archive is not worth a second full read, and
-	// the temp file must be deleted the moment the bytes turn out to be wrong.
-	digest := sha256.New()
-	sink := io.MultiWriter(tmp, digest)
-
-	var written int64
-	buf := make([]byte, 256*1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := sink.Write(buf[:n]); werr != nil {
-				_ = tmp.Close()
-				_ = os.Remove(tmpPath)
-				return "", werr
-			}
-			written += int64(n)
-			setDrawioProgress(written, resp.ContentLength)
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpPath)
-			return "", readErr
-		}
+	if err := streamAndVerifyArchive(tmp, resp.Body, resp.ContentLength); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", err
 	}
+	return tmpPath, nil
+}
+
+// streamAndVerifyArchive copies the archive into dst while hashing it, then
+// checks the digest.
+//
+// Hashing while copying matters: a 48MB archive is not worth a second full
+// read, and a rejected download must never be left behind for the unpack step.
+func streamAndVerifyArchive(dst io.Writer, src io.Reader, total int64) error {
+	digest := sha256.New()
+	sink := io.MultiWriter(dst, digest)
+
+	var written int64
+	buf := make([]byte, 256*1024)
+	for {
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			if _, werr := sink.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			written += int64(n)
+			setDrawioProgress(written, total)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
 
 	got := hex.EncodeToString(digest.Sum(nil))
 	if want := drawioExpectedChecksum; want != "" && !strings.EqualFold(got, want) {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("checksum mismatch: got %s, want %s", got, want)
+		return fmt.Errorf("checksum mismatch: got %s, want %s", got, want)
 	}
-	return tmpPath, nil
+	return nil
+}
+
+// InstallDrawioFromReader installs from an archive the user supplied — the
+// offline path, for a server that cannot reach any download source.
+//
+// It runs synchronously: the bytes have already been sent by the time it is
+// called, so the caller is only waiting for verification and unpacking. The
+// same checksum applies, so a hand-supplied file cannot smuggle in different
+// content either.
+func InstallDrawioFromReader(r io.Reader, total int64) error {
+	drawioMu.Lock()
+	if drawioInstalling {
+		drawioMu.Unlock()
+		return ErrDrawioInstallBusy
+	}
+	drawioInstalling = true
+	drawioState = "installing"
+	drawioDownloaded = 0
+	drawioTotal = total
+	drawioError = ""
+	drawioMu.Unlock()
+
+	err := installFromReader(r, total)
+
+	drawioMu.Lock()
+	drawioInstalling = false
+	if err != nil {
+		drawioState = "failed"
+		drawioError = err.Error()
+	} else {
+		drawioState = "ready"
+	}
+	drawioMu.Unlock()
+	return err
+}
+
+func installFromReader(r io.Reader, total int64) error {
+	tmp, err := os.CreateTemp("", "clawbench-drawio-*.war")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := streamAndVerifyArchive(tmp, r, total); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return unpackDrawio(tmpPath)
 }
 
 // unpackDrawio extracts the archive into a staging directory and swaps it into

@@ -225,3 +225,59 @@ func TestDrawioSHA256_IsAWellFormedDigest(t *testing.T) {
 	assert.Len(t, drawioSHA256, 64)
 	assert.Regexp(t, "^[0-9a-f]{64}$", drawioSHA256)
 }
+
+func TestInstallDrawioFromReader_InstallsAVerifiedArchive(t *testing.T) {
+	withDrawioDataDir(t)
+	archive := drawioZip(t, map[string]string{"index.html": "<html>uploaded</html>"})
+	drawioExpectedChecksum = sha256Hex(archive)
+
+	require.NoError(t, InstallDrawioFromReader(bytes.NewReader(archive), int64(len(archive))))
+
+	assert.True(t, DrawioReady())
+	body, err := os.ReadFile(filepath.Join(DrawioInstallDir(), "index.html"))
+	require.NoError(t, err)
+	assert.Equal(t, "<html>uploaded</html>", string(body))
+	assert.Equal(t, "ready", GetDrawioStatus().State)
+}
+
+func TestInstallDrawioFromReader_RejectsWrongContent(t *testing.T) {
+	withDrawioDataDir(t)
+	// The offline path is not a way around verification: a hand-supplied file
+	// must match the same digest as a downloaded one.
+	drawioExpectedChecksum = strings.Repeat("0", 64)
+	archive := drawioZip(t, map[string]string{"index.html": "<html>nope</html>"})
+
+	err := InstallDrawioFromReader(bytes.NewReader(archive), int64(len(archive)))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "checksum mismatch")
+	assert.False(t, DrawioReady())
+
+	// The failure is visible to a client that polls afterwards, not just to the
+	// caller that made the request.
+	st := GetDrawioStatus()
+	assert.Equal(t, "failed", st.State)
+	assert.Contains(t, st.Error, "checksum mismatch")
+}
+
+func TestInstallDrawioFromReader_RefusesWhileAnInstallIsRunning(t *testing.T) {
+	withDrawioDataDir(t)
+	drawioMu.Lock()
+	drawioInstalling = true
+	drawioMu.Unlock()
+
+	err := InstallDrawioFromReader(bytes.NewReader(nil), 0)
+	assert.ErrorIs(t, err, ErrDrawioInstallBusy)
+}
+
+func TestSettingsDescriptionPointsAtThePinnedRelease(t *testing.T) {
+	// The settings panel tells the user where to fetch the archive by hand, and
+	// that URL embeds the version. Nothing else would notice it going stale after
+	// a version bump — the user would download the old file and then hit a
+	// checksum error with no idea why.
+	want := "releases/download/" + drawioVersion + "/" + drawioAsset
+	for _, name := range []string{"zh.ts", "en.ts"} {
+		body, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "i18n", "locales", name))
+		require.NoError(t, err)
+		assert.Containsf(t, string(body), want, "%s must point at the pinned release", name)
+	}
+}

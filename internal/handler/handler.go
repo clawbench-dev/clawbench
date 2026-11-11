@@ -948,6 +948,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// the editor files themselves are served unauthenticated anyway.
 	registerPublic("/api/drawio/status", ServeDrawioStatus)
 	register("/api/drawio/install", ServeDrawioInstall)
+	register("/api/drawio/upload", ServeDrawioUpload)
 
 	// Serve static assets from frontend filesystem (disk build dir > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
