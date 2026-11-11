@@ -1007,6 +1007,14 @@ function grantControl(viewerId: string): void {
     toast.show(t('liveShare.controlWindowUnsupported'), { type: 'error', icon: 'warning' })
     return
   }
+  // One desktop has one pointer, so a second grant REPLACES the first. The
+  // shell enforces that silently (it keeps a single granted viewer), which
+  // left the previous controller with a "正在控制" page that swallowed its
+  // pointer while every event was dropped here. Hand over explicitly instead.
+  const previous = controlledBy.value
+  if (previous && previous !== viewerId) {
+    share.sendControlTo(previous, { t: 'ctrl-grant', viewerId: previous, granted: false })
+  }
   controlledBy.value = viewerId
   controlRequests.value = new Set([...controlRequests.value].filter((id) => id !== viewerId))
   share.sendControlTo(viewerId, { t: 'ctrl-grant', viewerId, granted: true })

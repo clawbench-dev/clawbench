@@ -2093,7 +2093,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* Both pictures (the host's and a member's, forwarded by the host) share this
+   one box. They are siblings inside `.live-zoom`, so they MUST be taken out of
+   flow: as normal blocks the second one is laid out UNDER the first and the
+   stage below clips it (`overflow: hidden`), which looks exactly like "the
+   forwarded stream never arrived" even though the <video> had it attached.
+   The inactive picture is hidden with `visibility`, not `display`, so
+   switching views never re-attaches a stream that is still live. */
 .live-video {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
