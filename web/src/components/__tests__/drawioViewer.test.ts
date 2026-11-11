@@ -301,3 +301,53 @@ describe('DrawioViewer offline upload', () => {
     }
   })
 })
+
+describe('DrawioViewer theme', () => {
+  function mountInstalled() {
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+    mockContentWindow()
+    return mount(DrawioViewer, { props: { file } })
+  }
+
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-theme-base')
+  })
+
+  it('asks for the dark palette when the app theme is dark', async () => {
+    // The editor takes its palette from the URL; without this a dark app shows a
+    // white editor in the middle of the screen.
+    document.documentElement.setAttribute('data-theme-base', 'dark')
+    const wrapper = mountInstalled()
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.find('iframe').attributes('src')).toContain('dark=1')
+    wrapper.unmount()
+  })
+
+  it('leaves the palette light when the app theme is light', async () => {
+    document.documentElement.setAttribute('data-theme-base', 'light')
+    const wrapper = mountInstalled()
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.find('iframe').attributes('src')).not.toContain('dark=1')
+    wrapper.unmount()
+  })
+
+  it('reloads the editor when the theme flips', async () => {
+    document.documentElement.setAttribute('data-theme-base', 'light')
+    const wrapper = mountInstalled()
+    await nextTick()
+    await nextTick()
+    expect(wrapper.find('iframe').attributes('src')).not.toContain('dark=1')
+
+    document.documentElement.setAttribute('data-theme-base', 'dark')
+    // MutationObserver callbacks are microtasks, and the watcher then re-renders.
+    await new Promise((r) => setTimeout(r, 0))
+    await nextTick()
+
+    expect(wrapper.find('iframe').attributes('src')).toContain('dark=1')
+    wrapper.unmount()
+  })
+})

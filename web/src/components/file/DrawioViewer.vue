@@ -117,6 +117,15 @@ const total = ref(0)
 const errorText = ref('')
 const uploading = ref(false)
 const uploadPercent = ref(0)
+// Light/dark of the app theme, mirrored from <html data-theme-base>. Observing
+// the attribute covers the theme picker, the settings page and a system-scheme
+// flip under 'auto' without re-deriving any of those rules here.
+const isDark = ref(false)
+let themeObserver = null
+
+function readThemeBase() {
+  isDark.value = document.documentElement.getAttribute('data-theme-base') === 'dark'
+}
 
 let pollTimer = null
 let iframeReady = false
@@ -133,7 +142,11 @@ const frameSrc = computed(() => {
   // Read-only preview hides the chrome and enables pan/zoom only, matching the
   // share page's treatment of Excalidraw — there is no save path there.
   const view = props.readonly ? '&nav=1&chrome=0' : ''
-  return `${basePath.value}?embed=1&proto=json&spin=1&modified=1&noSaveBtn=1&noExitBtn=1&lang=${lang}${view}`
+  // drawio picks its palette from `dark`; without it a dark app shows a white
+  // editor. Only the URL carries it — there is no runtime switch — so a theme
+  // change reloads the frame (see the watcher below).
+  const dark = isDark.value ? '&dark=1' : ''
+  return `${basePath.value}?embed=1&proto=json&spin=1&modified=1&noSaveBtn=1&noExitBtn=1&lang=${lang}${view}${dark}`
 })
 
 const percent = computed(() => {
@@ -329,7 +342,11 @@ function onMessage(e) {
 
 function sendLoad() {
   if (!iframeReady) return
-  postToFrame({ action: 'load', xml: props.file?.content || '', autosave: props.readonly ? 0 : 1 })
+  // `latestXml` is the live copy drawio has been pushing us since the last
+  // reload; falling back to the file's content keeps a reload (language/theme
+  // switch) from discarding edits made before the first autosave landed.
+  const xml = latestXml || props.file?.content || ''
+  postToFrame({ action: 'load', xml, autosave: props.readonly ? 0 : 1 })
 }
 
 function setDirty(v) {
@@ -397,6 +414,9 @@ let unregisterDirtyGetter = null
 
 onMounted(async () => {
   window.addEventListener('message', onMessage)
+  readThemeBase()
+  themeObserver = new MutationObserver(readThemeBase)
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme-base'] })
   // A read-only preview is not an editor: registering it would make the share
   // page's (nonexistent) back gesture think there is unsaved work.
   if (!props.readonly) {
@@ -409,6 +429,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('message', onMessage)
+  themeObserver?.disconnect()
+  themeObserver = null
   stopPolling()
   if (unregisterExitEdit) {
     unregisterExitEdit()
@@ -438,12 +460,15 @@ watch(
 
 // The language picker changes the editor UI language; reloading the iframe is
 // the only way draw.io accepts it.
-watch(locale, () => {
-  if (phase.value === 'ready') {
-    iframeReady = false
-    const el = frameRef.value
-    if (el) el.src = frameSrc.value
-  }
+// Language and light/dark both come from the iframe URL and have no runtime
+// switch, so a change means a fresh frame. The bound `src` reloads the iframe by
+// itself — assigning it again here would navigate a second time. All this has to
+// do is stop answering with the old scene until the new frame announces itself.
+// The scene then comes from the live copy (see sendLoad), so an in-progress edit
+// survives the swap.
+watch([locale, isDark], () => {
+  if (phase.value !== 'ready') return
+  iframeReady = false
 })
 
 async function requestExit() {
