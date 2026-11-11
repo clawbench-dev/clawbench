@@ -2192,7 +2192,7 @@ defineExpose({
 .agent-welcome-tags {
   display: flex;
   gap: var(--space-2);
-  margin-top: var(--space-1);
+  margin-top: var(--space-3);
 }
 
 .agent-welcome-tag {
@@ -2227,7 +2227,11 @@ defineExpose({
   white-space: nowrap;
 }
 
+/* The closing line ("send a message to start") is a different kind of statement
+   from the facts above it, so it gets its own air instead of stacking into the
+   same block — that density is what made the bottom half read as cramped. */
 .agent-welcome-hint {
+    margin-top: var(--space-6);
     font-size: var(--font-size-sm);
     color: color-mix(in srgb, var(--text-muted) 70%, transparent);
 }
