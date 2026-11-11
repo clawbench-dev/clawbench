@@ -303,7 +303,7 @@ describe('ForgePanelContent', () => {
       props: { active: true, projectPath: '' },
       global: globalOpts,
     })
-    await wrapper.find('.forge-card-options .fbtn').trigger('click')
+    await wrapper.find('.forge-state .empty-state__action .fbtn').trigger('click')
     expect(wrapper.emitted('request-project')).toBeTruthy()
   })
 
@@ -785,7 +785,7 @@ describe('ForgePanelContent', () => {
     // Nothing rendered before the click.
     expect(document.body.querySelector('.modal-overlay')).toBeNull()
 
-    const button = wrapper.findAll('.forge-card-options button')[0]
+    const button = wrapper.findAll('.forge-state .empty-state__action button')[0]
     expect(button.text()).toContain('Bind a repository')
     await button.trigger('click')
     await new Promise(r => setTimeout(r, 50))
@@ -813,7 +813,7 @@ describe('ForgePanelContent', () => {
       global: globalOpts,
     })
     await new Promise(r => setTimeout(r, 0))
-    const buttons = wrapper.findAll('.forge-card-options button')
+    const buttons = wrapper.findAll('.forge-state .empty-state__action button')
     expect(buttons).toHaveLength(1)
     expect(buttons[0].text()).toContain('Bind a repository')
     // Even with a suggestion present, no shortcut button is rendered.
@@ -1294,7 +1294,7 @@ describe('ForgePanelContent unread tab', () => {
 
     /** The empty state's glyph class, or '' when no icon rendered. */
     const emptyGlyph = () =>
-      wrapper.find('.forge-empty-icon').attributes('class') ?? ''
+      wrapper.find('.empty-state__icon').attributes('class') ?? ''
 
     // 动态 tab is the default; its list is stubbed, so drive the real list's
     // empty branch through the panel's own issue/pipeline tabs instead.
@@ -1325,7 +1325,7 @@ describe('ForgePanelContent unread tab', () => {
     await wrapper.findAll('.forge-tab')[1].trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.forge-empty-icon').attributes('class')).toContain('git-pull-request')
+    expect(wrapper.find('.empty-state__icon').attributes('class')).toContain('git-pull-request')
   })
 
   it('passes active=false through the composite when the dock tab is inactive', async () => {
@@ -1551,7 +1551,7 @@ describe('ForgePanelContent non-official host warning', () => {
       attachTo: document.body,
     })
     await new Promise(r => setTimeout(r, 0))
-    const button = wrapper.findAll('.forge-card-options button')[0]
+    const button = wrapper.findAll('.forge-state .empty-state__action button')[0]
     await button.trigger('click')
     await flushPromises()
     return wrapper
