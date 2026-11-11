@@ -3,12 +3,14 @@
     <div ref="listRef" class="live-chat__list" @scroll.passive="onScroll">
       <!-- The same empty state every 会议 tab uses: a centred glyph + title
            instead of one muted sentence in the top corner, which reads as a
-           message that failed to render. No `desc` here on purpose — an empty
-           chat has no cause worth explaining (see MeetingEmpty). -->
-      <MeetingEmpty
+           message that failed to render. The description says what the pane is
+           for; an empty chat has no *cause* to explain, but it does have a
+           purpose worth stating. -->
+      <EmptyState
         v-if="messages.length === 0"
         :icon="MessagesSquare"
         :title="t('share.live.chatEmpty')"
+        :desc="t('meeting.detail.emptyChatDesc')"
         data-role="chat-empty"
       />
       <ChatMessageRow
@@ -55,7 +57,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagesSquare } from 'lucide-vue-next'
 import ChatMessageRow from '@/components/live/ChatMessageRow.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { CHAT_MAX_CHARS } from '@/share/liveControl'
 import { useStickToBottom } from '@/composables/useStickToBottom.ts'
 
@@ -110,7 +112,7 @@ const { onScroll } = useStickToBottom(listRef, () => props.messages.length)
   padding: 0;
 }
 
-/* The empty state is `MeetingEmpty` (centred glyph + title); this list only
+/* The empty state is `EmptyState` (centred glyph + title); this list only
    has to give it the free height. */
 
 /* No rule above the composer: the filled field is the boundary. */

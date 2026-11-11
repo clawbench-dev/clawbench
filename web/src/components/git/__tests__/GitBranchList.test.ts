@@ -100,7 +100,7 @@ describe('GitBranchList', () => {
 
     it('shows empty message when no branches', () => {
       const wrapper = mountList()
-      expect(wrapper.find('.section-empty').exists()).toBe(true)
+      expect(wrapper.find('.empty-state').exists()).toBe(true)
     })
   })
 

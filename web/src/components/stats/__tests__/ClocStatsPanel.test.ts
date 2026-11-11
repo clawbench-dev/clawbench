@@ -31,6 +31,7 @@ const zhMessages = {
     clocColBlank: '空白行',
     clocTotalLabel: '合计',
     clocNoData: '当前工作区暂无源码文件',
+    clocNoDataDesc: '把源码放进工作区后重新扫描即可。',
     clocLoadFailed: '代码存量加载失败',
   },
 }
@@ -62,6 +63,8 @@ async function mountPanel() {
     global: {
       plugins: [makeI18n()],
       stubs: {
+        // Rendered for real: the empty state's title is the assertion.
+        EmptyState: false,
         StatsSkeleton: { name: 'StatsSkeleton', template: '<div class="skeleton-stub" />' },
         UsageChart: {
           template: '<div class="usage-chart-stub" />',

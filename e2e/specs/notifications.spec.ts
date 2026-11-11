@@ -192,7 +192,7 @@ test.describe('Notifications', () => {
     // Either the empty state appears (no task notifications) or only task rows
     // remain — both prove the filter applied.
     await expect(
-      page.locator('.notif-state').or(page.locator('.notif-card')).first(),
+      page.locator('.notif-panel .empty-state').or(page.locator('.notif-card')).first(),
     ).toBeVisible({ timeout: 10000 })
   })
 
@@ -206,6 +206,6 @@ test.describe('Notifications', () => {
     // Confirm in the shared dialog: the OK button carries `.fbtn.dlg-ok`.
     await page.locator('.dlg-ok').click()
 
-    await expect(page.locator('.notif-state')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('.notif-panel .empty-state')).toBeVisible({ timeout: 10000 })
   })
 })

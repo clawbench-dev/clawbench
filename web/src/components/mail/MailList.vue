@@ -4,7 +4,7 @@
       <PanelSkeleton variant="list" />
     </div>
 
-    <MailEmpty
+    <EmptyState
       v-else-if="error"
       :icon="TriangleAlert"
       :title="t('mail.list.errorTitle')"
@@ -13,9 +13,9 @@
       <template #action>
         <button class="fbtn" @click="emit('retry')">{{ t('mail.list.retry') }}</button>
       </template>
-    </MailEmpty>
+    </EmptyState>
 
-    <MailEmpty
+    <EmptyState
       v-else-if="messages.length === 0"
       :icon="query ? SearchX : Inbox"
       :title="query ? t('mail.list.noResults') : t('mail.list.emptyTitle')"
@@ -51,7 +51,7 @@
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Inbox, SearchX, TriangleAlert } from 'lucide-vue-next'
-import MailEmpty from './MailEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import MailListItem from './MailListItem.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'

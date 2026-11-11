@@ -276,12 +276,12 @@ describe('MeetingResources', () => {
     const wrapper = mountResources({ groups: [], total: 0, folderPath: '' })
 
     expect(wrapper.find('.res-row').exists()).toBe(false)
-    const card = wrapper.find('.meeting-empty')
+    const card = wrapper.find('.empty-state')
     expect(card.exists()).toBe(true)
     // Filled, so it centres in the tab body like the other three tabs' empty
     // states instead of hugging the top edge.
     expect(card.classes()).toContain('is-fill')
-    expect(wrapper.find('.meeting-empty__title').text()).toBe(enMessages.meeting.resources.emptyTitle)
+    expect(wrapper.find('.empty-state__title').text()).toBe(enMessages.meeting.resources.emptyTitle)
     expect(wrapper.text()).toContain(enMessages.meeting.resources.empty)
   })
 
@@ -290,7 +290,7 @@ describe('MeetingResources', () => {
     // full card would repeat it; the hint is the right weight there.
     const wrapper = mountResources({ groups: [], total: 0 })
 
-    expect(wrapper.find('.meeting-empty').exists()).toBe(false)
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
     expect(wrapper.find('.res-hint').text()).toContain(enMessages.meeting.resources.empty)
   })
 

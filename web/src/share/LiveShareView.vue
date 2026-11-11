@@ -414,7 +414,7 @@
         <!-- Same shape as the record's 转写 tab: centred glyph, title, one line
              of context. "Waiting" only makes sense while 听记 is on; once it is
              off, the honest line is that nothing was recorded. -->
-        <MeetingEmpty
+        <EmptyState
           v-if="noteBlocks.length === 0"
           :icon="Captions"
           :title="t(notesEnabled ? 'share.live.notesWaiting' : 'share.live.notesOffTitle')"
@@ -538,7 +538,7 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SpeakerAvatar from '@/components/common/SpeakerAvatar.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { LiveViewer, type LiveStats, type LiveViewerState, type RosterMember } from './liveViewer'
 import TranscriptList from '@/components/live/TranscriptList.vue'
 import LiveJoinGate from './LiveJoinGate.vue'

@@ -58,7 +58,9 @@ const zhMessages = {
     effNoUsage: '当前区间没有用量记录，无法计算每千行消耗',
     effLoadFailed: '用量数据加载失败',
     notGitRepo: '当前项目不是 Git 仓库，无法统计代码量',
+    notGitRepoDesc: '初始化仓库并提交后即可看到统计。',
     noData: '所选时间段内暂无代码提交',
+    noDataDesc: '换个时间段试试。',
     loadFailed: '代码统计加载失败',
     clocTitle: '代码存量',
     clocColLang: '语言',
@@ -68,6 +70,7 @@ const zhMessages = {
     clocColBlank: '空白行',
     clocTotalLabel: '合计',
     clocNoData: '当前工作区暂无源码文件',
+    clocNoDataDesc: '把源码放进工作区后重新扫描即可。',
     clocLoadFailed: '代码存量加载失败',
   },
 }
@@ -122,6 +125,8 @@ async function mountPanel() {
     global: {
       plugins: [makeI18n()],
       stubs: {
+        // Rendered for real: the empty state's title is the assertion.
+        EmptyState: false,
         StatsSkeleton: { name: 'StatsSkeleton', template: '<div class="skeleton-stub" />' },
         UsageChart: {
           template: '<div class="usage-chart-stub" />',

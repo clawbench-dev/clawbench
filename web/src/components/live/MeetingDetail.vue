@@ -51,7 +51,7 @@
       <PanelSkeleton variant="text" :rows="10" :label="t('common.loading')" />
     </div>
     <div v-else-if="!record" class="meeting-body">
-      <MeetingEmpty
+      <EmptyState
         :icon="FileQuestion"
         :title="t('meeting.detail.notFoundTitle')"
         :desc="t('meeting.detail.notFoundDesc')"
@@ -118,7 +118,7 @@
                  exist: it keeps the empty state and its generate CTA from
                  showing while the job is in flight. -->
             <template v-else-if="isArtifactRunning('minutes')"></template>
-            <MeetingEmpty
+            <EmptyState
               v-else
               :icon="FileText"
               :title="t('meeting.detail.emptyMinutesTitle')"
@@ -134,7 +134,7 @@
                   {{ t('meeting.detail.artifact.generate') }}
                 </button>
               </template>
-            </MeetingEmpty>
+            </EmptyState>
           </template>
 
           <template v-else-if="activeTab === 'transcript'">
@@ -157,21 +157,21 @@
                  sentence ("听记没有开启") was only right for one of them: it also
                  claimed that while the file was still being uploaded right after
                  a meeting, and when the file exists but could not be read. -->
-            <MeetingEmpty
+            <EmptyState
               v-else-if="transcriptPending"
               :icon="Captions"
               :title="t('meeting.detail.transcriptPendingTitle')"
               :desc="t('meeting.detail.transcriptPendingDesc')"
               data-role="transcript-pending"
             />
-            <MeetingEmpty
+            <EmptyState
               v-else-if="transcriptUnreadable"
               :icon="Captions"
               :title="t('meeting.detail.transcriptUnreadableTitle')"
               :desc="t('meeting.detail.transcriptUnreadableDesc')"
               data-role="transcript-unreadable"
             />
-            <MeetingEmpty
+            <EmptyState
               v-else
               :icon="Captions"
               :title="t('meeting.detail.emptyTranscriptTitle')"
@@ -187,7 +187,7 @@
                   {{ record?.hasAudio ? t('meeting.detail.artifact.reasr') : t('meeting.detail.artifact.generate') }}
                 </button>
               </template>
-            </MeetingEmpty>
+            </EmptyState>
           </template>
 
           <template v-else-if="activeTab === 'revised'">
@@ -207,7 +207,7 @@
             <!-- Proofreading is allowed to fail without failing the minutes: the
                  summary then comes from the raw transcript, and this tab stays
                  empty. Say so instead of leaving a blank pane. -->
-            <MeetingEmpty
+            <EmptyState
               v-else
               :icon="SpellCheck"
               :title="t('meeting.detail.emptyRevisedTitle')"
@@ -224,14 +224,15 @@
                   {{ t('meeting.detail.artifact.generate') }}
                 </button>
               </template>
-            </MeetingEmpty>
+            </EmptyState>
           </template>
 
           <template v-else-if="activeTab === 'chat'">
-            <MeetingEmpty
+            <EmptyState
               v-if="chat.length === 0"
               :icon="MessagesSquare"
               :title="t('meeting.detail.emptyChatTitle')"
+              :desc="t('meeting.detail.emptyChatDesc')"
             />
             <!-- The same conversation the live panel showed, drawn by the same
                  row component: same bubble, same avatar, same timestamp. -->
@@ -320,7 +321,7 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
 import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
-import MeetingEmpty from './MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import MeetingResources from './MeetingResources.vue'
 import MeetingArtifactBar from './MeetingArtifactBar.vue'
 import MeetingRegenerateSheet from './MeetingRegenerateSheet.vue'

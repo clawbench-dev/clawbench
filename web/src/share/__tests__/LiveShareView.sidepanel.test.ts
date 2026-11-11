@@ -359,8 +359,8 @@ describe('LiveShareView side panel', () => {
 
     const chatEmpty = w.find('[data-panel="chat"] [data-role="chat-empty"]')
     expect(chatEmpty.exists()).toBe(true)
-    // `MeetingEmpty` — the same block the record's tabs draw.
-    expect(chatEmpty.classes()).toContain('meeting-empty')
+    // `EmptyState` — the same block the record's tabs draw.
+    expect(chatEmpty.classes()).toContain('empty-state')
     expect(chatEmpty.text()).toContain('还没有消息')
 
     lastViewer?.opts?.callbacks?.onNotesEnabled?.(true)
@@ -370,7 +370,7 @@ describe('LiveShareView side panel', () => {
 
     const notesEmpty = w.find('[data-panel="notes"] [data-role="notes-empty"]')
     expect(notesEmpty.exists()).toBe(true)
-    expect(notesEmpty.classes()).toContain('meeting-empty')
+    expect(notesEmpty.classes()).toContain('empty-state')
     // The copy explains the LIVE situation ("waiting"), not the record's
     // "notes were off / nothing to transcribe": the tab only exists when the
     // publisher enabled 听记.

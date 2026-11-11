@@ -173,7 +173,7 @@
                       @open-search="openFileSearch"
                       @toggle-maximize-pane="toggleChatPane"
                     />
-                    <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
+                    <div v-else class="view-panel-empty" :class="{ 'has-recent': recentFileEntries.length }">
                       <template v-if="recentFileEntries.length">
                         <div class="view-empty-recent">
                           <div class="view-empty-recent-title">{{ t('appHeader.recentFiles') }}</div>
@@ -201,15 +201,24 @@
                             </div>
                           </div>
                         </div>
+                        <button class="fbtn fbtn-primary view-empty-manager-btn" @click="switchTab('browse')">
+                          <FolderOpen :size="16" />
+                          <span>{{ t('nav.fileManager') }}</span>
+                        </button>
                       </template>
-                      <template v-else>
-                        <FileText :size="40" class="view-empty-icon" />
-                        <span class="view-empty-no-recent-title">{{ t('appHeader.noRecentFiles') }}</span>
-                      </template>
-                      <button class="view-empty-manager-btn" @click="switchTab('browse')">
-                        <FolderOpen :size="16" />
-                        <span>{{ t('nav.fileManager') }}</span>
-                      </button>
+                      <EmptyState
+                        v-else
+                        :icon="FileText"
+                        :title="t('appHeader.noRecentFiles')"
+                        :desc="t('appHeader.noRecentFilesDesc')"
+                      >
+                        <template #action>
+                          <button class="fbtn fbtn-primary" @click="switchTab('browse')">
+                            <FolderOpen :size="16" />
+                            <span>{{ t('nav.fileManager') }}</span>
+                          </button>
+                        </template>
+                      </EmptyState>
                     </div>
                   </div>
                 </TabPanel>
@@ -646,6 +655,7 @@ import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontC
 import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
+import EmptyState from './components/common/EmptyState.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
 import InertPathPicker from './components/file/InertPathPicker.vue'
 import Lightbox from './components/media/Lightbox.vue'
@@ -5094,25 +5104,6 @@ onUnmounted(() => {
   margin-top: auto;
 }
 
-/* No recent files: centered chat-style empty state */
-.view-panel-empty.no-recent {
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-7);
-  padding: calc(32 * var(--dp)) var(--space-7);
-  text-align: center;
-}
-
-.view-empty-icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-muted);
-}
-
-.view-empty-no-recent-title {
-  font-size: var(--font-size-md);
-  color: var(--text-muted);
-}
-
 .view-empty-recent-title {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
@@ -5194,25 +5185,6 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.view-empty-manager-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  padding: calc(9 * var(--dp)) var(--space-7);
-  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  cursor: pointer;
-  transition: background var(--duration-base);
-}
-
-.view-empty-manager-btn:hover {
-  background: var(--bg-hover, rgba(128, 128, 128, 0.1));
 }
 
 /* Wide-screen split panes — positioned ancestors for the absolute TabPanels */

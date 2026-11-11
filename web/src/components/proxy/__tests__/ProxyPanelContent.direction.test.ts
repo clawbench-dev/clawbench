@@ -143,7 +143,12 @@ function mountPanel() {
       plugins: [i18n],
       stubs: {
         ProxyPortItem: { template: '<div class="stub-port-item" />', props: ['direction', 'localPort', 'port'] },
-        ModalDialog: { template: '<div class="stub-modal"><slot name="header" /><slot /><slot name="footer" /></div>' },
+        // Honour `open`: the empty-state action is asserted by the dialog
+        // appearing, and an always-rendered stub cannot tell the two apart.
+        ModalDialog: {
+          props: ['open'],
+          template: '<div v-if="open" class="stub-modal"><slot name="header" /><slot /><slot name="footer" /></div>',
+        },
         BottomSheet: { template: '<div class="bs"><slot name="header" /><slot /></div>' },
         LoadingIndicator: true,
         RefreshButton: { template: '<button class="rb" />' },
@@ -157,6 +162,20 @@ async function openAddForm(wrapper: ReturnType<typeof mountPanel>) {
   await wrapper.find('.create-btn').trigger('click')
   await wrapper.vm.$nextTick()
 }
+
+describe('ProxyPanelContent — empty state action', () => {
+  it('opens the add form from the empty state', async () => {
+    state.ports.value = []
+    const wrapper = mountPanel()
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.find('.stub-modal').exists()).toBe(false)
+
+    await wrapper.find('[data-action="proxy-empty-add"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.stub-modal').exists()).toBe(true)
+  })
+})
 
 describe('ProxyPanelContent direction', () => {
   beforeEach(() => {
@@ -206,7 +225,7 @@ describe('ProxyPanelContent direction', () => {
 
     await wrapper.find('.port-add-select').setValue('reverse')
     await wrapper.find('input[type="number"]').setValue('3000')
-    await wrapper.find('.fbtn-primary').trigger('click')
+    await wrapper.find('[data-action="proxy-save"]').trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(mockRegisterPort).toHaveBeenCalled()

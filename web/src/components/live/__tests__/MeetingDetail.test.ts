@@ -219,10 +219,10 @@ describe('MeetingDetail', () => {
     const w = mountDetail()
     await flushPromises()
 
-    const card = w.find('.meeting-empty')
+    const card = w.find('.empty-state')
     expect(card.exists()).toBe(true)
-    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.notFoundTitle)
-    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.notFoundDesc)
+    expect(card.find('.empty-state__title').text()).toBe(enMessages.meeting.detail.notFoundTitle)
+    expect(card.find('.empty-state__desc').text()).toBe(enMessages.meeting.detail.notFoundDesc)
     // No tabs for a record that is not there.
     expect(w.find('.meeting-tabs').exists()).toBe(false)
   })
@@ -307,8 +307,8 @@ describe('MeetingDetail', () => {
 
     const card = w.find('[data-role="revised-empty"]')
     expect(card.exists()).toBe(true)
-    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.emptyRevisedTitle)
-    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.emptyRevisedDesc)
+    expect(card.find('.empty-state__title').text()).toBe(enMessages.meeting.detail.emptyRevisedTitle)
+    expect(card.find('.empty-state__desc').text()).toBe(enMessages.meeting.detail.emptyRevisedDesc)
   })
 
   it('already shows the proofread transcript while the minutes are still generating', async () => {
@@ -398,7 +398,7 @@ describe('MeetingDetail', () => {
     const w = mountDetail('minutes')
     await flushPromises()
 
-    expect(w.find('.meeting-empty').exists()).toBe(true)
+    expect(w.find('.empty-state').exists()).toBe(true)
     expect(w.text()).toContain(enMessages.meeting.detail.emptyMinutesTitle)
     expect(w.text()).toContain(enMessages.meeting.detail.emptyMinutesDesc)
     expect(w.findAll('.meeting-file')).toHaveLength(0)
@@ -419,7 +419,7 @@ describe('MeetingDetail', () => {
     await w.find('[data-tab="transcript"]').trigger('click')
 
     const pane = w.find('.meeting-body')
-    expect(pane.find('.meeting-empty').exists()).toBe(true)
+    expect(pane.find('.empty-state').exists()).toBe(true)
     // `textContent` concatenates the two block elements with no separator; the
     // exact comparison is what catches a leaked HTML comment.
     expect(pane.text().trim()).toBe(
@@ -445,8 +445,8 @@ describe('MeetingDetail', () => {
 
     const card = w.find('[data-role="transcript-pending"]')
     expect(card.exists()).toBe(true)
-    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.transcriptPendingTitle)
-    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.detail.transcriptPendingDesc)
+    expect(card.find('.empty-state__title').text()).toBe(enMessages.meeting.detail.transcriptPendingTitle)
+    expect(card.find('.empty-state__desc').text()).toBe(enMessages.meeting.detail.transcriptPendingDesc)
     // It must not also claim the notes were off.
     expect(w.text()).not.toContain(enMessages.meeting.detail.emptyTranscriptDesc)
 
@@ -485,7 +485,7 @@ describe('MeetingDetail', () => {
 
     const card = w.find('[data-role="transcript-unreadable"]')
     expect(card.exists()).toBe(true)
-    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.detail.transcriptUnreadableTitle)
+    expect(card.find('.empty-state__title').text()).toBe(enMessages.meeting.detail.transcriptUnreadableTitle)
     expect(w.text()).not.toContain(enMessages.meeting.detail.emptyTranscriptDesc)
 
     w.unmount()

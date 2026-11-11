@@ -6,18 +6,18 @@
 
     <!-- No mailbox configured: the panel does not grow its own account form —
          configuration lives in Settings → 邮箱账号, one place for the whole app. -->
-    <MailEmpty
+    <EmptyState
       v-else-if="accounts.length === 0"
       :icon="Mail"
       :title="t('mail.empty.title')"
       :desc="t('mail.empty.desc')"
     >
       <template #action>
-        <button class="mail-empty-btn" @click="emit('open-settings')">
+        <button class="fbtn fbtn-primary" data-action="mail-empty-settings" @click="emit('open-settings')">
           {{ t('mail.empty.action') }}
         </button>
       </template>
-    </MailEmpty>
+    </EmptyState>
 
     <template v-else>
       <!-- Wide: list on the left, the opened message or composer beside it, so
@@ -115,7 +115,7 @@ import { useI18n } from 'vue-i18n'
 import { Mail } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import SplitView from '@/components/common/SplitView.vue'
-import MailEmpty from './MailEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import MailFolderBar from './MailFolderBar.vue'
 import MailList from './MailList.vue'
 import MailReader from './MailReader.vue'
@@ -456,16 +456,6 @@ async function onSent(): Promise<void> {
 <style scoped>
 .mail-panel__loading {
   padding: var(--space-2, 4px);
-}
-.mail-empty-btn {
-  padding: calc(5 * var(--dp)) calc(14 * var(--dp));
-  font-size: var(--font-size-sm, 12px);
-  color: #fff;
-  background: var(--accent-color);
-  border: none;
-  border-radius: var(--radius-sm, 4px);
-  cursor: pointer;
-  font-family: inherit;
 }
 .mail-panel {
   display: flex;

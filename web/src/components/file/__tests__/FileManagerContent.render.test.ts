@@ -12,6 +12,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 // suites drive async paths that take seconds when the worker pool is busy.
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import SplitView from '@/components/common/SplitView.vue'
@@ -1081,6 +1082,39 @@ describe('FileManagerContent — empty state text', () => {
   it('shows noFiles message when no currentDir and no entries', () => {
     const wrapper = mountContent({ entries: [], currentDir: '' })
     expect(wrapper.find('.empty-state').exists()).toBe(true)
+  })
+
+  it('renders a title, a description and the two create actions', () => {
+    // The unified empty state is icon + title + description + action; the file
+    // manager is the one tab where the action is a pair of buttons.
+    const wrapper = mountContent({ entries: [], currentDir: 'src' })
+    expect(wrapper.find('.empty-state__title').text()).toBe('空目录')
+    expect(wrapper.find('.empty-state__desc').text()).toBe('空目录说明')
+    const buttons = wrapper.findAll('.fs-empty-actions .fbtn')
+    expect(buttons.map(b => b.text())).toEqual(['新建文件', '新建目录'])
+  })
+
+  it('creates a file in the directory on screen', async () => {
+    const wrapper = mountContent({ entries: [], currentDir: 'src' })
+    await wrapper.findAll('.fs-empty-actions .fbtn')[0].trigger('click')
+    expect(wrapper.emitted('newFile')?.[0]).toEqual(['src'])
+  })
+
+  it('creates a folder in the directory on screen', async () => {
+    // The empty state has no row to anchor on, so the destination must come
+    // from the directory being browsed — never from a stale right-click target.
+    const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const wrapper = mountContent({ entries: [], currentDir: 'src' })
+      await wrapper.findAll('.fs-empty-actions .fbtn')[1].trigger('click')
+      await flushPromises()
+      const [url, opts] = fetchSpy.mock.calls[0] as unknown as [string, { body: string }]
+      expect(url).toBe('/api/dir/create')
+      expect(JSON.parse(opts.body)).toEqual({ path: 'src', name: 'newfile.txt' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

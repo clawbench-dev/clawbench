@@ -194,20 +194,38 @@
     >
       <template v-if="searchHasQuery">
         <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" variant="list" :rows="8" :meta="false" :label="t('file.search.searching')" />
-        <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
-          <FileX class="fs-search-empty-icon empty-state__icon" />
-          <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
-        </div>
+        <EmptyState
+          v-else-if="search.state.results.length === 0 && !search.state.searching"
+          :icon="FileX"
+          :title="t('file.search.noResults')"
+          :desc="t('file.search.noResultsDesc')"
+          data-role="file-search-empty"
+        />
       </template>
       <!-- First load of a directory: preview the row shape instead of covering
            an empty panel with a spinner. A refresh that already has rows on
            screen keeps the overlay below (the old rows must stay put, and
            swapping them for grey blocks would read as a navigation). -->
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
-      <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" class="empty-state__icon" />
-        <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
-      </div>
+      <EmptyState
+        v-else-if="filteredEntries.length === 0 && !dirLoading"
+        :icon="FolderOpen"
+        :title="currentDir ? t('file.emptyDir') : t('file.noFiles')"
+        :desc="currentDir ? t('file.emptyDirDesc') : t('file.noFilesDesc')"
+      >
+        <template #action>
+          <div class="fs-empty-actions">
+            <button class="fbtn fbtn-primary" @click="createFileInCurrentDir">
+              <FilePlus :size="14" />
+              <span>{{ t('file.context.newFile') }}</span>
+            </button>
+            <button class="fbtn" @click="createFolderInCurrentDir">
+              <FolderPlus :size="14" />
+              <span>{{ t('actionLabels.newFolder') }}</span>
+            </button>
+          </div>
+        </template>
+      </EmptyState>
 
       <template v-for="entry in displayEntries" :key="keyOf(entry)">
         <div
@@ -258,7 +276,7 @@
     </div>
 
     <!-- File grid -->
-    <div v-else class="file-grid" ref="fileGridRef"
+    <div v-else class="file-grid" :class="{ 'is-empty': gridIsEmpty }" ref="fileGridRef"
       @click="handleItemClick"
       @dblclick="handleItemDblClick"
       @contextmenu.prevent="handleCtxMenu"
@@ -271,16 +289,34 @@
     >
       <template v-if="searchHasQuery">
         <PanelSkeleton v-if="search.state.searching && search.state.results.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('file.search.searching')" />
-        <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
-          <FileX class="fs-search-empty-icon empty-state__icon" />
-          <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
-        </div>
+        <EmptyState
+          v-else-if="search.state.results.length === 0 && !search.state.searching"
+          :icon="FileX"
+          :title="t('file.search.noResults')"
+          :desc="t('file.search.noResultsDesc')"
+          data-role="file-search-empty"
+        />
       </template>
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
-      <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <FileIcon path="" :is-dir="true" size="var(--empty-icon-size)" class="empty-state__icon" />
-        <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
-      </div>
+      <EmptyState
+        v-else-if="filteredEntries.length === 0 && !dirLoading"
+        :icon="FolderOpen"
+        :title="currentDir ? t('file.emptyDir') : t('file.noFiles')"
+        :desc="currentDir ? t('file.emptyDirDesc') : t('file.noFilesDesc')"
+      >
+        <template #action>
+          <div class="fs-empty-actions">
+            <button class="fbtn fbtn-primary" @click="createFileInCurrentDir">
+              <FilePlus :size="14" />
+              <span>{{ t('file.context.newFile') }}</span>
+            </button>
+            <button class="fbtn" @click="createFolderInCurrentDir">
+              <FolderPlus :size="14" />
+              <span>{{ t('actionLabels.newFolder') }}</span>
+            </button>
+          </div>
+        </template>
+      </EmptyState>
 
       <div v-for="entry in displayEntries" :key="keyOf(entry)"
         v-long-press="(e) => onLongPress(entry, e)"
@@ -507,6 +543,7 @@
 <script setup>
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
@@ -2030,12 +2067,10 @@ function doNewFile() {
     emit('newFile', getDestDir(entry))
 }
 
-async function doNewFolder() {
-    const entry = ctxMenu.entry
-    closeCtxMenu()
+/** Create a folder inside `dir` (prompts for the name, then refreshes). */
+async function createFolderIn(dir) {
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
-    const dir = getDestDir(entry)
     // The results layer cannot show the new entry, so collapse it before the
     // refresh + selection.
     exitSearch()
@@ -2057,6 +2092,27 @@ async function doNewFolder() {
     } catch {
         if (toast) toast.show(t('file.toast.createFailed'), { icon: 'error', type: 'error', duration: 2000 })
     }
+}
+
+async function doNewFolder() {
+    const entry = ctxMenu.entry
+    closeCtxMenu()
+    await createFolderIn(getDestDir(entry))
+}
+
+/**
+ * Empty-state actions: create in the directory currently shown.
+ *
+ * They deliberately do not reuse the context-menu path: that one resolves its
+ * destination from `ctxMenu.entry`, and the empty state has no row to anchor on
+ * — a stale right-click target must not decide where the new entry lands.
+ */
+function createFileInCurrentDir() {
+    emit('newFile', currentDirPath())
+}
+
+function createFolderInCurrentDir() {
+    return createFolderIn(currentDirPath())
 }
 
 // ── Batch operations (multi-select) ──
@@ -2159,6 +2215,20 @@ const filteredEntries = computed(() => {
 
 const hasMoreEntries = computed(() => filteredEntries.value.length > MAX_VISIBLE_ENTRIES)
 const visibleEntries = computed(() => filteredEntries.value.slice(0, MAX_VISIBLE_ENTRIES))
+
+/**
+ * True when the grid is drawing its empty state rather than tiles.
+ *
+ * The grid is a `display: grid` of 90dp tracks; a lone empty-state child would
+ * land in the first track, 90dp wide and pinned to the top. When empty the
+ * container switches to a centred flex box instead (see `.file-grid.is-empty`),
+ * which is also what lets the shared `fill` empty state take the pane height.
+ */
+const gridIsEmpty = computed(() =>
+    searchHasQuery.value
+        ? search.state.results.length === 0 && !search.state.searching
+        : filteredEntries.value.length === 0 && !props.dirLoading,
+)
 
 /** Add every entry between two paths (inclusive) to the multi-selection. */
 function selectRange(fromPath, toPath) {
@@ -3167,6 +3237,11 @@ function scrollSelectedIntoView(path) {
     min-height: 0;
     overflow-y: auto;
     padding: var(--space-2) var(--space-3);
+    /* Column flex so the shared empty state can take the pane height and centre
+       itself (it is a plain block container otherwise). Rows stretch to the full
+       width, exactly as they did as block children. */
+    display: flex;
+    flex-direction: column;
 }
 
 /* Size, radius, colour and hover come from the shared ActionBar row rules
@@ -3407,21 +3482,15 @@ function scrollSelectedIntoView(path) {
     color: rgba(255,255,255,0.7);
 }
 
-/* Empty State */
-.empty-state {
-    text-align: center;
-    padding: calc(40 * var(--dp)) var(--space-8);
-    color: var(--text-muted, #999);
-}
-
-/* The glyph's size/opacity come from `FileIcon`'s `--empty-icon-size` and the
-   global `.empty-state__icon` rule — `FileIcon` renders an `<img>`, so that
-   class has to be passed through explicitly (neither `svg` nor a bare
-   `.file-type-icon` matches the shared rule). Only the gap above the text is
-   local. */
-.empty-state .file-type-icon,
-.empty-state svg {
-    margin-bottom: var(--space-6);
+/* Empty-state actions: two peer pills (new file / new folder). They wrap on a
+   narrow pane instead of overflowing the centred block. */
+.fs-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    /* Same gap as the shared footer rows (`.bs-footer`), so a pair of pills
+       here is spaced like a pair of pills anywhere else. */
+    gap: var(--space-4);
 }
 
 /* Truncate hint */
@@ -3446,6 +3515,15 @@ function scrollSelectedIntoView(path) {
     grid-template-columns: repeat(auto-fill, minmax(calc(90 * var(--dp)), 1fr));
     gap: var(--space-4);
     align-content: start;
+}
+
+/* Empty: a grid item would occupy the first 90dp track and hug the top, so the
+   container stops being a grid and becomes a centred box. The empty state's own
+   `fill` then takes the full height. */
+.file-grid.is-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* The skeleton is a grid ITEM here, so `width: 100%` on its root (PanelSkeleton)
@@ -3645,33 +3723,6 @@ function scrollSelectedIntoView(path) {
     font-size: var(--font-size-sm);
     background: var(--bg-secondary, #f8f9fa);
     border-top: 1px solid var(--border-color, #e5e5e5);
-}
-
-.fs-search-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-5);
-    padding: calc(40 * var(--dp)) calc(24 * var(--dp));
-    text-align: center;
-}
-
-.fs-search-empty-text {
-    font-size: var(--font-size-md);
-    color: var(--text-secondary, #666);
-    margin: 0;
-}
-
-.fs-search-empty-sub {
-    font-size: var(--font-size-sm);
-    color: var(--text-muted, #999);
-    margin: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
-    padding: 0 var(--space-6);
 }
 
 .fs-result-dir-btn {

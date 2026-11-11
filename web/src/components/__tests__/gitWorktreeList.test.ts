@@ -88,13 +88,13 @@ describe('GitWorktreeList', () => {
 
   it('shows empty message when worktrees array is empty', () => {
     const wrapper = mountList({ worktrees: [] })
-    expect(wrapper.find('.section-empty').text()).toBe('No worktrees')
+    expect(wrapper.find('.empty-state').text()).toContain('No worktrees')
   })
 
   it('shows a placeholder when loading is true', () => {
     const wrapper = mountList({ loading: true })
     expect(wrapper.find('.section-skeleton').exists()).toBe(true)
-    expect(wrapper.find('.section-empty').exists()).toBe(false)
+    expect(wrapper.find('.empty-state').exists()).toBe(false)
   })
 
   it('shows error state with retry button when error is true', () => {

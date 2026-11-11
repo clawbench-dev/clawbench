@@ -66,12 +66,8 @@ const SHARED_CHROME = [
   'forge-row-time',
   'forge-row-quote',
   'forge-state',
-  'forge-empty-card',
-  // No 'forge-empty-icon': the glyph's size/stroke/colour come from the app-wide
-  // `.empty-state__icon` rule (components.css), pinned by
-  // common/__tests__/emptyStateIcon.test.ts.
-  'forge-empty-title',
-  'forge-empty-hint',
+  // No forge empty-state classes: the block is the shared `EmptyState` now
+  // (common/EmptyState.vue), and its glyph comes from `.empty-state__icon`.
   'forge-overview-count-badge',
   // Filter toolbar + chips. The activity tab renders its own toolbar from
   // ForgeOverviewList, the other tabs render theirs from ForgePanelContent, so

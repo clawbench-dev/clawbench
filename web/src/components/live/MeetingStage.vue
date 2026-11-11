@@ -291,11 +291,11 @@
              participant and the publisher appear as different speakers. -->
         <div v-else-if="activeTab === 'notes'" class="live-tab-pane" data-role="notes-pane">
           <!-- Two different empty states, both drawn as the shared card (the
-               same `MeetingEmpty` the record's tabs and the viewer's panel use):
+               same `EmptyState` the record's tabs and the viewer's panel use):
                "听记 is off" is a setting to change before the next share, while
                "listening" is a live state that fills itself. As one muted line
                in the corner they both read as a pane that failed to render. -->
-          <MeetingEmpty
+          <EmptyState
             v-if="notes.phase.value !== 'recording'"
             :icon="Captions"
             :title="t('liveShare.notes.notEnabledTitle')"
@@ -317,7 +317,7 @@
               :segments="notes.segments.value.length"
               @retry="share.retryMicrophone()"
             />
-            <MeetingEmpty
+            <EmptyState
               v-if="noteBlocks.length === 0 && notes.health.value === 'ok'"
               :icon="Captions"
               :title="t('liveShare.notes.listening')"
@@ -483,7 +483,7 @@ import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import TranscriptList from '@/components/live/TranscriptList.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import NotesStatusBar from '@/components/live/NotesStatusBar.vue'
 import MeetingParticipants from '@/components/live/MeetingParticipants.vue'
 import { useToast } from '@/composables/useToast'

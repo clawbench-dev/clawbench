@@ -7,7 +7,12 @@
       <span>{{ t('git.manage.loadError') }}</span>
       <button class="retry-btn" @click="$emit('retry')">{{ t('git.manage.retry') }}</button>
     </div>
-    <div v-else-if="tags.length === 0" class="section-empty">{{ t('git.manage.noTags') }}</div>
+    <EmptyState
+      v-else-if="tags.length === 0"
+      :icon="Tag"
+      :title="t('git.manage.noTags')"
+      :desc="t('git.manage.noTagsDesc')"
+    />
     <template v-else>
       <div
         v-for="tag in sortedTags"
@@ -42,6 +47,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Tag, Trash2 } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const { t } = useI18n()
 
@@ -81,6 +87,10 @@ function shortDate(dateStr: string) {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Column flex so the shared empty state can take the pane height; rows do not
+     grow, so they still stack from the top. */
+  display: flex;
+  flex-direction: column;
 }
 
 .section-skeleton {
@@ -106,13 +116,6 @@ function shortDate(dateStr: string) {
   background: transparent;
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
-}
-
-.section-empty {
-  font-size: var(--font-size-md);
-  color: var(--text-muted, #999);
-  padding: calc(24 * var(--dp)) var(--space-6);
-  text-align: center;
 }
 
 .tag-row {

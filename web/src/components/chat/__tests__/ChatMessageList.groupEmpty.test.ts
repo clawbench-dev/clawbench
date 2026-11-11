@@ -160,7 +160,7 @@ beforeEach(() => {
 describe('ChatMessageList — group empty state by mode', () => {
   it('renders host-mode copy in host mode', () => {
     const wrapper = mountEmptyGroup({ groupMode: 'host' })
-    const text = wrapper.find('.group-welcome').text()
+    const text = wrapper.find('.empty-state').text()
     expect(text).toContain(ml.groupModeHostTitle)
     expect(text).toContain(ml.groupModeHostDesc)
     expect(text).toContain(ml.groupModeHostTip1)
@@ -171,7 +171,7 @@ describe('ChatMessageList — group empty state by mode', () => {
 
   it('renders free-mode copy in free mode', () => {
     const wrapper = mountEmptyGroup({ groupMode: 'free' })
-    const text = wrapper.find('.group-welcome').text()
+    const text = wrapper.find('.empty-state').text()
     expect(text).toContain(ml.groupModeFreeTitle)
     expect(text).toContain(ml.groupModeFreeDesc)
     expect(text).toContain(ml.groupModeFreeTip1)
@@ -182,7 +182,7 @@ describe('ChatMessageList — group empty state by mode', () => {
 
   it('defaults to host mode when groupMode is omitted', () => {
     const wrapper = mountEmptyGroup()
-    expect(wrapper.find('.group-welcome').text()).toContain(ml.groupModeHostTitle)
+    expect(wrapper.find('.empty-state').text()).toContain(ml.groupModeHostTitle)
   })
 
   it('lists the three mode tips', () => {

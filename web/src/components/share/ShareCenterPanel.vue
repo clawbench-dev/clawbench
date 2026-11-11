@@ -65,10 +65,12 @@
         <button class="share-retry" type="button" @click="reload">{{ t('common.retry') }}</button>
       </div>
 
-      <div v-else-if="visible.length === 0" class="share-hint">
-        <Share2 class="empty-state__icon" />
-        <span>{{ items.length === 0 ? t('shareCenter.empty') : t('shareCenter.emptyFiltered') }}</span>
-      </div>
+      <EmptyState
+        v-else-if="visible.length === 0"
+        :icon="Share2"
+        :title="items.length === 0 ? t('shareCenter.empty') : t('shareCenter.emptyFiltered')"
+        :desc="items.length === 0 ? t('shareCenter.emptyDesc') : t('shareCenter.emptyFilteredDesc')"
+      />
 
       <div v-else class="share-list">
         <div
@@ -193,6 +195,7 @@ import {
 } from 'lucide-vue-next'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useDialog } from '@/composables/useDialog'
@@ -556,6 +559,10 @@ watch(
   min-height: 0;
   overflow-y: auto;
   padding: var(--panel-body-pad, var(--space-5, 10px));
+  /* Column flex so the shared empty state can take the body height. The list
+     is a single auto-height child, so it still starts at the top. */
+  display: flex;
+  flex-direction: column;
 }
 
 .share-skeleton {

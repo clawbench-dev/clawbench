@@ -93,7 +93,7 @@ describe('MailPanel account refresh on activation', () => {
   it('shows the empty state when no mailbox is configured', async () => {
     const wrapper = mountPanel()
     await flushPromises()
-    expect(wrapper.find('.mail-empty-btn').exists()).toBe(true)
+    expect(wrapper.find('[data-action="mail-empty-settings"]').exists()).toBe(true)
   })
 
   it('picks up a mailbox added in Settings when the tab becomes active again', async () => {
@@ -111,7 +111,7 @@ describe('MailPanel account refresh on activation', () => {
 
     expect(loadAccounts).toHaveBeenCalled()
     expect(wrapper.find('.bar-stub').exists()).toBe(true)
-    expect(wrapper.find('.mail-empty-btn').exists()).toBe(false)
+    expect(wrapper.find('[data-action="mail-empty-settings"]').exists()).toBe(false)
     expect(selectFolder).toHaveBeenCalledWith(1)
   })
 

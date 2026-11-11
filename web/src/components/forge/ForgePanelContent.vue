@@ -1,21 +1,20 @@
 <template>
   <div class="forge-panel">
-    <!-- Unbound / no-project states use a question-card layout (same visual
-         language as the AskUserQuestion card): one prompt plus actionable
-         options. -->
+    <!-- Unbound / no-project states: the shared empty state, with the way out
+         as its action. -->
     <div v-if="!projectPath" class="forge-state">
-      <div class="forge-card">
-        <div class="forge-card-icon">
-          <Github :size="30" />
-        </div>
-        <div class="forge-card-header">{{ t('forge.empty.noProjectHeader') }}</div>
-        <div class="forge-card-body">{{ t('forge.empty.noProjectBody') }}</div>
-        <div class="forge-card-options">
+      <EmptyState
+        :icon="Github"
+        :title="t('forge.empty.noProjectHeader')"
+        :desc="t('forge.empty.noProjectBody')"
+        :fill="false"
+      >
+        <template #action>
           <button class="fbtn fbtn-primary" @click="emit('request-project')">
             {{ t('forge.empty.chooseProject') }}
           </button>
-        </div>
-      </div>
+        </template>
+      </EmptyState>
     </div>
 
     <!-- Fallback only. The backend auto-binds the highest-priority git remote
@@ -24,18 +23,18 @@
          self-hosted host that needs explicit confirmation, or the user having
          unbound the repository earlier. -->
     <div v-else-if="!items.isBound.value && !items.loading.value" class="forge-state">
-      <div class="forge-card">
-        <div class="forge-card-icon">
-          <Github :size="30" />
-        </div>
-        <div class="forge-card-header">{{ t('forge.empty.noBindingHeader') }}</div>
-        <div class="forge-card-body">{{ t('forge.empty.noBindingBody') }}</div>
-        <div class="forge-card-options">
+      <EmptyState
+        :icon="Github"
+        :title="t('forge.empty.noBindingHeader')"
+        :desc="t('forge.empty.noBindingBody')"
+        :fill="false"
+      >
+        <template #action>
           <button class="fbtn fbtn-primary" @click="openBindDialog">
             {{ t('forge.empty.bindRepo') }}
           </button>
-        </div>
-      </div>
+        </template>
+      </EmptyState>
     </div>
 
     <template v-else>
@@ -194,13 +193,12 @@
           </div>
 
           <div v-else-if="pipelines.pipelines.value.length === 0" class="forge-state">
-            <div class="forge-empty-card">
-              <component
-                :is="tabIcon('pipeline')"
-                class="forge-empty-icon empty-state__icon"
-              />
-              <div class="forge-empty-title">{{ t('forge.pipeline.emptyList') }}</div>
-            </div>
+            <EmptyState
+              :icon="tabIcon('pipeline')"
+              :title="t('forge.pipeline.emptyList')"
+              :desc="t('forge.pipeline.emptyListDesc')"
+              :fill="false"
+            />
           </div>
 
           <div v-else class="forge-list" @scroll="onPipelineScroll">
@@ -295,13 +293,12 @@
         </div>
 
         <div v-else-if="items.items.value.length === 0" class="forge-state">
-          <div class="forge-empty-card">
-            <component
-              :is="tabIcon(items.type.value)"
-              class="forge-empty-icon empty-state__icon"
-            />
-            <div class="forge-empty-title">{{ t('forge.emptyList') }}</div>
-          </div>
+          <EmptyState
+            :icon="tabIcon(items.type.value)"
+            :title="t('forge.emptyList')"
+            :desc="t('forge.emptyListDesc')"
+            :fill="false"
+          />
         </div>
 
         <div v-else class="forge-list" @scroll="onListScroll">
@@ -435,6 +432,7 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -1100,40 +1098,6 @@ function formatTime(iso: string): string {
   align-items: center;
   justify-content: center;
   transition: background var(--duration-base) ease, color var(--duration-base) ease;
-}
-
-/* ── Empty / unbound state cards ── */
-.forge-card {
-  max-width: calc(340 * var(--dp));
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: var(--space-4);
-}
-.forge-card-icon {
-  color: var(--text-muted);
-  opacity: var(--opacity-muted);
-  margin-bottom: var(--space-1);
-}
-.forge-card-header {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-}
-.forge-card-body {
-  color: var(--text-muted);
-  font-size: var(--font-size-md);
-  line-height: var(--line-height-normal);
-}
-.forge-card-options {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-  width: 100%;
-  align-items: center;
 }
 
 /* ── Type tabs — same treatment as the stats panel tab bar (connected

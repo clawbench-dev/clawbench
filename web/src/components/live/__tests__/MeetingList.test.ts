@@ -245,11 +245,11 @@ describe('MeetingList', () => {
     // 28px icon over a sentence, stuck to the top of the scroll area.
     const w = mountList()
 
-    const card = w.find('.meeting-empty')
+    const card = w.find('.empty-state')
     expect(card.exists()).toBe(true)
     expect(card.findComponent(MonitorUp).exists()).toBe(true)
-    expect(card.find('.meeting-empty__title').text()).toBe(enMessages.meeting.list.empty)
-    expect(card.find('.meeting-empty__desc').text()).toBe(enMessages.meeting.list.emptyDesc)
+    expect(card.find('.empty-state__title').text()).toBe(enMessages.meeting.list.empty)
+    expect(card.find('.empty-state__desc').text()).toBe(enMessages.meeting.list.emptyDesc)
   })
 
   it('previews the record rows while the first load is in flight', () => {

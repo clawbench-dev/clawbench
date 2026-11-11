@@ -3,10 +3,13 @@
     <div v-if="loading && allExecutions.length === 0" class="history-skeleton">
       <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
     </div>
-    <div v-else-if="allExecutions.length === 0" class="history-empty">
-      <History class="empty-icon empty-state__icon" />
-      <span>{{ t('task.exec.noExecutions') }}</span>
-    </div>
+    <EmptyState
+      v-else-if="allExecutions.length === 0"
+      :icon="History"
+      :title="t('task.exec.noExecutions')"
+      :desc="t('task.exec.noExecutionsDesc')"
+      :fill="false"
+    />
     <div v-else class="history-list">
       <div v-for="exec in allExecutions" :key="exec.id" class="execution-item" :class="{ running: isRunning(exec), unread: !isRunning(exec) && isUnreadDisplay(exec), 'just-completed': isJustCompleted(exec) }" @click="openDetail(exec)">
         <div class="execution-row">
@@ -95,6 +98,7 @@ import { formatDuration, formatDateTime } from '@/utils/format.ts'
 import { formatCompactCount } from '@/utils/usageFormat.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const props = defineProps({
   task: Object,
@@ -383,25 +387,12 @@ defineExpose({
   min-height: 0;
 }
 
-/* ── Empty state ── */
-.history-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-6);
-  padding: calc(24 * var(--dp)) 0;
-  color: var(--text-muted, #999);
-  font-size: var(--font-size-lg);
-}
-
 .history-skeleton {
   /* 12dp is `.execution-row`'s inset. */
   --panel-skeleton-inset: calc(12 * var(--dp));
   padding: var(--space-2) 0;
 }
 
-/* Size, stroke and colour come from the global `.empty-state__icon` rule. */
 
 /* ── Execution items ── */
 .history-list {

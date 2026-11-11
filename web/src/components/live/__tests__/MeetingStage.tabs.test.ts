@@ -500,7 +500,7 @@ describe('MeetingStage tabs', () => {
     expect(pane.text()).toContain('AI notes were off')
     // The same centred card the record's tabs draw, not a muted line in the
     // corner — that read as a pane that failed to render.
-    expect(pane.find('[data-role="notes-off"]').classes()).toContain('meeting-empty')
+    expect(pane.find('[data-role="notes-off"]').classes()).toContain('empty-state')
   })
 
   it('draws the listening card while 听记 runs but nothing was transcribed yet', async () => {
@@ -513,7 +513,7 @@ describe('MeetingStage tabs', () => {
     const pane = wrapper.find('[data-role="notes-pane"]')
     const card = pane.find('[data-role="notes-listening"]')
     expect(card.exists()).toBe(true)
-    expect(card.classes()).toContain('meeting-empty')
+    expect(card.classes()).toContain('empty-state')
     expect(card.text()).toContain('Listening')
     // Not the "it was off" copy: the recorder is running, the lines just have
     // not arrived.

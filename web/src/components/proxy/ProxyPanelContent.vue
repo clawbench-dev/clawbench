@@ -191,11 +191,19 @@
           </div>
 
           <!-- Empty state -->
-          <div v-else class="proxy-empty">
-            <NetworkIcon class="proxy-empty-icon empty-state__icon" />
-            <div class="proxy-empty-text">{{ t('proxy.noPorts') }}</div>
-            <div class="proxy-empty-hint">{{ t('proxy.emptyHint') }}</div>
-          </div>
+          <EmptyState
+            v-else
+            :icon="NetworkIcon"
+            :title="t('proxy.noPorts')"
+            :desc="t('proxy.emptyHint')"
+          >
+            <template #action>
+              <button class="fbtn fbtn-primary" data-action="proxy-empty-add" @click="openAddForm">
+                <Plus :size="14" />
+                <span>{{ t('proxy.addPort') }}</span>
+              </button>
+            </template>
+          </EmptyState>
         </div>
       </div>
 
@@ -317,7 +325,7 @@
         </div>
         <template #footer>
           <button class="fbtn" @click="showForm = false">{{ t('common.cancel') }}</button>
-          <button class="fbtn fbtn-primary" @click="handleSave" :disabled="!isValidPort || saving">{{ saving ? '...' : t('common.confirm') }}</button>
+          <button class="fbtn fbtn-primary" data-action="proxy-save" @click="handleSave" :disabled="!isValidPort || saving">{{ saving ? '...' : t('common.confirm') }}</button>
         </template>
       </ModalDialog>
 
@@ -334,6 +342,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
@@ -782,25 +791,6 @@ async function handleRetryTunnel() {
   padding: var(--space-2) 0;
 }
 
-.proxy-empty {
-  padding: calc(24 * var(--dp)) var(--space-6);
-  text-align: center;
-  color: var(--text-muted, #999);
-  font-size: var(--font-size-md);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-}
-
-.proxy-empty-hint {
-  font-size: var(--font-size-xs);
-  margin-top: var(--space-2);
-  color: var(--text-muted, #999);
-  opacity: var(--opacity-soft);
-}
-
 .proxy-list {
   display: flex;
   flex-direction: column;
@@ -822,6 +812,10 @@ async function handleRetryTunnel() {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Column flex so the shared empty state can take the zone height and centre
+     itself; the port list does not grow, so it still starts at the top. */
+  display: flex;
+  flex-direction: column;
 }
 
 /* Tunnel guide (web mode) */

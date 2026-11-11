@@ -78,7 +78,7 @@
       <div v-if="loading" class="mail-reader__loading">
         <LoadingIndicator size="sm" inline />
       </div>
-      <MailEmpty v-else-if="error" :icon="TriangleAlert" :title="t('mail.reader.errorTitle')" :desc="error" />
+      <EmptyState v-else-if="error" :icon="TriangleAlert" :title="t('mail.reader.errorTitle')" :desc="error" />
       <template v-else-if="detail">
         <div v-if="showImagesBar" class="mail-reader__images">
           <span>{{ t('mail.reader.imagesBlocked') }}</span>
@@ -92,7 +92,12 @@
           :srcdoc="docSource"
         />
         <pre v-else-if="detail.bodyText" class="mail-reader__text">{{ detail.bodyText }}</pre>
-        <MailEmpty v-else :icon="MailOpen" :title="t('mail.reader.noBody')" />
+        <EmptyState
+          v-else
+          :icon="MailOpen"
+          :title="t('mail.reader.noBody')"
+          :desc="t('mail.reader.noBodyDesc')"
+        />
       </template>
     </div>
 
@@ -131,7 +136,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Forward, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
-import MailEmpty from './MailEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { apiGet, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'

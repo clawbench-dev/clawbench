@@ -48,7 +48,7 @@
       <!-- The empty state speaks the card language the other dock tabs use:
            a muted glyph, a title, and one line about what lands here. The
            footer's two buttons are the action, so the card stays text-only. -->
-      <MeetingEmpty
+      <EmptyState
         v-else-if="sessions.length === 0"
         :icon="MEETING_ICON"
         :title="t('meeting.list.empty')"
@@ -274,7 +274,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
-import MeetingEmpty from '@/components/live/MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { getNative } from '@/utils/clawbenchNative'
 import { isHttpOrigin } from '@/utils/screenCaptureSupport'

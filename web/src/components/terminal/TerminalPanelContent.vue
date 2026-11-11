@@ -2,20 +2,27 @@
   <div class="terminal-panel">
 
     <!-- Platform unsupported state (top priority) -->
-    <div v-if="platformUnsupported" class="terminal-empty-state terminal-platform-unsupported">
-      <TerminalIcon class="terminal-empty-icon empty-state__icon" />
-      <p class="terminal-empty-text">{{ t('terminal.platformUnsupported') }}</p>
-    </div>
+    <EmptyState
+      v-if="platformUnsupported"
+      :icon="TerminalIcon"
+      :title="t('terminal.platformUnsupported')"
+      :desc="t('terminal.platformUnsupportedDesc')"
+    />
 
     <!-- Empty state when all tabs are closed -->
-    <div v-else-if="tabs.length === 0" class="terminal-empty-state">
-      <TerminalIcon class="terminal-empty-icon empty-state__icon" />
-      <p class="terminal-empty-text">{{ t('terminal.noSessions') }}</p>
-      <button class="terminal-empty-create-btn" @click="handleCreateTab">
-        <PlusIcon :size="16" />
-        <span>{{ t('terminal.createSession') }}</span>
-      </button>
-    </div>
+    <EmptyState
+      v-else-if="tabs.length === 0"
+      :icon="TerminalIcon"
+      :title="t('terminal.noSessions')"
+      :desc="t('terminal.noSessionsDesc')"
+    >
+      <template #action>
+        <button class="fbtn fbtn-primary" @click="handleCreateTab">
+          <PlusIcon :size="16" />
+          <span>{{ t('terminal.createSession') }}</span>
+        </button>
+      </template>
+    </EmptyState>
 
     <template v-else>
     <!-- Tab bar (replaces old header) -->
@@ -300,6 +307,7 @@ import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import DropOverlay from '@/components/common/DropOverlay.vue'
 import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
@@ -1601,41 +1609,6 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   height: 100%;
   overflow: hidden;
   position: relative;
-}
-
-/* Empty state */
-.terminal-empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: var(--space-6);
-  padding: calc(32 * var(--dp));
-}
-
-.terminal-empty-text {
-  font-size: var(--font-size-lg);
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.terminal-empty-create-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-7);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  cursor: pointer;
-  transition: background var(--duration-base) ease;
-}
-
-.terminal-empty-create-btn:active {
-  background: var(--bg-tertiary);
 }
 
 /* Tab bar */

@@ -53,17 +53,21 @@
       />
 
       <!-- Not a git repository -->
-      <div v-else-if="!isGit" class="stats-empty">
-        <GitBranch class="stats-empty-icon empty-state__icon" />
-        <span>{{ t('gitStats.notGitRepo') }}</span>
-      </div>
+      <EmptyState
+        v-else-if="!isGit"
+        :icon="GitBranch"
+        :title="t('gitStats.notGitRepo')"
+        :desc="t('gitStats.notGitRepoDesc')"
+      />
 
       <template v-else>
         <!-- Empty state: git repo but no commits in range -->
-        <div v-if="!totalsPresent" class="stats-empty">
-          <Code2 class="stats-empty-icon empty-state__icon" />
-          <span>{{ t('gitStats.noData') }}</span>
-        </div>
+        <EmptyState
+          v-if="!totalsPresent"
+          :icon="Code2"
+          :title="t('gitStats.noData')"
+          :desc="t('gitStats.noDataDesc')"
+        />
 
         <template v-else>
           <!-- Totals overview -->
@@ -218,6 +222,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, type Component } from
 import { useI18n } from 'vue-i18n'
 import { Clock, Gauge, Table, ChartLine, GitBranch, Code2, Plus, Minus, Scale, GitCommitHorizontal, Zap, Sigma, Coins, CircleDollarSign } from 'lucide-vue-next'
 import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
@@ -632,16 +637,6 @@ onMounted(() => {
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
-  font-size: var(--font-size-md);
-}
-.stats-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  padding: calc(48 * var(--dp)) 0;
-  color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
 /* ── Detail table ── */

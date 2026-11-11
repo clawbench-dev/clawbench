@@ -26,7 +26,10 @@ describe('ChatMessageList — session switching indicator (replaces full-area ov
     // The lone spinner was replaced by simulated bubbles; the empty-state
     // branch must stay `v-else-if` so the two never render together.
     expect(source).toContain('<ChatSkeleton')
-    expect(source).toContain('v-else-if="messages.length === 0" class="chat-empty"')
+    // The empty branch is a `<template v-else-if>` holding the shared
+    // `EmptyState` — still mutually exclusive with the skeleton.
+    expect(source).toContain('v-else-if="messages.length === 0"')
+    expect(source).toContain('<EmptyState')
   })
 
   it('defines the switching prop and forwards it from the panel', async () => {

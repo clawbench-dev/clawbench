@@ -20,10 +20,12 @@
           :chart="true"
           :label="t('common.loading')"
         />
-        <div v-else-if="clocLanguages.length === 0" class="stats-empty">
-          <FileCode2 class="stats-empty-icon empty-state__icon" />
-          <span>{{ t('gitStats.clocNoData') }}</span>
-        </div>
+        <EmptyState
+          v-else-if="clocLanguages.length === 0"
+          :icon="FileCode2"
+          :title="t('gitStats.clocNoData')"
+          :desc="t('gitStats.clocNoDataDesc')"
+        />
         <template v-else>
           <div class="cloc-totals">
             <div class="stats-total">
@@ -123,6 +125,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Files, FileCode2, Code2, MessageSquare, Space, FileStack } from 'lucide-vue-next'
 import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
@@ -267,16 +270,6 @@ onMounted(() => {
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
-  font-size: var(--font-size-md);
-}
-.stats-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  padding: calc(48 * var(--dp)) 0;
-  color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
 .cloc-totals {

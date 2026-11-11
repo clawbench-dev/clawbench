@@ -107,7 +107,7 @@
            centres like the other three tabs' empty states. When a folder does
            exist the header above already explains the zero, and a small hint is
            the right weight. -->
-      <MeetingEmpty
+      <EmptyState
         v-if="total === 0 && !folderPath"
         :icon="FolderOpen"
         :title="t('meeting.resources.emptyTitle')"
@@ -236,7 +236,7 @@ import {
 import FileIcon from '@/components/common/FileIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ShareAddressList from '@/components/common/ShareAddressList.vue'
-import MeetingEmpty from './MeetingEmpty.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 // The publish action wears the shared pill. A component that uses `.fbtn`
 // without going through ModalDialog loads the sheet itself — an ancestor
 // happening to import it is not a contract.

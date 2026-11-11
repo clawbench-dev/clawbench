@@ -192,30 +192,32 @@
         </div>
         <div v-else-if="error" class="git-history-error">{{ error }}</div>
         <div v-else-if="!isGit" class="git-history-empty">
-          <div class="empty-state-card">
-            <GitBranch class="empty-state__icon" />
-            <div class="empty-state-title">{{ t('git.commitList.notGitRepo') }}</div>
-            <div class="empty-state-desc">{{ t('git.commitList.notGitRepoDesc') }}</div>
-            <div class="empty-state-hint">
-              <code>git init</code>
-            </div>
-          </div>
+          <EmptyState :icon="GitBranch" :title="t('git.commitList.notGitRepo')" :fill="false">
+            <template #desc>
+              <div>{{ t('git.commitList.notGitRepoDesc') }}</div>
+              <div class="empty-state-hint">
+                <code>git init</code>
+              </div>
+            </template>
+          </EmptyState>
         </div>
         <div v-else-if="commits.length === 0 && untracked" class="git-history-empty">
-          <div class="empty-state-card">
-            <FileText class="empty-state__icon" />
-            <div class="empty-state-title">{{ t('git.commitList.untrackedFile') }}</div>
-            <div class="empty-state-desc">{{ t('git.commitList.untrackedDesc') }}</div>
-            <div class="empty-state-hint">
-              <code>git add &lt;filename&gt;</code> {{ t('git.commitList.untrackedHint') }}
-            </div>
-          </div>
+          <EmptyState :icon="FileText" :title="t('git.commitList.untrackedFile')" :fill="false">
+            <template #desc>
+              <div>{{ t('git.commitList.untrackedDesc') }}</div>
+              <div class="empty-state-hint">
+                <code>git add &lt;filename&gt;</code> {{ t('git.commitList.untrackedHint') }}
+              </div>
+            </template>
+          </EmptyState>
         </div>
         <div v-else-if="commits.length === 0" class="git-history-empty">
-          <div class="empty-state-card">
-            <GitCommitHorizontal class="empty-state__icon" />
-            <div class="empty-state-title">{{ t('git.commitList.noCommits') }}</div>
-          </div>
+          <EmptyState
+            :icon="GitCommitHorizontal"
+            :title="t('git.commitList.noCommits')"
+            :desc="t('git.commitList.noCommitsDesc')"
+            :fill="false"
+          />
         </div>
         <template v-else>
         <!-- Commits the upstream has and this branch does not. They are NOT part of
@@ -350,6 +352,7 @@ import GitGraph from './GitGraph.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import { useListNav } from '@/composables/useListNav'
@@ -1373,26 +1376,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
     justify-content: center;
     color: var(--text-muted, #999);
     font-size: var(--font-size-lg);
-}
-
-.empty-state-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: calc(32 * var(--dp)) calc(24 * var(--dp));
-    gap: var(--space-4);
-}
-
-.empty-state-title {
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-medium);
-    color: var(--text-primary);
-}
-
-.empty-state-desc {
-    font-size: var(--font-size-md);
-    color: var(--text-muted);
 }
 
 .empty-state-hint {
