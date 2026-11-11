@@ -1163,6 +1163,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Inject external session ID getter for ResumeSession recovery
 	ai.SetExternalSessionIDGetter(service.GetExternalSessionID)
 
+	// Inject the clearer for the same column: when the agent answers that it no
+	// longer has a session (e.g. an in-memory session lost with the backend
+	// process), the stale id must be dropped or every later turn — and every
+	// server restart — retries a session that cannot come back.
+	ai.SetExternalSessionIDClearer(service.ClearExternalSessionID)
+
 	// Inject auto-approve getter for ACP permission auto-approval
 	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)
 

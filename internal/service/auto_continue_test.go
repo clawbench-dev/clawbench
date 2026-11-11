@@ -88,6 +88,13 @@ func TestClassifyTurnAbnormality(t *testing.T) {
 		{"context cancel warning", "", true, false, warn(ai.ReasonContextCancel), ""},
 		{"user cancel warning reason", "", true, false, warn(ai.ReasonUserCancel), ""},
 		{"disconnect warning reason", "", true, false, warn(ai.ReasonDisconnect), ""},
+		// A rebuilt session (the agent had lost the previous one, issue #669) is
+		// a NOTICE, not a failure: the turn itself ran normally on the fresh
+		// session. Treating it as retryable would re-send the prompt and
+		// duplicate the answer; treating it as abnormal at all would stop a
+		// group member's seen_cursor from advancing.
+		{"session reset warning", "", true, false, warn(ai.ReasonSessionReset), ""},
+		{"session reset after text", "", true, false, warnPlusText(ai.ReasonSessionReset), ""},
 
 		// ── Clean finishes ──
 		{"normal completion", "", true, false, text, ""},

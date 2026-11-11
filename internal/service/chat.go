@@ -3619,8 +3619,17 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 // Called when transport switches from CLI to ACP — ACP manages its own session
 // mapping internally, so the CLI's external_session_id must not leak into the
 // ACP connection pool's GetOrCreateConn pre-population logic.
+//
+// Also called by ACP session recovery when the agent answers that the session no
+// longer exists. There the clear is load-bearing rather than hygienic: the pool
+// falls back to this column when its in-memory id is empty, so a failed write
+// makes the rebuild retry the dead id. Hence the log — a silent failure would
+// leave only "NewSessionFallback failed" with no hint why.
 func ClearExternalSessionID(sessionID string) {
-	_, _ = store.WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
+	if _, err := store.WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID); err != nil {
+		slog.Warn("clearExternalSessionID: write failed, a stale ACP session id may be retried",
+			slog.String("session", sessionID), slog.String("err", err.Error()))
+	}
 }
 
 // GetAgentTakeoverFrom returns the display name of the agent this session was

@@ -169,6 +169,18 @@ const (
 	// writing a spurious user+assistant row pair each time for a failure that can
 	// only be fixed in a terminal.
 	ReasonAuthRequired = "auth_required"
+	// ReasonSessionReset marks a turn that had to open a BRAND-NEW agent session
+	// because the agent answered that it no longer has the previous one (ACP
+	// business error "session not found" after a process restart — issue #669).
+	//
+	// It is deliberately neither retryable nor a terminal failure: the turn
+	// itself is about to run normally on the fresh session, so auto-continue
+	// must not re-send it (that would duplicate the answer) and a group member's
+	// turn must still count as clean (otherwise its seen_cursor is not advanced
+	// and the same context is injected again next round). The user-facing text
+	// rides the block's Text — it is localized server-side — so no frontend i18n
+	// key is needed for this reason.
+	ReasonSessionReset = "session_reset"
 	// ReasonQuotaExhausted means the upstream provider refused the call because
 	// the account is out of credit or over its plan limit (HTTP 402, or a
 	// provider-specific "quota"/"insufficient balance" error).
