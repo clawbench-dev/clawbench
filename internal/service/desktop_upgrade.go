@@ -157,9 +157,16 @@ var desktopDownloadKey = map[string]string{
 // These are community-run services with no uptime guarantee, so they are only
 // candidates: the client walks the list in order, and the direct github.com URL
 // is always included as the final fallback.
+//
+// Measured 2026-11-11 against the real desktop asset (125MB zip), 5MB range:
+// gh-proxy.com 3.9 MB/s, ghfast.top 1.2 MB/s, github.com direct 6 KB/s.
+// ghproxy.net was REMOVED — it answered HTTP 206 but trickled at 33-38 KB/s,
+// which is 55 minutes for one desktop package. A mirror that is slow-but-alive
+// is worse than one that is down: the client only falls through when a
+// candidate FAILS, so it would sit there instead of trying the next source.
 var githubReleaseMirrors = []string{
 	"https://gh-proxy.com/",
-	"https://ghproxy.net/",
+	"https://ghfast.top/",
 }
 
 // DesktopLatestResult is the response of GET /api/desktop/latest.

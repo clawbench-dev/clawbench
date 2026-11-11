@@ -38,11 +38,15 @@ vi.mock('node:child_process', () => ({
 // `download` is the control: return a Buffer to serve it as a 200 body, or
 // throw to simulate an unreachable host (which downloadFirstAvailable must
 // report for every candidate).
-const { download, downloadSpy, downloadOptsSpy, redirect } = vi.hoisted(() => ({
+const { download, downloadSpy, downloadOptsSpy, redirect, transfer } = vi.hoisted(() => ({
   downloadSpy: vi.fn(),
   downloadOptsSpy: vi.fn(),
   // One-shot 302 target, so a redirect chain can be exercised (and cannot loop).
   redirect: { to: '' },
+  // Per-URL transfer shape for the progress-guard tests. `stall` accepts the
+  // response and then sends nothing (a mirror that connected and went quiet);
+  // `trickle` sends a few bytes at a time (alive but unusably slow).
+  transfer: { stall: new Set<string>(), trickle: new Set<string>() },
   download: { impl: (() => Buffer.alloc(0)) as (url: string) => Buffer },
 }))
 
@@ -53,9 +57,22 @@ function makeGetMock() {
     downloadSpy(url)
     downloadOptsSpy(url, typeof optsOrCb === 'function' ? undefined : optsOrCb)
     const handlers: Record<string, Array<(arg?: unknown) => void>> = {}
+    const timers: Array<ReturnType<typeof setInterval>> = []
+    const fail = (err: unknown) => {
+      for (const t of timers) clearInterval(t)
+      queueMicrotask(() => {
+        for (const fn of handlers.error ?? []) fn(err)
+      })
+    }
     const req = {
       on(ev: string, fn: (arg?: unknown) => void) {
         ;(handlers[ev] ||= []).push(fn)
+        return req
+      },
+      // `httpGetBuffer` destroys the request when its progress guard gives up,
+      // which surfaces as an 'error' event just like a real abort.
+      destroy(err?: unknown) {
+        fail(err)
         return req
       },
     }
@@ -63,9 +80,7 @@ function makeGetMock() {
     try {
       body = download.impl(url)
     } catch (err) {
-      queueMicrotask(() => {
-        for (const fn of handlers.error ?? []) fn(err)
-      })
+      fail(err)
       return req
     }
     const location = redirect.to
@@ -80,6 +95,17 @@ function makeGetMock() {
       },
     }
     cb(res)
+    if (transfer.stall.has(url)) return req
+    if (transfer.trickle.has(url)) {
+      let sent = 0
+      timers.push(
+        setInterval(() => {
+          if (sent++ >= 10) return
+          for (const fn of handlers.data ?? []) fn(Buffer.alloc(64))
+        }, 15),
+      )
+      return req
+    }
     queueMicrotask(() => {
       for (const fn of handlers.data ?? []) fn(body)
       for (const fn of handlers.end ?? []) fn()
@@ -582,6 +608,44 @@ describe('downloadFirstAvailable', () => {
         downloadFirstAvailable(['https://mirror-a/a.zip', 'https://github.com/b.zip']),
       ).rejects.toThrow(/mirror-a[\s\S]*github\.com/)
     } finally {
+      download.impl = () => Buffer.alloc(0)
+    }
+  })
+
+  // A mirror that is alive but useless never "fails", and the walk only
+  // advances on failure. These two cases are the shapes that actually happen in
+  // the wild (measured 2026-11-11): a proxy that accepts the connection and
+  // sends nothing, and one that trickles at tens of KB/s.
+  it('abandons a mirror that accepts the connection and then goes quiet', async () => {
+    const stalled = 'https://mirror-a/stalled.zip'
+    const good = 'https://mirror-b/good.zip'
+    const zip = makeZip([{ name: 'app/index.html', content: 'hi' }])
+    downloadSpy.mockClear()
+    transfer.stall.add(stalled)
+    download.impl = (url) => (url === stalled ? Buffer.alloc(0) : zip)
+    try {
+      const buf = await downloadFirstAvailable([stalled, good], '', { idleMs: 40, minBytesPerSecond: 0 })
+      expect(buf.equals(zip)).toBe(true)
+      expect(downloadSpy.mock.calls.map((c) => c[0])).toEqual([stalled, good])
+    } finally {
+      transfer.stall.clear()
+      download.impl = () => Buffer.alloc(0)
+    }
+  })
+
+  it('abandons a mirror that trickles below the rate floor', async () => {
+    const slow = 'https://mirror-a/slow.zip'
+    const good = 'https://mirror-b/good.zip'
+    const zip = makeZip([{ name: 'app/index.html', content: 'hi' }])
+    downloadSpy.mockClear()
+    transfer.trickle.add(slow)
+    download.impl = (url) => (url === slow ? Buffer.alloc(0) : zip)
+    try {
+      const buf = await downloadFirstAvailable([slow, good], '', { idleMs: 40, minBytesPerSecond: 100 * 1024 })
+      expect(buf.equals(zip)).toBe(true)
+      expect(downloadSpy.mock.calls.map((c) => c[0])).toEqual([slow, good])
+    } finally {
+      transfer.trickle.clear()
       download.impl = () => Buffer.alloc(0)
     }
   })
