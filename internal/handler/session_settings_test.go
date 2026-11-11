@@ -219,6 +219,82 @@ func TestServeSessionSettingsUpdate_GroupMemberBusy(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 }
 
+// A MODEL switch is the one config write a running group must still accept
+// (issue #671): the member's connection is busy, but the next member turn reads
+// the persisted model back and applies it before its prompt, so storing it is
+// enough. The response says it was deferred, which is what the drawer's toast
+// keys off.
+func TestServeSessionSettingsUpdate_GroupMemberModelSwitchIsDeferred(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{"hostAgentId": "codebuddy"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	service.SetSessionRunning(created.GroupID, true, true)
+	t.Cleanup(func() { service.SetSessionRunning(created.GroupID, false, true) })
+
+	req = withProjectCookie(newRequest(t, http.MethodPatch, "/api/ai/session/settings", map[string]any{
+		"sessionId": created.HostMemberID,
+		"modelId":   "glm-5.1",
+	}), env.ProjectDir)
+	w = callHandlerWithAuth(ServeSessionSettingsUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got struct {
+		OK                  bool `json:"ok"`
+		ModelSwitchDeferred bool `json:"modelSwitchDeferred"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.True(t, got.OK)
+	assert.True(t, got.ModelSwitchDeferred, "a mid-turn switch must be stored, not applied")
+
+	// Storing is the whole point: the next turn reads this column.
+	assert.Equal(t, "glm-5.1", service.GetSessionModel(created.HostMemberID))
+}
+
+// Anything that still needs the member's live connection stays refused while the
+// group runs — including a request that mixes a model switch with such a field,
+// which must not half-apply.
+func TestServeSessionSettingsUpdate_GroupMemberMixedPatchStaysRefused(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{"hostAgentId": "codebuddy"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	service.SetSessionRunning(created.GroupID, true, true)
+	t.Cleanup(func() { service.SetSessionRunning(created.GroupID, false, true) })
+
+	before := service.GetSessionModel(created.HostMemberID)
+	req = withProjectCookie(newRequest(t, http.MethodPatch, "/api/ai/session/settings", map[string]any{
+		"sessionId": created.HostMemberID,
+		"modelId":   "glm-5.1",
+		"modeId":    "plan",
+	}), env.ProjectDir)
+	w = callHandlerWithAuth(ServeSessionSettingsUpdate, req)
+	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "GroupRunning")
+	assert.Equal(t, before, service.GetSessionModel(created.HostMemberID),
+		"a refused patch must not leave the model half-applied")
+}
+
 // TestServeSessionSettingsUpdate_Guards pins the rejection ladder before any
 // write happens. Each branch protects a different failure: an unscoped request
 // has no project to resolve the session against, an empty sessionId cannot be

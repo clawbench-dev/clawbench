@@ -878,6 +878,7 @@ export default {
       title: 'Model',
       switching: 'Switching model…',
       deferred: 'Session is busy — will switch on your next message',
+      deferredMember: 'Member is busy — will switch when it next speaks',
       switchFailed: 'Could not switch model',
       switchFailedDetail: 'Could not switch model: {detail}',
       effortChanged: 'Thinking effort for this model is {effort}',
