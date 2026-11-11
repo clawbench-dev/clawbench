@@ -65,10 +65,17 @@ func TestBuildWindowsSentinelScript(t *testing.T) {
 		// lock and left the service down (2026-11-11).
 		assert.Contains(t, script, "Wait-Process -Id 4321")
 		assert.NotContains(t, script, "timeout /t", "a fixed sleep is not a substitute for waiting on the PID")
+		// The wait must also be bounded: a drain that never finishes would
+		// otherwise leave the sentinel waiting for good and the service down.
+		// The timeout is reported as an error, hence try/catch — without it the
+		// error would abort the payload before the kill.
+		assert.Contains(t, script, "-Timeout 30")
+		assert.Contains(t, script, "try { Wait-Process -Id 4321")
+		assert.Contains(t, script, "Stop-Process -Id 4321 -Force",
+			"an expired wait must kill the outgoing process, not just give up on it")
 		// `&` must run the exe even when the wait fails (no PowerShell): that
 		// degrades to the old behavior instead of never restarting.
-		assert.Contains(t, script, "SilentlyContinue & ")
-		assert.Contains(t, script, `"C:\Program Files\clawbench.exe"`)
+		assert.Contains(t, script, `}" & "C:\Program Files\clawbench.exe"`)
 		assert.Contains(t, script, ` --port 20000`)
 		assert.NotContains(t, script, "'")
 	})
@@ -87,7 +94,10 @@ func TestBuildWindowsSentinelScript(t *testing.T) {
 	t.Run("no trailing space when there are no args", func(t *testing.T) {
 		script := buildWindowsSentinelScript(`C:\cb\clawbench.exe`, nil, 99)
 		assert.Equal(t,
-			`powershell -NoProfile -NonInteractive -Command Wait-Process -Id 99 -Timeout 60 -ErrorAction SilentlyContinue & C:\cb\clawbench.exe`,
+			`powershell -NoProfile -NonInteractive -Command "try { Wait-Process -Id 99 -Timeout 30 -ErrorAction Stop } catch {}; `+
+				`if (Get-Process -Id 99 -ErrorAction SilentlyContinue) { `+
+				`Stop-Process -Id 99 -Force -ErrorAction SilentlyContinue; `+
+				`Start-Sleep -Milliseconds 800 }" & C:\cb\clawbench.exe`,
 			script)
 		assert.False(t, strings.HasSuffix(script, " "))
 	})
@@ -116,16 +126,4 @@ func TestWindowsSentinelDoesNotUsePOSIXQuoting(t *testing.T) {
 	assert.NotContains(t, text, "joinArgs(", "Windows sentinel must not use POSIX quoting")
 	assert.NotContains(t, text, "shellQuote(", "Windows sentinel must not use POSIX quoting")
 	assert.Contains(t, text, "buildWindowsSentinelScript(")
-}
-
-// The Unix sentinel's wait is the reference behavior: it blocks until the PID
-// is gone, which is the only signal that the data-directory lock has been
-// released. Replacing it with a fixed sleep (the Windows sentinel's old shape)
-// would reintroduce the restart outage on every platform.
-func TestUnixSentinelWaitsForProcessExit(t *testing.T) {
-	src, err := os.ReadFile("settings_sentinel_unix.go")
-	require.NoError(t, err)
-	text := string(src)
-	assert.Contains(t, text, "while kill -0 $PID",
-		"the sentinel must wait for the outgoing process to exit, not sleep")
 }

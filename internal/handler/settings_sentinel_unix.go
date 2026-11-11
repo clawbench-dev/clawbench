@@ -44,13 +44,7 @@ func launchSentinel() (*exec.Cmd, error) {
 	// replaced at that instant) is actually retried. Permanent failures are
 	// caught earlier and surfaced as a 500 — see ResolveRestartBinary, which
 	// verifies the target is executable before the sentinel is ever started.
-	sentinelScript := fmt.Sprintf(
-		"PID=%d; EXE=%s; "+
-			"while kill -0 $PID 2>/dev/null; do sleep 0.1; done; "+
-			"for i in 1 2 3 4 5; do sleep 0.2; if [ -x \"$EXE\" ]; then exec \"$EXE\" %s; fi; done; "+
-			"echo 'restart-failed: no longer executable' >&2",
-		pid, shellQuote(exe), joinArgs(args),
-	)
+	sentinelScript := buildUnixSentinelScript(pid, exe, args, sentinelWaitSeconds)
 	cmd := exec.Command("/bin/sh", "-c", sentinelScript)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
@@ -66,4 +60,44 @@ func launchSentinel() (*exec.Cmd, error) {
 
 	slog.Info("sentinel process started", "pid", cmd.Process.Pid, "parent_pid", pid)
 	return cmd, nil
+}
+
+// buildUnixSentinelScript renders the /bin/sh script the sentinel runs: wait
+// for the outgoing process to EXIT — that is when the data-directory lock is
+// released — then re-exec this binary with the SAME arguments.
+//
+// The wait is bounded, and expiring the bound kills the target. Waiting forever
+// looks harmless because the target is already shutting down, but a drain that
+// never finishes would leave the sentinel waiting for good and the service down
+// with nobody left to start it. Killing is safe: shutdown was requested before
+// the sentinel was launched, so the target is never a healthy server. See
+// sentinelWaitSeconds for the budget.
+//
+// After SIGKILL the script waits (bounded) for the process to actually
+// disappear before starting the replacement: starting while the dying process
+// still holds the lock would just burn the new process's own lock wait.
+//
+// waitSeconds is a parameter only so tests can drive the escalation in about a
+// second instead of thirty; production passes sentinelWaitSeconds.
+func buildUnixSentinelScript(pid int, exe string, args []string, waitSeconds int) string {
+	// The loop ticks at 0.1s, so one second of waiting is ten ticks. After the
+	// kill, five seconds is plenty for SIGKILL to take effect (only an
+	// uninterruptible-sleep process outlives that, and the replacement's own
+	// lock wait is the backstop).
+	ticks := waitSeconds * 10
+	const killTicks = 50
+	return fmt.Sprintf(
+		"PID=%d; EXE=%s; n=0; "+
+			"while kill -0 $PID 2>/dev/null; do "+
+			"if [ $n -ge %d ]; then "+
+			"kill -9 $PID 2>/dev/null; m=0; "+
+			"while kill -0 $PID 2>/dev/null && [ $m -lt %d ]; do sleep 0.1; m=$((m+1)); done; "+
+			"break; "+
+			"fi; "+
+			"sleep 0.1; n=$((n+1)); "+
+			"done; "+
+			"for i in 1 2 3 4 5; do sleep 0.2; if [ -x \"$EXE\" ]; then exec \"$EXE\" %s; fi; done; "+
+			"echo 'restart-failed: no longer executable' >&2",
+		pid, shellQuote(exe), ticks, killTicks, joinArgs(args),
+	)
 }

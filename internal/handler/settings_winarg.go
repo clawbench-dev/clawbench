@@ -95,8 +95,8 @@ func escapeWindowsArgs(args []string) string {
 }
 
 // buildWindowsSentinelScript renders the cmd.exe script the sentinel runs: wait
-// for the outgoing process to EXIT, then re-exec this binary with the SAME
-// arguments.
+// for the outgoing process to EXIT — that is when the data-directory lock is
+// released — then re-exec this binary with the SAME arguments.
 //
 // The wait used to be `timeout /t 2`, a guess at how long shutdown takes. It is
 // the wrong signal: the data-directory lock is held until the process exits,
@@ -104,20 +104,39 @@ func escapeWindowsArgs(args []string) string {
 // terminals at 3s each). A replacement launched after 2s then burned its own
 // lock wait and exited — the 2026-11-11 outage, on Windows the same way.
 //
-// Wait-Process blocks on the PID instead. `&` (not `&&`) is deliberate: cmd
-// runs the next command whatever the exit code, so a machine without PowerShell
-// degrades to the old "start immediately" behavior — which the new process's
-// lock wait still absorbs — instead of never restarting at all.
+// Wait-Process blocks on the PID instead, and the wait is bounded: if it
+// expires the process is force-killed rather than waited on forever, because a
+// drain that never finishes would leave the service down with nobody to start
+// it. The kill is safe — shutdown was requested before the sentinel was
+// launched, so the target is never a healthy server. See sentinelWaitSeconds.
+//
+// `&` (not `&&`) is deliberate: cmd runs the next command whatever the exit
+// code, so a machine without PowerShell degrades to the old "start
+// immediately" behavior — which the new process's lock wait still absorbs —
+// instead of never restarting at all.
 //
 // Passing the args through unchanged is the point: --port and --data-dir must
 // reach the new process, or it comes up as a second instance on the default
 // port writing to ~/.clawbench instead of the configured directory.
 func buildWindowsSentinelScript(exe string, args []string, pid int) string {
-	// No inner quotes: cmd splits on `&`, so PowerShell receives the wait
-	// command as plain tokens. Nested double quotes are what cmd.exe mangles.
+	// The -Command payload is wrapped in double quotes so cmd.exe passes it
+	// through untouched: it contains `;`, `(`, `)`, `{` and `}`, all of which
+	// cmd treats as syntax when they are bare. Double quotes INSIDE the payload
+	// are still forbidden — those are what cmd mangles — which is why the exe
+	// path is quoted outside it, after the `&`.
+	//
+	// The wait sits in try/catch because Wait-Process reports BOTH "the process
+	// is already gone" and "the timeout expired" as errors; `-ErrorAction Stop`
+	// makes either one catchable, and swallowing it lets the script fall
+	// through to the "is it still there? then kill it" check. Without this the
+	// error would abort the rest of the payload and the kill would never run.
 	script := fmt.Sprintf(
-		`powershell -NoProfile -NonInteractive -Command Wait-Process -Id %d -Timeout 60 -ErrorAction SilentlyContinue & %s`,
-		pid, escapeWindowsArg(exe),
+		`powershell -NoProfile -NonInteractive -Command "`+
+			`try { Wait-Process -Id %d -Timeout %d -ErrorAction Stop } catch {}; `+
+			`if (Get-Process -Id %d -ErrorAction SilentlyContinue) { `+
+			`Stop-Process -Id %d -Force -ErrorAction SilentlyContinue; `+
+			`Start-Sleep -Milliseconds 800 }" & %s`,
+		pid, sentinelWaitSeconds, pid, pid, escapeWindowsArg(exe),
 	)
 	if len(args) > 0 {
 		script += " " + escapeWindowsArgs(args)
