@@ -202,6 +202,48 @@ describe('QuoteQuestionBar', () => {
         expect(wrapper.find('.qq-pending-attachment').exists()).toBe(false)
       })
     })
+
+    /**
+     * Quoting a chat message from its meta bar opens the bar with a PRE-BUILT
+     * payload. A message has no path or address, so the chip's label alone
+     * ("引用问答 · <session>") cannot tell the user which message they are about
+     * to ask about — the snippet is the only identification.
+     */
+    describe('quoted-content preview of a pre-built payload', () => {
+      it('shows the quoted text under the source chip', () => {
+        const wrapper = mountBar({
+          composerMode: true,
+          composerAttachment: { kind: 'quote', label: '引用问答 · 每日构建', text: 'the assistant reply' },
+        })
+
+        const preview = wrapper.find('.qq-composer-preview')
+        expect(preview.exists()).toBe(true)
+        expect(preview.text()).toContain('the assistant reply')
+      })
+
+      it('omits the preview for a payload with no text (a meeting, a bare object)', () => {
+        const wrapper = mountBar({
+          composerMode: true,
+          composerAttachment: { kind: 'quote', label: 'Meeting · Standup · 11-01 09:00' },
+        })
+
+        expect(wrapper.find('.qq-composer-preview').exists()).toBe(false)
+      })
+
+      it('prefers a live selection over the payload preview', () => {
+        // Select-then-click inside a message: the user pointed at a snippet, so
+        // the snippet is what the bar is about. Two snippets would be a
+        // contradiction on screen.
+        const wrapper = mountBar({
+          composerMode: true,
+          quoteData: QUOTE,
+          composerAttachment: { kind: 'quote', label: '引用问答 · 每日构建', text: 'the whole message' },
+        })
+
+        expect(wrapper.find('.qq-composer-preview').exists()).toBe(false)
+        expect(wrapper.find('.qq-quoted-snippet').text()).toContain('build failed on main')
+      })
+    })
   })
 
   describe('collapsed floating toolbar (issue #544)', () => {

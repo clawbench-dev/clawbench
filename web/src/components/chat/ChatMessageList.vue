@@ -135,7 +135,7 @@
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
         @file-tag-click="$emit('file-tag-click', $event)"
-        @quote-message="$emit('quote-message', $event)"
+        @quote-message="(msg, el) => $emit('quote-message', msg, el)"
         @task-card-click="$emit('task-card-click', $event)"
         @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
         @render-flush="emit('render-flush')"

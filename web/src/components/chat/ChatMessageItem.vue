@@ -227,12 +227,13 @@
         <button
           v-if="!readOnly && !msg.streaming && quotableText"
           class="chat-action-btn"
+          data-action="quote-message"
           :title="t('quoteBar.quoteMessage')"
           :aria-label="t('quoteBar.quoteMessage')"
           :draggable="quoteDragEnabled"
           @dragstart="onQuoteDragStart"
           @dragend="cleanupDragGhost()"
-          @click="$emit('quote-message', msg)"
+          @click="$emit('quote-message', msg, $event.currentTarget)"
         >
           <MessageSquare :size="14" />
         </button>

@@ -2560,7 +2560,7 @@ export default {
     typeLink: '链接',
     typeTerminal: '终端',
     removeQuote: '移除引用',
-    quoteMessage: '引用这条消息',
+    quoteMessage: '引用问答',
   },
   git: {
     history: {

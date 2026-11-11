@@ -1685,6 +1685,20 @@ describe('ChatMessageItem — quote message button', () => {
     expect(wrapper.emitted('quote-message')![0][0]).toMatchObject({ id: 42, role: 'assistant' })
   })
 
+  it('passes the pressed button as the second argument so the bar can anchor to it', async () => {
+    // The floating quote bar parks at the top of the page when it has no anchor,
+    // which for a message at the bottom of a long transcript is nowhere near the
+    // button that was pressed. The element travels with the event so the bar can
+    // open next to it.
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const btn = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'quoteBar.quoteMessage')!
+
+    await btn.trigger('click')
+
+    const emitted = wrapper.emitted('quote-message')!
+    expect(emitted[0][1]).toBe(btn.element)
+  })
+
   it('hides the quote button while streaming', () => {
     const wrapper = createWrapper({
       msg: { ...assistantMsg, streaming: true },

@@ -2561,7 +2561,7 @@ export default {
     typeLink: 'Link',
     typeTerminal: 'Terminal',
     removeQuote: 'Remove quote',
-    quoteMessage: 'Quote this message',
+    quoteMessage: 'Quote & ask',
   },
   git: {
     history: {

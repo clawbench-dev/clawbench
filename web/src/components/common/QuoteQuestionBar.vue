@@ -114,6 +114,14 @@
           <span class="qq-pending-label">{{ composerAttachment.label }}</span>
         </div>
 
+        <!-- Quoted content of a pre-built payload (quoting a chat message from
+             its meta bar). The chip above names the SOURCE; this shows WHAT is
+             being quoted, because a message has no path or address the label
+             could point at. Display-only: the card itself is built on commit. -->
+        <div v-if="composerPreviewText" class="qq-quoted-snippet qq-composer-preview">
+          <span class="qq-quoted-text qq-quoted-text--expanded">{{ composerPreviewText }}</span>
+        </div>
+
         <!-- Input -->
         <div class="qq-input-container">
           <div class="qq-input-row">
@@ -330,6 +338,22 @@ onUnmounted(() => {
 // is nothing to truncate for a single-line preview any more — the expanded
 // block is the only consumer and it always shows the full text.
 const displayQuoteText = computed(() => props.quoteData?.text || '')
+
+/**
+ * Content preview of a pre-built composer payload (quoting a chat message).
+ *
+ * Distinct from `displayQuoteText`: that one is the LIVE selection, which a
+ * composer never has at open time. This is the payload's own text, shown so the
+ * user can see WHICH message the bar is about before typing a question.
+ *
+ * A live selection wins when both exist (select-then-click inside a message):
+ * the user pointed at a snippet, so the snippet is what the bar is about.
+ */
+const composerPreviewText = computed(() => {
+  if (props.quoteData) return ''
+  const att = props.composerAttachment
+  return att?.kind === 'quote' ? (att.text || '') : ''
+})
 
 const canSend = computed(() => canSendInput(inputText.value))
 
