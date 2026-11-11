@@ -131,9 +131,33 @@ const VOICE_CUE_TONES: Record<'send' | 'interrupt' | 'exit', ReadonlyArray<reado
   send: [[880, 0, 0.07], [1244.5, 0.07, 0.09]],
   // Flat, not a glide: "I heard you, it stopped." The two pulses are identical
   // on purpose — an upward or downward contour would be read as "sent" or
-  // "closed", the two things this is NOT.
-  interrupt: [[587.33, 0, 0.055], [587.33, 0.1, 0.055]],
+  // "closed", the two things this is NOT. Pitched at G5 and held for 80 ms
+  // each: the first version (587 Hz, 55 ms) was so short and low that it could
+  // pass for a click, especially right after the speaker stops.
+  interrupt: [[784, 0, 0.08], [784, 0.1, 0.08]],
   exit: [[659.25, 0, 0.1], [440, 0.11, 0.18]],
+}
+
+/**
+ * Creates/resumes the cue AudioContext from inside a user gesture.
+ *
+ * Mobile browsers gate Web Audio on a gesture. The cues themselves fire from
+ * speech recognition and turn events — never a gesture — so under a strict
+ * autoplay policy the context would be created `suspended` and the later
+ * `resume()` calls would be rejected, leaving the whole mode silent while
+ * everything else still looks fine. Called when the user turns the mode on,
+ * which is a tap.
+ */
+export function unlockVoiceAudio() {
+  try {
+    const ctx = getAudioContext()
+    if (ctx.state !== 'suspended') return
+    void ctx.resume().catch((err: unknown) => {
+      appLog.w(TAG, 'Failed to unlock audio context for voice cues:', err)
+    })
+  } catch (err: unknown) {
+    appLog.w(TAG, 'Failed to create audio context for voice cues:', err)
+  }
 }
 
 /**
@@ -153,15 +177,25 @@ export function playVoiceModeCue(kind: 'send' | 'interrupt' | 'exit') {
   try {
     const ctx = getAudioContext()
     if (ctx.state === 'suspended') {
-      void ctx.resume()
+      // Reported rather than ignored: a rejected resume leaves the mode silent
+      // with nothing else on screen saying so, which is exactly the kind of
+      // report this line answers.
+      void ctx.resume().catch((err: unknown) => {
+        appLog.w(TAG, 'Failed to resume audio context for voice cue:', err)
+      })
     }
     const now = ctx.currentTime
+    // "The interruption landed" is the one cue that fires over a reply that was
+    // just cut short, so it carries a little more gain; the other two already
+    // stand out because nothing else is playing.
+    const gainValue = kind === 'interrupt' ? 0.26 : 0.18
+    appLog.d(TAG, `voice cue=${kind} ctx=${ctx.state} at=${now.toFixed(2)}`)
     for (const [freq, offset, duration] of VOICE_CUE_TONES[kind]) {
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
       osc.type = 'sine'
       osc.frequency.value = freq
-      gain.gain.setValueAtTime(0.18, now + offset)
+      gain.gain.setValueAtTime(gainValue, now + offset)
       gain.gain.exponentialRampToValueAtTime(0.01, now + offset + duration)
       osc.connect(gain)
       gain.connect(ctx.destination)
