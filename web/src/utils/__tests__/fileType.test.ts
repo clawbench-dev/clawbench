@@ -128,6 +128,15 @@ describe('getFileType', () => {
     expect(ft.isExcalidraw).toBe(true)
   })
 
+  it('detects draw.io diagrams', () => {
+    // .drawio must route to DrawioViewer (the on-demand downloaded editor), not
+    // fall through to the XML text view it would otherwise get from `lang: xml`.
+    const ft = getFileType('flow.drawio')
+    expect(ft.isDrawio).toBe(true)
+    expect(ft.isExcalidraw).toBeFalsy()
+    expect(getFileType('FLOW.DRAWIO').isDrawio).toBe(true)
+  })
+
   it('does not flag .json as Excalidraw', () => {
     const ft = getFileType('data.json')
     expect(ft.isExcalidraw).toBeUndefined()

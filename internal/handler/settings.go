@@ -198,6 +198,9 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
+	// draw.io editor download source — read when an install starts, so a change
+	// applies to the next attempt without a restart.
+	"drawio.download_url": true,
 	// Skills — hot: the registry is invalidated and rescanned on PATCH
 	"skills.enabled":       true,
 	"skills.dirs":          true,
@@ -340,6 +343,13 @@ type configResponse struct {
 	UsageMeter     configUsageMeter     `json:"usage_meter"`
 	MCP            configMCP            `json:"mcp"`
 	ShellEnv       configShellEnv       `json:"shell_env"`
+	Drawio         configDrawio         `json:"drawio"`
+}
+
+// configDrawio is where the on-demand draw.io editor is downloaded from.
+// An empty download_url means "built-in mirrors, then github.com".
+type configDrawio struct {
+	DownloadURL string `json:"download_url"`
 }
 
 // configMCP is the global MCP server list as sent to the client.
@@ -1308,6 +1318,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Skills:     buildConfigSkills(cfg),
 		MCP:        buildConfigMCP(cfg),
 		ShellEnv:   configShellEnv{Inherit: cfg.ShellEnv.Inherit},
+		Drawio:     configDrawio{DownloadURL: cfg.Drawio.DownloadURL},
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 		Mail:       configMail{Enabled: cfg.Mail.Enabled},
@@ -2357,6 +2368,18 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// drawio.download_url — an absolute http(s) URL, or empty for the built-in
+	// mirrors. Validated here so a typo fails immediately instead of surfacing
+	// minutes later as an opaque "download failed".
+	if drawioVal, ok := patch["drawio"].(map[string]any); ok {
+		if v, ok := drawioVal["download_url"].(string); ok && strings.TrimSpace(v) != "" {
+			u, err := url.Parse(strings.TrimSpace(v))
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("drawio.download_url must be an absolute http(s) URL")
+			}
+		}
+	}
+
 	// appearance — the wallpaper *resources* (gallery items, Bing cache) are
 	// written only by the dedicated theme endpoints, never by a config PATCH.
 	// The per-device choices (source / on-off / selected image / panel opacity)
@@ -2396,6 +2419,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
+		}
+	}
+
+	if drawioMap, ok := patch["drawio"].(map[string]any); ok {
+		if v, ok := drawioMap["download_url"].(string); ok {
+			cfg.Drawio.DownloadURL = strings.TrimSpace(v)
 		}
 	}
 

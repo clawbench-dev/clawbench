@@ -12,6 +12,7 @@ import (
 const (
 	SubtypeOpenAPI    = "openapi"
 	SubtypeExcalidraw = "excalidraw"
+	SubtypeDrawio     = "drawio"
 )
 
 // maxSpecSniffSize is the maximum file content size (1MB) for subtype detection.
@@ -25,6 +26,12 @@ const maxSpecSniffSize = 1 << 20
 // before it is ever sniffed — so both read from this single slice.
 // .xdraw is the short alias; .excalidraw is what Excalidraw itself writes.
 var excalidrawExts = []string{".excalidraw", ".xdraw"}
+
+// drawioExts lists the extensions that identify a draw.io diagram. Same two
+// sites as excalidrawExts: IsTextFile decides whether the file is served at
+// all, DetectSubtype routes it to the editor. Without this the file is simply
+// rejected as unsupported and never reaches the viewer.
+var drawioExts = []string{".drawio"}
 
 // IsSupportedFile returns true if the filename has a supported file extension
 // (text, image, audio, video, or office document).
@@ -90,6 +97,12 @@ func IsTextFile(name string) bool {
 	}
 	// Excalidraw extensions are shared with DetectSubtype (see excalidrawExts).
 	for _, ext := range excalidrawExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	// draw.io diagrams are XML, served as text and rendered by the editor.
+	for _, ext := range drawioExts {
 		if strings.HasSuffix(lower, ext) {
 			return true
 		}
@@ -167,6 +180,13 @@ func DetectSubtype(filename, content string) (subtype string) {
 			// sniffing would reject empty/large files and fall back to plain
 			// text.
 			return SubtypeExcalidraw
+		}
+	}
+	// Same reasoning for draw.io: a blank diagram is a valid `<mxfile/>`, and
+	// diagrams with embedded images easily exceed the sniff limit below.
+	for _, ext := range drawioExts {
+		if strings.HasSuffix(lower, ext) {
+			return SubtypeDrawio
 		}
 	}
 	if len(content) > maxSpecSniffSize {

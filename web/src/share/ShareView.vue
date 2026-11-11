@@ -167,6 +167,15 @@
             <ExcalidrawViewer :file="file" :readonly="true" />
           </div>
 
+          <!-- draw.io diagram. Same story as Excalidraw: the viewer IS the
+               editor, so it is mounted read-only (pan/zoom, no save path). If
+               the server has not downloaded the editor yet, the viewer shows a
+               note instead of offering an install — a public page has no
+               session to trigger one with. -->
+          <div v-else-if="isDrawio && canRenderInline" class="share-fill-viewer">
+            <DrawioViewer :file="file" :readonly="true" />
+          </div>
+
           <!-- OpenAPI / Swagger spec (rendered docs) -->
           <div v-else-if="isOpenapi && canRenderInline && viewMode === 'rendered'" class="share-fill-viewer">
             <OpenApiPreview :file="file" />
@@ -296,6 +305,7 @@ const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: 
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
 // Same vendor iframe the app mounts for .excalidraw/.xdraw, in read-only mode.
 const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/ExcalidrawViewer.vue') }))
+const DrawioViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/DrawioViewer.vue') }))
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadUrlWithProgress } from '@/utils/download.ts'
 import { flashElement } from '@/utils/domFlash'
@@ -332,6 +342,7 @@ interface ShareFile {
   isOffice?: boolean
   isHtml?: boolean
   isExcalidraw?: boolean
+  isDrawio?: boolean
   tooLarge?: boolean
   subtype?: string
 }
@@ -494,6 +505,7 @@ const isOpenapi = computed(() => file.value?.subtype === 'openapi' || false)
 /** Excalidraw scene (.excalidraw / .xdraw). The backend reports the subtype by
  *  extension, exactly like the app's file store does. */
 const isExcalidraw = computed(() => file.value?.isExcalidraw === true)
+const isDrawio = computed(() => file.value?.isDrawio === true)
 
 const isTable = computed(() => {
   if (!file.value) return false
@@ -525,7 +537,7 @@ const showRawSourceView = computed(() => {
   if (!isTextContent.value) return false
   // A diagram is rendered by the canvas viewer, never as its JSON source: the
   // app has no source mode for it either.
-  if (isExcalidraw.value) return false
+  if (isExcalidraw.value || isDrawio.value) return false
   if (isMarkdown.value || isHtml.value || isOpenapi.value || isTable.value) return viewMode.value === 'raw'
   return true
 })
@@ -556,7 +568,7 @@ const hasToc = computed(() => {
   if (file.value.subtype === 'openapi') return false
   // A canvas has no headings to outline — and the scene JSON would produce a
   // bogus (or empty) outline.
-  if (isExcalidraw.value) return false
+  if (isExcalidraw.value || isDrawio.value) return false
   // HTML rendered preview is a sandboxed <iframe srcdoc>: its inner DOM is
   // unreachable from here, so a source-derived outline can neither index the
   // rendered headings nor jump to them. Hide the TOC in that mode — it comes
@@ -582,6 +594,7 @@ function decorateFile(data: ShareFile): ShareFile {
   const htmlExts = ['.html', '.htm', '.xhtml']
   if (htmlExts.some(e => lower.endsWith(e))) data.isHtml = true
   if (data.subtype === 'excalidraw') data.isExcalidraw = true
+  if (data.subtype === 'drawio') data.isDrawio = true
   return data
 }
 

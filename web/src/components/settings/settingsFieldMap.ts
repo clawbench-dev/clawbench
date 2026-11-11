@@ -363,6 +363,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     ]}},
     { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    // draw.io editor is downloaded on first use rather than shipped. The URL
+    // only matters where github.com and the public proxies are unreachable —
+    // an air-gapped deployment points it at its own mirror.
+    { type: 'item', spec: { labelKey: 'settings.items.drawioDownloadUrl', descriptionKey: 'settings.items.drawioDownloadUrlDesc', key: 'drawio.download_url', type: 'text', source: 'server', sectionHeader: 'settings.items.drawioSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     // Retention deletes files, so it is a switch plus a day count rather than a

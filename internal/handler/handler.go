@@ -938,6 +938,17 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upgrade/start", ServeUpgradeStart)
 	register("/api/upgrade/status", ServeUpgradeStatus)
 
+	// draw.io editor: downloaded on first use rather than embedded (~118MB).
+	// The client polls status while the install runs, then loads the editor
+	// from /vendor/drawio/<version>/ (registered below as a static route).
+	//
+	// status is PUBLIC: the share page has to know whether the editor is
+	// installed before it can render a shared .drawio file, and it has no
+	// session. It exposes nothing but a version string and a progress counter;
+	// the editor files themselves are served unauthenticated anyway.
+	registerPublic("/api/drawio/status", ServeDrawioStatus)
+	register("/api/drawio/install", ServeDrawioInstall)
+
 	// Serve static assets from frontend filesystem (disk build dir > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
 	// For embed.FS, Open() additionally rejects ".." paths. No explicit ISS-055 guard needed.
@@ -945,6 +956,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// handled by ServeIndex, which reads directly from the frontend FS.
 	fsys := frontend.GetFS()
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServerFS(fsys)))
+	// The draw.io editor lives in the DATA directory, not the frontend FS: it is
+	// downloaded at runtime, so it is neither part of the build output nor
+	// embedded. Registered like /assets/ (unauthenticated static files).
+	mux.HandleFunc("/vendor/drawio/", ServeDrawioAsset)
 	if !frontend.DiskDirExists() {
 		// Dev mode fallbacks: Vite dev server needs these routes
 		mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))

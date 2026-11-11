@@ -70,6 +70,8 @@ tags:
     description: 客户端日志回传
   - name: APK
     description: Android 安装包
+  - name: Drawio
+    description: 按需下载的 draw.io 编辑器
 
 security:
   - cookieAuth: []
@@ -7611,6 +7613,44 @@ paths:
       responses:
         "200":
           description: 进度
+
+  # ── draw.io 编辑器（按需下载，不随二进制分发）─────────────────────────────
+  /api/drawio/status:
+    get:
+      tags: [Drawio]
+      summary: draw.io 编辑器安装状态
+      description: |
+        编辑器约 118MB，不随二进制分发：首次打开 `.drawio` 文件时才由服务端
+        下载并解压到 `<数据目录>/vendor/drawio/<版本>/`，此后所有设备共用。
+
+        `state` 取值 `idle` / `downloading` / `installing` / `ready` / `failed`；
+        `installed` 为真时 `basePath` 给出 iframe 应加载的路径前缀。安装完成后
+        以磁盘为准（重启不会让它变回未安装）。
+      operationId: drawioStatus
+      # Public: the share page must know whether the editor is installed before
+      # it can render a shared .drawio file, and it has no session.
+      security: []
+      responses:
+        "200":
+          description: 状态
+
+  /api/drawio/install:
+    post:
+      tags: [Drawio]
+      summary: 开始下载并安装 draw.io 编辑器
+      description: |
+        立即返回（202），下载与解压在后台进行，进度通过 `/api/drawio/status` 轮询。
+        下载源顺序：配置里的 `drawio.download_url`（若填）→ 内置加速镜像 →
+        github.com。单个源 10 分钟无结果即换下一个。
+        同一时刻只允许一个安装任务。
+      operationId: drawioInstall
+      responses:
+        "200":
+          description: 已安装，无需重复下载
+        "202":
+          description: 已开始
+        "409":
+          description: 已有安装任务在进行中（响应体为当前状态）
 
   # ── Proxy ─────────────────────────────────────────────────────────────────
   /api/proxy/ports:
