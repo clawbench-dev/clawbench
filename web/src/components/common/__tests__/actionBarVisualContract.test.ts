@@ -368,7 +368,9 @@ describe('the bar holds icon buttons only', () => {
     expect(forge).toMatch(/<ActionBar class="forge-header-actions"/)
 
     const mail = readWebFile('src/components/mail/MailFolderBar.vue')
-    expect(mail).toContain('<div class="mail-bar__top">')
+    // Regex, not a literal: the row also carries `v-if` (the search field swaps
+    // places with it), so the attribute list is not fixed.
+    expect(mail).toMatch(/<div[^>]*\bclass="mail-bar__top"/)
     expect(mail).toMatch(/<ActionBar class="mail-bar__actions"/)
   })
 

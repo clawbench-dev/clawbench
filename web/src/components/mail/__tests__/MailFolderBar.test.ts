@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 import en from '@/i18n/locales/en'
@@ -27,6 +27,8 @@ function mountBar(overrides: Record<string, unknown> = {}) {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
   return mount(MailFolderBar, {
     props: { accounts, folders, accountId: 1, folderId: 1, query: '', ...overrides },
+    // Attached to the document so the search field can really take focus.
+    attachTo: document.body,
     // PopupMenu teleports to <body>; render it in place so the options are
     // queryable from the wrapper (same trick as MenuSelect's own test).
     global: { plugins: [i18n], stubs: { Teleport: { template: '<div><slot /></div>' } } },
@@ -87,7 +89,7 @@ describe('MailFolderBar', () => {
 
   it('marks all read only when the current folder has unread mail', async () => {
     const wrapper = mountBar()
-    const button = wrapper.find('.mail-read-all')
+    const button = wrapper.find('[data-action="mark-all-read"]')
     expect(button.attributes('disabled')).toBeUndefined()
 
     await button.trigger('click')
@@ -96,12 +98,12 @@ describe('MailFolderBar', () => {
 
     // The Sent folder has no unread rows, so there is nothing to mark.
     const readOnly = mountBar({ folderId: 2 })
-    expect(readOnly.find('.mail-read-all').attributes('disabled')).toBeDefined()
+    expect(readOnly.find('[data-action="mark-all-read"]').attributes('disabled')).toBeDefined()
     readOnly.unmount()
 
     // In flight: a second click must not start another request.
     const busy = mountBar({ marking: true })
-    expect(busy.find('.mail-read-all').attributes('disabled')).toBeDefined()
+    expect(busy.find('[data-action="mark-all-read"]').attributes('disabled')).toBeDefined()
     busy.unmount()
   })
 
@@ -111,7 +113,7 @@ describe('MailFolderBar', () => {
   // <button><RefreshCw/></button> silently loses both.
   it('uses the unified RefreshButton and spins while refreshing', async () => {
     const wrapper = mountBar()
-    const btn = wrapper.findAll('.mail-icon-btn')[0]
+    const btn = wrapper.find('.mail-icon-btn.refresh-spin')
     expect(btn.classes()).toContain('refresh-spin')
     expect(btn.classes()).not.toContain('refresh-spin--active')
 
@@ -120,7 +122,7 @@ describe('MailFolderBar', () => {
     wrapper.unmount()
 
     const busy = mountBar({ refreshing: true })
-    const busyBtn = busy.findAll('.mail-icon-btn')[0]
+    const busyBtn = busy.find('.mail-icon-btn.refresh-spin')
     expect(busyBtn.classes()).toContain('refresh-spin--active')
     expect(busyBtn.attributes('disabled')).toBeDefined()
 
@@ -128,6 +130,57 @@ describe('MailFolderBar', () => {
     await busyBtn.trigger('click')
     expect(busy.emitted('refresh')).toBeUndefined()
     busy.unmount()
+  })
+})
+
+/**
+ * Search is not a resident row: it is a button that swaps the whole toolbar for
+ * the field. What must hold: the toolbar is REPLACED (so the list below does not
+ * move), the field takes focus, and closing clears the query — a hidden filter
+ * would leave the list filtered with nothing on screen saying why.
+ */
+describe('MailFolderBar — search', () => {
+  it('replaces the toolbar with the field and gives it focus', async () => {
+    const wrapper = mountBar()
+    expect(wrapper.find('.mail-bar__search-row').exists()).toBe(false)
+
+    await wrapper.find('[data-action="search"]').trigger('click')
+    await flushPromises()
+
+    // The pickers and the action buttons are gone, not merely covered.
+    expect(wrapper.find('.mail-bar__top').exists()).toBe(false)
+    expect(wrapper.find('.mail-bar__search-row').exists()).toBe(true)
+    const input = wrapper.find('.mail-bar__search-row input')
+    expect(document.activeElement).toBe(input.element)
+    wrapper.unmount()
+  })
+
+  it('debounces typing and clears the query when the field is closed', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    await wrapper.find('[data-action="search"]').trigger('click')
+    const input = wrapper.find('.mail-bar__search-row input')
+
+    await input.setValue('inv')
+    expect(wrapper.emitted('update:query')).toBeUndefined()
+    vi.advanceTimersByTime(250)
+    expect(wrapper.emitted('update:query')).toEqual([['inv']])
+
+    await wrapper.find('.mail-bar__search-cancel').trigger('click')
+    // Closing restores the toolbar and drops the filter.
+    expect(wrapper.find('.mail-bar__top').exists()).toBe(true)
+    expect(wrapper.emitted('update:query')!.at(-1)).toEqual([''])
+    vi.useRealTimers()
+    wrapper.unmount()
+  })
+
+  it('opens already expanded when the list is filtered', async () => {
+    // A query without a visible field would be an unexplained filtered list.
+    const wrapper = mountBar({ query: 'invoice' })
+    expect(wrapper.find('.mail-bar__search-row').exists()).toBe(true)
+    expect(wrapper.find('.mail-bar__top').exists()).toBe(false)
+    expect((wrapper.find('.mail-bar__search-row input').element as HTMLInputElement).value).toBe('invoice')
+    wrapper.unmount()
   })
 })
 
@@ -141,7 +194,7 @@ describe('MailFolderBar — action labels', () => {
     // beside it, and only the icon buttons live inside.
     const row = wrapper.find('.mail-bar__actions')
     expect(row.classes()).toContain('ab--labels')
-    expect(row.findAll('.action-label').length).toBe(3)
+    expect(row.findAll('.action-label').length).toBe(5)
     expect(wrapper.find('.mail-bar__top .menu-select').exists()).toBe(true)
     wrapper.unmount()
   })

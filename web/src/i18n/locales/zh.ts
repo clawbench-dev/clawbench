@@ -138,7 +138,8 @@ export default {
       refresh: '收信',
       compose: '写邮件',
       manage: '账号设置',
-      search: '搜索邮件…',
+      search: '搜索',
+      searchPlaceholder: '搜索邮件…',
     },
     folder: {
       inbox: '收件箱',

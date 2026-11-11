@@ -398,8 +398,8 @@ describe('MailPanel folder bar', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    const button = wrapper.find('.mail-read-all')
-    expect(button.text()).toBe('Mark all read')
+    const button = wrapper.find('[data-action="mark-all-read"]')
+    expect(button.attributes('title')).toBe('Mark all read')
     await button.trigger('click')
     await flushPromises()
 

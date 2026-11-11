@@ -139,7 +139,8 @@ export default {
       refresh: 'Check mail',
       compose: 'Compose',
       manage: 'Account settings',
-      search: 'Search mail…',
+      search: 'Search',
+      searchPlaceholder: 'Search mail…',
     },
     folder: {
       inbox: 'Inbox',
