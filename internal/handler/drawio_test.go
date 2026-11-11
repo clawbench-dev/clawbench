@@ -250,3 +250,26 @@ func TestServeDrawioUpload_ConflictWhileAnInstallRuns(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
+
+func TestDrawioEndpoints_RejectTheWrongMethod(t *testing.T) {
+	// Every endpoint asserts its method up front: without the guard a GET on
+	// /api/drawio/install would start a 118MB download.
+	cases := []struct {
+		name   string
+		fn     http.HandlerFunc
+		method string
+	}{
+		{"status", ServeDrawioStatus, http.MethodPost},
+		{"install", ServeDrawioInstall, http.MethodGet},
+		{"upload", ServeDrawioUpload, http.MethodGet},
+		{"asset", ServeDrawioAsset, http.MethodPost},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newRequest(t, tc.method, "/api/drawio/"+tc.name, nil)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(tc.fn, req)
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		})
+	}
+}

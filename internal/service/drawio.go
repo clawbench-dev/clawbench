@@ -58,12 +58,15 @@ const (
 	// deliberately separate from the live-notes status constants) because the
 	// same literal appears in more than one service file.
 	drawioStateFailed = "failed"
-	// maxDrawioEntryBytes caps one extracted archive member. The archive is
-	// checksum-verified, but the unpack step must still not be able to write an
-	// unbounded file from a reader (a repacked archive, or a checksum variable
-	// pointed at a test fixture).
-	maxDrawioEntryBytes = 512 << 20
 )
+
+// drawioMaxEntryBytes caps one extracted archive member. The archive is
+// checksum-verified, but the unpack step must still not be able to write an
+// unbounded file from a reader (a repacked archive, or a checksum variable
+// pointed at a test fixture).
+//
+// A variable so the size-limit test can lower it instead of allocating 512MB.
+var drawioMaxEntryBytes int64 = 512 << 20
 
 // drawioMirrorPrefixes are prefix proxies prepended to the canonical GitHub
 // URL. Same list and same reasoning as githubReleaseMirrors in
@@ -480,13 +483,13 @@ func extractDrawioEntry(f *zip.File, root string) error {
 	// CopyN with an explicit ceiling, not Copy: the reader is an archive member
 	// whose declared size can lie, and a decompression bomb would fill the disk.
 	// limit+1 bytes written means the member exceeded the cap.
-	if _, err := io.CopyN(out, rc, maxDrawioEntryBytes+1); err != nil && !errors.Is(err, io.EOF) {
+	if _, err := io.CopyN(out, rc, drawioMaxEntryBytes+1); err != nil && !errors.Is(err, io.EOF) {
 		_ = out.Close()
 		return err
 	}
-	if info, statErr := out.Stat(); statErr == nil && info.Size() > maxDrawioEntryBytes {
+	if info, statErr := out.Stat(); statErr == nil && info.Size() > drawioMaxEntryBytes {
 		_ = out.Close()
-		return fmt.Errorf("archive entry %q is larger than %d bytes", f.Name, maxDrawioEntryBytes)
+		return fmt.Errorf("archive entry %q is larger than %d bytes", f.Name, drawioMaxEntryBytes)
 	}
 	return out.Close()
 }

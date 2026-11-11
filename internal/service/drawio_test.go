@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -311,4 +312,114 @@ func TestPruneOldDrawioVersions_KeepsTheCurrentOne(t *testing.T) {
 	pruneOldDrawioVersions()
 
 	assert.DirExists(t, DrawioInstallDir())
+}
+
+func TestDrawioVersion_IsExposedForTheClient(t *testing.T) {
+	// The version is part of the served path (browsers cache app.min.js by
+	// name), so what the client is told and what the installer pins must agree.
+	assert.Equal(t, drawioVersion, DrawioVersion())
+	assert.Contains(t, DrawioBasePath(), drawioVersion)
+}
+
+func TestInstallDrawioFrom_NoCandidatesIsAnError(t *testing.T) {
+	withDrawioDataDir(t)
+
+	err := installDrawioFrom(nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no download source configured")
+}
+
+func TestDownloadDrawioArchive_UnparseableURLIsReported(t *testing.T) {
+	// A hand-written drawio.download_url can be malformed; it must fail that
+	// candidate instead of panicking inside the HTTP client.
+	_, err := downloadDrawioArchive("://not a url")
+	require.Error(t, err)
+}
+
+func TestDownloadDrawioArchive_TransportErrorIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL + "/draw.war"
+	srv.Close() // nothing is listening any more
+
+	_, err := downloadDrawioArchive(url)
+	require.Error(t, err)
+}
+
+func TestStartDrawioInstall_RecordsTheFailure(t *testing.T) {
+	withDrawioDataDir(t)
+	drawioInstaller = func() error { return errors.New("mirror down") }
+
+	require.NoError(t, StartDrawioInstall())
+	require.Eventually(t, func() bool {
+		drawioMu.Lock()
+		defer drawioMu.Unlock()
+		return !drawioInstalling
+	}, 2*time.Second, 10*time.Millisecond)
+
+	// The error is kept, not cleared: a client that polls after the fact still
+	// has to learn why nothing was installed.
+	st := GetDrawioStatus()
+	assert.Equal(t, drawioStateFailed, st.State)
+	assert.Contains(t, st.Error, "mirror down")
+}
+
+// failingWriter is an io.Writer that always fails, for the hashing copy path.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestStreamAndVerifyArchive_WriteErrorIsReported(t *testing.T) {
+	boom := errors.New("disk full")
+
+	err := streamAndVerifyArchive(failingWriter{err: boom}, strings.NewReader("archive"), 7)
+	require.ErrorIs(t, err, boom)
+}
+
+func TestUnpackDrawio_NotAnArchive(t *testing.T) {
+	withDrawioDataDir(t)
+	path := filepath.Join(t.TempDir(), "junk.war")
+	require.NoError(t, os.WriteFile(path, []byte("not a zip"), 0o600))
+
+	err := unpackDrawio(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not readable")
+	assert.False(t, DrawioReady())
+}
+
+func TestUnpackDrawio_RejectsAnOversizedEntry(t *testing.T) {
+	withDrawioDataDir(t)
+	orig := drawioMaxEntryBytes
+	drawioMaxEntryBytes = 8
+	t.Cleanup(func() { drawioMaxEntryBytes = orig })
+
+	archive := drawioZip(t, map[string]string{"index.html": strings.Repeat("x", 32)})
+	path := filepath.Join(t.TempDir(), "big.war")
+	require.NoError(t, os.WriteFile(path, archive, 0o600))
+
+	err := unpackDrawio(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "larger than")
+	// A rejected unpack must not leave a half-populated editor behind.
+	assert.False(t, DrawioReady())
+	assert.NoDirExists(t, DrawioInstallDir())
+}
+
+func TestUnpackDrawio_CreatesExplicitDirectoryEntries(t *testing.T) {
+	withDrawioDataDir(t)
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	_, err := zw.Create("assets/")
+	require.NoError(t, err)
+	w, err := zw.Create("assets/icon.svg")
+	require.NoError(t, err)
+	_, err = w.Write([]byte("<svg/>"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+
+	path := filepath.Join(t.TempDir(), "draw.war")
+	require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o600))
+
+	require.NoError(t, unpackDrawio(path))
+	assert.FileExists(t, filepath.Join(DrawioInstallDir(), "assets", "icon.svg"))
 }
