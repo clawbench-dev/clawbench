@@ -70,12 +70,16 @@
       </template>
       <template v-else-if="currentAgent && !isGroupSession">
         <div class="agent-welcome">
-          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="lg" /></span>
+          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="xxl" /></span>
           <div class="agent-welcome-info">
             <span class="agent-welcome-name">{{ currentAgent.name }}</span>
             <span class="agent-welcome-specialty">{{ currentAgent.specialty }}</span>
             <div class="agent-welcome-tags">
-              <span class="agent-welcome-tag agent-welcome-backend">{{ currentAgent.backend }}</span>
+              <!-- The bare backend id ("opencode", "claude") reads as an
+                   unexplained word, so the tag says what the value is. -->
+              <span class="agent-welcome-tag agent-welcome-backend">
+                <span class="agent-welcome-tag-label">{{ t('chat.messageList.backendTag') }}</span>{{ currentAgent.backend }}
+              </span>
               <span v-if="currentAgent.model" class="agent-welcome-tag agent-welcome-model"><ProviderIcon :model-name="currentAgent.model" :size="11" />{{ currentAgent.model }}</span>
             </div>
           </div>
@@ -2146,10 +2150,13 @@ defineExpose({
   opacity: var(--opacity-muted);
 }
 
+/* Same size as every other empty-state glyph (see --empty-icon-size): the
+   group welcome, the "no agents" welcome and this one are the same block, so a
+   smaller tile here would read as a different kind of thing. */
 .agent-welcome-icon {
   flex-shrink: 0;
-  width: calc(40 * var(--dp));
-  height: calc(40 * var(--dp));
+  width: var(--empty-icon-size);
+  height: var(--empty-icon-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2189,11 +2196,21 @@ defineExpose({
 }
 
 .agent-welcome-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   font-size: var(--font-size-2xs);
   padding: 1px var(--space-3);
   border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
+}
+
+/* "后端" in front of the id: the value alone does not say what it is. Muted so
+   the id stays the thing you read. */
+.agent-welcome-tag-label {
+  opacity: var(--opacity-soft);
+  font-weight: var(--font-weight-normal);
 }
 
 .agent-welcome-backend {

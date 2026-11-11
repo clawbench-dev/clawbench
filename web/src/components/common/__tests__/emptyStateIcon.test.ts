@@ -130,4 +130,23 @@ describe('the empty-state glyph is one size, declared once', () => {
     }
     expect(offenders).toEqual([])
   })
+
+  it('sizes the chat welcome avatar from the same token', () => {
+    // The single-chat welcome puts an agent avatar where the glyph would go.
+    // It used to be a 40dp tile of its own, so the same surface drew two
+    // different sizes depending on whether it was a chat or a group.
+    const src = stripComments(read('src/components/chat/ChatMessageList.vue'))
+    const box = ruleDecls(src, '.agent-welcome-icon')
+    expect(box, '.agent-welcome-icon must exist').not.toBeNull()
+    expect(box!).toMatch(/width:\s*var\(--empty-icon-size\)/)
+    expect(box!).toMatch(/height:\s*var\(--empty-icon-size\)/)
+
+    // The avatar is an AgentIcon, whose ladder is sized for text; `xxl` is the
+    // step that resolves to the empty-state token rather than a second number.
+    expect(src).toMatch(/<AgentIcon[^>]*\ssize="xxl"/)
+    const agentIcon = stripComments(read('src/components/common/AgentIcon.vue'))
+    const xxl = ruleDecls(agentIcon, '.agent-icon--xxl')
+    expect(xxl, 'AgentIcon must declare the xxl step').not.toBeNull()
+    expect(xxl!).toMatch(/--ai-size:\s*var\(--empty-icon-size\)/)
+  })
 })

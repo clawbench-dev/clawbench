@@ -240,3 +240,43 @@ describe('ChatMessageList — single-member group hint', () => {
     expect(wrapper.find('.group-welcome-solo').exists()).toBe(false)
   })
 })
+
+/**
+ * The single-agent welcome card names the agent, its specialty and the two ids
+ * it runs on. Those ids are opaque on their own — "opencode" could be anything —
+ * so the backend tag carries a label saying what the value is.
+ */
+describe('ChatMessageList — single-agent welcome card tags', () => {
+  const agent = { id: 'a1', name: 'OpenCode', backend: 'opencode', specialty: 'Coding' }
+
+  function mountWelcome(overrides: Record<string, unknown> = {}) {
+    return mount(ChatMessageList, {
+      props: {
+        messages: [],
+        expandedTools: {},
+        blockTasks: {},
+        blockAskQuestions: {},
+        agents: [agent],
+        currentAgent: agent,
+        staticBlockCache: {},
+        active: true,
+        ...overrides,
+      },
+      global: { plugins: [i18n] },
+    })
+  }
+
+  it('labels the backend tag instead of showing the bare id', () => {
+    const tag = mountWelcome().find('.agent-welcome-backend')
+    expect(tag.exists()).toBe(true)
+    expect(tag.find('.agent-welcome-tag-label').text()).toBe(ml.backendTag)
+    // The id itself must survive — the label explains it, it does not replace it.
+    expect(tag.text()).toContain('opencode')
+  })
+
+  it('does not label the model tag (its provider logo already identifies it)', () => {
+    const tag = mountWelcome({ currentAgent: { ...agent, model: 'claude-sonnet-4' } }).find('.agent-welcome-model')
+    expect(tag.exists()).toBe(true)
+    expect(tag.find('.agent-welcome-tag-label').exists()).toBe(false)
+  })
+})

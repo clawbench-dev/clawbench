@@ -1204,6 +1204,8 @@ export default {
       loadingMore: '加载中...',
       moreOlderMessages: '还有 {count} 条更早消息',
       allMessagesLoaded: '已加载全部消息',
+      // 欢迎卡片标签行的前缀：单独一个 "opencode" 看不出它是后端名。
+      backendTag: '后端',
       startConversation: '发送消息开始对话',
       startConversationAI: '发送消息开始与 AI 对话',
       // Group empty-state copy, selected by mode. The two modes route

@@ -381,8 +381,8 @@
        each matches the text it sits beside: sm (14) rides 10–12px meta, md (18)
        the default 13–15px rows, lg (24) larger list/avatar contexts, xl (40)
        the single settings-detail preview. Passed to AgentIcon as `size` enum
-       (sm|md|lg|xl), which resolves to these vars. Prefer the closest step over
-       a new one. ── */
+       (sm|md|lg|xl; its extra `xxl` step resolves to --empty-icon-size, not to
+       this ladder). Prefer the closest step over a new one. ── */
     --icon-size-sm: calc(14 * var(--dp));
     --icon-size-md: calc(18 * var(--dp));
     --icon-size-lg: calc(24 * var(--dp));

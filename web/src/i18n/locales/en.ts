@@ -1203,6 +1203,9 @@ export default {
       loadingMore: 'Loading...',
       moreOlderMessages: '{count} more older messages',
       allMessagesLoaded: 'All messages loaded',
+      // Prefix of the welcome card's tag row: a bare "opencode" reads as a
+      // random word, not as the name of the backend running the agent.
+      backendTag: 'Backend',
       startConversation: 'Send a message to start',
       startConversationAI: 'Send a message to start chatting with AI',
       // Group empty-state copy, selected by mode (see ChatMessageList).
