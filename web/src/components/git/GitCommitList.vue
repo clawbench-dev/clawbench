@@ -1450,6 +1450,9 @@ defineExpose({ observeList, unobserveList, commitSearch })
   background: transparent;
   color: var(--text-secondary);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 45%, transparent);
+  /* Unlike .git-commit-sha / .git-commit-refs, no wrapper supplies the gap —
+     without it the date runs straight into the tag ("未推送34分钟前"). */
+  margin-right: var(--space-2);
 }
 
 .git-ref-tag--remote {
