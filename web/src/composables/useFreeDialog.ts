@@ -880,6 +880,13 @@ async function openBargeListener(): Promise<void> {
         turnCancelledByUser = true
         onInterrupt?.()
       }
+      // Confirm the cut-in landed. The user is not looking at the screen, and
+      // "the reply went quiet" is indistinguishable from a network hiccup or a
+      // TTS failure — without this they cannot tell whether they were heard.
+      // Played strictly after the action, so it never overlaps the reply it
+      // just stopped; and short enough (≈155 ms) to be over before dictation
+      // reopens 250 ms later, which keeps it out of the next transcript.
+      playVoiceModeCue('interrupt')
     } catch { /* ignore malformed */ }
   }
   sock.onclose = () => { /* the playback watcher owns the lifecycle */ }

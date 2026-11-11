@@ -153,6 +153,10 @@ describe('useNotificationSound', () => {
     // answer to "did it send?".
     playVoiceModeCue('exit')
     expect(chimes()).toBe(2)
+    // The interruption cue is its own shape and must not be dropped as a
+    // duplicate of either neighbour.
+    playVoiceModeCue('interrupt')
+    expect(chimes()).toBe(3)
     vi.unstubAllGlobals()
   })
 

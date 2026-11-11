@@ -1221,6 +1221,60 @@ describe('useFreeDialog', () => {
     expect(cuePlayed).not.toHaveBeenCalled()
   })
 
+  it('beeps when the user cuts the generation short', async () => {
+    // "It went quiet" is indistinguishable from a dropped connection or a TTS
+    // failure, and the user is not looking at the screen: the cut-in needs its
+    // own confirmation.
+    const onInterrupt = vi.fn()
+    const mod = await import('../useFreeDialog')
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt })
+    await flush()
+    speak('做点事 发送')
+    vi.advanceTimersByTime(500)
+    await flush()
+    cuePlayed.mockClear()
+    speak('等等', 'partial')
+    expect(onInterrupt).toHaveBeenCalledTimes(1)
+    expect(cuePlayed).toHaveBeenCalledWith('interrupt')
+  })
+
+  it('beeps when the user cuts the read-aloud short', async () => {
+    const mod = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn(), onInterrupt: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    mod.setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    cuePlayed.mockClear()
+    speak('等一下，先别改那个文件', 'partial')
+    expect(autoSpeech.stopAudio).toHaveBeenCalled()
+    expect(cuePlayed).toHaveBeenCalledWith('interrupt')
+  })
+
+  it('does not beep when the heard speech is ignored', async () => {
+    // The cue means "your interruption landed". Playing it for a fragment the
+    // loop decided to ignore (the assistant's own voice here) would tell the
+    // user they had been heard when nothing happened.
+    const { startFreeDialog, setFreeDialogThinking } = await import('../useFreeDialog')
+    const autoSpeech = (await import('@/composables/useAutoSpeech')).useAutoSpeech()
+    autoSpeech.speakingText.value = '好的我来帮你检查一下这个配置文件里的端口设置'
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    speak('做点事 发送')
+    setFreeDialogThinking(false)
+    autoSpeech.state.value = 'playing'
+    await flush()
+    await flush()
+    cuePlayed.mockClear()
+    const barge = sockets[sockets.length - 1]
+    barge.onmessage?.({ data: JSON.stringify({ type: 'partial', text: '帮你检查一下这个配置文件' }) })
+    expect(autoSpeech.stopAudio).not.toHaveBeenCalled()
+    expect(cuePlayed).not.toHaveBeenCalled()
+  })
+
   it('beeps when the mode closes', async () => {
     const mod = await import('../useFreeDialog')
     await mod.startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
