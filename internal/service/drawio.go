@@ -395,7 +395,36 @@ func unpackDrawio(archivePath string) error {
 		_ = os.RemoveAll(staging)
 		return err
 	}
+
+	pruneOldDrawioVersions()
 	return nil
+}
+
+// pruneOldDrawioVersions removes editor copies left behind by previous releases.
+//
+// The version is part of the path, so an app upgrade installs a fresh copy and
+// never touches the old one — 123MB per version, with nothing that would ever
+// read it again. Safe to do right after a successful unpack: the server serves
+// only the pinned version, and an app upgrade has already restarted it, so no
+// live page is still loading the previous one.
+//
+// Best effort on purpose: a permission error here must not turn a successful
+// install into a failed one.
+func pruneOldDrawioVersions() {
+	root := filepath.Join(model.DataDir, "vendor", "drawio")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		// Only release directories ("v32.6.10"). Anything else — a staging
+		// directory left by an interrupted unpack, or a directory someone put
+		// there by hand — is not ours to delete.
+		if !e.IsDir() || e.Name() == drawioVersion || !strings.HasPrefix(e.Name(), "v") {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(root, e.Name()))
+	}
 }
 
 // extractDrawioEntry writes one archive member under root, refusing anything

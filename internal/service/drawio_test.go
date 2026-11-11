@@ -281,3 +281,34 @@ func TestSettingsDescriptionPointsAtThePinnedRelease(t *testing.T) {
 		assert.Containsf(t, string(body), want, "%s must point at the pinned release", name)
 	}
 }
+
+func TestUnpackDrawio_RemovesCopiesFromPreviousVersions(t *testing.T) {
+	withDrawioDataDir(t)
+
+	// A previous release's editor and a directory that is not ours at all.
+	root := filepath.Join(model.DataDir, "vendor", "drawio")
+	oldVersion := filepath.Join(root, "v0.0.1")
+	notOurs := filepath.Join(root, "notes")
+	require.NoError(t, os.MkdirAll(oldVersion, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(oldVersion, "index.html"), []byte("old"), 0o644))
+	require.NoError(t, os.MkdirAll(notOurs, 0o755))
+
+	archive := drawioZip(t, map[string]string{"index.html": "<html>new</html>"})
+	drawioExpectedChecksum = sha256Hex(archive)
+	require.NoError(t, InstallDrawioFromReader(bytes.NewReader(archive), int64(len(archive))))
+
+	// The old 123MB copy is gone; the current one is there.
+	assert.NoDirExists(t, oldVersion)
+	assert.True(t, DrawioReady())
+	// Anything that does not look like a release directory is left alone.
+	assert.DirExists(t, notOurs)
+}
+
+func TestPruneOldDrawioVersions_KeepsTheCurrentOne(t *testing.T) {
+	withDrawioDataDir(t)
+	require.NoError(t, os.MkdirAll(DrawioInstallDir(), 0o755))
+
+	pruneOldDrawioVersions()
+
+	assert.DirExists(t, DrawioInstallDir())
+}
