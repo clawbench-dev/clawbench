@@ -133,7 +133,10 @@ test.describe('Terminal multi-tab', () => {
     // Closing the last tab does NOT auto-create a replacement: the panel shows
     // its empty state and the user starts a new tab explicitly.
     await terminal.expectTabCount(0)
-    await expect(page.locator('.terminal-empty-state')).toBeVisible({ timeout: 5000 })
+    // The panel draws the shared EmptyState (it replaced the bespoke
+    // `.terminal-empty-state` block); scope to the panel because the same
+    // component also renders for the unsupported-platform case.
+    await expect(page.locator('.terminal-panel .empty-state')).toBeVisible({ timeout: 5000 })
   })
 
   test('each tab should connect to its own PTY session', async ({ page }) => {
