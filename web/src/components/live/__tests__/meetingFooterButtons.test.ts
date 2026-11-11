@@ -126,6 +126,12 @@ describe('meeting footer actions use the shared .fbtn language', () => {
     expect(meetingSource(file)).toContain("import '@/assets/modal-footer-btn.css'")
   })
 
+  it('loads the sheet in the tab that draws a pill outside the footer too', () => {
+    // 资源's publish action is a `.fbtn` inside the tab body, not in the footer,
+    // so the per-screen list above never covers it.
+    expect(meetingSource('MeetingResources.vue')).toContain("import '@/assets/modal-footer-btn.css'")
+  })
+
   it('keeps the primary/danger variants the actions rely on', () => {
     expect(footerButtonClasses('MeetingList.vue').some((c) => c.includes('fbtn-primary'))).toBe(true)
     expect(footerButtonClasses('MeetingCreate.vue').some((c) => c.includes('fbtn-primary'))).toBe(true)

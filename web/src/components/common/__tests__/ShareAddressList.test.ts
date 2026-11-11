@@ -47,6 +47,31 @@ function mountList(links: ShareLink[]) {
 }
 
 describe('ShareAddressList', () => {
+  it('can wear a globe and a labelled copy button when a host asks for them', () => {
+    // The meeting record shows the address on its own card, where a bare glyph
+    // next to a field has nothing to sit on and the field has no marker.
+    const w = mount(ShareAddressList, {
+      props: { links: [link('10.0.0.5', 'lan')], leadingIcon: true, copyLabel: '复制' },
+      global: {
+        plugins: [i18n],
+        stubs: {
+          CopyButton: { props: ['label'], template: '<button class="copy-btn">{{ label }}</button>' },
+        },
+      },
+    })
+
+    expect(w.find('.share-addr-icon').exists()).toBe(true)
+    expect(w.find('[data-share-primary]').classes()).toContain('is-with-icon')
+    expect(w.find('.copy-btn').text()).toBe('复制')
+  })
+
+  it('keeps the plain field and the icon-only button by default', () => {
+    const w = mountList([link('10.0.0.5', 'lan')])
+
+    expect(w.find('.share-addr-icon').exists()).toBe(false)
+    expect(w.find('[data-share-primary]').classes()).not.toContain('is-with-icon')
+  })
+
   it('shows only the primary link by default', () => {
     const w = mountList([
       link('192.168.100.104', 'lan', 'wlp1s0'),

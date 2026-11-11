@@ -348,14 +348,19 @@ test.describe('Meeting flow', () => {
     await expect(unpublishedViewer.locator('[data-role="meeting-ended"]')).toHaveCount(0)
     await unpublishedViewer.close()
 
-    // Publishing is a switch next to the link in 资源, off by default, and the
-    // switch reflects what the server stored rather than the click.
+    // Publishing is the card's action button in 资源, off by default, and the
+    // badge reflects what the server stored rather than the click.
     await row.click()
-    const shareToggle = page.locator('[data-role="meeting-share-toggle"]')
-    await expect(shareToggle).toBeVisible({ timeout: 20000 })
-    await expect(shareToggle).not.toBeChecked()
-    await shareToggle.check()
-    await expect(shareToggle).toBeChecked()
+    const shareBadge = page.locator('[data-role="meeting-share-badge"]')
+    await expect(shareBadge).toBeVisible({ timeout: 20000 })
+    await expect(shareBadge).toHaveText(/仅自己可见|Only you can open it/)
+
+    const shareAction = page.locator('[data-role="meeting-share-toggle"]')
+    await shareAction.click()
+    // Publishing outlives the meeting, so it is confirmed first — the shared
+    // dialog's OK button carries `.fbtn.dlg-ok`.
+    await page.locator('.dlg-ok').click()
+    await expect(shareBadge).toHaveText(/已共享|Shared/, { timeout: 10000 })
 
     // Published: the link handed out in advance now works after the meeting. A
     // member opening it lands on the record — minutes / transcript / proofread /

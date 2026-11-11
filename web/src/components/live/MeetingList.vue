@@ -114,10 +114,24 @@
 
             <!-- What it produced. Hidden entirely when there is nothing to
                  say yet (a meeting that is still running), rather than leaving
-                 an empty third line on the card. -->
-            <div v-if="r.artifacts.length || r.showEmpty" class="meeting-row__tags">
-              <span v-for="label in r.artifacts" :key="label" class="meeting-pill is-soft">{{ label }}</span>
+                 an empty third line on the card. A shared record always shows
+                 the line: "anyone with the link can read this" is worth a row
+                 even before anything has been produced. -->
+            <div
+              v-if="r.artifacts.length || r.showEmpty || r.record.shareEnabled"
+              class="meeting-row__tags"
+            >
+              <span v-for="a in r.artifacts" :key="a.kind" class="meeting-pill is-soft">
+                <component :is="a.icon" :size="10" />{{ a.label }}
+              </span>
               <span v-if="r.showEmpty" class="meeting-pill is-empty">{{ t('meeting.list.noArtifacts') }}</span>
+              <span
+                v-if="r.record.shareEnabled"
+                class="meeting-pill is-shared"
+                data-role="meeting-row-shared"
+              >
+                <Globe :size="10" />{{ t('meeting.list.shared') }}
+              </span>
             </div>
           </div>
           <!-- Right rail: delete on top, quote in the bottom-right corner. The
@@ -243,10 +257,14 @@ import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   ArrowLeft,
+  Captions,
   Check,
+  FileText,
+  Globe,
   Link as LinkIcon,
   MessageSquare,
   Plus,
+  SpellCheck,
   Trash2,
   Upload,
 } from 'lucide-vue-next'
@@ -599,11 +617,15 @@ function rowState(s: MeetingRecord): RowState {
 }
 
 /** What a meeting produced, as pills, in reading order. */
-function artifactsOf(s: MeetingRecord): string[] {
-  const out: string[] = []
-  if (s.hasMinutes) out.push(t('meeting.list.pillMinutes'))
-  if (s.hasTranscript) out.push(t('meeting.list.pillTranscript'))
-  if (s.hasRevised) out.push(t('meeting.list.pillRevised'))
+function artifactsOf(s: MeetingRecord): Array<{
+  kind: 'minutes' | 'transcript' | 'revised'
+  icon: typeof FileText
+  label: string
+}> {
+  const out: Array<{ kind: 'minutes' | 'transcript' | 'revised'; icon: typeof FileText; label: string }> = []
+  if (s.hasMinutes) out.push({ kind: 'minutes', icon: FileText, label: t('meeting.list.pillMinutes') })
+  if (s.hasTranscript) out.push({ kind: 'transcript', icon: Captions, label: t('meeting.list.pillTranscript') })
+  if (s.hasRevised) out.push({ kind: 'revised', icon: SpellCheck, label: t('meeting.list.pillRevised') })
   return out
 }
 
@@ -740,7 +762,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-5, 10px);
-  padding: var(--space-4, 8px) var(--space-5, 10px) var(--space-6, 12px);
+  padding: var(--panel-body-pad, var(--space-5, 10px));
 }
 
 .meeting-list { display: flex; flex-direction: column; gap: var(--space-4, 8px); }
@@ -881,6 +903,13 @@ onMounted(() => {
   color: var(--color-red);
   background: color-mix(in srgb, var(--color-red) 13%, transparent);
   border-color: color-mix(in srgb, var(--color-red) 38%, transparent);
+}
+/* Sharing is not a lifecycle state, so it does not get an edge stripe — only a
+   green pill, the same hue the record's own card uses for the same fact. */
+.meeting-pill.is-shared {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-green) 38%, transparent);
 }
 .meeting-pill__dot {
   width: calc(5 * var(--dp));

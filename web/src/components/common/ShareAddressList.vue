@@ -14,9 +14,11 @@
   -->
   <div class="share-addr">
     <div class="share-addr-primary">
+      <span v-if="leadingIcon" class="share-addr-icon"><Globe :size="11" /></span>
       <input
         ref="inputRef"
         class="share-addr-input"
+        :class="{ 'is-with-icon': leadingIcon }"
         type="text"
         :value="primaryUrl"
         readonly
@@ -24,7 +26,13 @@
         data-share-primary
         @focus="($event.target as HTMLInputElement).select()"
       />
-      <CopyButton :text="primaryUrl" title-key="shareAddress.copy" class="share-addr-btn" />
+      <CopyButton
+        :text="primaryUrl"
+        :label="copyLabel"
+        title-key="shareAddress.copy"
+        class="share-addr-btn"
+        :class="{ 'share-addr-btn--labeled': copyLabel }"
+      />
       <slot name="trailing" />
     </div>
 
@@ -56,11 +64,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown } from 'lucide-vue-next'
+import { ChevronDown, Globe } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 import type { ShareAddress, ShareLink } from '@/composables/useShareLinks'
 
-const props = defineProps<{ links: ShareLink[] }>()
+const props = defineProps<{
+  links: ShareLink[]
+  /**
+   * Draw a globe inside the field. For hosts that show the address on its own
+   * card (the meeting record) rather than under a labelled row.
+   */
+  leadingIcon?: boolean
+  /**
+   * Visible label on the copy button. Off by default: the button is usually
+   * pinned to a container edge, and a label grows it into whatever sits
+   * beside it.
+   */
+  copyLabel?: string
+}>()
 
 const { t } = useI18n()
 const expanded = ref(false)
@@ -107,7 +128,20 @@ defineExpose({ focusPrimary })
   align-items: center;
   gap: var(--space-2, 4px);
   min-width: 0;
+  position: relative;
 }
+
+.share-addr-icon {
+  position: absolute;
+  left: var(--space-4, 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  color: var(--text-hint, #9aa4af);
+  pointer-events: none;
+}
+
+.share-addr-input.is-with-icon { padding-left: calc(22 * var(--dp, 1px)); }
 
 .share-addr-input {
   flex: 1;
@@ -124,6 +158,20 @@ defineExpose({ focusPrimary })
 .share-addr-btn {
   flex-shrink: 0;
 }
+
+/* Label variant: a bordered field-height button, because a bare glyph with a
+   word next to it has no edge to sit on. */
+.share-addr-btn--labeled {
+  gap: var(--space-2, 4px);
+  height: calc(28 * var(--dp, 1px));
+  padding: 0 var(--space-5, 10px);
+  border: 1px solid var(--border-color, #d0d7de);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-tertiary, #e9ecef);
+  color: var(--text-secondary, #495057);
+  font-size: var(--font-size-xs, 11px);
+}
+.share-addr-btn--labeled:hover { color: var(--accent-color, #4a90d9); }
 
 .share-addr-toggle {
   display: inline-flex;
