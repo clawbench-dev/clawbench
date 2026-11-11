@@ -45,6 +45,17 @@ describe('SessionListHeader', () => {
     expect(wrapper.emitted('create')).toBeTruthy()
   })
 
+  it('renders the create button first in the action row', () => {
+    // Create is the row's primary action and ActionBar folds from the tail, so
+    // leading the row is what keeps it visible when the header is narrow.
+    const wrapper = mountHeader({ pinned: true })
+    const actions = wrapper.find('.session-header-actions')
+    const first = actions.findAll('button')[0]
+    expect(first.attributes('data-action')).toBe('create')
+    const order = actions.findAll('button').map(b => b.attributes('data-action'))
+    expect(order.indexOf('create')).toBeLessThan(order.indexOf('search'))
+  })
+
   it('no longer renders a separate create-group button', () => {
     // Group creation merged into the create page (single/group switch there), so
     // the session-list header must not keep a standalone group entry.

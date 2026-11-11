@@ -20,13 +20,16 @@
     </div>
     <ActionBar class="session-header-actions" mode="menu" align="end" size="bar">
       <slot name="actions" />
-      <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
-        <Search :size="16" />
-        <span class="action-label">{{ t('sessionSearch.title') }}</span>
-      </button>
+      <!-- Create is the row's primary action, so it leads the row: the buttons
+           stay in DOM order and ActionBar folds from the tail, which means the
+           first button is the one that survives when the header gets narrow. -->
       <button class="header-action-btn is-primary" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
         <span class="action-label">{{ t('session.newSession') }}</span>
+      </button>
+      <button class="header-action-btn" data-action="search" @click.stop="$emit('open-search')" :title="t('sessionSearch.title')">
+        <Search :size="16" />
+        <span class="action-label">{{ t('sessionSearch.title') }}</span>
       </button>
       <template v-if="pinned">
         <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh">
@@ -34,7 +37,7 @@
         </RefreshButton>
       </template>
       <!-- Trailing slot: hosts put the sidebar pin/close toggle here so it is the
-           right-most control in the header, after search/create/refresh. The
+           right-most control in the header, after create/search/refresh. The
            leading #actions slot is rendered before the built-in buttons. -->
       <slot name="actions-end" />
     </ActionBar>

@@ -29,7 +29,7 @@
           @create="handleCreateClick"
         >
           <!-- Pin sits in the trailing slot so it is the right-most control in
-               the header, after search/create. -->
+               the header, after create/search. -->
           <template #actions-end>
             <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
               <PanelRight :size="16" />
