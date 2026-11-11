@@ -132,6 +132,9 @@ let iframeReady = false
 let dirty = false
 let latestXml = ''
 let pendingExport = null
+// A user-requested export (see requestExport), distinct from the save flow's
+// XML round trip above.
+let pendingUserExport = null
 
 const frameSrc = computed(() => {
   const lang = typeof locale.value === 'string' && locale.value.startsWith('zh') ? 'zh' : 'en'
@@ -331,7 +334,23 @@ function onMessage(e) {
         setDirty(true)
       }
       break
+    case 'save':
+      // drawio's own "Save & Exit" (also Ctrl+S). The frame stays open — the
+      // diagram is saved in place — because exiting would take the editor away
+      // from a user who is still editing it.
+      if (typeof msg.xml === 'string' && msg.xml) {
+        latestXml = msg.xml
+        void persistXml(msg.xml)
+      }
+      break
     case 'export':
+      if (pendingUserExport) {
+        const { resolve, timer } = pendingUserExport
+        clearTimeout(timer)
+        pendingUserExport = null
+        resolve({ format: msg.format || '', data: msg.data || '' })
+        break
+      }
       if (pendingExport) {
         pendingExport(msg.data || latestXml)
         pendingExport = null
@@ -377,12 +396,15 @@ function requestXml() {
   })
 }
 
-async function saveCurrent() {
-  const xml = await requestXml()
+async function persistXml(xml) {
   if (!xml) return false
   const ok = await saveFile(props.file?.path || '', xml)
   if (ok) setDirty(false)
   return ok
+}
+
+async function saveCurrent() {
+  return persistXml(await requestXml())
 }
 
 // Same contract as ExcalidrawViewer: resolves true when the diagram is saved or
@@ -471,12 +493,37 @@ watch([locale, isDark], () => {
   iframeReady = false
 })
 
+/**
+ * Ask drawio for an export and hand back the raw payload.
+ *
+ * drawio's own "Export as" menu is disabled in embed mode, so this is the only
+ * way to produce a file — the caller decides where it goes.
+ */
+function requestExport(format) {
+  return new Promise((resolve, reject) => {
+    if (!iframeReady) {
+      reject(new Error(t('file.drawioExport.notReady')))
+      return
+    }
+    // Large diagrams take a while to rasterise; the timer only guards against
+    // an iframe that never answers.
+    const timer = setTimeout(() => {
+      if (pendingUserExport) {
+        pendingUserExport = null
+        reject(new Error(t('file.drawioExport.timeout')))
+      }
+    }, 20000)
+    pendingUserExport = { resolve, timer }
+    postToFrame({ action: 'export', format })
+  })
+}
+
 async function requestExit() {
   if (props.readonly) return true
   return handleExit()
 }
 
-defineExpose({ requestExit, isDirty: () => dirty })
+defineExpose({ requestExit, requestExport, isDirty: () => dirty })
 </script>
 
 <style scoped>

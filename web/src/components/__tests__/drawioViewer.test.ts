@@ -351,3 +351,53 @@ describe('DrawioViewer theme', () => {
     wrapper.unmount()
   })
 })
+
+describe('DrawioViewer export', () => {
+  async function mountReady() {
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+    mockContentWindow()
+    const wrapper = mount(DrawioViewer, { props: { file } })
+    await nextTick()
+    await nextTick()
+    sendFromIframe({ event: 'init' })
+    await nextTick()
+    return wrapper
+  }
+
+  it('returns the payload drawio answers with', async () => {
+    const wrapper = await mountReady()
+    const pending = wrapper.vm.requestExport('png')
+    sendFromIframe({ event: 'export', format: 'png', data: 'data:image/png;base64,AQID' })
+    await expect(pending).resolves.toEqual({ format: 'png', data: 'data:image/png;base64,AQID' })
+    wrapper.unmount()
+  })
+
+  it('times out instead of hanging when the editor never answers', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountReady()
+    const pending = wrapper.vm.requestExport('png')
+    const assertion = expect(pending).rejects.toThrow()
+    await vi.advanceTimersByTimeAsync(20100)
+    await assertion
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+})
+
+describe('DrawioViewer save from the editor menu', () => {
+  it('saves the XML drawio sends with its own Save & Exit', async () => {
+    // drawio's File menu is still reachable inside the frame, and its Save item
+    // used to be a dead click.
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+    mockContentWindow()
+    const wrapper = mount(DrawioViewer, { props: { file } })
+    await nextTick()
+    await nextTick()
+    sendFromIframe({ event: 'init' })
+    await nextTick()
+
+    sendFromIframe({ event: 'save', xml: '<mxfile>edited</mxfile>' })
+    await vi.waitFor(() => expect(mockSaveFile).toHaveBeenCalledWith('docs/flow.drawio', '<mxfile>edited</mxfile>'))
+    wrapper.unmount()
+  })
+})

@@ -38,6 +38,7 @@
       @set-as-background="(path) => emit('setAsBackground', path)"
       @quote-in-chat="(path) => emit('quoteInChat', path)"
       @toggle-maximize-pane="emit('toggleMaximizePane')"
+      @export-drawio="handleExportDrawio"
     />
 
     <!-- Content row: file content + (wide-screen) inline TOC dock -->
@@ -291,6 +292,15 @@
       :diff-lines="drawerDiffLines"
       @close="closeDrawer"
     />
+
+    <!-- draw.io export chooser: format + where the artifact lands -->
+    <DrawioExportDialog
+      :open="drawioExportOpen"
+      :dir-name="drawioExportDir"
+      :busy="drawioExportBusy"
+      @close="drawioExportOpen = false"
+      @confirm="handleDrawioExport"
+    />
   </div>
 </template>
 
@@ -309,6 +319,7 @@ import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent.ts'
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./ExcalidrawViewer.vue') }))
 const DrawioViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./DrawioViewer.vue') }))
+import DrawioExportDialog from './DrawioExportDialog.vue'
 import MarkdownPreview from './MarkdownPreview.vue'
 import TablePreviewBody from './TablePreviewBody.vue'
 import PreviewSearchBar from './PreviewSearchBar.vue'
@@ -328,6 +339,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
+import { DRAWIO_EXPORT_FORMATS, downloadExport, exportedFileName, saveExportToProject } from '@/utils/drawioExport.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
 import { buildHtmlPreviewSrc, installPreviewLinkHandler, installPreviewScrollbar, installPreviewSearchStyles, watchPreviewTheme } from '@/utils/htmlPreview.ts'
 import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
@@ -1018,6 +1030,52 @@ async function handleExportHtml() {
         toast.show(msgs.join('. '), { icon: 'success', type: 'success', duration: 4000 })
     } catch {
         toast.show(t('file.header.exportHtmlFailed'), { icon: 'error', type: 'error', duration: 3000 })
+    }
+}
+
+// --- draw.io export -------------------------------------------------------
+// drawio disables its own "Export as" menu in embed mode, so the entry point
+// lives here and the artifact is produced over the embed protocol instead.
+const drawioExportOpen = ref(false)
+const drawioExportBusy = ref(false)
+
+/** Directory the diagram lives in — where "save to project" puts the artifact. */
+const drawioExportDir = computed(() => {
+    const path = props.file?.path || ''
+    const idx = path.lastIndexOf('/')
+    return idx > 0 ? path.slice(0, idx) : ''
+})
+
+function handleExportDrawio() {
+    if (!props.file?.isDrawio) return
+    drawioExportOpen.value = true
+}
+
+async function handleDrawioExport({ format, destination }) {
+    const viewer = drawioViewerRef.value
+    const spec = DRAWIO_EXPORT_FORMATS.find(f => f.id === format)
+    if (!viewer?.requestExport || !spec) return
+
+    drawioExportBusy.value = true
+    toast.show(t('file.drawioExport.working'), { icon: 'file', type: 'info', duration: 0 })
+    try {
+        const { data } = await viewer.requestExport(format)
+        const name = exportedFileName(props.file?.name || '', spec.ext)
+        if (destination === 'project') {
+            const saved = await saveExportToProject(data, name, drawioExportDir.value)
+            toast.show(t('file.drawioExport.saved', { path: saved }), { icon: 'success', type: 'success', duration: 4000 })
+            // The artifact lands in the diagram's directory; refresh silently so
+            // it appears in the file list without a loading flash.
+            void store.loadFiles(store.state.currentDir, true)
+        } else {
+            downloadExport(data, name)
+            toast.show(t('file.drawioExport.downloaded'), { icon: 'success', type: 'success', duration: 3000 })
+        }
+        drawioExportOpen.value = false
+    } catch (err) {
+        toast.show((err && err.message) || t('file.drawioExport.failed'), { icon: 'error', type: 'error', duration: 4000 })
+    } finally {
+        drawioExportBusy.value = false
     }
 }
 
