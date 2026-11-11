@@ -21,6 +21,8 @@ export interface CopyKeyEvent {
   metaKey: boolean
   altKey: boolean
   shiftKey: boolean
+  /** Legacy numeric code — some IMEs/browsers report Insert without a usable `key`. */
+  keyCode?: number
 }
 
 /**
@@ -50,4 +52,32 @@ export function isCopySelectionShortcut(
   // SIGINT, and a bare Cmd+C is the native copy chord; on Windows/Linux the
   // reverse. Demanding the primary modifier also rejects the plain 'c' keypress.
   return isMac ? ev.metaKey : ev.ctrlKey
+}
+
+/**
+ * Whether this event is the "paste into the terminal" chord: Shift+Insert.
+ *
+ * Why intercept it instead of leaving it to the browser: xterm only forwards
+ * Insert WITHOUT Shift to the PTY and lets every other modifier combination
+ * fall through to the browser's default action. That default is paste in
+ * Chromium and Firefox, but it is not guaranteed in Safari, Android WebViews or
+ * an Electron window whose menu swallows the accelerator — exactly the hosts
+ * this app runs in. Claiming the chord here makes the behaviour identical
+ * everywhere, and lets the caller decide what "paste" means (the live selection
+ * first, the clipboard when nothing is selected).
+ *
+ * Shift is required and every other modifier is rejected:
+ * - Ctrl+Insert is the copy chord, not paste.
+ * - Alt/Meta combinations keep their normal terminal meaning.
+ *
+ * Only `keydown` counts, for the same reason as copy: acting on keydown,
+ * keypress and keyup would paste the same text up to three times.
+ */
+export function isPasteSelectionShortcut(ev: CopyKeyEvent): boolean {
+  if (ev.type !== 'keydown') return false
+  if (!ev.shiftKey) return false
+  if (ev.ctrlKey || ev.altKey || ev.metaKey) return false
+  // `key` is 'Insert' in every current browser; `keyCode` is the fallback for
+  // environments that report an empty key for non-character keys.
+  return ev.key === 'Insert' || ev.keyCode === 45
 }

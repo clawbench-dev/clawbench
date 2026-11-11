@@ -105,6 +105,7 @@ const sections = computed<HelpSection[]>(() => {
       name: props.mac ? 'Cmd+C' : 'Ctrl+C / Ctrl+Shift+C',
     },
     { key: 'copyInsert', nameKey: 'terminal.helpCommonCopyInsert', descKey: 'terminal.helpCommonCopyInsertDesc' },
+    { key: 'pasteInsert', nameKey: 'terminal.helpCommonPasteInsert', descKey: 'terminal.helpCommonPasteInsertDesc' },
     { key: 'rightClick', nameKey: 'terminal.helpCommonRightClick', descKey: 'terminal.helpCommonRightClickDesc' },
     { key: 'tools', nameKey: 'terminal.helpCommonTools', descKey: 'terminal.helpCommonToolsDesc' },
   )

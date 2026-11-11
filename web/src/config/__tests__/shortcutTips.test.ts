@@ -64,6 +64,7 @@ describe('SHORTCUT_TIPS', () => {
     const byLeaf = (leaf: string) => SHORTCUT_TIPS.find(t => t.contextKey.endsWith(`.${leaf}`))
     expect(byLeaf('contextTermCopy')?.keys).toEqual(['Ctrl+C', 'Ctrl+Shift+C'])
     expect(byLeaf('contextTermCopyInsert')?.keys).toEqual(['Ctrl+Insert'])
+    expect(byLeaf('contextTermPasteInsert')?.keys).toEqual(['Shift+Insert'])
     expect(byLeaf('contextTermZoom')?.keys).toEqual(['Ctrl+Wheel'])
     // Copy-on-select and right-click have no key chord — they are gestures, so
     // they carry a description instead. Assert the ROW exists (not just that

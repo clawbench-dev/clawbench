@@ -163,4 +163,50 @@ test.describe('Terminal multi-tab', () => {
 
     await terminal.expectTabCount(3)
   })
+
+  test('Shift+Insert inserts the selected text at the cursor without running it', async ({ page }) => {
+    await terminal.ensureTerminalConnected(0, 15000)
+
+    /** Trimmed text of every visible xterm row (the DOM renderer keeps them as text). */
+    const rows = () =>
+      page.evaluate(() => {
+        const container = Array.from(document.querySelectorAll('.terminal-container .xterm-rows'))
+          .find((el) => (el as HTMLElement).offsetParent !== null)
+        if (!container) return [] as string[]
+        return Array.from(container.children).map((el) => (el.textContent || '').trim())
+      })
+
+    // Print a bare COMMAND line (no prompt prefix) so a triple-click selects
+    // exactly `echo <marker>` — the selection is what Shift+Insert must insert.
+    const marker = `paste-marker-${Date.now()}`
+    await terminal.getTerminalContainer(0).click()
+    await page.keyboard.type(`echo echo ${marker}`)
+    await page.keyboard.press('Enter')
+
+    const command = `echo ${marker}`
+    await expect.poll(() => rows(), { timeout: 15000 }).toContain(command)
+
+    // Triple-click the line to select it (xterm's multi-click line selection).
+    // Match the row EXACTLY: the prompt line above also contains the command as
+    // a substring ("echo echo <marker>"), and selecting that would paste the
+    // prompt along with it.
+    const line = page
+      .locator('.terminal-container .xterm-rows:visible div')
+      .filter({ hasText: new RegExp(`^\\s*${command}\\s*$`) })
+      .first()
+    const box = await line.boundingBox()
+    if (!box) throw new Error(`could not locate the rendered row for "${command}"`)
+    // Click through the xterm screen (the row divs sit underneath it and do not
+    // receive pointer events themselves).
+    await page.mouse.click(box.x + 4, box.y + box.height / 2, { clickCount: 3 })
+
+    // Paste and run. The pasted text must land at the cursor — nothing is sent
+    // until Enter, which is the whole point of the chord.
+    await page.keyboard.press('Shift+Insert')
+    await page.keyboard.press('Enter')
+
+    // The command ran, so the marker now appears on a line of its own. Before
+    // the paste the only line containing it also contained `echo `.
+    await expect.poll(() => rows(), { timeout: 15000 }).toContain(marker)
+  })
 })
