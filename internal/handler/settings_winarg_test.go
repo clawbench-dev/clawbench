@@ -57,9 +57,17 @@ func TestEscapeWindowsArgs(t *testing.T) {
 }
 
 func TestBuildWindowsSentinelScript(t *testing.T) {
-	t.Run("quotes the exe and passes args through", func(t *testing.T) {
-		script := buildWindowsSentinelScript(`C:\Program Files\clawbench.exe`, []string{"--port", "20000"})
-		assert.Contains(t, script, `timeout /t 2 /nobreak >nul & `)
+	t.Run("waits for the outgoing process, then runs the exe with args", func(t *testing.T) {
+		script := buildWindowsSentinelScript(`C:\Program Files\clawbench.exe`, []string{"--port", "20000"}, 4321)
+		// The wait must key on the PID, not on a fixed sleep: the data-directory
+		// lock is held until the process exits, which is long after the port is
+		// released. A `timeout /t N` here is what let the replacement die on the
+		// lock and left the service down (2026-11-11).
+		assert.Contains(t, script, "Wait-Process -Id 4321")
+		assert.NotContains(t, script, "timeout /t", "a fixed sleep is not a substitute for waiting on the PID")
+		// `&` must run the exe even when the wait fails (no PowerShell): that
+		// degrades to the old behavior instead of never restarting.
+		assert.Contains(t, script, "SilentlyContinue & ")
 		assert.Contains(t, script, `"C:\Program Files\clawbench.exe"`)
 		assert.Contains(t, script, ` --port 20000`)
 		assert.NotContains(t, script, "'")
@@ -71,13 +79,16 @@ func TestBuildWindowsSentinelScript(t *testing.T) {
 		script := buildWindowsSentinelScript(
 			`C:\cb\clawbench.exe`,
 			[]string{"--port", "28000", "--data-dir", `D:\cbdata`},
+			1,
 		)
 		assert.Contains(t, script, `--port 28000 --data-dir D:\cbdata`)
 	})
 
 	t.Run("no trailing space when there are no args", func(t *testing.T) {
-		script := buildWindowsSentinelScript(`C:\cb\clawbench.exe`, nil)
-		assert.Equal(t, `timeout /t 2 /nobreak >nul & C:\cb\clawbench.exe`, script)
+		script := buildWindowsSentinelScript(`C:\cb\clawbench.exe`, nil, 99)
+		assert.Equal(t,
+			`powershell -NoProfile -NonInteractive -Command Wait-Process -Id 99 -Timeout 60 -ErrorAction SilentlyContinue & C:\cb\clawbench.exe`,
+			script)
 		assert.False(t, strings.HasSuffix(script, " "))
 	})
 
@@ -88,6 +99,7 @@ func TestBuildWindowsSentinelScript(t *testing.T) {
 		script := buildWindowsSentinelScript(
 			`C:\cb\clawbench.exe`,
 			[]string{"--data-dir", `C:\Program Files\cb`},
+			7,
 		)
 		assert.Contains(t, script, `--data-dir "C:\Program Files\cb"`)
 		assert.NotContains(t, script, "'")
@@ -104,4 +116,16 @@ func TestWindowsSentinelDoesNotUsePOSIXQuoting(t *testing.T) {
 	assert.NotContains(t, text, "joinArgs(", "Windows sentinel must not use POSIX quoting")
 	assert.NotContains(t, text, "shellQuote(", "Windows sentinel must not use POSIX quoting")
 	assert.Contains(t, text, "buildWindowsSentinelScript(")
+}
+
+// The Unix sentinel's wait is the reference behavior: it blocks until the PID
+// is gone, which is the only signal that the data-directory lock has been
+// released. Replacing it with a fixed sleep (the Windows sentinel's old shape)
+// would reintroduce the restart outage on every platform.
+func TestUnixSentinelWaitsForProcessExit(t *testing.T) {
+	src, err := os.ReadFile("settings_sentinel_unix.go")
+	require.NoError(t, err)
+	text := string(src)
+	assert.Contains(t, text, "while kill -0 $PID",
+		"the sentinel must wait for the outgoing process to exit, not sleep")
 }

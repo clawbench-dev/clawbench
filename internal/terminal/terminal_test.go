@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"testing"
@@ -1265,3 +1267,58 @@ func TestManager_HandleWebSocket_SessionExpiredReconnect(t *testing.T) {
 }
 
 // --- SuppressOutput after Connect (prevents duplicate prompts on reconnect) ---
+
+// Closing sessions must not cost N×3s. Session.Close waits 3s for SIGTERM
+// before escalating to SIGKILL, and interactive shells routinely ignore
+// SIGTERM. The outgoing server holds the data-directory lock until it exits,
+// so a serial close with 10 terminals blocked the replacement for 30s — longer
+// than the new process waits for the lock — and the restart left the service
+// down (2026-11-11 outage).
+//
+// The fake shell below ignores SIGTERM on purpose, so this test separates the
+// two implementations: serial costs n×3s (9s for three sessions), concurrent
+// costs ~3s.
+func TestManager_CloseAllSessions_ClosesConcurrently(t *testing.T) {
+	shell := filepath.Join(t.TempDir(), "stubborn-shell")
+	// The loop matters: if the shell were just `sleep 30`, SIGTERM would kill
+	// the sleep child, the script would end and the session would exit fast —
+	// making the timing identical for both implementations.
+	script := "#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 1; done\n"
+	if err := os.WriteFile(shell, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake shell: %v", err)
+	}
+	t.Setenv("SHELL", shell)
+
+	cfg := model.TerminalConfig{
+		Enabled:      true,
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}
+	mgr := NewManager(cfg, 20000)
+
+	const sessionCount = 3
+	for range sessionCount {
+		s, err := NewSession(t.TempDir(), t.TempDir(), mgr.Config(), 0, 0)
+		if err != nil {
+			t.Skipf("PTY not available in this environment: %v", err)
+		}
+		mgr.mu.Lock()
+		mgr.sessions[s.ID()] = s
+		mgr.mu.Unlock()
+	}
+
+	start := time.Now()
+	mgr.CloseAllSessions()
+	elapsed := time.Since(start)
+
+	// Serial would be 3×3s = 9s. 6s leaves room for a slow machine while still
+	// failing any implementation that closes one session at a time.
+	if elapsed > 6*time.Second {
+		t.Fatalf("closing %d sessions took %s, expected ~3s (sessions closed serially?)", sessionCount, elapsed)
+	}
+
+	if sessions := mgr.AllSessionStatus(); len(sessions) != 0 {
+		t.Fatalf("expected all sessions removed, got %d", len(sessions))
+	}
+}

@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -44,12 +45,16 @@ type InstanceLock struct {
 // AcquireInstanceLock takes the exclusive lock for dir, waiting up to wait for
 // the previous holder to go away.
 //
-// The wait exists for restarts, not for a second server: `build.sh --restart`
-// starts the new process as soon as the PORT is free, which happens while the
-// outgoing process is still draining (it releases the port first and does its
-// final writes afterwards). Failing immediately would turn every restart into
-// an error; waiting the full window and then failing still rejects a genuine
-// second instance.
+// The wait exists for restarts, not for a second server: a replacement process
+// is launched while the outgoing one is still draining (it releases the PORT
+// first and does its final writes afterwards, and the lock — which is what
+// protects the database — is only released when the process exits). Failing
+// immediately would turn every restart into an error; waiting the full window
+// and then failing still rejects a genuine second instance.
+//
+// Because the lock outlives the port, `wait` must cover the whole shutdown
+// drain, not just the port handover. See cmd/server/main.go's instanceLockWait
+// for the sizing and for the 2026-11-11 outage this used to cause.
 func AcquireInstanceLock(dir string, wait time.Duration) (*InstanceLock, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
@@ -61,15 +66,31 @@ func AcquireInstanceLock(dir string, wait time.Duration) (*InstanceLock, error) 
 		return nil, fmt.Errorf("open instance lock: %w", err)
 	}
 
-	deadline := time.Now().Add(wait)
+	start := time.Now()
+	deadline := start.Add(wait)
+	waitLogged := false
 	for {
 		ov, lockErr := lockFileExclusive(f)
 		if lockErr == nil {
+			if waitLogged {
+				slog.Info("data directory lock acquired after waiting",
+					slog.String("data_dir", dir),
+					slog.Duration("waited", time.Since(start)))
+			}
 			return &InstanceLock{file: f, ov: ov}, nil
 		}
 		if !isLockBusy(lockErr) {
 			_ = f.Close()
 			return nil, fmt.Errorf("lock data directory: %w", lockErr)
+		}
+		// Log once, not per poll: a restart's drain is expected, but a silent
+		// wait is what made the 2026-11-11 outage hard to read — the log only
+		// showed "server starting" followed by "refusing to start".
+		if !waitLogged && wait > 0 {
+			waitLogged = true
+			slog.Info("data directory is locked by another instance, waiting for it to exit",
+				slog.String("data_dir", dir),
+				slog.Duration("wait", wait))
 		}
 		if !time.Now().Before(deadline) {
 			_ = f.Close()

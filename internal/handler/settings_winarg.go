@@ -95,15 +95,30 @@ func escapeWindowsArgs(args []string) string {
 }
 
 // buildWindowsSentinelScript renders the cmd.exe script the sentinel runs: wait
-// two seconds (the outgoing process needs the main port released, and
-// listenMainWithRetry covers the rest), then re-exec this binary with the SAME
+// for the outgoing process to EXIT, then re-exec this binary with the SAME
 // arguments.
+//
+// The wait used to be `timeout /t 2`, a guess at how long shutdown takes. It is
+// the wrong signal: the data-directory lock is held until the process exits,
+// which happens well after the port is released (the outgoing server closes ten
+// terminals at 3s each). A replacement launched after 2s then burned its own
+// lock wait and exited — the 2026-11-11 outage, on Windows the same way.
+//
+// Wait-Process blocks on the PID instead. `&` (not `&&`) is deliberate: cmd
+// runs the next command whatever the exit code, so a machine without PowerShell
+// degrades to the old "start immediately" behavior — which the new process's
+// lock wait still absorbs — instead of never restarting at all.
 //
 // Passing the args through unchanged is the point: --port and --data-dir must
 // reach the new process, or it comes up as a second instance on the default
 // port writing to ~/.clawbench instead of the configured directory.
-func buildWindowsSentinelScript(exe string, args []string) string {
-	script := fmt.Sprintf(`timeout /t 2 /nobreak >nul & %s`, escapeWindowsArg(exe))
+func buildWindowsSentinelScript(exe string, args []string, pid int) string {
+	// No inner quotes: cmd splits on `&`, so PowerShell receives the wait
+	// command as plain tokens. Nested double quotes are what cmd.exe mangles.
+	script := fmt.Sprintf(
+		`powershell -NoProfile -NonInteractive -Command Wait-Process -Id %d -Timeout 60 -ErrorAction SilentlyContinue & %s`,
+		pid, escapeWindowsArg(exe),
+	)
 	if len(args) > 0 {
 		script += " " + escapeWindowsArgs(args)
 	}

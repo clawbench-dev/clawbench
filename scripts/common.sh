@@ -36,28 +36,79 @@ check_binary() {
     fi
 }
 
+# _pid_alive reports whether the given PID is a running (non-zombie) process.
+#
+# A zombie answers `kill -0` until its parent reaps it, so a plain existence
+# check would keep a waiter blocked long after the process is actually gone —
+# the same trap that makes the restart sentinel spin.
+_pid_alive() {
+    local pid="$1"
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/$pid/stat" ]]; then
+        # Field 3 is the state, but field 2 (comm) may contain spaces and
+        # parentheses — slice after the LAST ')' instead of splitting on spaces.
+        local state
+        state=$(sed -e 's/^.*) //' -e 's/ .*//' "/proc/$pid/stat" 2>/dev/null)
+        [[ "$state" == "Z" ]] && return 1
+    fi
+    return 0
+}
+
+# _wait_pids_gone waits until every PID in $1 has exited, up to $2 seconds.
+# Prints the PIDs still alive on timeout and returns 1; returns 0 when all are
+# gone (nothing printed).
+#
+# Polling for process EXIT — rather than sleeping a fixed number of seconds or
+# watching the port — is what makes a restart safe: the data-directory lock is
+# released when the process exits, which happens long after the port is freed.
+_wait_pids_gone() {
+    local pids="$1"
+    local timeout="${2:-30}"
+    local ticks=0
+    local pid alive
+    while true; do
+        alive=""
+        for pid in $pids; do
+            _pid_alive "$pid" && alive="$alive $pid"
+        done
+        if [[ -z "$alive" ]]; then
+            return 0
+        fi
+        if [[ $ticks -ge $((timeout * 10)) ]]; then
+            echo "$alive"
+            return 1
+        fi
+        sleep 0.1
+        ticks=$((ticks + 1))
+    done
+}
+
 # _stop_servers stops processes tracked by the given PID file and/or by port.
 # Arguments:
 #   $1 - PID_FILE  path to the PID file (may be empty)
 #   $2 - PORT      port to kill orphaned processes (may be empty)
 #   $3 - NAME      display name for the service (optional, default "server")
+#
+# Returns only once the process has actually exited (or after SIGKILL), because
+# callers start a replacement immediately afterwards.
 _stop_servers() {
     local pid_file="$1"
     local port="$2"
     local name="${3:-server}"
+    local grace="${STOP_GRACE_SECONDS:-30}"
 
     # Stop by PID file first
     if [[ -n "$pid_file" && -f "$pid_file" ]]; then
         local pid
         pid=$(cat "$pid_file")
-        if kill -0 "$pid" 2>/dev/null; then
+        if _pid_alive "$pid"; then
             echo "Stopping $name (PID $pid)..."
-            kill "$pid"
-            sleep 5
-            # Force kill if still alive
-            if kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null
-                sleep 1
+            kill "$pid" 2>/dev/null || true
+            local remaining=""
+            if ! remaining=$(_wait_pids_gone "$pid" "$grace"); then
+                echo "PID$remaining did not exit after ${grace}s, sending SIGKILL..."
+                echo "$remaining" | xargs kill -9 2>/dev/null || true
+                _wait_pids_gone "$remaining" 5 >/dev/null || true
             fi
         fi
         rm -f "$pid_file"
@@ -72,17 +123,13 @@ _stop_servers() {
             pids=$(netstat -tlnp 2>/dev/null | grep ":$port" | grep -oP '\s[0-9]+/' | grep -oP '[0-9]+' | sort -u | tr '\n' ' ')
         fi
         if [[ -n "$pids" ]]; then
-            echo "Killing orphan process on port $port (PIDs: $pids)..."
+            echo "Killing orphan process on port $port (PIDs:$pids)..."
             echo "$pids" | xargs kill 2>/dev/null || true
-            sleep 5
-            # Force kill if still alive
-            if command -v ss >/dev/null 2>&1; then
-                local remaining
-                remaining=$(ss -tlnp 2>/dev/null | grep ":$port" | grep -oP 'pid=\K[0-9]+' | sort -u | tr '\n' ' ')
-                if [[ -n "$remaining" ]]; then
-                    echo "$remaining" | xargs kill -9 2>/dev/null || true
-                    sleep 1
-                fi
+            local remaining=""
+            if ! remaining=$(_wait_pids_gone "$pids" "$grace"); then
+                echo "PIDs$remaining still alive after ${grace}s, sending SIGKILL..."
+                echo "$remaining" | xargs kill -9 2>/dev/null || true
+                _wait_pids_gone "$remaining" 5 >/dev/null || true
             fi
         fi
 

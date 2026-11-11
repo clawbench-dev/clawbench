@@ -340,34 +340,37 @@ if [[ -n "$DO_RESTART" ]]; then
     NEW_PID=$!
     echo "  New PID: $NEW_PID"
 
-    # Sanity check: verify process is alive
-    sleep 2
-    if ! kill -0 "$NEW_PID" 2>/dev/null; then
-        echo "ERROR: ClawBench process exited immediately. Check $LOG" >&2
-        exit 1
-    fi
-
-    # Wait for port to bind (up to 15s)
+    # Wait for the new process to bind (up to 30s).
+    #
+    # A dead process or a port that never binds is a FAILED restart, not a
+    # warning. The 2026-11-11 outage came from exactly this: the outgoing
+    # instance still held the data-directory lock while draining ten terminals,
+    # the replacement refused to start 10s later, and this script printed
+    # "WARNING: Port 20000 not yet bound after 15s" followed by "Done." — so the
+    # restart looked successful while nothing was listening.
     WAITED=0
-    while [[ $WAITED -lt 15 ]]; do
+    while [[ $WAITED -lt 30 ]]; do
+        if ! kill -0 "$NEW_PID" 2>/dev/null; then
+            echo "ERROR: ClawBench exited during startup (PID $NEW_PID). Last log lines:" >&2
+            tail -n 20 "$LOG" >&2
+            exit 1
+        fi
         BOUND=""
         if command -v ss >/dev/null 2>&1; then
             BOUND=$(ss -tlnp 2>/dev/null | grep ":$PORT") || true
         fi
         if [[ -n "$BOUND" ]]; then
-            break
+            echo "[restart] ClawBench restarted successfully on port $PORT."
+            show_auto_password "$SCRIPT_DIR/.clawbench/auto-password"
+            exit 0
         fi
         sleep 1
         WAITED=$((WAITED + 1))
     done
 
-    if [[ $WAITED -ge 15 ]]; then
-        echo "WARNING: Port $PORT not yet bound after 15s. Process may still be starting."
-    else
-        echo "[restart] ClawBench restarted successfully on port $PORT."
-        show_auto_password "$SCRIPT_DIR/.clawbench/auto-password"
-    fi
-    echo "Done."
+    echo "ERROR: port $PORT not bound after 30s (PID $NEW_PID is still alive). Last log lines:" >&2
+    tail -n 20 "$LOG" >&2
+    exit 1
 else
     echo ""
     echo "Run with: ./$NAME"
