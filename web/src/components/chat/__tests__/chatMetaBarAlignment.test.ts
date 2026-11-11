@@ -67,9 +67,17 @@ describe('chat meta bar: user and assistant rows align on the right edge', () =>
     // inner edge.
     const bar = declsIn(source, /\.chat-meta-bar\s*\{([^}]*)\}/)
     // Horizontal padding is what the two rows must agree on. The vertical part
-    // is free: the bar is a footer now (hairline above it), so it carries its
-    // own top padding.
+    // is free: the bar carries its own top padding, which is the only
+    // separation it gets — see the no-rule decision in ChatMessageItem.vue.
     expect(bar).toMatch(/padding:[^;]*var\(--space-6\)/)
     expect(source).not.toMatch(/\.chat-meta-bar-(?:user|assistant)\s*\{[^}]*padding/)
+  })
+
+  it('keeps the meta bar rule-free', () => {
+    // A hairline above the actions was removed: it spanned only the row's
+    // fit-content width, so on a user bubble it capped nothing and read as a
+    // stray line under the message. Locked here so it does not creep back.
+    const bar = declsIn(source, /\.chat-meta-bar\s*\{([^}]*)\}/)
+    expect(bar).not.toMatch(/border-top/)
   })
 })

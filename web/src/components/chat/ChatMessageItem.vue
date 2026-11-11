@@ -1002,8 +1002,14 @@ const copyPayload = quotableText
 /* Chat Meta Bar — the message's footer: duration/timestamp on the left, actions
    on the right. Sits OUTSIDE the bubble (sibling of .msg-card), so it always
    renders on the panel background and never inherits the user bubble's
-   white-on-accent text. The hairline turns it into a footer rather than a loose
-   row floating under the reply. */
+   white-on-accent text.
+
+   NO rule above it, deliberately. A 1px border here was meant to "turn the row
+   into a footer", but it only spanned the row's own (fit-content) width, so on
+   a user message it capped nothing and read as a stray line under the bubble.
+   The footer reading comes from the muted small text and the icon row itself,
+   plus the bubble's own fill and radius — the same way every chat UI separates
+   a bubble from its actions. */
 .chat-meta-bar {
     display: flex;
     align-items: center;
@@ -1011,7 +1017,6 @@ const copyPayload = quotableText
     margin-top: var(--space-2);
     gap: var(--space-3);
     padding: var(--space-2) var(--space-6) 0;
-    border-top: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
     min-width: 0;
 }
 
