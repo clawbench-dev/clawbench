@@ -144,6 +144,39 @@ describe('createSingleTabGuard', () => {
     a.dispose()
     expect(true).toBe(true)
   })
+
+  // The native hosts are deliberately NOT exempt (issue #666). Exempting them
+  // would hide the real defect — a WebView that is never destroyed keeps its
+  // document, and therefore its lock, alive for the life of the process — and
+  // replace "stuck on the blocking screen" with "two pages fight over one
+  // client_id", which is the storm this guard exists to prevent. The Android
+  // side releases the document on teardown instead.
+  it('does not exempt the Android or HarmonyOS native host', async () => {
+    const bridgeWindow = window as unknown as { ClawBenchNative?: unknown }
+    const original = bridgeWindow.ClawBenchNative
+    try {
+      for (const platform of ['android', 'harmonyos']) {
+        bridgeWindow.ClawBenchNative = {
+          isNativeApp: () => true,
+          getHostPlatform: () => platform,
+        }
+        const a = makeGuard(`native-${platform}-a`)
+        expect(await a.acquire()).toBe(true)
+        // A second context on the same host must still be blocked: that is the
+        // whole point of keeping the guard on in a native shell.
+        const b = makeGuard(`native-${platform}-b`)
+        expect(await b.acquire()).toBe(false)
+        a.release()
+        expect(await b.acquire()).toBe(true)
+        // Hand the slot back before the next platform runs, or its first
+        // acquire would find this iteration's owner still holding it.
+        b.release()
+      }
+    } finally {
+      if (original === undefined) delete bridgeWindow.ClawBenchNative
+      else bridgeWindow.ClawBenchNative = original
+    }
+  })
 })
 
 // ── Web Locks tier ──────────────────────────────────────────────────────────

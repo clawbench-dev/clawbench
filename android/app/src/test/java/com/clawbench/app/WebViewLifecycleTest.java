@@ -11,6 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertNull;
 
 import android.content.SharedPreferences;
 import android.view.View;
@@ -107,6 +108,82 @@ public class WebViewLifecycleTest {
         verify(mockWebView).onResume();
         // No resumeTimers() since pauseTimers() is no longer called.
         verify(mockWebView, never()).resumeTimers();
+    }
+
+    // =====================================================
+    // MainActivity.destroyWebView — the single-tab lock depends on it
+    // =====================================================
+
+    /**
+     * A dropped WebView keeps its document (and the frontend's Web Lock) alive
+     * for the life of the process, and this process outlives the Activity
+     * because BackgroundService is stopWithTask="false". The next launch then
+     * finds the lock held by a page nobody can see and shows the blocking
+     * screen — issue #666. Clearing the field alone is NOT enough: only
+     * destroy() releases the document, so that is what these tests pin.
+     */
+    @Test
+    public void mainActivity_destroyWebView_detachesAndDestroysTheView() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        android.view.ViewGroup mockParent = mock(android.view.ViewGroup.class);
+        when(mockWebView.getParent()).thenReturn(mockParent);
+        setField(mainActivity, "webView", mockWebView);
+
+        invokeMethod(mainActivity, "destroyWebView");
+
+        verify(mockWebView).loadUrl("about:blank");
+        verify(mockParent).removeView(mockWebView);
+        verify(mockWebView).destroy();
+        assertNull("the field must be cleared so no late JS lands on a dead view",
+                getField(mainActivity.getClass(), "webView").get(mainActivity));
+    }
+
+    @Test
+    public void mainActivity_destroyWebView_isSafeWhenAlreadyDestroyed() throws Exception {
+        setField(mainActivity, "webView", null);
+
+        // Must not throw — onDestroy can run after a renderer crash already
+        // replaced or dropped the view.
+        invokeMethod(mainActivity, "destroyWebView");
+
+        assertNull(getField(mainActivity.getClass(), "webView").get(mainActivity));
+    }
+
+    /**
+     * The lifecycle hook must actually call it — testing destroyWebView() alone
+     * would still pass if onDestroy stopped calling it, which is the exact
+     * regression that produced #666.
+     */
+    @Test
+    public void mainActivity_onDestroy_releasesTheWebView() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(mainActivity, "webView", mockWebView);
+
+        MainActivity spyActivity = spy(mainActivity);
+        // super.onDestroy() walks the fragment/ lifecycle machinery, which an
+        // Unsafe-allocated Activity has no real instances of.
+        setField(spyActivity, "mFragments", mock(FragmentController.class));
+        setField(spyActivity, "mFragmentLifecycleRegistry", mock(androidx.lifecycle.LifecycleRegistry.class));
+
+        invokeMethod(spyActivity, "onDestroy");
+
+        verify(mockWebView).destroy();
+    }
+
+    @Test
+    public void mainActivity_destroyWebView_keepsGoingWhenTeardownStepsThrow() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        android.view.ViewGroup mockParent = mock(android.view.ViewGroup.class);
+        when(mockWebView.getParent()).thenReturn(mockParent);
+        doThrow(new IllegalStateException("view already detached")).when(mockWebView).loadUrl("about:blank");
+        doThrow(new IllegalStateException("wrong thread")).when(mockParent).removeView(mockWebView);
+        setField(mainActivity, "webView", mockWebView);
+
+        // Each step is best-effort: a throwing early step must not skip destroy().
+        invokeMethod(mainActivity, "destroyWebView");
+
+        verify(mockWebView).destroy();
+        assertNull(getField(mainActivity.getClass(), "webView").get(mainActivity));
     }
 
     // =====================================================

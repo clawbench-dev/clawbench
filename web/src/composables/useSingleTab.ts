@@ -142,9 +142,16 @@ function getLockManager(): LockManager | null {
  *
  * - Child frames share the parent's storage and would otherwise fight it for
  *   ownership; they are always allowed through.
- * - The native app hosts a single WebView, so there is nothing to arbitrate.
- *   Its background service uses a separate `native-bg-*` id and never loads
- *   this page.
+ *
+ * Nothing else is exempt. In particular the native hosts are NOT exempt: an
+ * Android WebView (and a HarmonyOS ArkWeb) is a real page holding a real Web
+ * Lock, and its process outlives the Activity because BackgroundService is
+ * `stopWithTask="false"`. Exempting them would turn "the old page never let go"
+ * into "two pages fight over one client_id", which is the storm this guard
+ * exists to prevent. The fix for a stuck native shell is to release the
+ * document on teardown (MainActivity.destroyWebView), not to skip arbitration.
+ * Its background event connection uses a separate `native-bg-*` id and never
+ * loads this page.
  */
 function guardNotApplicable(): boolean {
   try {
