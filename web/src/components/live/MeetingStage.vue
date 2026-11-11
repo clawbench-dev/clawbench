@@ -1728,7 +1728,7 @@ watch(
   gap: var(--space-3, 6px);
   min-width: 0;
   padding: var(--space-3, 6px) var(--space-5, 10px);
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary, #f6f8fa);
   font-size: var(--font-size-xs, 11px);
 }
@@ -2063,7 +2063,7 @@ watch(
   width: calc(200 * var(--dp));
   max-width: 100%;
   aspect-ratio: 4 / 3;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary, #21262d);
   overflow: hidden;
   border: 1px solid var(--border-color, rgb(255 255 255 / 10%));

@@ -872,7 +872,7 @@ function forgeTargetFromItemKey(key: string) {
   padding: var(--space-5) var(--space-5) var(--space-4);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   min-width: 0;
   transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
     box-shadow var(--duration-base) ease;

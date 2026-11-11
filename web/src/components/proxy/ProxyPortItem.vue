@@ -151,7 +151,7 @@ const statusTitle = computed(() => {
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-6) calc(14 * var(--dp));
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   cursor: pointer;

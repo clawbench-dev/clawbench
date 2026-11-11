@@ -413,7 +413,7 @@ defineExpose({
 .execution-item {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   overflow: hidden;
   transition: all var(--duration-slow) ease;
 }

@@ -745,9 +745,10 @@ onMounted(() => {
 
 .meeting-list { display: flex; flex-direction: column; gap: var(--space-4, 8px); }
 
-/* Square card, hairline border, 8px gap — the task tab's row language. The
-   card stays sharp while its labels are pills: the container is structure, the
-   pills are metadata. */
+/* Card radius is shared with every other dock panel's card (--radius-md). The
+   card is a rounded container while its labels stay pills: the container is
+   structure, the pills are metadata. `overflow: hidden` keeps the left state
+   stripe inside that rounded corner. */
 .meeting-row {
   position: relative;
   display: flex;
@@ -755,9 +756,10 @@ onMounted(() => {
   gap: var(--space-4, 8px);
   padding: var(--space-4, 8px) var(--space-4, 8px) var(--space-4, 8px) var(--space-5, 10px);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary, #f8f9fa);
   cursor: pointer;
+  overflow: hidden;
   transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
     box-shadow var(--duration-base) ease;
 }

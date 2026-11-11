@@ -18,12 +18,12 @@
  * They keep only their own layout (e.g. the prompt body), never this shape.
  */
 
-/* The card shell: secondary surface, hairline border, square corners (the
-   design language of this page is deliberately radius 0). */
+/* The card shell: secondary surface, hairline border, and the shared card
+   radius (--radius-md) used by every dock panel's cards. */
 .overview-card {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-5);
   display: flex;
   flex-direction: column;

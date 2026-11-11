@@ -83,7 +83,7 @@ const time = computed(() => formatClockTime(new Date(props.at)))
 
 .chat-row__text {
   padding: var(--space-2, 4px) var(--space-4, 8px);
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary, rgba(255, 255, 255, 0.06));
   color: var(--text-primary, #e6edf3);
   font-size: var(--font-size-sm, 13px);

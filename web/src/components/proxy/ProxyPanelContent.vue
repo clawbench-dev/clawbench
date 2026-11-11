@@ -88,7 +88,7 @@
       </template>
 
       <!-- Web mode: app recommendation banner -->
-      <div v-if="isWebApp" class="tunnel-banner tip tunnel-banner--square">
+      <div v-if="isWebApp" class="tunnel-banner tip">
         <Smartphone :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.appRecommendation') }}</span>
@@ -703,7 +703,7 @@ async function handleRetryTunnel() {
   align-items: flex-start;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border-left: 3px solid;
   flex-shrink: 0;
 }
@@ -724,10 +724,6 @@ async function handleRetryTunnel() {
   background: rgba(59, 130, 246, 0.06);
   border-left-color: #3b82f6;
   color: var(--text-secondary, #666);
-}
-
-.tunnel-banner.tip.tunnel-banner--square {
-  border-radius: 0;
 }
 
 .tunnel-banner.tip .tunnel-banner-detail {
@@ -831,7 +827,7 @@ async function handleRetryTunnel() {
 /* Tunnel guide (web mode) */
 .tunnel-guide {
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -1083,7 +1079,7 @@ async function handleRetryTunnel() {
   padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-color, #e5e5e5);
   border-left: 3px solid #3b82f6;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary, #f8f9fa);
   color: var(--text-primary, #1a1a1a);
   cursor: pointer;

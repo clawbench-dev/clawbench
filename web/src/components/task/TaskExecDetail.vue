@@ -883,7 +883,7 @@ onUnmounted(() => {
   margin: 0;
   padding: var(--space-4) var(--space-5);
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--bg-primary, #fff);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-relaxed);

@@ -370,7 +370,7 @@ onMounted(refresh)
   padding: var(--space-5);
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--duration-slow) ease;
   position: relative;

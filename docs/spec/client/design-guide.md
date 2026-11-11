@@ -130,6 +130,8 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 `0`（直角）**刻意不 token 化**——写死 `0` 是在表达"这里就是要方"这个决定。
 
+**卡片一律用 `--radius-md`**：左栏各面板（会议、任务、统计、分享、端口映射、通知中心）与设置页的分组卡片共用一个圆角，不要按页面另写 `0` / `--radius-sm` / `--radius-lg`。卡片内部的按钮、输入框、标签仍按各自档位（`--radius-sm` / `--radius-xs` / `--radius-full`）。
+
 ### 动效时长
 
 `--duration-fast: 0.1s`（hover/active 反馈）、`--duration-base: 0.15s`（颜色/背景默认）、`--duration-slow: 0.2s`（大表面淡入）。

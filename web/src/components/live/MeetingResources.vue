@@ -413,7 +413,7 @@ function metaFor(item: MeetingResourceItem): string {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
   min-width: 0;

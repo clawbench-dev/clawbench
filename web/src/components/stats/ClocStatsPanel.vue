@@ -242,7 +242,7 @@ onMounted(() => {
 .stats-card-panel {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
@@ -263,7 +263,7 @@ onMounted(() => {
 }
 .stats-error {
   padding: calc(9 * var(--dp)) var(--space-6);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
@@ -288,7 +288,7 @@ onMounted(() => {
 .stats-total {
   background: var(--bg-elevated, var(--bg-primary));
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;

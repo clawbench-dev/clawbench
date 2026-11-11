@@ -97,7 +97,7 @@ const rowWidths = computed(() =>
 .stats-skeleton-section {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
@@ -119,7 +119,7 @@ const rowWidths = computed(() =>
 .stats-skeleton-card {
   background: var(--bg-elevated, var(--bg-primary));
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
