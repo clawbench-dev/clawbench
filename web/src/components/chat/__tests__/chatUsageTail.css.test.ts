@@ -79,4 +79,24 @@ describe('in-bubble consumption figures', () => {
     const body = rule(css, '.chat-usage-arrow')
     expect(body).not.toMatch(/opacity\s*:/)
   })
+
+  it('pins the model to the left edge while the figures stay flush right', () => {
+    // `margin-right: auto` (NOT `justify-content: space-between`): a row that
+    // has no model must keep its figures flush right exactly as before.
+    const model = rule(css, '.chat-usage-model')
+    const row = rule(css, '.chat-usage-inline')
+    expect(model).toMatch(/margin-right:\s*auto/)
+    expect(row).toMatch(/justify-content:\s*flex-end/)
+  })
+
+  it('ellipsizes a long model id instead of squeezing the figures', () => {
+    // A flex item refuses to shrink below its content without `min-width: 0`,
+    // so `text-overflow` alone would never fire and long provider/model pairs
+    // would push the numbers out of the bubble.
+    const model = rule(css, '.chat-usage-model')
+    expect(model).toMatch(/min-width:\s*0/)
+    expect(model).toMatch(/overflow:\s*hidden/)
+    expect(model).toMatch(/text-overflow:\s*ellipsis/)
+    expect(model).toMatch(/white-space:\s*nowrap/)
+  })
 })

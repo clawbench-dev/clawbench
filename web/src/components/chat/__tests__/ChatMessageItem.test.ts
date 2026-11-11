@@ -521,6 +521,65 @@ describe('ChatMessageItem', () => {
       })
       expect(wrapper.find('.chat-usage-inline').exists()).toBe(false)
     })
+
+    it('shows the model that produced the reply, before the figures', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'm1', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { model: 'claude-sonnet-4-6', credit: 0.5, inputTokens: 1200, outputTokens: 80 },
+        },
+      })
+      const tail = wrapper.find('.chat-usage-inline')
+      expect(tail.find('.chat-usage-model').text()).toBe('claude-sonnet-4-6')
+      // DOM order IS the left-to-right order: model first, figures after it.
+      expect(tail.element.firstElementChild?.classList.contains('chat-usage-model')).toBe(true)
+      // The full id stays reachable when the row ellipsizes it.
+      expect(tail.find('.chat-usage-model').attributes('title')).toBe('claude-sonnet-4-6')
+    })
+
+    it('renders a provider/model pair readably instead of the raw JSON id', () => {
+      const wrapper = createWrapper({
+        msg: {
+          id: 'm2', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { model: '["deepseek-official","deepseek-v4-pro"]', inputTokens: 10 },
+        },
+      })
+      expect(wrapper.find('.chat-usage-model').text()).toBe('deepseek-official/deepseek-v4-pro')
+    })
+
+    it('shows the model even when the turn reported no money and no tokens', () => {
+      // The model is a per-reply fact, so it must not depend on usage figures
+      // being present — otherwise single-chat replies that report neither would
+      // silently lose their attribution.
+      const wrapper = createWrapper({
+        msg: {
+          id: 'm3', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { model: 'gpt-5-codex' },
+        },
+      })
+      const tail = wrapper.find('.chat-usage-inline')
+      expect(tail.exists()).toBe(true)
+      expect(tail.find('.chat-usage-model').text()).toBe('gpt-5-codex')
+      expect(tail.find('.chat-usage-tokens').exists()).toBe(false)
+      expect(tail.find('.chat-usage-money').exists()).toBe(false)
+    })
+
+    it('omits the model span when the backend reported none', () => {
+      // No fallback to the session's current model: that would relabel old
+      // replies after a mid-session switch, which is the bug being avoided.
+      const wrapper = createWrapper({
+        msg: {
+          id: 'm4', role: 'assistant', content: 'response',
+          blocks: [{ type: 'text', text: 'response' }],
+          metadata: { credit: 1, inputTokens: 10 },
+        },
+      })
+      expect(wrapper.find('.chat-usage-inline').exists()).toBe(true)
+      expect(wrapper.find('.chat-usage-model').exists()).toBe(false)
+    })
   })
 
   // DELETED (queue-store refactor): 'emits remove-pending when pending remove
