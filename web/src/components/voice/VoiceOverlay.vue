@@ -120,6 +120,7 @@ const {
   inputText: voiceText,
   targetEl,
   draftPending,
+  configured,
   startGlobal,
   startAt,
   stop,
@@ -241,6 +242,9 @@ const focusEl = ref<HTMLElement | null>(null)
 const fabPos = ref({ top: 0, right: 12 })
 
 const fabVisible = computed(() => {
+  // No recognition engine → no button. Pressing it could only ever produce
+  // "go configure it"; F9 still gives that hint for discoverability.
+  if (!configured.value) return false
   if (!isTouchPrimary.value || voiceState.value !== 'idle' || targetEl.value) return false
   const el = focusEl.value
   if (!el) return false

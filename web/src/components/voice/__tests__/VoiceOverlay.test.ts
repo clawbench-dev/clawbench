@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import VoiceOverlay from '../VoiceOverlay.vue'
 import i18n from '@/i18n'
 import { useVoiceInput } from '@/composables/useVoiceInput'
+import { _resetPlatformForTest, _setPlatformForTest } from '@/composables/usePlatformDetect'
 import { useToast } from '@/composables/useToast'
 import { serverConfig } from '@/composables/useSettingsConfig'
 
@@ -39,6 +40,7 @@ describe('VoiceOverlay', () => {
   afterEach(() => {
     wrapper?.unmount()
     wrapper = null
+    _resetPlatformForTest()
     // The actions show a toast, whose auto-dismiss timer would otherwise
     // outlive the test (and the environment).
     useToast().dismiss()
@@ -58,6 +60,23 @@ describe('VoiceOverlay', () => {
     el.setSelectionRange(caret, caret)
     return el
   }
+
+  it('hides the touch mic button when no recognition engine is configured', async () => {
+    _setPlatformForTest({ isTouchPrimary: true })
+    serverConfig.value = { stt: { provider: '' } }
+    mountOverlay()
+    field('abc')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.querySelector('.voice-fab')).toBeNull()
+  })
+
+  it('shows the touch mic button on a touch device once an engine is configured', async () => {
+    _setPlatformForTest({ isTouchPrimary: true })
+    serverConfig.value = { stt: { provider: 'vllm' } }
+    mountOverlay()
+    field('abc')
+    await vi.waitFor(() => expect(document.querySelector('.voice-fab')).not.toBeNull())
+  })
 
   it('writes into whichever field holds the caret when F9 is released', async () => {
     mountOverlay()

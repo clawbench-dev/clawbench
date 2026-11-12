@@ -19,7 +19,7 @@
  *
  * Recognized text is never auto-sent.
  */
-import { ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { useSettingsConfig } from './useSettingsConfig'
 import { useToast } from './useToast'
 import { useDialog } from './useDialog'
@@ -175,6 +175,16 @@ export function useVoiceInput() {
 
   const shortcutKey = () => (sttField('shortcut_key') as string | undefined) ?? 'F9'
   const provider = () => (sttField('provider') as string | undefined) ?? ''
+
+  /**
+   * Whether a recognition engine is configured.
+   *
+   * The touch mic button is hidden while this is false: an entry point whose
+   * only possible outcome is "go configure something" is worse than no entry
+   * point. The F9 shortcut still answers with the same hint, so the feature is
+   * discoverable without a dead button sitting on screen.
+   */
+  const configured = computed(() => Boolean(provider()))
 
   // Each engine keeps its own streaming switch and language: they used to be
   // shared, so turning streaming on for Doubao also switched it on for the
@@ -772,6 +782,7 @@ export function useVoiceInput() {
     mode,
     targetEl,
     draftPending,
+    configured,
     toggle,
     toggleAt,
     start,
