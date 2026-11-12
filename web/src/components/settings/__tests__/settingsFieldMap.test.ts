@@ -37,6 +37,21 @@ describe('settingsFieldMap', () => {
   // 群聊: the nickname is also the meeting display name and the profile is
   // injected into every agent prompt. Guard both halves of the extraction so a
   // later refactor cannot silently put the nickname back under chat.
+  // Remote images in a mail body load by default; the row exists so a cautious
+  // reader can turn that off. Pin both halves — the panel entry and the value
+  // the reader actually consults — or the switch could render while changing
+  // nothing.
+  it('offers the mail image default as a local switch that is on', () => {
+    const row = categoryItems['mail'].find(
+      e => e.type === 'item' && (e as { spec: { key: string } }).spec.key === 'mailLoadRemoteImages',
+    )
+    expect(row).toBeDefined()
+    if (row!.type !== 'item') throw new Error('expected an item entry for mailLoadRemoteImages')
+    expect(row!.spec.type).toBe('switch')
+    expect(row!.spec.source).toBe('local')
+    expect(localConfig.mailLoadRemoteImages).toBe(true)
+  })
+
   it('identity category owns the user nickname and profile', () => {
     const identity = categoryItems['identity']
     expect(identity).toBeDefined()

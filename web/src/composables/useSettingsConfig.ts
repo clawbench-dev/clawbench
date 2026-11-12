@@ -412,6 +412,12 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   stickyScroll: true,
   fileView: 'list',
   filePreviewMode: false,
+  // Remote images inside an email body load by default (设置 → 邮件 → 邮件阅读).
+  // On, a newsletter renders as its sender intended; off, every picture stays
+  // blocked until the reader asks for it in that one message. Per device: it is
+  // purely how this screen draws the mail, and a phone on mobile data may well
+  // want the opposite answer from a desktop. Read by `MailReader.vue`.
+  mailLoadRemoteImages: true,
   // How the layout (split ratios, collapses, dock/tab choices) is remembered:
   // one shared record for every project, or one per project. Default 'global'
   // keeps the pre-existing behaviour.

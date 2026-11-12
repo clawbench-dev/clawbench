@@ -156,6 +156,7 @@ import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useToast } from '@/composables/useToast'
 import { buildMailQuote } from '@/utils/mailQuote'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 const props = defineProps<{ messageId: number }>()
 const emit = defineEmits<{
@@ -170,7 +171,21 @@ const detail = ref<MailMessageDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
 const busy = ref(false)
+/** Per-message override: the reader pressed "Show images" on this message. */
 const allowRemoteImages = ref(false)
+
+/**
+ * Whether this message may load remote images right now.
+ *
+ * The default comes from 设置 → 邮件 → 邮件阅读 (`mailLoadRemoteImages`, on out of
+ * the box). Keeping it as a computed rather than seeding the ref means flipping
+ * the switch takes effect on the message already on screen instead of the next
+ * one. The per-message override only ever adds permission — turning the global
+ * switch off still blocks a message the user had not explicitly allowed.
+ */
+const imagesAllowed = computed(
+  () => localConfig.mailLoadRemoteImages !== false || allowRemoteImages.value,
+)
 
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
 
@@ -240,11 +255,11 @@ const sentAtLabel = computed(() =>
   detail.value ? mailFullTimestamp(detail.value.sentAt) : '',
 )
 const showImagesBar = computed(
-  () => !!detail.value?.bodyHtml && hasRemoteImages(detail.value.bodyHtml) && !allowRemoteImages.value,
+  () => !!detail.value?.bodyHtml && hasRemoteImages(detail.value.bodyHtml) && !imagesAllowed.value,
 )
 const docSource = computed(() => {
   if (!detail.value?.bodyHtml) return ''
-  return buildMailDocument(detail.value.bodyHtml, { allowRemoteImages: allowRemoteImages.value })
+  return buildMailDocument(detail.value.bodyHtml, { allowRemoteImages: imagesAllowed.value })
 })
 
 let generation = 0
@@ -253,6 +268,8 @@ async function load(): Promise<void> {
   const gen = ++generation
   loading.value = true
   error.value = ''
+  // The override is per message: moving to another mail re-applies the
+  // configured default instead of carrying the previous message's answer.
   allowRemoteImages.value = false
   try {
     const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${props.messageId}`)

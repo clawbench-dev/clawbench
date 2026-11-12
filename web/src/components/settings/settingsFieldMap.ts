@@ -431,6 +431,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // placeholder only opens the section and must also be listed in
     // PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+    // How a message body is drawn. Local, not server: it changes nothing about
+    // what the server fetches or stores, only whether this screen lets the
+    // mail's own <img> tags hit the network. The default is ON, so the row is
+    // about letting a cautious reader turn the exposure off — the description
+    // has to name the risk (tracking pixels / read receipts), not just say
+    // "images".
+    { type: 'item', spec: { labelKey: 'settings.items.mailLoadImages', descriptionKey: 'settings.items.mailLoadImagesDesc', key: 'mailLoadRemoteImages', type: 'switch', source: 'local', sectionHeader: 'settings.items.mailReadSection' } },
   ],
   providers: [
     // Model-provider list (endpoint + credential). Same shape as the MCP

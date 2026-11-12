@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import en from '@/i18n/locales/en'
+import { localConfig } from '@/composables/useSettingsConfig'
 import MailReader from '../MailReader.vue'
 
 const apiGet = vi.fn()
@@ -80,7 +81,7 @@ describe('MailReader', () => {
     expect(links[0].attributes('href')).toBe('/api/mail/messages/5/attachments/11')
   })
 
-  it('renders HTML mail inside a sandboxed iframe', async () => {
+  it('lets remote images through by default, per the mail setting', async () => {
     apiGet.mockResolvedValue({
       message: { ...detail, bodyText: '', bodyHtml: '<p>rich</p><img src="https://track.test/p.png">' },
     })
@@ -92,8 +93,33 @@ describe('MailReader', () => {
     const sandbox = frame.attributes('sandbox') ?? ''
     expect(sandbox).toContain('allow-same-origin')
     expect(sandbox).not.toContain('allow-scripts')
-    // Remote images are blocked until the user asks for them.
-    expect(wrapper.text()).toContain('Remote images are blocked')
+    // The CSP is what decides whether the picture loads; "on by default" has to
+    // be visible there, not merely implied by the absent bar.
+    expect(frame.attributes('srcdoc')).toContain('img-src \'self\' data: https: http:')
+    expect(wrapper.text()).not.toContain('Remote images are blocked')
+  })
+
+  it('blocks remote images and offers "Show images" when the setting is off', async () => {
+    apiGet.mockResolvedValue({
+      message: { ...detail, bodyText: '', bodyHtml: '<p>rich</p><img src="https://track.test/p.png">' },
+    })
+    localConfig.mailLoadRemoteImages = false
+    try {
+      const wrapper = mountReader()
+      await flushPromises()
+
+      const frame = wrapper.find('iframe.mail-reader__frame')
+      expect(frame.attributes('srcdoc')).not.toContain('img-src \'self\' data: https: http:')
+      expect(wrapper.text()).toContain('Remote images are blocked')
+
+      await wrapper.findAll('button').find((b) => b.text() === 'Show images')!.trigger('click')
+      await nextTick()
+      expect(wrapper.find('iframe.mail-reader__frame').attributes('srcdoc'))
+        .toContain('img-src \'self\' data: https: http:')
+      expect(wrapper.text()).not.toContain('Remote images are blocked')
+    } finally {
+      localConfig.mailLoadRemoteImages = true
+    }
   })
 
   it('emits reply modes and back', async () => {
