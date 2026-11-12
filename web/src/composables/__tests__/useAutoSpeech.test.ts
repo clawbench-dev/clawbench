@@ -1391,9 +1391,8 @@ describe('useAutoSpeech — Android system speech engine', () => {
       expect.anything(),
     )
     expect(api.isActive('42')).toBe(false)
-    // Do not keep a broken engine selected: the next read must go straight to
-    // the server instead of waiting out the same timeout again.
-    expect(localConfig.systemSpeech).toBe(false)
+    // The choice stays as the user made it — no silent switch to the server.
+    expect(localConfig.systemSpeech).toBe(true)
   })
 
   it('ignores events for a different utterance id', async () => {
@@ -1426,27 +1425,23 @@ describe('useAutoSpeech — Android system speech engine', () => {
     expect(nativeTtsMock.ttsStop).toHaveBeenCalled()
   })
 
-  it('falls back to server synthesis when the device has no engine', async () => {
+  it('never falls back to the server when the phone engine is unavailable', async () => {
+    // The user picked the phone voice on purpose. Switching to the server
+    // behind their back makes it impossible to tell which voice spoke, so a
+    // failure must end the read instead.
     nativeTtsMock.ttsStatus.mockReturnValue('unavailable')
-    fetchSpy.mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: async () => ({ error: 'boom' }),
-    })
 
     const api = useAutoSpeech()
     api.speakText('42', '原文')
 
-    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled())
+    await vi.waitFor(() => expect(toastShowMock).toHaveBeenCalledWith(
+      'settings.items.systemSpeechNoEngine',
+      expect.anything(),
+    ))
 
-    expect(toastShowMock).toHaveBeenCalledWith('settings.items.systemSpeechNoEngine', expect.anything())
-    // The fallback is a normal server-synthesis request: no summarizeOnly, and
-    // the phone engine is never asked to speak.
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
-    expect(body.summarizeOnly).toBeUndefined()
+    expect(fetchSpy).not.toHaveBeenCalled()
     expect(nativeTtsMock.ttsSpeak).not.toHaveBeenCalled()
-    // Stop retrying on this device: every read would otherwise wait out the
-    // probe and then fall back anyway.
-    expect(localConfig.systemSpeech).toBe(false)
+    expect(localConfig.systemSpeech).toBe(true)
+    expect(api.isActive('42')).toBe(false)
   })
 })

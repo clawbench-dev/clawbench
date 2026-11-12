@@ -140,11 +140,6 @@ if (typeof window !== 'undefined') {
         // the screen — the user has no way to enable logs on our behalf.
         appLog.w(TAG, 'native tts error: ' + (detail.message || ''))
         reportError(nativeFailureText(detail.message))
-        // A failed synthesis is not transient on a given phone: the engine
-        // either refuses this app or has no working voice. Turn the option off
-        // so the next read uses the server immediately instead of waiting out
-        // another 30-second engine timeout in silence.
-        setLocalConfig('systemSpeech', false)
       }
       onDone?.()
     }
@@ -602,9 +597,14 @@ export function useAutoSpeech() {
     }
   }
 
-  /** True when this device can read with its own engine and the user chose it. */
+  /**
+   * True when the user chose the phone voice.
+   *
+   * Whether the host can actually do it is checked inside — a missing bridge
+   * must be reported, not treated as "use the server instead".
+   */
   function shouldUseSystemSpeech(): boolean {
-    return localConfig.systemSpeech === true && typeof getNative()?.ttsSpeak === 'function'
+    return localConfig.systemSpeech === true
   }
 
   /**
@@ -614,18 +614,25 @@ export function useAutoSpeech() {
    * minutes to read), but nothing is synthesized: `summarizeOnly` returns the
    * text the audio path would have spoken.
    *
-   * @returns true when this path took over; false only when the device has no
-   *   usable engine, in which case the caller falls back to server synthesis.
-   *   A failure after that point throws, so it is reported like any other.
+   * Never falls back to server synthesis: the user picked this voice on
+   * purpose, and switching to another voice behind their back makes it
+   * impossible to tell which one actually spoke. On any failure it reports the
+   * reason and ends the read.
+   *
+   * @returns always true (the request has been handled one way or another)
    */
   async function speakWithSystemSpeech(
     id: string,
     text: string,
     speakerName: string | undefined,
     signal: AbortSignal,
-  ): Promise<boolean> {
+  ): Promise<void> {
     const native = getNative()
-    if (!native?.ttsSpeak) return false
+    if (!native?.ttsSpeak) {
+      reportError(nativeFailureText('no_bridge'))
+      advancePlayback()
+      return
+    }
 
     // Check readiness on every read, not just when the option was chosen.
     // The flag is stored per device and survives app upgrades, so it can be on
@@ -635,12 +642,9 @@ export function useAutoSpeech() {
     const probe = await probeSystemSpeech(8000)
     if (!probe.ok) {
       appLog.w(TAG, 'system speech unavailable at read time: ' + probe.reason)
-      toast.show(gt(systemSpeechErrorKey(probe.reason)), { icon: 'warning', type: 'error', duration: 5000 })
-      // Stop trying on this device. Otherwise every read waits out the probe
-      // and then falls back to the server anyway — worse than just using the
-      // server voice, and it hides the real problem.
-      setLocalConfig('systemSpeech', false)
-      return false
+      reportError(gt(systemSpeechErrorKey(probe.reason)))
+      advancePlayback()
+      return
     }
 
     state.value = 'summarizing'
@@ -685,14 +689,12 @@ export function useAutoSpeech() {
     const utteranceId = String(id)
     const accepted = native.ttsSpeak(spoken, utteranceId)
     appLog.i(TAG, 'native tts speak id=' + utteranceId + ' len=' + spoken.length + ' accepted=' + accepted)
-    if (accepted === 'unavailable' || accepted === 'no_chinese') {
-      // The engine went away after the probe (voice uninstalled, service
-      // killed). Falling back beats going silent.
-      toast.show(gt('autoSpeech.systemSpeechUnavailable'), { icon: 'warning', type: 'error', duration: 4000 })
-      return false
-    }
     if (accepted !== 'ready' && accepted !== 'initializing') {
-      throw new Error(nativeFailureText(accepted))
+      // The engine went away after the probe, or refused the request. Do not
+      // switch voices silently.
+      reportError(nativeFailureText(accepted))
+      advancePlayback()
+      return
     }
 
     nativeTtsId = utteranceId
@@ -710,7 +712,6 @@ export function useAutoSpeech() {
       reportError(nativeFailureText('timeout'))
       onDone?.()
     }, 10000)
-    return true
   }
 
   // --- Internal: generate and play TTS for text ---
@@ -732,8 +733,8 @@ export function useAutoSpeech() {
 
     try {
       if (shouldUseSystemSpeech()) {
-        const handled = await speakWithSystemSpeech(id, text, speakerName, controller.signal)
-        if (handled) return
+        await speakWithSystemSpeech(id, text, speakerName, controller.signal)
+        return
       }
 
       // Step 1: POST to create TTS job (or get cached result)
