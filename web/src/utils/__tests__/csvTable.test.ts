@@ -5,7 +5,9 @@ import {
   detectDelimiter,
   detectNumericColumns,
   filterAndSortRows,
+  isNumericTable,
   parseDelimited,
+  parseNumericCell,
   parseTable,
   stripBom,
 } from '@/utils/csvTable'
@@ -172,5 +174,121 @@ describe('detectNumericColumns', () => {
 
   it('treats a column with no values as non-numeric', () => {
     expect(detectNumericColumns([['', '']], 2)).toEqual([false, false])
+  })
+})
+
+describe('parseNumericCell', () => {
+  it('reads plain numbers', () => {
+    expect(parseNumericCell('42')).toBe(42)
+    expect(parseNumericCell(' -3.5 ')).toBe(-3.5)
+  })
+
+  it('treats a comma with a short tail as a decimal separator', () => {
+    expect(parseNumericCell('3450,75')).toBe(3450.75)
+    expect(parseNumericCell('1,5')).toBe(1.5)
+    expect(parseNumericCell('-0,25')).toBe(-0.25)
+  })
+
+  it('treats groups of three digits as thousands separators', () => {
+    expect(parseNumericCell('1,234')).toBe(1234)
+    expect(parseNumericCell('1,234,567')).toBe(1234567)
+    expect(parseNumericCell('1,234.56')).toBe(1234.56)
+  })
+
+  it('reads the European grouping form', () => {
+    expect(parseNumericCell('1.234,56')).toBe(1234.56)
+    expect(parseNumericCell('1.234.567')).toBe(1234567)
+  })
+
+  it('keeps a single dot as the decimal point', () => {
+    expect(parseNumericCell('1.234')).toBe(1.234)
+  })
+
+  it('reads percentages, currency, units and Chinese magnitudes', () => {
+    expect(parseNumericCell('12.5%')).toBe(12.5)
+    expect(parseNumericCell('12,5 %')).toBe(12.5)
+    expect(parseNumericCell('−3%')).toBe(-3)
+    expect(parseNumericCell('¥1,234')).toBe(1234)
+    expect(parseNumericCell('$12.50')).toBe(12.5)
+    expect(parseNumericCell('CNY 88')).toBe(88)
+    expect(parseNumericCell('1,234元')).toBe(1234)
+    expect(parseNumericCell('42ms')).toBe(42)
+    expect(parseNumericCell('3.2GB')).toBe(3.2)
+    expect(parseNumericCell('5人')).toBe(5)
+    expect(parseNumericCell('1.2万')).toBe(12000)
+    expect(parseNumericCell('3亿元')).toBe(300000000)
+    expect(parseNumericCell('2亿')).toBe(200000000)
+    expect(parseNumericCell('0.3万')).toBe(3000)
+    expect(parseNumericCell('3‰')).toBe(3)
+    expect(parseNumericCell('€12.50')).toBe(12.5)
+    expect(parseNumericCell('£5.5')).toBe(5.5)
+    expect(parseNumericCell('120px')).toBe(120)
+    expect(parseNumericCell('1.5m')).toBe(1.5)
+    expect(parseNumericCell('90分')).toBe(90)
+    expect(parseNumericCell('-¥134')).toBe(-134)
+    expect(parseNumericCell('$12.50万')).toBe(125000)
+  })
+
+  it('reads accounting negatives and full-width digits', () => {
+    expect(parseNumericCell('(1,234)')).toBe(-1234)
+    expect(parseNumericCell('１２３')).toBe(123)
+  })
+
+  it('reads space-grouped numbers', () => {
+    expect(parseNumericCell('1 234')).toBe(1234)
+    expect(parseNumericCell('1 234,56')).toBe(1234.56)
+  })
+
+  it('does not guess ranges, comparisons or unknown suffixes', () => {
+    expect(parseNumericCell('1-2')).toBeNull()
+    expect(parseNumericCell('12pm')).toBeNull()
+    expect(parseNumericCell('3D')).toBeNull()
+    expect(parseNumericCell('≥90%')).toBeNull()
+    expect(parseNumericCell('约120')).toBeNull()
+  })
+
+  it('returns null for text and malformed groupings', () => {
+    expect(parseNumericCell('abc')).toBeNull()
+    expect(parseNumericCell('1,23,456')).toBeNull()
+    expect(parseNumericCell('')).toBeNull()
+  })
+})
+
+describe('isNumericTable', () => {
+  it('accepts decimal-comma numbers as numeric', () => {
+    expect(isNumericTable(['name', 'value'], [['a', '3450,75'], ['b', '12,5']])).toBe(true)
+  })
+
+  it('accepts a table where only one column is purely numeric', () => {
+    expect(isNumericTable(
+      ['name', 'qty', 'note'],
+      [['a', '1', '正常'], ['b', '2', '正常']],
+    )).toBe(true)
+  })
+
+  it('ignores the first column when looking for that numeric column', () => {
+    expect(isNumericTable(
+      ['序号', '名称', '说明'],
+      [['1', '网关', '正常'], ['2', '鉴权', '正常']],
+    )).toBe(false)
+  })
+
+  it('rejects a table where no column is purely numeric', () => {
+    expect(isNumericTable(
+      ['name', 'status'],
+      [['网关', '运行中'], ['鉴权', '降级']],
+    )).toBe(false)
+  })
+
+  it('accepts a single data row', () => {
+    expect(isNumericTable(['name', 'value'], [['a', '1']])).toBe(true)
+  })
+
+  it('treats a percentage column as numeric', () => {
+    expect(isNumericTable(['渠道', '转化率'], [['a', '12.5%'], ['b', '8,4%']])).toBe(true)
+  })
+
+  it('still rejects a table with one text cell', () => {
+    expect(isNumericTable(['name', 'value'], [['a', '3450,75'], ['b', '暂无']])).toBe(false)
   })
 })

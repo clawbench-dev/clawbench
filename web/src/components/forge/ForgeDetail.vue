@@ -79,8 +79,7 @@
         <div
           v-if="detail.item.value.body"
           class="forge-detail-content markdown-body"
-          v-html="renderedBody"
-        ></div>
+        ><RichTextBlock :html="renderedBody" /></div>
 
         <!-- CI: the change's pipelines. Change requests only — an issue has no
              branch and therefore no CI. Collapsed by default and fetched on
@@ -160,8 +159,7 @@
               :data-quote-source="commentQuoteLabel(c)"
               :data-quote-language="detail.item.value.type"
               :data-quote-url="commentUrl(c)"
-              v-html="renderComment(c.body)"
-            ></div>
+            ><RichTextBlock :html="renderComment(c.body)" /></div>
           </div>
         </div>
       </div>
@@ -193,6 +191,7 @@ import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { getQuoteSource } from '@/utils/quoteQuestionUtils'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { appLog } from '@/utils/appLog'
+import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 
 const TAG = 'ForgeDetail'
 const props = defineProps<{

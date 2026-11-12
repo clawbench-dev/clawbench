@@ -17,15 +17,14 @@ import { gt } from '@/composables/useLocale'
  * the live re-application.
  */
 
-/**
- * Same key `setLocalConfig('tableWrap', …)` writes (LOCAL_PREFIX + key). The
- * key keeps its original name so preferences saved before code blocks shared
- * this setting keep working.
- */
-export const BLOCK_WRAP_STORAGE_KEY = 'clawbench-settings-tableWrap'
+import {
+  BLOCK_WRAP_STORAGE_KEY,
+  getDefaultBlockWrap,
+  setBlockWrapCache,
+  _resetBlockWrapCache,
+} from './blockWrapRead'
 
-/** `null` until the first read, so localStorage is touched once per session. */
-let cached: boolean | null = null
+export { BLOCK_WRAP_STORAGE_KEY, getDefaultBlockWrap }
 
 /**
  * Bumped on every change. Rendered markdown is cached by
@@ -33,21 +32,6 @@ let cached: boolean | null = null
  * block would come back with the previous default's wrapper classes.
  */
 export const blockWrapVersion = ref(0)
-
-/** The default wrap mode for a block that has not been toggled by hand. */
-export function getDefaultBlockWrap(): boolean {
-  if (cached === null) {
-    let value = true
-    try {
-      const raw = localStorage.getItem(BLOCK_WRAP_STORAGE_KEY)
-      if (raw !== null) value = raw !== 'false'
-    } catch {
-      // Private mode / disabled storage: fall back to the shipped default.
-    }
-    cached = value
-  }
-  return cached
-}
 
 /**
  * Re-apply a wrap mode to every block already in the document, buttons
@@ -86,8 +70,8 @@ export function applyBlockWrapToRenderedBlocks(wrap: boolean): void {
 
 /** Update the in-memory default and apply it to the blocks on screen. */
 export function setDefaultBlockWrap(wrap: boolean): void {
-  if (cached !== wrap) blockWrapVersion.value++
-  cached = wrap
+  if (getDefaultBlockWrap() !== wrap) blockWrapVersion.value++
+  setBlockWrapCache(wrap)
   try {
     localStorage.setItem(BLOCK_WRAP_STORAGE_KEY, JSON.stringify(wrap))
   } catch {
@@ -98,6 +82,6 @@ export function setDefaultBlockWrap(wrap: boolean): void {
 
 /** @internal Reset the memoised value — for tests only. */
 export function _resetBlockWrapPref(): void {
-  cached = null
+  _resetBlockWrapCache()
   blockWrapVersion.value = 0
 }

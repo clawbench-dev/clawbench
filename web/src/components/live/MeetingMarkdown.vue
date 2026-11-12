@@ -11,7 +11,7 @@
     @dragend="interactions.onDragEnd"
     @load.capture="onMediaLoad"
   >
-    <div class="markdown-content" v-html="renderedHtml" />
+    <div class="markdown-content"><RichTextBlock :html="renderedHtml" /></div>
   </div>
 
   <TableRowModal
@@ -48,6 +48,7 @@ import { useMarkdownDocumentRender } from '@/composables/useMarkdownDocumentRend
 import { useMarkdownDocumentInteractions } from '@/composables/useMarkdownDocumentInteractions.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
+import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 
 const props = defineProps<{
   /** Raw minutes markdown. */

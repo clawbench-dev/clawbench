@@ -476,3 +476,48 @@
 .block-landscape .table-block-header .table-block-attach-btn {
     display: none;
 }
+
+/* ==========================================================================
+   Data-table component inside a chat table block
+
+   The shared DataTable renders its own grid, toolbar, scrolling and sticky
+   header, so the markdown-table rules above (wrap every cell, display:block,
+   max-width:100%) must not reach it. `.is-data-table` is put on the wrapper by
+   ChatTableBlock.vue; plain mode still uses the normal markdown behaviour
+   (wrap on, the header's wrap toggle still works).
+   ========================================================================== */
+
+.table-block-wrapper.is-data-table {
+    width: 100%;
+}
+
+.table-block-wrapper.is-data-table .table-wrap {
+    overflow: visible !important;
+}
+
+.table-block-wrapper.is-data-table table.dt-grid,
+.table-block-wrapper.no-wrap.is-data-table table.dt-grid {
+    display: table !important;
+    table-layout: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+}
+
+/* 数据表：格子不换行，列宽跟着内容走（横向滚动由组件自己管）。 */
+.table-block-wrapper.is-data-table .dt.is-data th,
+.table-block-wrapper.is-data-table .dt.is-data td {
+    white-space: nowrap !important;
+    word-break: normal !important;
+}
+
+/* 横屏浮层里的数据表：克隆出来的 DOM 没有 Vue 响应，工具条只会是摆设，
+   直接藏掉；滚动高度交还给浮层自己。 */
+.block-landscape .dt-bar {
+    display: none;
+}
+
+.block-landscape .dt-scroll {
+    max-height: none !important;
+    height: 100%;
+}

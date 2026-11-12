@@ -182,12 +182,131 @@ export function parseTable(content: string, fileName = ''): ParsedTable {
     }
 }
 
-/** Numeric value of a cell, or null when it is empty / not a plain number. */
+/**
+ * Numeric value of a cell, or null when it is not a number.
+ *
+ * 认得的写法（表里都当数字）：
+ *   普通数字        42  -3.5  +7  1e3
+ *   千分位 / 小数逗号 1,234  3450,75  1.234,56  1,234.56  1 234（空格分组）
+ *   百分号 / 千分号   12.5%  0,5％  3‰
+ *   货币前缀        ¥1,234  $12.50  CNY 88
+ *   单位后缀        120元  42ms  3.2GB  5人  90分  1.5m
+ *   万亿后缀        1.2万  3亿元  2亿
+ *   括号负数        (1,234)  → -1234
+ *   全角数字        １２３ → 123
+ *
+ * 认不出来就返回 null，不猜：`1-2`、`12pm`、`3D`、`暂无` 都不算。
+ */
 export function parseNumericCell(value: string): number | null {
-    const trimmed = value.trim()
+    const text = normalizeWidth(value.trim())
+    if (text === '') return null
+
+    // 会计写法：(1,234) 表示 -1234
+    const paren = /^\((.+)\)$/.exec(text)
+    if (paren) {
+        const inner = parsePlainNumber(paren[1])
+        return inner === null ? null : -inner
+    }
+
+    const plain = parsePlainNumber(text)
+    if (plain !== null) return plain
+
+    return parseDecoratedNumber(text)
+}
+
+const FULLWIDTH: Record<string, string> = {
+    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+    '．': '.', '，': ',', '％': '%', '＋': '+', '－': '-',
+    '（': '(', '）': ')', '　': ' ',
+}
+
+function normalizeWidth(text: string): string {
+    return text.replace(/[０-９．，％＋－（）]/g, ch => FULLWIDTH[ch] ?? ch)
+}
+
+/** 纯数字（含千分位、小数逗号、空格分组）。 */
+function parsePlainNumber(text: string): number | null {
+    const trimmed = text.trim().replace(/[−]/g, '-')
     if (trimmed === '') return null
-    const n = Number(trimmed)
+    const normalized = normalizeNumericText(trimmed)
+    if (normalized === null) return null
+    const n = Number(normalized)
     return Number.isFinite(n) ? n : null
+}
+
+/**
+ * 带装饰的数字：货币前缀、单位后缀、百分号、万亿。
+ *
+ * 单位用白名单而不是「末尾任意字母」：`42ms` 要认，`12pm`、`3D` 这种不能认。
+ */
+const UNIT_PATTERN = [
+    '毫秒', '分钟', '小时',
+    '万元', '亿元',
+    'GB', 'MB', 'KB', 'TB', 'GHz', 'MHz', 'mAh', 'kg', 'km', 'cm', 'mm',
+    'ms', 'px', 'pt', 'Hz', 'kW', '℃', '°C',
+    '万', '亿', '元', '人', '个', '件', '台', '次', '秒', '分', '时', '天', '月', '年', '度',
+    '%', '‰',
+    's', 'g', 'm', 'W', 'V', 'A', 'B',
+].join('|')
+
+const UNIT_RE = new RegExp(`^(.*?)\\s*(${UNIT_PATTERN})$`)
+const CURRENCY_RE = /^(?:[¥￥$€£₩₽]|USD|CNY|RMB|EUR|GBP|JPY|HKD)\s*/i
+
+function parseDecoratedNumber(text: string): number | null {
+    let rest = text
+    let sign = 1
+
+    if (rest.startsWith('+')) rest = rest.slice(1)
+    else if (rest.startsWith('-')) { sign = -1; rest = rest.slice(1) }
+
+    const currency = CURRENCY_RE.exec(rest)
+    if (currency) rest = rest.slice(currency[0].length)
+
+    let multiplier = 1
+    const unit = UNIT_RE.exec(rest)
+    if (unit) {
+        rest = unit[1]
+        if (unit[2] === '万' || unit[2] === '万元') multiplier = 1e4
+        else if (unit[2] === '亿' || unit[2] === '亿元') multiplier = 1e8
+    }
+
+    const core = parsePlainNumber(rest)
+    if (core === null) return null
+    return sign * core * multiplier
+}
+
+/** 把带逗号 / 空格分组的数字写法转成 `Number()` 能读的形式；认不出来返回 null。 */
+function normalizeNumericText(text: string): string | null {
+    if (/^[-+]?\d{1,3}([ \u00a0\u202f]\d{3})+([.,]\d+)?$/.test(text)) {
+        return text.replace(/[ \u00a0\u202f]/g, '').replace(',', '.')
+    }
+
+    if (!text.includes(',')) {
+        // 两个以上的点号只可能是千分位（1.234.567）；单个点号仍当小数点。
+        if (/^[-+]?\d{1,3}(\.\d{3}){2,}$/.test(text)) return text.replace(/\./g, '')
+        return text
+    }
+
+    const lastComma = text.lastIndexOf(',')
+    const lastDot = text.lastIndexOf('.')
+
+    if (lastDot > lastComma) {
+        // 1,234.56 —— 逗号是千分位，点是小数点
+        if (!/^[-+]?\d{1,3}(,\d{3})*(\.\d+)?$/.test(text)) return null
+        return text.replace(/,/g, '')
+    }
+
+    if (lastDot >= 0) {
+        // 1.234,56 —— 点是千分位，逗号是小数点
+        if (!/^[-+]?\d{1,3}(\.\d{3})*(,\d+)?$/.test(text)) return null
+        return text.replace(/\./g, '').replace(',', '.')
+    }
+
+    // 只有逗号：三位一组当千分位，否则当小数点（3450,75）
+    if (/^[-+]?\d{1,3}(,\d{3})+$/.test(text)) return text.replace(/,/g, '')
+    if (/^[-+]?\d+,\d+$/.test(text)) return text.replace(',', '.')
+    return null
 }
 
 /**
@@ -231,6 +350,34 @@ export function filterAndSortRows(rows: string[][], filter: RowFilter): string[]
         result = [...result].sort((a, b) => sign * compareCells(a[column] ?? '', b[column] ?? ''))
     }
     return result
+}
+
+/**
+ * Is this table a "data table"?
+ *
+ * 产品定的规则：第一列通常是标签，不参与；**其余列里只要有一列是纯数字**
+ * （非空的格子全是数字，空格子算缺失），整张表就默认按数据表展示。
+ *
+ * 之前是「除第一列外每一格都必须是数字」，太严：一张「名称 / 数量 / 备注」
+ * 的表只要备注里有一个字，就整表退化成简单表，数量列明明能排序、能合计。
+ */
+export function isNumericTable(headers: string[], rows: string[][]): boolean {
+    if (headers.length < 2 || rows.length < 1) return false
+    for (let c = 1; c < headers.length; c++) {
+        let seen = 0
+        let allNumeric = true
+        for (const row of rows) {
+            const raw = (row[c] ?? '').trim()
+            if (raw === '') continue
+            seen++
+            if (parseNumericCell(raw) === null) {
+                allNumeric = false
+                break
+            }
+        }
+        if (seen > 0 && allNumeric) return true
+    }
+    return false
 }
 
 /**

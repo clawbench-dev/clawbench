@@ -43,7 +43,7 @@
             <ChevronDown :size="14" :class="{ 'is-collapsed': promptCollapsed }" class="card-chevron" />
           </button>
         </h3>
-        <div v-show="!promptCollapsed" class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" v-html="renderedPrompt"></div>
+        <div v-show="!promptCollapsed" class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick"><RichTextBlock :html="renderedPrompt" /></div>
       </div>
     </div>
 
@@ -72,6 +72,7 @@ import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { store } from '@/stores/app.ts'
 import '@/assets/task-overview-card.css'
+import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()

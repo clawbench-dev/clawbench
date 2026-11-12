@@ -77,7 +77,7 @@ vi.mock('@/composables/useCodeBlockHeader', () => ({
   handleCodeBlockClick: vi.fn(),
   handleTableBlockClick: vi.fn(),
 }))
-vi.mock('@/composables/useDoubleClickCopy', () => ({ useDoubleClickCopy: () => ({ onDblClick: vi.fn() }) }))
+vi.mock('@/composables/useDoubleClickCopy', () => ({ useDoubleClickCopy: () => ({ handleDblClick: vi.fn() }) }))
 vi.mock('@/composables/useQuoteQuestion', () => ({ useQuoteQuestion: () => ({}) }))
 vi.mock('@/utils/quoteQuestionUtils', () => ({ getQuoteSource: () => '' }))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
