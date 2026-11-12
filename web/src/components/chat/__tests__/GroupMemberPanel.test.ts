@@ -31,7 +31,7 @@ vi.mock('@/utils/format', () => ({
 const MEMBERS = [
   { id: 'h', agentId: 'a-h', name: 'Host', backend: 'codebuddy', avatar: '', agentName: 'Host', isHost: true, disabled: false },
   { id: 'b', agentId: 'a-b', name: 'B', backend: 'claude', avatar: '', agentName: 'B', isHost: false, disabled: false },
-  { id: 'c', agentId: 'a-c', name: 'C', backend: 'claude', avatar: '', agentName: 'Claude Code', isHost: false, disabled: false },
+  { id: 'c', agentId: 'a-c', name: 'C', backend: 'claude', avatar: '', agentName: 'Claude Code', isHost: false, disabled: false, usage: { used: 32000, size: 100000 } },
   { id: 'd', agentId: 'a-d', name: 'D', backend: 'claude', avatar: '', agentName: 'D', isHost: false, disabled: true },
 ]
 
@@ -134,6 +134,20 @@ describe('GroupMemberPanel', () => {
 
     // No agent-name difference AND no model → no empty meta slot at all.
     expect(rowOf(w, 'Host').find('.member-row__meta').exists()).toBe(false)
+  })
+
+  it('shows the context usage chip only for members that reported one', async () => {
+    const w = mountPanel()
+    await w.find('.member-chip').trigger('click')
+
+    const c = rowOf(w, 'C')
+    expect(c.find('.member-row__usage').exists()).toBe(true)
+    expect(c.find('.member-row__usage-pct').text()).toBe('32%')
+    expect(c.find('.member-row__usage-fill').attributes('style')).toContain('width: 32%')
+    expect(c.find('.member-row__usage').attributes('title')).toContain('chat.sessionInfo.contextUsageTooltip')
+
+    // No reported usage → no chip at all (a dense row does not show "—").
+    expect(rowOf(w, 'B').find('.member-row__usage').exists()).toBe(false)
   })
 
   it('offers a stop button only for a speaking member that is not the host', async () => {

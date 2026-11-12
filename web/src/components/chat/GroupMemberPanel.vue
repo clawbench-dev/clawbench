@@ -78,6 +78,27 @@
                 <span v-if="modelLabel(m)" class="member-row__model">· {{ modelLabel(m) }}</span>
               </span>
             </span>
+            <!-- Context usage, same chip as the group settings roster (bar +
+                 percent, no "—" row: a dense list hides what it does not have).
+                 It outlives the model/agent detail on narrow cards, because
+                 "almost full, time to compact" is the more actionable number. -->
+            <span
+              v-if="usageOf(m)"
+              class="member-row__usage"
+              :title="usageTitle(m)"
+            >
+              <Activity :size="11" class="member-row__usage-icon" aria-hidden="true" />
+              <span class="member-row__usage-bar">
+                <span
+                  class="member-row__usage-fill"
+                  :style="{
+                    width: Math.min(usagePctOf(usageOf(m)), 100) + '%',
+                    background: usageColorOf(usagePctOf(usageOf(m))),
+                  }"
+                ></span>
+              </span>
+              <span class="member-row__usage-pct">{{ usagePctOf(usageOf(m)) }}%</span>
+            </span>
             <span v-if="running" class="member-row__pill" :class="`is-${statusOf(m)}`">
               {{ statusLabel(m) }}
             </span>
@@ -116,12 +137,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronUp, Crown, LocateFixed, Square } from 'lucide-vue-next'
+import { Activity, ChevronDown, ChevronUp, Crown, LocateFixed, Square } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 import { formatRelativeTime } from '@/utils/format'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
+import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
 import { collectGroupMemberStatus, type GroupMemberRoundStatus } from '@/utils/groupMemberStatus'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
 import type { ChatMessage } from '@/utils/chatStreamUtils'
@@ -187,6 +209,22 @@ function modelLabel(m: GroupMemberInfo): string {
  *  read as a missing value. */
 function hasMeta(m: GroupMemberInfo): boolean {
   return (!!m.agentName && m.agentName !== m.name) || !!modelLabel(m)
+}
+
+/** The member's own context window, when it has reported one. CLI-transport
+ *  agents never report it, so this stays empty for them (no "—" row). */
+function usageOf(m: GroupMemberInfo) {
+  return m.usage || null
+}
+
+function usageTitle(m: GroupMemberInfo): string {
+  const u = usageOf(m)
+  if (!u) return ''
+  return t('chat.sessionInfo.contextUsageTooltip', {
+    used: (u.used ?? 0).toLocaleString(),
+    size: u.size.toLocaleString(),
+    pct: usagePctOf(u),
+  })
 }
 
 // Host first, like the header stack: the host is the group's router, so it
@@ -482,10 +520,16 @@ function jump(m: GroupMemberInfo) {
 }
 
 /* Narrow card: drop the extra identity detail entirely so the name and the
-   status pill keep their room. 28rem = 420 design px of CARD width; a phone
+   status pill keep their room. 32rem = 480 design px of CARD width; a phone
    card is ~370, a desktop pane is ~860. */
-@container member-panel (max-width: 28rem) {
+@container member-panel (max-width: 32rem) {
   .member-row__meta { display: none; }
+}
+
+/* Even narrower: the usage chip goes last. 22rem = 330 design px — a 360px
+   phone card (~340) still shows it, a 320px one does not. */
+@container member-panel (max-width: 22rem) {
+  .member-row__usage { display: none; }
 }
 
 .member-row__name {
@@ -533,6 +577,41 @@ function jump(m: GroupMemberInfo) {
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #6c757d);
   white-space: nowrap;
+}
+
+/* Context usage — the same chip as the group settings roster, sized down to
+   fit a row that already carries a status pill. */
+.member-row__usage {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3 * var(--dp));
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted, #6c757d);
+}
+.member-row__usage-icon {
+  flex-shrink: 0;
+  opacity: var(--opacity-muted, 0.6);
+}
+.member-row__usage-bar {
+  position: relative;
+  width: calc(24 * var(--dp));
+  height: calc(5 * var(--dp));
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.member-row__usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-xs);
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.member-row__usage-pct {
+  font-variant-numeric: tabular-nums;
+  min-width: calc(24 * var(--dp));
+  text-align: right;
 }
 
 /* One trailing slot: stop while it can be stopped, otherwise the jump hint.
