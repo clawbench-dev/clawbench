@@ -654,7 +654,9 @@ const serverDefaults: Record<string, unknown> = {
   'tts.minimax.base_url': 'https://api.minimax.chat',
   'tts.minimax.model': 'speech-02-hd',
   'tts.minimax.voice': 'female-shaonv',
-  'stt.provider': 'vllm',
+  // Empty = not configured. Voice input refuses to record rather than uploading
+  // to a localhost Whisper the user never set up.
+  'stt.provider': '',
   // Per-engine defaults, mirroring model.ApplyDefaults. Every engine keeps its
   // own credentials and options, so switching the engine never inherits (or
   // overwrites) another engine's values.

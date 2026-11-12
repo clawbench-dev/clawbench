@@ -29,7 +29,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body := fmt.Sprintf(`{"category":"stt","values":{"stt.vllm.base_url":%q,"stt.vllm.model":"m"}}`, srv.URL)
+	body := fmt.Sprintf(`{"category":"stt","values":{"stt.provider":"vllm","stt.vllm.base_url":%q,"stt.vllm.model":"m"}}`, srv.URL)
 	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	ServeConfigTest(w, r)
@@ -44,6 +44,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 // TestSTTConnectivity_EmptyBaseURL covers the missing base URL guard in testSTT.
 func TestSTTConnectivity_EmptyBaseURL(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": "",
 		"stt.vllm.model":    "m",
 	})
@@ -62,6 +63,7 @@ func TestSTTConnectivity_DefaultModel(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 	})
 	assert.True(t, res.Success, res.Message)
@@ -78,6 +80,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 		"stt.vllm.api_key":  "test-api-key",
@@ -88,6 +91,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 // TestSTTConnectivity_Unreachable covers the client.Do network error path.
 func TestSTTConnectivity_Unreachable(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": "http://127.0.0.1:19999",
 		"stt.vllm.model":    "m",
 	})
@@ -99,6 +103,7 @@ func TestSTTConnectivity_Unreachable(t *testing.T) {
 // must report it rather than panicking or reporting success.
 func TestSTTConnectivity_NewRequestError(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": ":",
 		"stt.vllm.model":    "m",
 	})
@@ -505,6 +510,7 @@ func TestTestPortForward_ServerPortClosed(t *testing.T) {
 // base URL from a wrong key.
 func TestSTTConnectivity_UnreachableNamesEndpoint(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": "http://127.0.0.1:1",
 		"stt.vllm.model":    "m",
 	})
@@ -521,7 +527,7 @@ func TestSTTConnectivity_UnclassifiedError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := testSTT(context.Background(), map[string]any{"stt.vllm.base_url": srv.URL, "stt.vllm.model": "m"})
+	res := testSTT(context.Background(), map[string]any{"stt.provider": "vllm", "stt.vllm.base_url": srv.URL, "stt.vllm.model": "m"})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "500")
 	assert.Contains(t, res.Message, "internal failure")

@@ -166,7 +166,7 @@
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `provider` | `vllm` | 引擎：`vllm`（OpenAI 兼容接口）/ `doubao`（豆包）/ `alibaba`（阿里云百炼）/ `tencent`（腾讯云语音识别） |
+| `provider` | 空 | 引擎：空＝**未配置，不使用语音识别**；可选 `vllm`（OpenAI 兼容接口）/ `doubao`（豆包）/ `alibaba`（阿里云百炼）/ `tencent`（腾讯云语音识别） |
 | `shortcut_key` | `F9` | 语音输入快捷键（四个引擎共用） |
 | `mic_echo_cancel` | `true` | 回声消除。朗读时靠它不把自己的声音录进去 |
 | `mic_noise_suppress` | `true` | 背景降噪 |

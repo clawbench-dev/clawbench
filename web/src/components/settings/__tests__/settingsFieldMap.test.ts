@@ -730,6 +730,9 @@ describe('settingsFieldMap', () => {
     // The provider list must offer it, otherwise the rows can never render.
     const provider = cfg.commonFields.find(f => f.key === 'stt.provider')
     expect(provider!.options!.map(o => o.value)).toContain('tencent')
+    // "Not configured" is the default and comes first: an unset install must
+    // read as "nothing chosen", not as a localhost engine nobody set up.
+    expect(provider!.options![0]).toEqual({ labelKey: 'settings.items.sttProviderNone', value: '' })
 
     // The streaming switch exists only for the engines that can decode live
     // PCM, each gated on its own engine. vLLM gets no row at all: its value was

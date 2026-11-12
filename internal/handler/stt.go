@@ -71,6 +71,12 @@ func STTTranscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, sttMaxBodyBytes)
 
+	provider := GetSTTProvider()
+	if provider == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{strReqError: "speech recognition is not configured"})
+		return
+	}
+
 	language := r.FormValue("language")
 	file, _, err := r.FormFile("file")
 	if err != nil {
@@ -84,7 +90,6 @@ func STTTranscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	provider := GetSTTProvider()
 	text, err := provider.Transcribe(r.Context(), file, language)
 	if err != nil {
 		slog.Error("stt: transcribe failed", slog.String("error", err.Error()))
@@ -243,6 +248,10 @@ func STTTranscribeWS(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.CloseNow() }()
 
 	provider := GetSTTProvider()
+	if provider == nil {
+		_ = sendSTTMsg(conn, sttWSServerMsg{Type: sttWSError, Message: "speech recognition is not configured"})
+		return
+	}
 	if streaming, ok := provider.(stt.StreamingSTTProvider); ok {
 		serveStreamingSTT(r.Context(), conn, streaming, model.ConfigInstance)
 		return

@@ -358,6 +358,9 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 // testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	providerName := resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider)
+	if providerName == "" {
+		return ConnectivityTestResult{Success: false, Message: "STT engine is not configured"}
+	}
 	if providerName == "doubao" {
 		return testDoubaoSTT(ctx, values)
 	}

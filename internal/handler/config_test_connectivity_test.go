@@ -66,6 +66,7 @@ func TestSTTConnectivity(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 	})
@@ -88,11 +89,20 @@ func TestSTTConnectivity_EmptyTranscriptFails(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "empty transcription")
+}
+
+// TestSTTConnectivity_NotConfigured pins the empty provider: the probe must say
+// the engine is missing rather than reporting a localhost Whisper as broken.
+func TestSTTConnectivity_NotConfigured(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "not configured")
 }
 
 // A server error is a failure. The probe used to treat any non-auth/non-404
@@ -105,6 +115,7 @@ func TestSTTConnectivity_ServerErrorFails(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
@@ -134,6 +145,7 @@ func TestSTTConnectivity_UploadsEmbeddedClip(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 		"stt.vllm.api_key":  "k-1",
@@ -155,6 +167,7 @@ func TestSTTConnectivity_AuthFailure(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
@@ -171,6 +184,7 @@ func TestSTTConnectivity_ModelNotFound(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 	})
@@ -186,6 +200,7 @@ func TestSTTConnectivity_Endpoint404(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})

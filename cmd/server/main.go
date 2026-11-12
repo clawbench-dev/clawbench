@@ -2584,6 +2584,10 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		p.EnableDDC = cfg.STT.Alibaba.EnableDDC
 		p.EndWindowSize = cfg.STT.Alibaba.EndWindowSize
 		return p
+	case "":
+		// No engine selected: voice input stays off instead of silently pointing
+		// at a localhost Whisper that was never configured.
+		return nil
 	case "tencent":
 		p := stt.NewTencentProvider(
 			cfg.STT.Tencent.SecretID, cfg.STT.Tencent.SecretKey, cfg.STT.Tencent.AppID)

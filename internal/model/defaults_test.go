@@ -196,6 +196,12 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if !cfg.STT.Alibaba.EnableITN || !cfg.STT.Alibaba.EnablePunc {
 		t.Errorf("STT.Alibaba ITN/punc = %v/%v, want both true", cfg.STT.Alibaba.EnableITN, cfg.STT.Alibaba.EnablePunc)
 	}
+	// No engine is selected until the user picks one: defaulting to the
+	// OpenAI-compatible engine left a full form of localhost settings that
+	// looked configured but pointed at nothing.
+	if cfg.STT.Provider != "" {
+		t.Errorf("STT.Provider = %q, want empty (not configured)", cfg.STT.Provider)
+	}
 	if cfg.STT.Tencent.Model != "16k_zh" {
 		t.Errorf("STT.Tencent.Model = %q, want default", cfg.STT.Tencent.Model)
 	}

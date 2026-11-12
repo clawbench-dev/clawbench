@@ -104,6 +104,28 @@ func TestSTTTranscribe_Success(t *testing.T) {
 	}
 }
 
+// TestSTTTranscribe_Unconfigured pins the "no engine selected" state: the
+// endpoint must say so instead of dereferencing a nil provider.
+func TestSTTTranscribe_Unconfigured(t *testing.T) {
+	old := GetSTTProvider()
+	defer SetSTTProvider(old)
+	SetSTTProvider(nil)
+
+	body, ct := makeSTTMultipart(t, "AUDIO")
+	req := httptest.NewRequest(http.MethodPost, "/api/stt/transcribe", body)
+	req.Header.Set("Content-Type", ct)
+	w := httptest.NewRecorder()
+
+	STTTranscribe(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "not configured") {
+		t.Fatalf("body = %s, want a not-configured message", w.Body.String())
+	}
+}
+
 func TestSTTTranscribe_MissingFile(t *testing.T) {
 	old := GetSTTProvider()
 	defer SetSTTProvider(old)

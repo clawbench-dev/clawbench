@@ -776,6 +776,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       panelId: 'stt_engine',
       commonFields: [
         { labelKey: 'settings.items.sttProvider', descriptionKey: 'settings.items.sttProviderDesc', key: 'stt.provider', type: 'select', source: 'server', sectionHeader: 'settings.items.sttHeader', options: [
+          // The empty value is "not configured": no engine, no rows, and voice
+          // input tells the user to come back here instead of failing an upload.
+          { labelKey: 'settings.items.sttProviderNone', value: '' },
           { labelKey: 'settings.items.sttProviderVllm', value: 'vllm' },
           { labelKey: 'settings.items.sttProviderDoubao', value: 'doubao' },
           { labelKey: 'settings.items.sttProviderAlibaba', value: 'alibaba' },

@@ -271,9 +271,13 @@ func TestActiveAccessors(t *testing.T) {
 		t.Error("vllm ActiveStreaming = true, want false")
 	}
 
-	// An unset provider behaves like the default engine.
+	// An unset provider means "not configured": there is no engine to tell a
+	// language to, and no vLLM endpoint hiding behind an empty value.
 	cfg.Provider = ""
-	if got := cfg.ActiveLanguage(); got != "en" {
-		t.Errorf("default ActiveLanguage = %q, want en", got)
+	if got := cfg.ActiveLanguage(); got != "" {
+		t.Errorf("unconfigured ActiveLanguage = %q, want empty", got)
+	}
+	if cfg.ActiveStreaming() {
+		t.Error("unconfigured ActiveStreaming = true, want false")
 	}
 }

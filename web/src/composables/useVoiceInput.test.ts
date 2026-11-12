@@ -90,6 +90,8 @@ describe('useVoiceInput', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: { getUserMedia: vi.fn().mockRejectedValue(new Error('denied')) },
     })
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.toggle()
@@ -99,11 +101,31 @@ describe('useVoiceInput', () => {
 
   it('reports a clear error when mediaDevices is missing (insecure context)', async () => {
     vi.stubGlobal('navigator', {}) // no mediaDevices → non-secure context
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.toggle()
     expect(v.state.value).toBe('idle')
     expect(v.error.value).toContain('HTTPS')
+  })
+
+  it('refuses to record when no engine is configured', async () => {
+    // Nothing selected means there is nowhere to send the audio. Recording a
+    // clip that can only fail is worse than one clear sentence pointing at the
+    // setting, and the microphone is never opened.
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: '' } }
+    const getUserMedia = vi.fn()
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(getUserMedia).not.toHaveBeenCalled()
+    expect(v.state.value).toBe('idle')
+    expect(v.error.value).toBeTruthy()
   })
 
   it('non-streaming release stops media tracks and nulls the stream', async () => {
@@ -125,6 +147,8 @@ describe('useVoiceInput', () => {
       json: async () => ({ text: '识别结果' }),
     }))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()
@@ -155,6 +179,8 @@ describe('useVoiceInput', () => {
       json: async () => ({ text: '识别结果' }),
     }))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()
@@ -187,6 +213,8 @@ describe('useVoiceInput', () => {
       Promise.resolve({ ok: true, json: async () => ({ text: texts[call++] }) })
     ))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
 
@@ -220,6 +248,8 @@ describe('useVoiceInput', () => {
       Promise.resolve({ ok: true, json: async () => ({ text: '识别结果' }) })
     ))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
 
@@ -253,6 +283,8 @@ describe('useVoiceInput', () => {
     let resolveFetch!: (v: unknown) => void
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { resolveFetch = resolve })))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
 
@@ -694,6 +726,8 @@ describe('useVoiceInput', () => {
       static isTypeSupported = vi.fn(() => false)
     })
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()

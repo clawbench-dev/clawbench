@@ -491,9 +491,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- STT ---
-	if cfg.STT.Provider == "" {
-		cfg.STT.Provider = "vllm"
-	}
 	// Each engine's own defaults. They are applied unconditionally (not only for
 	// the selected engine) so switching the engine in the settings UI starts
 	// from a usable configuration instead of an empty endpoint.

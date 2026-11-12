@@ -15,7 +15,7 @@ package model
 // language in the engine model name, so both return "".
 func (c STTConfig) ActiveLanguage() string {
 	switch c.Provider {
-	case "doubao", "tencent":
+	case "", "doubao", "tencent":
 		return ""
 	case "alibaba":
 		return c.Alibaba.Language

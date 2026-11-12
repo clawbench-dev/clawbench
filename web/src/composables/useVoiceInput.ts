@@ -136,7 +136,7 @@ export function useVoiceInput() {
     readSttField(settings.serverConfig.value as Record<string, unknown> | undefined, key)
 
   const shortcutKey = () => (sttField('shortcut_key') as string | undefined) ?? 'F9'
-  const provider = () => (sttField('provider') as string | undefined) ?? 'vllm'
+  const provider = () => (sttField('provider') as string | undefined) ?? ''
 
   // Each engine keeps its own streaming switch and language: they used to be
   // shared, so turning streaming on for Doubao also switched it on for the
@@ -181,6 +181,13 @@ export function useVoiceInput() {
   async function start(prefix = '') {
     if (state.value !== 'idle') return
     error.value = ''
+    // Nothing configured means there is nowhere to send the audio. Say so before
+    // asking for the microphone: recording a clip that can only fail is worse
+    // than one clear sentence pointing at the setting.
+    if (!provider()) {
+      fail(i18n.global.t('chat.voice.notConfigured'))
+      return
+    }
     // navigator.mediaDevices only exists in a secure context (HTTPS or
     // localhost). If it's missing the page was served over plain HTTP on a
     // remote host, so the microphone is unreachable regardless of permission.
@@ -458,22 +465,42 @@ export function useVoiceInput() {
     state.value = 'idle'
   }
 
+  /**
+   * How long the capture keeps running after the user lets go.
+   *
+   * The microphone pipeline sits between the air and `onFrame`: the device's own
+   * buffer, echo cancellation / noise suppression, the resampler into the
+   * worklet, the worklet's partial 100 ms frame and the message queue. Tearing
+   * the graph down on pointer-up throws all of that away, so the recogniser
+   * hears the last syllable cut short — reported as "the last couple of
+   * characters are never recognized". The state flips to `transcribing` first,
+   * so this reads as the normal wait for the final text rather than as extra
+   * recording.
+   */
+  const RELEASE_TAIL_MS = 300
+
   async function stop() {
     stopRequested = true
     if (ws) {
-      // Streaming: stop capture first so no frame lands after the end marker.
+      const sock = ws
+      // Stop the capture indicator immediately; the microphone itself stays
+      // open for the release tail below.
+      state.value = 'transcribing'
+      isRecording.value = false
+      await new Promise((resolve) => window.setTimeout(resolve, RELEASE_TAIL_MS))
+      // A cancel (or a finalize triggered by the engine) may have torn this
+      // recording down while the tail was running.
+      if (ws !== sock) return
+      // Stop capture first so no frame lands after the end marker.
       stopPcmCapture()
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'end' }))
-      } else if (ws.readyState === WebSocket.CONNECTING) {
+      if (sock.readyState === WebSocket.OPEN) {
+        sock.send(JSON.stringify({ type: 'end' }))
+      } else if (sock.readyState === WebSocket.CONNECTING) {
         // Nothing was captured yet; abort the handshake instead of waiting for
         // it to open and then starting capture on a released button.
-        ws.close()
+        sock.close()
       }
-      // Release the microphone now — waiting for the engine's final result
-      // would leave the capture indicator on after the user let go.
       stopMediaStream()
-      state.value = 'transcribing'
       return
     }
     if (wavStreamer) {
