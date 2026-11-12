@@ -28,6 +28,14 @@ public class TtsStateEventTest {
         assertTrue(script.contains("\"message\":\"unavailable\""));
     }
 
+
+    @Test
+    public void initScript_usesTheEventNameTheSettingsProbeListensFor() {
+        String script = MainActivity.buildTtsInitScript("no_chinese");
+        assertTrue(script.contains("'clawbench-tts-init'"));
+        assertTrue(script.contains("\"state\":\"no_chinese\""));
+    }
+
     @Test
     public void quotesAndNewlines_areEscaped() {
         // A message about a `"` must not turn the injected script into a

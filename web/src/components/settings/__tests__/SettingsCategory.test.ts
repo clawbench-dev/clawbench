@@ -197,6 +197,14 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
+// hoisted: SettingsCategory imports this module statically, so the factory
+// runs while the file body is still executing.
+const { mockProbeSystemSpeech } = vi.hoisted(() => ({ mockProbeSystemSpeech: vi.fn() }))
+vi.mock('@/utils/systemSpeech', () => ({
+  probeSystemSpeech: mockProbeSystemSpeech,
+  systemSpeechErrorKey: (reason: string) => `settings.items.systemSpeech_${reason}`,
+}))
+
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
 vi.mock('@/composables/useDialog.ts', () => ({
   useDialog: () => ({ confirm: mockDialogConfirm }),
@@ -415,6 +423,12 @@ const i18n = createI18n({
           securitySection: '安全',
           debugSection: '调试',
           summaryModelRow: '摘要模型',
+          systemSpeech: '用手机系统朗读',
+          systemSpeechDesc: '用手机自带的语音引擎朗读',
+          systemSpeechNoBridge: '不支持手机朗读',
+          systemSpeechNoEngine: '没有语音引擎',
+          systemSpeechNoChinese: '没有中文语音包',
+          systemSpeechTimeout: '检查超时',
           summaryModelConfigured: '已配置',
           summaryModelNotConfigured: '未配置',
         },
@@ -1668,5 +1682,57 @@ describe('server warnings surfaced to the user', () => {
     await flushPromises()
 
     expect(mockToastShow).not.toHaveBeenCalled()
+  })
+})
+
+// ── TTS category: phone voice switch ──────────────────────────────────────
+// Turning the switch on is a promise that the phone can actually read Chinese.
+// If the probe fails the value must not be stored, and the checkbox (which has
+// already flipped) must be put back.
+
+describe('tts category — phone voice switch', () => {
+  beforeEach(() => {
+    // The row is androidOnly: the platform axes are derived per mount, so the
+    // host flags must be set before mounting or the row is filtered out.
+    mockIsAppMode.value = true
+    mockIsDesktopApp.value = false
+    mockIsHarmonyApp.value = false
+    mockProbeSystemSpeech.mockReset()
+    mockProbeSystemSpeech.mockResolvedValue({ ok: true })
+    mockToastShow.mockClear()
+    mockSetLocalConfig.mockClear()
+  })
+
+  afterEach(() => {
+    mockIsAppMode.value = false
+  })
+
+  function findSystemSpeech(wrapper: ReturnType<typeof mountCategory>) {
+    return wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props().settingKey === 'systemSpeech')
+  }
+
+  it('stores the switch when the device can read Chinese', async () => {
+    const wrapper = mountCategory('tts')
+    const item = findSystemSpeech(wrapper)
+    expect(item).toBeTruthy()
+
+    await item!.vm.$emit('update:modelValue', true)
+    await flushPromises()
+
+    expect(mockProbeSystemSpeech).toHaveBeenCalled()
+    expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', true)
+  })
+
+  it('reverts the switch when there is no Chinese voice', async () => {
+    mockProbeSystemSpeech.mockResolvedValue({ ok: false, reason: 'no_chinese' })
+    const wrapper = mountCategory('tts')
+    const item = findSystemSpeech(wrapper)
+
+    await item!.vm.$emit('update:modelValue', true)
+    await flushPromises()
+
+    expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', true)
+    expect(mockToastShow).toHaveBeenCalled()
   })
 })

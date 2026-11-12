@@ -33,6 +33,16 @@ public final class SystemTtsEngine {
     /** Callback into the Activity, which forwards it into the WebView. */
     public interface Listener {
         void onState(String utteranceId, String state, String message);
+
+        /**
+         * Fires once when initialization finishes, with {@code ready},
+         * {@code no_chinese} or {@code unavailable}.
+         *
+         * Needed because initialization is asynchronous: a caller that asks
+         * "can this phone read?" right after turning the feature on would
+         * otherwise only ever see {@code initializing} and have to poll.
+         */
+        void onInit(String status);
     }
 
     static final String STATE_START = "start";
@@ -42,11 +52,20 @@ public final class SystemTtsEngine {
     static final String STATUS_READY = "ready";
     static final String STATUS_INITIALIZING = "initializing";
     static final String STATUS_UNAVAILABLE = "unavailable";
+    /**
+     * The engine works but has no Chinese voice installed.
+     *
+     * Kept separate from {@code unavailable}: English text can still be read,
+     * so the read path may use it, while the settings switch (which exists for
+     * Chinese replies) refuses to turn on.
+     */
+    static final String STATUS_NO_CHINESE = "no_chinese";
 
     private static final int INTERNAL_IDLE = 0;
     private static final int INTERNAL_INITIALIZING = 1;
     private static final int INTERNAL_READY = 2;
     private static final int INTERNAL_UNAVAILABLE = 3;
+    private static final int INTERNAL_NO_CHINESE = 4;
 
     private final Context context;
     private final Listener listener;
@@ -100,6 +119,8 @@ public final class SystemTtsEngine {
         switch (internalState) {
             case INTERNAL_READY:
                 return STATUS_READY;
+            case INTERNAL_NO_CHINESE:
+                return STATUS_NO_CHINESE;
             case INTERNAL_UNAVAILABLE:
                 return STATUS_UNAVAILABLE;
             default:
@@ -153,8 +174,12 @@ public final class SystemTtsEngine {
         try {
             tts = new TextToSpeech(context, initStatus -> {
                 if (initStatus == TextToSpeech.SUCCESS && tts != null) {
-                    internalState = INTERNAL_READY;
                     tts.setOnUtteranceProgressListener(progress);
+                    // Initialization succeeding only means "an engine exists".
+                    // Whether it can read Chinese is a separate question, and
+                    // the one the settings switch actually cares about.
+                    internalState = hasChineseVoice(tts) ? INTERNAL_READY : INTERNAL_NO_CHINESE;
+                    emitInit();
                     if (pendingText != null && pendingId != null) {
                         String text = pendingText;
                         String id = pendingId;
@@ -165,6 +190,7 @@ public final class SystemTtsEngine {
                     return;
                 }
                 internalState = INTERNAL_UNAVAILABLE;
+                emitInit();
                 String id = pendingId;
                 pendingId = null;
                 pendingText = null;
@@ -174,6 +200,7 @@ public final class SystemTtsEngine {
             });
         } catch (Throwable t) {
             internalState = INTERNAL_UNAVAILABLE;
+            emitInit();
             String id = pendingId;
             pendingId = null;
             pendingText = null;
@@ -181,6 +208,31 @@ public final class SystemTtsEngine {
                 emit(id, STATE_ERROR, "init_failed");
             }
         }
+    }
+
+    /** Must run on the main thread. */
+    private void emitInit() {
+        if (listener == null) {
+            return;
+        }
+        String status;
+        switch (internalState) {
+            case INTERNAL_READY:
+                status = STATUS_READY;
+                break;
+            case INTERNAL_NO_CHINESE:
+                status = STATUS_NO_CHINESE;
+                break;
+            default:
+                status = STATUS_UNAVAILABLE;
+                break;
+        }
+        listener.onInit(status);
+    }
+
+    /** True when the engine advertises a Mandarin voice. */
+    static boolean hasChineseVoice(TextToSpeech engine) {
+        return engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE) >= TextToSpeech.LANG_AVAILABLE;
     }
 
     private void speakOnMain(String text, String id) {

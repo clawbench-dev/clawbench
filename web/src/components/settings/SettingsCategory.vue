@@ -118,7 +118,7 @@
         />
         <template
           v-for="item in card.items"
-          :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
+          :key="item.key + (needsRenderEpoch(item.key) ? '-' + configRenderEpoch : '')"
         >
           <!-- The summary model is chosen where it is referenced, not on a
                separate page: this row opens a provider → model picker. -->
@@ -221,6 +221,7 @@ import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app.ts'
 import { appLog, setLogCaptureEnabled } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
+import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
@@ -266,6 +267,17 @@ const toast = useToast()
 // would also destroy any in-progress edit state (an open inline editor, a
 // half-typed text field) for a change that was rejected anyway.
 const configRenderEpoch = ref(0)
+
+/**
+ * Rows whose switch is reverted after an asynchronous check.
+ *
+ * The checkbox has already flipped when the answer arrives, and the stored
+ * value never changed, so nothing else would put it back — only a re-mount
+ * (a new key) does.
+ */
+function needsRenderEpoch(key: string): boolean {
+  return key === 'forge.enabled' || key === 'systemSpeech'
+}
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { loadAgents } = useAgents()
@@ -603,6 +615,21 @@ function getItemDisabled(item: ItemSpec): boolean {
 async function handleUpdate(item: ItemSpec, value: unknown) {
   if (item.type === 'password') {
     if (!value) return
+  }
+
+  // The phone-voice switch is only honest if the phone can actually read
+  // Chinese aloud. Without an engine (or without a Chinese voice) every read
+  // would silently fall back to the server, so the user would believe they had
+  // switched voices when they had not. Check before accepting the toggle.
+  if (item.key === 'systemSpeech' && value === true) {
+    const probe = await probeSystemSpeech()
+    if (!probe.ok) {
+      toast.show(t(systemSpeechErrorKey(probe.reason)), { icon: 'blocked', type: 'error', duration: 5000 })
+      // The checkbox has already flipped visually; only a re-render puts it
+      // back, since the stored value never changes.
+      configRenderEpoch.value++
+      return
+    }
   }
 
   // Disabling the forge integration is destructive: the server clears every

@@ -908,7 +908,17 @@ public class MainActivity extends AppCompatActivity {
         // Phone-side read-aloud. Constructing it is cheap; the TextToSpeech
         // service is bound lazily on the first status/speak call, so users who
         // never turn the feature on pay nothing.
-        systemTts = new SystemTtsEngine(this, this::dispatchTtsState);
+        systemTts = new SystemTtsEngine(this, new SystemTtsEngine.Listener() {
+            @Override
+            public void onState(String utteranceId, String state, String message) {
+                dispatchTtsState(utteranceId, state, message);
+            }
+
+            @Override
+            public void onInit(String status) {
+                dispatchTtsInit(status);
+            }
+        });
 
         // Add 引用 / 评论 to the WebView's own text-selection menu. A plain
         // WebView has no API for this, so the view is a ClawBenchWebView
@@ -2210,6 +2220,32 @@ public class MainActivity extends AppCompatActivity {
                 + "\"id\":" + jsStringLiteral(utteranceId)
                 + ",\"state\":" + jsStringLiteral(state)
                 + ",\"message\":" + jsStringLiteral(message)
+                + "} }))";
+    }
+
+    /**
+     * Tell the page that the speech engine finished initializing.
+     *
+     * <p>The settings switch waits for this before committing: initialization
+     * is asynchronous, so without it the toggle would either lie (accept before
+     * knowing) or have to poll.
+     */
+    private void dispatchTtsInit(String status) {
+        runOnUiThread(() -> {
+            WebView wv = webView;
+            if (wv == null || isFinishing() || isDestroyed()) return;
+            try {
+                wv.evaluateJavascript(buildTtsInitScript(status), null);
+            } catch (Exception e) {
+                AppLog.d(TAG, "dispatchTtsInit failed", e);
+            }
+        });
+    }
+
+    /** Build the JS that dispatches the one-shot init event. */
+    static String buildTtsInitScript(String status) {
+        return "window.dispatchEvent(new CustomEvent('clawbench-tts-init', { detail: {"
+                + "\"state\":" + jsStringLiteral(status)
                 + "} }))";
     }
 
