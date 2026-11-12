@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, SCROLL_STOP_MS, RESUME_FOLLOW_PX, NEAR_BOTTOM_PX, LOAD_MORE_AHEAD_PX, type ScrollStateInput } from '../scrollState'
+import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, shouldShowStreamPill, SCROLL_STOP_MS, RESUME_FOLLOW_PX, NEAR_BOTTOM_PX, LOAD_MORE_AHEAD_PX, STREAM_PILL_FAREWELL_MS, type ScrollStateInput, type StreamPillInput } from '../scrollState'
 
 function baseInput(overrides: Partial<ScrollStateInput> = {}): ScrollStateInput {
   return {
@@ -144,5 +144,38 @@ describe('constants', () => {
   it('uses a short wheel-decay window', () => {
     expect(SCROLL_STOP_MS).toBeGreaterThan(0)
     expect(SCROLL_STOP_MS).toBeLessThanOrEqual(500)
+  })
+})
+
+describe('shouldShowStreamPill', () => {
+  function pill(overrides: Partial<StreamPillInput> = {}): StreamPillInput {
+    return { awayFromBottom: true, streaming: true, farewell: false, ...overrides }
+  }
+
+  it('shows while a turn is in flight and the reader is away', () => {
+    expect(shouldShowStreamPill(pill())).toBe(true)
+  })
+
+  it('never shows while the reader sits at the bottom', () => {
+    // At the bottom there is nothing to jump to; the pill would be pure noise
+    // sitting on top of the newest line.
+    expect(shouldShowStreamPill(pill({ awayFromBottom: false }))).toBe(false)
+    expect(shouldShowStreamPill(pill({ awayFromBottom: false, streaming: false, farewell: true }))).toBe(false)
+  })
+
+  it('hides once the turn ends and the farewell window has passed', () => {
+    // The whole point of the pill is "content is still arriving". With no turn
+    // running it must hand over to the direction FABs instead of lingering.
+    expect(shouldShowStreamPill(pill({ streaming: false, farewell: false }))).toBe(false)
+  })
+
+  it('lingers through the farewell window after the turn ends', () => {
+    expect(shouldShowStreamPill(pill({ streaming: false, farewell: true }))).toBe(true)
+  })
+
+  it('keeps the farewell window on the same beat as the direction FABs', () => {
+    // Both use 3s; two different beats would make the hand-off look like two
+    // separate glitches.
+    expect(STREAM_PILL_FAREWELL_MS).toBe(3000)
   })
 })

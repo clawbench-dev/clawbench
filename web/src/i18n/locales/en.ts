@@ -1257,6 +1257,9 @@ export default {
       scrollToPrev: 'Previous message',
       scrollToNext: 'Next message',
       scrollToBottom: 'Scroll to bottom',
+      // "Still writing below" pill: stays for the whole turn, click to return.
+      streamPillStreaming: 'AI is responding',
+      streamPillBack: 'Jump to latest',
       userMsgIndex: 'User message index',
       userMsgIndexTitle: 'User messages',
       conversationIndexTitle: 'Conversation index',

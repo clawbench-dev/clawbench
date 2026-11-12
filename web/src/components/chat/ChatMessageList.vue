@@ -182,29 +182,57 @@
     </div>
   </div>
 
-  <!-- Floating scroll buttons — outside scroll container, inside relative wrapper -->
-  <Transition name="scroll-fab">
-    <div v-if="(scrolledUp || scrolledDown) && !textSelecting" ref="scrollFabRef" class="scroll-fab-group scroll-fab-bottom">
-      <Transition name="scroll-fab-swap" mode="out-in">
-        <div v-if="scrolledUp" key="up" class="scroll-fab-dir">
-          <button class="scroll-fab-round" @click="scrollToTop" :title="t('chat.messageList.scrollToTop')">
-            <ChevronsUp :size="18" />
-          </button>
-          <button class="scroll-fab-round" @click="scrollToPreviousMessage" :title="t('chat.messageList.scrollToPrev')">
-            <ArrowUp :size="18" />
-          </button>
-        </div>
-        <div v-else key="down" class="scroll-fab-dir">
-          <button class="scroll-fab-round" @click="scrollToBottomSmooth" :title="t('chat.messageList.scrollToBottom')">
-            <ChevronsDown :size="18" />
-          </button>
-          <button class="scroll-fab-round" @click="scrollToNextMessage" :title="t('chat.messageList.scrollToNext')">
-            <ArrowDown :size="18" />
-          </button>
+  <!-- Bottom dock — the streaming pill and the direction FABs share ONE row.
+       The pill sits in the centre grid column, so it never shifts sideways when
+       the FABs appear; the FABs hang off its right edge (see .dock-row). -->
+  <div class="chat-bottom-dock">
+    <!-- has-pill lives HERE, on the row: the grid placement rules read it to
+         decide whether the FABs sit beside the pill (col 3) or alone, centred
+         (col 2). It was once bound on .chat-bottom-dock instead and the row
+         never saw it — the FABs stacked under the pill. -->
+    <div class="dock-row" :class="{ 'has-pill': showStreamPill }">
+      <!-- "Still writing below" pill: persistent for the whole turn, unlike the
+           FABs (which fade 3s after the last scroll). -->
+      <Transition name="stream-pill">
+        <button
+          v-if="showStreamPill"
+          class="stream-pill"
+          :aria-label="streamPillLabel"
+          @click="onStreamPillClick"
+        >
+          <span class="stream-pill-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="stream-pill-label">{{ streamPillLabel }}</span>
+          <span class="stream-pill-chev" aria-hidden="true"><ChevronsDown :size="13" /></span>
+        </button>
+      </Transition>
+
+      <Transition name="scroll-fab">
+        <div v-if="(scrolledUp || scrolledDown) && !textSelecting" ref="scrollFabRef" class="scroll-fab-group">
+          <Transition name="scroll-fab-swap" mode="out-in">
+            <div v-if="scrolledUp" key="up" class="scroll-fab-dir">
+              <button class="scroll-fab-round" @click="scrollToTop" :title="t('chat.messageList.scrollToTop')">
+                <ChevronsUp :size="18" />
+              </button>
+              <button class="scroll-fab-round" @click="scrollToPreviousMessage" :title="t('chat.messageList.scrollToPrev')">
+                <ArrowUp :size="18" />
+              </button>
+            </div>
+            <div v-else key="down" class="scroll-fab-dir">
+              <!-- While the pill is up it IS the "back to bottom" button; a
+                   second control for the same action would just make the reader
+                   choose between two identical buttons. -->
+              <button v-if="!showStreamPill" class="scroll-fab-round" @click="scrollToBottomSmooth" :title="t('chat.messageList.scrollToBottom')">
+                <ChevronsDown :size="18" />
+              </button>
+              <button class="scroll-fab-round" @click="scrollToNextMessage" :title="t('chat.messageList.scrollToNext')">
+                <ArrowDown :size="18" />
+              </button>
+            </div>
+          </Transition>
         </div>
       </Transition>
     </div>
-  </Transition>
+  </div>
 
   <!-- Conversation index drawer -->
   <UserMsgIndexDrawer
@@ -261,7 +289,7 @@ import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 import { railReadingIndex } from '@/utils/railReadingPosition.ts'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
-import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX } from '@/utils/scrollState'
+import { isUserScrolling, shouldPin, isUserAwayFromBottom, shouldLoadOlderHistory, shouldShowStreamPill, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX, STREAM_PILL_FAREWELL_MS } from '@/utils/scrollState'
 import { saveChatScrollPosition, clearChatScrollPosition, getChatScrollPosition, hasChatScrollPosition } from '@/utils/chatScrollMemory'
 import { runningSessions } from '@/composables/useSessionIdentity'
 import { appLog } from '@/utils/appLog'
@@ -754,6 +782,66 @@ let wheelDecayTimer = null
 
 // Throttle scrollTick for nearestIndexMsgId recomputation
 const scrollFrameScheduler = new StreamFrameScheduler()
+
+// ── "Still writing below" pill ──
+// The direction FABs are transient by design (they fade 3s after the last
+// scroll), so a reader parked in the history during a long reply had no sign
+// that content was still arriving and no persistent way back. The pill is that
+// sign. It shares the bottom dock with the FABs — see the template — and the
+// FABs' own "back to bottom" button steps aside while it is on screen, so the
+// same action never has two buttons.
+const pillFarewell = ref(false)
+let pillFarewellTimer = null
+
+/** Whether a turn is in flight for the session this list is showing. */
+const isStreamingNow = computed(() => {
+  const sid = props.currentSessionId
+  if (sid && runningSessions.value.has(sid)) return true
+  // Fallback for the window between "user pressed send" and the WS
+  // session_update: the tail bubble already carries the streaming flag.
+  const list = props.messages || []
+  return !!list[list.length - 1]?.streaming
+})
+
+const showStreamPill = computed(() => !textSelecting.value && shouldShowStreamPill({
+  awayFromBottom: !isAtBottom.value,
+  streaming: isStreamingNow.value,
+  farewell: pillFarewell.value,
+}))
+
+const streamPillLabel = computed(() => (
+  isStreamingNow.value
+    ? t('chat.messageList.streamPillStreaming')
+    : t('chat.messageList.streamPillBack')
+))
+
+watch(isStreamingNow, (now, was) => {
+  if (now) {
+    clearTimeout(pillFarewellTimer)
+    pillFarewell.value = false
+    return
+  }
+  // Turn just ended while the reader is up in the history: hand over on the
+  // FABs' own beat instead of vanishing on this frame.
+  if (was && !isAtBottom.value) {
+    pillFarewell.value = true
+    clearTimeout(pillFarewellTimer)
+    pillFarewellTimer = setTimeout(() => { pillFarewell.value = false }, STREAM_PILL_FAREWELL_MS)
+  }
+})
+
+watch(isAtBottom, (atBottom) => {
+  if (!atBottom) return
+  clearTimeout(pillFarewellTimer)
+  pillFarewell.value = false
+})
+
+function onStreamPillClick() {
+  pillFarewell.value = false
+  // Same path as the "back to bottom" FAB: it also clears the follow latch, so
+  // the rest of the turn streams into view instead of stopping at the bottom.
+  scrollToBottomSmooth()
+}
 
 function handleScroll() {
   // A scroll event during a queued message jump means the smooth scroll is
@@ -2261,22 +2349,135 @@ defineExpose({
 }
 
 
-/* ── Floating scroll buttons ── */
-.scroll-fab-group {
+/* ── Bottom dock: streaming pill + direction FABs share one row ── */
+.chat-bottom-dock {
   position: absolute;
   left: 0;
   right: 0;
+  bottom: 0;
+  z-index: 3;
   display: flex;
   justify-content: center;
-  align-items: center;
-  gap: var(--space-3);
-  z-index: 3;
-  pointer-events: none;
   padding: var(--space-3) 0;
+  pointer-events: none;
 }
 
-.scroll-fab-bottom {
-  bottom: 0;
+/* Middle column is `auto` with `1fr` on both sides, so the pill is exactly
+   centred whatever its label width; the FABs start just right of it. */
+.dock-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  column-gap: calc(10 * var(--dp));
+  align-items: center;
+  width: 100%;
+}
+
+.scroll-fab-group {
+  grid-column: 3;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+
+/* No pill: the FABs are alone in the dock and must stay centred. */
+.dock-row:not(.has-pill) .scroll-fab-group {
+  grid-column: 2;
+  justify-self: center;
+}
+
+/* ── "Still writing below" pill ── */
+.stream-pill {
+  grid-column: 2;
+  justify-self: center;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(9 * var(--dp));
+  padding: calc(7 * var(--dp)) calc(9 * var(--dp)) calc(7 * var(--dp)) calc(13 * var(--dp));
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--duration-base), background var(--duration-base);
+}
+
+.stream-pill-label {
+  white-space: nowrap;
+}
+
+/* The animation only decorates the label: the text alone says "still writing",
+   so the pill stays readable if the bars are stopped. */
+.stream-pill-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: calc(2 * var(--dp));
+  height: calc(11 * var(--dp));
+}
+
+.stream-pill-eq i {
+  display: block;
+  width: calc(2.5 * var(--dp));
+  height: 100%;
+  border-radius: calc(2 * var(--dp));
+  background: var(--accent-color);
+  transform-origin: bottom;
+  animation: stream-pill-eq 1.05s ease-in-out infinite;
+}
+
+.stream-pill-eq i:nth-child(2) { animation-delay: 0.16s; }
+.stream-pill-eq i:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes stream-pill-eq {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+.stream-pill-chev {
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--bg-tertiary);
+  color: var(--accent-color);
+}
+
+.stream-pill:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent-color));
+  outline-offset: 2px;
+}
+
+.stream-pill:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) {
+  .stream-pill:hover {
+    border-color: var(--accent-color);
+  }
+}
+
+.stream-pill-enter-active {
+  transition: opacity 0.2s ease-out, transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.stream-pill-leave-active {
+  transition: opacity var(--duration-base) ease-in, transform var(--duration-base) ease-in;
+}
+
+.stream-pill-enter-from,
+.stream-pill-leave-to {
+  opacity: 0;
+  transform: translateY(calc(14 * var(--dp))) scale(0.94);
 }
 
 .scroll-fab-dir {
@@ -2348,11 +2549,11 @@ defineExpose({
 .scroll-fab-leave-active {
   transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
-.scroll-fab-bottom.scroll-fab-enter-from {
+.scroll-fab-group.scroll-fab-enter-from {
   opacity: 0;
   transform: translateY(calc(16 * var(--dp))) scale(0.9);
 }
-.scroll-fab-bottom.scroll-fab-leave-to {
+.scroll-fab-group.scroll-fab-leave-to {
   opacity: 0;
   transform: translateY(calc(10 * var(--dp))) scale(0.9);
 }

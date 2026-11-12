@@ -1259,6 +1259,9 @@ export default {
       scrollToPrev: '上一条消息',
       scrollToNext: '下一条消息',
       scrollToBottom: '回到底部',
+      // 「底部还在输出」胶囊：流式期间常驻，点一下回到底部。
+      streamPillStreaming: 'AI 正在输出',
+      streamPillBack: '回到最新',
       userMsgIndex: '用户消息索引',
       userMsgIndexTitle: '用户消息',
       conversationIndexTitle: '对话索引',

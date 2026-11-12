@@ -144,9 +144,14 @@ test.describe('Chat scrolling during a streaming reply', () => {
       return g.max - g.top
     }, { timeout: 5000 }).toBeGreaterThan(500)
     await wheel(page, 200)
-    const scrollToBottom = page.locator('.scroll-fab-group .scroll-fab-round').first()
-    await expect(scrollToBottom).toHaveAttribute('title', /bottom/i)
-    await scrollToBottom.click()
+    // While a reply is being written the pill OWNS "back to bottom" — the FAB
+    // gives that button up, so the same action never has two entries.
+    const pill = page.locator('.stream-pill')
+    await expect(pill).toBeVisible({ timeout: 5000 })
+    await expect(
+      page.locator('.scroll-fab-group .scroll-fab-round[title="Scroll to bottom"]')
+    ).toHaveCount(0)
+    await pill.click()
     await expect.poll(async () => {
       const resumed = await geometry(page)
       return resumed.max - resumed.top
@@ -165,6 +170,59 @@ test.describe('Chat scrolling during a streaming reply', () => {
       const resumed = await geometry(page)
       return resumed.max - resumed.top
     }, { timeout: 5000 }).toBeLessThan(80)
+
+    await chat.waitForIdle(120000)
+  })
+
+  test('the "still writing below" pill sits beside the direction FABs', async ({ page }) => {
+    await makeScrollable(page)
+
+    // A long reply keeps the content growing below the viewport for ~20s.
+    await chat.sendMessage('[mock:long-reply] stream something long please')
+    const streaming = page.locator('.chat-message[data-streaming="true"]')
+    await expect(streaming).toBeVisible({ timeout: 20000 })
+    await expect(streaming).toContainText(/.+/, { timeout: 20000 })
+    await expect.poll(async () => {
+      const box = await streaming.boundingBox()
+      return box ? Math.round(box.height) : 0
+    }, { timeout: 30000, intervals: [200, 500, 1000] }).toBeGreaterThan(300)
+
+    // Park in the history. The FABs fade 3s after the last scroll; the pill is
+    // the persistent signal that content is still arriving below.
+    for (let i = 0; i < 4; i++) {
+      const { max, top } = await geometry(page)
+      if (max - top > 500) break
+      await wheel(page, -200)
+    }
+    const pill = page.locator('.stream-pill')
+    await expect(pill).toBeVisible({ timeout: 5000 })
+    await expect(pill).toContainText(/responding|正在输出/)
+
+    // The pill and the FABs are ONE row: the FABs hang off the pill's right
+    // edge. Binding `has-pill` to the wrong element once put them on separate
+    // rows (both centred, one above the other) while a visibility-only
+    // assertion still passed — hence the geometry check.
+    const nav = page.locator('.scroll-fab-group')
+    await expect(nav).toBeVisible({ timeout: 5000 })
+    const pillBox = await pill.boundingBox()
+    const navBox = await nav.boundingBox()
+    expect(pillBox && navBox).toBeTruthy()
+    expect(Math.abs((pillBox!.y + pillBox!.height / 2) - (navBox!.y + navBox!.height / 2))).toBeLessThan(6)
+    expect(navBox!.x).toBeGreaterThan(pillBox!.x + pillBox!.width)
+    expect(navBox!.x - (pillBox!.x + pillBox!.width)).toBeLessThan(30)
+
+    // Still there after the FABs' 3s auto-hide window — the whole difference
+    // from the direction buttons. Waits for the auto-hide to actually happen
+    // rather than sleeping a fixed 3s.
+    await expect(nav).toHaveCount(0, { timeout: 8000 })
+    await expect(pill).toBeVisible()
+
+    await pill.click()
+    await expect.poll(async () => {
+      const g = await geometry(page)
+      return g.max - g.top
+    }, { timeout: 5000 }).toBeLessThan(60)
+    await expect(pill).toHaveCount(0)
 
     await chat.waitForIdle(120000)
   })
