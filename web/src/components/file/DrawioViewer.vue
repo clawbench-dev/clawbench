@@ -102,6 +102,8 @@ const props = defineProps({
   readonly: { type: Boolean, default: false },
 })
 
+const emit = defineEmits(['requestClose'])
+
 const { t, locale } = useI18n()
 const dialog = useDialog()
 const fileEditor = useFileEditor()
@@ -335,12 +337,15 @@ function onMessage(e) {
       }
       break
     case 'save':
-      // drawio's own "Save & Exit" (also Ctrl+S). The frame stays open — the
-      // diagram is saved in place — because exiting would take the editor away
-      // from a user who is still editing it.
+      // drawio's own "Save & Exit" (the same message Ctrl+S sends). In embed
+      // mode this is drawio's ONLY save action and it carries no exit flag, so
+      // it always means "save and leave" — the host is the one that has to close
+      // the view, otherwise the button saves and then appears to do nothing.
       if (typeof msg.xml === 'string' && msg.xml) {
         latestXml = msg.xml
-        void persistXml(msg.xml)
+        void persistXml(msg.xml).then((ok) => {
+          if (ok) emit('requestClose')
+        })
       }
       break
     case 'export':
@@ -370,6 +375,13 @@ function sendLoad() {
 
 function setDirty(v) {
   dirty = v
+  // "Editing" tracks unsaved work, not the fact that an editor is on screen.
+  // The back/close state machine routes every press to "exit edit mode" while
+  // this flag is set, so keeping it on permanently turned the close button into
+  // a no-op: the press was consumed by an exit that had nothing to do, and the
+  // viewer never closed. With it following `dirty`, a clean diagram closes in
+  // one click and an edited one still asks before throwing the changes away.
+  if (!props.readonly) fileEditor.setEditing(v)
 }
 
 /** Ask draw.io for the current XML; falls back to the last autosave. */
@@ -419,13 +431,10 @@ async function handleExit() {
     extraPrimedText: t('common.confirm'),
   })
   if (choice === true) {
-    const ok = await saveCurrent()
-    if (ok) fileEditor.setEditing(false)
-    return ok
+    return await saveCurrent()
   }
   if (choice === null) {
     setDirty(false)
-    fileEditor.setEditing(false)
     return true
   }
   return false
@@ -442,7 +451,6 @@ onMounted(async () => {
   // A read-only preview is not an editor: registering it would make the share
   // page's (nonexistent) back gesture think there is unsaved work.
   if (!props.readonly) {
-    fileEditor.setEditing(true)
     unregisterExitEdit = fileEditor.registerExitEditHandler(handleExit)
     unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => dirty)
   }

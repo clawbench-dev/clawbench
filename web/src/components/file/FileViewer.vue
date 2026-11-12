@@ -101,6 +101,7 @@
         v-else-if="file.isDrawio"
         ref="drawioViewerRef"
         :file="file"
+        @request-close="handleDrawioRequestClose"
       />
 
       <!-- Too large -->
@@ -1045,6 +1046,11 @@ const drawioExportDir = computed(() => {
     const idx = path.lastIndexOf('/')
     return idx > 0 ? path.slice(0, idx) : ''
 })
+
+/** drawio's own "Save & Exit": it has already saved, so close without asking again. */
+function handleDrawioRequestClose() {
+    emit('overlayClose')
+}
 
 function handleExportDrawio() {
     if (!props.file?.isDrawio) return

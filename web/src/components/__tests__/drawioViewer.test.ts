@@ -210,9 +210,17 @@ describe('DrawioViewer bridge', () => {
     wrapper.unmount()
   })
 
-  it('registers itself as the active editor so the back gesture asks before leaving', async () => {
+  it('does not claim "editing" while the diagram is clean', async () => {
+    // The back/close state machine routes every press to "exit edit mode" while
+    // the flag is set; a clean diagram would make the close button a no-op.
+    // The guard arms itself the moment drawio pushes an autosave.
     const wrapper = await mountReady()
+    expect(useFileEditor().isEditing()).toBe(false)
+
+    sendFromIframe({ event: 'autosave', xml: '<mxfile>x</mxfile>' })
+    await nextTick()
     expect(useFileEditor().isEditing()).toBe(true)
+
     wrapper.unmount()
     expect(useFileEditor().isEditing()).toBe(false)
   })
@@ -398,6 +406,39 @@ describe('DrawioViewer save from the editor menu', () => {
 
     sendFromIframe({ event: 'save', xml: '<mxfile>edited</mxfile>' })
     await vi.waitFor(() => expect(mockSaveFile).toHaveBeenCalledWith('docs/flow.drawio', '<mxfile>edited</mxfile>'))
+    // "Save & Exit" has to actually leave: in embed mode this message is the
+    // only save action drawio has, and it carries no exit flag, so the host is
+    // responsible for closing the view.
+    await vi.waitFor(() => expect(wrapper.emitted('requestClose')).toBeTruthy())
+    wrapper.unmount()
+  })
+})
+
+describe('DrawioViewer editing flag', () => {
+  it('is not "editing" until something is unsaved', async () => {
+    // The back/close state machine routes every press to "exit edit mode" while
+    // this flag is set, so a permanent true turned the close button into a
+    // no-op: the press was consumed by an exit that had nothing to do.
+    const fileEditor = useFileEditor()
+    fileEditor.setEditing(false)
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+    mockContentWindow()
+    const wrapper = mount(DrawioViewer, { props: { file } })
+    await nextTick()
+    await nextTick()
+
+    expect(fileEditor.isEditing()).toBe(false)
+
+    // An edit marks the diagram dirty and arms the guard...
+    sendFromIframe({ event: 'init' })
+    await nextTick()
+    sendFromIframe({ event: 'autosave', xml: '<mxfile>dirty</mxfile>' })
+    await nextTick()
+    expect(fileEditor.isEditing()).toBe(true)
+
+    // ...and a successful save disarms it again.
+    sendFromIframe({ event: 'save', xml: '<mxfile>saved</mxfile>' })
+    await vi.waitFor(() => expect(fileEditor.isEditing()).toBe(false))
     wrapper.unmount()
   })
 })
