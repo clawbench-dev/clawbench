@@ -67,6 +67,8 @@ public final class SystemTtsEngine {
     private static final int INTERNAL_UNAVAILABLE = 3;
     private static final int INTERNAL_NO_CHINESE = 4;
 
+    private static final String TAG = "SystemTts";
+
     private final Context context;
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -179,6 +181,7 @@ public final class SystemTtsEngine {
                     // Whether it can read Chinese is a separate question, and
                     // the one the settings switch actually cares about.
                     internalState = hasChineseVoice(tts) ? INTERNAL_READY : INTERNAL_NO_CHINESE;
+                    AppLog.i(TAG, "init ok status=" + internalState + " " + describeEngines(tts));
                     emitInit();
                     if (pendingText != null && pendingId != null) {
                         String text = pendingText;
@@ -190,6 +193,10 @@ public final class SystemTtsEngine {
                     return;
                 }
                 internalState = INTERNAL_UNAVAILABLE;
+                // -1 = ERROR. Usually "no default engine set" or, on API 30+,
+                // the engine being invisible without the TTS_SERVICE query in
+                // the manifest.
+                AppLog.w(TAG, "init failed status=" + initStatus);
                 emitInit();
                 String id = pendingId;
                 pendingId = null;
@@ -200,6 +207,7 @@ public final class SystemTtsEngine {
             });
         } catch (Throwable t) {
             internalState = INTERNAL_UNAVAILABLE;
+            AppLog.w(TAG, "init threw: " + t);
             emitInit();
             String id = pendingId;
             pendingId = null;
@@ -230,9 +238,43 @@ public final class SystemTtsEngine {
         listener.onInit(status);
     }
 
-    /** True when the engine advertises a Mandarin voice. */
+    /** True when the engine advertises a Chinese voice (any variant). */
     static boolean hasChineseVoice(TextToSpeech engine) {
-        return engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE) >= TextToSpeech.LANG_AVAILABLE;
+        return engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE) >= TextToSpeech.LANG_AVAILABLE
+                || engine.isLanguageAvailable(Locale.CHINESE) >= TextToSpeech.LANG_AVAILABLE
+                || engine.isLanguageAvailable(Locale.TRADITIONAL_CHINESE) >= TextToSpeech.LANG_AVAILABLE;
+    }
+
+    /**
+     * Retry the remaining Chinese variants after the preferred one failed.
+     *
+     * <p>Engines differ in how they report locales: some only expose `zh`,
+     * some only `zh_TW`. A phone that can read Chinese must not be rejected
+     * because `zh_CN` specifically is missing.
+     */
+    static boolean applyLanguageFallback(TextToSpeech engine, String text) {
+        Locale[] candidates = containsCjk(text)
+                ? new Locale[]{Locale.CHINESE, Locale.TRADITIONAL_CHINESE}
+                : new Locale[]{Locale.ENGLISH};
+        for (Locale locale : candidates) {
+            if (engine.setLanguage(locale) >= TextToSpeech.LANG_AVAILABLE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Engine list and language availability, for the client log. */
+    static String describeEngines(TextToSpeech engine) {
+        try {
+            return "zhCN=" + engine.isLanguageAvailable(Locale.SIMPLIFIED_CHINESE)
+                    + " zh=" + engine.isLanguageAvailable(Locale.CHINESE)
+                    + " zhTW=" + engine.isLanguageAvailable(Locale.TRADITIONAL_CHINESE)
+                    + " en=" + engine.isLanguageAvailable(Locale.US)
+                    + " engines=" + engine.getEngines();
+        } catch (Throwable t) {
+            return "describe failed: " + t;
+        }
     }
 
     private void speakOnMain(String text, String id) {
@@ -256,8 +298,14 @@ public final class SystemTtsEngine {
         int language = tts.setLanguage(pickLocale(text));
         if (language == TextToSpeech.LANG_MISSING_DATA
                 || language == TextToSpeech.LANG_NOT_SUPPORTED) {
-            emit(id, STATE_ERROR, "language_not_supported");
-            return;
+            // Retry with the bare / traditional variants before giving up: some
+            // engines advertise `zh` or `zh_TW` but not `zh_CN`, and can still
+            // read simplified text.
+            if (!applyLanguageFallback(tts, text)) {
+                AppLog.w(TAG, "no usable voice for text, " + describeEngines(tts));
+                emit(id, STATE_ERROR, "language_not_supported");
+                return;
+            }
         }
 
         currentId = id;
@@ -329,12 +377,16 @@ public final class SystemTtsEngine {
 
     /** Chinese text goes to the Chinese voice; pure Latin text to English. */
     static Locale pickLocale(String text) {
+        return containsCjk(text) ? Locale.SIMPLIFIED_CHINESE : Locale.US;
+    }
+
+    static boolean containsCjk(String text) {
         for (int i = 0; i < text.length(); i++) {
             if (isCjk(text.charAt(i))) {
-                return Locale.SIMPLIFIED_CHINESE;
+                return true;
             }
         }
-        return Locale.US;
+        return false;
     }
 
     private static boolean isCjk(char c) {
