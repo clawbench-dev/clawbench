@@ -36,6 +36,18 @@ const EMPTY_CREATED_SESSION: CreatedSession = { id: '', title: '', agentId: '' }
 // ───────────────────────────────────────────────────────────
 
 const currentSessionId = ref('')
+/**
+ * Exported as a read-only handle for module-level consumers that must REACT to
+ * a session switch rather than just read the current value.
+ *
+ * The case that needs it: `useAutoSpeech` is a module singleton with one
+ * playback queue, and a read-aloud belonging to the session being left has to
+ * stop the moment the user opens another one — otherwise it keeps talking
+ * while the new session's reply waits in the queue behind it, so the session on
+ * screen never gets read out. That watcher lives in useAutoSpeech (which cannot
+ * import this module's actions without a cycle) and only ever reads.
+ */
+export const currentSessionIdRef = currentSessionId
 const currentSessionTitle = ref('')
 const currentBackend = ref('')
 // session_type of the current session ('chat' | 'group' | ...). Authoritative

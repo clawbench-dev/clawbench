@@ -13,7 +13,7 @@
  *   - Cache hits skip SSE entirely and play audio immediately.
  */
 
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import i18n from '@/i18n'
@@ -25,6 +25,7 @@ import { appLog } from '@/utils/appLog'
 import { extractSpeakableText } from '@/utils/speakableText'
 import { getNative } from '@/utils/clawbenchNative'
 import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
+import { currentSessionIdRef } from '@/composables/useSessionIdentity.ts'
 
 // Re-exported so existing `@/composables/useAutoSpeech` importers keep working;
 // the implementation lives in the leaf module to avoid dragging this file's
@@ -258,6 +259,39 @@ if (typeof window !== 'undefined') {
   })
 }
 
+/**
+ * Stops read-aloud when the user opens a different session.
+ *
+ * Playback is a module singleton with ONE queue, so leaving it running across a
+ * session switch has two consequences, and the second is the one that gets
+ * reported as a bug:
+ *
+ *   1. The conversation the user just left keeps talking while they are looking
+ *      at another one.
+ *   2. `isBusy()` is still true when the NEW session's turn finishes, so its
+ *      reply is appended to the queue instead of being spoken. The user hears
+ *      the old session, the one on screen stays silent, and the whole feature
+ *      reads as "read-aloud stopped working".
+ *
+ * Registered at module scope rather than in ChatPanelContent: the panel is one
+ * consumer, and a switch can happen while it is not mounted (a notification
+ * deep link, the session drawer). The stop has to belong to whoever owns the
+ * audio.
+ *
+ * The actual teardown lives inside `useAutoSpeech()`'s closure (it owns the
+ * audio element, the sockets and the queue), so it is reached through this
+ * hook, installed the first time the composable is instantiated.
+ */
+let stopForSessionSwitch: (() => void) | null = null
+
+watch(currentSessionIdRef, () => {
+  if (!stopForSessionSwitch) return
+  appLog.i(TAG, 'session switched; stopping read-aloud of the previous session')
+  // The QUEUE belongs to the session being left too, so it is cleared rather
+  // than drained into the new one.
+  stopForSessionSwitch()
+})
+
 export function useAutoSpeech() {
   // --- Persistence ---
   function saveState() {
@@ -395,6 +429,11 @@ export function useAutoSpeech() {
     autoQueue = []
     stopPlayback(releaseScreenLock)
   }
+
+  // Let the module-level session watcher reach the teardown above. Assigned on
+  // every instantiation (they all share the same closure state, so any one of
+  // them is correct) — see `stopForSessionSwitch`.
+  stopForSessionSwitch = () => stopAudio()
 
   // --- Internal: play audio from a path ---
   function playAudio(audioPath: string) {

@@ -106,38 +106,42 @@ const REOPEN_DELAY_MS = 250
 const BARGE_ARM_DELAY_MS = 500
 
 /**
- * Level below which a frame carries no signal at all.
+ * How long the capture may go without handing over a single frame before it is
+ * torn down and re-acquired.
  *
- * Room tone — a fan, a keyboard, traffic two rooms away — sits around
- * 0.0005–0.0015 on this scale (see `SENSITIVITY_RMS`), so anything under this
- * floor is not "a quiet room", it is a capture graph handing over digital
- * silence. Measured on a stuck Android capture: 0.0001.
- */
-const DEAD_CAPTURE_RMS = 0.0003
-
-/**
- * How long a capture that is producing frames but no signal may run before it
- * is torn down and re-acquired.
+ * Measured on FRAME FLOW, deliberately never on the level inside the frames.
  *
- * The capture can die without saying anything: the track stays `live`, the
- * worklet keeps posting frames, the recogniser socket stays open and the UI
- * keeps showing "正在听…" — the frames are just all zeros. Nothing else in the
- * loop can tell that apart from a silent room, and the user experiences it as
- * "it hears nothing at all", which is exactly what was reported after an
- * interrupt.
+ * An earlier version judged the capture dead when its frames carried no signal
+ * (below 0.0003 RMS, on the assumption that room tone is always at least
+ * 0.0005). That assumption is false on a phone: with noise suppression and echo
+ * cancellation engaged — the shipped defaults — Android hands over EXACT
+ * digital silence whenever the user is not speaking. "Three seconds of zeros"
+ * is therefore what a perfectly healthy microphone looks like in a quiet
+ * moment, and the watchdog tore the capture down mid-conversation twice and
+ * then left the mode with an error toast, about ten seconds after every start
+ * and always right after the user's first sentence had been sent.
  *
- * Long enough not to fire on the pauses inside a normal sentence, short enough
- * that the user notices a hiccup rather than a dead mode.
+ * Nothing inside the page can tell "the OS is gating a silent microphone" apart
+ * from "the audio stack is stuck and delivering zeros" — both are frames of
+ * zeros on a live track, and the recogniser cannot help because it receives the
+ * same audio. Ending the mode over that is strictly worse than not detecting
+ * it, so only the provable failure is handled here: a graph that stopped
+ * producing frames at all (a suspended AudioContext, a capture that never
+ * started, a device the OS took away).
  */
 const DEAD_CAPTURE_MS = 3000
 
 /**
  * How many re-acquisitions are allowed before the mode gives up.
  *
- * A capture that is still silent after two fresh `getUserMedia` + AudioContext
- * pairs is not going to come back from inside the page (the observed case only
- * recovered after restarting the app), so the loop must say so instead of
- * pretending to listen.
+ * A capture that keeps stalling after two fresh `getUserMedia` + AudioContext
+ * pairs is not going to come back from inside the page, and the loop must say
+ * so instead of pretending to listen.
+ *
+ * Only reachable once the capture HAS produced at least one frame: a capture
+ * that never produces one at all is left to the idle-exit timer, because "the
+ * graph has not started yet" is not distinguishable from "it will never start"
+ * at that point.
  */
 const MAX_CAPTURE_RECOVERIES = 2
 
@@ -149,10 +153,19 @@ const CAPTURE_WATCH_TICK_MS = 1000
  *
  * Without this a capture that flaps (works, dies, works, dies) would re-acquire
  * forever, each time costing the user the moment it spends without a
- * microphone. A capture that has been delivering sound for this long is
+ * microphone. A capture that has been delivering frames for this long is
  * treated as genuinely fixed.
  */
 const HEALTHY_TICKS_BEFORE_RESET = 10
+
+/**
+ * How long a stretch of pure digital silence is worth a log line.
+ *
+ * Diagnostic only — nothing is torn down over this (see `DEAD_CAPTURE_MS`). The
+ * two states look identical from inside the page, so the only honest thing to
+ * do is leave a trace that makes the next report diagnosable.
+ */
+const DIGITAL_SILENCE_LOG_MS = 15000
 
 // ── Module-level singleton ───────────────────────────────────────────────
 // One loop per app instance, like useAutoSpeech: the mode is a property of the
@@ -240,14 +253,24 @@ let bargeTriggered = false
 /**
  * When the capture last handed over a frame (epoch ms); 0 until the first one.
  *
- * Until a frame arrives there is nothing to judge — the graph may still be
- * starting up — so the watchdog stays quiet.
+ * A capture that has not produced a single frame yet is judged by
+ * `captureStartedAt` instead: "still starting up" and "never going to start"
+ * are the same observation until enough time has passed.
  */
 let lastFrameAt = 0
-/** Whether any frame since the last tick carried signal. */
+/** When the watchdog started observing the current capture graph (epoch ms). */
+let captureStartedAt = 0
+/**
+ * Whether any frame since the last tick carried signal.
+ *
+ * Diagnostic only: a frame that carries no signal is NOT a fault (see
+ * `DEAD_CAPTURE_MS`), it is what a healthy microphone delivers while nobody
+ * talks. It is still worth knowing, because it is what tells "the OS is gating
+ * a silent microphone" apart from "the audio stack is stuck" in a log.
+ */
 let heardSomething = false
-/** Consecutive ticks with nothing heard. */
-let silentTicks = 0
+/** When the current stretch of pure silence started (epoch ms); 0 when not in one. */
+let silentSince = 0
 /** Consecutive ticks that did carry signal, for the recovery budget. */
 let healthyTicks = 0
 /** Re-acquisitions used up in this session — see MAX_CAPTURE_RECOVERIES. */
@@ -444,45 +467,54 @@ function stopCaptureWatch() {
     captureWatchTimer = null
   }
   lastFrameAt = 0
+  captureStartedAt = 0
   heardSomething = false
-  silentTicks = 0
+  silentSince = 0
 }
 
 /**
- * Watches for a capture that is running but no longer hearing anything.
+ * Watches for a capture that stopped producing frames.
  *
- * The failure this exists for: after an interrupt the graph keeps producing
- * frames, but they are all zeros — a state the recogniser cannot report (it
- * receives valid, silent audio), the track cannot report (it is still `live`),
- * and the UI cannot show (the phase is 'listening', which is what the socket
- * being open means). The user's only symptom is "it hears nothing at all", and
- * the only thing that brought the device back was restarting the app.
+ * The failure this exists for: after an interrupt the graph can stall entirely
+ * — the track stays `live`, the recogniser socket stays open, the UI keeps
+ * showing "正在听…", but no frame ever arrives again (the original report was a
+ * stuck Android capture whose every frame was digital zero; that state cannot
+ * be told apart from ordinary quiet, see `DEAD_CAPTURE_MS` for what is and is
+ * not treated as a fault).
  *
- * The check is on the LEVEL, not on recognition: silence is a property of the
- * audio pipeline, so it is detected in seconds instead of waiting for the
- * idle-exit timeout, and it does not depend on which recogniser is attached.
+ * The check is on FRAME FLOW. A stretch of frames that all carry nothing is
+ * logged once per stretch (`DIGITAL_SILENCE_LOG_MS`) but never acted on: with
+ * noise suppression on, a healthy phone delivers exact zeros whenever the user
+ * is not speaking, and the original level-based watchdog killed the mode ten
+ * seconds into every conversation because of it.
  */
 function startCaptureWatch() {
   stopCaptureWatch()
+  captureStartedAt = Date.now()
   captureWatchTimer = setInterval(() => {
     if (phase.value === 'idle' || recoveringCapture) return
-    // Nothing measured yet: the graph is still starting, or it never produced
-    // a frame at all (in which case the idle-exit timer owns the session).
-    if (lastFrameAt === 0) return
     if (heardSomething) {
       heardSomething = false
-      silentTicks = 0
+      silentSince = 0
       healthyTicks += 1
       if (healthyTicks >= HEALTHY_TICKS_BEFORE_RESET) captureRecoveries = 0
       return
     }
     healthyTicks = 0
-    silentTicks += 1
-    if (silentTicks * CAPTURE_WATCH_TICK_MS >= DEAD_CAPTURE_MS) {
-      // Two shapes, one cause: frames that carry nothing, or no frames at all
-      // (the graph stopped being pulled — a suspended AudioContext).
-      const stalled = Date.now() - lastFrameAt >= DEAD_CAPTURE_MS
-      recoverCapture(stalled ? 'stopped producing audio' : 'hears nothing but digital silence')
+    if (silentSince === 0) silentSince = Date.now()
+    if (Date.now() - silentSince >= DIGITAL_SILENCE_LOG_MS) {
+      silentSince = Date.now()
+      // Not a fault — a breadcrumb. If the user reports "it stopped hearing
+      // me", this line is what makes the report diagnosable.
+      appLog.w(TAG, `capture has delivered only digital silence for ${DIGITAL_SILENCE_LOG_MS}ms (not recovering; silence is not a fault)`)
+    }
+    // Measured from the last frame, or from when this graph started when it has
+    // never produced one: a graph that delivers nothing at all is just as
+    // broken as one that used to deliver and stopped, and without the fallback
+    // the first case would be observed once and then never again.
+    const quietSince = lastFrameAt === 0 ? captureStartedAt : lastFrameAt
+    if (Date.now() - quietSince >= DEAD_CAPTURE_MS) {
+      recoverCapture(lastFrameAt === 0 ? 'never produced a frame' : 'stopped producing frames')
     }
   }, CAPTURE_WATCH_TICK_MS)
 }
@@ -496,11 +528,11 @@ function startCaptureWatch() {
  */
 function recoverCapture(reason: string): void {
   if (phase.value === 'idle' || recoveringCapture) return
-  silentTicks = 0
+  silentSince = 0
   healthyTicks = 0
   if (captureRecoveries >= MAX_CAPTURE_RECOVERIES) {
-    // Two fresh captures in a row were silent: this page cannot bring the
-    // microphone back. Say so — silently listening to nothing is the exact
+    // Two fresh captures in a row produced no frames at all: this page cannot
+    // capture anything. Say so — silently listening to nothing is the exact
     // behaviour being fixed here.
     appLog.e(TAG, `capture ${reason} after ${captureRecoveries} re-acquisitions; leaving the mode`)
     stop({ notify: false })
@@ -823,12 +855,17 @@ function ensureCapture(): Promise<boolean> {
       stream,
       tuning,
       onFrame: (frame) => frameSink?.(frame),
-      // The only evidence that the pipeline still carries sound. Frames flow
-      // whether or not the gate forwards them, so this measures the capture
-      // itself, not what the recogniser happens to be receiving.
+      // The only evidence that the pipeline still runs, and whether what it
+      // carries is signal or digital silence. Frames flow whether or not the
+      // gate forwards them, so this measures the capture itself, not what the
+      // recogniser happens to be receiving.
+      //
+      // `rms > 0` rather than a floor: on a phone with noise suppression on,
+      // exact zeros are what a HEALTHY capture delivers between words, so the
+      // only thing worth recording is "was there any signal at all".
       onLevel: (rms) => {
         lastFrameAt = Date.now()
-        if (rms >= DEAD_CAPTURE_RMS) heardSomething = true
+        if (rms > 0) heardSomething = true
       },
     })
     streamer = s

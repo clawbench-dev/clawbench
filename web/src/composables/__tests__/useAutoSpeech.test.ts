@@ -1445,3 +1445,90 @@ describe('useAutoSpeech — Android system speech engine', () => {
     expect(api.isActive('42')).toBe(false)
   })
 })
+
+// ── Session switch ──
+
+describe('useAutoSpeech — switching sessions stops the read-aloud', () => {
+  /**
+   * Playback is a module singleton with ONE queue. Leaving it running across a
+   * session switch made the NEW session's reply queue up behind the old one
+   * instead of being spoken, so the conversation on screen went silent while
+   * the abandoned one kept talking — reported as "read-aloud stopped working".
+   */
+  async function switchTo(sessionId: string) {
+    const { useSessionIdentity } = await import('@/composables/useSessionIdentity')
+    useSessionIdentity().currentSessionId.value = sessionId
+    // The watcher is default-flush (pre), so it runs on the microtask queue.
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  it('stops a read-aloud that belongs to the session being left', async () => {
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/a.mp3' }),
+    })
+    const pause = vi.fn()
+    vi.stubGlobal('Audio', vi.fn(function (this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = pause
+      this.currentTime = 0
+      this.duration = 0
+      this.buffered = { length: 0 }
+      this.addEventListener = vi.fn()
+      this.removeEventListener = vi.fn()
+      this.onended = null
+      this.onerror = null
+    }))
+
+    const api = useAutoSpeech()
+    api.enabled.value = true
+    api.stopAudio()
+    await switchTo('session-a')
+    api.speakMessage('1', '会话 A 的回复')
+    await vi.waitFor(() => expect(api.isBusy()).toBe(true))
+
+    await switchTo('session-b')
+
+    expect(api.isBusy(), 'the old session must not keep the player busy').toBe(false)
+    expect(pause, 'the audio element must actually be paused').toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('frees the player so the new session is not queued behind the old one', async () => {
+    // The observable bug: with the old read-aloud still "busy", the new reply
+    // was appended to the queue and never played until the previous one
+    // drained. The player must be idle the moment the switch happens, so the
+    // next `speakMessage` starts immediately instead of queueing.
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    fetchSpy.mockResolvedValue({ cached: true, audioPath: '/tts/x.mp3' })
+    vi.stubGlobal('Audio', vi.fn(function (this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = vi.fn()
+      this.currentTime = 0
+      this.duration = 0
+      this.buffered = { length: 0 }
+      this.addEventListener = vi.fn()
+      this.removeEventListener = vi.fn()
+      this.onended = null
+      this.onerror = null
+    }))
+
+    const api = useAutoSpeech()
+    api.enabled.value = true
+    api.stopAudio()
+    await switchTo('session-a')
+    api.speakMessage('1', 'A 的回复')
+    await vi.waitFor(() => expect(api.isBusy()).toBe(true))
+
+    await switchTo('session-b')
+
+    // Nothing of A's is in flight any more, so B's reply cannot be queued.
+    expect(api.isBusy()).toBe(false)
+    expect(api.state.value).toBe('idle')
+    vi.unstubAllGlobals()
+  })
+})

@@ -1224,6 +1224,10 @@ watch(loading, (now, before) => {
 // Switching sessions ends the loop: the trigger words and the reply belong to
 // the conversation the user was talking to, and sending into a different one
 // would be worse than stopping.
+//
+// (Read-aloud of the session being left is stopped by useAutoSpeech itself, at
+// module scope — it owns the playback singleton and must do that whether or not
+// this panel is mounted.)
 watch(() => identity.currentSessionId.value, (sid) => {
   // Message ids are per session's history; carrying the set over would only
   // grow it. (A same-session reload keeps it, which is the point.)
