@@ -308,11 +308,12 @@ describe('CompletionMenu', () => {
 })
 
 describe('SOURCE_META', () => {
-  it('covers all eight completion sources', () => {
+  it('covers all nine completion sources', () => {
     expect(Object.keys(SOURCE_META).sort()).toEqual([
       'agent',
       'clawbench',
       'current-dir',
+      'global',
       'recent-open',
       'recent-ref',
       'recent-share',

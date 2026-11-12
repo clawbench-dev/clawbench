@@ -829,6 +829,7 @@ export default {
         recentRef: 'Referenced',
         recentUpload: 'Uploaded',
         recentShare: 'Shared',
+        global: 'Global',
         clawbench: 'Built-in',
         agent: 'Agent',
         skill: 'Skill',

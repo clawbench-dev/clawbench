@@ -843,6 +843,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Directory search SSE (recursive fuzzy file search)
 	register("/api/dir/search", DirSearch)
+	// Ranked top-N variant for the chat input's @ file reference menu: one JSON
+	// payload of the best matches instead of a walk-order SSE stream.
+	register("/api/dir/search/top", DirSearchTop)
 
 	// Content search SSE (grep-style search inside file contents)
 	register("/api/file/content-search", ContentSearch)

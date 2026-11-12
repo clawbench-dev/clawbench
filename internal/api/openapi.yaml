@@ -3507,6 +3507,59 @@ paths:
               schema:
                 type: string
 
+  /api/dir/search/top:
+    get:
+      tags: [Files]
+      summary: 目录搜索（Top N）
+      description: |
+        与 `/api/dir/search` 同一次递归文件名搜索，但**按模糊匹配得分排序后
+        只返回前 `limit` 条**，一次性 JSON 返回。供聊天输入框的 `@` 文件引用
+        菜单使用：它每次按键都会重新查询，只需要最好的几条，流式返回的
+        walk 顺序（目录顺序）反而会把最相关的命中挤到很后面。
+
+        `total` 是截断前的命中总数。
+      operationId: dirSearchTop
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 文件名查询（只匹配文件名，不匹配目录部分）
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: 返回条数上限（默认 8，最大 50）
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 按得分排序的命中
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        path:
+                          type: string
+                          description: 项目相对路径
+                        type:
+                          type: string
+                          enum: [file, dir, image]
+                        matchedIndices:
+                          type: array
+                          items:
+                            type: integer
+                  total:
+                    type: integer
+                    description: 截断前的命中总数
+
   /api/file/content-search:
     get:
       tags: [Files]

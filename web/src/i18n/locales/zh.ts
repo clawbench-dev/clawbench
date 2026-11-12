@@ -831,6 +831,7 @@ export default {
         recentRef: '最近引用',
         recentUpload: '最近上传',
         recentShare: '最近分享',
+        global: '全局搜索',
         clawbench: '内置',
         agent: '智能体',
         skill: '技能',

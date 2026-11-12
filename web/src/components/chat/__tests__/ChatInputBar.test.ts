@@ -102,6 +102,7 @@ const i18n = createI18n({
             recentRef: 'Referenced',
             recentUpload: 'Uploaded',
             recentShare: 'Shared',
+            global: 'Global',
             clawbench: 'Built-in',
             agent: 'Agent',
           },
@@ -2625,6 +2626,52 @@ describe('ChatInputBar', () => {
     expect(items).toHaveLength(1)
     expect(items[0].find('.completion-label').text()).toBe('main.ts')
     store.state.dirEntries = [] as any
+  })
+
+  it('@ menu merges ranked project-wide hits from the server', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+
+    const apiGetMock = apiGet as ReturnType<typeof vi.fn>
+    apiGetMock.mockImplementation((url: string) =>
+      url.startsWith('/api/dir/search/top')
+        ? Promise.resolve({
+            items: [
+              { name: 'ChatInputBar.vue', path: 'web/src/components/chat/ChatInputBar.vue', type: 'file' },
+              { name: 'chat', path: 'web/src/components/chat', type: 'dir' },
+            ],
+            total: 2,
+          })
+        : Promise.resolve(undefined),
+    )
+
+    const wrapper = mountBar()
+    // The late result refresh is gated on focus (a dismissed menu must not
+    // resurrect), so the textarea has to own focus like it does while typing.
+    await wrapper.find('.chat-textarea').trigger('focus')
+    wrapper.vm.inputText = '@chat'
+    await wrapper.vm.$nextTick()
+
+    // Nothing local matches, so the popup only opens once the async hits land.
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.completion-label').map(i => i.text())).toContain('ChatInputBar.vue')
+    })
+
+    const rows = wrapper.findAll('.completion-item')
+    const fileRow = rows.find(r => r.find('.completion-label').text() === 'ChatInputBar.vue')!
+    expect(fileRow.find('.completion-source').text()).toBe('Global')
+    // The directory column disambiguates hits from the same basename.
+    expect(fileRow.find('.completion-desc').text()).toBe('web/src/components/chat')
+
+    // A directory hit must reach the attach handler with isDir=true.
+    const dirRow = rows.find(r => r.find('.completion-label').text() === 'chat')!
+    await dirRow.trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['web/src/components/chat', true])
+
+    apiGetMock.mockReset()
+    apiGetMock.mockResolvedValue(undefined)
   })
 
   it('@ menu does not trigger for an email-like @', async () => {

@@ -410,6 +410,7 @@ import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteReco
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
+import { useAtFileSearch } from '@/composables/useAtFileSearch'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import ActionBar from '@/components/common/ActionBar.vue'
@@ -1241,6 +1242,7 @@ function ensureSkillsMenuLoaded() {
 const recentFiles = useRecentFiles()
 const { recentShares, fetchRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads } = useUploadRecent()
+const atSearch = useAtFileSearch()
 const fileSourcesLoaded = ref(false)
 
 /**
@@ -1261,10 +1263,18 @@ function currentCaret() {
 // (otherwise the candidate list would stay filtered by the previous query).
 const caretVersion = ref(0)
 
-const fileMenuItems = computed(() => {
-  // Establish the reactive dependency on the caret position.
+/**
+ * The live `@` query ('' when there is no trigger or the trigger is bare `@`).
+ * Shared by the candidate list and the project-wide search watcher so both read
+ * the same trigger — parsing twice invites them to disagree after a caret move.
+ */
+const atQueryText = computed(() => {
   void caretVersion.value
-  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+  return parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+})
+
+const fileMenuItems = computed(() => {
+  const query = atQueryText.value
 
   // Group members come FIRST: in a group chat an @ is usually about naming a
   // speaker, and the roster is short. Only active members are listed.
@@ -1307,6 +1317,11 @@ const fileMenuItems = computed(() => {
     recentRef: recentReferencedFiles.value.map(r => ({ path: r.path, isDir: r.isDir })),
     recentUpload: recentUploads.value.map(u => ({ path: u.path })),
     recentShare: recentShares.value.map(s => ({ path: s.path })),
+    // Project-wide search hits — only for the query they were fetched for, so a
+    // fresh bare "@" (or a different query) never shows stale unrelated files.
+    global: query && atSearch.hitsQuery.value === query
+      ? atSearch.hits.value.map(h => ({ path: h.path, isDir: h.isDir }))
+      : [],
   }
   const attached = props.attachedFiles.map(f => f.path)
   // Every file row shows its type icon (the shared menu renders it when present).
@@ -1347,6 +1362,24 @@ const fileMenu = useCompletionMenu({
   // member selection ALSO just removes the trigger — the card is the payload.
   buildReplacement: () => '',
   applyText: applyCompletionText,
+})
+
+// Project-wide search follows the @ query. Typing replaces the pending search
+// (debounced inside the composable); clearing the query drops the hits so a
+// fresh bare "@" never shows results from an earlier word.
+watch(atQueryText, (q) => {
+  if (historyNavSuppressMenu) return
+  if (q) atSearch.schedule(q)
+  else atSearch.clear()
+})
+
+// Results land after the debounce. Refresh so the popup opens on them (or grows
+// a list the local sources already opened). Gated on focus for the same reason
+// as the share/upload fetch below: a late refresh would resurrect a menu the
+// user dismissed by clicking away.
+watch(atSearch.hits, () => {
+  if (historyNavSuppressMenu) return
+  if (isTextareaFocused.value) fileMenu.refresh()
 })
 
 // Lazily load the share/upload sources the first time an @ trigger appears,
@@ -2355,6 +2388,7 @@ onBeforeUnmount(() => {
   endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
   stopPlaceholderRotation()
+  atSearch.clear()
 })
 
 // Reset stop confirmation state when loading ends (AI finished or cancelled)

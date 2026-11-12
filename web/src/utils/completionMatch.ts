@@ -84,6 +84,7 @@ export type CompletionSource =
   | 'recent-ref'
   | 'recent-upload'
   | 'recent-share'
+  | 'global'
   | 'clawbench'
   | 'agent'
   | 'skill'
@@ -95,6 +96,7 @@ export const SOURCE_PRIORITY: CompletionSource[] = [
   'recent-ref',
   'recent-upload',
   'recent-share',
+  'global',
 ]
 
 export interface PathCandidate {
@@ -109,6 +111,12 @@ export interface FileCandidateSources {
   recentRef?: PathCandidate[]
   recentUpload?: PathCandidate[]
   recentShare?: PathCandidate[]
+  /**
+   * Project-wide search hits. Lowest priority: an entry already offered by a
+   * more local source keeps that source's row, and its position in this list is
+   * already the server's ranking — the menu only keeps the best few.
+   */
+  global?: PathCandidate[]
 }
 
 export interface CompletionItem {
@@ -166,7 +174,7 @@ function canonicalPath(path: string, projectRoot?: string): string {
 }
 
 /**
- * Merge the five file sources into one ranked candidate list.
+ * Merge the file sources into one ranked candidate list.
  *
  * Dedupes by normalized path (highest-priority source wins), drops paths that
  * are already attached, fuzzy-matches the basename when a query is present,
@@ -189,6 +197,7 @@ export function buildFileCandidates(
     { source: 'recent-ref', list: sources.recentRef || [] },
     { source: 'recent-upload', list: sources.recentUpload || [] },
     { source: 'recent-share', list: sources.recentShare || [] },
+    { source: 'global', list: sources.global || [] },
   ]
 
   const byPath = new Map<string, CompletionItem>()
