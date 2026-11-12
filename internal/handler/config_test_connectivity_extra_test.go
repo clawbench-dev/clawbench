@@ -319,6 +319,70 @@ func TestSTTConnectivity_AlibabaAuthFailure(t *testing.T) {
 	assert.Contains(t, res.Message, "auth failed")
 }
 
+// TestSTTConnectivity_Tencent probes through the real signed request path and
+// checks the embedded speech clip is what got uploaded.
+func TestSTTConnectivity_Tencent(t *testing.T) {
+	var gotAction, gotData string
+	var gotDataLen int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAction = r.Header.Get("X-TC-Action")
+		var body struct {
+			Data    string `json:"Data"`
+			DataLen int    `json:"DataLen"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotData = body.Data
+		gotDataLen = body.DataLen
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	prev := tencentSTTBaseURL
+	tencentSTTBaseURL = srv.URL
+	t.Cleanup(func() { tencentSTTBaseURL = prev })
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+		"stt.tencent.app_id":     "1250000000",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "SentenceRecognition", gotAction)
+	assert.Equal(t, len(sttProbeAudio), gotDataLen)
+	decoded, err := base64.StdEncoding.DecodeString(gotData)
+	require.NoError(t, err)
+	assert.Equal(t, sttProbeAudio, decoded, "probe must upload the real speech clip")
+}
+
+// TestSTTConnectivity_TencentRequiresCredentials covers the missing-key guard.
+func TestSTTConnectivity_TencentRequiresCredentials(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "",
+		"stt.tencent.secret_key": "sk",
+		"stt.tencent.app_id":     "1",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "SecretId")
+}
+
+// TestSTTConnectivity_TencentRequiresAppID names the field the realtime API
+// needs but the file API does not, so a half-configured account is caught here
+// instead of at the first recording.
+func TestSTTConnectivity_TencentRequiresAppID(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk",
+		"stt.tencent.app_id":     "",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "AppID")
+}
+
 // ── Summarize Voice: provider branch ────────────────────────
 
 // The provider branch of testSummarizeVoice: its protocol decides the request

@@ -521,6 +521,9 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.Alibaba.Language == "" {
 		cfg.STT.Alibaba.Language = "zh"
 	}
+	if cfg.STT.Tencent.Model == "" {
+		cfg.STT.Tencent.Model = "16k_zh"
+	}
 	// Bool zero-value trap: ITN and punctuation default to ON, so only an
 	// explicit value in config.yaml may turn them off. The presence map uses the
 	// per-engine paths — a shared path would let one engine's explicit false
@@ -537,11 +540,23 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if _, ok := presence["stt.alibaba.enable_punc"]; !ok {
 		cfg.STT.Alibaba.EnablePunc = true
 	}
+	if _, ok := presence["stt.tencent.enable_itn"]; !ok {
+		cfg.STT.Tencent.EnableITN = true
+	}
+	// Tencent streams by default: realtime has no 60-second ceiling and returns
+	// text while the user is still speaking. Only an explicit false turns it
+	// off, which switches dictation to a WAV upload.
+	if _, ok := presence["stt.tencent.streaming"]; !ok {
+		cfg.STT.Tencent.Streaming = true
+	}
 	if cfg.STT.Doubao.EndWindowSize <= 0 {
 		cfg.STT.Doubao.EndWindowSize = 800
 	}
 	if cfg.STT.Alibaba.EndWindowSize <= 0 {
 		cfg.STT.Alibaba.EndWindowSize = 800
+	}
+	if cfg.STT.Tencent.EndWindowSize <= 0 {
+		cfg.STT.Tencent.EndWindowSize = 1000
 	}
 	if cfg.STT.ShortcutKey == "" {
 		cfg.STT.ShortcutKey = "F9"

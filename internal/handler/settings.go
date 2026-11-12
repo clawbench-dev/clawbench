@@ -148,6 +148,14 @@ var hotReloadFields = map[string]bool{
 	"stt.alibaba.enable_ddc":       true,
 	"stt.alibaba.end_window_size":  true,
 	"stt.alibaba.streaming":        true,
+	"stt.tencent.secret_id":        true,
+	"stt.tencent.secret_key":       true,
+	"stt.tencent.app_id":           true,
+	"stt.tencent.model":            true,
+	"stt.tencent.enable_itn":       true,
+	"stt.tencent.enable_ddc":       true,
+	"stt.tencent.end_window_size":  true,
+	"stt.tencent.streaming":        true,
 	"stt.mic_echo_cancel":          true,
 	"stt.mic_noise_suppress":       true,
 	"stt.mic_auto_gain":            true,
@@ -571,6 +579,7 @@ type configSTT struct {
 	VLLM        configSTTVLLM    `json:"vllm"`
 	Doubao      configSTTDoubao  `json:"doubao"`
 	Alibaba     configSTTAlibaba `json:"alibaba"`
+	Tencent     configSTTTencent `json:"tencent"`
 	ShortcutKey string           `json:"shortcut_key"`
 
 	MicEchoCancel        bool   `json:"mic_echo_cancel"`
@@ -616,6 +625,17 @@ type configSTTAlibaba struct {
 	Language      string `json:"language"`
 	EnableITN     bool   `json:"enable_itn"`
 	EnablePunc    bool   `json:"enable_punc"`
+	EnableDDC     bool   `json:"enable_ddc"`
+	EndWindowSize int    `json:"end_window_size"`
+	Streaming     bool   `json:"streaming"`
+}
+
+type configSTTTencent struct {
+	SecretID      string `json:"secret_id"`
+	SecretKey     string `json:"secret_key"`
+	AppID         string `json:"app_id"`
+	Model         string `json:"model"`
+	EnableITN     bool   `json:"enable_itn"`
 	EnableDDC     bool   `json:"enable_ddc"`
 	EndWindowSize int    `json:"end_window_size"`
 	Streaming     bool   `json:"streaming"`
@@ -1062,6 +1082,14 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.alibaba.enable_ddc":                 true,
 	"stt.alibaba.end_window_size":            true,
 	"stt.alibaba.streaming":                  true,
+	"stt.tencent.secret_id":                  true,
+	"stt.tencent.secret_key":                 true,
+	"stt.tencent.app_id":                     true,
+	"stt.tencent.model":                      true,
+	"stt.tencent.enable_itn":                 true,
+	"stt.tencent.enable_ddc":                 true,
+	"stt.tencent.end_window_size":            true,
+	"stt.tencent.streaming":                  true,
 	"stt.mic_echo_cancel":                    true,
 	"stt.mic_noise_suppress":                 true,
 	"stt.mic_auto_gain":                      true,
@@ -1163,7 +1191,7 @@ var validTTSEngines = map[string]bool{
 // must be rejected rather than falling back to vLLM, otherwise a typo silently
 // sends recordings to a service the user did not configure.
 var validSTTProviders = map[string]bool{
-	"vllm": true, "doubao": true, "alibaba": true,
+	"vllm": true, "doubao": true, "alibaba": true, "tencent": true,
 }
 
 // validVoiceSensitivities is the set of voice-gate sensitivity values. The
@@ -1325,6 +1353,16 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 				EnableDDC:     cfg.STT.Alibaba.EnableDDC,
 				EndWindowSize: cfg.STT.Alibaba.EndWindowSize,
 				Streaming:     cfg.STT.Alibaba.Streaming,
+			},
+			Tencent: configSTTTencent{
+				SecretID:      cfg.STT.Tencent.SecretID,
+				SecretKey:     cfg.STT.Tencent.SecretKey,
+				AppID:         cfg.STT.Tencent.AppID,
+				Model:         cfg.STT.Tencent.Model,
+				EnableITN:     cfg.STT.Tencent.EnableITN,
+				EnableDDC:     cfg.STT.Tencent.EnableDDC,
+				EndWindowSize: cfg.STT.Tencent.EndWindowSize,
+				Streaming:     cfg.STT.Tencent.Streaming,
 			},
 
 			MicEchoCancel:        cfg.STT.MicEchoCancel,
@@ -1929,6 +1967,34 @@ func applySTTAlibabaPatch(cfg *model.STTAlibabaConfig, patch map[string]any) {
 	}
 }
 
+// applySTTTencentPatch writes the Tencent Cloud engine's own fields.
+func applySTTTencentPatch(cfg *model.STTTencentConfig, patch map[string]any) {
+	if v, ok := patch["secret_id"].(string); ok {
+		cfg.SecretID = v
+	}
+	if v, ok := patch["secret_key"].(string); ok {
+		cfg.SecretKey = v
+	}
+	if v, ok := patch["app_id"].(string); ok {
+		cfg.AppID = v
+	}
+	if v, ok := patch["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := patch["enable_itn"].(bool); ok {
+		cfg.EnableITN = v
+	}
+	if v, ok := patch["enable_ddc"].(bool); ok {
+		cfg.EnableDDC = v
+	}
+	if v, ok := patch["end_window_size"].(float64); ok {
+		cfg.EndWindowSize = int(v)
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+}
+
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
 	// language: only locales the bundled translation tables actually carry.
 	// An unknown value would make every background-localized string fall back
@@ -2052,7 +2118,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
 		if v, ok := sttVal["provider"].(string); ok && v != "" {
 			if !validSTTProviders[v] {
-				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba")
+				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba,tencent")
 			}
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
@@ -2878,6 +2944,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["alibaba"].(map[string]any); ok {
 			applySTTAlibabaPatch(&cfg.STT.Alibaba, v)
+		}
+		if v, ok := sttVal["tencent"].(map[string]any); ok {
+			applySTTTencentPatch(&cfg.STT.Tencent, v)
 		}
 		if v, ok := sttVal["mic_echo_cancel"].(bool); ok {
 			cfg.STT.MicEchoCancel = v

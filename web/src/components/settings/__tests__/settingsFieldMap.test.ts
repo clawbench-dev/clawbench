@@ -696,18 +696,32 @@ describe('settingsFieldMap', () => {
     }
 
     // Each engine has its own api_key, and only that engine's row shows it.
+    // Tencent's credential is a SecretId/SecretKey pair, so it is checked
+    // separately below rather than through this api_key loop.
     for (const [engine, key] of [['vllm', 'stt.vllm.api_key'], ['doubao', 'stt.doubao.api_key'], ['alibaba', 'stt.alibaba.api_key']]) {
       const field = cfg.commonFields.find(f => f.key === key)
       expect(field, key).toBeDefined()
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
     }
 
+    // Tencent signs with SecretId/SecretKey and needs the numeric AppID for
+    // realtime; all of its rows must be gated on its own engine.
+    for (const key of ['stt.tencent.secret_id', 'stt.tencent.secret_key', 'stt.tencent.app_id',
+      'stt.tencent.model', 'stt.tencent.streaming', 'stt.tencent.end_window_size']) {
+      const field = cfg.commonFields.find(f => f.key === key)
+      expect(field, key).toBeDefined()
+      expect(field!.dependsOn, key).toEqual({ key: 'stt.provider', value: 'tencent' })
+    }
+    // The provider list must offer it, otherwise the rows can never render.
+    const provider = cfg.commonFields.find(f => f.key === 'stt.provider')
+    expect(provider!.options!.map(o => o.value)).toContain('tencent')
+
     // The streaming switch exists only for the engines that can decode live
     // PCM, each gated on its own engine. vLLM gets no row at all: its value was
     // never read by any code path (dictation always uploads one recording), so
     // the row was a switch that did nothing.
     expect(keys).not.toContain('stt.vllm.streaming')
-    for (const engine of ['doubao', 'alibaba']) {
+    for (const engine of ['doubao', 'alibaba', 'tencent']) {
       const field = cfg.commonFields.find(f => f.key === `stt.${engine}.streaming`)
       expect(field, engine).toBeDefined()
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })

@@ -783,6 +783,7 @@ func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
 		"applySTTVLLMPatch":    false,
 		"applySTTDoubaoPatch":  false,
 		"applySTTAlibabaPatch": false,
+		"applySTTTencentPatch": false,
 	}
 
 	bodies := map[string]*ast.BlockStmt{}
@@ -833,6 +834,7 @@ func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
 		"stt.vllm.":    "applySTTVLLMPatch",
 		"stt.doubao.":  "applySTTDoubaoPatch",
 		"stt.alibaba.": "applySTTAlibabaPatch",
+		"stt.tencent.": "applySTTTencentPatch",
 	}
 
 	var missing []string
@@ -1829,6 +1831,86 @@ func TestServeConfig_Patch_STTAlibaba(t *testing.T) {
 	assert.Equal(t, "sk-dash", model.ConfigInstance.STT.Alibaba.APIKey)
 	assert.Equal(t, "https://dashscope-intl.aliyuncs.com", model.ConfigInstance.STT.Alibaba.BaseURL)
 	assert.Equal(t, "paraformer-realtime-8k-v2", model.ConfigInstance.STT.Alibaba.Model)
+}
+
+// TestServeConfig_Patch_STTTencent covers the Tencent Cloud fields end to end:
+// every one must be in PatchableConfigPaths (otherwise forbidden_field) and in
+// applySTTTencentPatch (otherwise the value is dropped silently).
+func TestServeConfig_Patch_STTTencent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"stt":{"provider":"tencent","tencent":{"secret_id":"AKIDtest","secret_key":"sk-test","app_id":"1250000000","model":"16k_zh_dialect","enable_itn":false,"enable_ddc":true,"end_window_size":1200,"streaming":false}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "tencent", model.ConfigInstance.STT.Provider)
+	assert.Equal(t, "AKIDtest", model.ConfigInstance.STT.Tencent.SecretID)
+	assert.Equal(t, "sk-test", model.ConfigInstance.STT.Tencent.SecretKey)
+	assert.Equal(t, "1250000000", model.ConfigInstance.STT.Tencent.AppID)
+	assert.Equal(t, "16k_zh_dialect", model.ConfigInstance.STT.Tencent.Model)
+	assert.False(t, model.ConfigInstance.STT.Tencent.EnableITN, "an explicit false must survive the PATCH")
+	assert.True(t, model.ConfigInstance.STT.Tencent.EnableDDC)
+	assert.Equal(t, 1200, model.ConfigInstance.STT.Tencent.EndWindowSize)
+	assert.False(t, model.ConfigInstance.STT.Tencent.Streaming, "an explicit false must survive the PATCH")
+}
+
+// TestServeConfig_Get_STTTencent proves GET echoes the Tencent section. The
+// settings panel reads `stt.tencent.*` from this payload, so a field missing
+// from configSTT (or from the struct that fills it) shows up as an empty form
+// even though the value is stored — the same trap the other engines have.
+func TestServeConfig_Get_STTTencent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.STT.Provider = "tencent"
+	model.ConfigInstance.STT.Tencent = model.STTTencentConfig{
+		SecretID:      "AKIDtest",
+		SecretKey:     "sk-test",
+		AppID:         "1250000000",
+		Model:         "16k_zh_dialect",
+		EnableITN:     true,
+		EnableDDC:     true,
+		EndWindowSize: 1200,
+		Streaming:     true,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		STT struct {
+			Provider string `json:"provider"`
+			Tencent  struct {
+				SecretID      string `json:"secret_id"`
+				SecretKey     string `json:"secret_key"`
+				AppID         string `json:"app_id"`
+				Model         string `json:"model"`
+				EnableITN     bool   `json:"enable_itn"`
+				EnableDDC     bool   `json:"enable_ddc"`
+				EndWindowSize int    `json:"end_window_size"`
+				Streaming     bool   `json:"streaming"`
+			} `json:"tencent"`
+		} `json:"stt"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "tencent", resp.STT.Provider)
+	assert.Equal(t, "AKIDtest", resp.STT.Tencent.SecretID)
+	assert.Equal(t, "sk-test", resp.STT.Tencent.SecretKey)
+	assert.Equal(t, "1250000000", resp.STT.Tencent.AppID)
+	assert.Equal(t, "16k_zh_dialect", resp.STT.Tencent.Model)
+	assert.True(t, resp.STT.Tencent.EnableITN)
+	assert.True(t, resp.STT.Tencent.EnableDDC)
+	assert.Equal(t, 1200, resp.STT.Tencent.EndWindowSize)
+	assert.True(t, resp.STT.Tencent.Streaming)
 }
 
 // TestServeConfig_Patch_STTEnginesAreIndependent is the point of the per-engine

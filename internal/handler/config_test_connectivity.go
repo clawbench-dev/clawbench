@@ -364,6 +364,9 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	if providerName == engineAlibaba {
 		return testAlibabaSTT(ctx, values)
 	}
+	if providerName == engineTencent {
+		return testTencentSTT(ctx, values)
+	}
 
 	baseURL := resolveStringValue(values, "stt.vllm.base_url", model.ConfigInstance.STT.VLLM.BaseURL)
 	sttModel := resolveStringValue(values, "stt.vllm.model", model.ConfigInstance.STT.VLLM.Model)
@@ -491,6 +494,47 @@ func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTest
 		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud transcription returned empty text"}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Alibaba Cloud transcription succeeded: %q", text)}
+}
+
+// tencentSTTBaseURL is the Tencent Cloud ASR root used by the connectivity
+// test. Overridable in tests; production always hits the real host.
+//
+//nolint:gochecknoglobals // test seam, mirrors doubaoSTTBaseURL
+var tencentSTTBaseURL = stt.TencentASRBaseURL
+
+// testTencentSTT probes 一句话识别 with the embedded "你好" clip. The signed
+// request exercises the real signature path, so a wrong SecretId/SecretKey or
+// an unopened service surfaces as the engine's own error code instead of "the
+// host answered".
+func testTencentSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	secretID := resolveStringValue(values, "stt.tencent.secret_id", model.ConfigInstance.STT.Tencent.SecretID)
+	secretKey := resolveStringValue(values, "stt.tencent.secret_key", model.ConfigInstance.STT.Tencent.SecretKey)
+	appID := resolveStringValue(values, "stt.tencent.app_id", model.ConfigInstance.STT.Tencent.AppID)
+	engineModel := resolveStringValue(values, "stt.tencent.model", model.ConfigInstance.STT.Tencent.Model)
+
+	if secretID == "" || secretKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud SecretId and SecretKey are required"}
+	}
+	if appID == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud AppID is required for realtime recognition"}
+	}
+
+	provider := stt.NewTencentProvider(secretID, secretKey, appID)
+	provider.BaseURL = tencentSTTBaseURL
+	if engineModel != "" {
+		provider.Model = engineModel
+	}
+	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Tencent Cloud transcription failed: %v", err)}
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud transcription returned empty text"}
+	}
+	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Tencent Cloud transcription succeeded: %q", text)}
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.

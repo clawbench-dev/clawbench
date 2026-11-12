@@ -196,6 +196,18 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if !cfg.STT.Alibaba.EnableITN || !cfg.STT.Alibaba.EnablePunc {
 		t.Errorf("STT.Alibaba ITN/punc = %v/%v, want both true", cfg.STT.Alibaba.EnableITN, cfg.STT.Alibaba.EnablePunc)
 	}
+	if cfg.STT.Tencent.Model != "16k_zh" {
+		t.Errorf("STT.Tencent.Model = %q, want default", cfg.STT.Tencent.Model)
+	}
+	if !cfg.STT.Tencent.EnableITN {
+		t.Error("STT.Tencent.EnableITN = false, want true")
+	}
+	if !cfg.STT.Tencent.Streaming {
+		t.Error("STT.Tencent.Streaming = false, want true (realtime has no 60-second ceiling)")
+	}
+	if cfg.STT.Tencent.EndWindowSize != 1000 {
+		t.Errorf("STT.Tencent.EndWindowSize = %d, want 1000", cfg.STT.Tencent.EndWindowSize)
+	}
 	if cfg.STT.ShortcutKey != "F9" {
 		t.Errorf("STT.ShortcutKey = %q, want F9", cfg.STT.ShortcutKey)
 	}
@@ -356,6 +368,22 @@ func TestApplyDefaults_STTEngineSwitchesIndependent(t *testing.T) {
 	if !cfg.STT.Alibaba.EnableITN || !cfg.STT.Alibaba.EnablePunc {
 		t.Errorf("STT.Alibaba ITN/punc = %v/%v, want both true (untouched engine)",
 			cfg.STT.Alibaba.EnableITN, cfg.STT.Alibaba.EnablePunc)
+	}
+	if !cfg.STT.Tencent.EnableITN || !cfg.STT.Tencent.Streaming {
+		t.Errorf("STT.Tencent itn/streaming = %v/%v, want both true (untouched engine)",
+			cfg.STT.Tencent.EnableITN, cfg.STT.Tencent.Streaming)
+	}
+}
+
+// TestApplyDefaults_STTTencentStreamingCanBeDisabled pins the presence handling
+// for Tencent's ON-by-default streaming switch: an explicit false must survive.
+func TestApplyDefaults_STTTencentStreamingCanBeDisabled(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, map[string]bool{"stt.tencent.streaming": true})
+	if cfg.STT.Tencent.Streaming {
+		t.Error("STT.Tencent.Streaming = true, want false (explicitly set)")
 	}
 }
 

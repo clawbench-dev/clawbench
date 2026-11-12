@@ -772,6 +772,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
           { labelKey: 'settings.items.sttProviderVllm', value: 'vllm' },
           { labelKey: 'settings.items.sttProviderDoubao', value: 'doubao' },
           { labelKey: 'settings.items.sttProviderAlibaba', value: 'alibaba' },
+          { labelKey: 'settings.items.sttProviderTencent', value: 'tencent' },
         ] },
         // Each engine's credentials and options live in its own section. They
         // are NOT shared: a single set of fields meant switching the engine
@@ -810,6 +811,19 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.alibaba.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.alibaba.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.alibaba.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+
+        // Tencent Cloud signs every request with a SecretId/SecretKey pair; the
+        // realtime API additionally needs the numeric AppID in its URL path.
+        // The engine model name carries the language (16k_zh, 16k_en, …), so
+        // there is no separate language row.
+        { labelKey: 'settings.items.sttTencentSecretId', descriptionKey: 'settings.items.sttTencentSecretIdDesc', key: 'stt.tencent.secret_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentSecretKey', descriptionKey: 'settings.items.sttTencentSecretKeyDesc', key: 'stt.tencent.secret_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentAppId', descriptionKey: 'settings.items.sttTencentAppIdDesc', key: 'stt.tencent.app_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentModel', descriptionKey: 'settings.items.sttTencentModelDesc', key: 'stt.tencent.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttTencentStreamingDesc', key: 'stt.tencent.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.tencent.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.tencent.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentEndWindowSize', descriptionKey: 'settings.items.sttTencentEndWindowSizeDesc', key: 'stt.tencent.end_window_size', type: 'number', source: 'server', min: 500, max: 2000, step: 100, dependsOn: { key: 'stt.provider', value: 'tencent' } },
 
         { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
 

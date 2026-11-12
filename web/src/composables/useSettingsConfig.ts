@@ -675,6 +675,16 @@ const serverDefaults: Record<string, unknown> = {
   'stt.alibaba.enable_ddc': false,
   'stt.alibaba.end_window_size': 800,
   'stt.alibaba.streaming': false,
+  'stt.tencent.secret_id': '',
+  'stt.tencent.secret_key': '',
+  'stt.tencent.app_id': '',
+  'stt.tencent.model': '16k_zh',
+  'stt.tencent.enable_itn': true,
+  'stt.tencent.enable_ddc': false,
+  'stt.tencent.end_window_size': 1000,
+  // ON by default: realtime has no 60-second ceiling and returns text while the
+  // user is still speaking. Off switches dictation to a WAV upload.
+  'stt.tencent.streaming': true,
   'stt.shortcut_key': 'F9',
   // Mirrors model.ApplyDefaults: the preprocessing and gate switches default ON
   // (only an explicit false turns them off), and the free-dialog defaults are

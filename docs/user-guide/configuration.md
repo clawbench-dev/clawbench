@@ -166,8 +166,8 @@
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `provider` | `vllm` | 引擎：`vllm`（OpenAI 兼容接口）/ `doubao`（豆包）/ `alibaba`（阿里云百炼） |
-| `shortcut_key` | `F9` | 语音输入快捷键（三个引擎共用） |
+| `provider` | `vllm` | 引擎：`vllm`（OpenAI 兼容接口）/ `doubao`（豆包）/ `alibaba`（阿里云百炼）/ `tencent`（腾讯云语音识别） |
+| `shortcut_key` | `F9` | 语音输入快捷键（四个引擎共用） |
 | `mic_echo_cancel` | `true` | 回声消除。朗读时靠它不把自己的声音录进去 |
 | `mic_noise_suppress` | `true` | 背景降噪 |
 | `mic_auto_gain` | `true` | 自动音量 |
@@ -205,6 +205,14 @@
 | `alibaba.enable_ddc` | `false` | 顺滑处理 |
 | `alibaba.end_window_size` | `800` | 流式判停的静音阈值（毫秒） |
 | `alibaba.streaming` | `false` | 边录边传 |
+| `tencent.secret_id` | 空 | 腾讯云 API 密钥的 SecretId |
+| `tencent.secret_key` | 空 | 与 SecretId 配对的 SecretKey |
+| `tencent.app_id` | 空 | 账号数字 AppID，实时识别必填 |
+| `tencent.model` | `16k_zh` | 引擎型号，同时决定语种（`16k_en`、`16k_zh_dialect` 等） |
+| `tencent.enable_itn` | `true` | 数字规范化（`convert_num_mode`） |
+| `tencent.enable_ddc` | `false` | 顺滑处理，去口头语（`filter_modal`） |
+| `tencent.end_window_size` | `1000` | 流式判停的静音阈值，500–2000 毫秒（`vad_silence_time`） |
+| `tencent.streaming` | `true` | 边录边传。**默认开**；关掉后浏览器把录音转成 WAV 上传（整段识别单次最多 60 秒） |
 
 > 界面入口：设置 → 语音识别。麦克风处理与「安静时不送」这几项，会议听记也共用同一份。
 

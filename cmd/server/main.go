@@ -2584,6 +2584,16 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		p.EnableDDC = cfg.STT.Alibaba.EnableDDC
 		p.EndWindowSize = cfg.STT.Alibaba.EndWindowSize
 		return p
+	case "tencent":
+		p := stt.NewTencentProvider(
+			cfg.STT.Tencent.SecretID, cfg.STT.Tencent.SecretKey, cfg.STT.Tencent.AppID)
+		if cfg.STT.Tencent.Model != "" {
+			p.Model = cfg.STT.Tencent.Model
+		}
+		p.EnableITN = cfg.STT.Tencent.EnableITN
+		p.EnableDDC = cfg.STT.Tencent.EnableDDC
+		p.EndWindowSize = cfg.STT.Tencent.EndWindowSize
+		return p
 	default:
 		return stt.NewVLLMProvider(
 			cfg.STT.VLLM.BaseURL, cfg.STT.VLLM.Model, cfg.STT.VLLM.APIKey, cfg.STT.VLLM.Language)

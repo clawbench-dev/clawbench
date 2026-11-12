@@ -475,10 +475,11 @@ type BingWallpaperConfig struct {
 // user — which engine, the recording shortcut, microphone processing, the voice
 // gate and free-dialog behavior — stay at this level.
 type STTConfig struct {
-	Provider    string           `yaml:"provider"` // "vllm" (default), "doubao" (Volcano Engine Seed-ASR) or "alibaba" (Model Studio / DashScope)
+	Provider    string           `yaml:"provider"` // "vllm" (default), "doubao" (Volcano Engine Seed-ASR), "alibaba" (Model Studio / DashScope) or "tencent" (Tencent Cloud ASR)
 	VLLM        STTEngineConfig  `yaml:"vllm"`
 	Doubao      STTDoubaoConfig  `yaml:"doubao"`
 	Alibaba     STTAlibabaConfig `yaml:"alibaba"`
+	Tencent     STTTencentConfig `yaml:"tencent"`
 	ShortcutKey string           `yaml:"shortcut_key"` // Recording shortcut (default: "F9")
 
 	// Microphone preprocessing. Applied where the microphone is opened, so the
@@ -561,6 +562,27 @@ type STTAlibabaConfig struct {
 	EndWindowSize int  `yaml:"end_window_size"` // Streaming VAD silence threshold in ms (default: 800)
 	// Streaming is the client-facing switch; this engine streams natively.
 	Streaming bool `yaml:"streaming"` // true=streaming incremental, false=non-streaming full (default: false)
+}
+
+// STTTencentConfig is the Tencent Cloud (腾讯云语音识别) engine's own config.
+//
+// Auth is a SecretId/SecretKey pair, and the realtime API additionally needs
+// the numeric account AppID in its URL path. The engine model name carries the
+// language (16k_zh, 16k_en, 16k_zh_dialect, …), so there is no language field.
+type STTTencentConfig struct {
+	SecretID  string `yaml:"secret_id"`  // API key SecretId
+	SecretKey string `yaml:"secret_key"` // API key SecretKey
+	AppID     string `yaml:"app_id"`     // Numeric account AppID (realtime only)
+	Model     string `yaml:"model"`      // engine model type (default: "16k_zh")
+	// Recognition options.
+	EnableITN     bool `yaml:"enable_itn"`      // convert_num_mode: Arabic numerals (default: true)
+	EnableDDC     bool `yaml:"enable_ddc"`      // filter_modal: drop filler words (default: false)
+	EndWindowSize int  `yaml:"end_window_size"` // vad_silence_time in ms, 500–2000 (default: 1000)
+	// Streaming defaults to ON: realtime has no 60-second ceiling and shows
+	// text while the user is still speaking. Turning it off works too — the
+	// browser converts its recording to WAV for the whole-file API, which
+	// rejects the WebM container the recorder would otherwise produce.
+	Streaming bool `yaml:"streaming"` // true=streaming incremental (default: true)
 }
 
 // FileSearchConfig holds configuration for the file search feature.

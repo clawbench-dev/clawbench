@@ -11,10 +11,11 @@ package model
 
 // ActiveLanguage is the language code the selected engine should be told.
 //
-// Doubao auto-detects and has no language setting, so it returns "".
+// Doubao auto-detects and has no language setting, and Tencent encodes the
+// language in the engine model name, so both return "".
 func (c STTConfig) ActiveLanguage() string {
 	switch c.Provider {
-	case "doubao":
+	case "doubao", "tencent":
 		return ""
 	case "alibaba":
 		return c.Alibaba.Language
@@ -33,6 +34,8 @@ func (c STTConfig) ActiveStreaming() bool {
 		return c.Doubao.Streaming
 	case "alibaba":
 		return c.Alibaba.Streaming
+	case "tencent":
+		return c.Tencent.Streaming
 	default:
 		return false
 	}

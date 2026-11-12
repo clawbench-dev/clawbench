@@ -609,6 +609,50 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
+  it('uses the PCM stream when the provider is tencent and streaming is on', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'tencent', tencent: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(env.getWS()).toBeDefined()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+    v.cancel()
+  })
+
+  it('uploads a WAV for tencent with streaming off (its whole-file API rejects WebM)', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'tencent', tencent: { streaming: false } } }
+    const env = stubStreamingEnv()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: '识别结果' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+    // One 100 ms frame of speech (RMS well above the standard threshold).
+    env.workletNode.port.onmessage!({ data: new Int16Array(1600).fill(1000).buffer })
+    await v.stop()
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = fetchMock.mock.calls[0][1].body as FormData
+    const file = body.get('file') as File
+    expect(file.name).toBe('recording.wav')
+    expect(file.type).toBe('audio/wav')
+    // 44-byte header + one 1600-sample (3200-byte) frame.
+    expect(file.size).toBe(44 + 3200)
+    expect(v.inputText.value).toBe('识别结果')
+  })
+
   it('partial messages replace the transcript while keeping the typed prefix', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }

@@ -25,7 +25,7 @@ import {
   rmsThreshold,
   type VoiceTuning,
 } from '@/utils/audioTuning'
-import { PCM_SAMPLE_RATE, PcmStreamer } from '@/utils/pcmCapture'
+import { PCM_SAMPLE_RATE, PcmStreamer, encodeWav } from '@/utils/pcmCapture'
 import i18n from '@/i18n'
 
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
@@ -46,6 +46,10 @@ let voicePrefix = ''
 let stopRequested = false
 // PCM capture for the streaming engine (band filter + worklet + voice gate).
 let pcm: PcmStreamer | null = null
+// PCM capture for the whole-file engines that cannot read WebM: frames are
+// collected and encoded as WAV when the user stops.
+let wavStreamer: PcmStreamer | null = null
+let wavFrames: ArrayBuffer[] = []
 // Level metering for the buffered (whole-file) path: whether any window of the
 // recording rose above the speech threshold.
 let sawSpeech = false
@@ -150,11 +154,21 @@ export function useVoiceInput() {
   /**
    * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
    * protocol by provider capability, and only the engines that decode PCM
-   * (Doubao, Alibaba Cloud Paraformer) are reached that way — every other
-   * provider receives the bytes as a `recording.webm` upload, so the flag alone
-   * must never select this path.
+   * (Doubao, Alibaba Cloud Paraformer, Tencent Cloud) are reached that way —
+   * every other provider receives the bytes as a `recording.webm` upload, so
+   * the flag alone must never select this path. Tencent also rejects WebM on
+   * its whole-file API, which is why its streaming switch defaults to on.
    */
-  const usePcmStreaming = () => streaming() && (provider() === 'doubao' || provider() === 'alibaba')
+  const usePcmStreaming = () =>
+    streaming() && (provider() === 'doubao' || provider() === 'alibaba' || provider() === 'tencent')
+
+  /**
+   * Whole-file engines that reject the WebM container the MediaRecorder
+   * produces. Tencent's 一句话识别 decodes containers (wav/pcm/mp3/m4a/…), not
+   * bare Opus frames, so its upload is built from the PCM capture instead.
+   * Every other buffered engine takes the recorder's WebM as-is.
+   */
+  const needsWavUpload = () => provider() === 'tencent'
 
   async function toggle(prefix = '') {
     if (state.value === 'recording' || state.value === 'transcribing') {
@@ -205,6 +219,8 @@ export function useVoiceInput() {
 
     if (usePcmStreaming()) {
       startStreaming()
+    } else if (needsWavUpload()) {
+      startWavRecording()
     } else {
       startNonStreaming()
     }
@@ -218,36 +234,72 @@ export function useVoiceInput() {
     mediaRecorder = new MediaRecorder(mediaStream!, mimeType ? { mimeType } : undefined)
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
     mediaRecorder.onstop = async () => {
-      state.value = 'transcribing'
       // The recording is complete once this fires, so the capture indicator can
       // go off while the upload runs — without cutting the final chunk.
       stopMediaStream()
-      const blob = new Blob(chunks, { type: 'audio/webm' })
-      // The buffered path cannot skip silence frame-by-frame (there is no frame
-      // boundary to decide on) — the whole recording is one upload. A clip that
-      // never rose above the speech threshold is pure cost and returns an empty
-      // transcript anyway, so it is dropped here instead of being uploaded.
-      if (tuning.voiceGate && !sawSpeech) {
-        finishRecording('')
-        return
-      }
-      try {
-        const form = new FormData()
-        form.append('file', blob, 'recording.webm')
-        form.append('language', language() ?? 'zh')
-        const resp = await fetch('/api/stt/transcribe', { method: 'POST', body: form })
-        const data = await resp.json().catch(() => ({}))
-        if (!resp.ok) throw new Error((data as Record<string, unknown>).error as string ?? 'transcribe failed')
-        appendText((data as Record<string, unknown>).text as string ?? '')
-      } catch (e) {
-        fail(i18n.global.t('chat.voice.transcribeFailed'))
-        appLog.e('VoiceInput', 'non-streaming transcribe failed', e)
-      } finally {
-        finishRecording()
-      }
+      await uploadRecording(new Blob(chunks, { type: 'audio/webm' }), 'recording.webm')
     }
     mediaRecorder.start()
     startBufferedGate()
+  }
+
+  /**
+   * Buffered recording for engines that cannot read WebM.
+   *
+   * The same PCM capture the streaming path uses, with the gate disabled: a
+   * whole-file upload has no keepalive requirement, and dropping silence would
+   * splice the speech together and shift every timestamp. The level callback
+   * still drives `sawSpeech`, so a clip that never rose above the threshold is
+   * skipped exactly like the recorder path.
+   */
+  function startWavRecording() {
+    state.value = 'recording'
+    isRecording.value = true
+    wavFrames = []
+    sawSpeech = !tuning.voiceGate
+    const threshold = rmsThreshold(tuning)
+    const streamer = new PcmStreamer({
+      stream: mediaStream!,
+      tuning: { ...tuning, voiceGate: false },
+      onFrame: (frame) => { wavFrames.push(frame) },
+      onLevel: (rms) => { if (!sawSpeech && rms >= threshold) sawSpeech = true },
+    })
+    wavStreamer = streamer
+    streamer.start().catch((e) => {
+      appLog.e('VoiceInput', 'pcm capture failed', e)
+      fail(i18n.global.t('chat.voice.micUnavailable'))
+      cancel()
+    })
+  }
+
+  /**
+   * Uploads one finished recording and appends the transcript.
+   *
+   * Shared by the recorder path and the WAV path so the silence skip, the error
+   * handling and the state transition cannot drift between them.
+   */
+  async function uploadRecording(blob: Blob, filename: string) {
+    state.value = 'transcribing'
+    // A clip that never rose above the speech threshold is pure cost and
+    // returns an empty transcript anyway, so it is dropped instead of uploaded.
+    if (tuning.voiceGate && !sawSpeech) {
+      finishRecording('')
+      return
+    }
+    try {
+      const form = new FormData()
+      form.append('file', blob, filename)
+      form.append('language', language() ?? 'zh')
+      const resp = await fetch('/api/stt/transcribe', { method: 'POST', body: form })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error((data as Record<string, unknown>).error as string ?? 'transcribe failed')
+      appendText((data as Record<string, unknown>).text as string ?? '')
+    } catch (e) {
+      fail(i18n.global.t('chat.voice.transcribeFailed'))
+      appLog.e('VoiceInput', 'non-streaming transcribe failed', e)
+    } finally {
+      finishRecording()
+    }
   }
 
   /** Completes the non-streaming state machine (shared by the silent-skip path). */
@@ -424,6 +476,23 @@ export function useVoiceInput() {
       state.value = 'transcribing'
       return
     }
+    if (wavStreamer) {
+      // Capture first, then release the microphone: the last frame is already
+      // in `wavFrames`, so there is nothing left to flush.
+      const frames = wavFrames
+      wavFrames = []
+      wavStreamer.stop()
+      wavStreamer = null
+      stopMediaStream()
+      // A tap that released before the worklet produced anything has no audio
+      // to send; a header-only WAV would come back as an engine error.
+      if (frames.length === 0) {
+        finishRecording('')
+        return
+      }
+      await uploadRecording(encodeWav(frames), 'recording.wav')
+      return
+    }
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       // The recorder flushes its final chunk as it stops, so the microphone is
       // released in `onstop` rather than here: stopping the tracks first can
@@ -434,6 +503,11 @@ export function useVoiceInput() {
 
   function cancel() {
     stopPcmCapture()
+    if (wavStreamer) {
+      wavStreamer.stop()
+      wavStreamer = null
+      wavFrames = []
+    }
     stopBufferedGate()
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       try { mediaRecorder.stop() } catch { /* noop */ }
