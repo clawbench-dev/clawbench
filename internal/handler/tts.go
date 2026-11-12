@@ -360,6 +360,73 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ttsPreviewTextMaxRunes caps the sample a preview may speak. The endpoint
+// exists to let a human hear the voice; a long text is a bug in the caller.
+const ttsPreviewTextMaxRunes = 200
+
+// ttsPreviewTimeout bounds one preview synthesis. It is deliberately shorter
+// than the playback job's budget: the user is staring at a "testing" button.
+const ttsPreviewTimeout = 30 * time.Second
+
+// TTSPreview handles POST /api/tts/preview.
+//
+// Synthesizes a short sample with the CURRENT provider and returns its path so
+// the settings page can play it. Deliberately skips summarization: the point is
+// to hear the voice, not a condensation of the sample.
+func TTSPreview(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+
+	var req struct {
+		Text     string `json:"text"`
+		Language string `json:"language"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Text == "" {
+		req.Text = "您好，这是一段语音合成测试"
+	}
+	if req.Language == "" {
+		req.Language = "zh"
+	}
+	if len([]rune(req.Text)) > ttsPreviewTextMaxRunes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "TextTooLong", map[string]any{"MaxChars": ttsPreviewTextMaxRunes})
+		return
+	}
+
+	provider := GetSpeechProvider()
+	// Fold the provider identity into the file name: switching the voice must
+	// not replay the previous voice's sample, which looks like a broken test.
+	sum := sha256.Sum256([]byte("preview\x00" + req.Text + "\x00" + req.Language + "\x00" + ttsProviderCacheIdentity(provider)))
+	relPath := filepath.Join(".clawbench", "generated", "tts-preview",
+		hex.EncodeToString(sum[:])[:summarize.CacheKeyHexLen]+ttsAudioExt)
+	absPath, ok := validateAndResolvePath(w, r, projectPath, relPath)
+	if !ok {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		slog.Error("tts preview mkdir failed", slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "SynthesizeFailed")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), ttsPreviewTimeout)
+	defer cancel()
+	if err := provider.Synthesize(ctx, req.Text, absPath, req.Language); err != nil {
+		slog.Warn("tts preview failed", slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusBadGateway, "SynthesizeFailed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audioPath": relPath})
+}
+
 // ttsApplyConclusion replaces the request text with the message's final answer
 // when a messageId is present, so intermediate step commentary is not read.
 func ttsApplyConclusion(req *ttsGenerateRequest) {

@@ -185,6 +185,12 @@ const i18n = createI18n({
           testing: '测试中…',
           testConnectivity: '测试连通性',
           needsRestartHint: '需要重启生效',
+          ttsTestPhrase: '您好，这是一段{engine}朗读测试。',
+          ttsTestOk: '测试音频已播放',
+          ttsTestFailed: '朗读测试失败：{reason}',
+          systemSpeechTestPhrase: '你好，这是一段手机朗读测试。',
+          systemSpeechTestOk: '手机朗读正常',
+          systemSpeechTestFailed: '手机朗读失败：{reason}',
         },
         items: {
           terminalEnabled: '启用终端',
@@ -1091,12 +1097,51 @@ describe('SettingsGroupPanel', () => {
     })
 
     it('calls runConnectivityTests with getTestCategories result', async () => {
-      localValues['tts.engine'] = 'edge'
-      localValues['tts.voice'] = ''
-      const wrapper = mountPanel(makeTtsConfig())
+      const config: GroupPanelConfig = {
+        panelId: 'other',
+        commonFields: [{ labelKey: 'x', key: 'x.key', type: 'text', source: 'server' }],
+        hasConnectivityTest: true,
+        getTestCategories: (values) => [{ category: 'tts', values }],
+      }
+      localValues['x.key'] = 'v'
+      const wrapper = mountPanel(config)
       await wrapper.find('.group-panel__test-btn').trigger('click')
       expect(mockClearConnectivityResults).toHaveBeenCalled()
       expect(mockRunConnectivityTests).toHaveBeenCalledWith([{ category: 'tts', values: expect.any(Object) }])
+    })
+
+    it('plays a synthesized sample for the voice panel', async () => {
+      localValues['tts.engine'] = 'edge'
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ audioPath: '.clawbench/generated/tts-preview/a.mp3' }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const play = vi.fn().mockResolvedValue(undefined)
+      const audioInstances: any[] = []
+      vi.stubGlobal('Audio', vi.fn(function (this: any) {
+        this.play = play
+        this.onended = null
+        this.onerror = null
+        audioInstances.push(this)
+      }))
+
+      mockTestResults.value = []
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      const done = vm.$.setupState.handleConnectivityTest()
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+      expect(mockRunConnectivityTests).not.toHaveBeenCalled()
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(body.text).toContain('朗读测试')
+
+      await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+      expect(play).toHaveBeenCalled()
+      audioInstances[0].onended()
+      await done
+
+      expect(mockTestResults.value[0].success).toBe(true)
     })
 
     it('defaults to panelId category when no getTestCategories', async () => {

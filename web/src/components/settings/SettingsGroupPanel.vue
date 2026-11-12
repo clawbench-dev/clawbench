@@ -222,6 +222,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
 import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
 import { getNative } from '@/utils/clawbenchNative'
+import { buildLocalFileUrl } from '@/utils/download'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -255,7 +256,7 @@ const emit = defineEmits<{
   restartNeeded: [fields: string[]]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
@@ -855,6 +856,13 @@ async function onProbeTunnel() {
 
 // ── Save ──
 
+/** Persist the per-device phone-voice draft (it never goes to the server). */
+function applyPhoneVoiceDraft() {
+  if (phoneVoiceDirty.value) {
+    setLocalConfig('systemSpeech', phoneVoiceDraft.value)
+  }
+}
+
 async function onSave() {
   const result = await handleSave()
   if (result.needsRestart && result.changedColdFields.length > 0) {
@@ -864,9 +872,7 @@ async function onSave() {
 
   // The phone-voice choice is per device, so it is applied here rather than
   // sent to the server — but still only when the user presses Save.
-  if (phoneVoiceDirty.value) {
-    setLocalConfig('systemSpeech', phoneVoiceDraft.value)
-  }
+  applyPhoneVoiceDraft()
 
   // Switching the transport makes the server start or stop its SSH listener,
   // so the live tunnel has to be rebuilt on the new wire. The native monitor
@@ -1037,10 +1043,91 @@ async function handleConnectivityTest() {
     return
   }
 
-  const values = { ...localValues } as Record<string, unknown>
-  const tests = props.config.getTestCategories?.(values) ?? [{ category: props.config.panelId, values }]
-  if (tests.length === 0) return
-  await runConnectivityTests(tests)
+  // Other panels keep the server-side connectivity test; only the voice panel
+  // is tested by hearing it.
+  if (props.config.panelId !== 'tts') {
+    const values = { ...localValues } as Record<string, unknown>
+    const tests = props.config.getTestCategories?.(values) ?? [{ category: props.config.panelId, values }]
+    if (tests.length === 0) return
+    await runConnectivityTests(tests)
+    return
+  }
+
+  // Every engine is tested by actually hearing it. The preview endpoint uses
+  // the SAVED provider, so a dirty draft has to be committed first — otherwise
+  // the test would speak with the previous engine and look broken.
+  if (panelDirty.value) {
+    const saved = await handleSave()
+    if (saved.failed || serverError.value) {
+      connectivityTestResults.value = [{ success: false, message: t('settings.saveFailed') }]
+      return
+    }
+    applyPhoneVoiceDraft()
+  }
+
+  connectivityTesting.value = true
+  try {
+    connectivityTestResults.value = [await testServerSpeech()]
+  } finally {
+    connectivityTesting.value = false
+  }
+}
+
+/**
+ * Synthesize one sample sentence with the saved engine and play it.
+ *
+ * The result is "did the audio play", not "is the endpoint reachable": a reach
+ * check already existed and it passed on engines whose voice was unusable.
+ */
+async function testServerSpeech(): Promise<{ success: boolean; message: string }> {
+  const sample = t('settings.panel.ttsTestPhrase', { engine: entryDisplayLabel.value })
+  let audioPath = ''
+  try {
+    const resp = await fetch('/api/tts/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: sample, language: locale.value }),
+    })
+    if (!resp.ok) {
+      let detail = ''
+      try {
+        const err = await resp.json()
+        detail = err?.error || ''
+      } catch { /* non-JSON error body */ }
+      return {
+        success: false,
+        message: t('settings.panel.ttsTestFailed', { reason: detail || `HTTP ${resp.status}` }),
+      }
+    }
+    const data = await resp.json()
+    audioPath = typeof data.audioPath === 'string' ? data.audioPath : ''
+  } catch (err) {
+    return {
+      success: false,
+      message: t('settings.panel.ttsTestFailed', { reason: err instanceof Error ? err.message : '' }),
+    }
+  }
+  if (!audioPath) {
+    return { success: false, message: t('settings.panel.ttsTestFailed', { reason: 'no audio' }) }
+  }
+
+  return await new Promise((resolve) => {
+    const audio = new Audio(buildLocalFileUrl(audioPath))
+    let settled = false
+    const finish = (success: boolean, message: string) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ success, message })
+    }
+    audio.onended = () => finish(true, t('settings.panel.ttsTestOk'))
+    audio.onerror = () => finish(false, t('settings.panel.ttsTestFailed', { reason: 'playback' }))
+    const timer = setTimeout(
+      () => finish(false, t('settings.panel.ttsTestFailed', { reason: 'timeout' })),
+      30000,
+    )
+    audio.play().catch(() => finish(false, t('settings.panel.ttsTestFailed', { reason: 'playback' })))
+  })
 }
 
 /**

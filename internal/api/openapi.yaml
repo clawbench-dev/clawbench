@@ -6807,6 +6807,37 @@ paths:
                     type: string
                     description: 实际要朗读的文本（含群聊发言人前缀），仅 summarizeOnly 返回。
 
+  /api/tts/preview:
+    post:
+      tags: [TTS]
+      summary: 试听当前引擎（合成一句样例）
+      operationId: ttsPreview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: 要念的样例文本，缺省为一句中文测试语，最长 200 字。
+                language:
+                  type: string
+                  description: 语言代码（如 zh / en），缺省 zh。
+      responses:
+        "200":
+          description: 合成好的样例音频路径
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  audioPath:
+                    type: string
+        "502":
+          description: 合成失败（引擎不可用或返回错误）
+
   /api/tts/stream/{jobId}:
     get:
       tags: [TTS]

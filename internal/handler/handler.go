@@ -794,6 +794,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
 	register("/api/tts/generate", TTSGenerate)
+	register("/api/tts/preview", TTSPreview)
 	register("/api/tts/stream/", TTSStream)
 	register("/api/tts/audio/ws", TTSAudioWS)
 	register("/api/voice/turn/ws", VoiceTurnWS)
