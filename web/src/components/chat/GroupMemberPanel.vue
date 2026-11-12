@@ -65,8 +65,19 @@
             <span class="member-row__avatar">
               <AgentIcon :backend="m.backend" :name="m.name" :avatar="avatarOf(m)" size="md" />
             </span>
-            <span class="member-row__name">{{ m.name }}</span>
-            <Crown v-if="m.isHost" :size="10" class="member-row__host" aria-hidden="true" />
+            <span class="member-row__identity">
+              <span class="member-row__name">{{ m.name }}</span>
+              <Crown v-if="m.isHost" :size="10" class="member-row__host" aria-hidden="true" />
+              <!-- Extra identity detail: the underlying agent name (only when the
+                   member's display name was auto-derived — RealAgentNameTag owns
+                   that rule) and the model it actually runs. Hidden on a narrow
+                   panel via the container query below, so the name and status
+                   never get squeezed by it. -->
+              <span v-if="hasMeta(m)" class="member-row__meta">
+                <RealAgentNameTag :agent-name="m.agentName" :display-name="m.name" />
+                <span v-if="modelLabel(m)" class="member-row__model">· {{ modelLabel(m) }}</span>
+              </span>
+            </span>
             <span v-if="running" class="member-row__pill" :class="`is-${statusOf(m)}`">
               {{ statusLabel(m) }}
             </span>
@@ -107,8 +118,10 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Crown, LocateFixed, Square } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import { getAgentAvatar } from '@/composables/useAgents'
+import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
+import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 import { formatRelativeTime } from '@/utils/format'
+import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { collectGroupMemberStatus, type GroupMemberRoundStatus } from '@/utils/groupMemberStatus'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
 import type { ChatMessage } from '@/utils/chatStreamUtils'
@@ -138,6 +151,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { getAgentModel, getDefaultModelId } = useAgents()
 
 const collapsed = ref(true)
 watch(() => props.sessionId, () => { collapsed.value = true })
@@ -157,6 +171,22 @@ function hasReply(m: GroupMemberInfo): boolean {
 function avatarOf(m: GroupMemberInfo): string {
   // The member's own frozen avatar wins; older members fall back to the agent.
   return m.avatar || getAgentAvatar(m.agentId) || ''
+}
+
+/** The model this member actually runs (its own override, else the agent's
+ *  default). Same resolution as the group settings roster line, so the two
+ *  surfaces can never name different models for the same member. */
+function modelLabel(m: GroupMemberInfo): string {
+  const id = m.model || getDefaultModelId(m.agentId)
+  if (!id) return ''
+  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(id)
+}
+
+/** Whether the row has any extra identity detail (real agent name and/or model).
+ *  When it has none, the meta slot is not rendered at all — an empty gap would
+ *  read as a missing value. */
+function hasMeta(m: GroupMemberInfo): boolean {
+  return (!!m.agentName && m.agentName !== m.name) || !!modelLabel(m)
 }
 
 // Host first, like the header stack: the host is the group's router, so it
@@ -253,6 +283,11 @@ function jump(m: GroupMemberInfo) {
   /* --chat-content-card-gutter: centres the card once the pane is wider than
      the chat measure, and keeps the phone's original 10px gutter. */
   margin: 0 var(--chat-content-card-gutter) var(--space-4);
+  /* Size container: the identity detail (real agent name + model) yields when
+     the CARD is narrow, not when the viewport is — the same approach the team
+     roster uses with its `team-roster` container. */
+  container-type: inline-size;
+  container-name: member-panel;
 }
 
 /* ── Collapsed chip ── */
@@ -359,6 +394,9 @@ function jump(m: GroupMemberInfo) {
   padding: 0 var(--space-3) 0 0;
   display: flex;
   flex-direction: column;
+  /* A little breathing room between rows — they used to sit flush against each
+     other and read as one block. */
+  row-gap: var(--space-1);
   max-height: calc(240 * var(--dp));
   overflow-y: auto;
 }
@@ -367,7 +405,7 @@ function jump(m: GroupMemberInfo) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
 }
 .member-row:hover { background: var(--bg-tertiary, #e9ecef); }
@@ -419,8 +457,39 @@ function jump(m: GroupMemberInfo) {
 .member-chip__avatar :deep(.agent-icon-img),
 .member-row__avatar :deep(.agent-icon-img) { object-fit: cover; }
 
-.member-row__name {
+/* Name + (real agent name · model). The identity block absorbs the leftover
+   width; its children keep their natural size and only the name/model ellipsize. */
+.member-row__identity {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.member-row__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.member-row__model {
+  min-width: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted, #6c757d);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Narrow card: drop the extra identity detail entirely so the name and the
+   status pill keep their room. 28rem = 420 design px of CARD width; a phone
+   card is ~370, a desktop pane is ~860. */
+@container member-panel (max-width: 28rem) {
+  .member-row__meta { display: none; }
+}
+
+.member-row__name {
+  flex: 0 1 auto;
   min-width: 0;
   font-size: var(--font-size-sm);
   color: var(--text-primary, #212529);

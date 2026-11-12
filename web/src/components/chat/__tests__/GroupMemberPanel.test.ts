@@ -15,6 +15,13 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
 
 vi.mock('@/composables/useAgents', () => ({
   getAgentAvatar: (agentId: string) => (agentId ? `<svg>agent-${agentId}</svg>` : ''),
+  useAgents: () => ({
+    // Deterministic model resolution: the host has none, everyone else inherits
+    // `claude-sonnet-4-5`, and the display name is derived from the id so the
+    // assertion proves the resolution path was used.
+    getDefaultModelId: (agentId: string) => (agentId === 'a-h' ? '' : 'claude-sonnet-4-5'),
+    getAgentModel: (_agentId: string, id: string) => (id ? { name: `shown-${id}` } : null),
+  }),
 }))
 
 vi.mock('@/utils/format', () => ({
@@ -24,7 +31,7 @@ vi.mock('@/utils/format', () => ({
 const MEMBERS = [
   { id: 'h', agentId: 'a-h', name: 'Host', backend: 'codebuddy', avatar: '', agentName: 'Host', isHost: true, disabled: false },
   { id: 'b', agentId: 'a-b', name: 'B', backend: 'claude', avatar: '', agentName: 'B', isHost: false, disabled: false },
-  { id: 'c', agentId: 'a-c', name: 'C', backend: 'claude', avatar: '', agentName: 'C', isHost: false, disabled: false },
+  { id: 'c', agentId: 'a-c', name: 'C', backend: 'claude', avatar: '', agentName: 'Claude Code', isHost: false, disabled: false },
   { id: 'd', agentId: 'a-d', name: 'D', backend: 'claude', avatar: '', agentName: 'D', isHost: false, disabled: true },
 ]
 
@@ -108,6 +115,25 @@ describe('GroupMemberPanel', () => {
     expect(rowOf(w, 'C').find('.member-row__pill').classes()).toContain('is-done')
     expect(rowOf(w, 'Host').find('.member-row__pill').classes()).toContain('is-waiting')
     expect(rowOf(w, 'D').find('.member-row__pill').classes()).toContain('is-disabled')
+  })
+
+  it('shows the underlying agent name and the model, and omits the slot when there is nothing to say', async () => {
+    const w = mountPanel()
+    await w.find('.member-chip').trigger('click')
+
+    // Display name was auto-derived → the real agent is disclosed, plus its model.
+    const c = rowOf(w, 'C')
+    expect(c.find('.member-row__meta').exists()).toBe(true)
+    expect(c.find('.real-agent-name-tag').text()).toBe('Claude Code')
+    expect(c.find('.member-row__model').text()).toContain('shown-claude-sonnet-4-5')
+
+    // Same name → no redundant tag, but the model still shows.
+    const b = rowOf(w, 'B')
+    expect(b.find('.real-agent-name-tag').exists()).toBe(false)
+    expect(b.find('.member-row__model').text()).toContain('shown-claude-sonnet-4-5')
+
+    // No agent-name difference AND no model → no empty meta slot at all.
+    expect(rowOf(w, 'Host').find('.member-row__meta').exists()).toBe(false)
   })
 
   it('offers a stop button only for a speaking member that is not the host', async () => {
