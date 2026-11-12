@@ -1,25 +1,25 @@
 # 上游基线记录
 
-当前参考源码已于 2026-11-10 从 GitHub 下载并覆盖同步到上游 `main` / 正式 tag `v0.137.0`。相对上轮 `06a43010` 新增 45 个提交；主线和 tag 指向同一 commit。ZIP 经过路径、归档 SHA-256 和镜像后逐文件内容校验，参考目录没有创建旧版本备份。上游 `CLAUDE.md` 是指向 `AGENTS.md` 的归档符号链接；Windows ZIP 解压保留为普通文本文件，不创建文件系统链接。鸿蒙运行时改动独立审核、构建，不把服务器源码整体打入 HAP。
+2026-11-12 从 GitHub 下载按 commit 锁定的 ZIP，覆盖镜像到 `clawbench-source code/`，逐文件校验 4,420 个文件，没有创建旧版备份。相对 `21aeaff4` 共新增 81 个提交；同时核对 v0.138.0、v0.139.0 更新记录、Android WebView 生命周期修复及共享原生桥。参考源码保持原始内容；本轮共享前端修复单独归档为最小补丁，并在隔离贡献检出中实施。
 
 ## 当前快照
 
 | 字段 | 当前值 |
 | --- | --- |
 | 上游仓库 | `https://github.com/clawbench-dev/clawbench` |
-| 上游分支 / commit | `main` / `21aeaff4c6ef066aa94ad50d884518b01b4744de` |
-| 发布 tag | `v0.137.0`，tag 指向同一 commit |
-| 同步日期 | `2026-11-10` |
-| 本地参考目录 | `clawbench-source code/` |
-| 归档 SHA-256 | `6d59d993249137c45bec992fde15072c25d5868aacc05b701ed87ab36c5af91a` |
-| 上游文件数 | 4,380 |
+| 上游分支 / commit | `main` / `733ab3ec0c039193eca80dd08816f2e9006aa0aa` |
+| 发布 tag | `v0.139.0`，tag 指向同一 commit |
+| 同步日期 | `2026-11-12` |
+| 本地参考目录 | `clawbench-source code/`，不纳入发布源码 |
+| 归档 SHA-256 | `93bbe3d1e8672615ce5fb679ed8f696893a4f69a6626a20b42ea837aedd753ca` |
+| 上游文件数 | 4,420 |
 | 客户端协议号 | `1`，来自 `internal/version/client_protocol.txt` |
-| 鸿蒙工程版本 | 本轮更新为 `0.2.11 / 211`，包名 `com.clawbench.harmony` |
-| HarmonyOS 集成状态 | PR #631 / #636 的集成及后续 0.2.10 修复已进入上游；此快照已包含鸿蒙宿主，不要再叠加历史补丁 |
-| 鸿蒙 release 资产 | `v0.137.0` release 只有 Android、桌面和服务端资产，没有 HarmonyOS HAP；应用内更新检测待上游发布鸿蒙 release 后再验收 |
-| 发布状态 | README 标注实验性支持，明确未达到 Android 全功能对等且暂不进入正式发布流水线 |
+| 鸿蒙工程版本 | `0.2.12 / 212`，包名 `com.clawbench.harmony` |
+| HarmonyOS 集成状态 | PR #631、#636、#653、#662 已合并；本地开工时的邮件评审修改与当前上游运行时代码一致，不重复提交 |
+| 本轮共享修复 | `web/src/components/attach/AttachmentPicker.vue` 与对应回归测试；维护方另存补丁归档 |
+| release 资产 | 最新正式 release 没有 HarmonyOS HAP，应用内升级来源仍待上游发布 |
 
-历史 Harmony 集成补丁与校验材料属于维护方本地工作流，不随本仓库提交。上游主线已包含鸿蒙宿主时，无需也不应重放历史补丁。
+共享前端与服务端单独部署，HAP 不内嵌整套 Vue 应用。附件宿主判定修复须由服务端更新前端后生效，单独安装 HAP 不会替换服务端页面。原始参考目录、账户配置、签名材料和本地指令文件不进入贡献改动。
 
 ## 原始适配基线
 
@@ -38,11 +38,11 @@
 
 ## 主要文件指纹
 
-以下 SHA-256 用于识别 2026-11-10 当前快照中的关键文件，不能替代完整 commit，也不能单独证明整个目录来自同一版本。
+以下 SHA-256 用于识别 2026-11-12 当前快照中的关键文件，不能替代完整 commit，也不能单独证明整个目录来自同一版本。
 
 ```text
 android/app/src/main/java/com/clawbench/app/MainActivity.java
-bcd706c830ed96c82e6656d1b0be1c9482cbf1247755452417493856a0669d31
+dfeb5f4e58fa6cc2e877dfe85ecf303cbd078c5a4c6f765a3aab51d37ad4ddee
 
 android/app/src/main/AndroidManifest.xml
 f319f13b410230fb7444e5b63d29dff0278840c80bba058b5edaf7b8a780a210

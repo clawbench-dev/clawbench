@@ -1,6 +1,6 @@
 # HarmonyOS 客户端（实验性）
 
-基于 ArkTS / ArkUI Stage 和 ArkWeb，复用安卓本地登录页及服务端 Vue 工作台。当前开发版 `0.2.11 / 211`，对齐上游 `v0.137.0`，客户端协议 `1`，沿用包名 `com.clawbench.harmony`，保留手机、平板和 `2in1` 的可安装范围。本版补齐 `mailto:` 系统邮件回退、畸形邮件链接双语提示和外链失败反馈，保留文件、分享、通知、媒体授权及原生 SSH / HTTP2 隧道。用户已确认系统邮件与新版媒体流程真机验收通过，具体设备及媒体子项未逐项列出。启动与已有功能不依赖 Push Kit；Frozen 或进程结束后不保证通知送达。尚未达到 Android 全功能对等，暂不加入正式发布流水线。
+基于 ArkTS / ArkUI Stage 和 ArkWeb，复用安卓本地登录页及服务端 Vue 工作台。当前开发版 `0.2.12 / 212`，对齐上游 `v0.139.0`，客户端协议 `1`，沿用包名 `com.clawbench.harmony`，保留手机、平板和 `2in1` 的可安装范围。本版补齐桌面式 UA 下附件来源栏的 HarmonyOS 宿主判定，保留系统邮件回退、畸形邮件链接双语提示和外链失败反馈，以及文件、分享、通知、媒体授权及原生 SSH / HTTP2 隧道。用户已确认系统邮件与新版媒体流程真机验收通过，具体设备及媒体子项未逐项列出。启动与已有功能不依赖 Push Kit；Frozen 或进程结束后不保证通知送达。尚未达到 Android 全功能对等，暂不加入正式发布流水线。
 
 0.2.6 为 ArkWeb 注册 `WebDownloadDelegate`，网页下载、原生认证流式下载与 Blob 保存统一使用系统 `Download/com.clawbench.harmony/`，重名自动增加序号，避免文件仅落入 Web 私有缓存。网页导航保留已开始的 Web 下载，应用页面销毁时取消未完成任务。2026-11-07 用户确认新的选择界面及原生下载桥已完成真机验证。
 
@@ -20,7 +20,7 @@
 ./scripts/build-harmonyos.ps1 -DevEcoRoot $env:DEVECO_ROOT
 ```
 
-也可以用 DevEco Studio 打开 `harmony/`。原始产物在 `harmony/entry/build/default/outputs/default/`，构建脚本直接导出根目录 `bulid-hap/ClawBench-0.2.11-unsigned.hap`，默认未签名；`bulid-hap` 是既有约定目录名，CI 上传路径使用同一目录。实际构建结果和校验值见维护记录。签名配置应由开发者本地提供，不提交证书、私钥、密码、实际服务器地址或账户。构建脚本已兼容 Windows PowerShell 5.1 下 Hvigor 的 stderr 警告，以进程退出码判断构建结果。
+也可以用 DevEco Studio 打开 `harmony/`。原始产物在 `harmony/entry/build/default/outputs/default/`，构建脚本直接导出根目录 `bulid-hap/ClawBench-0.2.12-unsigned.hap`，默认未签名；`bulid-hap` 是既有约定目录名，CI 上传路径使用同一目录。实际构建结果和校验值见维护记录。签名配置应由开发者本地提供，不提交证书、私钥、密码、实际服务器地址或账户。构建脚本已兼容 Windows PowerShell 5.1 下 Hvigor 的 stderr 警告，以进程退出码判断构建结果。
 
 原生 CMake 构建包含 arm64-v8a / x86_64，首次构建需联网获取固定版本及 SHA-256 的 libssh2、mbedTLS、nghttp2 等公开依赖和 CA 数据。SSH 使用 libssh2 + mbedTLS，HTTP2 使用 nghttp2；TLS 校验主机名与受信 CA，SSH 首次连接或主机密钥变化需确认。不能通过跳过证书 / 主机身份检查解决连接失败。
 
@@ -55,6 +55,10 @@ npm --prefix harmony test
 当前没有应用内自签名证书信任例外或证书信任库，设置页只在宿主提供 `forgetTrustedCerts` 时显示证书管理。原生壳仍使用 `COLOR_MODE_DARK` 保持启动与加载外观；登录页、工作台网页主题和系统栏颜色独立同步，尚未完成原生控件随浅色网页主题切换。
 
 ## 验证与边界
+
+0.2.12：鸿蒙契约测试 316/316、共享前端五文件 251/251、类型检查、生产前端和 DevEco debug HAP 构建通过；共享测试另报 8 处既有 vue-i18n Promise 泄漏。HarmonyOS 7 / API 26 / x86_64 手机模拟器验证原生登录版本、附件上传与 `.war,.zip` 系统选择器和取消、68 字节下载完成事件、非法邮件错误，以及页面刷新后的单标签锁重新获取。未验证 draw.io 安装 / 编辑 / 保存、实际拍照 / 图库、同进程销毁后重连或新增媒体组合；全仓 Go 预检未全绿，具体原因见 [维护记录](../docs/harmonyos/MAINTENANCE.md)。共享附件修复需部署服务端前端，HAP 不内嵌整套 Vue。
+
+本地模拟器夹具：从仓库根运行 `node harmony/tests/fixtures/upstream-alignment-server.mjs`，将本机 21713 端口通过 HDC 反向映射，再在模拟器添加 `http://127.0.0.1:21713`。使用任意测试密码，仅返回合成图片和桥接观察数据。
 
 0.1.3 阶段：25 项鸿蒙 Node 测试通过，未签名 HAP 构建成功；在 Pura 90 Pro / HarmonyOS 7 / API 26 / x86_64 模拟器验证安装、已保存凭据登录、服务器管理、竖屏安全区和聊天键盘布局。模拟器旋转检查时连接丢失，横屏设备验收待补。
 

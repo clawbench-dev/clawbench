@@ -164,9 +164,10 @@ vi.mock('@/utils/format', () => ({
 // button on desktop browsers and Electron. Mutable so each test picks a host;
 // `isMobileOSUA` is a module-level constant, so it is mocked alongside.
 const mockIsAndroidApp = ref(false)
+const mockIsHarmonyApp = ref(false)
 let mockIsMobileOSUA = false
 vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({ isAndroidApp: mockIsAndroidApp }),
+  usePlatformDetect: () => ({ isAndroidApp: mockIsAndroidApp, isHarmonyApp: mockIsHarmonyApp }),
   get isMobileOSUA() {
     return mockIsMobileOSUA
   },
@@ -303,6 +304,7 @@ describe('AttachmentPicker', () => {
     // Default to desktop: that is the majority case and the one whose layout
     // the original header button belongs to. Mobile tests opt in explicitly.
     mockIsAndroidApp.value = false
+    mockIsHarmonyApp.value = false
     mockIsMobileOSUA = false
   })
 
@@ -454,6 +456,31 @@ describe('AttachmentPicker', () => {
     mockIsAndroidApp.value = true
     const wrapper = mountDrawer()
     expect(wrapper.find('.ad-source-bar').exists()).toBe(true)
+  })
+
+  it('keeps all three source entries usable in a HarmonyOS host with a desktop UA', async () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.ad-source-bar').exists()).toBe(false)
+    // Host detection can settle after the first render.
+    mockIsHarmonyApp.value = true
+    await nextTick()
+    expect(wrapper.findAll('.ad-source-label').map((label) => label.text()))
+      .toEqual(['Camera', 'Photo', 'Upload file'])
+    expect(wrapper.find('.ad-header-upload-btn').exists()).toBe(false)
+    const state = getRawState(wrapper)
+    for (const [label, key] of [
+      ['Camera', 'cameraInputRef'], ['Photo', 'photoInputRef'], ['Upload file', 'fileInputRef'],
+    ]) {
+      const input = { value: 'old', click: vi.fn() }
+      state[key].value = input
+      await wrapper.findAll('.ad-source-btn').find((button) => button.text().includes(label))!.trigger('click')
+      expect(input.click).toHaveBeenCalledTimes(1)
+      state.filePickerOpen.value = false
+    }
+    mockIsHarmonyApp.value = false
+    await nextTick()
+    expect(wrapper.find('.ad-source-bar').exists()).toBe(false)
+    expect(wrapper.find('.ad-header-upload-btn').exists()).toBe(true)
   })
 
   it('desktop header button opens the plain file input', async () => {

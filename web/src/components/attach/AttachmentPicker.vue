@@ -294,11 +294,11 @@ const toast = useToast()
 // PC, and its file picker has no camera or photo library behind it. The host
 // axis is not the test either: Electron on a touch laptop stays desktop, and
 // a browser on a phone is still mobile.
-const { isAndroidApp } = usePlatformDetect()
-// computed, not `isMobileOSUA || isAndroidApp`: the latter returns the ref
+const { isAndroidApp, isHarmonyApp } = usePlatformDetect()
+// computed, not `isMobileOSUA || isAndroidApp || isHarmonyApp`: that returns a ref
 // object when the UA test is false, and a ref is always truthy — every desktop
 // browser would have been shown the mobile strip.
-const isMobileLayout = computed(() => isMobileOSUA || isAndroidApp.value)
+const isMobileLayout = computed(() => isMobileOSUA || isAndroidApp.value || isHarmonyApp.value)
 const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 
