@@ -81,11 +81,18 @@
             <!-- Context usage, same chip as the group settings roster (bar +
                  percent, no "—" row: a dense list hides what it does not have).
                  It outlives the model/agent detail on narrow cards, because
-                 "almost full, time to compact" is the more actionable number. -->
-            <span
+                 "almost full, time to compact" is the more actionable number.
+                 Clicking it opens the member's own settings drawer on the usage
+                 tab — the same destination as clicking a row in the group
+                 settings roster, just one level more direct. -->
+            <button
               v-if="usageOf(m)"
+              type="button"
               class="member-row__usage"
               :title="usageTitle(m)"
+              :aria-label="usageTitle(m)"
+              data-action="member-usage"
+              @click.stop="openUsage(m)"
             >
               <Activity :size="11" class="member-row__usage-icon" aria-hidden="true" />
               <span class="member-row__usage-bar">
@@ -98,7 +105,7 @@
                 ></span>
               </span>
               <span class="member-row__usage-pct">{{ usagePctOf(usageOf(m)) }}%</span>
-            </span>
+            </button>
             <span v-if="running" class="member-row__pill" :class="`is-${statusOf(m)}`">
               {{ statusLabel(m) }}
             </span>
@@ -131,6 +138,18 @@
         {{ t('group.memberPanel.manage') }}
       </button>
     </div>
+
+    <!-- Per-member settings drawer: the SAME component the group settings
+         roster opens, addressed at the member's own session row. Only opened
+         from the usage chip (the row itself jumps to the latest reply). -->
+    <SessionDrawer
+      :open="!!usageMemberId"
+      :agent-id="usageMember?.agentId || ''"
+      :target-session-id="usageMemberId"
+      initial-tab="usage"
+      @close="usageMemberId = ''"
+      @changed="$emit('changed')"
+    />
   </div>
 </template>
 
@@ -140,6 +159,7 @@ import { useI18n } from 'vue-i18n'
 import { Activity, ChevronDown, ChevronUp, Crown, LocateFixed, Square } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
+import SessionDrawer from './SessionDrawer.vue'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 import { formatRelativeTime } from '@/utils/format'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
@@ -170,13 +190,22 @@ const emit = defineEmits<{
   (e: 'stop-member', id: string): void
   (e: 'jump-message', id: string | number): void
   (e: 'open-settings'): void
+  /** The member's settings drawer changed something (model, usage, …); the
+   *  roster (owned by the app shell) needs a refetch so this panel's labels
+   *  do not keep showing the old values. */
+  (e: 'changed'): void
 }>()
 
 const { t } = useI18n()
 const { getAgentModel, getDefaultModelId } = useAgents()
 
 const collapsed = ref(true)
-watch(() => props.sessionId, () => { collapsed.value = true })
+/** Member whose settings drawer is open (the usage chip is its only opener). */
+const usageMemberId = ref('')
+watch(() => props.sessionId, () => {
+  collapsed.value = true
+  usageMemberId.value = ''
+})
 
 const statuses = computed(() => collectGroupMemberStatus(props.members, props.messages))
 const statusById = computed(() => new Map(statuses.value.map(s => [s.id, s])))
@@ -215,6 +244,16 @@ function hasMeta(m: GroupMemberInfo): boolean {
  *  agents never report it, so this stays empty for them (no "—" row). */
 function usageOf(m: GroupMemberInfo) {
   return m.usage || null
+}
+
+/** Member whose settings drawer is open (the usage chip is its only opener). */
+const usageMember = computed(
+  () => props.members.find(m => String(m.id) === usageMemberId.value) || null,
+)
+
+function openUsage(m: GroupMemberInfo) {
+  if (!usageOf(m)) return
+  usageMemberId.value = String(m.id)
 }
 
 function usageTitle(m: GroupMemberInfo): string {
@@ -588,6 +627,19 @@ function jump(m: GroupMemberInfo) {
   gap: calc(3 * var(--dp));
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #6c757d);
+  /* A real button (opens the member's settings drawer on the usage tab) — strip
+     the UA chrome so it still reads as the roster's plain chip. */
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  outline: none;
+}
+.member-row__usage:hover { color: var(--text-secondary, #495057); }
+.member-row__usage:focus-visible {
+  outline: 2px solid var(--accent-color, #0066cc);
+  outline-offset: calc(2 * var(--dp));
+  border-radius: var(--radius-xs);
 }
 .member-row__usage-icon {
   flex-shrink: 0;

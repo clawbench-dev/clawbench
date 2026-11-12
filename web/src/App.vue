@@ -380,6 +380,7 @@
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
                       @open-group-settings="openGroupSettings"
+                      @refresh-group-members="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                       @open-agent-config="openAgentConfig"
                       @toggle-group-cruise="onToggleGroupCruise"
                       @toggle-group-parallel="onToggleGroupParallel"

@@ -28,6 +28,15 @@ vi.mock('@/utils/format', () => ({
   formatRelativeTime: (date: string) => `rel(${date})`,
 }))
 
+// The drawer itself is a heavy BottomSheet; only its props matter here.
+vi.mock('../SessionDrawer.vue', () => ({
+  default: {
+    name: 'SessionDrawer',
+    props: ['open', 'agentId', 'initialTab', 'targetSessionId'],
+    template: '<div class="session-drawer-stub" />',
+  },
+}))
+
 const MEMBERS = [
   { id: 'h', agentId: 'a-h', name: 'Host', backend: 'codebuddy', avatar: '', agentName: 'Host', isHost: true, disabled: false },
   { id: 'b', agentId: 'a-b', name: 'B', backend: 'claude', avatar: '', agentName: 'B', isHost: false, disabled: false },
@@ -148,6 +157,20 @@ describe('GroupMemberPanel', () => {
 
     // No reported usage → no chip at all (a dense row does not show "—").
     expect(rowOf(w, 'B').find('.member-row__usage').exists()).toBe(false)
+  })
+
+  it('opens the member settings drawer on the usage tab when the usage chip is clicked', async () => {
+    const w = mountPanel()
+    await w.find('.member-chip').trigger('click')
+    await rowOf(w, 'C').find('.member-row__usage').trigger('click')
+
+    const drawer = w.findComponent({ name: 'SessionDrawer' })
+    expect(drawer.props('open')).toBe(true)
+    expect(drawer.props('targetSessionId')).toBe('c')
+    expect(drawer.props('agentId')).toBe('a-c')
+    expect(drawer.props('initialTab')).toBe('usage')
+    // The chip is inside the row that jumps — its click must not do both.
+    expect(w.emitted('jump-message')).toBeUndefined()
   })
 
   it('offers a stop button only for a speaking member that is not the host', async () => {

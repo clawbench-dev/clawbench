@@ -100,6 +100,7 @@
       @stop-member="handleStopMember"
       @jump-message="handleJumpToMember"
       @open-settings="$emit('open-group-settings')"
+      @changed="$emit('refresh-group-members')"
     />
 
     <!-- Upstream retry notice — transient, never part of the transcript. Sits
@@ -419,7 +420,7 @@ const props = defineProps({
      *  toggle is emitted back up so App owns the PATCH + roster refresh. */
     groupParallelDefault: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise', 'toggle-group-parallel'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise', 'toggle-group-parallel', 'refresh-group-members'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
