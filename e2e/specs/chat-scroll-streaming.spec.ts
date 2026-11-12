@@ -247,12 +247,19 @@ test.describe('Chat scrolling during a streaming reply', () => {
       })
     })
 
-    const before = await geometry(page)
-    await wheel(page, before.max - before.top + 80)
+    // Arrive at the bottom. The target has to be re-measured while scrolling:
+    // the reply is still streaming, so `scrollHeight` grows between the read and
+    // the gesture — a single `max - top + 80` computed up front can land short
+    // of the bottom (observed on Firefox: the list had already grown by ~400px
+    // by the time the wheel was delivered, so the assertion below read "still
+    // 415px above the bottom"). Wheel until the measured distance is small,
+    // re-reading each round instead of trusting one snapshot.
     await expect.poll(async () => {
       const g = await geometry(page)
-      return g.max - g.top
-    }, { timeout: 5000 }).toBeLessThan(60)
+      const remaining = g.max - g.top
+      if (remaining >= 60) await wheel(page, remaining + 80)
+      return remaining
+    }, { timeout: 20000, intervals: [200, 300, 500] }).toBeLessThan(60)
     await expect(pill).toHaveCount(0)
     await expect(nav).toHaveCount(0)
 
