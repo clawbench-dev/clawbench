@@ -1200,7 +1200,7 @@ export default {
       releaseToStop: 'Release F9 to finish',
       escToCancel: 'Esc to cancel',
       written: 'Inserted',
-      capsuleDoneHint: 'Not inserted anywhere yet — pick a destination',
+      capsuleDoneHint: 'Not inserted — pick a destination',
       copy: 'Copy',
       copied: 'Copied',
       copyFailed: 'Could not copy — select the text manually',

@@ -1202,7 +1202,7 @@ export default {
       releaseToStop: '松开 F9 结束',
       escToCancel: 'Esc 取消',
       written: '已写入',
-      capsuleDoneHint: '还没插入任何地方，选一个去处',
+      capsuleDoneHint: '还没插入，选个去处',
       copy: '复制',
       copied: '已复制',
       copyFailed: '复制失败，请手动选中',

@@ -540,11 +540,14 @@ watch(voiceMode, () => { reposition() })
   display: flex;
   align-items: center;
   gap: calc(10 * var(--dp));
-  width: min(calc(600 * var(--dp)), calc(100vw - 24 * var(--dp)));
-  padding: calc(9 * var(--dp)) calc(10 * var(--dp)) calc(9 * var(--dp)) calc(13 * var(--dp));
+  /* Hug the content: a short transcript should not leave a wide empty middle
+     before the buttons. Long transcripts still cap out and scroll inside. */
+  width: fit-content;
+  max-width: min(calc(600 * var(--dp)), calc(100vw - 24 * var(--dp)));
+  padding: calc(8 * var(--dp)) calc(10 * var(--dp)) calc(8 * var(--dp)) calc(13 * var(--dp));
   border-radius: var(--radius-lg);
 }
-.voice-capsule-body { flex: 1; min-width: 0; }
+.voice-capsule-body { flex: 0 1 auto; min-width: 0; }
 .voice-capsule-text {
   font-size: var(--font-size-md);
   line-height: var(--line-height-snug);
@@ -552,7 +555,8 @@ watch(voiceMode, () => { reposition() })
   /* Two lines tall, then it scrolls: clamping (the old behaviour) hid every
      word after the second line, so the user could not see the transcript
      growing. */
-  max-height: calc(var(--font-size-md) * 2.9);
+  /* Exactly two line boxes: a rounded number leaked a sliver of line 3. */
+  max-height: calc(2em * var(--line-height-snug));
   overflow-y: auto;
   overflow-wrap: break-word;
   scrollbar-width: none;
