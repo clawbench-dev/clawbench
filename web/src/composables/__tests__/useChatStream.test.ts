@@ -2902,6 +2902,66 @@ describe('useChatStream', () => {
     })
   })
 
+  // ── tool_use watchdog vs a live elicitation card ──
+  //
+  // An elicitation (ACP `elicitation/create`) blocks the agent until the USER
+  // answers; `done` only arrives on submit (or on the server's 30-minute
+  // timeout). The 30s "stalled tool" fallback used to mark it done, which
+  // re-rendered the card read-only: every option click was dropped, no
+  // /api/ai/elicitation/respond was ever posted, and the turn sat "running"
+  // for 30 minutes (issue #676).
+  describe('tool_use watchdog — live elicitation', () => {
+    function toolBlock(options: ReturnType<typeof createOptions>, id: string) {
+      const live = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      return (live?.blocks || []).find((b: any) => b.type === 'tool_use' && b.id === id)
+    }
+
+    it('leaves an unanswered elicitation block alone past the 30s fallback', () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', {
+        id: 'elic_1',
+        name: 'AskUserQuestion',
+        input: { elicitationId: 'elic_1', questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+        done: false,
+      })
+
+      vi.advanceTimersByTime(31000)
+
+      expect(toolBlock(options, 'elic_1')?.done, 'the card must stay answerable while the agent waits').toBe(false)
+      expect(mockAppLogW).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining("stalled without 'done'"),
+      )
+      vi.useRealTimers()
+    })
+
+    it('still marks a plain AskUserQuestion done (no elicitation behind it) (control)', () => {
+      // The exemption keys on `input.elicitationId`, NOT on the tool name: an
+      // ask card that is answered by a chat message has no blocked RPC behind
+      // it, so the ordinary fallback still applies.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', {
+        id: 'ask_1',
+        name: 'AskUserQuestion',
+        input: { questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+        done: false,
+      })
+
+      vi.advanceTimersByTime(31000)
+
+      expect(toolBlock(options, 'ask_1')?.done).toBe(true)
+      vi.useRealTimers()
+    })
+  })
+
   // ── Concurrent streams (parallel group speaking): by-id routing ──
   describe('concurrent streams route by message_id', () => {
     it('routes content to the bubble named by message_id, not the first streaming one', () => {
