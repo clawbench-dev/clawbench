@@ -62,20 +62,28 @@
       </div>
     </Transition>
 
-    <!-- ── 手机：输入框聚焦时的小圆钮 ── -->
+    <!-- ── 手机：输入框聚焦时的小圆钮 ──
+         A div, not a <button>: a real button is focusable, so tapping it moves
+         the caret out of the field and the keyboard closes (then reopens when
+         the transcript is written — a visible flicker). A non-focusable
+         element plus preventDefault on every "press" event keeps the field
+         focused for the whole dictation, so the keyboard never moves. -->
     <Transition name="voice-pop">
-      <button
+      <div
         v-if="fabVisible"
         class="voice-fab"
+        role="button"
         :style="fabStyle"
         :title="t('chat.voice.holdToTalk')"
         :aria-label="t('chat.voice.holdToTalk')"
         @pointerdown.prevent="onFabDown"
+        @touchstart.prevent
+        @mousedown.prevent
         @pointerup="onFabUp"
         @pointercancel="onFabUp"
       >
         <Mic :size="18" />
-      </button>
+      </div>
     </Transition>
   </Teleport>
 </template>
