@@ -1,11 +1,14 @@
 package com.clawbench.app;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -78,6 +81,10 @@ public final class SystemTtsEngine {
     private TextToSpeech tts;
     private String pendingId;
     private String pendingText;
+
+    /** Engines to try in order; index 0 is null = let the system choose. */
+    private final List<String> engineAttempts = new ArrayList<>();
+    private int engineAttempt = -1;
 
     private String currentId;
     private int lastIndex = -1;
@@ -173,41 +180,23 @@ public final class SystemTtsEngine {
             return;
         }
         internalState = INTERNAL_INITIALIZING;
-        try {
-            tts = new TextToSpeech(context, initStatus -> {
-                if (initStatus == TextToSpeech.SUCCESS && tts != null) {
-                    tts.setOnUtteranceProgressListener(progress);
-                    // Initialization succeeding only means "an engine exists".
-                    // Whether it can read Chinese is a separate question, and
-                    // the one the settings switch actually cares about.
-                    internalState = hasChineseVoice(tts) ? INTERNAL_READY : INTERNAL_NO_CHINESE;
-                    AppLog.i(TAG, "init ok status=" + internalState + " " + describeEngines(tts));
-                    emitInit();
-                    if (pendingText != null && pendingId != null) {
-                        String text = pendingText;
-                        String id = pendingId;
-                        pendingText = null;
-                        pendingId = null;
-                        speakOnMain(text, id);
-                    }
-                    return;
-                }
-                internalState = INTERNAL_UNAVAILABLE;
-                // -1 = ERROR. Usually "no default engine set" or, on API 30+,
-                // the engine being invisible without the TTS_SERVICE query in
-                // the manifest.
-                AppLog.w(TAG, "init failed status=" + initStatus);
-                emitInit();
-                String id = pendingId;
-                pendingId = null;
-                pendingText = null;
-                if (id != null) {
-                    emit(id, STATE_ERROR, "init_failed");
-                }
-            });
-        } catch (Throwable t) {
+        engineAttempts.clear();
+        // The system default first, then every engine the package manager can
+        // see. The default alone is not enough: some ROMs ship an engine but
+        // leave the default unset, so the plain constructor fails while the
+        // engine itself works when asked for by package name.
+        engineAttempts.add(null);
+        engineAttempts.addAll(queryEnginePackages(context));
+        AppLog.i(TAG, "tts engines visible: " + engineAttempts);
+        startEngineAttempt(0);
+    }
+
+    /** Try one entry of {@link #engineAttempts}; null means "system default". */
+    private void startEngineAttempt(int index) {
+        engineAttempt = index;
+        if (index >= engineAttempts.size()) {
             internalState = INTERNAL_UNAVAILABLE;
-            AppLog.w(TAG, "init threw: " + t);
+            AppLog.w(TAG, "no usable tts engine after " + engineAttempts.size() + " attempt(s)");
             emitInit();
             String id = pendingId;
             pendingId = null;
@@ -215,7 +204,88 @@ public final class SystemTtsEngine {
             if (id != null) {
                 emit(id, STATE_ERROR, "init_failed");
             }
+            return;
         }
+
+        TextToSpeech previous = tts;
+        tts = null;
+        if (previous != null) {
+            try {
+                previous.shutdown();
+            } catch (Throwable ignored) {
+                // A failed instance may already be unusable.
+            }
+        }
+
+        String packageName = engineAttempts.get(index);
+        final int attempt = index;
+        try {
+            if (packageName == null) {
+                tts = new TextToSpeech(context, status -> handleInitResult(status, attempt));
+            } else {
+                tts = new TextToSpeech(context, status -> handleInitResult(status, attempt), packageName);
+            }
+        } catch (Throwable t) {
+            AppLog.w(TAG, "init threw for engine=" + packageName + ": " + t);
+            startEngineAttempt(index + 1);
+        }
+    }
+
+    private void handleInitResult(int status, int attempt) {
+        // A stale callback from an engine we already gave up on.
+        if (attempt != engineAttempt) {
+            return;
+        }
+        String packageName = engineAttempts.get(attempt);
+        if (status == TextToSpeech.SUCCESS && tts != null) {
+            tts.setOnUtteranceProgressListener(progress);
+            // Initialization succeeding only means "an engine exists".
+            // Whether it can read Chinese is a separate question, and the one
+            // the settings switch actually cares about.
+            internalState = hasChineseVoice(tts) ? INTERNAL_READY : INTERNAL_NO_CHINESE;
+            AppLog.i(TAG, "init ok engine=" + packageName + " status=" + internalState + " " + describeEngines(tts));
+            emitInit();
+            if (pendingText != null && pendingId != null) {
+                String text = pendingText;
+                String id = pendingId;
+                pendingText = null;
+                pendingId = null;
+                speakOnMain(text, id);
+            }
+            return;
+        }
+        // -1 = ERROR. Either no engine at all, the default is unset, or (API
+        // 30+) the engine is invisible without the TTS_SERVICE manifest query.
+        AppLog.w(TAG, "init failed engine=" + packageName + " status=" + status);
+        startEngineAttempt(attempt + 1);
+    }
+
+    /**
+     * Packages exposing a TTS engine, as visible through package visibility.
+     *
+     * Empty is a meaningful answer: it means the phone has no engine at all
+     * (or the manifest lost its TTS_SERVICE query).
+     */
+    static List<String> queryEnginePackages(Context context) {
+        List<String> packages = new ArrayList<>();
+        try {
+            Intent intent = new Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE);
+            List<ResolveInfo> services = context.getPackageManager().queryIntentServices(intent, 0);
+            if (services == null) {
+                return packages;
+            }
+            for (ResolveInfo info : services) {
+                if (info == null || info.serviceInfo == null || info.serviceInfo.packageName == null) {
+                    continue;
+                }
+                if (!packages.contains(info.serviceInfo.packageName)) {
+                    packages.add(info.serviceInfo.packageName);
+                }
+            }
+        } catch (Throwable t) {
+            AppLog.w(TAG, "query engines failed: " + t);
+        }
+        return packages;
     }
 
     /** Must run on the main thread. */
