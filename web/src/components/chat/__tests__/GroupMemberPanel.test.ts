@@ -159,6 +159,16 @@ describe('GroupMemberPanel', () => {
     expect(rowOf(w, 'B').find('.member-row__usage').exists()).toBe(false)
   })
 
+  it('does not render a 0% bar for a member that only reported credit', async () => {
+    // A window percentage needs a window size; without one the chip would
+    // claim a measurement that does not exist.
+    const w = mountPanel({
+      members: MEMBERS.map(m => (m.id === 'c' ? { ...m, usage: { used: 0, size: 0 } } : m)),
+    })
+    await w.find('.member-chip').trigger('click')
+    expect(rowOf(w, 'C').find('.member-row__usage').exists()).toBe(false)
+  })
+
   it('opens the member settings drawer on the usage tab when the usage chip is clicked', async () => {
     const w = mountPanel()
     await w.find('.member-chip').trigger('click')

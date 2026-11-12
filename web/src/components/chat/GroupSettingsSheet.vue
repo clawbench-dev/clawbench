@@ -54,7 +54,7 @@
                      the name + real name. They describe the member, so they belong
                      next to who it is — pinned to the far right they read like a
                      row-level action and broke the alignment across rows (the
-                     usage chip is the only right-hand column). -->
+                     trailing controls are the only right-hand column). -->
                 <span v-if="m.isHost" class="gm-tag gm-tag--host"><Crown :size="11" class="gm-tag-crown" />{{ t('group.host') }}</span>
                 <span v-else-if="m.disabled" class="gm-tag gm-tag--disabled"><Ban :size="11" class="gm-tag-disabled-icon" />{{ t('group.disabled') }}</span>
               </span>
@@ -69,21 +69,6 @@
                 <ProviderIcon :model-name="modelLabel(m)" :size="10" />
                 <span class="gm-model-name">{{ modelLabel(m) }}</span>
               </span>
-            </span>
-            <!-- Context usage chip: the member's OWN window, not the group's.
-                 A member that never reported usage shows an em dash — 0% would
-                 claim a measurement that does not exist. A disabled member keeps
-                 its chip: the number is still real and is exactly what may need
-                 compacting while it is disabled. -->
-            <span class="gm-usage" :class="{ 'gm-usage--empty': !usageOf(m) }" :title="usageTitle(m)">
-              <Activity :size="11" class="gm-usage-icon" />
-              <template v-if="usageOf(m)">
-                <span class="gm-usage-bar">
-                  <span class="gm-usage-bar-fill" :style="{ width: Math.min(usagePctOf(usageOf(m)), 100) + '%', background: usageColorOf(usagePctOf(usageOf(m))) }"></span>
-                </span>
-                <span class="gm-usage-pct">{{ usagePctOf(usageOf(m)) }}%</span>
-              </template>
-              <span v-else class="gm-usage-pct">—</span>
             </span>
           </button>
           <!-- Make-host action (更换主持人). Rendered on EVERY row in host mode —
@@ -105,7 +90,7 @@
           </button>
           <!-- Disable toggle. Every row has one, including the host: a disabled one
                keeps the trailing column aligned across rows (a missing button
-               shifted the usage chip left on the host row). The host's is greyed
+               shifted the trailing controls left on the host row). The host's is greyed
                and inert — it is the group's only router, so muting it would
                strand the group. -->
           <button
@@ -124,7 +109,7 @@
                is the reversible, everyday action, removal is the destructive
                one. Like the other trailing controls it is rendered on EVERY row
                (inert on the host / the last member) so the column keeps its
-               width and the usage chip stays aligned across rows. -->
+               width and the trailing controls stay aligned across rows. -->
           <button
             class="gm-remove-toggle"
             :class="{ 'gm-remove-toggle--inert': !canRemove(m) }"
@@ -245,7 +230,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Crown, Activity, Ban, Play, Trash2 } from 'lucide-vue-next'
+import { Plus, Crown, Ban, Play, Trash2 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import RealAgentNameTag from '@/components/common/RealAgentNameTag.vue'
@@ -258,7 +243,6 @@ import { toggleAutoApprove, applyCruiseAutoApproveDefault } from '@/composables/
 import { useDialog } from '@/composables/useDialog'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useToast } from '@/composables/useToast'
-import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
@@ -522,31 +506,6 @@ async function removeMember(m: GroupMemberInfo) {
   }
 }
 
-/** A member's reported usage, or null when it never reported any.
- *
- * Deliberately gated on SIZE, not on "any field": this chip renders a window
- * PERCENTAGE, and a member that only has credit (a generation-tool billing)
- * would otherwise show a 0% bar — claiming a measurement that does not exist.
- * The credit itself is visible in the member detail panel, which gates on
- * "carries anything".
- */
-function usageOf(m: GroupMemberInfo) {
-  const u = m.usage
-  return u && (u.size ?? 0) > 0 ? u : null
-}
-
-// Tooltip for the usage chip: the exact numbers (the row itself only has space
-// for a bar and a percentage), or the reason there is nothing to show.
-function usageTitle(m: GroupMemberInfo) {
-  const u = usageOf(m)
-  if (!u) return t('group.memberDetail.noUsageShort')
-  return t('chat.sessionInfo.contextUsageTooltip', {
-    used: (u.used ?? 0).toLocaleString(),
-    size: u.size.toLocaleString(),
-    pct: usagePctOf(u),
-  })
-}
-
 /** The model label a member row shows.
  *
  * `m.model` is the member row's OWN override; empty means it inherits the
@@ -632,10 +591,10 @@ defineExpose({ open: openSheet })
 .gm-row + .gm-row {
   border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
 }
-/* The row's main region: a button so the whole identity+usage area is one tap
+/* The row's main region: a button so the whole identity area is one tap
    target that opens the member's context panel. Reset the UA button styles —
    most importantly `text-align: center`, which is the default for <button> and
-   would centre the name and usage chip (the flex children inherit it). */
+   would centre the name and model (the flex children inherit it). */
 .gm-row-main {
   flex: 1;
   min-width: 0;
@@ -715,7 +674,7 @@ defineExpose({ open: openSheet })
    A single line with an ellipsis — model ids are long (`claude-opus-4-5`), and
    wrapping would make one row taller than its neighbours for no information
    gain. `max-width: 100%` keeps it inside the identity column so it can never
-   push the usage chip (the row's only trailing column) off the right edge. */
+   push the trailing controls off the right edge. */
 .gm-model {
   display: inline-flex;
   align-items: center;
@@ -736,56 +695,6 @@ defineExpose({ open: openSheet })
    override stands out while an inherited one still names its model. */
 .gm-model--default {
   color: var(--text-muted);
-}
-
-/* ── Context usage chip ──
-   The member's OWN window. Same 28×6 bar geometry as the single-chat session
-   info bar so the two read as one measurement; the percentage is the value the
-   eye lands on, the bar is the magnitude. Fixed hues (see usageDisplay.ts) —
-   the accent is orange in ~3/36 themes and would collide with the warning step. */
-.gm-usage {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: calc(3 * var(--dp));
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-}
-
-.gm-usage-icon {
-  flex-shrink: 0;
-  opacity: var(--opacity-muted, 0.6);
-}
-
-.gm-usage-bar {
-  position: relative;
-  width: calc(28 * var(--dp));
-  height: calc(6 * var(--dp));
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.gm-usage-bar-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  border-radius: var(--radius-xs);
-  transition: width 0.3s ease, background 0.3s ease;
-}
-
-.gm-usage-pct {
-  font-variant-numeric: tabular-nums;
-  min-width: calc(26 * var(--dp));
-  text-align: right;
-}
-
-/* No data: the chip is just an em dash — never a 0% bar, which would claim a
-   measurement that does not exist. */
-.gm-usage--empty .gm-usage-pct {
-  text-align: center;
 }
 
 /* Pills: host (accent) / disabled (neutral). */
@@ -886,7 +795,7 @@ defineExpose({ open: openSheet })
   color: var(--accent-color, #0066cc);
 }
 /* Host's disable control: present but inert, so every row has the same trailing
-   column (the usage chip keeps its x-position across rows). */
+   column (the controls keep their x-position across rows). */
 .gm-disable-toggle--inert,
 .gm-disable-toggle--inert:hover,
 .gm-remove-toggle--inert,

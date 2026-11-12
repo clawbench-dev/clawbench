@@ -242,9 +242,14 @@ function hasMeta(m: GroupMemberInfo): boolean {
 }
 
 /** The member's own context window, when it has reported one. CLI-transport
- *  agents never report it, so this stays empty for them (no "—" row). */
+ *  agents never report it, so this stays empty for them (no "—" row).
+ *
+ *  Gated on SIZE, not "any field": the chip renders a window PERCENTAGE, and a
+ *  member that only has credit (a generation-tool billing) would otherwise show
+ *  a 0% bar — claiming a measurement that does not exist. */
 function usageOf(m: GroupMemberInfo) {
-  return m.usage || null
+  const u = m.usage
+  return u && (u.size ?? 0) > 0 ? u : null
 }
 
 /** Member whose settings drawer is open (the usage chip is its only opener). */

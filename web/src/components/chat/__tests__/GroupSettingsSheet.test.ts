@@ -160,7 +160,7 @@ describe('GroupSettingsSheet', () => {
     expect(tagIcon.classes()).toContain('lucide-ban')
     expect(tagIcon.classes()).not.toContain('lucide-mic-off')
     // EVERY row keeps the trailing control (the host's is disabled), so the
-    // usage chip holds the same x-position across rows.
+    // trailing controls hold the same x-position across rows.
     expect(w.findAll('.gm-disable-toggle')).toHaveLength(3)
   })
 
@@ -184,12 +184,10 @@ describe('GroupSettingsSheet', () => {
     const w = mountSheet(MEMBERS)
     const hostRow = w.findAll('.gm-row')[0]
     expect(hostRow.find('.gm-identity .gm-tag--host').exists()).toBe(true)
-    // And the identity group comes BEFORE the usage chip / disable control.
+    // And the identity group comes BEFORE the trailing controls.
     const identity = hostRow.find('.gm-identity').element
-    const usage = hostRow.find('.gm-usage').element
     const disable = hostRow.find('.gm-disable-toggle').element
-    expect(identity.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(usage.compareDocumentPosition(disable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(identity.compareDocumentPosition(disable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('keeps the host disable button disabled and inert', async () => {
@@ -608,39 +606,19 @@ describe('GroupSettingsSheet', () => {
     })
   })
 
-  describe('member context chip and detail panel', () => {
-    // Usage lives on the MEMBER row: each member has its own context window, so
-    // the roster shows one chip per member rather than a group-level number.
+  describe('member detail panel', () => {
+    // Context usage moved OUT of this roster: the chat's member panel shows it
+    // per member (and opens this drawer's usage tab when clicked), so a second
+    // copy here would just be two places to read the same number.
     const WITH_USAGE = [
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true, usage: { used: 50000, size: 200000 } },
       { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false, usage: null },
       { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, disabled: true, usage: { used: 90000, size: 100000 } },
     ]
 
-    it('renders a bar + percentage for a member that reported usage', () => {
+    it('no longer renders a context usage chip in the roster', () => {
       const w = mountSheet(WITH_USAGE)
-      const chip = w.findAll('.gm-usage')[0]
-      expect(chip.classes()).not.toContain('gm-usage--empty')
-      expect(chip.find('.gm-usage-bar-fill').exists()).toBe(true)
-      expect(chip.find('.gm-usage-pct').text()).toBe('25%')
-    })
-
-    it('shows an em dash (not 0%) for a member that never reported usage', () => {
-      const w = mountSheet(WITH_USAGE)
-      const chip = w.findAll('.gm-usage')[1]
-      expect(chip.classes()).toContain('gm-usage--empty')
-      expect(chip.find('.gm-usage-bar').exists()).toBe(false)
-      expect(chip.find('.gm-usage-pct').text()).toBe('—')
-    })
-
-    it('keeps the chip for a disabled member (the number is still real)', () => {
-      // Muting only takes the member off the schedule; its context window is
-      // untouched, and that is exactly what may need compacting while it is off
-      // the mic. Hiding the chip would make the row look empty for no reason.
-      const w = mountSheet(WITH_USAGE)
-      expect(w.findAll('.gm-usage')).toHaveLength(3)
-      const disabledRow = w.findAll('.gm-row').find(r => r.classes().includes('is-disabled'))!
-      expect(disabledRow.find('.gm-usage-pct').text()).toBe('90%')
+      expect(w.find('.gm-usage').exists()).toBe(false)
     })
 
     it('opens the member panel when the row is clicked', async () => {
@@ -718,17 +696,16 @@ describe('GroupSettingsSheet', () => {
       expect(rows[2].find('.gm-model').exists()).toBe(true)
     })
 
-    it('keeps the model line out of the usage chip’s trailing column', () => {
-      // The row has room for ONE trailing column on a phone. The model must
-      // live inside the identity column (stacked under the name), or a long id
-      // would squeeze the usage chip off the right edge.
+    it('keeps the model line inside the identity column', () => {
+      // The right-hand side is reserved for the trailing controls. The model
+      // must live inside the identity column (stacked under the name), or a
+      // long id would push those controls off the edge.
       const w = mountSheet(WITH_USAGE)
       const row = w.findAll('.gm-row')[0]
       expect(row.find('.gm-identity .gm-model').exists()).toBe(true)
       const identity = row.find('.gm-identity').element
-      const usage = row.find('.gm-usage').element
-      // Model line precedes the chip in document order (i.e. is not after it).
-      expect(identity.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      const disable = row.find('.gm-disable-toggle').element
+      expect(identity.compareDocumentPosition(disable) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('refreshes the roster when the member drawer writes', async () => {
