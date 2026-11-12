@@ -1,6 +1,8 @@
 # 原生能力与平台边界
 
-核查日期：2026-11-10。当前开发版 `0.2.11 / 211`，沿用包名 `com.clawbench.harmony`，Manifest 保留手机、平板及 `2in1`，暂不接入 Push Kit。工具链为 DevEco Studio 26.0.0.851 / HarmonyOS SDK 26.0.0.105，应用兼容与目标 API 23，编译 API 26。
+当前 `0.2.12 / 212` 对齐 `v0.139.0`，原生桥必需方法保持兼容。新版附件源栏支持显式 HarmonyOS 宿主，在 UA 未声明移动系统时仍提供拍照、图库与文件入口；实际选择由既有 ArkWeb 文件委托处理。draw.io 通过服务端沙箱 iframe 提供，编辑器下载 / 离线安装与保存不属于本轮完整设备验收；下载、邮件失败和单标签锁的模拟器证据见维护记录。此前 0.2.11 真机确认范围保持不变。
+
+核查日期：2026-11-12。当前开发版 `0.2.12 / 212`，沿用包名 `com.clawbench.harmony`，Manifest 保留手机、平板及 `2in1`，暂不接入 Push Kit。工具链为 DevEco Studio 26.0.0.851 / HarmonyOS SDK 26.0.0.105，应用兼容与目标 API 23，编译 API 26。
 
 本文中的 SDK 路径相对于 DevEco Studio 的 `sdk/default/`。这些是本轮实际使用的 SDK 声明和权限定义；后续 SDK 更新时应重新核查。编译器可以识别某个接口，并不表示当前签名配置具备调用资格。
 
@@ -38,7 +40,7 @@
 
 ## Push Kit 接入暂缓与原生通知边界
 
-2026-11-10 的暂缓 Push Kit 决策以当时 `0.2.10 / 210` 为历史背景；该决策本身没有修改应用身份或运行时代码。当前开发版已为 `0.2.11 / 211`，包含系统邮件运行时适配，工程继续使用 `com.clawbench.harmony`。此前提出的 `com.clawbench.mobile` 仅对应 Push Kit 接入设想，尚未应用到工程。
+2026-11-10 的暂缓 Push Kit 决策以当时 `0.2.10 / 210` 为历史背景；该决策本身没有修改应用身份或运行时代码。当前开发版已为 `0.2.12 / 212`，包含系统邮件运行时适配，工程继续使用 `com.clawbench.harmony`。此前提出的 `com.clawbench.mobile` 仅对应 Push Kit 接入设想，尚未应用到工程。
 
 当前原生通知仍由 `NotificationKit` 在本地发布，消息来源是应用进程获准运行期间的 WebSocket 订阅和 HTTP 补拉。HarmonyOS 将应用置于 Frozen 或结束进程后，这两种机制均不能保证送达。模拟器已验证的权限流程、进程内订阅和点击导航不构成冻结 / 结束进程后的推送验收。
 
@@ -56,7 +58,7 @@ Push Kit 系统级投递目前未实现。后续接入至少需要：客户端�
 
 “关于”页由服务端下发，应用版本描述仍写“当前安装的 Android 应用版本号”。0.2.8 在 `harmony-bootstrap.js` 中只处理 `[data-settings-key="appVersion"] .settings-item__desc`：观察新增节点和该说明节点的文本更新，把 `Android 应用版本号` / `Android app version number` 替换为 HarmonyOS 对应文案。聊天消息、代码预览、可编辑区、textarea、script/JSON 和其他 Android 下载入口都不在替换范围内；jsdom 与真实浏览器 DOM 均做了区外文本不变的回归。
 
-应用内更新检测依赖上游先发布包含 HarmonyOS 安装包与版本清单的 release，再据此实现版本比较、下载与安装校验。当前上游 `v0.137.0` release 只有 Android、桌面和服务端资产，未发布鸿蒙 release 时无法取得可核实的鸿蒙版本来源，该项保持待上游发布，不伪造通过结果。
+应用内更新检测依赖上游先发布包含 HarmonyOS 安装包与版本清单的 release，再据此实现版本比较、下载与安装校验。当前上游 `v0.139.0` release 只有 Android、桌面和服务端资产，未发布鸿蒙 release 时无法取得可核实的鸿蒙版本来源，该项保持待上游发布，不伪造通过结果。
 
 ## 2026-11-09 测试服务器补验
 
