@@ -456,9 +456,9 @@ await page.evaluate(() => document.querySelector('.session-tags-dialog .st-chip'
 | 状态 | 关键选择器 | 按钮 |
 |---|---|---|
 | **未生成** | `.share-dialog-hint`（说明文案） | 「生成链接」（`.fbtn-primary`） |
-| **已生成** | `.share-dialog-link-input`（只读链接框） | 「打开页面」+「关闭分享」（`.fbtn-danger`） |
+| **已生成** | `.share-addr-input`（只读链接框） | 「打开页面」+「关闭分享」（`.fbtn-danger`） |
 
-- 链接栏内还有两个图标按钮：复制（`.share-dialog-link-btn`）与重新生成（同上，第二个）。
+- 链接栏右侧并排两枚图标按钮：复制（`.share-addr-btn`）与重新生成（`.share-dialog-link-btn`）。
 - 生成链接会**真实写入 `file_shares` 表**，记得拍完撤销（见下）。
 
 ### 分享页面（独立 SPA）

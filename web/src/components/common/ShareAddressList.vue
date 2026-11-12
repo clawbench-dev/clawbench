@@ -155,13 +155,29 @@ defineExpose({ focusPrimary })
   font-family: var(--font-mono, monospace);
 }
 
+/* Square icon button, the same footprint as the host's trailing button (the
+   share dialogs' "regenerate"). A bare 14px glyph here would sit next to a
+   28dp box and the pair would read as two unrelated things. */
 .share-addr-btn {
   flex-shrink: 0;
+  width: calc(28 * var(--dp, 1px));
+  height: calc(28 * var(--dp, 1px));
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-secondary, #495057);
+}
+
+@media (hover: hover) {
+  .share-addr-btn:not(.share-addr-btn--labeled):hover {
+    background: var(--bg-tertiary, #e9ecef);
+    color: var(--accent-color, #4a90d9);
+  }
 }
 
 /* Label variant: a bordered field-height button, because a bare glyph with a
-   word next to it has no edge to sit on. */
+   word next to it has no edge to sit on. Width must be released or the label
+   would be clipped to the square footprint above. */
 .share-addr-btn--labeled {
+  width: auto;
   gap: var(--space-2, 4px);
   height: calc(28 * var(--dp, 1px));
   padding: 0 var(--space-5, 10px);
