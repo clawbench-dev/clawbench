@@ -638,21 +638,28 @@ describe('SettingsGroupPanel', () => {
 
     // The phone voice is an option in the same list (one choice for the user),
     // but it is stored per device. Picking it must NOT rewrite tts.engine: that
-    // would switch every other device to a voice it cannot run.
-    it('selecting the phone voice stores a local flag and keeps the server engine', async () => {
+    // would switch every other device to a voice it cannot run. Like every
+    // other field, it only takes effect on Save.
+    it('selecting the phone voice is a draft until Save', async () => {
       mockProbeSystemSpeech.mockResolvedValue({ ok: true })
+      settingsLocalConfig.systemSpeech = false
       localValues['tts.engine'] = 'edge'
       const wrapper = mountPanel(makeTtsConfig())
       const vm = wrapper.vm as any
       await vm.$.setupState.handleEntrySelect('system')
 
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', true)
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', true)
       expect(localValues['tts.engine']).toBe('edge')
       expect(mockDrawerClose).toHaveBeenCalled()
+
+      await vm.$.setupState.onSave()
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', true)
+      expect(localValues['tts.engine']).toBe('edge')
     })
 
     it('refuses the phone voice when the device cannot read Chinese', async () => {
       mockProbeSystemSpeech.mockResolvedValue({ ok: false, reason: 'no_chinese' })
+      settingsLocalConfig.systemSpeech = false
       localValues['tts.engine'] = 'edge'
       const wrapper = mountPanel(makeTtsConfig())
       const vm = wrapper.vm as any
@@ -663,15 +670,34 @@ describe('SettingsGroupPanel', () => {
       expect(mockToastShow).toHaveBeenCalled()
     })
 
-    it('selecting a real engine clears the phone-voice flag', async () => {
+    it('tests the phone voice instead of the server engine', async () => {
+      settingsLocalConfig.systemSpeech = true
+      mockTestResults.value = []
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+
+      await vm.$.setupState.handleConnectivityTest()
+
+      // No server request: the phone voice has no server config to probe.
+      expect(mockRunConnectivityTests).not.toHaveBeenCalled()
+      expect(mockTestResults.value).toHaveLength(1)
+      // No bridge in this environment, so the result must say so rather than
+      // reporting a success it never measured.
+      expect(mockTestResults.value[0].success).toBe(false)
+    })
+
+    it('selecting a real engine clears the phone-voice flag on Save', async () => {
       settingsLocalConfig.systemSpeech = true
       localValues['tts.engine'] = 'edge'
       const wrapper = mountPanel(makeTtsConfig())
       const vm = wrapper.vm as any
       await vm.$.setupState.handleEntrySelect('alt')
 
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', false)
       expect(localValues['tts.engine']).toBe('alt')
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', false)
+
+      await vm.$.setupState.onSave()
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', false)
     })
   })
 

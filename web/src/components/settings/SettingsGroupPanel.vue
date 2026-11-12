@@ -221,6 +221,7 @@ import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
 import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
+import { getNative } from '@/utils/clawbenchNative'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -270,11 +271,27 @@ const {
   hotReloadWarning,
   hasFailedSave,
   hasChanges,
-  canSave,
+  canSave: snapshotCanSave,
   needsRestartHint,
   initSnapshot,
   handleSave,
 } = usePanelSnapshot(props.config)
+
+// ── Phone voice (a per-device option inside the engine list) ──
+//
+// Kept as a draft like every other field, so the panel's Save button means the
+// same thing everywhere. `localValues['tts.engine']` stays the SERVER engine:
+// a device-local choice must never overwrite what every other device uses.
+const { getServerValueWithDefault, setLocalConfig, localConfig: settingsLocalConfig } = useSettingsConfig()
+
+const phoneVoiceDraft = ref(settingsLocalConfig.systemSpeech === true)
+const phoneVoiceDirty = computed(() =>
+  phoneVoiceDraft.value !== (settingsLocalConfig.systemSpeech === true),
+)
+const phoneVoiceActive = computed(() => props.config.panelId === 'tts' && phoneVoiceDraft.value)
+// The phone choice alone is a valid change even when the server engine's
+// credentials are incomplete.
+const canSave = computed(() => snapshotCanSave.value || phoneVoiceDirty.value)
 
 const activeKey = ref<string | null>(null)
 const entryPicker = useTabDrawer('settings', { autoRestore: false })
@@ -352,6 +369,7 @@ const terminalThemePreviews = computed<Record<string, TerminalPreview> | undefin
 
 onMounted(() => {
   initSnapshot()
+  phoneVoiceDraft.value = settingsLocalConfig.systemSpeech === true
   registerGuard(`panel-${props.config.panelId}`, () => !panelDirty.value && !hasFailedSave.value)
   // Fetch RAG status on mount so progress counts are visible immediately
   if (props.config.panelId === 'rag') {
@@ -417,19 +435,7 @@ const entryOptions = computed(() => {
   return props.config.entrySelector?.options ?? []
 })
 
-/**
- * Whether this device reads with its own voice.
- *
- * "Phone voice" is an option inside the engine list, not a separate switch: to
- * the user it is just another voice, and where it runs is an implementation
- * detail. The draft still holds the SERVER engine, so a per-device choice never
- * overwrites what every other device uses.
- */
-const phoneVoiceActive = computed(() =>
-  props.config.panelId === 'tts' && settingsLocalConfig.systemSpeech === true,
-)
-
-/** The engine the list should show as selected. */
+/** The engine the list should show as selected (phone voice shadows the server one). */
 const effectiveEngine = computed<unknown>(() =>
   phoneVoiceActive.value ? 'system' : localValues['tts.engine'],
 )
@@ -460,13 +466,13 @@ async function handleEntrySelect(value: unknown) {
       toast.show(t(systemSpeechErrorKey(probe.reason)), { icon: 'blocked', type: 'error', duration: 5000 })
       return
     }
-    setLocalConfig('systemSpeech', true)
+    phoneVoiceDraft.value = true
     entryPicker.close()
     return
   }
 
   // Picking a real engine means "this device goes back to the server voice".
-  setLocalConfig('systemSpeech', false)
+  phoneVoiceDraft.value = false
   // Only the selected value changes. Each engine owns its own settings, so
   // switching must not touch another engine's saved voice / credentials —
   // resetting them here overwrote the Edge voice whenever the user tried the
@@ -525,10 +531,6 @@ function isLastInSection(idx: number): boolean {
   const next = renderList.value[idx + 1]
   return !next || next.type === 'header'
 }
-
-// ── Settings config for getLocalValue fallback ──
-
-const { getServerValueWithDefault, setLocalConfig, localConfig: settingsLocalConfig } = useSettingsConfig()
 
 // ── Field value helpers ──
 
@@ -689,7 +691,7 @@ const transportDirty = computed(() => hasChanges.value)
 
 /** The panel's own dirty flag (the transport is an ordinary field now, so
  *  `hasChanges` already covers it). */
-const panelDirty = computed(() => hasChanges.value)
+const panelDirty = computed(() => hasChanges.value || phoneVoiceDirty.value)
 
 // ── Tunnel status ──
 
@@ -860,6 +862,12 @@ async function onSave() {
   }
   if (result.failed || serverError.value) return
 
+  // The phone-voice choice is per device, so it is applied here rather than
+  // sent to the server — but still only when the user presses Save.
+  if (phoneVoiceDirty.value) {
+    setLocalConfig('systemSpeech', phoneVoiceDraft.value)
+  }
+
   // Switching the transport makes the server start or stop its SSH listener,
   // so the live tunnel has to be rebuilt on the new wire. The native monitor
   // would notice within its 15s tick, but doing it here puts the wait under the
@@ -1016,10 +1024,71 @@ async function handleFieldClick(_field: ItemSpec) {
 
 async function handleConnectivityTest() {
   clearConnectivityResults()
+
+  // The phone voice has no server config to probe: test it end to end by
+  // speaking a short sample and waiting for the engine's terminal event.
+  if (phoneVoiceActive.value) {
+    connectivityTesting.value = true
+    try {
+      connectivityTestResults.value = [await testSystemSpeech()]
+    } finally {
+      connectivityTesting.value = false
+    }
+    return
+  }
+
   const values = { ...localValues } as Record<string, unknown>
   const tests = props.config.getTestCategories?.(values) ?? [{ category: props.config.panelId, values }]
   if (tests.length === 0) return
   await runConnectivityTests(tests)
+}
+
+/**
+ * Speak a fixed short sentence on the phone and report what happened.
+ *
+ * A readiness probe alone would pass on an engine that accepts requests and
+ * then fails to synthesize (OPPO's does exactly that, ~30s later), so the test
+ * has to wait for the real terminal event.
+ */
+async function testSystemSpeech(): Promise<{ success: boolean; message: string }> {
+  const native = getNative()
+  if (!native?.ttsSpeak) {
+    return { success: false, message: t(systemSpeechErrorKey('no_bridge')) }
+  }
+  const probe = await probeSystemSpeech(8000)
+  if (!probe.ok) {
+    return { success: false, message: t(systemSpeechErrorKey(probe.reason)) }
+  }
+
+  return await new Promise((resolve) => {
+    const id = 'tts-test-' + Date.now()
+    let settled = false
+    const finish = (success: boolean, message: string) => {
+      if (settled) return
+      settled = true
+      window.removeEventListener('clawbench-tts-state', onState)
+      clearTimeout(timer)
+      resolve({ success, message })
+    }
+    const onState = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { id?: string; state?: string; message?: string }
+      if (detail?.id !== id) return
+      if (detail.state === 'done') {
+        finish(true, t('settings.panel.systemSpeechTestOk'))
+      } else if (detail.state === 'error') {
+        finish(false, t('settings.panel.systemSpeechTestFailed', { reason: detail.message || '' }))
+      }
+    }
+    window.addEventListener('clawbench-tts-state', onState)
+    const timer = setTimeout(
+      () => finish(false, t('settings.panel.systemSpeechTestFailed', { reason: 'timeout' })),
+      20000,
+    )
+    const accepted = native.ttsSpeak!(t('settings.panel.systemSpeechTestPhrase'), id)
+    if (accepted !== 'ready' && accepted !== 'initializing') {
+      finish(false, t('settings.panel.systemSpeechTestFailed', { reason: accepted }))
+    }
+  })
 }
 
 // Auto-clear test results when form values change (results become stale)

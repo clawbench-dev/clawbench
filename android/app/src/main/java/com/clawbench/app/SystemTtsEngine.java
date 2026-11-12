@@ -501,8 +501,18 @@ public final class SystemTtsEngine {
                 || (c >= 0xF900 && c <= 0xFAFF);
     }
 
-    /** Leaves headroom below the engine's hard limit (4000 on current Android). */
+    /**
+     * Characters per utterance.
+     *
+     * Android documents 4000, but OEM engines impose much smaller limits and do
+     * not say so: OPPO's accessibility engine accepts a long request and then
+     * fails with ERROR_SYNTHESIS about 30 seconds later. Short chunks cost a
+     * few more queue entries; a failed long one costs the whole read.
+     */
+    private static final int MAX_CHUNK_CHARS = 120;
+
     private static int maxChunkLength() {
-        return Math.max(200, Math.min(3000, TextToSpeech.getMaxSpeechInputLength() - 100));
+        int engineLimit = TextToSpeech.getMaxSpeechInputLength() - 1;
+        return Math.max(40, Math.min(MAX_CHUNK_CHARS, engineLimit));
     }
 }
