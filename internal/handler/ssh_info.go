@@ -82,17 +82,17 @@ func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {
 	sshRef := GetSSHServer()
 	if sshRef == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":   false,
-			"port":      0,
-			"transport": configuredTransport(),
+			"enabled":     false,
+			"port":        0,
+			jsonTransport: configuredTransport(),
 		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":   true,
-		"port":      sshRef.Port(),
-		"transport": configuredTransport(),
+		"enabled":     true,
+		"port":        sshRef.Port(),
+		jsonTransport: configuredTransport(),
 	})
 }
 
@@ -116,7 +116,7 @@ func ServeSSHInfoFull(w http.ResponseWriter, r *http.Request) {
 			"fingerprint":     "",
 			"command":         "",
 			"connectionStats": nil,
-			"transport":       configuredTransport(),
+			jsonTransport:     configuredTransport(),
 		})
 		return
 	}
@@ -180,6 +180,6 @@ func ServeSSHInfoFull(w http.ResponseWriter, r *http.Request) {
 		"fingerprint":     fingerprint,
 		"command":         command,
 		"connectionStats": sshRef.ConnectionStats(),
-		"transport":       configuredTransport(),
+		jsonTransport:     configuredTransport(),
 	})
 }

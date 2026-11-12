@@ -425,7 +425,7 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 		}
 		srv := model.MCPServer{}
 		srv.Name, _ = m["name"].(string)
-		srv.Transport, _ = m["transport"].(string)
+		srv.Transport, _ = m[jsonTransport].(string)
 		srv.Command, _ = m["command"].(string)
 		srv.URL, _ = m["url"].(string)
 		if args, ok := m["args"].([]any); ok {
@@ -2580,7 +2580,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	// h2 on apply; anything unrecognized is a 400 rather than a stored value
 	// that would only be converged on the next load.
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
-		if raw, present := pf["transport"]; present {
+		if raw, present := pf[jsonTransport]; present {
 			v, ok := raw.(string)
 			if !ok {
 				return fmt.Errorf("port_forward.transport must be a string")
@@ -3032,7 +3032,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		// Only applied when the patch carries it: omitting the field must not
 		// reset the operator's choice. The retired "both" (old clients still
 		// send it) normalizes to "h2".
-		if v, ok := pf["transport"].(string); ok {
+		if v, ok := pf[jsonTransport].(string); ok {
 			cfg.PortForward.Transport = model.NormalizePortForwardTransport(v)
 		}
 	}

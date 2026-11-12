@@ -88,12 +88,18 @@ describe('session-search jump wiring', () => {
     // Assert the CALL ITSELF, not the identifier: the identifier also appears in
     // the block's own documentation, so `indexOf('jumpToUserMessage')` was
     // satisfied by a comment and survived deleting the call.
-    expect(panelCode).toContain('await messageListRef.value?.jumpToUserMessage?.(')
+    //
+    // Everything below is scoped to the CONSUME PATH, not the whole file:
+    // `jumpToUserMessage` is also called from the group member panel's
+    // jump-to-latest handler, and a whole-file `indexOf` finds that one first —
+    // so the "comes after consume" assertion was really asserting that the
+    // member handler sits further down the file.
     const consume = panelCode.indexOf('consumePendingMessageNavigation()')
     expect(consume).toBeGreaterThan(-1)
-    expect(panelCode.indexOf('jumpToUserMessage?.(')).toBeGreaterThan(consume)
+    const consumePath = panelCode.slice(consume)
+    expect(consumePath).toContain('await messageListRef.value?.jumpToUserMessage?.(')
     // The old loaded-only call must be gone from the consume path.
-    expect(panelCode.slice(consume)).not.toContain('scrollToMessage(')
+    expect(consumePath).not.toContain('scrollToMessage(')
   })
 
   it('the panel re-runs when the request itself arrives (watch source)', () => {

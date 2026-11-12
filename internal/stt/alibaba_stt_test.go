@@ -184,9 +184,15 @@ func TestAlibabaTranscribeMultimodalEmptyTranscript(t *testing.T) {
 }
 
 func TestAlibabaUsesMultimodal(t *testing.T) {
+	// The padded key is deliberate: model ids come from user config, and the
+	// family check has to trim before matching (otherwise a stray space routes
+	// a multimodal model to the OpenAI-compatible endpoint, which 404s it).
 	cases := map[string]bool{
-		"qwen-audio-3.1-asr-flash":   true,
-		" Qwen-Audio-3.1-asr-flash ": true,
+		"qwen-audio-3.1-asr-flash": true,
+		// Padded on purpose: model ids come from user config, and the family
+		// check must trim before matching (otherwise a stray space routes a
+		// multimodal model to the OpenAI-compatible endpoint, which 404s it).
+		" Qwen-Audio-3.1-asr-flash ": true, //nolint:gocritic // whitespace is the case under test
 		"qwen3-asr-flash":            false,
 		"paraformer-v2":              false,
 		"":                           false,

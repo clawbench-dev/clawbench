@@ -186,3 +186,138 @@ func TestMinimaxTTSCacheIdentity(t *testing.T) {
 		t.Errorf("CacheIdentity must not contain the API key: %q", id)
 	}
 }
+
+func TestMinimaxTTS_ValidateCoversEveryRequiredField(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(p *MinimaxTTSProvider)
+		want string
+	}{
+		{"api_key", func(p *MinimaxTTSProvider) { p.APIKey = "" }, "tts.minimax.api_key"},
+		{"api_key blank", func(p *MinimaxTTSProvider) { p.APIKey = "  " }, "tts.minimax.api_key"},
+		{"model", func(p *MinimaxTTSProvider) { p.Model = "" }, "tts.minimax.model"},
+		{"voice", func(p *MinimaxTTSProvider) { p.Voice = "" }, "tts.minimax.voice"},
+	}
+	for _, tc := range cases {
+		p := newTestMinimaxProvider("http://unused")
+		tc.mut(p)
+		if err := p.validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: validate err = %v, want it to name %s", tc.name, err, tc.want)
+		}
+	}
+	if err := newTestMinimaxProvider("http://unused").validate(); err != nil {
+		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+func TestMinimaxTTS_SynthesisURLHandlesEveryBaseShape(t *testing.T) {
+	cases := []struct {
+		name  string
+		base  string
+		group string
+		want  string
+	}{
+		{"empty base falls back to the default", "", "", MinimaxTTSBaseURL + minimaxTTSPath},
+		{"trailing slashes are trimmed", "https://api.example.com/", "", "https://api.example.com" + minimaxTTSPath},
+		{"group id is a query parameter", "https://api.example.com", "g-1", "https://api.example.com" + minimaxTTSPath + "?GroupId=g-1"},
+		{"existing query is preserved", "https://api.example.com?foo=bar", "g-1", "https://api.example.com" + minimaxTTSPath + "?GroupId=g-1&foo=bar"},
+	}
+	for _, tc := range cases {
+		p := newTestMinimaxProvider(tc.base)
+		p.GroupID = tc.group
+		if got := p.synthesisURL(); got != tc.want {
+			t.Errorf("%s: synthesisURL() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestMinimaxTTS_HTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("rate limited"))
+	}))
+	defer srv.Close()
+
+	p := newTestMinimaxProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "429") || !strings.Contains(err.Error(), "rate limited") {
+		t.Fatalf("err = %v, want the status and the body", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a failed synthesis must not leave an output file behind")
+	}
+}
+
+func TestMinimaxTTS_MalformedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`not json at all`))
+	}))
+	defer srv.Close()
+
+	p := newTestMinimaxProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "malformed response") {
+		t.Fatalf("err = %v, want a malformed-response error", err)
+	}
+}
+
+func TestMinimaxTTS_MissingAudioNamesTheTrace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"base_resp": map[string]any{"status_code": 0, "status_msg": "success"},
+			"trace_id":  "trace-missing",
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestMinimaxProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "no audio") || !strings.Contains(err.Error(), "trace-missing") {
+		t.Fatalf("err = %v, want a no-audio error naming the trace", err)
+	}
+}
+
+func TestMinimaxTTS_RejectsNonHexAudio(t *testing.T) {
+	// A base64 payload (what a different vendor returns) must fail with a decode
+	// error rather than being written out as garbage.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":      map[string]any{"audio": "SUQzBAAAAAA=", "status": 2},
+			"base_resp": map[string]any{"status_code": 0, "status_msg": "success"},
+			"trace_id":  "trace-hex",
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestMinimaxProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "decode hex audio") || !strings.Contains(err.Error(), "trace-hex") {
+		t.Fatalf("err = %v, want a hex decode error naming the trace", err)
+	}
+}
+
+func TestMinimaxTTS_RejectsNonMP3Audio(t *testing.T) {
+	// Valid hex, but a WAV container: the sink refuses to cache it under .mp3.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		wav := append([]byte("RIFF....WAVE"), make([]byte, mp3SniffPrefixBytes)...)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":      map[string]any{"audio": hex.EncodeToString(wav), "status": 2},
+			"base_resp": map[string]any{"status_code": 0, "status_msg": "success"},
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestMinimaxProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "not mp3") {
+		t.Fatalf("err = %v, want a not-mp3 error", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a rejected payload must not leave an output file behind")
+	}
+}

@@ -2934,6 +2934,7 @@ export default {
     generateFailedDetail: 'Speech generation failed: {error}',
     autoplayBlocked: 'Browser blocked autoplay, please click the read button manually',
     systemSpeechFailed: 'Phone read-aloud failed, retry or switch back to server synthesis',
+    systemSpeechFailedWithReason: 'Phone read-aloud failed, retry or switch back to server synthesis ({reason})',
     systemSpeechUnavailable: 'This device has no usable speech engine, using server synthesis instead',
     enabled: 'Auto speech enabled',
     disabled: 'Auto speech disabled',

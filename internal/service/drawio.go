@@ -122,7 +122,8 @@ var (
 		Timeout: drawioDownloadTimeout,
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
-			//nolint:gosec // integrity comes from drawioSHA256, see above
+			// Verification is off by design here (G402 is excluded repo-wide for
+			// this reason); integrity comes from drawioSHA256, see above.
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}

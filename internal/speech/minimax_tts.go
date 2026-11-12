@@ -97,10 +97,16 @@ func (p *MinimaxTTSProvider) synthesisURL() string {
 	if base == "" {
 		base = MinimaxTTSBaseURL
 	}
-	// Accept a base that already carries the full endpoint or a query string.
-	u, err := url.Parse(base + minimaxTTSPath)
+	// Parse the base on its own, then attach the path — concatenating first
+	// would put the path INSIDE an existing query string
+	// ("…?foo=bar" + "/v1/t2a_v2" becomes "…?foo=bar/v1/t2a_v2").
+	u, err := url.Parse(base)
 	if err != nil {
 		return base + minimaxTTSPath
+	}
+	// Accept a base that already carries the full endpoint.
+	if !strings.HasSuffix(u.Path, minimaxTTSPath) {
+		u.Path = strings.TrimRight(u.Path, "/") + minimaxTTSPath
 	}
 	if p.GroupID != "" {
 		q := u.Query()

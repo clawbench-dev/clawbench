@@ -476,36 +476,63 @@ func (p *AlibabaTTSProvider) synthesizeSambert(ctx context.Context, text string,
 			}
 			continue
 		}
-		var ev alibabaSambertEvent
-		if err := json.Unmarshal(data, &ev); err != nil {
-			continue
+		done, err := sambertControlFrame(ctx, conn, taskID, data, written)
+		if err != nil {
+			return err
 		}
-		switch ev.Header.Event {
-		case "task-started":
-			finish := alibabaSambertFinish{Header: alibabaSambertHeader{Action: "finish-task", TaskID: taskID, Streaming: "duplex"}}
-			body, marshalErr := json.Marshal(finish)
-			if marshalErr != nil {
-				return fmt.Errorf("alibaba-tts: encode sambert finish: %w", marshalErr)
-			}
-			if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
-				return fmt.Errorf("alibaba-tts: sambert send finish: %w", err)
-			}
-		case "task-failed":
-			reason := ev.Header.ErrorMessage
-			if ev.Header.ErrorCode != "" {
-				reason = ev.Header.ErrorCode + ": " + reason
-			}
-			if reason == "" {
-				reason = "no reason given"
-			}
-			return fmt.Errorf("alibaba-tts: sambert failed: %s", reason)
-		case "task-finished":
-			if written == 0 {
-				return fmt.Errorf("alibaba-tts: sambert returned no audio")
-			}
+		if done {
 			return nil
 		}
 	}
+}
+
+// sambertControlFrame applies one text frame from the server: ack the task
+// start, surface a failure, or report completion. Unknown frames and frames
+// that are not JSON are ignored — the audio stream is what matters.
+func sambertControlFrame(ctx context.Context, conn *websocket.Conn, taskID string, data []byte, written int) (bool, error) {
+	var ev alibabaSambertEvent
+	if err := json.Unmarshal(data, &ev); err != nil {
+		// Not JSON: a frame we do not understand, not a failure. Ignore it —
+		// the audio stream is what matters.
+		return false, nil //nolint:nilerr // an unparsable control frame is not a stream failure
+	}
+	switch ev.Header.Event {
+	case "task-started":
+		return false, sendSambertFinish(ctx, conn, taskID)
+	case "task-failed":
+		return false, fmt.Errorf("alibaba-tts: sambert failed: %s", sambertFailureReason(ev))
+	case "task-finished":
+		if written == 0 {
+			return false, fmt.Errorf("alibaba-tts: sambert returned no audio")
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// sendSambertFinish asks the server to wrap up once the task has started.
+func sendSambertFinish(ctx context.Context, conn *websocket.Conn, taskID string) error {
+	finish := alibabaSambertFinish{Header: alibabaSambertHeader{Action: "finish-task", TaskID: taskID, Streaming: "duplex"}}
+	body, err := json.Marshal(finish)
+	if err != nil {
+		return fmt.Errorf("alibaba-tts: encode sambert finish: %w", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
+		return fmt.Errorf("alibaba-tts: sambert send finish: %w", err)
+	}
+	return nil
+}
+
+// sambertFailureReason renders a task-failed frame as one readable string.
+func sambertFailureReason(ev alibabaSambertEvent) string {
+	reason := ev.Header.ErrorMessage
+	if ev.Header.ErrorCode != "" {
+		reason = ev.Header.ErrorCode + ": " + reason
+	}
+	if reason == "" {
+		reason = "no reason given"
+	}
+	return reason
 }
 
 // clampFloat keeps v inside [lo, hi].

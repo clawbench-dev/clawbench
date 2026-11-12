@@ -458,5 +458,5 @@ func TestDownloadDrawioArchive_AcceptsAPlainHTTPSource(t *testing.T) {
 
 	path, err := downloadDrawioArchive(srv.URL + "/draw.war")
 	require.NoError(t, err)
-	defer func() { _ = os.Remove(path) }()
+	t.Cleanup(func() { _ = os.Remove(path) })
 }

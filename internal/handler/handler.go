@@ -48,6 +48,12 @@ const (
 	// name, watched file). Distinct from entryTypeFile / shareKindFile, which
 	// are VALUES classifying a file, not a key.
 	jsonFile = "file"
+	// jsonTransport names the transport of a server/agent/session in responses
+	// and config patches ("stdio" / "http" / "sse" / "acp-stdio" / "ssh" / "h2").
+	jsonTransport = "transport"
+	// jsonAudioPath is where a synthesized TTS clip landed, relative to the
+	// project root. Emitted by both the WS and the HTTP job responses.
+	jsonAudioPath = "audioPath"
 )
 
 // loc returns the Localizer for the current request.

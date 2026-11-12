@@ -371,10 +371,114 @@ func TestAlibabaTTS_SambertTaskFailed(t *testing.T) {
 	}
 }
 
+func TestAlibabaTTS_SambertIgnoresFramesItCannotRead(t *testing.T) {
+	// A real stream can carry a text frame that is not our JSON (a keepalive, a
+	// vendor notice) or an event we do not handle. Neither may abort a synthesis
+	// that is otherwise producing audio — the audio is the payload; control
+	// frames are advisory. This pins the "unknown frame → keep reading" contract
+	// that the control-frame split introduced.
+	audio := mp3(strings.Repeat("c", 32))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		// Not JSON at all.
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`not json`))
+		// Valid JSON, but an event nobody handles.
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"header":{"event":"task-queued"}}`))
+		_ = conn.Write(ctx, websocket.MessageBinary, audio)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"header":{"event":"task-finished"}}`))
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	p.Model = "sambert-zhide-v1"
+	p.Voice = ""
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	if err := p.Synthesize(context.Background(), "你好世界", out, "zh"); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !bytes.Equal(got, audio) {
+		t.Fatalf("output = %q, want the audio that followed the unreadable frames", got)
+	}
+}
+
+func TestAlibabaTTS_SambertEmptyStreamIsAnError(t *testing.T) {
+	// task-finished with zero audio bytes must fail rather than write a 0-byte
+	// file: an empty mp3 plays as silence, which looks like a working voice
+	// that produced nothing.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"header":{"event":"task-finished"}}`))
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	p.Model = "sambert-zhide-v1"
+	p.Voice = ""
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "no audio") {
+		t.Fatalf("err = %v, want a 'returned no audio' error", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a synthesis with no audio must not leave an output file behind")
+	}
+}
+
+func TestSambertFailureReason(t *testing.T) {
+	// The error surface is what a user sees when a voice is misconfigured, so
+	// every shape must read sensibly — including the one where the vendor sends
+	// neither a code nor a message.
+	var ev alibabaSambertEvent
+	ev.Header.ErrorCode = "InvalidParameter"
+	ev.Header.ErrorMessage = "text is invalid"
+	if got := sambertFailureReason(ev); got != "InvalidParameter: text is invalid" {
+		t.Errorf("code+message = %q", got)
+	}
+
+	ev = alibabaSambertEvent{}
+	ev.Header.ErrorMessage = "quota exceeded"
+	if got := sambertFailureReason(ev); got != "quota exceeded" {
+		t.Errorf("message only = %q", got)
+	}
+
+	ev = alibabaSambertEvent{}
+	if got := sambertFailureReason(ev); got != "no reason given" {
+		t.Errorf("empty = %q, want the placeholder", got)
+	}
+}
+
 func TestAlibabaUsesSambert(t *testing.T) {
+	// The padded key is deliberate: model ids arrive from user config, and the
+	// family check has to trim before matching (otherwise a stray space silently
+	// routes sambert models to the HTTP endpoint, which rejects them).
 	cases := map[string]bool{
-		"sambert-zhide-v1":         true,
-		" SAMBERT-eva-v1 ":         true,
+		"sambert-zhide-v1": true,
+		// Padded on purpose: model ids come from user config, and the family
+		// check must trim before matching (otherwise a stray space silently
+		// routes sambert models to the HTTP endpoint, which rejects them).
+		" SAMBERT-eva-v1 ":         true, //nolint:gocritic // whitespace is the case under test
 		"cosyvoice-v3-flash":       false,
 		"qwen-audio-3.1-tts-flash": false,
 		"":                         false,
@@ -383,5 +487,249 @@ func TestAlibabaUsesSambert(t *testing.T) {
 		if got := alibabaUsesSambert(model); got != want {
 			t.Errorf("alibabaUsesSambert(%q) = %v, want %v", model, got, want)
 		}
+	}
+}
+
+func TestAlibabaTTS_ValidateCoversEveryRequiredField(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(p *AlibabaTTSProvider)
+		want string
+	}{
+		{"api_key", func(p *AlibabaTTSProvider) { p.APIKey = "" }, "tts.alibaba.api_key"},
+		{"api_key blank", func(p *AlibabaTTSProvider) { p.APIKey = "   " }, "tts.alibaba.api_key"},
+		{"model", func(p *AlibabaTTSProvider) { p.Model = "" }, "tts.alibaba.model"},
+		{"voice", func(p *AlibabaTTSProvider) { p.Voice = "" }, "tts.alibaba.voice"},
+	}
+	for _, tc := range cases {
+		p := newTestAlibabaProvider("http://unused")
+		tc.mut(p)
+		if err := p.validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: validate err = %v, want it to name %s", tc.name, err, tc.want)
+		}
+	}
+	if err := newTestAlibabaProvider("http://unused").validate(); err != nil {
+		t.Errorf("valid config rejected: %v", err)
+	}
+
+	// sambert names the voice by model id, so an empty voice is NOT a
+	// misconfiguration there — this is the branch that would otherwise send the
+	// user to fill in a field the engine ignores.
+	sambert := newTestAlibabaProvider("http://unused")
+	sambert.Model = "sambert-zhide-v1"
+	sambert.Voice = ""
+	if err := sambert.validate(); err != nil {
+		t.Errorf("sambert without a voice must validate: %v", err)
+	}
+}
+
+func TestAlibabaTTS_SpeedIsSentOnlyWhenItDiffers(t *testing.T) {
+	// 1.0x is the default, so the field is omitted; anything else is clamped to
+	// the documented 0.5…2.0 range. Asserted on the wire body.
+	cases := []struct {
+		speed float64
+		want  float64
+	}{
+		{0, 0}, // unset
+		{1, 0}, // default → omitted
+		{1.5, 1.5},
+		{3, 2}, // clamped
+		{0.1, 0.5},
+	}
+	for _, tc := range cases {
+		var got struct {
+			Input struct {
+				Rate float64 `json:"rate"`
+			} `json:"input"`
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &got)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": 200,
+				"output":      map[string]any{"audio": map[string]any{"data": base64.StdEncoding.EncodeToString(mp3(strings.Repeat("r", 32)))}},
+			})
+		}))
+
+		p := newTestAlibabaProvider(srv.URL)
+		p.Speed = tc.speed
+		out := filepath.Join(t.TempDir(), "out.mp3")
+		err := p.Synthesize(context.Background(), "你好", out, "zh")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("speed %v: Synthesize: %v", tc.speed, err)
+		}
+		if got.Input.Rate != tc.want {
+			t.Errorf("speed %v → input.rate %v, want %v", tc.speed, got.Input.Rate, tc.want)
+		}
+	}
+}
+
+func TestAlibabaTTS_HTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("key disabled"))
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "key disabled") {
+		t.Fatalf("err = %v, want the status and the body", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a failed synthesis must not leave an output file behind")
+	}
+}
+
+func TestAlibabaTTS_MalformedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<html>gateway</html>`))
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "malformed response") {
+		t.Fatalf("err = %v, want a malformed-response error", err)
+	}
+}
+
+func TestAlibabaTTS_NoAudioFieldAtAll(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status_code": 200,
+			"request_id":  "req-empty",
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "neither audio.data nor audio.url") || !strings.Contains(err.Error(), "req-empty") {
+		t.Fatalf("err = %v, want an error naming both shapes and the request", err)
+	}
+}
+
+func TestAlibabaTTS_UndecodableInlineAudio(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status_code": 200,
+			"output":      map[string]any{"audio": map[string]any{"data": "!!!!not-base64!!!!"}},
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "decode inline audio") {
+		t.Fatalf("err = %v, want an inline decode error", err)
+	}
+}
+
+func TestAlibabaTTS_DownloadFailures(t *testing.T) {
+	audio := mp3(strings.Repeat("a", 32))
+	cases := []struct {
+		name   string
+		status int
+		body   []byte
+		want   string
+	}{
+		{"non-200", http.StatusNotFound, []byte("gone"), "status 404"},
+		{"empty body", http.StatusOK, nil, "downloaded audio is empty"},
+	}
+	for _, tc := range cases {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/v1/services/audio/tts/SpeechSynthesizer", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": 200,
+				"output":      map[string]any{"audio": map[string]any{"url": "http://" + r.Host + "/audio"}},
+			})
+		})
+		mux.HandleFunc("/audio", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write(tc.body)
+		})
+		srv := httptest.NewServer(mux)
+
+		p := newTestAlibabaProvider(srv.URL)
+		out := filepath.Join(t.TempDir(), "out.mp3")
+		err := p.Synthesize(context.Background(), "你好", out, "zh")
+		srv.Close()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
+		}
+	}
+	_ = audio
+}
+
+// TestAlibabaTTS_DownloadDoesNotSendTheAPIKey pins a security property: the
+// audio URL is a pre-signed OSS link carrying its own credentials, so the
+// provider's API key must not travel with it (a third-party host would
+// otherwise receive it).
+func TestAlibabaTTS_DownloadDoesNotSendTheAPIKey(t *testing.T) {
+	audio := mp3(strings.Repeat("a", 32))
+	var downloadAuth, downloadPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/services/audio/tts/SpeechSynthesizer", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status_code": 200,
+			"output":      map[string]any{"audio": map[string]any{"url": "http://" + r.Host + "/oss/audio.mp3"}},
+		})
+	})
+	mux.HandleFunc("/oss/audio.mp3", func(w http.ResponseWriter, r *http.Request) {
+		downloadAuth = r.Header.Get("Authorization")
+		downloadPath = r.URL.Path
+		_, _ = w.Write(audio)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	if err := p.Synthesize(context.Background(), "你好", out, "zh"); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if downloadPath != "/oss/audio.mp3" {
+		t.Errorf("download path = %q", downloadPath)
+	}
+	if downloadAuth != "" {
+		t.Errorf("Authorization = %q on the pre-signed download, want none", downloadAuth)
+	}
+}
+
+func TestAlibabaTTS_NoAudioDataAtAll(t *testing.T) {
+	// Every segment succeeds but produces zero bytes: a 0-byte file must not be
+	// left behind (silence looks like a working voice).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status_code": 200,
+			"output":      map[string]any{"audio": map[string]any{"data": ""}},
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "neither audio.data nor audio.url") {
+		t.Fatalf("err = %v, want the no-audio-shape error", err)
+	}
+}
+
+// TestAlibabaTTS_SambertDialFailure: a closed port must surface as a sambert
+// dial error, not a hang.
+func TestAlibabaTTS_SambertDialFailure(t *testing.T) {
+	p := newTestAlibabaProvider("http://127.0.0.1:1")
+	p.Model = "sambert-zhide-v1"
+	p.Voice = ""
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "sambert dial") {
+		t.Fatalf("err = %v, want a dial failure", err)
 	}
 }

@@ -173,3 +173,55 @@ func TestTencentTranscribeReadError(t *testing.T) {
 		t.Fatal("Transcribe succeeded, want the read error")
 	}
 }
+
+// TestTencentTranscribe_HTTPStatusAndMalformedBody: a non-200 answer and a body
+// that is not the envelope must both be reported, not treated as an empty
+// transcript.
+func TestTencentTranscribe_HTTPStatusAndMalformedBody(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{"non-200", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("maintenance"))
+		}, "503"},
+		{"malformed body", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("not json"))
+		}, "decode response"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+
+			p := NewTencentProvider("id", "key", "1")
+			p.BaseURL = srv.URL
+			_, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestTencentTranscribe_UnreachableHost covers the dial failure.
+func TestTencentTranscribe_UnreachableHost(t *testing.T) {
+	p := NewTencentProvider("id", "key", "1")
+	p.BaseURL = "http://127.0.0.1:1"
+	_, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
+	if err == nil || !strings.Contains(err.Error(), "request failed") {
+		t.Fatalf("err = %v, want a request failure", err)
+	}
+}
+
+// TestTencentTranscribe_EmptyAudioRejected: zero bytes must be caught before a
+// signed request is built (the API would bill for it and return nothing).
+func TestTencentTranscribe_EmptyAudioRejected(t *testing.T) {
+	p := NewTencentProvider("id", "key", "1")
+	_, err := p.Transcribe(context.Background(), strings.NewReader(""), "")
+	if err == nil || !strings.Contains(err.Error(), "empty audio") {
+		t.Fatalf("err = %v, want an empty-audio error", err)
+	}
+}

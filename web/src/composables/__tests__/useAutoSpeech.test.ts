@@ -1387,7 +1387,7 @@ describe('useAutoSpeech — Android system speech engine', () => {
     }))
 
     expect(toastShowMock).toHaveBeenCalledWith(
-      'autoSpeech.systemSpeechFailed（speak_failed）',
+      'autoSpeech.systemSpeechFailedWithReason',
       expect.anything(),
     )
     expect(api.isActive('42')).toBe(false)

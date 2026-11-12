@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -278,5 +279,60 @@ func TestAlibabaReadLoopReportsEngineFailure(t *testing.T) {
 	}
 	if results[0].Final {
 		t.Error("error result marked Final, want false")
+	}
+}
+
+// TestAlibabaTranscribe_MalformedResponse: a body that is not the envelope must
+// be reported as such, not treated as an empty transcript.
+func TestAlibabaTranscribe_MalformedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>gateway error</html>"))
+	}))
+	defer srv.Close()
+
+	p := NewAlibabaProvider("k")
+	p.BaseURL = srv.URL
+	p.HTTPClient = srv.Client()
+
+	_, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
+	if err == nil || !strings.Contains(err.Error(), "decode response") {
+		t.Fatalf("err = %v, want a decode error", err)
+	}
+}
+
+// TestAlibabaOpenStream_DialFailure covers the dial branch: a closed port must
+// surface as a dial error naming the stream, not a hang.
+func TestAlibabaOpenStream_DialFailure(t *testing.T) {
+	p := NewAlibabaProvider("k")
+	p.BaseURL = "http://127.0.0.1:1"
+	_, err := p.OpenStream(context.Background(), StreamOptions{})
+	if err == nil || !strings.Contains(err.Error(), "alibaba stream dial") {
+		t.Fatalf("err = %v, want a dial failure", err)
+	}
+}
+
+// TestAlibabaOpenStream_UnreadableHandshake: a server that accepts the socket
+// but never answers the task-started handshake must fail within the handshake
+// window, not hang the recording.
+func TestAlibabaOpenStream_UnreadableHandshake(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		_, _, _ = conn.Read(context.Background())
+		// Answer nothing: the handshake wait must time out on its own.
+		time.Sleep(2 * time.Second)
+	}))
+	defer srv.Close()
+
+	p := NewAlibabaProvider("k")
+	p.BaseURL = srv.URL
+	p.HTTPClient = srv.Client()
+
+	_, err := p.OpenStream(context.Background(), StreamOptions{})
+	if err == nil || !strings.Contains(err.Error(), "handshake") {
+		t.Fatalf("err = %v, want a handshake failure", err)
 	}
 }

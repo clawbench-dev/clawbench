@@ -391,7 +391,7 @@ func TTSPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Text == "" {
-		req.Text = "您好，这是一段语音合成测试"
+		req.Text = T(r, "TTSPreviewDefaultSample")
 	}
 	if req.Language == "" {
 		req.Language = "zh"

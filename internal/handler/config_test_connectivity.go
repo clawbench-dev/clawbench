@@ -929,6 +929,12 @@ func testTTSMinimax(ctx context.Context, values map[string]any) ConnectivityTest
 	return probeTTSProvider(ctx, p, fmt.Sprintf("MiniMax TTS ready (model: %s, voice: %s)", p.Model, p.Voice))
 }
 
+// ttsProbeSample is what the connectivity probe asks the engine to speak. It is
+// a fixed clip, not UI copy: the probe only needs *some* short text that any
+// Chinese-capable voice can read, and the result is thrown away — the point is
+// whether synthesis returns audio at all.
+const ttsProbeSample = "你好"
+
 // probeTTSProvider runs one real synthesis into a temporary file and reports
 // the provider's own error verbatim — the vendor's message (bad key, unknown
 // voice, service not activated) is what the user needs to see.
@@ -942,7 +948,7 @@ func probeTTSProvider(ctx context.Context, p speech.SpeechProvider, okMessage st
 	_ = os.Remove(path)
 	defer func() { _ = os.Remove(path) }()
 
-	if synthErr := p.Synthesize(ctx, "你好", path, "zh"); synthErr != nil {
+	if synthErr := p.Synthesize(ctx, ttsProbeSample, path, "zh"); synthErr != nil {
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("TTS synthesis failed: %v", synthErr)}
 	}
 	info, statErr := os.Stat(path)

@@ -936,7 +936,7 @@ func TestDirSearchTop_DefaultLimitIsSmall(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		createTestFile(t, env.ProjectDir, filepath.Join("src", "file"+strconv.Itoa(i)+".go"), "package src")
 	}
 
@@ -958,7 +958,7 @@ func TestDirSearchTop_ClampsLimit(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	for i := 0; i < maxTopSearchLimit+5; i++ {
+	for i := range maxTopSearchLimit + 5 {
 		createTestFile(t, env.ProjectDir, filepath.Join("src", "file"+strconv.Itoa(i)+".go"), "package src")
 	}
 

@@ -115,3 +115,68 @@ func TestTencentEffectiveAppID_RequiresCredentials(t *testing.T) {
 		t.Fatalf("err = %v, want it to name the missing SecretId", err)
 	}
 }
+
+// TestTencentLookupAppID_FailureShapes pins each way the CAM lookup can fail.
+// The lookup is the only thing standing between a misconfigured key pair and a
+// wall of 4002s during recording, so every branch must produce a message that
+// names what went wrong.
+func TestTencentLookupAppID_FailureShapes(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{
+			"http error",
+			func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = fmt.Fprint(w, "boom")
+			},
+			"500",
+		},
+		{
+			"malformed body",
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, "<html>nope</html>")
+			},
+			"decode appid response",
+		},
+		{
+			"api error object",
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, `{"Response":{"Error":{"Code":"AuthFailure.TokenFailure","Message":"bad token"}}}`)
+			},
+			"AuthFailure.TokenFailure",
+		},
+		{
+			"no appid in the answer",
+			func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, `{"Response":{}}`)
+			},
+			"no AppId",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+
+			p := NewTencentProvider("AKIDtest", "secretkey", "")
+			p.CAMBaseURL = srv.URL
+			_, err := p.lookupAppID(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestTencentLookupAppID_UnreachableHost covers the dial failure: a closed port
+// must surface as a lookup failure, not a hang or an empty AppID.
+func TestTencentLookupAppID_UnreachableHost(t *testing.T) {
+	p := NewTencentProvider("AKIDtest", "secretkey", "")
+	p.CAMBaseURL = "http://127.0.0.1:1"
+	if _, err := p.lookupAppID(context.Background()); err == nil || !strings.Contains(err.Error(), "appid lookup failed") {
+		t.Fatalf("err = %v, want a lookup failure", err)
+	}
+}

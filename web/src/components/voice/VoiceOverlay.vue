@@ -576,7 +576,7 @@ watch(voiceMode, () => { reposition() })
   font-size: var(--font-size-xs);
   white-space: nowrap;
 }
-.voice-cap-btn:hover { color: var(--text-primary); border-color: var(--border-strong, var(--text-hint)); }
+.voice-cap-btn:hover { color: var(--text-primary); border-color: color-mix(in srgb, var(--text-primary) 40%, var(--border-color)); }
 .voice-cap-btn.primary {
   background: var(--accent-color);
   border-color: var(--accent-color);

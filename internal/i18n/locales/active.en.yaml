@@ -34,6 +34,10 @@ FileTooLarge: File too large
 TextTooLong: Text too long, max {{.MaxChars}} characters
 SummarizeFailed: Summarization failed, please retry later
 SynthesizeFailed: Speech synthesis failed, please retry later
+# Sample text the TTS preview endpoint speaks when the client sends none. It is
+# synthesized audio content, not UI copy — it only has to be speakable, so it is
+# still localized (the voice should read the user's language).
+TTSPreviewDefaultSample: Hello, this is a speech synthesis test
 TTSSpeakerSaysPrefix: "{{.Name}} says: "
 BackendCreateFailed: "Failed to create AI backend: {{.Error}}"
 StreamStartFailed: "Failed to start streaming: {{.Error}}"

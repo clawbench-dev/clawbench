@@ -379,3 +379,242 @@ func TestTencentStreamResponseDecodes(t *testing.T) {
 		t.Fatalf("result = %+v, want nil", resp.Result)
 	}
 }
+
+// TestTencentStreamSession_Lifecycle pins the write/finish/close state machine.
+// Every branch here protects the recorder from a silent hang: a write after
+// finish, a double finish, and a close during a paced wait must all return
+// promptly instead of blocking the audio thread.
+func TestTencentStreamSession_Lifecycle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"code":0}`))
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
+	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
+
+	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	defer session.Close()
+
+	// An empty write is a no-op, not an error (the recorder flushes empties).
+	if err := session.Write(nil); err != nil {
+		t.Fatalf("empty Write: %v", err)
+	}
+	if err := session.Write(make([]byte, 320)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := session.Finish(); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	// Finishing twice is idempotent: the UI can call it on teardown as well.
+	if err := session.Finish(); err != nil {
+		t.Fatalf("second Finish: %v", err)
+	}
+	// Writing after finish must fail loudly — silently dropping audio would
+	// truncate the transcript without telling anyone.
+	if err := session.Write(make([]byte, 320)); err == nil || !strings.Contains(err.Error(), "already finished") {
+		t.Fatalf("Write after Finish: err = %v, want 'already finished'", err)
+	}
+
+	session.Close()
+	// Close is idempotent too.
+	session.Close()
+	if err := session.Write(make([]byte, 320)); err == nil {
+		t.Error("Write after Close succeeded, want an error")
+	}
+}
+
+// TestTencentStreamSession_PacingReleasesOnClose: a stream that runs far ahead
+// of realtime waits; closing it must release that wait rather than block until
+// the audio catches up.
+func TestTencentStreamSession_PacingReleasesOnClose(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"code":0}`))
+		for {
+			if _, _, err := conn.Read(ctx); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
+	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
+
+	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+
+	// 32 kB at 16 kHz/16-bit is ~1 s of audio sent instantly, well past the
+	// pace allowance — so the NEXT write has to wait.
+	if err := session.Write(make([]byte, 32*1024)); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- session.Write(make([]byte, 32*1024)) }()
+
+	// Give the paced write a moment to enter its wait, then close. The only
+	// property observable from outside is "Close unblocks the write promptly":
+	// whether the pace wait was armed at all depends on the timing of this
+	// machine, and a write that went through before Close is equally correct.
+	time.Sleep(50 * time.Millisecond)
+	session.Close()
+
+	select {
+	case <-done:
+		// Either outcome is fine — what must NOT happen is a blocked recorder.
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not release a paced Write — the recorder would hang")
+	}
+}
+
+// TestTencentStream_ReadLoopIgnoresUnparsableFrames: a non-JSON frame must be
+// skipped, not end the session (the engine sends keep-alive text frames).
+func TestTencentStream_ReadLoopIgnoresUnparsableFrames(t *testing.T) {
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"code":0}`))
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`keep-alive`))
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"code":0,"result":{"slice_type":1,"index":0,"voice_text_str":"你好"}}`))
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"code":0,"final":1}`))
+	}))
+	defer srv.Close()
+
+	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
+	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
+
+	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	defer session.Close()
+	if err := session.Finish(); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	var got []StreamResult
+	for res := range session.Results() {
+		got = append(got, res)
+	}
+	<-done
+	if len(got) != 2 {
+		t.Fatalf("results = %+v, want the interim and the final", got)
+	}
+	if got[0].Text != "你好" || got[0].Final {
+		t.Errorf("result[0] = %+v, want interim 你好", got[0])
+	}
+	if got[1].Text != "你好" || !got[1].Final {
+		t.Errorf("result[1] = %+v, want final 你好", got[1])
+	}
+}
+
+// TestTencentStreamURL_RejectsANonWebSocketBase: a base that is neither ws(s)
+// nor http(s) must be rejected with the base in the message — otherwise the
+// dial fails later with an opaque parse error.
+func TestTencentStreamURL_RejectsANonWebSocketBase(t *testing.T) {
+	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
+	p.WSBaseURL = "ftp://example.com/asr"
+	_, err := p.streamURL(TencentDefaultModel, "1250000000")
+	if err == nil || !strings.Contains(err.Error(), "must be a ws(s) URL") {
+		t.Fatalf("err = %v, want a base-shape error", err)
+	}
+}
+
+// TestTencentOpenStream_DialFailure: a closed port must surface as a dial
+// failure rather than a hang.
+func TestTencentOpenStream_DialFailure(t *testing.T) {
+	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
+	p.WSBaseURL = "ws://127.0.0.1:1"
+	p.CAMBaseURL = camStub(t)
+
+	_, err := p.OpenStream(context.Background(), StreamOptions{})
+	if err == nil || !strings.Contains(err.Error(), "tencent stream dial") {
+		t.Fatalf("err = %v, want a dial failure", err)
+	}
+}
+
+// TestTencentStream_ResultsCloseOnEmitAfterClose: once the session is closed,
+// emit must stop delivering (the reader loop is waiting on a channel nobody
+// drains any more). This is what keeps Close from deadlocking the read loop.
+func TestTencentStream_ResultsCloseOnEmitAfterClose(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"code":0}`))
+		// Speak results the moment the client finishes, then keep the socket
+		// open: the client closes first, so emit must give up rather than block.
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		for range 5 {
+			_ = conn.Write(ctx, websocket.MessageText,
+				[]byte(`{"code":0,"result":{"slice_type":1,"index":0,"voice_text_str":"x"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
+	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
+
+	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		t.Fatalf("OpenStream: %v", err)
+	}
+	if err := session.Finish(); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	// Close without draining Results: the read loop must terminate instead of
+	// blocking forever on a full results channel.
+	session.Close()
+
+	done := make(chan struct{})
+	go func() {
+		for range session.Results() {
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Results never closed after Close — the read loop is stuck in emit")
+	}
+}

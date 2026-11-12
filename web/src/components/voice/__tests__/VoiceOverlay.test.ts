@@ -116,8 +116,11 @@ describe('VoiceOverlay', () => {
     await vi.waitFor(() => expect(useVoiceInput().draftPending.value).toBe(true))
     const capsule = document.querySelector('.voice-capsule')
     expect(capsule?.textContent).toContain('听写')
-    // Three ways out, and the text is not thrown away on its own.
-    expect(capsule?.querySelectorAll('.voice-cap-btn').length).toBe(2)
+    // Three ways out, and the text is not thrown away on its own. Copy is an
+    // icon button now (it renders CopyButton, not a .voice-cap-btn), so the
+    // labelled actions are "to chat" alone.
+    expect(capsule?.querySelectorAll('.voice-cap-btn').length).toBe(1)
+    expect(capsule?.querySelector('.voice-cap-icon-btn')).not.toBeNull()
     expect(capsule?.querySelector('.voice-cap-x')).not.toBeNull()
   })
 

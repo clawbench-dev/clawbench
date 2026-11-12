@@ -207,3 +207,151 @@ func TestTencentTTSCacheIdentity(t *testing.T) {
 		t.Errorf("CacheIdentity must not contain the secret: %q", id)
 	}
 }
+
+// TestTencentTTS_ValidateCoversEveryRequiredField pins each validation branch:
+// every missing credential must name ITS setting, not a generic failure, so the
+// settings page can point the user at the field to fill.
+func TestTencentTTS_ValidateCoversEveryRequiredField(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(p *TencentTTSProvider)
+		want string
+	}{
+		{"secret_id", func(p *TencentTTSProvider) { p.SecretID = "" }, "tts.tencent.secret_id"},
+		{"secret_id blank", func(p *TencentTTSProvider) { p.SecretID = "   " }, "tts.tencent.secret_id"},
+		{"secret_key", func(p *TencentTTSProvider) { p.SecretKey = "" }, "tts.tencent.secret_key"},
+		{"voice_type", func(p *TencentTTSProvider) { p.VoiceType = 0 }, "tts.tencent.voice_type"},
+	}
+	for _, tc := range cases {
+		p := newTestTencentProvider("http://unused")
+		tc.mut(p)
+		err := p.validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: validate err = %v, want it to name %s", tc.name, err, tc.want)
+		}
+	}
+	// The valid combination passes.
+	if err := newTestTencentProvider("http://unused").validate(); err != nil {
+		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+// TestTencentTTS_SpeedScale pins the piecewise conversion to Tencent's -2…6
+// scale, including both clamp endpoints and interpolation between the
+// documented points.
+func TestTencentTTS_SpeedScale(t *testing.T) {
+	cases := []struct {
+		multiplier float64
+		want       float64
+	}{
+		{0, 0},      // unset → default
+		{1, 0},      // 1.0x IS 0 on Tencent's scale
+		{0.5, -2},   // clamped to the slowest documented point
+		{0.6, -2},   // exactly 0.6x
+		{0.7, -1.5}, // interpolated halfway between 0.6x (-2) and 0.8x (-1)
+		{0.8, -1},   // exactly 0.8x
+		{0.9, -0.5}, // halfway between 0.8x (-1) and 1.0x (0)
+		{1.2, 1},    // exactly 1.2x
+		{1.35, 1.5}, // halfway between 1.2x (1) and 1.5x (2)
+		{2.5, 6},    // the fastest documented point
+		{3, 6},      // clamped to the fastest
+	}
+	for _, tc := range cases {
+		if got := tencentSpeed(tc.multiplier); got != tc.want {
+			t.Errorf("tencentSpeed(%v) = %v, want %v", tc.multiplier, got, tc.want)
+		}
+	}
+}
+
+// TestTencentTTS_PrimaryLanguage pins the language mapping: anything
+// English-prefixed maps to 2, everything else (including an empty value) to 1.
+func TestTencentTTS_PrimaryLanguage(t *testing.T) {
+	// A slice of pairs (not a map) because one input is deliberately padded:
+	// language codes arrive from config, and the mapping trims before matching.
+	cases := []struct {
+		lang string
+		want int
+	}{
+		{"en", 2},
+		{"EN", 2},
+		{"en-US", 2},
+		{" en ", 2},
+		{"zh", 1},
+		{"", 1},
+		{"ja", 1},
+	}
+	for _, tc := range cases {
+		if got := tencentPrimaryLanguage(tc.lang); got != tc.want {
+			t.Errorf("tencentPrimaryLanguage(%q) = %d, want %d", tc.lang, got, tc.want)
+		}
+	}
+}
+
+// TestTencentTTS_HTTPStatusError surfaces a non-200 answer verbatim: the
+// message is what the user reads when a proxy sits in front of the API.
+func TestTencentTTS_HTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream overloaded"))
+	}))
+	defer srv.Close()
+
+	p := newTestTencentProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "upstream overloaded") {
+		t.Fatalf("err = %v, want the status and the body", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a failed synthesis must not leave an output file behind")
+	}
+}
+
+// TestTencentTTS_MalformedResponse reports a body that is not the envelope.
+func TestTencentTTS_MalformedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<html>not json</html>`))
+	}))
+	defer srv.Close()
+
+	p := newTestTencentProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "malformed response") {
+		t.Fatalf("err = %v, want a malformed-response error", err)
+	}
+}
+
+// TestTencentTTS_MissingAudio rejects a 200 envelope with no audio field.
+func TestTencentTTS_MissingAudio(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Response": map[string]any{"RequestId": "req-1"},
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestTencentProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "no audio") || !strings.Contains(err.Error(), "req-1") {
+		t.Fatalf("err = %v, want a no-audio error naming the request", err)
+	}
+}
+
+// TestTencentTTS_UndecodableAudio rejects audio that is not valid base64.
+func TestTencentTTS_UndecodableAudio(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Response": map[string]any{"Audio": "!!!!not-base64!!!!", "RequestId": "req-2"},
+		})
+	}))
+	defer srv.Close()
+
+	p := newTestTencentProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "decode audio") {
+		t.Fatalf("err = %v, want a decode failure", err)
+	}
+}

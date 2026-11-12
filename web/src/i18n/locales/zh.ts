@@ -2929,6 +2929,7 @@ export default {
     generateFailedDetail: '语音生成失败: {error}',
     autoplayBlocked: '浏览器禁止自动播放音频，请手动点击朗读按钮',
     systemSpeechFailed: '手机朗读失败，请重试或改用服务端合成',
+    systemSpeechFailedWithReason: '手机朗读失败，请重试或改用服务端合成（{reason}）',
     systemSpeechUnavailable: '这台设备没有可用的朗读引擎，已改用服务端合成',
     enabled: '自动朗读已开启',
     disabled: '自动朗读已关闭',

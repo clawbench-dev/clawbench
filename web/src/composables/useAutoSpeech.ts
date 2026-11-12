@@ -113,8 +113,11 @@ function reportError(message: string) {
 
 /** Failure text with the native reason appended (e.g. "…（speak_failed）"). */
 function nativeFailureText(reason?: string): string {
-  const base = gt('autoSpeech.systemSpeechFailed')
-  return reason ? `${base}（${reason}）` : base
+  if (!reason) return gt('autoSpeech.systemSpeechFailed')
+  // The wrapper punctuation is part of the sentence, so it lives in the locale
+  // tables rather than being hardcoded here (fullwidth parens in zh, ASCII in
+  // en).
+  return gt('autoSpeech.systemSpeechFailedWithReason', { reason })
 }
 
 // Registered once at module scope: the singleton state above is shared by every

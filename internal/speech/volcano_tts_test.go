@@ -1,6 +1,7 @@
 package speech
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -178,5 +179,163 @@ func TestVolcanoTTSCacheIdentity(t *testing.T) {
 	}
 	if strings.Contains(id, "key-test") {
 		t.Errorf("CacheIdentity must not contain the access key: %q", id)
+	}
+}
+
+func TestVolcanoTTS_ValidateCoversRequiredFields(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(p *VolcanoTTSProvider)
+		want string
+	}{
+		{"api_key", func(p *VolcanoTTSProvider) { p.APIKey = "" }, "tts.volcano.api_key"},
+		{"api_key blank", func(p *VolcanoTTSProvider) { p.APIKey = "  " }, "tts.volcano.api_key"},
+		{"voice", func(p *VolcanoTTSProvider) { p.Voice = "" }, "tts.volcano.voice"},
+	}
+	for _, tc := range cases {
+		p := newTestVolcanoProvider("http://unused")
+		tc.mut(p)
+		if err := p.validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: validate err = %v, want it to name %s", tc.name, err, tc.want)
+		}
+	}
+	if err := newTestVolcanoProvider("http://unused").validate(); err != nil {
+		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+// TestVolcanoTTS_SpeedBecomesAPercentageOffset pins the shared multiplier onto
+// the API's -50…100 scale, including both clamps. Asserted on the REQUEST BODY
+// the server actually receives — computing the expected value with the same
+// expression would pass even if the field were never sent.
+func TestVolcanoTTS_SpeedBecomesAPercentageOffset(t *testing.T) {
+	cases := []struct {
+		speed float64
+		want  int
+	}{
+		{0, 0},    // unset → normal
+		{1, 0},    // normal speed is omitted entirely
+		{1.5, 50}, // +50%
+		{2, 100},  // the fastest documented point
+		{3, 100},  // clamped
+		{0.5, -50},
+		{0.1, -50}, // clamped
+	}
+	for _, tc := range cases {
+		var got volcanoTTSRequest
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &got)
+			writeVolcanoChunks(w, mp3(strings.Repeat("s", 32)))
+		}))
+
+		p := newTestVolcanoProvider(srv.URL)
+		p.Speed = tc.speed
+		out := filepath.Join(t.TempDir(), "out.mp3")
+		err := p.Synthesize(context.Background(), "你好", out, "zh")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("speed %v: Synthesize: %v", tc.speed, err)
+		}
+		if got.ReqParams.AudioParams.SpeechRate != tc.want {
+			t.Errorf("speed %v → speech_rate %d, want %d", tc.speed, got.ReqParams.AudioParams.SpeechRate, tc.want)
+		}
+	}
+}
+
+func TestVolcanoTTS_HTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("bad api key"))
+	}))
+	defer srv.Close()
+
+	p := newTestVolcanoProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "bad api key") {
+		t.Fatalf("err = %v, want the status and the body", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a failed synthesis must not leave an output file behind")
+	}
+}
+
+// TestVolcanoTTS_EmptyChunksAreSkipped: a heartbeat line with no data must not
+// be decoded into an empty write, and must not end the stream.
+func TestVolcanoTTS_EmptyChunksAreSkipped(t *testing.T) {
+	audio := mp3(strings.Repeat("k", 32))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": ""})
+		writeVolcanoChunks(w, audio)
+	}))
+	defer srv.Close()
+
+	p := newTestVolcanoProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	if err := p.Synthesize(context.Background(), "你好", out, "zh"); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !bytes.Equal(got, audio) {
+		t.Errorf("output = %x, want the audio chunk that followed the heartbeat", got)
+	}
+}
+
+func TestVolcanoTTS_UndecodableChunkIsFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": "!!!!not-base64!!!!"})
+	}))
+	defer srv.Close()
+
+	p := newTestVolcanoProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "decode audio chunk") {
+		t.Fatalf("err = %v, want a chunk decode error", err)
+	}
+}
+
+func TestVolcanoTTS_RejectsNonMP3Audio(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		wav := append([]byte("RIFF....WAVE"), make([]byte, mp3SniffPrefixBytes)...)
+		writeVolcanoChunks(w, wav)
+	}))
+	defer srv.Close()
+
+	p := newTestVolcanoProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "not mp3") {
+		t.Fatalf("err = %v, want a not-mp3 error", err)
+	}
+}
+
+// TestVolcanoTTS_StreamingForwardsOnlyValidatedAudio pins the ordering the
+// player depends on: a chunk reaches chunkCh only after it passed the MP3
+// check, so a misconfigured server never streams garbage to the browser.
+func TestVolcanoTTS_StreamingForwardsOnlyValidatedAudio(t *testing.T) {
+	audio := mp3(strings.Repeat("m", 48))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeVolcanoChunks(w, audio)
+	}))
+	defer srv.Close()
+
+	p := newTestVolcanoProvider(srv.URL)
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	ch := make(chan []byte, 4)
+	if err := p.SynthesizeStream(context.Background(), "你好", out, "zh", ch); err != nil {
+		t.Fatalf("SynthesizeStream: %v", err)
+	}
+	close(ch)
+	var forwarded []byte
+	for b := range ch {
+		forwarded = append(forwarded, b...)
+	}
+	if !bytes.Equal(forwarded, audio) {
+		t.Errorf("forwarded %x, want the same audio that was written to the file", forwarded)
 	}
 }
