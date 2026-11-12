@@ -217,12 +217,49 @@ test.describe('Chat scrolling during a streaming reply', () => {
     await expect(nav).toHaveCount(0, { timeout: 8000 })
     await expect(pill).toBeVisible()
 
-    await pill.click()
+    // Bring the FABs back, then arrive at the bottom WITH them on screen —
+    // that is the exact state the two-row flash appeared in (the pill fades out
+    // while the direction buttons are still up). Scroll DOWN for this: the
+    // transcript is only ~one screen taller than the viewport, so another
+    // wheel-up lands at the top, where the FABs are suppressed by design.
+    await wheel(page, 120)
+    await expect(nav).toBeVisible({ timeout: 5000 })
+
+    // Watch the dock across that arrival. The bug this pins: the pill fades out
+    // over ~150ms, but "has-pill" used to be dropped on the same frame the v-if
+    // flipped, so the FABs re-flowed into a second row under the still-visible
+    // pill.
+    await page.evaluate(() => {
+      const row = document.querySelector('.dock-row') as HTMLElement
+      const log: Array<{ pill: boolean; nav: boolean; hasPill: boolean }> = []
+      ;(window as unknown as { __dockLog: typeof log }).__dockLog = log
+      const sample = () => log.push({
+        pill: !!row.querySelector('.stream-pill'),
+        nav: !!row.querySelector('.scroll-fab-group'),
+        hasPill: row.classList.contains('has-pill'),
+      })
+      sample()
+      new MutationObserver(sample).observe(row, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      })
+    })
+
+    const before = await geometry(page)
+    await wheel(page, before.max - before.top + 80)
     await expect.poll(async () => {
       const g = await geometry(page)
       return g.max - g.top
     }, { timeout: 5000 }).toBeLessThan(60)
     await expect(pill).toHaveCount(0)
+    await expect(nav).toHaveCount(0)
+
+    const dockLog = await page.evaluate(() => (window as unknown as { __dockLog: Array<{ pill: boolean; nav: boolean; hasPill: boolean }> }).__dockLog)
+    expect(dockLog.length).toBeGreaterThan(0)
+    // Never "both on screen, laid out as if the pill were absent".
+    expect(dockLog.filter((e) => e.pill && e.nav && !e.hasPill)).toEqual([])
 
     await chat.waitForIdle(120000)
   })

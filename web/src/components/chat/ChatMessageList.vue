@@ -190,10 +190,10 @@
          decide whether the FABs sit beside the pill (col 3) or alone, centred
          (col 2). It was once bound on .chat-bottom-dock instead and the row
          never saw it — the FABs stacked under the pill. -->
-    <div class="dock-row" :class="{ 'has-pill': showStreamPill }">
+    <div class="dock-row" :class="{ 'has-pill': pillInLayout }">
       <!-- "Still writing below" pill: persistent for the whole turn, unlike the
            FABs (which fade 3s after the last scroll). -->
-      <Transition name="stream-pill">
+      <Transition name="stream-pill" @after-leave="onPillLeft">
         <button
           v-if="showStreamPill"
           class="stream-pill"
@@ -809,6 +809,34 @@ const showStreamPill = computed(() => !textSelecting.value && shouldShowStreamPi
   farewell: pillFarewell.value,
 }))
 
+// The pill's grid slot must stay reserved for the length of its leave
+// animation. Dropping `has-pill` on the same frame the v-if flips re-flowed the
+// FABs into a second row underneath the still-fading pill — a two-row flash
+// every time the reader reached the bottom.
+const pillLeaving = ref(false)
+let pillLeaveTimer = null
+const pillInLayout = computed(() => showStreamPill.value || pillLeaving.value)
+
+watch(showStreamPill, (now, was) => {
+  if (now) {
+    clearTimeout(pillLeaveTimer)
+    pillLeaving.value = false
+    return
+  }
+  if (!was) return
+  pillLeaving.value = true
+  // Safety net: if the leave transition never reports back (interrupted, or no
+  // CSS transitions at all), the slot must still be released or the FABs would
+  // sit off-centre for good.
+  clearTimeout(pillLeaveTimer)
+  pillLeaveTimer = setTimeout(() => { pillLeaving.value = false }, 400)
+})
+
+function onPillLeft() {
+  clearTimeout(pillLeaveTimer)
+  pillLeaving.value = false
+}
+
 const streamPillLabel = computed(() => (
   isStreamingNow.value
     ? t('chat.messageList.streamPillStreaming')
@@ -902,9 +930,18 @@ function handleScroll() {
       scrolledUp.value = false
       clearTimeout(scrollUpTimer)
     }
-    if (nearBottom && scrolledDown.value) {
-      scrolledDown.value = false
-      clearTimeout(scrollDownTimer)
+    if (nearBottom) {
+      // Both directions end at the bottom: nothing is below, and a lingering
+      // up-group would be re-flowed next to a vanishing pill (the two-row
+      // flash the reader saw on arrival).
+      if (scrolledDown.value) {
+        scrolledDown.value = false
+        clearTimeout(scrollDownTimer)
+      }
+      if (scrolledUp.value) {
+        scrolledUp.value = false
+        clearTimeout(scrollUpTimer)
+      }
     }
     // A programmatic jump to the top (FAB scroll-to-top) enters the prefetch
     // band just like a manual scroll — load older history the same way. This
@@ -920,9 +957,15 @@ function handleScroll() {
     scrolledUp.value = false
     clearTimeout(scrollUpTimer)
   }
-  if (nearBottom && scrolledDown.value) {
-    scrolledDown.value = false
-    clearTimeout(scrollDownTimer)
+  if (nearBottom) {
+    if (scrolledDown.value) {
+      scrolledDown.value = false
+      clearTimeout(scrollDownTimer)
+    }
+    if (scrolledUp.value) {
+      scrolledUp.value = false
+      clearTimeout(scrollUpTimer)
+    }
   }
 
   // Prefetch band, not "pinned to the top": waiting until scrollTop hits 0 means
