@@ -1141,6 +1141,7 @@ export default {
       freeDialogOnWaitingQuiet: '连续对话已开启，这次回答结束后开始听',
       freeDialogNoWakeLock: '连续对话已开启，但当前页面无法阻止锁屏（息屏后会停止）',
       micLost: '麦克风已断开，连续对话已停止',
+      micSilent: '麦克风没有声音了（重新打开麦克风也没能恢复），连续对话已停止。请重启应用后再试',
       freeDialogIdleExit: '很久没听到你说话，已退出连续对话',
       freeDialogOnWithSpeech: '连续对话已开启，朗读已自动打开',
       freeDialogOff: '连续对话已关闭',

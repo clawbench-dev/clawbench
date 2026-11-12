@@ -1139,6 +1139,7 @@ export default {
       freeDialogOnWaitingQuiet: 'Continuous conversation on — listening starts after this answer',
       freeDialogNoWakeLock: 'Continuous conversation on, but this page cannot keep the screen awake — it will stop when the screen sleeps',
       micLost: 'Microphone disconnected — continuous conversation stopped',
+      micSilent: 'The microphone stopped picking up any sound (reopening it did not help), so continuous conversation stopped. Restart the app and try again',
       freeDialogIdleExit: 'Nothing heard for a while — continuous conversation closed',
       freeDialogOnWithSpeech: 'Continuous conversation on — read-aloud turned on',
       freeDialogOff: 'Continuous conversation off',
