@@ -84,6 +84,24 @@
     <!-- Agent Team roster (CodeBuddy teams) -->
     <TeamPanel />
 
+    <!-- Group member panel: who is speaking RIGHT NOW, who already answered, and
+         a one-tap jump to any member's latest reply. Same collapse pattern as
+         the plan / team cards; the chip's leading slot carries the speakers'
+         avatars instead of an icon (the team card already uses a people glyph).
+         Statuses are derived from the rendered messages — no extra backend
+         field, so it can never disagree with the bubbles on screen. -->
+    <GroupMemberPanel
+      v-if="isGroupSession"
+      :session-id="identity.currentSessionId.value"
+      :members="props.groupMembers"
+      :messages="messages"
+      :host-member-id="props.groupHostMemberId"
+      :running="loading"
+      @stop-member="handleStopMember"
+      @jump-message="handleJumpToMember"
+      @open-settings="$emit('open-group-settings')"
+    />
+
     <!-- Upstream retry notice — transient, never part of the transcript. Sits
          above the queue so a long silent retry explains itself. -->
     <RetryNotice :sessionId="identity.currentSessionId.value" :active="loading" />
@@ -320,6 +338,7 @@ import RetryNotice from './RetryNotice.vue'
 import QueuedMessageEditSheet from './QueuedMessageEditSheet.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
+import GroupMemberPanel from './GroupMemberPanel.vue'
 import BusyBar from '@/components/common/BusyBar.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
@@ -499,6 +518,15 @@ async function handleStopMember(memberId) {
     toast.show(t('chat.input.stopMemberFailed'), { type: 'error', icon: 'error' })
   }
 }
+
+/** Jump to a member's latest reply from the member panel. The message list owns
+ *  the scroll + flash, and pages older history in when the target predates the
+ *  loaded window (the same path a session-search hit uses). */
+async function handleJumpToMember(messageId) {
+  if (messageId === null || messageId === undefined || messageId === '') return
+  await messageListRef.value?.jumpToUserMessage?.({ id: messageId })
+}
+
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({
@@ -3020,13 +3048,17 @@ defineExpose({
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 .chat-panel-content > div.plan-panel,
 .chat-panel-content > div.team-panel,
+.chat-panel-content > div.member-panel,
 .chat-panel-content > div.queued-bar {
   margin-top: var(--space-4);
 }
 
 .chat-panel-content > .plan-panel ~ div.team-panel,
+.chat-panel-content > .plan-panel ~ div.member-panel,
 .chat-panel-content > .plan-panel ~ div.queued-bar,
-.chat-panel-content > .team-panel ~ div.queued-bar {
+.chat-panel-content > .team-panel ~ div.member-panel,
+.chat-panel-content > .team-panel ~ div.queued-bar,
+.chat-panel-content > .member-panel ~ div.queued-bar {
   margin-top: 0;
 }
 
