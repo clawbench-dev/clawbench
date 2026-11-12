@@ -39,7 +39,8 @@
 | `wide-screen.css` | ≥1024px 两栏 Dock 布局（类驱动，不用 `@media`） |
 | `markdown-common.css` | Markdown 基础元素（`.markdown-body` / `.chat-message.*` 共用） |
 | `code-block.css` / `code-block-header.css` | 代码块行结构与头部栏 |
-| `content.css` | `.markdown-body` 阅读列、标题、表格、mermaid、KaTeX |
+| `content.css` | `.markdown-body` 阅读列、标题、mermaid、KaTeX |
+| `table.css` | **表格样式的唯一归属地**：表格外壳与表头栏（`.table-block-*`）、普通表格单元格与斑马纹、数据表网格（`.dt-grid`，含冻结列 / 合计行 / 筛选行）。markdown-common / content / code-block-header / ChatMessageItem / DataTable 里的表格规则已全部收口到这里，新的表格外观规则不要再散着写；由 `dataTableBorders.css.test.ts` 守住 |
 | `media-block.css` | 统一媒体图（`.image-block-wrapper`）+ 浮动工具栏 |
 | `components.css` | **跨组件共享的全局类**（`.count-badge`、`.drilldown-*`、`.context-menu`、引用附件卡、**app-menu 弹层容器** `.app-menu-title`/`.app-menu-scroll`/`.app-menu-column`/`.menu-divider`/`.theme-picker`、**快捷发送/快捷指令弹层的固定标题** `.quick-send-title`） |
 | `diff-rows.css` | 四种 diff 界面共用的行语言 |
@@ -816,6 +817,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/designTokens.css.test.ts` | token 设计值、主题块完整性、未定义 token 引用、窗口控件对比度配方 |
 | `__tests__/fontDrivenScaling.test.ts` | 根字号是唯一缩放入口（`--dp` 唯一声明、html 不得用 `--font-size-*`）、全仓无 `zoom`、Electron 不再走 `setZoomFactor`、token 都走 `--dp`、发丝线不被缩放、lucide 属性选择器齐备、宽屏断点用有效宽度且监听缩放事件、**全仓 `<style>`（含 `src/assets/*.css`）无裸 `font-size: Npx` / `letter-spacing: Npx`**、`designToCss` 唯一实现且被各阈值比较点消费 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
+| `components/common/__tests__/dataTableBorders.css.test.ts` | 表格边框只在 `css/table.css` 声明（其余四文件不得再写 `border-collapse` / `--table-border`）；简单表 `collapse` + 1px 网格、数据表每条边只画一次（右+下，首列补左、表头补上）、合计行不叠线、冻结列不额外叠分隔线 |
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts` | 快捷发送 / 快捷指令弹层标题 `.quick-send-title` 在 `components.css` 全局声明（sticky + 不透明 `--bg-secondary` + `z-index`），两个宿主不得各自重声明，且两个菜单的 `:max-height` 一致且 ≥400 |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |

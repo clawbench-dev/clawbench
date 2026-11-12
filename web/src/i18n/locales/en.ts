@@ -62,8 +62,8 @@ export default {
   codeBlock: {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
-    landscape: 'Landscape view',
-    landscapeClose: 'Close landscape view',
+    landscape: 'Fullscreen view',
+    landscapeClose: 'Close fullscreen view',
   },
   diffBlock: {
     wrapOn: 'Word wrap on',
@@ -84,8 +84,8 @@ export default {
     label: 'Table',
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
-    landscape: 'Landscape view',
-    landscapeClose: 'Close landscape view',
+    landscape: 'Fullscreen view',
+    landscapeClose: 'Close fullscreen view',
     copy: 'Copy',
     copyMarkdown: 'Copy Markdown',
     copyHtml: 'Copy HTML',

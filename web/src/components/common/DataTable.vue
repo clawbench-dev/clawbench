@@ -35,7 +35,7 @@
           :aria-label="t('tableBlock.landscape')"
           @click="openLandscape"
         >
-          <RotateCw :size="12" />
+          <span class="dt-icon" v-html="maximizeIconSvg(12)" />
         </button>
       </div>
     </div>
@@ -73,7 +73,7 @@
 
     <!-- 网格 -->
     <div ref="scrollRef" class="dt-scroll" :style="scrollStyle">
-      <table ref="tableRef" class="dt-grid">
+      <table ref="tableRef" class="dt-grid" :class="{ 'has-total': showFooter }">
         <thead>
           <tr class="dt-head-row">
             <th
@@ -140,7 +140,7 @@
             <td class="dt-empty" :colspan="Math.max(visibleColumns.length, 1)">{{ emptyText }}</td>
           </tr>
         </tbody>
-        <tfoot v-if="isData && pageRows.length > 0 && hasNumericColumn">
+        <tfoot v-if="showFooter">
           <tr>
             <td
               v-for="col in visibleColumns"
@@ -321,7 +321,6 @@ import {
   FilterX,
   ListFilter,
   Pin,
-  RotateCw,
   Search,
   WrapText,
   X,
@@ -338,6 +337,7 @@ import {
 } from '@/utils/csvTable'
 import { copyText } from '@/utils/clipboard'
 import { getDefaultBlockWrap } from '@/utils/blockWrapRead'
+import { maximizeIconSvg } from '@/utils/blockHeaderIcons'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{
@@ -736,6 +736,9 @@ const hasNumericColumn = computed(() =>
   visibleColumns.value.some(col => isNumCol(col)),
 )
 
+/** 合计行是否真的渲染。CSS 要据此决定最后一行还画不画下边线（否则叠成 2px）。 */
+const showFooter = computed(() => isData.value && pageRows.value.length > 0 && hasNumericColumn.value)
+
 async function openLandscape(event: MouseEvent): Promise<void> {
   const root = rootRef.value
   if (!root) return
@@ -987,6 +990,12 @@ defineExpose({ focusSearch, closeSearch })
   cursor: pointer;
 }
 
+.dt-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .dt-act:hover {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
@@ -1108,58 +1117,15 @@ defineExpose({ focusSearch, closeSearch })
 }
 
 /* ── 网格 ───────────────────────────────────────────────────────────── */
+/* 表格本体（网格线、表头、单元格、数据条、冻结列、合计行、筛选行、普通表
+   模式）的样式统一在 web/css/table.css 的第 3 节，这里只留组件自己的滚动
+   容器与表头里的按钮/箭头/浮层。改表格外观去那边改。 */
 
 .dt-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-}
-
-.dt-grid {
-  width: max-content;
-  min-width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: var(--font-size-sm);
-}
-
-.dt .dt-grid th,
-.dt .dt-grid td {
-  padding: calc(5 * var(--dp)) var(--space-4);
-  border-bottom: 1px solid var(--border-color);
-  text-align: left;
-  vertical-align: top;
-  background: var(--bg-primary);
-}
-
-.dt.is-data .dt-grid th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  padding-right: calc(26 * var(--dp));
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
-}
-
-.dt.is-data .dt-grid th:hover {
-  background: var(--bg-tertiary);
-}
-
-.dt.is-data .dt-grid td {
-  padding-right: calc(26 * var(--dp));
-}
-
-.dt-th-label {
-  display: inline-block;
-  max-width: calc(200 * var(--dp));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
 }
 
 .is-data .dt-arrow {
@@ -1175,10 +1141,6 @@ defineExpose({ focusSearch, closeSearch })
 
 .dt.is-data .dt-grid th:hover .dt-arrow {
   opacity: 1;
-}
-
-.dt.is-data .dt-grid th.is-sorted {
-  color: var(--text-primary);
 }
 
 .dt.is-data .dt-grid th.is-sorted .dt-arrow {
@@ -1216,17 +1178,6 @@ defineExpose({ focusSearch, closeSearch })
   opacity: 1;
 }
 
-/* 每列筛选行 */
-.dt-filter-cell {
-  position: sticky;
-  top: calc(28 * var(--dp));
-  z-index: 2;
-  height: calc(28 * var(--dp));
-  padding: 0 !important;
-  background: var(--bg-secondary) !important;
-  border-bottom: 1px solid var(--border-color);
-}
-
 .dt-filter-input {
   display: block;
   width: 100%;
@@ -1253,130 +1204,6 @@ defineExpose({ focusSearch, closeSearch })
   box-shadow: inset 0 calc(-2 * var(--dp)) 0 var(--accent-color);
 }
 
-/* 单元格 */
-.dt .dt-grid td {
-  position: relative;
-  color: var(--text-primary);
-}
-
-.dt.is-data .dt-row:hover td {
-  background: var(--bg-secondary);
-}
-
-.dt-cell {
-  position: relative;
-  z-index: 1;
-  display: block;
-  max-width: calc(320 * var(--dp));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 普通表保持 markdown 表格的老样子：允许换行、宽度跟内容走。
-   `white-space: inherit` 让 td 上的「自动换行」开关继续生效。 */
-.dt:not(.is-data) .dt-cell {
-  display: inline;
-  max-width: none;
-  overflow: visible;
-  text-overflow: clip;
-  white-space: inherit;
-  word-break: inherit;
-}
-
-.dt-cell-bar {
-  position: absolute;
-  left: 0;
-  top: calc(3 * var(--dp));
-  bottom: calc(3 * var(--dp));
-  z-index: 0;
-  border-radius: 0 calc(3 * var(--dp)) calc(3 * var(--dp)) 0;
-  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
-  pointer-events: none;
-}
-
-.is-numeric {
-  text-align: right;
-}
-
-.is-numeric .dt-cell {
-  font-variant-numeric: tabular-nums;
-}
-
-/* 冻结列 */
-.dt.is-data .dt-grid th.is-frozen,
-.dt.is-data .dt-grid .dt-filter-cell.is-frozen {
-  z-index: 4;
-  background: var(--bg-secondary);
-}
-
-.dt.is-data .dt-grid td.is-frozen {
-  position: sticky;
-  z-index: 3;
-  background: var(--bg-primary);
-  box-shadow: 1px 0 0 var(--border-color);
-}
-
-.dt.is-data .dt-row:hover td.is-frozen {
-  background: var(--bg-secondary);
-}
-
-.dt-empty {
-  padding: calc(30 * var(--dp)) var(--space-6) !important;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-}
-
-/* 合计行 */
-.dt .dt-grid tfoot td {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  border-top: 1px solid var(--border-color);
-  border-bottom: 0;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-weight: var(--font-weight-medium);
-}
-
-/* ── 普通表模式 ─────────────────────────────────────────────────────── */
-
-.dt:not(.is-data) .dt-grid th,
-.dt:not(.is-data) .dt-grid td {
-  padding-right: var(--space-4);
-  border: 1px solid var(--border-color);
-  background: transparent;
-}
-
-.dt:not(.is-data) .dt-grid th {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-weight: var(--font-weight-semibold);
-  cursor: default;
-}
-
-/* 简单表的换行开关。聊天里外层 `.table-block-wrapper th/td` 的规则带
-   `!important`，这里必须用更高特异性 + `!important` 才能压过它。 */
-.dt.no-wrap:not(.is-data) .dt-grid th,
-.dt.no-wrap:not(.is-data) .dt-grid td {
-  white-space: nowrap !important;
-}
-
-.dt:not(.is-data) .is-numeric {
-  text-align: left;
-}
-
-.dt:not(.is-data) .is-numeric .dt-cell {
-  font-variant-numeric: normal;
-}
-
-.dt:not(.is-data) .dt-grid tfoot,
-.dt:not(.is-data) .dt-grid .dt-filter-row {
-  display: none;
-}
-
-/* ── 分页 ───────────────────────────────────────────────────────────── */
 
 .dt-pager {
   display: flex;

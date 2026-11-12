@@ -67,6 +67,19 @@ describe('DataTable', () => {
     // q1 = 10+5+3+7 = 25, q2 = 20+7+9+11 = 47
     expect(wrapper.find('.dt-grid tfoot').text()).toContain('25')
     expect(wrapper.find('.dt-grid tfoot').text()).toContain('47')
+    // 有合计行时表格带 has-total：最后一条数据行据此不画下边线，避免与
+    // 合计行的上边线叠成 2px。
+    expect(wrapper.find('.dt-grid').classes()).toContain('has-total')
+    wrapper.unmount()
+  })
+
+  it('表头栏的全屏按钮用的是最大化图标，不是旋转图标', () => {
+    const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
+    const btn = wrapper.find('.table-block-landscape-btn')
+    expect(btn.exists()).toBe(true)
+    // 图形来自 utils/blockHeaderIcons.ts（与注入式表头共用一份）
+    expect(btn.html()).toContain('M8 3H5a2 2 0 0 0-2 2v3')
+    expect(btn.html()).not.toContain('M21 12a9 9 0 1 1-9-9')
     wrapper.unmount()
   })
 
@@ -76,6 +89,7 @@ describe('DataTable', () => {
     expect(wrapper.find('.dt-funnel').exists()).toBe(false)
     expect(wrapper.find('.dt-search').exists()).toBe(false)
     expect(wrapper.find('.dt-grid tfoot').exists()).toBe(false)
+    expect(wrapper.find('.dt-grid').classes()).not.toContain('has-total')
     wrapper.unmount()
   })
 

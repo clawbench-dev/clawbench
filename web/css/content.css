@@ -121,14 +121,7 @@
     font-size: inherit;
 }
 
-.markdown-body table {
-    font-size: var(--font-size-lg);
-}
-
-/* Tables NOT inside a table-block-wrapper keep max-content width for scroll */
-.markdown-body .table-wrap:not(.table-block-wrapper .table-wrap) table {
-    width: max-content;
-}
+/* 表格的宽度 / 滚动容器 / 字号见 css/table.css。 */
 
 .markdown-body img {
     height: auto;
@@ -137,20 +130,6 @@
 
 .markdown-body hr {
     margin: 2em 0;
-}
-
-.markdown-body .table-wrap {
-    width: 100%;
-    overflow-x: auto;
-    margin: 1em 0;
-}
-
-.markdown-body .table-block-wrapper .table-wrap {
-    margin: 0;
-}
-
-.markdown-body .table-wrap table {
-    margin: 0;
 }
 
 /* Mermaid Diagrams */

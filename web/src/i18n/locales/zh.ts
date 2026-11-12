@@ -61,8 +61,8 @@ export default {
   codeBlock: {
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',
-    landscape: '横屏查看',
-    landscapeClose: '关闭横屏查看',
+    landscape: '全屏查看',
+    landscapeClose: '关闭全屏查看',
   },
   diffBlock: {
     wrapOn: '自动换行已开启',
@@ -83,8 +83,8 @@ export default {
     label: '表格',
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',
-    landscape: '横屏查看',
-    landscapeClose: '关闭横屏查看',
+    landscape: '全屏查看',
+    landscapeClose: '关闭全屏查看',
     copy: '复制',
     copyMarkdown: '复制 Markdown',
     copyHtml: '复制 HTML',
