@@ -279,10 +279,11 @@ func TestSTTConnectivity_AlibabaSuccess(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.provider":         "alibaba",
-		"stt.alibaba.api_key":  "sk-dash",
-		"stt.alibaba.base_url": srv.URL,
-		"stt.alibaba.language": "zh",
+		"stt.provider":           "alibaba",
+		"stt.alibaba.api_key":    "sk-dash",
+		"stt.alibaba.base_url":   srv.URL,
+		"stt.alibaba.language":   "zh",
+		"stt.alibaba.file_model": "qwen3-asr-flash",
 	})
 
 	assert.True(t, res.Success, res.Message)
@@ -734,4 +735,50 @@ func TestIMProbes_UnbuildableRequests(t *testing.T) {
 	})
 	assert.False(t, feishu.Success)
 	assert.Contains(t, feishu.Message, "Failed to create request")
+}
+
+// TestSTTConnectivity_AlibabaDefaultsToFreeModel pins the default file model to
+// the one the console grants free seconds to, and to the native endpoint that
+// model lives on. A regression here silently moves every whole-file upload back
+// onto a metered model.
+func TestSTTConnectivity_AlibabaDefaultsToFreeModel(t *testing.T) {
+	var gotPath, gotModel, gotFormat, gotData string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		var body struct {
+			Model      string `json:"model"`
+			Parameters struct {
+				Format string `json:"format"`
+			} `json:"parameters"`
+			Input struct {
+				Messages []struct {
+					Content []struct {
+						Audio string `json:"audio"`
+					} `json:"content"`
+				} `json:"messages"`
+			} `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotModel = body.Model
+		gotFormat = body.Parameters.Format
+		if len(body.Input.Messages) > 0 && len(body.Input.Messages[0].Content) > 0 {
+			gotData = body.Input.Messages[0].Content[0].Audio
+		}
+		_, _ = w.Write([]byte(`{"output":{"output":{"text":"你好"},"text":"你好"}}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":         "alibaba",
+		"stt.alibaba.api_key":  "sk-dash",
+		"stt.alibaba.base_url": srv.URL,
+		"stt.alibaba.language": "zh",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "/api/v1/services/aigc/multimodal-generation/generation", gotPath)
+	assert.Equal(t, "qwen-audio-3.1-asr-flash", gotModel)
+	assert.Equal(t, "mp3", gotFormat, "the endpoint rejects the call when format is empty")
+	assert.True(t, strings.HasPrefix(gotData, "data:audio/mpeg;base64,"), gotData)
 }

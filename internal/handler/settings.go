@@ -142,6 +142,7 @@ var hotReloadFields = map[string]bool{
 	"stt.alibaba.api_key":          true,
 	"stt.alibaba.base_url":         true,
 	"stt.alibaba.model":            true,
+	"stt.alibaba.file_model":       true,
 	"stt.alibaba.language":         true,
 	"stt.alibaba.enable_itn":       true,
 	"stt.alibaba.enable_punc":      true,
@@ -620,6 +621,7 @@ type configSTTAlibaba struct {
 	APIKey        string `json:"api_key"`
 	BaseURL       string `json:"base_url"`
 	Model         string `json:"model"`
+	FileModel     string `json:"file_model"`
 	Language      string `json:"language"`
 	EnableITN     bool   `json:"enable_itn"`
 	EnablePunc    bool   `json:"enable_punc"`
@@ -1074,6 +1076,7 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.alibaba.api_key":                    true,
 	"stt.alibaba.base_url":                   true,
 	"stt.alibaba.model":                      true,
+	"stt.alibaba.file_model":                 true,
 	"stt.alibaba.language":                   true,
 	"stt.alibaba.enable_itn":                 true,
 	"stt.alibaba.enable_punc":                true,
@@ -1345,6 +1348,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 				APIKey:        cfg.STT.Alibaba.APIKey,
 				BaseURL:       cfg.STT.Alibaba.BaseURL,
 				Model:         cfg.STT.Alibaba.Model,
+				FileModel:     cfg.STT.Alibaba.FileModel,
 				Language:      cfg.STT.Alibaba.Language,
 				EnableITN:     cfg.STT.Alibaba.EnableITN,
 				EnablePunc:    cfg.STT.Alibaba.EnablePunc,
@@ -1939,6 +1943,9 @@ func applySTTAlibabaPatch(cfg *model.STTAlibabaConfig, patch map[string]any) {
 	}
 	if v, ok := patch["model"].(string); ok {
 		cfg.Model = v
+	}
+	if v, ok := patch["file_model"].(string); ok {
+		cfg.FileModel = v
 	}
 	if v, ok := patch["language"].(string); ok {
 		cfg.Language = v

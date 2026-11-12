@@ -103,7 +103,12 @@ tts:
 
 ## 阿里云百炼（DashScope，需网络）
 
-调用百炼的语音合成接口（`/api/v1/services/audio/tts/SpeechSynthesizer`），统一输出 MP3。
+支持百炼的两类合成模型，统一输出 MP3：
+
+- **CosyVoice 系列**（默认 `cosyvoice-v3-flash`）：走 HTTP 接口 `/api/v1/services/audio/tts/SpeechSynthesizer`。
+- **Sambert 系列**（如 `sambert-zhide-v1`）：这类模型只认 WebSocket（HTTP 调用会回 `current user api does not support http call`），本程序对 `sambert-` 开头的模型自动改走 `wss://.../api-ws/v1/inference`。**音色由模型名决定**，此时 `voice` 字段不生效；语速也不下发（该接口没有这个参数）。
+
+> **免费额度按模型发**：控制台的「每月 3 万字符、每月 1 号重置」只发给 sambert 各音色（每个音色各 3 万，汉字按 2 字符算，约 1.5 万汉字/月/音色）；CosyVoice 的 `v3-flash` / `v3-plus` / `v2` 没有任何免费额度，`v3.5-flash` / `v3.5-plus` 才有 1 万字符。
 
 ```yaml
 tts:
@@ -112,12 +117,12 @@ tts:
   alibaba:
     api_key: "sk-..."                                  # 百炼 API Key
     base_url: "https://dashscope.aliyuncs.com"         # 默认值；业务空间专属域名填这里
-    model: "cosyvoice-v3-flash"                        # 默认值
-    voice: "longanyang"                                # 默认值，可换系统音色 / 复刻音色 ID
+    model: "cosyvoice-v3-flash"                        # 默认值；填 sambert-xxx-v1 则自动走 WebSocket
+    voice: "longanyang"                                # 默认值，可换系统音色 / 复刻音色 ID（sambert 忽略此项）
 ```
 
 - 北京与新加坡是**两套独立的域名和密钥**，不能混用。用业务空间专属域名时填 `https://<业务空间ID>.cn-beijing.maas.aliyuncs.com`。
-- 默认模型是 CosyVoice 系列（支持 MP3）。**`qwen3-tts-flash` 不在支持范围内**——它走另一条接口且只输出 WAV，与本程序的播放链路不兼容。
+- 默认模型是 CosyVoice 系列（支持 MP3）。**`qwen3-tts-flash` 与 `qwen-audio-3.1-tts-*` 不在支持范围内**——它们走另一条接口且只输出 WAV（或请求格式完全不同），与本程序的播放链路不兼容。
 - 语速会被限制在接口允许的 0.5～2.0 倍之间。
 
 ---

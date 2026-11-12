@@ -546,13 +546,19 @@ type STTDoubaoConfig struct {
 
 // STTAlibabaConfig is the Alibaba Cloud Model Studio engine's own config.
 //
-// Two APIs sit behind one key: whole-file transcription always uses
-// qwen3-asr-flash, while live streaming uses a Paraformer real-time model that
-// the user picks here.
+// Two APIs sit behind one key: whole-file transcription uses the file model
+// (a Qwen-ASR model), while live streaming uses a Paraformer real-time model
+// that the user picks here.
 type STTAlibabaConfig struct {
 	APIKey  string `yaml:"api_key"`  // DashScope key
 	BaseURL string `yaml:"base_url"` // default "https://dashscope.aliyuncs.com" (intl: dashscope-intl.aliyuncs.com)
 	Model   string `yaml:"model"`    // real-time model (default: "paraformer-realtime-v2")
+	// FileModel transcribes a whole upload (default: "qwen-audio-3.1-asr-flash").
+	// It is separate from Model because the real-time and file families are not
+	// interchangeable, and because free quota is granted per model id: the
+	// default is the one the console gives free seconds to, while
+	// qwen3-asr-flash is metered on a fresh account.
+	FileModel string `yaml:"file_model"`
 	// Language is a hint; empty means "detect it".
 	Language string `yaml:"language"` // default "zh"
 	// Recognition options.

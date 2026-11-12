@@ -2591,6 +2591,9 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		if cfg.STT.Alibaba.Model != "" {
 			p.StreamModel = cfg.STT.Alibaba.Model
 		}
+		if cfg.STT.Alibaba.FileModel != "" {
+			p.FileModel = cfg.STT.Alibaba.FileModel
+		}
 		p.Language = cfg.STT.Alibaba.Language
 		p.EnableITN = cfg.STT.Alibaba.EnableITN
 		p.EnablePunc = cfg.STT.Alibaba.EnablePunc

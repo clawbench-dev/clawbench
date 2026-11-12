@@ -25,10 +25,13 @@ import (
 //     raw PCM frames and returns one result per sentence, so the session
 //     accumulates them into the cumulative text the StreamResult contract
 //     promises.
-//   - Whole-file transcription uses Qwen3-ASR-Flash through the OpenAI-compatible
-//     chat endpoint (audio inline as a base64 data URI). It is what the
-//     non-streaming upload path, the voice-turn device and the connectivity
-//     probe call.
+//   - Whole-file transcription uses a Qwen-ASR model. Two generations of that
+//     family are reachable through two different HTTP shapes: qwen3-asr-flash
+//     answers on the OpenAI-compatible chat endpoint, while the qwen-audio-3.1
+//     family only exists on the native multimodal-generation endpoint. The
+//     configured file model picks the shape; nothing is auto-detected from a
+//     failed response, because a 404 on the wrong endpoint reads like "model
+//     does not exist" and would send the user chasing the wrong problem.
 //
 // The two APIs also differ in auth: the WebSocket validates the bearer token at
 // handshake time, while the chat endpoint answers a normal HTTP error body.
@@ -42,12 +45,14 @@ const (
 	// accepts any sample rate and supports language hints.
 	AlibabaDefaultStreamModel = "paraformer-realtime-v2"
 
-	// alibabaFileModel transcribes a complete upload. It is fixed rather than
-	// configurable because it must be a chat-completion model, while the
-	// configured model names a real-time one — one field cannot mean both.
-	alibabaFileModel = "qwen3-asr-flash"
+	// AlibabaDefaultFileModel transcribes a complete upload. qwen-audio-3.1-asr-flash
+	// is the default because it is the one the console grants free seconds to;
+	// qwen3-asr-flash still works when configured explicitly, but a fresh
+	// account has no quota on it.
+	AlibabaDefaultFileModel = "qwen-audio-3.1-asr-flash"
 
 	alibabaChatPath        = "/compatible-mode/v1/chat/completions"
+	alibabaMultimodalPath  = "/api/v1/services/aigc/multimodal-generation/generation"
 	alibabaWSInferencePath = "/api-ws/v1/inference"
 
 	// alibabaMaxAudioBytes keeps the base64 payload under the API's 10 MB
@@ -65,8 +70,12 @@ type AlibabaProvider struct {
 	APIKey      string
 	BaseURL     string // default AlibabaBaseURL; international/workspace hosts go here
 	StreamModel string // default AlibabaDefaultStreamModel
-	Language    string // default "zh"; empty means "let the model detect it"
-	HTTPClient  *http.Client
+	// FileModel transcribes a whole upload. Empty means AlibabaDefaultFileModel.
+	// It is separate from StreamModel because the real-time and the file
+	// families are not interchangeable: one field cannot name both.
+	FileModel  string
+	Language   string // default "zh"; empty means "let the model detect it"
+	HTTPClient *http.Client
 
 	// Recognition options shared by both paths. They map onto Paraformer's
 	// punctuation_prediction_enabled / inverse_text_normalization_enabled /
@@ -130,7 +139,49 @@ type alibabaChatResponse struct {
 	} `json:"choices"`
 }
 
-// Transcribe recognizes a complete audio file through Qwen3-ASR-Flash.
+// alibabaMultimodalRequest is the native (non OpenAI-compatible) body the
+// qwen-audio family answers on. parameters.format is mandatory: without it the
+// server rejects the call with "format is empty" even though the audio carries
+// a perfectly good container.
+type alibabaMultimodalRequest struct {
+	Model      string                      `json:"model"`
+	Input      alibabaMultimodalInput      `json:"input"`
+	Parameters alibabaMultimodalParameters `json:"parameters"`
+}
+
+type alibabaMultimodalInput struct {
+	Messages []alibabaMultimodalMessage `json:"messages"`
+}
+
+type alibabaMultimodalMessage struct {
+	Role    string                     `json:"role"`
+	Content []alibabaMultimodalContent `json:"content"`
+}
+
+type alibabaMultimodalContent struct {
+	Audio string `json:"audio"`
+}
+
+type alibabaMultimodalParameters struct {
+	Format     string             `json:"format"`
+	ASROptions *alibabaASROptions `json:"asr_options,omitempty"`
+}
+
+// alibabaMultimodalResponse nests the transcript under output.output.text and
+// repeats it under output.text. The nested copy is the documented one; the
+// flat copy is used as a fallback so a future shape change does not silently
+// return an empty transcript.
+type alibabaMultimodalResponse struct {
+	Output struct {
+		Output struct {
+			Text string `json:"text"`
+		} `json:"output"`
+		Text string `json:"text"`
+	} `json:"output"`
+}
+
+// Transcribe recognizes a complete audio file. The configured file model picks
+// which HTTP shape to use; see alibabaUsesMultimodal.
 func (p *AlibabaProvider) Transcribe(ctx context.Context, audioReader io.Reader, language string) (string, error) {
 	if strings.TrimSpace(p.APIKey) == "" {
 		return "", errors.New("stt: alibaba API key is required")
@@ -157,8 +208,27 @@ func (p *AlibabaProvider) Transcribe(ctx context.Context, audioReader io.Reader,
 		lang = language
 	}
 
+	model := p.FileModel
+	if model == "" {
+		model = AlibabaDefaultFileModel
+	}
+	if alibabaUsesMultimodal(model) {
+		return p.transcribeMultimodal(ctx, model, audio, format, lang)
+	}
+	return p.transcribeChat(ctx, model, audio, format, lang)
+}
+
+// alibabaUsesMultimodal reports whether a model id belongs to the qwen-audio
+// family, which has no OpenAI-compatible endpoint. Anything else keeps the chat
+// shape, so an unknown/older model still gets the path it used before.
+func alibabaUsesMultimodal(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "qwen-audio-")
+}
+
+// transcribeChat calls the OpenAI-compatible endpoint (qwen3-asr-flash).
+func (p *AlibabaProvider) transcribeChat(ctx context.Context, model string, audio []byte, format, language string) (string, error) {
 	body, err := json.Marshal(alibabaChatRequest{
-		Model: alibabaFileModel,
+		Model: model,
 		Messages: []alibabaChatMessage{{
 			Role: "user",
 			Content: []alibabaChatContent{{
@@ -167,15 +237,73 @@ func (p *AlibabaProvider) Transcribe(ctx context.Context, audioReader io.Reader,
 			}},
 		}},
 		Stream:     false,
-		ASROptions: &alibabaASROptions{Language: alibabaLanguageCode(lang), EnableITN: p.EnableITN},
+		ASROptions: &alibabaASROptions{Language: alibabaLanguageCode(language), EnableITN: p.EnableITN},
 	})
 	if err != nil {
 		return "", fmt.Errorf("stt: encode request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, alibabaChatURL(p.BaseURL), bytes.NewReader(body))
+	respBody, err := p.postJSON(ctx, alibabaChatURL(p.BaseURL), body)
 	if err != nil {
-		return "", fmt.Errorf("stt: create request: %w", err)
+		return "", err
+	}
+
+	var parsed alibabaChatResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("stt: decode response: %s", truncate(respBody))
+	}
+	if len(parsed.Choices) == 0 {
+		return "", fmt.Errorf("stt: alibaba returned no choices: %s", truncate(respBody))
+	}
+	return parsed.Choices[0].Message.Content, nil
+}
+
+// transcribeMultimodal calls the native multimodal-generation endpoint
+// (qwen-audio-3.1-asr-flash and siblings).
+func (p *AlibabaProvider) transcribeMultimodal(ctx context.Context, model string, audio []byte, format, language string) (string, error) {
+	body, err := json.Marshal(alibabaMultimodalRequest{
+		Model: model,
+		Input: alibabaMultimodalInput{Messages: []alibabaMultimodalMessage{{
+			Role: "user",
+			Content: []alibabaMultimodalContent{{
+				Audio: "data:" + audioMIMEType(format) + ";base64," + base64.StdEncoding.EncodeToString(audio),
+			}},
+		}}},
+		Parameters: alibabaMultimodalParameters{
+			Format:     format,
+			ASROptions: &alibabaASROptions{Language: alibabaLanguageCode(language), EnableITN: p.EnableITN},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("stt: encode request: %w", err)
+	}
+
+	respBody, err := p.postJSON(ctx, alibabaMultimodalURL(p.BaseURL), body)
+	if err != nil {
+		return "", err
+	}
+
+	var parsed alibabaMultimodalResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("stt: decode response: %s", truncate(respBody))
+	}
+	text := strings.TrimSpace(parsed.Output.Output.Text)
+	if text == "" {
+		text = strings.TrimSpace(parsed.Output.Text)
+	}
+	if text == "" {
+		return "", fmt.Errorf("stt: alibaba returned an empty transcript: %s", truncate(respBody))
+	}
+	return text, nil
+}
+
+// postJSON sends one authenticated JSON request and returns the body. A non-200
+// answer becomes an APIError so the caller (and the settings probe) can show the
+// engine's own code and message.
+func (p *AlibabaProvider) postJSON(ctx context.Context, url string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("stt: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.APIKey)
@@ -186,26 +314,18 @@ func (p *AlibabaProvider) Transcribe(ctx context.Context, audioReader io.Reader,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("stt: request failed: %w", err)
+		return nil, fmt.Errorf("stt: request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("stt: read response: %w", err)
+		return nil, fmt.Errorf("stt: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &APIError{Status: resp.StatusCode, Body: string(respBody)}
+		return nil, &APIError{Status: resp.StatusCode, Body: string(respBody)}
 	}
-
-	var parsed alibabaChatResponse
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("stt: decode response (HTTP %d): %s", resp.StatusCode, truncate(respBody))
-	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("stt: alibaba returned no choices: %s", truncate(respBody))
-	}
-	return parsed.Choices[0].Message.Content, nil
+	return respBody, nil
 }
 
 // audioMIMEType maps a detected container to the MIME the API expects.
@@ -265,7 +385,7 @@ func alibabaBaseURL(base string) string {
 	if u == "" {
 		return AlibabaBaseURL
 	}
-	for _, suffix := range []string{alibabaChatPath, "/compatible-mode/v1", alibabaWSInferencePath} {
+	for _, suffix := range []string{alibabaChatPath, alibabaMultimodalPath, "/api/v1", "/compatible-mode/v1", alibabaWSInferencePath} {
 		if strings.HasSuffix(u, suffix) {
 			u = strings.TrimRight(strings.TrimSuffix(u, suffix), "/")
 			break
@@ -280,6 +400,15 @@ func alibabaChatURL(base string) string {
 	u = strings.Replace(u, "wss://", "https://", 1)
 	u = strings.Replace(u, "ws://", "http://", 1)
 	return u + alibabaChatPath
+}
+
+// alibabaMultimodalURL builds the native file-transcription endpoint from the
+// same base.
+func alibabaMultimodalURL(base string) string {
+	u := alibabaBaseURL(base)
+	u = strings.Replace(u, "wss://", "https://", 1)
+	u = strings.Replace(u, "ws://", "http://", 1)
+	return u + alibabaMultimodalPath
 }
 
 // alibabaWSURL builds the real-time inference URL from the same base.

@@ -498,6 +498,9 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.Alibaba.Model == "" {
 		cfg.STT.Alibaba.Model = "paraformer-realtime-v2"
 	}
+	if cfg.STT.Alibaba.FileModel == "" {
+		cfg.STT.Alibaba.FileModel = "qwen-audio-3.1-asr-flash"
+	}
 	if cfg.STT.Alibaba.Language == "" {
 		cfg.STT.Alibaba.Language = "zh"
 	}

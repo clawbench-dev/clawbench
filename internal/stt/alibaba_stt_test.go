@@ -40,6 +40,8 @@ func TestAlibabaTranscribe(t *testing.T) {
 	p := NewAlibabaProvider("sk-test")
 	p.BaseURL = srv.URL
 	p.HTTPClient = srv.Client()
+	// Pin the chat-shaped model: the default file model is the multimodal one.
+	p.FileModel = "qwen3-asr-flash"
 
 	text, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
 	if err != nil {
@@ -56,8 +58,8 @@ func TestAlibabaTranscribe(t *testing.T) {
 	if gotAuth != "Bearer sk-test" {
 		t.Errorf("Authorization = %q, want Bearer sk-test", gotAuth)
 	}
-	if gotReq.Model != alibabaFileModel {
-		t.Errorf("model = %q, want %q", gotReq.Model, alibabaFileModel)
+	if gotReq.Model != "qwen3-asr-flash" {
+		t.Errorf("model = %q, want qwen3-asr-flash", gotReq.Model)
 	}
 	if len(gotReq.Messages) != 1 || len(gotReq.Messages[0].Content) != 1 {
 		t.Fatalf("messages = %+v, want one user message with one content part", gotReq.Messages)
@@ -86,12 +88,113 @@ func TestAlibabaTranscribeUsesCallerLanguage(t *testing.T) {
 	p.BaseURL = srv.URL
 	p.HTTPClient = srv.Client()
 	p.Language = "zh"
+	p.FileModel = "qwen3-asr-flash"
 
 	if _, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "en"); err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
 	if gotReq.ASROptions == nil || gotReq.ASROptions.Language != "en" {
 		t.Fatalf("asr_options = %+v, want language en", gotReq.ASROptions)
+	}
+}
+
+func TestAlibabaTranscribeDefaultsToMultimodalModel(t *testing.T) {
+	var gotPath string
+	var gotReq alibabaMultimodalRequest
+	done := make(chan struct{})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"output":{"output":{"text":"你好世界"},"text":"你好世界"}}`))
+	}))
+	defer srv.Close()
+
+	p := NewAlibabaProvider("sk-test")
+	p.BaseURL = srv.URL
+	p.HTTPClient = srv.Client()
+
+	text, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	if text != "你好世界" {
+		t.Fatalf("text = %q, want 你好世界", text)
+	}
+	<-done
+
+	if gotPath != alibabaMultimodalPath {
+		t.Errorf("path = %q, want %q", gotPath, alibabaMultimodalPath)
+	}
+	if gotReq.Model != AlibabaDefaultFileModel {
+		t.Errorf("model = %q, want %q", gotReq.Model, AlibabaDefaultFileModel)
+	}
+	// The endpoint rejects the call outright when format is empty, so it has to
+	// carry the detected container rather than a fixed value.
+	if gotReq.Parameters.Format != "wav" {
+		t.Errorf("parameters.format = %q, want wav", gotReq.Parameters.Format)
+	}
+	if len(gotReq.Input.Messages) != 1 || len(gotReq.Input.Messages[0].Content) != 1 {
+		t.Fatalf("messages = %+v, want one user message with one audio part", gotReq.Input.Messages)
+	}
+	if audio := gotReq.Input.Messages[0].Content[0].Audio; !strings.HasPrefix(audio, "data:audio/wav;base64,") {
+		t.Errorf("audio = %q, want a WAV data URI", audio)
+	}
+	if gotReq.Parameters.ASROptions == nil || gotReq.Parameters.ASROptions.Language != "zh" || !gotReq.Parameters.ASROptions.EnableITN {
+		t.Errorf("asr_options = %+v, want language zh and enable_itn true", gotReq.Parameters.ASROptions)
+	}
+}
+
+func TestAlibabaTranscribeMultimodalFlatTextFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"output":{"text":"扁平的文本"}}`))
+	}))
+	defer srv.Close()
+
+	p := NewAlibabaProvider("k")
+	p.BaseURL = srv.URL
+	p.HTTPClient = srv.Client()
+
+	text, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	if text != "扁平的文本" {
+		t.Fatalf("text = %q, want the flat output.text copy", text)
+	}
+}
+
+func TestAlibabaTranscribeMultimodalEmptyTranscript(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"output":{"output":{},"text":""}}`))
+	}))
+	defer srv.Close()
+
+	p := NewAlibabaProvider("k")
+	p.BaseURL = srv.URL
+	p.HTTPClient = srv.Client()
+
+	_, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
+	if err == nil || !strings.Contains(err.Error(), "empty transcript") {
+		t.Fatalf("err = %v, want an empty-transcript error", err)
+	}
+}
+
+func TestAlibabaUsesMultimodal(t *testing.T) {
+	cases := map[string]bool{
+		"qwen-audio-3.1-asr-flash":   true,
+		" Qwen-Audio-3.1-asr-flash ": true,
+		"qwen3-asr-flash":            false,
+		"paraformer-v2":              false,
+		"":                           false,
+	}
+	for model, want := range cases {
+		if got := alibabaUsesMultimodal(model); got != want {
+			t.Errorf("alibabaUsesMultimodal(%q) = %v, want %v", model, got, want)
+		}
 	}
 }
 
@@ -345,6 +448,12 @@ func TestAlibabaURLs(t *testing.T) {
 		}
 		if got := alibabaWSURL(c.base); got != c.ws {
 			t.Errorf("alibabaWSURL(%q) = %q, want %q", c.base, got, c.ws)
+		}
+		// The multimodal endpoint must come from the same normalized base, or a
+		// user who pasted a full endpoint keeps it and the file path 404s.
+		wantMultimodal := strings.TrimSuffix(c.chat, alibabaChatPath) + alibabaMultimodalPath
+		if got := alibabaMultimodalURL(c.base); got != wantMultimodal {
+			t.Errorf("alibabaMultimodalURL(%q) = %q, want %q", c.base, got, wantMultimodal)
 		}
 	}
 }

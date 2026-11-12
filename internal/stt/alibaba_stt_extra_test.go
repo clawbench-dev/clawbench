@@ -57,6 +57,7 @@ func TestAlibabaTranscribeFallsBackToDefaultClient(t *testing.T) {
 	p := NewAlibabaProvider("k")
 	p.BaseURL = srv.URL
 	p.HTTPClient = nil // exercises the built-in client branch
+	p.FileModel = "qwen3-asr-flash"
 
 	text, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
 	if err != nil {
@@ -95,6 +96,7 @@ func TestAlibabaTranscribeMalformedResponses(t *testing.T) {
 			p := NewAlibabaProvider("k")
 			p.BaseURL = srv.URL
 			p.HTTPClient = srv.Client()
+			p.FileModel = "qwen3-asr-flash"
 			_, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("err = %v, want %q", err, c.want)
@@ -115,6 +117,7 @@ func TestAlibabaTranscribeTruncatedBodyIsAnError(t *testing.T) {
 	p := NewAlibabaProvider("k")
 	p.BaseURL = srv.URL
 	p.HTTPClient = srv.Client()
+	p.FileModel = "qwen3-asr-flash"
 	_, err := p.Transcribe(context.Background(), strings.NewReader(string(wavProbe())), "")
 	if err == nil || !strings.Contains(err.Error(), "read response") {
 		t.Fatalf("err = %v, want a read-response error", err)

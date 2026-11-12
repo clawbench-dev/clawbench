@@ -470,9 +470,11 @@ func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestR
 }
 
 // testAlibabaSTT probes Alibaba Cloud Model Studio with the embedded "你好"
-// clip. It goes through the same Qwen3-ASR-Flash path real uploads use, so a
-// key from the wrong region, a missing model or a revoked key all surface as
-// the actual HTTP answer instead of "the host is reachable".
+// clip. It goes through the same file-transcription path real uploads use
+// (including the configured file model, which decides between the OpenAI-
+// compatible and the native multimodal endpoint), so a key from the wrong
+// region, a missing model or a revoked key all surface as the actual HTTP
+// answer instead of "the host is reachable".
 func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	apiKey := resolveStringValue(values, "stt.alibaba.api_key", model.ConfigInstance.STT.Alibaba.APIKey)
 	if apiKey == "" {
@@ -480,17 +482,22 @@ func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTest
 	}
 	baseURL := resolveStringValue(values, "stt.alibaba.base_url", model.ConfigInstance.STT.Alibaba.BaseURL)
 	language := resolveStringValue(values, "stt.alibaba.language", model.ConfigInstance.STT.Alibaba.Language)
+	fileModel := resolveStringValue(values, "stt.alibaba.file_model", model.ConfigInstance.STT.Alibaba.FileModel)
+	if fileModel == "" {
+		fileModel = stt.AlibabaDefaultFileModel
+	}
 
 	provider := stt.NewAlibabaProvider(apiKey)
 	if baseURL != "" {
 		provider.BaseURL = baseURL
 	}
 	provider.Language = language
+	provider.FileModel = fileModel
 	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
 	if err != nil {
-		return sttProbeFailure(provider.BaseURL, "qwen3-asr-flash", err)
+		return sttProbeFailure(provider.BaseURL, fileModel, err)
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {

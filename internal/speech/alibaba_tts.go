@@ -12,20 +12,26 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/google/uuid"
 )
 
 // Alibaba Cloud Model Studio (百炼 / DashScope) speech synthesis.
 //
-// The endpoint is the non-real-time synthesis API introduced for the
-// qwen-audio / cosyvoice model families:
+// Two shapes of the same product live here, picked by the configured model:
 //
-//	POST {base}/api/v1/services/audio/tts/SpeechSynthesizer
+//   - cosyvoice / qwen-audio answer on the non-real-time HTTP API
+//     (POST {base}/api/v1/services/audio/tts/SpeechSynthesizer) with a URL to
+//     the rendered audio or, when the server inlined it, base64 in
+//     output.audio.data.
+//   - sambert is WebSocket-only. The HTTP endpoint answers it with
+//     "current user api does not support http call", so the sambert family has
+//     its own client below. This is the family the console grants monthly free
+//     characters to, which is why it is worth the second code path.
 //
-// It answers with a URL to the rendered audio (24h validity) or, when the
-// server chose to inline it, base64 audio in output.audio.data. Both shapes
-// are handled here; the format is requested explicitly as mp3 because the rest
-// of the pipeline (cache extension, browser playback, device PCM decoding)
-// assumes MP3.
+// Both write mp3 because the rest of the pipeline (cache extension, browser
+// playback, device PCM decoding) assumes it.
 //
 // Note that qwen3-tts-flash lives on a different path
 // (/services/aigc/multimodal-generation/generation) and only produces WAV —
@@ -37,7 +43,14 @@ const (
 	// their own host — hence the configurable base.
 	AlibabaTTSBaseURL = "https://dashscope.aliyuncs.com"
 
-	alibabaTTSPath = "/api/v1/services/audio/tts/SpeechSynthesizer"
+	alibabaTTSPath   = "/api/v1/services/audio/tts/SpeechSynthesizer"
+	alibabaTTSWSPath = "/api-ws/v1/inference"
+
+	// alibabaTTSSampleRate is what sambert renders at. It is fixed because the
+	// mp3 container is what the pipeline assumes and 22050 is the family's
+	// documented default; sending a different rate would only change the pitch
+	// of the cached file, not its size class.
+	alibabaTTSSampleRate = 22050
 
 	// alibabaTTSSegmentRunes bounds one request. The API rejects oversized
 	// input, and a long reply read in full is several thousand runes; splitting
@@ -100,7 +113,9 @@ func (p *AlibabaTTSProvider) validate() error {
 	if p.Model == "" {
 		return fmt.Errorf("alibaba-tts: tts.alibaba.model is not configured")
 	}
-	if p.Voice == "" {
+	// sambert names the voice by model id, so an empty voice field is not a
+	// misconfiguration there.
+	if p.Voice == "" && !alibabaUsesSambert(p.Model) {
 		return fmt.Errorf("alibaba-tts: tts.alibaba.voice is not configured")
 	}
 	return nil
@@ -216,6 +231,10 @@ func (p *AlibabaTTSProvider) synthesizeText(ctx context.Context, text string, w 
 }
 
 func (p *AlibabaTTSProvider) synthesizeSegment(ctx context.Context, text string, w io.Writer) error {
+	if alibabaUsesSambert(p.Model) {
+		return p.synthesizeSambert(ctx, text, w)
+	}
+
 	var body alibabaTTSRequest
 	body.Model = p.Model
 	body.Input.Text = text
@@ -321,6 +340,172 @@ func (p *AlibabaTTSProvider) downloadAudio(ctx context.Context, url string, w io
 		return fmt.Errorf("alibaba-tts: downloaded audio is empty")
 	}
 	return nil
+}
+
+// alibabaUsesSambert reports whether a model id belongs to the sambert family.
+// Those models answer only over WebSocket; the HTTP endpoint rejects them with
+// "current user api does not support http call".
+func alibabaUsesSambert(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "sambert-")
+}
+
+// ResolveAlibabaTTSWSURL completes a configured base into the bidirectional
+// inference endpoint sambert speaks on. Exported so a probe resolves it the
+// same way.
+func ResolveAlibabaTTSWSURL(base string) string {
+	u := strings.TrimRight(strings.TrimSpace(base), "/")
+	if u == "" {
+		u = AlibabaTTSBaseURL
+	}
+	switch {
+	case strings.HasSuffix(u, alibabaTTSWSPath):
+		// already the full endpoint
+	case strings.HasSuffix(u, "/api/v1"):
+		u = strings.TrimSuffix(u, "/api/v1") + alibabaTTSWSPath
+	case strings.HasSuffix(u, alibabaTTSPath):
+		u = strings.TrimSuffix(u, alibabaTTSPath) + alibabaTTSWSPath
+	default:
+		u += alibabaTTSWSPath
+	}
+	switch {
+	case strings.HasPrefix(u, "wss://"), strings.HasPrefix(u, "ws://"):
+		return u
+	case strings.HasPrefix(u, "https://"):
+		return "wss://" + strings.TrimPrefix(u, "https://")
+	case strings.HasPrefix(u, "http://"):
+		return "ws://" + strings.TrimPrefix(u, "http://")
+	}
+	return u
+}
+
+// alibabaSambertHeader is the envelope every client instruction shares.
+type alibabaSambertHeader struct {
+	Action    string `json:"action"`
+	TaskID    string `json:"task_id"`
+	Streaming string `json:"streaming"`
+}
+
+type alibabaSambertParameters struct {
+	TextType   string `json:"text_type"`
+	Format     string `json:"format"`
+	SampleRate int    `json:"sample_rate"`
+}
+
+type alibabaSambertRequest struct {
+	Header  alibabaSambertHeader `json:"header"`
+	Payload struct {
+		TaskGroup  string                   `json:"task_group"`
+		Task       string                   `json:"task"`
+		Function   string                   `json:"function"`
+		Model      string                   `json:"model"`
+		Parameters alibabaSambertParameters `json:"parameters"`
+		Input      struct {
+			Text string `json:"text"`
+		} `json:"input"`
+	} `json:"payload"`
+}
+
+type alibabaSambertFinish struct {
+	Header  alibabaSambertHeader `json:"header"`
+	Payload struct {
+		Input struct{} `json:"input"`
+	} `json:"payload"`
+}
+
+type alibabaSambertEvent struct {
+	Header struct {
+		Event        string `json:"event"`
+		ErrorCode    string `json:"error_code"`
+		ErrorMessage string `json:"error_message"`
+	} `json:"header"`
+}
+
+// synthesizeSambert renders one segment over the WebSocket protocol:
+// run-task (carrying the whole text) → task-started → finish-task → binary
+// audio frames → task-finished.
+//
+// The text must travel in run-task, not in a follow-up continue-task: sambert
+// answers a continue-task with "Request text is invalid!" and produces no
+// audio. The voice is implied by the model id, so tts.alibaba.voice is unused
+// on this path (and the speed setting is not sent — the family takes no rate
+// parameter here).
+func (p *AlibabaTTSProvider) synthesizeSambert(ctx context.Context, text string, w io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, alibabaTTSTimeout)
+	defer cancel()
+
+	conn, resp, err := websocket.Dial(ctx, ResolveAlibabaTTSWSURL(p.BaseURL), &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + p.APIKey}},
+	})
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return fmt.Errorf("alibaba-tts: sambert dial: %w", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+	conn.SetReadLimit(4 << 20)
+
+	taskID := uuid.NewString()
+	start := alibabaSambertRequest{Header: alibabaSambertHeader{Action: "run-task", TaskID: taskID, Streaming: "duplex"}}
+	start.Payload.TaskGroup = "audio"
+	start.Payload.Task = "tts"
+	start.Payload.Function = "SpeechSynthesizer"
+	start.Payload.Model = p.Model
+	start.Payload.Parameters = alibabaSambertParameters{TextType: "PlainText", Format: mp3Format, SampleRate: alibabaTTSSampleRate}
+	start.Payload.Input.Text = text
+
+	payload, err := json.Marshal(start)
+	if err != nil {
+		return fmt.Errorf("alibaba-tts: encode sambert request: %w", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, payload); err != nil {
+		return fmt.Errorf("alibaba-tts: sambert send request: %w", err)
+	}
+
+	var written int
+	for {
+		mt, data, err := conn.Read(ctx)
+		if err != nil {
+			return fmt.Errorf("alibaba-tts: sambert stream: %w", err)
+		}
+		if mt == websocket.MessageBinary {
+			n, writeErr := w.Write(data)
+			written += n
+			if writeErr != nil {
+				return fmt.Errorf("alibaba-tts: failed to write audio: %w", writeErr)
+			}
+			continue
+		}
+		var ev alibabaSambertEvent
+		if err := json.Unmarshal(data, &ev); err != nil {
+			continue
+		}
+		switch ev.Header.Event {
+		case "task-started":
+			finish := alibabaSambertFinish{Header: alibabaSambertHeader{Action: "finish-task", TaskID: taskID, Streaming: "duplex"}}
+			body, marshalErr := json.Marshal(finish)
+			if marshalErr != nil {
+				return fmt.Errorf("alibaba-tts: encode sambert finish: %w", marshalErr)
+			}
+			if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
+				return fmt.Errorf("alibaba-tts: sambert send finish: %w", err)
+			}
+		case "task-failed":
+			reason := ev.Header.ErrorMessage
+			if ev.Header.ErrorCode != "" {
+				reason = ev.Header.ErrorCode + ": " + reason
+			}
+			if reason == "" {
+				reason = "no reason given"
+			}
+			return fmt.Errorf("alibaba-tts: sambert failed: %s", reason)
+		case "task-finished":
+			if written == 0 {
+				return fmt.Errorf("alibaba-tts: sambert returned no audio")
+			}
+			return nil
+		}
+	}
 }
 
 // clampFloat keeps v inside [lo, hi].

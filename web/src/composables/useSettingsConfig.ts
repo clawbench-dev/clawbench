@@ -677,6 +677,7 @@ const serverDefaults: Record<string, unknown> = {
   'stt.alibaba.api_key': '',
   'stt.alibaba.base_url': 'https://dashscope.aliyuncs.com',
   'stt.alibaba.model': 'paraformer-realtime-v2',
+  'stt.alibaba.file_model': 'qwen-audio-3.1-asr-flash',
   'stt.alibaba.language': 'zh',
   'stt.alibaba.enable_itn': true,
   'stt.alibaba.enable_punc': true,

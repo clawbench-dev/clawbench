@@ -46,7 +46,7 @@ sequenceDiagram
 
 - **两个引擎都是纯 HTTP 客户端**：Edge TTS 走 WebSocket 流式合成，OpenAI 兼容引擎走 `/v1/audio/speech`，两者都不依赖本地可执行文件
 - **国内三家的实现约束**（阿里云 / 腾讯云 / 火山引擎）：
-  - **必须输出 MP3**。整条链路只认 MP3——缓存文件名是 `.mp3`、浏览器按 `audio/mpeg` 播放、设备侧用 go-mp3 解码。因此阿里云走的是 `/api/v1/services/audio/tts/SpeechSynthesizer`（`input.format` 可指定 mp3），**不支持只出 WAV 的 `qwen3-tts-flash`**；三家 provider 共用 `audioSink`，在写入前嗅探前 16 字节，服务端换了格式会立刻报「不是 mp3」而不是缓存一个放不出来的文件
+  - **必须输出 MP3**。整条链路只认 MP3——缓存文件名是 `.mp3`、浏览器按 `audio/mpeg` 播放、设备侧用 go-mp3 解码。因此阿里云走的是 `/api/v1/services/audio/tts/SpeechSynthesizer`（`input.format` 可指定 mp3），**不支持只出 WAV 的 `qwen3-tts-flash`**；**`sambert-*` 是例外，它只认 WebSocket**（HTTP 会回 `current user api does not support http call`），按模型名前缀分派到 `wss://.../api-ws/v1/inference`：run-task 里必须直接带 `input.text`（用 continue-task 送文本会被回 `Request text is invalid!` 且不出音频），收到 `task-started` 后发 finish-task，二进制帧即音频，`task-finished` 收尾；三家 provider 共用 `audioSink`，在写入前嗅探前 16 字节，服务端换了格式会立刻报「不是 mp3」而不是缓存一个放不出来的文件
   - **单请求长度都有限**，长回复按句切段后写进同一个文件（与 Edge 同一套 `splitSpeechSegments`）：阿里云 500 rune、火山 500 rune、腾讯 120 rune（接口上限 150 汉字）
   - **鉴权各不相同**：阿里云是 Bearer API Key；腾讯云是每次请求 TC3-HMAC-SHA256 签名（SecretId/SecretKey 不上线）；火山引擎是 `X-Api-Key` + 资源 ID 两个头（资源 ID 要与音色类型匹配）
   - **只有火山是流式的**（v3 单向流式返回逐行 JSON，每行一段 base64 音频），因此只有它实现 `StreamingSpeechProvider`；阿里云（返回文件 URL 或整段 base64）、腾讯云（整段 base64）与 MiniMax（整段 hex）走非流式，播放在合成完成后开始

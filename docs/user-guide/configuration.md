@@ -199,7 +199,8 @@
 | `doubao.streaming` | `false` | 边录边传 |
 | `alibaba.api_key` | 空 | 百炼的 Key |
 | `alibaba.base_url` | `https://dashscope.aliyuncs.com` | 新加坡地域填 `https://dashscope-intl.aliyuncs.com` |
-| `alibaba.model` | `paraformer-realtime-v2` | 实时识别模型（整段上传固定用 `qwen3-asr-flash`） |
+| `alibaba.model` | `paraformer-realtime-v2` | 实时识别模型（每月有免费时长） |
+| `alibaba.file_model` | `qwen-audio-3.1-asr-flash` | 整段上传识别模型；`qwen3-asr-flash` 在新账号上没有免费额度，填它按秒计费 |
 | `alibaba.language` | `zh` | 识别语言提示，留空自动判断 |
 | `alibaba.enable_itn` / `enable_punc` | `true` | 数字日期规范化 / 自动标点 |
 | `alibaba.enable_ddc` | `false` | 顺滑处理 |

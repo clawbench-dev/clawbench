@@ -296,7 +296,7 @@ ClawBench 会把所有来源的技能（含 `SKILL.md` 的目录）汇总起来�
 
 | 设置项 | 说明 |
 |---|---|
-| **引擎** | 默认是**未配置**（不使用语音识别，按录音键会提示先去选一个）。可选：**OpenAI 兼容接口**（如自建 vLLM Whisper）、**豆包 Seed-ASR**、**阿里云百炼**（Paraformer / Qwen-ASR）或**腾讯云语音识别**。前两者一个按 HTTP 分段上传、一个走豆包的双向 WebSocket；阿里云实时识别同样走双向 WebSocket，整段上传走 Qwen3-ASR-Flash；腾讯云实时识别走双向 WebSocket，整段上传走一句话识别。语音输入与会议听记共用这一个引擎设置 |
+| **引擎** | 默认是**未配置**（不使用语音识别，按录音键会提示先去选一个）。可选：**OpenAI 兼容接口**（如自建 vLLM Whisper）、**豆包 Seed-ASR**、**阿里云百炼**（Paraformer / Qwen-ASR）或**腾讯云语音识别**。前两者一个按 HTTP 分段上传、一个走豆包的双向 WebSocket；阿里云实时识别同样走双向 WebSocket，整段上传走 Qwen-ASR（默认 `qwen-audio-3.1-asr-flash`，这个模型每月有免费额度）；腾讯云实时识别走双向 WebSocket，整段上传走一句话识别。语音输入与会议听记共用这一个引擎设置 |
 | **快捷键** | 触发语音输入的按键（四种引擎共用） |
 
 下面这些是**每个引擎各自一套**，只显示当前选中的那个引擎的。换引擎不会改动另一个引擎已填好的内容，切回来还是原来的配置。
@@ -307,7 +307,7 @@ ClawBench 会把所有来源的技能（含 `SKILL.md` 的目录）汇总起来�
 | **流式识别 / 分片毫秒 / 收尾复核** | OpenAI 兼容引擎专有：边录边传、切片大小（200–10000）、松手后是否再整段复核一遍 |
 | **豆包 API Key / Resource ID** | 豆包专有：控制台下发的 Key、接入点资源 id |
 | **流式识别 / ITN / 标点 / DDC / 中文变体** | 豆包专有：边录边传、数字规范化、自动标点、顺滑处理（去口头语）、简繁输出 |
-| **阿里云 API Key / 服务地址 / 实时识别模型 / 识别语言** | 阿里云专有：默认 `https://dashscope.aliyuncs.com`（新加坡地域填 `https://dashscope-intl.aliyuncs.com`），实时模型默认 `paraformer-realtime-v2`；整段上传固定用 `qwen3-asr-flash`。识别语言只作提示，留空即自动识别 |
+| **阿里云 API Key / 服务地址 / 实时识别模型 / 整段上传模型 / 识别语言** | 阿里云专有：默认 `https://dashscope.aliyuncs.com`（新加坡地域填 `https://dashscope-intl.aliyuncs.com`），实时模型默认 `paraformer-realtime-v2`，整段上传默认 `qwen-audio-3.1-asr-flash`。免费额度**按模型发**：`paraformer-realtime-v2` 每月有免费时长，`qwen-audio-3.1-asr-flash` 有一次性额度，而 `qwen3-asr-flash` 在新账号上没有额度、填它按秒计费。识别语言只作提示，留空即自动识别 |
 | **流式识别 / ITN / 标点 / DDC** | 阿里云专有 |
 | **腾讯云 SecretId / SecretKey / AppID** | 腾讯云专有：API 密钥对。AppID **可以留空**——服务端会用这对密钥自动查出账号 APPID（实时识别要用）；只有密钥没有读取账号信息的权限时才需要手填。密钥只保存在服务端 |
 | **识别引擎 / 流式识别 / ITN / DDC / 断句静音** | 腾讯云专有：引擎型号同时决定语种（`16k_zh` 普通话、`16k_en` 英语、`16k_zh_dialect` 多方言等）。**流式识别默认开启**——关掉后录音会在浏览器里转成 WAV 再上传（体积大一些，且整段识别单次最多 60 秒） |

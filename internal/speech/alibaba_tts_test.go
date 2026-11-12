@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coder/websocket"
 )
 
 func newTestAlibabaProvider(baseURL string) *AlibabaTTSProvider {
@@ -238,5 +240,148 @@ func TestAlibabaTTSCacheIdentity(t *testing.T) {
 	}
 	if strings.Contains(id, "sk-test") {
 		t.Errorf("CacheIdentity must not contain the API key: %q", id)
+	}
+}
+
+func TestResolveAlibabaTTSWSURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"https://dashscope.aliyuncs.com", "wss://dashscope.aliyuncs.com/api-ws/v1/inference"},
+		{"https://dashscope.aliyuncs.com/", "wss://dashscope.aliyuncs.com/api-ws/v1/inference"},
+		{"https://dashscope.aliyuncs.com/api/v1", "wss://dashscope.aliyuncs.com/api-ws/v1/inference"},
+		{"https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", "wss://dashscope.aliyuncs.com/api-ws/v1/inference"},
+		{"wss://x.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference", "wss://x.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"},
+		{"http://127.0.0.1:1234", "ws://127.0.0.1:1234/api-ws/v1/inference"},
+		{"", "wss://dashscope.aliyuncs.com/api-ws/v1/inference"},
+	}
+	for _, c := range cases {
+		if got := ResolveAlibabaTTSWSURL(c.in); got != c.want {
+			t.Errorf("ResolveAlibabaTTSWSURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestAlibabaTTS_SambertUsesWebSocket covers the second protocol: the model is
+// WebSocket-only, the whole text must ride in run-task (a continue-task is
+// rejected by the engine), and the audio arrives as binary frames between
+// task-started and task-finished.
+func TestAlibabaTTS_SambertUsesWebSocket(t *testing.T) {
+	audio := mp3(strings.Repeat("b", 48))
+
+	var gotPath string
+	var gotReq alibabaSambertRequest
+	var finish alibabaSambertFinish
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		if err := json.Unmarshal(data, &gotReq); err != nil {
+			t.Errorf("decode run-task: %v", err)
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"header":{"event":"task-started"}}`))
+
+		_, data, err = conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		_ = json.Unmarshal(data, &finish)
+
+		_ = conn.Write(ctx, websocket.MessageBinary, audio)
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"header":{"event":"task-finished"}}`))
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	p.Model = "sambert-zhide-v1"
+	p.Voice = "" // sambert takes the voice from the model id
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	if err := p.Synthesize(context.Background(), "你好世界", out, "zh"); err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !bytes.Equal(got, audio) {
+		t.Fatalf("output = %q, want the streamed audio bytes", got)
+	}
+
+	if gotPath != alibabaTTSWSPath {
+		t.Errorf("path = %q, want %q", gotPath, alibabaTTSWSPath)
+	}
+	if gotReq.Header.Action != "run-task" {
+		t.Errorf("action = %q, want run-task", gotReq.Header.Action)
+	}
+	if gotReq.Payload.Model != "sambert-zhide-v1" {
+		t.Errorf("model = %q, want sambert-zhide-v1", gotReq.Payload.Model)
+	}
+	if gotReq.Payload.Input.Text != "你好世界" {
+		t.Errorf("input.text = %q, want the whole segment", gotReq.Payload.Input.Text)
+	}
+	if gotReq.Payload.Parameters.Format != "mp3" {
+		t.Errorf("parameters.format = %q, want mp3", gotReq.Payload.Parameters.Format)
+	}
+	if gotReq.Payload.Parameters.TextType != "PlainText" {
+		t.Errorf("parameters.text_type = %q, want PlainText", gotReq.Payload.Parameters.TextType)
+	}
+	if finish.Header.Action != "finish-task" {
+		t.Errorf("second instruction = %q, want finish-task", finish.Header.Action)
+	}
+	if finish.Header.TaskID != gotReq.Header.TaskID {
+		t.Errorf("finish task_id = %q, want %q", finish.Header.TaskID, gotReq.Header.TaskID)
+	}
+}
+
+func TestAlibabaTTS_SambertTaskFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := context.Background()
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText,
+			[]byte(`{"header":{"event":"task-failed","error_code":"InvalidParameter","error_message":"text is invalid"}}`))
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	p := newTestAlibabaProvider(srv.URL)
+	p.Model = "sambert-zhide-v1"
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "InvalidParameter") || !strings.Contains(err.Error(), "text is invalid") {
+		t.Fatalf("err = %v, want the engine's code and message", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a failed synthesis must not leave an output file behind")
+	}
+}
+
+func TestAlibabaUsesSambert(t *testing.T) {
+	cases := map[string]bool{
+		"sambert-zhide-v1":         true,
+		" SAMBERT-eva-v1 ":         true,
+		"cosyvoice-v3-flash":       false,
+		"qwen-audio-3.1-tts-flash": false,
+		"":                         false,
+	}
+	for model, want := range cases {
+		if got := alibabaUsesSambert(model); got != want {
+			t.Errorf("alibabaUsesSambert(%q) = %v, want %v", model, got, want)
+		}
 	}
 }
