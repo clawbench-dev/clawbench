@@ -353,7 +353,12 @@ public final class SystemTtsEngine {
             emit(id, STATE_ERROR, "unavailable");
             return;
         }
-        if (internalState != INTERNAL_READY || tts == null) {
+        // Only a still-initializing engine may park the request. NO_CHINESE is
+        // a usable engine (English works, Chinese will fail with a clear
+        // reason) — parking it here would hang forever, because no init
+        // callback is coming to flush it.
+        if (tts == null
+                || (internalState != INTERNAL_READY && internalState != INTERNAL_NO_CHINESE)) {
             pendingId = id;
             pendingText = text;
             return;
@@ -380,6 +385,8 @@ public final class SystemTtsEngine {
 
         currentId = id;
         lastIndex = chunks.size() - 1;
+        AppLog.i(TAG, "speak id=" + id + " len=" + text.length()
+                + " chunks=" + chunks.size() + " lang=" + language);
         for (int i = 0; i < chunks.size(); i++) {
             int result = tts.speak(
                     chunks.get(i),
@@ -387,6 +394,7 @@ public final class SystemTtsEngine {
                     null,
                     id + "#" + i);
             if (result != TextToSpeech.SUCCESS) {
+                AppLog.w(TAG, "speak failed at chunk " + i + "/" + chunks.size() + " result=" + result);
                 currentId = null;
                 lastIndex = -1;
                 emit(id, STATE_ERROR, "speak_failed");
@@ -428,6 +436,9 @@ public final class SystemTtsEngine {
             // frontend advance its queue.
             if (!id.equals(currentId)) {
                 return;
+            }
+            if (error != null) {
+                AppLog.w(TAG, "utterance error " + utteranceId + ": " + error);
             }
             if (error == null && index != lastIndex) {
                 return;

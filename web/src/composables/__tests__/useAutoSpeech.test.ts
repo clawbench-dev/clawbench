@@ -1347,6 +1347,31 @@ describe('useAutoSpeech — Android system speech engine', () => {
     await vi.waitFor(() => expect(api.isActive('42')).toBe(false))
   })
 
+  it('surfaces the engine\'s reason in the failure message', async () => {
+    // A generic "read-aloud failed" cannot be diagnosed from the screen; the
+    // native reason is what tells us whether it is the voice, the text or the
+    // engine.
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '结论', speakText: '结论' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('42', '原文')
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalled())
+
+    window.dispatchEvent(new CustomEvent('clawbench-tts-state', {
+      detail: { id: '42', state: 'error', message: 'speak_failed' },
+    }))
+
+    expect(toastShowMock).toHaveBeenCalledWith(
+      'autoSpeech.systemSpeechFailed（speak_failed）',
+      expect.anything(),
+    )
+    expect(api.isActive('42')).toBe(false)
+  })
+
   it('ignores events for a different utterance id', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,

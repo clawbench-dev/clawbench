@@ -109,14 +109,21 @@ function reportError(message: string) {
   toast.show(message, { icon: 'blocked', type: 'error', duration: 5000 })
 }
 
+/** Failure text with the native reason appended (e.g. "…（speak_failed）"). */
+function nativeFailureText(reason?: string): string {
+  const base = gt('autoSpeech.systemSpeechFailed')
+  return reason ? `${base}（${reason}）` : base
+}
+
 // Registered once at module scope: the singleton state above is shared by every
 // consumer, so a per-instance listener would double-advance the queue.
 if (typeof window !== 'undefined') {
   window.addEventListener('clawbench-tts-state', (e: Event) => {
-    const detail = (e as CustomEvent).detail as { id?: string; state?: string } | undefined
+    const detail = (e as CustomEvent).detail as { id?: string; state?: string; message?: string } | undefined
     if (!detail?.id || detail.id !== nativeTtsId) return
 
     if (detail.state === 'start') {
+      appLog.i(TAG, 'native tts started: ' + detail.id)
       clearNativeTtsWatchdog()
       state.value = 'playing'
       return
@@ -127,7 +134,11 @@ if (typeof window !== 'undefined') {
       nativeTtsOnDone = null
       clearNativeTtsWatchdog()
       if (detail.state === 'error') {
-        reportError(gt('autoSpeech.systemSpeechFailed'))
+        // Keep the engine's own reason visible: without it every failure reads
+        // the same ("phone read-aloud failed") and cannot be diagnosed from
+        // the screen — the user has no way to enable logs on our behalf.
+        appLog.w(TAG, 'native tts error: ' + (detail.message || ''))
+        reportError(nativeFailureText(detail.message))
       }
       onDone?.()
     }
@@ -653,8 +664,15 @@ export function useAutoSpeech() {
 
     state.value = 'synthesizing'
     const accepted = native.ttsSpeak(spoken, id)
+    appLog.i(TAG, 'native tts speak id=' + id + ' len=' + spoken.length + ' accepted=' + accepted)
+    if (accepted === 'unavailable' || accepted === 'no_chinese') {
+      // The engine went away after the probe (voice uninstalled, service
+      // killed). Falling back beats going silent.
+      toast.show(gt('autoSpeech.systemSpeechUnavailable'), { icon: 'warning', type: 'error', duration: 4000 })
+      return false
+    }
     if (accepted !== 'ready' && accepted !== 'initializing') {
-      throw new Error(gt('autoSpeech.systemSpeechFailed'))
+      throw new Error(nativeFailureText(accepted))
     }
 
     nativeTtsId = id
@@ -669,7 +687,7 @@ export function useAutoSpeech() {
       nativeTtsId = ''
       nativeTtsOnDone = null
       nativeTtsStartTimer = null
-      reportError(gt('autoSpeech.systemSpeechFailed'))
+      reportError(nativeFailureText('timeout'))
       onDone?.()
     }, 10000)
     return true
