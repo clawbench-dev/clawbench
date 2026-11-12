@@ -440,6 +440,16 @@ watch(voiceMode, () => { reposition() })
   position: fixed;
   z-index: calc(var(--z-toast) - 50);
   box-sizing: border-box;
+  /* Lift the surface off the page in EVERY theme. A fixed background step
+     (secondary → elevated) is invisible in the ~15 themes where those two are
+     nearly the same colour, so the surface is mixed from the text colour
+     instead: it darkens in light themes and lightens in dark ones, always
+     moving away from whatever is behind it. */
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated, var(--bg-secondary)));
+  border: 1px solid color-mix(in srgb, var(--text-primary) 18%, var(--border-color));
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    0 10px 28px rgba(0, 0, 0, 0.22);
 }
 
 /* ── mini pill ── */
@@ -450,10 +460,7 @@ watch(voiceMode, () => { reposition() })
   max-width: min(calc(320 * var(--dp)), calc(100vw - 16 * var(--dp)));
   height: calc(34 * var(--dp));
   padding: 0 calc(11 * var(--dp));
-  background: var(--bg-elevated, var(--bg-secondary));
-  border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
-  box-shadow: var(--shadow-md);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   pointer-events: none;
@@ -478,10 +485,7 @@ watch(voiceMode, () => { reposition() })
   gap: calc(10 * var(--dp));
   width: min(calc(600 * var(--dp)), calc(100vw - 24 * var(--dp)));
   padding: calc(9 * var(--dp)) calc(10 * var(--dp)) calc(9 * var(--dp)) calc(13 * var(--dp));
-  background: var(--bg-elevated, var(--bg-secondary));
-  border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg, var(--shadow-md));
 }
 .voice-capsule-body { flex: 1; min-width: 0; }
 .voice-capsule-text {
@@ -542,9 +546,14 @@ watch(voiceMode, () => { reposition() })
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--bg-elevated, var(--bg-secondary));
-  border: 1px solid var(--border-color);
-  box-shadow: var(--shadow-md);
+  /* Accent-tinted so it reads as a control, not as another panel: the mic is
+     the one thing here the user is meant to press. */
+  background: color-mix(in srgb, var(--accent-color) 16%, var(--bg-elevated, var(--bg-secondary)));
+  border-color: color-mix(in srgb, var(--accent-color) 42%, var(--border-color));
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.18),
+    0 8px 22px rgba(0, 0, 0, 0.24),
+    0 0 0 calc(3 * var(--dp)) color-mix(in srgb, var(--accent-color) 14%, transparent);
   color: var(--accent-color);
   /* The button is pressed and held; the browser must not treat that as a
      scroll gesture or synthesize a click on release. */
