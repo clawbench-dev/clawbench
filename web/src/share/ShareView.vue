@@ -1011,15 +1011,25 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
+/* Download button of the "no preview / too large" fallback.
+   `border: none` and `font-family: inherit` are NOT decoration: this element
+   used to be an `<a href download>`, and when it became a `<button>` (so the
+   download could report progress) it inherited the UA button chrome — a 2px
+   OUTSET border framed the accent fill, and the label fell back to the UA's
+   13.33px Arial instead of the page font. Both were visible on every
+   un-previewable share. Same rule as design-guide §buttons: a class reused
+   from an `<a>` must reset its own border. */
 .share-download-btn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-7);
+  border: none;
   border-radius: var(--radius-sm);
   background: var(--accent-color, #0969da);
   color: #fff;
   text-decoration: none;
+  font-family: inherit;
   font-size: var(--font-size-lg);
   cursor: pointer;
 }
