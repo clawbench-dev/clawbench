@@ -452,7 +452,7 @@ watch(voiceMode, () => { reposition() })
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 .voice-capsule-text.is-empty { color: var(--text-muted); }
 .voice-capsule-sub {
