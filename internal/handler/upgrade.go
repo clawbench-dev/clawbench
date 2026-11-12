@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -20,8 +21,11 @@ var (
 	upgradeGetUpgradeState     = service.GetUpgradeState
 	upgradeCompareVersions     = version.CompareVersions
 	upgradeIsDevBuild          = version.IsDevBuild
+	upgradeIsVersionedBuild    = version.IsVersionedBuild
 	upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 	upgradeIsDocker            = service.IsDocker
+	upgradeReadSkippedVersion  = service.ReadSkippedUpgradeVersion
+	upgradeWriteSkippedVersion = service.WriteSkippedUpgradeVersion
 )
 
 // ServeUpgradeCheck handles GET /api/upgrade/check
@@ -38,7 +42,13 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	currentVer, latestVer := info.CurrentVersion, info.LatestVersion
 
-	hasUpgrade := upgradeCompareVersions(currentVer, latestVer) < 0 || upgradeIsDevBuild(currentVer)
+	// A dev build only counts as "upgradeable regardless" when its version
+	// cannot be compared at all ("dev", a bare VCS hash). A commit-describe
+	// build ("v0.139.0-20-g9037e1d5a") IS comparable, and when it sits ahead of
+	// the registry the "new version" on offer is in fact an older release —
+	// offering it invites a downgrade and nags on every launch.
+	hasUpgrade := upgradeCompareVersions(currentVer, latestVer) < 0 ||
+		(upgradeIsDevBuild(currentVer) && !upgradeIsVersionedBuild(currentVer))
 
 	// Report install-directory writability so the UI can warn before the user
 	// starts an upgrade that cannot succeed.
@@ -69,6 +79,51 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// compares codes rather than the message, which varies with registry
 		// routing and error detail.
 		"verification_issues": info.VerificationIssues,
+		// skipped_version is the version the user asked not to be prompted
+		// about again, or "" when nothing is recorded. It is server-side so the
+		// choice survives a wiped WebView storage and applies to every device
+		// and origin this server is reached from. has_upgrade is deliberately
+		// left untouched: a skipped version can still be installed from the
+		// settings dialog, so only the startup prompt consults this field.
+		"skipped_version": upgradeReadSkippedVersion(),
+	})
+}
+
+// ServeUpgradeSkip handles POST /api/upgrade/skip
+//
+// Body: {"version": "1.2.3"} records that version as skipped; an empty or
+// missing version clears the record. Returns the stored value, so the client
+// can tell a successful write from a silently ignored one.
+func ServeUpgradeSkip(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req struct {
+		Version string `json:"version"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+	}
+
+	stored, err := upgradeWriteSkippedVersion(req.Version)
+	if err != nil {
+		// An unusable version is the caller's mistake; anything else means the
+		// record could not be written (missing/unwritable data directory), which
+		// the client treats as "not remembered" and keeps its local copy.
+		if errors.Is(err, service.ErrSkippedVersionInvalid) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"skipped_version": stored,
 	})
 }
 

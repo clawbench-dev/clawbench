@@ -937,6 +937,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upgrade/check", ServeUpgradeCheck)
 	register("/api/upgrade/start", ServeUpgradeStart)
 	register("/api/upgrade/status", ServeUpgradeStatus)
+	register("/api/upgrade/skip", ServeUpgradeSkip)
 
 	// draw.io editor: downloaded on first use rather than embedded (~118MB).
 	// The client polls status while the install runs, then loads the editor

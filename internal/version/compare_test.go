@@ -110,3 +110,29 @@ func TestIsDevBuild(t *testing.T) {
 		}
 	}
 }
+
+func TestIsVersionedBuild(t *testing.T) {
+	tests := []struct {
+		v    string
+		want bool
+	}{
+		{"v1.0.0", true},
+		{"1.0.0", true},
+		{"v0.66.0-5-g7702c473", true},             // commit-describe build
+		{"v0.139.0-20-g9037e1d5a-11121522", true}, // commit-describe + build time
+		{"v1.0.0-07291030", true},                 // release rebuilt
+		{"dev", false},
+		{"a0f87a96", false}, // bare VCS hash
+		{"g7702c47", false}, // bare hash with g prefix
+		{"", false},
+		{"v1.0", false},          // not three segments
+		{"v1.0.0garbage", false}, // junk glued to the patch number
+		{"v1.x.0", false},        // non-numeric segment
+	}
+
+	for _, tt := range tests {
+		if got := IsVersionedBuild(tt.v); got != tt.want {
+			t.Errorf("IsVersionedBuild(%q) = %v, want %v", tt.v, got, tt.want)
+		}
+	}
+}

@@ -71,6 +71,35 @@ func IsDevBuild(v string) bool {
 	return pre != ""
 }
 
+// IsVersionedBuild reports whether v has a parseable vX.Y.Z base, i.e. it is a
+// clean release ("v1.0.0") or a commit-describe build ("v0.66.0-5-g7702c473").
+// A bare VCS short hash ("a0f87a96"), "dev" and an empty string are not
+// versioned builds, and neither is junk appended to the patch number
+// ("v1.0.0garbage").
+//
+// Why it matters next to IsDevBuild: IsDevBuild covers both comparable dev
+// builds (commits after a tag) and versions that cannot be compared at all.
+// Callers that need to know whether CompareVersions means anything must use
+// this, not IsDevBuild.
+//
+// Mirrors isVersionedBuild in web/src/utils/version.ts and
+// VersionCompare.isVersionedBuild on Android.
+func IsVersionedBuild(v string) bool {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	v = stripBuildTimeSuffix(v)
+	core, _ := splitPreRelease(v)
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" || !isAllDigits(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // ReleaseTag returns the GitHub release tag that a build's version corresponds
 // to, or "" when it corresponds to no release.
 //
