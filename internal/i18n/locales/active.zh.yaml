@@ -34,6 +34,10 @@ FileTooLarge: 文件过大
 TextTooLong: 文本过长，最多支持{{.MaxChars}}字符
 SummarizeFailed: 摘要生成失败，请稍后重试
 SynthesizeFailed: 语音合成失败，请稍后重试
+# Sample text the TTS preview endpoint speaks when the client sends none. It is
+# synthesized audio content, not UI copy — it only has to be speakable, so it is
+# still localized (the voice should read the user's language).
+TTSPreviewDefaultSample: 您好，这是一段语音合成测试
 TTSSpeakerSaysPrefix: "{{.Name}}说："
 BackendCreateFailed: "创建 AI Backend 失败: {{.Error}}"
 StreamStartFailed: "启动流式输出失败: {{.Error}}"
@@ -401,6 +405,7 @@ ForgeEventLabelAuthor: 作者
 ForgeEventViewDetail: 查看详情
 ForgeDisabled: GitHub/GitLab 集成已关闭
 PortForwardUnavailable: 端口转发不可用
+TunnelTransportDisabled: 服务端当前使用 SSH 隧道，HTTP/2 隧道已关闭
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输
 UsageMeterOverTitle: 用量超出计划

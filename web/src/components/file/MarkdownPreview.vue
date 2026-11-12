@@ -2,7 +2,7 @@
   <div class="markdown-preview">
     <!-- Rendered markdown -->
     <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="interactions.handleClick" @mousedown="interactions.onTableMouseDown" @touchstart.passive="interactions.onTableTouchStart" @dragstart="interactions.onDragStart" @dragend="interactions.onDragEnd" @load.capture="onImageLoad">
-      <div class="markdown-content" v-html="renderedHtml" />
+      <div class="markdown-content"><RichTextBlock :html="renderedHtml" /></div>
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
         v-for="pm in positionedMarkers"
@@ -77,6 +77,7 @@ import { useMarkdownDocumentRender } from '@/composables/useMarkdownDocumentRend
 import { useMarkdownDocumentInteractions } from '@/composables/useMarkdownDocumentInteractions.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import '@/assets/diff-marker.css'
+import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 
 const props = defineProps<{
     file?: { content: string; path: string; error?: boolean }

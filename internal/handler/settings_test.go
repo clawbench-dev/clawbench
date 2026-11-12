@@ -783,6 +783,7 @@ func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
 		"applySTTVLLMPatch":    false,
 		"applySTTDoubaoPatch":  false,
 		"applySTTAlibabaPatch": false,
+		"applySTTTencentPatch": false,
 	}
 
 	bodies := map[string]*ast.BlockStmt{}
@@ -833,6 +834,7 @@ func TestApplyConfigPatchCoversEveryPatchableField(t *testing.T) {
 		"stt.vllm.":    "applySTTVLLMPatch",
 		"stt.doubao.":  "applySTTDoubaoPatch",
 		"stt.alibaba.": "applySTTAlibabaPatch",
+		"stt.tencent.": "applySTTTencentPatch",
 	}
 
 	var missing []string
@@ -1231,6 +1233,67 @@ func TestServeConfig_Patch_OpenAIInvalidBaseURL(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "tts.openai.base_url must be a valid URL")
+}
+
+func TestServeConfig_Patch_AlibabaInvalidBaseURL(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"tts":{"alibaba":{"base_url":"not a url"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "tts.alibaba.base_url must be a valid URL")
+}
+
+// GET must return every vendor block regardless of which engine is selected:
+// hiding the saved credentials of the engines you are not using makes switching
+// back look like the configuration was lost.
+func TestServeConfig_Get_VendorTTSBlocksAlwaysPresent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.TTS.Engine = "edge"
+	cfg.TTS.Alibaba.APIKey = "sk-a"
+	cfg.TTS.Tencent.SecretID = "AKID"
+	cfg.TTS.Tencent.VoiceType = 101001
+	cfg.TTS.Volcano.APIKey = "key-x"
+	cfg.TTS.Volcano.Voice = "voice-x"
+	cfg.TTS.Minimax.APIKey = "mm-key"
+	cfg.TTS.Minimax.Voice = "voice-m"
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	tts, ok := resp["tts"].(map[string]any)
+	require.True(t, ok, "response must carry a tts object")
+
+	alibaba, ok := tts["alibaba"].(map[string]any)
+	require.True(t, ok, "alibaba block must be present")
+	assert.Equal(t, "sk-a", alibaba["api_key"])
+
+	tencent, ok := tts["tencent"].(map[string]any)
+	require.True(t, ok, "tencent block must be present")
+	assert.Equal(t, "AKID", tencent["secret_id"])
+
+	volcano, ok := tts["volcano"].(map[string]any)
+	require.True(t, ok, "volcano block must be present")
+	assert.Equal(t, "voice-x", volcano["voice"])
+
+	minimax, ok := tts["minimax"].(map[string]any)
+	require.True(t, ok, "minimax block must be present")
+	assert.Equal(t, "voice-m", minimax["voice"])
 }
 
 func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
@@ -1768,6 +1831,86 @@ func TestServeConfig_Patch_STTAlibaba(t *testing.T) {
 	assert.Equal(t, "sk-dash", model.ConfigInstance.STT.Alibaba.APIKey)
 	assert.Equal(t, "https://dashscope-intl.aliyuncs.com", model.ConfigInstance.STT.Alibaba.BaseURL)
 	assert.Equal(t, "paraformer-realtime-8k-v2", model.ConfigInstance.STT.Alibaba.Model)
+}
+
+// TestServeConfig_Patch_STTTencent covers the Tencent Cloud fields end to end:
+// every one must be in PatchableConfigPaths (otherwise forbidden_field) and in
+// applySTTTencentPatch (otherwise the value is dropped silently).
+func TestServeConfig_Patch_STTTencent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"stt":{"provider":"tencent","tencent":{"secret_id":"AKIDtest","secret_key":"sk-test","app_id":"1250000000","model":"16k_zh_dialect","enable_itn":false,"enable_ddc":true,"end_window_size":1200,"streaming":false}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "tencent", model.ConfigInstance.STT.Provider)
+	assert.Equal(t, "AKIDtest", model.ConfigInstance.STT.Tencent.SecretID)
+	assert.Equal(t, "sk-test", model.ConfigInstance.STT.Tencent.SecretKey)
+	assert.Equal(t, "1250000000", model.ConfigInstance.STT.Tencent.AppID)
+	assert.Equal(t, "16k_zh_dialect", model.ConfigInstance.STT.Tencent.Model)
+	assert.False(t, model.ConfigInstance.STT.Tencent.EnableITN, "an explicit false must survive the PATCH")
+	assert.True(t, model.ConfigInstance.STT.Tencent.EnableDDC)
+	assert.Equal(t, 1200, model.ConfigInstance.STT.Tencent.EndWindowSize)
+	assert.False(t, model.ConfigInstance.STT.Tencent.Streaming, "an explicit false must survive the PATCH")
+}
+
+// TestServeConfig_Get_STTTencent proves GET echoes the Tencent section. The
+// settings panel reads `stt.tencent.*` from this payload, so a field missing
+// from configSTT (or from the struct that fills it) shows up as an empty form
+// even though the value is stored — the same trap the other engines have.
+func TestServeConfig_Get_STTTencent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.STT.Provider = "tencent"
+	model.ConfigInstance.STT.Tencent = model.STTTencentConfig{
+		SecretID:      "AKIDtest",
+		SecretKey:     "sk-test",
+		AppID:         "1250000000",
+		Model:         "16k_zh_dialect",
+		EnableITN:     true,
+		EnableDDC:     true,
+		EndWindowSize: 1200,
+		Streaming:     true,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		STT struct {
+			Provider string `json:"provider"`
+			Tencent  struct {
+				SecretID      string `json:"secret_id"`
+				SecretKey     string `json:"secret_key"`
+				AppID         string `json:"app_id"`
+				Model         string `json:"model"`
+				EnableITN     bool   `json:"enable_itn"`
+				EnableDDC     bool   `json:"enable_ddc"`
+				EndWindowSize int    `json:"end_window_size"`
+				Streaming     bool   `json:"streaming"`
+			} `json:"tencent"`
+		} `json:"stt"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "tencent", resp.STT.Provider)
+	assert.Equal(t, "AKIDtest", resp.STT.Tencent.SecretID)
+	assert.Equal(t, "sk-test", resp.STT.Tencent.SecretKey)
+	assert.Equal(t, "1250000000", resp.STT.Tencent.AppID)
+	assert.Equal(t, "16k_zh_dialect", resp.STT.Tencent.Model)
+	assert.True(t, resp.STT.Tencent.EnableITN)
+	assert.True(t, resp.STT.Tencent.EnableDDC)
+	assert.Equal(t, 1200, resp.STT.Tencent.EndWindowSize)
+	assert.True(t, resp.STT.Tencent.Streaming)
 }
 
 // TestServeConfig_Patch_STTEnginesAreIndependent is the point of the per-engine
@@ -3193,15 +3336,13 @@ func TestServeConfig_Patch_BingFileRejected(t *testing.T) {
 
 // --- port_forward.transport ---
 //
-// The field is PINNED to "both" on both the load path (ApplyDefaults) and the
-// PATCH path (applyConfigPatch). It is still whitelisted and still serialized
-// because the web client's tunnelTransportAllowsH2() reads it from /api/config,
-// but its value is ignored: `ssh`/`h2`/`both` all round-trip as `both`.
+// The field is a real server-side switch: PATCH stores what it was given
+// (normalized), GET echoes it, and the hot-reload path starts or stops the SSH
+// listener accordingly. The retired "both" is still accepted from old clients
+// and normalized to "h2".
 
-// The PATCH must accept the value, report no restart, and — critically — store
-// "both" rather than what was sent. A PATCH that wrote the value through would
-// leave the runtime in a state ApplyDefaults never allows, and a restart would
-// then silently change it.
+// A PATCH must store the transport it was given and must not demand a restart:
+// switching it starts/stops the SSH listener in place (cmd/server/hotReloadSSH).
 func TestServeConfigPatch_PortForwardTransport(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -3215,28 +3356,25 @@ func TestServeConfigPatch_PortForwardTransport(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-		"the transport is pinned; the patched value must not be applied")
+	assert.Equal(t, model.TransportH2, model.ConfigInstance.PortForward.Transport,
+		"the patched transport must be applied")
 
 	// Hot-reload: the change must not demand a restart.
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.False(t, resp["needs_restart"].(bool), "transport is a hot-reload field")
 
-	// GET must echo the PINNED value, not the patched one.
+	// GET must echo the stored value.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
 	assert.Equal(t, http.StatusOK, gw.Code)
-	assert.Contains(t, gw.Body.String(), `"transport":"both"`)
+	assert.Contains(t, gw.Body.String(), `"transport":"h2"`)
 }
 
-// TestServeConfigPatch_PortForwardTransportSSHStaysBoth is the core invariant:
-// patching `transport: ssh` — the value that used to confine the tunnel to SSH
-// — is accepted (200) but the runtime and GET both stay "both". This is the
-// regression guard for review M5: the state "the server says ssh-only" must not
-// be expressible, so no client can bypass it.
-func TestServeConfigPatch_PortForwardTransportSSHStaysBoth(t *testing.T) {
+// The ssh value is the one that confines the tunnel to the SSH listener — it
+// must survive the round trip, otherwise the switch could only ever select h2.
+func TestServeConfigPatch_PortForwardTransportSSHIsApplied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -3248,24 +3386,27 @@ func TestServeConfigPatch_PortForwardTransportSSHStaysBoth(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusOK, w.Code, "ssh is a recognized value, so it is a 200")
-	assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-		"patching ssh must still leave the runtime pinned to both")
+	assert.Equal(t, http.StatusOK, w.Code, "ssh is a recognized value")
+	assert.Equal(t, model.TransportSSH, model.ConfigInstance.PortForward.Transport,
+		"patching ssh must confine the runtime to the SSH listener")
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
 	assert.Equal(t, http.StatusOK, gw.Code)
-	assert.Contains(t, gw.Body.String(), `"transport":"both"`)
-	assert.NotContains(t, gw.Body.String(), `"transport":"ssh"`,
-		"GET must never report ssh — the web client would then hide the h2 panel")
+	assert.Contains(t, gw.Body.String(), `"transport":"ssh"`)
 }
 
-// Each of the three values must be accepted and stored as "both" — a validator
-// that only knew two of them would silently reject a legitimate setting, and
-// the pin must apply to all three equally.
+// Each accepted value must be stored — except the retired "both", which is
+// normalized to "h2" (its old meaning was "h2 is available, probe it first").
+// Old clients still send it, so rejecting it would break their save.
 func TestServeConfigPatch_PortForwardTransportAcceptedValues(t *testing.T) {
-	for _, sent := range []string{model.TransportSSH, model.TransportH2, model.TransportBoth} {
+	tests := map[string]string{
+		model.TransportSSH:  model.TransportSSH,
+		model.TransportH2:   model.TransportH2,
+		model.TransportBoth: model.TransportH2,
+	}
+	for sent, want := range tests {
 		t.Run(sent, func(t *testing.T) {
 			_, teardown := setupTestEnv(t)
 			defer teardown()
@@ -3279,8 +3420,8 @@ func TestServeConfigPatch_PortForwardTransportAcceptedValues(t *testing.T) {
 			w := callHandler(ServeConfig, req)
 
 			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-				"%q must be accepted and normalized to both", sent)
+			assert.Equal(t, want, model.ConfigInstance.PortForward.Transport,
+				"%q must be accepted and stored as %q", sent, want)
 		})
 	}
 }
@@ -3412,15 +3553,13 @@ func TestServeConfigPatch_PortForwardTransportWrongTypeRejected(t *testing.T) {
 	}
 }
 
-// Omitting the field must leave the stored value pinned to "both" — the
-// validator must not treat "absent" as "invalid", and an unrelated
-// port_forward PATCH must not un-pin the transport.
+// Omitting the field must leave the stored value alone — the validator must not
+// treat "absent" as "invalid", and an unrelated port_forward PATCH must not
+// silently reset the operator's transport choice.
 func TestServeConfigPatch_PortForwardTransportAbsentKeepsValue(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Seed a stale value on purpose: even a ConfigInstance that somehow holds
-	// "ssh" must come out of the patch path as "both".
 	cfg := model.Config{}
 	cfg.PortForward.Transport = model.TransportSSH
 	model.ConfigInstance = cfg
@@ -3432,36 +3571,39 @@ func TestServeConfigPatch_PortForwardTransportAbsentKeepsValue(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-		"an unrelated port_forward PATCH must leave the transport pinned to both")
+	assert.Equal(t, model.TransportSSH, model.ConfigInstance.PortForward.Transport,
+		"an unrelated port_forward PATCH must not reset the transport")
 }
 
-// GET /api/config must expose the transport pinned to "both" regardless of what
-// the in-memory config holds (the frontend reads it to decide whether to show
-// the h2 panel), and must not expose host_key.
+// GET /api/config must expose the stored transport (the web client reads it to
+// decide whether the h2 panel is reachable) and must not expose host_key.
 func TestServeConfigGet_PortForwardExposesTransport(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
+	for _, want := range []string{model.TransportSSH, model.TransportH2} {
+		t.Run(want, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
 
-	cfg := model.Config{}
-	cfg.PortForward.Enabled = true
-	cfg.PortForward.Port = 2222
-	cfg.PortForward.Transport = model.TransportH2 // stale/injected — GET must ignore it
-	cfg.PortForward.HostKey = "/secret/host_key"
-	model.ConfigInstance = cfg
+			cfg := model.Config{}
+			cfg.PortForward.Enabled = true
+			cfg.PortForward.Port = 2222
+			cfg.PortForward.Transport = want
+			cfg.PortForward.HostKey = "/secret/host_key"
+			model.ConfigInstance = cfg
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
+			req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	pf, ok := resp["port_forward"].(map[string]any)
-	require.True(t, ok, "port_forward must be present")
-	assert.Equal(t, "both", pf["transport"], "GET must report the pinned value, not the stored one")
-	assert.NotContains(t, pf, "host_key", "host_key must stay server-side")
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			pf, ok := resp["port_forward"].(map[string]any)
+			require.True(t, ok, "port_forward must be present")
+			assert.Equal(t, want, pf["transport"], "GET must report the stored transport")
+			assert.NotContains(t, pf, "host_key", "host_key must stay server-side")
+		})
+	}
 }
 
 // TestValidatePatchValues_MCPServers pins the save-time checks. The command

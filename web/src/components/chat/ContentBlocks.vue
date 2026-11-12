@@ -470,7 +470,8 @@
         <span v-if="extractSkillCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSkillCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
-      <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
+      <!-- 数字表换成 DataTable（和 CSV 预览同一个控件），其余 HTML 原样渲染 -->
+      <RichTextBlock v-else-if="block.type === 'text'" :html="getBlockHtml(bi, block)" :streaming="streaming" />
     </template>
     </template>
     <!-- Loading dots while AI is still streaming (not when cancelled, and not when showing summary) -->
@@ -494,6 +495,7 @@ import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles, Users } from 'lucide-vue-next'
+import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'

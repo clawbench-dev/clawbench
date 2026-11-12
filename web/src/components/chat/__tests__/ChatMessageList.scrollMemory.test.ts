@@ -388,17 +388,17 @@ describe('ChatMessageList — restoring a still session position', () => {
     await wrapper.setProps({ currentSessionId: 's2' })
     await wrapper.setProps({ messages: msgs(1, 2) })
     await flushRestore()
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(true)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(true)
 
     // Dismiss it through the real path (click outside the FAB group), so the
     // assertion below cannot pass just because the restore left it showing.
     document.body.click()
     await nextTick()
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(false)
 
     await wrapper.setProps({ messages: msgs(1, 2, 3) })
 
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(true)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(true)
     expect(wrapper.find('.scroll-fab-dir [title="Scroll to bottom"]').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -462,18 +462,18 @@ describe('ChatMessageList — "new messages" hint is not fooled by prepends', ()
     await wrapper.setProps({ currentSessionId: 's2' })
     await wrapper.setProps({ messages: msgs(1, 2) })
     await flushRestore()
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(true)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(true)
 
     // Dismiss the hint through the real path so the assertion below cannot pass
     // just because the restore left it showing.
     document.body.click()
     await nextTick()
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(false)
 
     // Older history arrives at the head: 3 messages instead of 2, same tail.
     await wrapper.setProps({ messages: msgs(0, 1, 2) })
 
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -489,11 +489,11 @@ describe('ChatMessageList — "new messages" hint is not fooled by prepends', ()
     await flushRestore()
     document.body.click()
     await nextTick()
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(false)
 
     await wrapper.setProps({ messages: msgs(1, 2, 3) })
 
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(true)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -510,7 +510,7 @@ describe('ChatMessageList — "new messages" hint is not fooled by prepends', ()
     await flushRestore()
     document.body.click()
     await nextTick()
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(false)
 
     await wrapper.setProps({
       messages: [
@@ -519,7 +519,7 @@ describe('ChatMessageList — "new messages" hint is not fooled by prepends', ()
       ],
     })
 
-    expect(wrapper.find('.scroll-fab-bottom').exists()).toBe(false)
+    expect(wrapper.find('.scroll-fab-group').exists()).toBe(false)
     wrapper.unmount()
   })
 })

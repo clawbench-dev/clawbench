@@ -23,6 +23,11 @@ public class ClawBenchApp extends Application {
     public void onCreate() {
         super.onCreate();
 
+        // The port-forward transport default moved to HTTP/2; existing installs
+        // (including ones that explicitly chose SSH) are moved over once, before
+        // any tunnel code reads the preference.
+        BackgroundService.migrateTunnelTransportToH2(this);
+
         if (isBrowserProcess()) {
             // Must be called before any WebView is created in this process
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

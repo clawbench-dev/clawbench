@@ -171,6 +171,10 @@
           <FileOutput :size="14" />
           {{ t('file.header.exportHtml') }}
         </button>
+        <button v-if="permanentMenuIds.includes('exportDrawio')" class="ab-menu-item" @click="$emit('exportDrawio')">
+          <FileOutput :size="14" />
+          {{ t('file.drawioExport.menuItem') }}
+        </button>
         <button v-if="permanentMenuIds.includes('setAsBackground')" class="ab-menu-item" @click="handleSetAsBackground">
           <Image :size="14" />
           {{ t('file.header.setAsBackground') }}
@@ -248,7 +252,7 @@ const props = defineProps({
     canGoForwardFile: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat', 'toggleMaximizePane'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat', 'toggleMaximizePane'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -394,6 +398,9 @@ const permanentMenuIds = computed(() => {
     if (!props.editing) ids.push('shareLink')
     if (props.file?.isBinary) ids.push('openAsText')
     if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
+    // drawio keeps the export entry visible: the editor's own menu is disabled
+    // in embed mode, so this is the only way to get a PNG/SVG/XML out.
+    if (props.file?.isDrawio) ids.push('exportDrawio')
     if (isWallpaperSource.value) ids.push('setAsBackground')
   }
   if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) {

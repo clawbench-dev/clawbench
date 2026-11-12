@@ -132,27 +132,42 @@
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `engine` | `edge` | 引擎：`edge`（免密钥）或 `openai`（OpenAI 兼容接口） |
+| `engine` | `edge` | 引擎：`edge`（免密钥）、`openai`（OpenAI 兼容接口）、`alibaba`（阿里云百炼）、`tencent`（腾讯云）、`volcano`（火山引擎） |
 | `voice` | `zh-CN-XiaoxiaoNeural` | Edge 引擎的音色 |
 | `speed` | `1.0` | 语速，两个引擎共用（「我想听多快」只有一个答案） |
 | `inline_code_max_len` | `100` | 行内代码多长以内还念出来，更长的直接跳过 |
 | `max_summarize_runes` | `10000` | 送去摘要的最长字数，超出截断（simple 模式是 1000） |
 | `max_cache_files` | `100` | 朗读音频缓存最多留几个文件，超了按最久没用清掉。`-1`＝不限 |
-| `tts_model` / `format` | 空 | 预留字段，当前不生效 |
+| `tts_model` / `format` | 空 | 历史预留字段，不生效（MiniMax 的模型用 `minimax.model`） |
 | `openai.base_url` | 空 | OpenAI 兼容 TTS 的地址（填到 `/v1` 即可） |
 | `openai.api_key` | 空 | 上面那个接口的密钥 |
 | `openai.model` | 空 | TTS 模型，比如 `gpt-4o-mini-tts`。没有默认值，要自己填 |
 | `openai.voice` | 空 | 音色名或自定义音色 id |
 | `openai.stream_mode` | `auto` | `auto` 按模型决定，`sse` 强制流式，`audio` 强制整段返回 |
+| `alibaba.api_key` | 空 | 阿里云百炼（DashScope）的 API Key |
+| `alibaba.base_url` | `https://dashscope.aliyuncs.com` | 百炼接入地址；用业务空间专属域名时填这里 |
+| `alibaba.model` | `cosyvoice-v3-flash` | 语音合成模型（输出 MP3） |
+| `alibaba.voice` | `longanyang` | 系统音色名，或复刻/设计音色的 id |
+| `tencent.secret_id` | 空 | 腾讯云 SecretId |
+| `tencent.secret_key` | 空 | 腾讯云 SecretKey（每次请求签名用，不上传） |
+| `tencent.voice_type` | `101001` | 腾讯云的数字音色编号 |
+| `volcano.api_key` | 空 | 火山引擎语音控制台的 API Key |
+| `volcano.resource_id` | `seed-tts-2.0` | 资源编号，要与音色类型匹配（复刻音色用 `seed-icl-2.0`） |
+| `volcano.voice` | `zh_female_vv_uranus_bigtts` | 发音人 ID |
+| `minimax.api_key` | 空 | MiniMax 开放平台的接口密钥 |
+| `minimax.group_id` | 空 | 可选，老账号（尤其国内站）需要 |
+| `minimax.base_url` | `https://api.minimax.chat` | 国内站地址；国际站换成对应域名 |
+| `minimax.model` | `speech-02-hd` | 语音模型 |
+| `minimax.voice` | `female-shaonv` | 音色 ID |
 
-> 界面入口：设置 → 语音朗读。两个引擎的音色各存一份，切来切去不会互相覆盖。
+> 界面入口：设置 → 语音朗读。每个引擎的音色和密钥各存一份，切来切去不会互相覆盖。
 
 ### 语音识别 `stt`
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `provider` | `vllm` | 引擎：`vllm`（OpenAI 兼容接口）/ `doubao`（豆包）/ `alibaba`（阿里云百炼） |
-| `shortcut_key` | `F9` | 语音输入快捷键（三个引擎共用） |
+| `provider` | 空 | 引擎：空＝**未配置，不使用语音识别**；可选 `vllm`（OpenAI 兼容接口）/ `doubao`（豆包）/ `alibaba`（阿里云百炼）/ `tencent`（腾讯云语音识别） |
+| `shortcut_key` | `F9` | 语音输入快捷键（四个引擎共用） |
 | `mic_echo_cancel` | `true` | 回声消除。朗读时靠它不把自己的声音录进去 |
 | `mic_noise_suppress` | `true` | 背景降噪 |
 | `mic_auto_gain` | `true` | 自动音量 |
@@ -184,12 +199,21 @@
 | `doubao.streaming` | `false` | 边录边传 |
 | `alibaba.api_key` | 空 | 百炼的 Key |
 | `alibaba.base_url` | `https://dashscope.aliyuncs.com` | 新加坡地域填 `https://dashscope-intl.aliyuncs.com` |
-| `alibaba.model` | `paraformer-realtime-v2` | 实时识别模型（整段上传固定用 `qwen3-asr-flash`） |
+| `alibaba.model` | `paraformer-realtime-v2` | 实时识别模型（每月有免费时长） |
+| `alibaba.file_model` | `qwen-audio-3.1-asr-flash` | 整段上传识别模型；`qwen3-asr-flash` 在新账号上没有免费额度，填它按秒计费 |
 | `alibaba.language` | `zh` | 识别语言提示，留空自动判断 |
 | `alibaba.enable_itn` / `enable_punc` | `true` | 数字日期规范化 / 自动标点 |
 | `alibaba.enable_ddc` | `false` | 顺滑处理 |
 | `alibaba.end_window_size` | `800` | 流式判停的静音阈值（毫秒） |
 | `alibaba.streaming` | `false` | 边录边传 |
+| `tencent.secret_id` | 空 | 腾讯云 API 密钥的 SecretId |
+| `tencent.secret_key` | 空 | 与 SecretId 配对的 SecretKey |
+| `tencent.app_id` | 空 | 账号数字 AppID，**留空即可**：实时识别会用上面的密钥自动查出账号 APPID；密钥无权读取账号信息时才需要手填 |
+| `tencent.model` | `16k_zh` | 引擎型号，同时决定语种（`16k_en`、`16k_zh_dialect` 等） |
+| `tencent.enable_itn` | `true` | 数字规范化（`convert_num_mode`） |
+| `tencent.enable_ddc` | `false` | 顺滑处理，去口头语（`filter_modal`） |
+| `tencent.end_window_size` | `1000` | 流式判停的静音阈值，500–2000 毫秒（`vad_silence_time`） |
+| `tencent.streaming` | `true` | 边录边传。**默认开**；关掉后浏览器把录音转成 WAV 上传（整段识别单次最多 60 秒） |
 
 > 界面入口：设置 → 语音识别。麦克风处理与「安静时不送」这几项，会议听记也共用同一份。
 

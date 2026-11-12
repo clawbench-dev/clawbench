@@ -92,7 +92,7 @@ func TestShouldCreateProxyRegistry(t *testing.T) {
 func TestShouldCreateProxyRegistry_FormerFalseCellNowTrue(t *testing.T) {
 	require.True(t, shouldCreateProxyRegistry(model.Config{
 		PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportSSH},
-	}), "enabled:false + transport:ssh must no longer disable the registry — the transport is pinned to both")
+	}), "enabled:false + transport:ssh must not disable the registry — it is shared by both transports")
 }
 
 // TestShouldCreateProxyRegistry_DefaultTransportCreatesRegistry is the direct
@@ -101,17 +101,17 @@ func TestShouldCreateProxyRegistry_FormerFalseCellNowTrue(t *testing.T) {
 //
 // The composition is pinned without calling model.ApplyDefaults (which mutates
 // process globals and writes files): internal/model's
-// TestApplyDefaultsPortForwardTransport already proves "omitted → both", and
-// this asserts that this default is h2-capable. Together they mean an existing
+// TestApplyDefaultsPortForwardTransport already proves "omitted → h2", and this
+// asserts that this default is h2-capable. Together they mean an existing
 // install that never heard of port_forward.transport still gets a registry.
 func TestShouldCreateProxyRegistry_DefaultTransportCreatesRegistry(t *testing.T) {
-	require.Equal(t, model.TransportBoth, model.DefaultPortForwardTransport,
-		"the pinned transport must be 'both' — 'ssh' would disable the registry for installs that never set it")
+	require.Equal(t, model.TransportH2, model.DefaultPortForwardTransport,
+		"the default transport must be h2 — it is the wire that does not need the SSH port exposed")
 	require.True(t,
 		shouldCreateProxyRegistry(model.Config{
 			PortForward: model.PortForwardConfig{Transport: model.DefaultPortForwardTransport},
 		}),
-		"a defaulted config (transport=both, SSH disabled) must still create the registry")
+		"a defaulted config (transport=h2) must still create the registry")
 }
 
 // TestProxyRegistryGate_NilRegistryYields503 wires the remaining chain together:

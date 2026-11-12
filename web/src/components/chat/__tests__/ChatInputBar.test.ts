@@ -102,6 +102,7 @@ const i18n = createI18n({
             recentRef: 'Referenced',
             recentUpload: 'Uploaded',
             recentShare: 'Shared',
+            global: 'Global',
             clawbench: 'Built-in',
             agent: 'Agent',
           },
@@ -457,45 +458,40 @@ vi.mock('@/composables/useSkillsState', async (importOriginal) => ({
   ensureSkillsLoaded: (...a: unknown[]) => mockEnsureSkillsLoaded(...a),
 }))
 
-// Mock useVoiceInput — controllable fake for voice input tests.
+// Mock useVoiceInput — the real surface, with the pieces this component
+// actually touches kept controllable.
 //
-// `startText` mirrors the REAL composable's captured prefix: start(prefix)
-// snapshots the box and a late transcript is appended to that snapshot. The
-// fake keeps it in a ref so a test can drive "send → transcript arrives" and
-// see whether the sent text comes back. `simulateTranscript` below is exactly
-// what the real appendText/setPartial do with it.
-const mockVoiceStartText = ref('')
-// Only the START call captures the box; the release calls toggle() with no
-// argument (the real composable then just stops, leaving the snapshot alone).
-const mockVoiceToggle = vi.fn((prefix?: string) => {
-  if (prefix !== undefined) mockVoiceStartText.value = prefix
-})
-const mockVoiceStart = vi.fn()
-const mockVoiceStop = vi.fn()
+// The composer no longer owns the shortcut or the transcript: dictation writes
+// into whatever field holds the caret (see utils/voiceTarget) and the global
+// overlay renders the status. All this component does is offer its textarea as
+// a target and show a local "recording" indicator when that textarea IS the
+// target.
+const mockVoiceToggleAt = vi.fn()
 const mockVoiceState = ref('idle')
-const mockVoiceInputText = ref('')
-const mockVoiceShortcutKey = vi.fn(() => 'F9')
+const mockVoiceTargetEl = ref<HTMLElement | null>(null)
 const mockVoiceCancel = vi.fn()
-const mockVoiceSetStartText = vi.fn((text: string) => {
-  mockVoiceStartText.value = text
-  mockVoiceInputText.value = text
-})
 vi.mock('@/composables/useVoiceInput', () => ({
   useVoiceInput: () => ({
     state: mockVoiceState,
-    inputText: mockVoiceInputText,
-    error: { value: '' },
-    isRecording: { value: false },
-    toggle: mockVoiceToggle,
-    start: mockVoiceStart,
-    stop: mockVoiceStop,
+    inputText: ref(''),
+    error: ref(''),
+    isRecording: ref(false),
+    mode: ref('idle'),
+    targetEl: mockVoiceTargetEl,
+    draftPending: ref(false),
+    toggle: vi.fn(),
+    toggleAt: mockVoiceToggleAt,
+    start: vi.fn(),
+    startAt: vi.fn(),
+    startGlobal: vi.fn(),
+    stop: vi.fn(),
     cancel: mockVoiceCancel,
     reset: vi.fn(),
     appendText: vi.fn(),
+    discardDraft: vi.fn(),
     setState: vi.fn(),
     setInputText: vi.fn(),
-    setStartText: mockVoiceSetStartText,
-    shortcutKey: mockVoiceShortcutKey,
+    shortcutKey: vi.fn(() => 'F9'),
   }),
 }))
 
@@ -740,6 +736,32 @@ describe('ChatInputBar', () => {
     const strip = wrapper.find('[data-role="free-dialog-strip"]')
     expect(strip.exists()).toBe(true)
     expect(strip.text()).toContain('帮我看下这个报错')
+  })
+
+  it('keeps the newest words of the transcript in view as it grows', async () => {
+    // The strip is capped at two lines, so a long sentence overflows at the
+    // bottom — exactly where the words that just arrived are. Without the
+    // auto-scroll the user reads the oldest part of the sentence forever.
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      freeDialogPhase: 'listening',
+      freeDialogTranscript: '帮我看',
+    })
+    const textEl = wrapper.find('.free-dialog-text').element as HTMLElement
+    let top = 0
+    // jsdom never lays anything out, so the scrollable geometry is faked the
+    // same way the transcript-list tests do it.
+    Object.defineProperty(textEl, 'scrollHeight', { value: 48, configurable: true })
+    Object.defineProperty(textEl, 'scrollTop', {
+      get: () => top,
+      set: (v: number) => { top = v },
+      configurable: true,
+    })
+
+    await wrapper.setProps({ freeDialogTranscript: '帮我看下这个报错，就是刚才那个' })
+    await nextTick()
+
+    expect(top).toBe(48)
   })
 
   it('falls back to the phase hint when nothing has been recognised yet', () => {
@@ -2606,6 +2628,52 @@ describe('ChatInputBar', () => {
     store.state.dirEntries = [] as any
   })
 
+  it('@ menu merges ranked project-wide hits from the server', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+
+    const apiGetMock = apiGet as ReturnType<typeof vi.fn>
+    apiGetMock.mockImplementation((url: string) =>
+      url.startsWith('/api/dir/search/top')
+        ? Promise.resolve({
+            items: [
+              { name: 'ChatInputBar.vue', path: 'web/src/components/chat/ChatInputBar.vue', type: 'file' },
+              { name: 'chat', path: 'web/src/components/chat', type: 'dir' },
+            ],
+            total: 2,
+          })
+        : Promise.resolve(undefined),
+    )
+
+    const wrapper = mountBar()
+    // The late result refresh is gated on focus (a dismissed menu must not
+    // resurrect), so the textarea has to own focus like it does while typing.
+    await wrapper.find('.chat-textarea').trigger('focus')
+    wrapper.vm.inputText = '@chat'
+    await wrapper.vm.$nextTick()
+
+    // Nothing local matches, so the popup only opens once the async hits land.
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.completion-label').map(i => i.text())).toContain('ChatInputBar.vue')
+    })
+
+    const rows = wrapper.findAll('.completion-item')
+    const fileRow = rows.find(r => r.find('.completion-label').text() === 'ChatInputBar.vue')!
+    expect(fileRow.find('.completion-source').text()).toBe('Global')
+    // The directory column disambiguates hits from the same basename.
+    expect(fileRow.find('.completion-desc').text()).toBe('web/src/components/chat')
+
+    // A directory hit must reach the attach handler with isDir=true.
+    const dirRow = rows.find(r => r.find('.completion-label').text() === 'chat')!
+    await dirRow.trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['web/src/components/chat', true])
+
+    apiGetMock.mockReset()
+    apiGetMock.mockResolvedValue(undefined)
+  })
+
   it('@ menu does not trigger for an email-like @', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = 'a@b'
@@ -4054,57 +4122,29 @@ describe('ChatInputBar', () => {
 
   describe('voice input', () => {
     beforeEach(() => {
-      mockVoiceToggle.mockReset()
-      // mockReset() drops the implementation, so restore the real composable's
-      // contract: start(prefix) captures the box, stop() leaves it alone.
-      mockVoiceToggle.mockImplementation((prefix?: string) => {
-        if (prefix !== undefined) mockVoiceStartText.value = prefix
-      })
-      mockVoiceStart.mockReset()
-      mockVoiceStop.mockReset()
-      mockVoiceShortcutKey.mockReset()
-      mockVoiceShortcutKey.mockReturnValue('F9')
-      mockVoiceInputText.value = ''
-      mockVoiceStartText.value = ''
+      mockVoiceToggleAt.mockReset()
+      mockVoiceTargetEl.value = null
       mockVoiceState.value = 'idle'
     })
 
-    /** What the real composable does when the engine answers: append the
-     *  transcript to the text the dictation started from. */
-    function simulateTranscript(text: string) {
-      mockVoiceInputText.value = mockVoiceStartText.value + text
-    }
+    const composerTextarea = (wrapper: ReturnType<typeof mountBar>) =>
+      wrapper.find('textarea').element as HTMLTextAreaElement
 
-    it('long-press on send does not open quick-send menu', async () => {
+    it('long-press on send starts dictation into the composer, not the quick menu', async () => {
       vi.useFakeTimers()
       const wrapper = mountBar()
       wrapper.vm.inputText = ''
       await wrapper.vm.$nextTick()
       const sendBtn = wrapper.find('.chat-send-btn')
-      // Long-press starts recording
+      // Long-press starts recording into this textarea.
       await sendBtn.trigger('pointerdown')
       vi.advanceTimersByTime(600)
-      expect(mockVoiceToggle).toHaveBeenCalled()
+      expect(mockVoiceToggleAt).toHaveBeenCalledWith(composerTextarea(wrapper))
       // Release + synthetic click must NOT pop the quick-send menu
       await sendBtn.trigger('pointerup')
       await sendBtn.trigger('click')
       expect(wrapper.vm.showQuickMenu).toBe(false)
       expect(wrapper.emitted('send')).toBeFalsy()
-      wrapper.unmount()
-      vi.useRealTimers()
-    })
-
-    it('long-press starts dictation even when the input already has text', async () => {
-      vi.useFakeTimers()
-      const wrapper = mountBar()
-      wrapper.vm.inputText = '已有内容'
-      await wrapper.vm.$nextTick()
-      const sendBtn = wrapper.find('.chat-send-btn')
-      await sendBtn.trigger('pointerdown')
-      vi.advanceTimersByTime(600)
-      // The current text is handed over as the prefix so the transcript is
-      // appended to it instead of replacing it.
-      expect(mockVoiceToggle).toHaveBeenCalledWith('已有内容')
       wrapper.unmount()
       vi.useRealTimers()
     })
@@ -4124,162 +4164,32 @@ describe('ChatInputBar', () => {
 
       await sendBtn.trigger('pointerdown')
       vi.advanceTimersByTime(600)
-      // Dictation still starts, appending to the existing text (unchanged
-      // behavior — see the case above).
-      expect(mockVoiceToggle).toHaveBeenCalledWith('请看一下这个改动')
+      expect(mockVoiceToggleAt).toHaveBeenCalledWith(composerTextarea(wrapper))
 
       await sendBtn.trigger('pointerup')
       await sendBtn.trigger('click')
 
       expect(wrapper.emitted('send')?.[0]).toEqual(['请看一下这个改动'])
-      // And the gesture must not leave the mic recording: start (prefix) then
-      // stop is exactly two calls.
-      expect(mockVoiceToggle.mock.calls).toEqual([['请看一下这个改动'], []])
+      // Start then stop: the gesture must not leave the mic recording.
+      expect(mockVoiceToggleAt.mock.calls).toEqual([
+        [composerTextarea(wrapper)],
+        [composerTextarea(wrapper)],
+      ])
 
       wrapper.unmount()
       vi.useRealTimers()
     })
 
-    // The send now goes out (see the case above), so the OTHER half of that
-    // gesture must be right too: the dictation that the long press started is
-    // still in flight when the message leaves, and its transcript must not drag
-    // the sent text back into the box.
-    //
-    // Regression: `clearInput()` only cleared the component's copy of the text.
-    // The composable keeps its own snapshot (taken by start(prefix)) and builds
-    // the transcript on top of it, so the box came back as "sent text +
-    // transcript" — one tap away from sending the same message twice.
-    //
-    // The full order matters and is what the old assertion missed: send →
-    // composer cleared by the parent → engine answers.
-    it('a transcript arriving after the send does not put the sent text back', async () => {
-      vi.useFakeTimers()
+    // The voice status moved to the global pill above the composer. Swapping
+    // the attach button for a waveform hid the paperclip exactly while the
+    // user was dictating — and duplicated what the pill already says.
+    it('keeps the paperclip while dictating into the composer', async () => {
       const wrapper = mountBar()
-      wrapper.vm.inputText = '请看一下这个改动'
-      await wrapper.vm.$nextTick()
-      const sendBtn = wrapper.find('.chat-send-btn')
-
-      await sendBtn.trigger('pointerdown')
-      vi.advanceTimersByTime(600)
-      // Dictation captured the box as its start text.
-      expect(mockVoiceStartText.value).toBe('请看一下这个改动')
-
-      await sendBtn.trigger('pointerup')
-      await sendBtn.trigger('click')
-      expect(wrapper.emitted('send')?.[0]).toEqual(['请看一下这个改动'])
-
-      // ChatPanelContent clears the composer right after a successful send.
-      wrapper.vm.clearInput()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.inputText).toBe('')
-
-      // ...and only then does the engine answer.
-      simulateTranscript('听写')
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.inputText).toBe('听写')
-      expect(wrapper.vm.inputText).not.toContain('请看一下这个改动')
-
-      wrapper.unmount()
-      vi.useRealTimers()
-    })
-
-    // A failed send restores the text; the in-flight dictation must then append
-    // to the RESTORED message rather than replace it (clearInput had just told
-    // the composable the box was empty).
-    it('restoring after a failed send keeps the dictation start text in step', async () => {
-      vi.useFakeTimers()
-      const wrapper = mountBar()
-      wrapper.vm.inputText = '请看一下这个改动'
-      await wrapper.vm.$nextTick()
-      const sendBtn = wrapper.find('.chat-send-btn')
-
-      await sendBtn.trigger('pointerdown')
-      vi.advanceTimersByTime(600)
-      await sendBtn.trigger('pointerup')
-      await sendBtn.trigger('click')
-      wrapper.vm.clearInput()
-      // The request failed → the parent puts the user's text back.
-      wrapper.vm.restoreInput('请看一下这个改动')
-      await wrapper.vm.$nextTick()
-
-      simulateTranscript('听写')
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.inputText).toBe('请看一下这个改动听写')
-
-      wrapper.unmount()
-      vi.useRealTimers()
-    })
-
-    it('F9 press-and-hold: keydown starts recording, keyup stops it', async () => {
-      mockVoiceShortcutKey.mockReturnValue('F9')
-      const wrapper = mountBar()
-      await wrapper.vm.$nextTick()
-      const down = new KeyboardEvent('keydown', { code: 'F9' })
-      window.dispatchEvent(down)
-      expect(mockVoiceStart).toHaveBeenCalled()
-      const up = new KeyboardEvent('keyup', { code: 'F9' })
-      window.dispatchEvent(up)
-      expect(mockVoiceStop).toHaveBeenCalled()
-      wrapper.unmount()
-    })
-
-    it('F9 keydown auto-repeat does not restart recording', async () => {
-      mockVoiceShortcutKey.mockReturnValue('F9')
-      const wrapper = mountBar()
-      await wrapper.vm.$nextTick()
-      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9' }))
-      const afterFirst = mockVoiceStart.mock.calls.length
-      // Auto-repeat keydown events must be ignored (no additional start calls).
-      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', repeat: true }))
-      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9', repeat: true }))
-      expect(mockVoiceStart.mock.calls.length).toBe(afterFirst)
-      wrapper.unmount()
-    })
-
-    it('F9 with modifiers does not trigger recording', async () => {
-      mockVoiceShortcutKey.mockReturnValue('F9')
-      const wrapper = mountBar()
-      await wrapper.vm.$nextTick()
-      const down = new KeyboardEvent('keydown', { code: 'F9', ctrlKey: true })
-      window.dispatchEvent(down)
-      expect(mockVoiceStart).not.toHaveBeenCalled()
-      wrapper.unmount()
-    })
-
-    it('window blur stops an in-progress recording (F9 keyup safety)', async () => {
-      mockVoiceShortcutKey.mockReturnValue('F9')
-      const wrapper = mountBar()
-      await wrapper.vm.$nextTick()
-      const down = new KeyboardEvent('keydown', { code: 'F9' })
-      window.dispatchEvent(down)
-      expect(mockVoiceStart).toHaveBeenCalled()
-      // In production start() transitions state to 'recording'; mirror it here.
       mockVoiceState.value = 'recording'
-      window.dispatchEvent(new Event('blur'))
-      expect(mockVoiceStop).toHaveBeenCalled()
-      wrapper.unmount()
-    })
-
-    it('renders red circular recording indicator with audio wave in the attach slot', async () => {
-      mockVoiceState.value = 'recording'
-      const wrapper = mountBar()
+      mockVoiceTargetEl.value = composerTextarea(wrapper)
       await wrapper.vm.$nextTick()
-      const recBtn = wrapper.find('.chat-attach-btn.voice-rec-btn.recording')
-      expect(recBtn.exists()).toBe(true)
-      expect(wrapper.find('.voice-wave').exists()).toBe(true)
-      // no text
-      expect(wrapper.find('.voice-banner').exists()).toBe(false)
-      wrapper.unmount()
-    })
-
-    it('renders transcribing indicator with spinner in the attach slot', async () => {
-      mockVoiceState.value = 'transcribing'
-      const wrapper = mountBar()
-      await wrapper.vm.$nextTick()
-      const transBtn = wrapper.find('.chat-attach-btn.voice-rec-btn.transcribing')
-      expect(transBtn.exists()).toBe(true)
-      expect(transBtn.find('.attach-btn-spinner').exists()).toBe(true)
-      expect(wrapper.find('.voice-banner').exists()).toBe(false)
+      expect(wrapper.find('.voice-rec-btn').exists()).toBe(false)
+      expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
       wrapper.unmount()
     })
 
@@ -4290,18 +4200,6 @@ describe('ChatInputBar', () => {
       expect(wrapper.find('.voice-rec-btn').exists()).toBe(false)
       expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
       wrapper.unmount()
-    })
-
-
-    it('watch syncs recognized voice text into input', async () => {
-      const wrapper = mountBar()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.inputText).toBe('')
-      mockVoiceInputText.value = 'hello voice'
-      await wrapper.vm.$nextTick()
-      await flushPromises()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.inputText).toBe('hello voice')
     })
 
     it('cleans up voice timer and recording on unmount', async () => {

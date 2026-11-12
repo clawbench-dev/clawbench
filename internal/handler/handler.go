@@ -48,6 +48,12 @@ const (
 	// name, watched file). Distinct from entryTypeFile / shareKindFile, which
 	// are VALUES classifying a file, not a key.
 	jsonFile = "file"
+	// jsonTransport names the transport of a server/agent/session in responses
+	// and config patches ("stdio" / "http" / "sse" / "acp-stdio" / "ssh" / "h2").
+	jsonTransport = "transport"
+	// jsonAudioPath is where a synthesized TTS clip landed, relative to the
+	// project root. Emitted by both the WS and the HTTP job responses.
+	jsonAudioPath = "audioPath"
 )
 
 // loc returns the Localizer for the current request.
@@ -794,6 +800,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
 	register("/api/tts/generate", TTSGenerate)
+	register("/api/tts/preview", TTSPreview)
 	register("/api/tts/stream/", TTSStream)
 	register("/api/tts/audio/ws", TTSAudioWS)
 	register("/api/voice/turn/ws", VoiceTurnWS)
@@ -842,6 +849,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Directory search SSE (recursive fuzzy file search)
 	register("/api/dir/search", DirSearch)
+	// Ranked top-N variant for the chat input's @ file reference menu: one JSON
+	// payload of the best matches instead of a walk-order SSE stream.
+	register("/api/dir/search/top", DirSearchTop)
 
 	// Content search SSE (grep-style search inside file contents)
 	register("/api/file/content-search", ContentSearch)
@@ -937,6 +947,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upgrade/check", ServeUpgradeCheck)
 	register("/api/upgrade/start", ServeUpgradeStart)
 	register("/api/upgrade/status", ServeUpgradeStatus)
+	register("/api/upgrade/skip", ServeUpgradeSkip)
 
 	// draw.io editor: downloaded on first use rather than embedded (~118MB).
 	// The client polls status while the install runs, then loads the editor

@@ -493,6 +493,48 @@ func TestServeSSHInfo_DisabledMinimal(t *testing.T) {
 	assert.Equal(t, float64(0), result["port"])
 }
 
+// The public endpoint must always report the configured transport, including
+// when enabled is false: that is how a native client learns to use h2 after the
+// operator switched (with h2 nothing listens on the SSH port, so enabled=false
+// alone would read as "port forwarding is broken").
+func TestServeSSHInfo_ReportsConfiguredTransport(t *testing.T) {
+	origCfg := model.ConfigInstance
+	origSSH := sshServerRef
+	defer func() {
+		model.ConfigInstance = origCfg
+		sshServerRef = origSSH
+	}()
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "pw", nil)
+
+	cases := []struct {
+		name      string
+		transport string
+		ref       *ssh.Server
+	}{
+		{"ssh with listener up", model.TransportSSH, srv},
+		{"h2 with no listener", model.TransportH2, nil},
+		{"ssh with bind failed", model.TransportSSH, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := model.Config{}
+			cfg.PortForward.Transport = tc.transport
+			model.ConfigInstance = cfg
+			sshServerRef = tc.ref
+
+			req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+			w := httptest.NewRecorder()
+			ServeSSHInfo(w, req)
+
+			var result map[string]interface{}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+			assert.Equal(t, tc.transport, result["transport"])
+			assert.Equal(t, tc.ref != nil, result["enabled"])
+		})
+	}
+}
+
 func TestServeSSHInfo_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/ssh/info", http.NoBody)
 	w := httptest.NewRecorder()

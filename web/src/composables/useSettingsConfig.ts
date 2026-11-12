@@ -398,6 +398,11 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   terminalTheme: 'auto',
   locale: 'zh',
   autoSpeech: false,
+  // Read replies with the phone's own speech engine instead of the server's
+  // TTS. Per device on purpose: it depends on which engines that phone has
+  // installed, and a tablet with a good Chinese voice should not change what a
+  // desktop hears.
+  systemSpeech: false,
   showHidden: false,
   wordWrap: true,
   // Markdown tables start wrapped unless the user turned the default off
@@ -407,6 +412,12 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   stickyScroll: true,
   fileView: 'list',
   filePreviewMode: false,
+  // Remote images inside an email body load by default (设置 → 邮件 → 邮件阅读).
+  // On, a newsletter renders as its sender intended; off, every picture stays
+  // blocked until the reader asks for it in that one message. Per device: it is
+  // purely how this screen draws the mail, and a phone on mobile data may well
+  // want the opposite answer from a desktop. Read by `MailReader.vue`.
+  mailLoadRemoteImages: true,
   // How the layout (split ratios, collapses, dock/tab choices) is remembered:
   // one shared record for every project, or one per project. Default 'global'
   // keeps the pre-existing behaviour.
@@ -632,7 +643,20 @@ const serverDefaults: Record<string, unknown> = {
   'tts.format': '',
   'tts.speed': 1.0,
   'tts.max_cache_files': 100,
-  'stt.provider': 'vllm',
+  // Vendor TTS engines: documented defaults, mirroring model.ApplyDefaults so
+  // switching engines lands on a usable form instead of blank fields.
+  'tts.alibaba.base_url': 'https://dashscope.aliyuncs.com',
+  'tts.alibaba.model': 'cosyvoice-v3-flash',
+  'tts.alibaba.voice': 'longanyang',
+  'tts.tencent.voice_type': 101001,
+  'tts.volcano.resource_id': 'seed-tts-2.0',
+  'tts.volcano.voice': 'zh_female_vv_uranus_bigtts',
+  'tts.minimax.base_url': 'https://api.minimax.chat',
+  'tts.minimax.model': 'speech-02-hd',
+  'tts.minimax.voice': 'female-shaonv',
+  // Empty = not configured. Voice input refuses to record rather than uploading
+  // to a localhost Whisper the user never set up.
+  'stt.provider': '',
   // Per-engine defaults, mirroring model.ApplyDefaults. Every engine keeps its
   // own credentials and options, so switching the engine never inherits (or
   // overwrites) another engine's values.
@@ -653,12 +677,23 @@ const serverDefaults: Record<string, unknown> = {
   'stt.alibaba.api_key': '',
   'stt.alibaba.base_url': 'https://dashscope.aliyuncs.com',
   'stt.alibaba.model': 'paraformer-realtime-v2',
+  'stt.alibaba.file_model': 'qwen-audio-3.1-asr-flash',
   'stt.alibaba.language': 'zh',
   'stt.alibaba.enable_itn': true,
   'stt.alibaba.enable_punc': true,
   'stt.alibaba.enable_ddc': false,
   'stt.alibaba.end_window_size': 800,
   'stt.alibaba.streaming': false,
+  'stt.tencent.secret_id': '',
+  'stt.tencent.secret_key': '',
+  'stt.tencent.app_id': '',
+  'stt.tencent.model': '16k_zh',
+  'stt.tencent.enable_itn': true,
+  'stt.tencent.enable_ddc': false,
+  'stt.tencent.end_window_size': 1000,
+  // ON by default: realtime has no 60-second ceiling and returns text while the
+  // user is still speaking. Off switches dictation to a WAV upload.
+  'stt.tencent.streaming': true,
   'stt.shortcut_key': 'F9',
   // Mirrors model.ApplyDefaults: the preprocessing and gate switches default ON
   // (only an explicit false turns them off), and the free-dialog defaults are
@@ -694,6 +729,9 @@ const serverDefaults: Record<string, unknown> = {
   'meeting.file_excerpts': true,
   'meeting.minutes_max_tokens': 0,
   'port_forward.allowed_ports': '1024-65535',
+  // Mirrors the server default (h2) so the transport row shows a value before
+  // /api/config lands instead of a blank select.
+  'port_forward.transport': 'h2',
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',

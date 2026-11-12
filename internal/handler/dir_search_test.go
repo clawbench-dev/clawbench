@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -887,5 +888,129 @@ func TestDirSearch_SizeModifiedFields(t *testing.T) {
 	}
 	if matched.Modified == "" {
 		t.Error("expected modified to be populated (RFC3339)")
+	}
+}
+
+// ── /api/dir/search/top (ranked, truncated — the chat @ menu) ──────────────
+
+func decodeTopSearch(t *testing.T, w *httptest.ResponseRecorder) DirSearchTopResponse {
+	t.Helper()
+	var resp DirSearchTopResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal top search response: %v; body: %s", err, w.Body.String())
+	}
+	return resp
+}
+
+func TestDirSearchTop_RanksBeforeTruncating(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Walk order is lexical, so "aaainput.go" is visited before "src/input.go".
+	// A first-N implementation would return the worse match; ranking must not.
+	createTestFile(t, env.ProjectDir, "aaainput.go", "package main")
+	createTestFile(t, env.ProjectDir, "src/input.go", "package src")
+	createTestFile(t, env.ProjectDir, "src/main.go", "package src")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search/top?q=input&limit=1", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearchTop, req)
+
+	assertOK(t, w)
+	resp := decodeTopSearch(t, w)
+	require.Len(t, resp.Items, 1)
+	if resp.Items[0].Name != "input.go" {
+		t.Fatalf("expected the prefix match input.go to rank first, got %q", resp.Items[0].Name)
+	}
+	if resp.Items[0].Path != "src/input.go" {
+		t.Errorf("expected project-relative path, got %q", resp.Items[0].Path)
+	}
+	// Total is the pre-limit match count, so callers can tell "all shown" from
+	// "there are more".
+	if resp.Total != 2 {
+		t.Errorf("expected total 2, got %d", resp.Total)
+	}
+}
+
+func TestDirSearchTop_DefaultLimitIsSmall(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for i := range 12 {
+		createTestFile(t, env.ProjectDir, filepath.Join("src", "file"+strconv.Itoa(i)+".go"), "package src")
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search/top?q=file", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearchTop, req)
+
+	assertOK(t, w)
+	resp := decodeTopSearch(t, w)
+	if len(resp.Items) != defaultTopSearchLimit {
+		t.Errorf("expected %d items, got %d", defaultTopSearchLimit, len(resp.Items))
+	}
+	if resp.Total != 12 {
+		t.Errorf("expected total 12, got %d", resp.Total)
+	}
+}
+
+func TestDirSearchTop_ClampsLimit(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for i := range maxTopSearchLimit + 5 {
+		createTestFile(t, env.ProjectDir, filepath.Join("src", "file"+strconv.Itoa(i)+".go"), "package src")
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search/top?q=file&limit=9999", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearchTop, req)
+
+	assertOK(t, w)
+	resp := decodeTopSearch(t, w)
+	if len(resp.Items) != maxTopSearchLimit {
+		t.Errorf("expected the limit to clamp to %d, got %d", maxTopSearchLimit, len(resp.Items))
+	}
+}
+
+func TestDirSearchTop_IncludesDirectories(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "chatnotes/readme.md", "# notes")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search/top?q=chat", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearchTop, req)
+
+	assertOK(t, w)
+	resp := decodeTopSearch(t, w)
+	require.Len(t, resp.Items, 1)
+	if resp.Items[0].Type != entryTypeDir {
+		t.Errorf("expected the directory to be typed dir, got %q", resp.Items[0].Type)
+	}
+}
+
+func TestDirSearchTop_MissingQuery(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search/top?q=", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearchTop, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestDirSearchTop_NoProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	_ = env
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search/top?q=main", nil)
+	w := callHandler(DirSearchTop, req)
+
+	if w.Code != http.StatusForbidden && w.Code != http.StatusBadRequest {
+		t.Errorf("expected 403 or 400, got %d", w.Code)
 	}
 }

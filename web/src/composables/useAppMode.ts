@@ -12,7 +12,6 @@ const isAppMode = ref(false)
 // would make notifications impossible to deliver.
 const isDesktopApp = ref(false)
 const isHarmonyApp = ref(false)
-let initialized = false
 
 /**
  * The root attribute that switches on the **Android WebView** rendering
@@ -42,26 +41,41 @@ let initialized = false
 export const WEBVIEW_MODE_ATTR = 'data-webview-mode'
 
 /**
+ * Re-reads the host axes from the native bridge.
+ *
+ * Deliberately NOT one-shot: the bridge is installed by the host at document
+ * start, but a page that evaluates before that injection (or a host that adds
+ * it later) would otherwise latch "web" for the rest of the session, and every
+ * consumer — Android CSS compensations, HarmonyOS layout, background policy —
+ * would be wrong until a reload. Re-reading costs a few synchronous bridge
+ * calls, and the refs only notify when a value actually changed.
+ */
+function readHostAxes() {
+  try {
+    if (window !== window.top) return
+    isAppMode.value = isNativeApp()
+    isDesktopApp.value = isAppMode.value && detectDesktopApp()
+    isHarmonyApp.value = isAppMode.value && getNativeHostPlatform() === 'harmonyos'
+  } catch {
+    // window.top access may throw in cross-origin iframe — treat as web mode
+  }
+  // Android WebView ONLY. See WEBVIEW_MODE_ATTR for why the desktop shell must
+  // not get the attribute despite reporting isNativeApp() === true. Kept in
+  // sync with the axes (not set-once) so a bridge that appears late also gets
+  // the attribute, and a non-Android host never inherits a stale one.
+  if (typeof document === 'undefined') return
+  const androidWebview = isAppMode.value && !isDesktopApp.value && !isHarmonyApp.value
+  const hasAttr = document.documentElement.hasAttribute(WEBVIEW_MODE_ATTR)
+  if (androidWebview && !hasAttr) document.documentElement.setAttribute(WEBVIEW_MODE_ATTR, '')
+  else if (!androidWebview && hasAttr) document.documentElement.removeAttribute(WEBVIEW_MODE_ATTR)
+}
+
+/**
  * Detects if the app is running inside a native host (top-level frame).
  * Top-frame check is critical: a child iframe inherits the bridge but must run
  * in web mode (no port forward button, no native auto-login, etc.).
  */
 export function useAppMode() {
-  if (!initialized) {
-    initialized = true
-    try {
-      if (window !== window.top) return { isAppMode, isDesktopApp, isHarmonyApp }
-      isAppMode.value = isNativeApp()
-      isDesktopApp.value = isAppMode.value && detectDesktopApp()
-      isHarmonyApp.value = isAppMode.value && getNativeHostPlatform() === 'harmonyos'
-    } catch {
-      // window.top access may throw in cross-origin iframe — treat as web mode
-    }
-    // Android WebView ONLY. See WEBVIEW_MODE_ATTR for why the desktop shell
-    // must not get the attribute despite reporting isNativeApp() === true.
-    if (isAppMode.value && !isDesktopApp.value && !isHarmonyApp.value) {
-      document.documentElement.setAttribute(WEBVIEW_MODE_ATTR, '')
-    }
-  }
+  readHostAxes()
   return { isAppMode, isDesktopApp, isHarmonyApp }
 }

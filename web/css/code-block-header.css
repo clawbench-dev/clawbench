@@ -126,227 +126,6 @@
     overflow-wrap: break-word;
 }
 
-/* ==========================================================================
-   Table Block Header Styles
-   Lightweight header bar above markdown tables showing label + copy/wrap buttons.
-
-   Structure:
-   <div class="table-block-wrapper">
-     <div class="table-block-header">
-       <span class="table-block-label">Table</span>
-       <span class="table-block-header-actions">
-         <button class="table-block-copy-btn" data-action="copy">...</button>
-         <button class="table-block-wrap-btn" data-action="wrap">...</button>
-       </span>
-     </div>
-     <div class="table-wrap">
-       <table>...</table>
-     </div>
-   </div>
-   ========================================================================== */
-
-/* ─── Wrapper: contains header + table-wrap ─── */
-.table-block-wrapper {
-    position: relative;
-    margin: 0.75em 0;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    overflow: hidden;
-    width: fit-content;
-    max-width: 100%;
-}
-
-/* ─── Header bar ─── */
-.table-block-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--space-1) var(--space-4);
-    background: var(--code-bg);
-    border-bottom: 1px solid var(--border-color);
-    font-size: var(--font-size-xs);
-    line-height: var(--line-height-snug);
-    user-select: none;
-    min-height: calc(22 * var(--dp));
-}
-
-/* ─── Label ─── */
-.table-block-label {
-    color: var(--text-muted);
-    font-weight: var(--font-weight-medium);
-    text-transform: lowercase;
-    font-family: var(--font-mono);
-}
-
-/* ─── Actions group (right side) ─── */
-.table-block-header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-}
-
-/* ─── Header buttons: copy + wrap toggle + landscape view ─── */
-.table-block-copy-btn,
-.table-block-wrap-btn,
-.table-block-landscape-btn,
-.table-block-attach-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: calc(22 * var(--dp));
-    height: calc(22 * var(--dp));
-    border: none;
-    border-radius: var(--radius-xs);
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0;
-    opacity: var(--opacity-muted);
-    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
-    outline: none;
-    box-shadow: none;
-}
-
-.table-block-copy-btn:hover,
-.table-block-wrap-btn:hover,
-.table-block-landscape-btn:hover,
-.table-block-attach-btn:hover {
-    opacity: 1;
-    color: var(--text-secondary);
-    background: var(--bg-tertiary);
-}
-
-.table-block-copy-btn:active,
-.table-block-wrap-btn:active,
-.table-block-landscape-btn:active,
-.table-block-attach-btn:active {
-    background: var(--border-color);
-}
-
-/* ─── Active wrap state ─── */
-.table-block-wrap-btn.is-wrapped {
-    opacity: var(--opacity-hover);
-    color: var(--accent-color);
-}
-
-.table-block-wrap-btn.is-wrapped:hover {
-    opacity: 1;
-}
-
-/* ─── Copied state ───
-   The trigger's own state is in css/copy-button.css (it must stay auto-width:
-   it carries a chevron next to the glyph). */
-
-/* ─── Copy dropdown trigger (copy icon + chevron) ─── */
-.table-block-copy-dropdown {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-}
-
-.table-block-copy-btn {
-    gap: 1px;
-    width: auto;
-    padding: 0 calc(3 * var(--dp));
-}
-
-.table-block-copy-btn svg:last-child {
-    opacity: var(--opacity-soft);
-}
-
-.table-block-copy-btn[aria-expanded="true"] {
-    opacity: 1;
-    color: var(--accent-color);
-    background: var(--bg-tertiary);
-}
-
-/* ─── Copy dropdown menu ───
-   `position: fixed`, NOT absolute: the menu is taller than a 1–2 row table, and
-   both `.table-block-wrapper` and the chat bubble (`.msg-card`) clip overflow —
-   an absolutely-positioned menu had its third item (Copy TSV) cut off on short
-   tables. Fixed escapes the clip chain; the opening click positions it against
-   the trigger (see positionTableMenu in useCodeBlockHeader.ts). No top/right
-   here — the inline style is authoritative. */
-.table-block-copy-menu {
-    position: fixed;
-    z-index: 100;
-    min-width: calc(140 * var(--dp));
-    padding: var(--space-2) 0;
-    background: var(--code-bg);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md, 6px);
-    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.2);
-    overflow: hidden;
-}
-
-.table-block-copy-menu-item {
-    display: block;
-    width: 100%;
-    padding: calc(7 * var(--dp)) var(--space-6);
-    border: none;
-    background: none;
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-    text-align: left;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.table-block-copy-menu-item:hover {
-    background: var(--bg-tertiary);
-}
-
-/* The menu item's tint comes from css/copy-button.css (it is listed there with
-   the other copy buttons). Its label stays put — the text IS the format
-   identity — so only the weight bump belongs here. */
-.table-block-copy-menu-item.is-copied {
-    font-weight: var(--font-weight-medium);
-}
-
-/* ─── Table-wrap inside wrapper ─── */
-.table-block-wrapper .table-wrap {
-    margin: 0;
-    border-radius: 0;
-    border: none;
-}
-
-/* ─── Default: word-wrap (auto line-wrap) for markdown tables ─── */
-.table-block-wrapper .table-wrap {
-    overflow-x: hidden;
-}
-
-.table-block-wrapper table {
-    display: table !important;     /* override display:block from ChatMessageItem */
-    table-layout: auto !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-}
-
-.table-block-wrapper th,
-.table-block-wrapper td {
-    white-space: normal !important;  /* override white-space:nowrap from ChatMessageItem */
-    word-break: break-word !important;
-}
-
-/* ─── No-wrap mode: horizontal scroll (toggled off) ─── */
-.table-block-wrapper.no-wrap .table-wrap {
-    overflow-x: auto !important;
-}
-
-.table-block-wrapper.no-wrap table {
-    display: block !important;
-    table-layout: auto !important;
-    max-width: none !important;
-    width: max-content !important;
-}
-
-.table-block-wrapper.no-wrap th,
-.table-block-wrapper.no-wrap td {
-    white-space: nowrap !important;
-    word-break: normal !important;
-    overflow-wrap: normal !important;
-}
-
-
 /* ─── Attach-to-chat button: file-preview only ───
    The header annotator runs for chat too, but a code/table block in a chat
    message has no markdown file to reference. Hide the paperclip everywhere by
@@ -383,20 +162,10 @@
    scoped rules never match it. See design-guide 红线 1.
    ========================================================================== */
 
-/* ─── Toolbar button: touch / narrow only ───
-   On a mouse+keyboard desktop the block is already readable in place, so the
-   extra button only crowds the header. */
-.table-block-landscape-btn,
-.code-block-landscape-btn {
-    display: none;
-}
-
-@media (pointer: coarse), (max-width: 900px) {
-    .table-block-landscape-btn,
-    .code-block-landscape-btn {
-        display: inline-flex;
-    }
-}
+/* ─── Toolbar button: 全平台可见 ───
+   以前只在触屏/窄屏出现（桌面觉得“块本来就看得清”），但桌面也需要把表格/
+   代码块放到整屏看，尤其是宽表；显隐不再按指针类型分。按钮几何在
+   code-block-header.css（代码块）与 table.css（表格）里，默认就是 inline-flex。 */
 
 /* ─── Overlay ───
    `--z-sheet`, NOT `--z-lightbox`: the row viewer opened from inside must paint
@@ -464,15 +233,21 @@
     margin: 0 auto;
 }
 
-/* Inside the overlay this slot IS the close button, so it must stay visible even
-   if the viewport grew past the breakpoint after the overlay opened. */
-.block-landscape .table-block-landscape-btn,
-.block-landscape .code-block-landscape-btn {
-    display: inline-flex;
-}
-
 /* The paperclip attaches the markdown FILE to chat. The clone has no file
    identity (no `data-file-path` ancestor), so it would be an inert button. */
 .block-landscape .table-block-header .table-block-attach-btn {
     display: none;
+}
+
+/* 表格本体（含 .is-data-table 的覆盖）的样式统一在 css/table.css。 */
+
+/* 横屏浮层里的数据表：克隆出来的 DOM 没有 Vue 响应，工具条只会是摆设，
+   直接藏掉；滚动高度交还给浮层自己。 */
+.block-landscape .dt-bar {
+    display: none;
+}
+
+.block-landscape .dt-scroll {
+    max-height: none !important;
+    height: 100%;
 }

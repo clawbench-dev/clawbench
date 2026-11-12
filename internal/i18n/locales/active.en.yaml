@@ -34,6 +34,10 @@ FileTooLarge: File too large
 TextTooLong: Text too long, max {{.MaxChars}} characters
 SummarizeFailed: Summarization failed, please retry later
 SynthesizeFailed: Speech synthesis failed, please retry later
+# Sample text the TTS preview endpoint speaks when the client sends none. It is
+# synthesized audio content, not UI copy — it only has to be speakable, so it is
+# still localized (the voice should read the user's language).
+TTSPreviewDefaultSample: Hello, this is a speech synthesis test
 TTSSpeakerSaysPrefix: "{{.Name}} says: "
 BackendCreateFailed: "Failed to create AI backend: {{.Error}}"
 StreamStartFailed: "Failed to start streaming: {{.Error}}"
@@ -409,6 +413,7 @@ ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
 ForgeDisabled: the GitHub/GitLab integration is disabled
 PortForwardUnavailable: port forwarding is not available
+TunnelTransportDisabled: the server uses the SSH tunnel, so the HTTP/2 tunnel is disabled
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1
 UsageMeterOverTitle: Usage above plan

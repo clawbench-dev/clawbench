@@ -155,17 +155,17 @@
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
         <div class="attach-menu-wrapper" ref="attachMenuRef">
-          <button v-if="voiceState === 'recording' || voiceState === 'transcribing'" class="chat-attach-btn voice-rec-btn" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" disabled :title="voiceState === 'recording' ? t('chat.voice.recording') : t('chat.voice.transcribing')">
-            <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-            <LoadingIndicator v-else class="attach-btn-spinner" size="sm" inline />
-          </button>
-          <button v-else class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
+          <!-- Always the paperclip. Voice status now lives in the global pill
+               above the composer; swapping this button for a waveform made the
+               attach action vanish exactly when the user was mid-dictation. -->
+          <button class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
             <Paperclip :size="15" />
           </button>
         </div>
         <textarea class="chat-textarea"
           :key="inputEpoch"
           ref="textareaRef"
+          data-voice-chat-input
           v-model="inputText"
           :disabled="inputDisabled"
           :placeholder="dynamicPlaceholder"
@@ -410,6 +410,7 @@ import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteReco
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
+import { useAtFileSearch } from '@/composables/useAtFileSearch'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import ActionBar from '@/components/common/ActionBar.vue'
@@ -721,6 +722,26 @@ const props = defineProps({
   freeDialogCanInterrupt: { type: Boolean, default: false },
 })
 
+/**
+ * Keep the tail of the transcript in view.
+ *
+ * The strip is capped at two lines (see `.free-dialog-text`), so a long spoken
+ * sentence overflows — and it overflows at the *bottom*, which is where the
+ * words that just arrived are. Without this the user watches the oldest part
+ * of the sentence and never sees what the microphone heard a moment ago.
+ *
+ * Looked up from the root element instead of holding a template ref: a ref
+ * that only appears as a string `ref="…"` is not part of the setup state, so
+ * `ref.value` would stay `null` forever (the element lands in `$refs` only).
+ */
+function scrollFreeDialogTextToEnd() {
+  const el = rootRef.value?.querySelector('.free-dialog-text')
+  if (el) el.scrollTop = el.scrollHeight
+}
+watch(() => props.freeDialogTranscript, () => {
+  void nextTick(scrollFreeDialogTextToEnd)
+})
+
 const emit = defineEmits([
   'send',
   'btw',
@@ -944,7 +965,7 @@ watch(inputText, (text) => {
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
-const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, start: startVoice, stop: stopVoice, setStartText: setVoiceStartText, shortcutKey: voiceShortcutKey } = voiceInput
+const { toggleAt: toggleVoiceAt } = voiceInput
 
 const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
@@ -975,10 +996,9 @@ function onSendPointerDown() {
       // the box the click is a real send, and any transcript lands in the input
       // afterwards (see useVoiceInput.start's `prefix`).
       voiceJustRecorded = !hasInputContent.value
-      // Long-press starts dictation regardless of what is already typed; the
-      // recognized text is appended to the existing content rather than
-      // replacing it (see useVoiceInput.start's `prefix`).
-      void toggleVoice(inputText.value)
+      // Long-press starts dictation into this textarea at the caret; whatever
+      // is already typed around it is left alone.
+      void toggleVoiceAt(textareaRef.value)
     }
   }, VOICE_LONG_PRESS_MS)
 }
@@ -988,43 +1008,14 @@ function onSendPointerUp() {
   if (voicePressTimer) { clearTimeout(voicePressTimer); voicePressTimer = null }
   if (voiceLongPressActive) {
     voiceLongPressActive = false
-    void toggleVoice()
+    void toggleVoiceAt(textareaRef.value)
   }
 }
 
 // Sync recognized voice text into the input box (never auto-sends).
-watch(voiceInputText, (val) => {
-  if (val && val !== inputText.value) {
-    inputText.value = val
-  }
-})
-
-function onVoiceShortcutDown(e) {
-  // NOTE: Only the hardcoded F9 shortcut is currently supported.
-  // stt.shortcut_key may hold other values; matching those is out of scope
-  // and would require a lookup table of key/alt/ctrl/meta/shift combos.
-  const sc = voiceShortcutKey()
-  if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.repeat) {
-    e.preventDefault()
-    startVoice(inputText.value)
-  }
-}
-
-function onVoiceShortcutUp(e) {
-  const sc = voiceShortcutKey()
-  if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-    e.preventDefault()
-    stopVoice()
-  }
-}
-
-// Safety net: if the window loses focus while F9 is held (keyup may never fire),
-// end the recording so it doesn't get stuck.
-function onVoiceBlurStop() {
-  if (voiceState.value === 'recording') {
-    stopVoice()
-  }
-}
+// The transcript is written straight into the textarea at the caret (see
+// utils/voiceTarget), so v-model picks it up through the dispatched `input`
+// event. Nothing to mirror here — a watch would fight the caret arithmetic.
 
 const rootRef = ref(null)
 const textareaRef = ref(null)
@@ -1251,6 +1242,7 @@ function ensureSkillsMenuLoaded() {
 const recentFiles = useRecentFiles()
 const { recentShares, fetchRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads } = useUploadRecent()
+const atSearch = useAtFileSearch()
 const fileSourcesLoaded = ref(false)
 
 /**
@@ -1271,10 +1263,18 @@ function currentCaret() {
 // (otherwise the candidate list would stay filtered by the previous query).
 const caretVersion = ref(0)
 
-const fileMenuItems = computed(() => {
-  // Establish the reactive dependency on the caret position.
+/**
+ * The live `@` query ('' when there is no trigger or the trigger is bare `@`).
+ * Shared by the candidate list and the project-wide search watcher so both read
+ * the same trigger — parsing twice invites them to disagree after a caret move.
+ */
+const atQueryText = computed(() => {
   void caretVersion.value
-  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+  return parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+})
+
+const fileMenuItems = computed(() => {
+  const query = atQueryText.value
 
   // Group members come FIRST: in a group chat an @ is usually about naming a
   // speaker, and the roster is short. Only active members are listed.
@@ -1317,6 +1317,11 @@ const fileMenuItems = computed(() => {
     recentRef: recentReferencedFiles.value.map(r => ({ path: r.path, isDir: r.isDir })),
     recentUpload: recentUploads.value.map(u => ({ path: u.path })),
     recentShare: recentShares.value.map(s => ({ path: s.path })),
+    // Project-wide search hits — only for the query they were fetched for, so a
+    // fresh bare "@" (or a different query) never shows stale unrelated files.
+    global: query && atSearch.hitsQuery.value === query
+      ? atSearch.hits.value.map(h => ({ path: h.path, isDir: h.isDir }))
+      : [],
   }
   const attached = props.attachedFiles.map(f => f.path)
   // Every file row shows its type icon (the shared menu renders it when present).
@@ -1357,6 +1362,24 @@ const fileMenu = useCompletionMenu({
   // member selection ALSO just removes the trigger — the card is the payload.
   buildReplacement: () => '',
   applyText: applyCompletionText,
+})
+
+// Project-wide search follows the @ query. Typing replaces the pending search
+// (debounced inside the composable); clearing the query drops the hits so a
+// fresh bare "@" never shows results from an earlier word.
+watch(atQueryText, (q) => {
+  if (historyNavSuppressMenu) return
+  if (q) atSearch.schedule(q)
+  else atSearch.clear()
+})
+
+// Results land after the debounce. Refresh so the popup opens on them (or grows
+// a list the local sources already opened). Gated on focus for the same reason
+// as the share/upload fetch below: a late refresh would resurrect a menu the
+// user dismissed by clicking away.
+watch(atSearch.hits, () => {
+  if (historyNavSuppressMenu) return
+  if (isTextareaFocused.value) fileMenu.refresh()
 })
 
 // Lazily load the share/upload sources the first time an @ trigger appears,
@@ -2183,11 +2206,10 @@ function handleWindowPaste(e) {
 
 function clearInput() {
   inputText.value = ''
-  // A dictation still in flight captured the text we just sent as its start
-  // text; re-point it at the now-empty box. Otherwise the transcript that
-  // arrives after the send rebuilds "sent text + transcript" and drops it back
-  // into the box — the message looks unsent and a second tap sends it twice.
-  setVoiceStartText('')
+  // An in-flight dictation writes into this textarea by caret index. Clearing
+  // the value is enough: the next partial notices the field no longer holds
+  // what it wrote and re-anchors to the (now empty) box, so the transcript
+  // lands alone instead of resurrecting the sent message.
   // Also clear the draft cache for current session so it doesn't linger
   if (props.currentSessionId) {
     deleteChatDraft(props.currentSessionId)
@@ -2201,10 +2223,8 @@ function clearInput() {
  *  must not silently disappear. */
 function restoreInput(text) {
   inputText.value = text ?? ''
-  // Keep the in-flight dictation's start text in step with the box: a send that
-  // failed cleared it (clearInput), so without this the transcript would
-  // replace the restored message instead of appending to it.
-  setVoiceStartText(text ?? '')
+  // Same re-anchor rule as clearInput: the dictation's next partial sees the
+  // restored value and continues from the caret instead of overwriting it.
   if (props.currentSessionId && text) {
     setChatDraft(props.currentSessionId, text)
   }
@@ -2337,9 +2357,6 @@ onMounted(() => {
   fetchItems()
   startPlaceholderRotation()
   window.addEventListener('paste', handleWindowPaste, true)
-  window.addEventListener('keydown', onVoiceShortcutDown)
-  window.addEventListener('keyup', onVoiceShortcutUp)
-  window.addEventListener('blur', onVoiceBlurStop)
   window.addEventListener('clawbench-recommendation', onRecommendationEvent)
   // Caret moves (clicks / arrow keys) can enter or leave an @ trigger without
   // changing the text, so the @ menu must re-evaluate on selection changes.
@@ -2360,9 +2377,6 @@ onBeforeUnmount(() => {
   }
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
-  window.removeEventListener('keydown', onVoiceShortcutDown)
-  window.removeEventListener('keyup', onVoiceShortcutUp)
-  window.removeEventListener('blur', onVoiceBlurStop)
   window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
   document.removeEventListener('selectionchange', onTextareaSelectionChange)
   stopMachine.destroy()
@@ -2374,6 +2388,7 @@ onBeforeUnmount(() => {
   endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
   stopPlaceholderRotation()
+  atSearch.clear()
 })
 
 // Reset stop confirmation state when loading ends (AI finished or cancelled)
@@ -2979,9 +2994,17 @@ defineExpose({
 .free-dialog-text {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Two lines max, then scroll. A single ellipsised line would cut off exactly
+     the words that just arrived; letting it grow unbounded would push the
+     composer up by however long the sentence is. The script keeps the newest
+     line at the bottom. */
+  max-height: calc(2 * var(--font-size-sm) * var(--line-height-tight));
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  scrollbar-width: none;
+}
+.free-dialog-text::-webkit-scrollbar {
+  display: none;
 }
 /* Nothing recognised yet: this is a hint, not content — muted so it is not
    mistaken for what the microphone heard. */
@@ -3416,47 +3439,6 @@ defineExpose({
 @keyframes stop-heartbeat {
   0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.5); }
   50%      { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
-}
-
-/* Voice recording indicator — red circle with animation, shown in the attach
-   slot. Geometry (26px square) comes from the base .chat-attach-btn rule; only
-   the shape and colour differ. */
-.chat-attach-btn.voice-rec-btn {
-  border-radius: 50%;
-  background: #ff3b30;
-  color: #fff;
-}
-.chat-attach-btn.voice-rec-btn:disabled {
-  opacity: 1;
-  cursor: default;
-}
-.chat-attach-btn.voice-rec-btn.transcribing {
-  background: var(--accent-color, #0066cc);
-}
-
-/* Audio-wave animation: animated vertical bars */
-.voice-wave {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: calc(14 * var(--dp));
-}
-.voice-wave i {
-  display: block;
-  width: calc(2 * var(--dp));
-  height: calc(6 * var(--dp));
-  border-radius: 1px;
-  background: currentColor;
-  animation: voice-wave 1s ease-in-out infinite;
-}
-.voice-wave i:nth-child(1) { animation-delay: 0s; }
-.voice-wave i:nth-child(2) { animation-delay: 0.1s; }
-.voice-wave i:nth-child(3) { animation-delay: 0.2s; }
-.voice-wave i:nth-child(4) { animation-delay: 0.3s; }
-.voice-wave i:nth-child(5) { animation-delay: 0.4s; }
-@keyframes voice-wave {
-  0%, 100% { height: 4px; }
-  50% { height: 13px; }
 }
 
 

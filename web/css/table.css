@@ -1,0 +1,702 @@
+/* ==========================================================================
+   Table styles — 表格样式的唯一归属地
+   ==========================================================================
+
+   这里的「表格」指三件事，全部集中在本文件，别再去 markdown-common.css /
+   content.css / code-block-header.css / ChatMessageItem.vue / DataTable.vue
+   里加表格的边框、底色、内外边距：
+
+     1. 外壳        .table-block-wrapper / .table-block-header（表头栏）
+     2. 普通表      markdown 表格与聊天里的「简单表」——每格四边 1px
+     3. 数据表      .dt-grid（DataTable 的网格）——每格都有边框的完整网格
+
+   文件内的顺序有意义：第 3 节在最后，靠「同特异性后来者胜」压过第 2 节的
+   通用 th/td 规则；数据表还显式写了 `border: 0`，因为聊天/预览的全局规则会给
+   每个格子加上四边边框，只写 border-bottom 的话另外三边会漏进来。
+
+   表头栏里的附件按钮（只在文件预览里出现）与横屏浮层与代码块共用，那两段
+   留在 code-block-header.css。
+   ========================================================================== */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1. 外壳
+   ========================================================================== */
+
+/* ─── Wrapper: contains header + table-wrap ─── */
+.table-block-wrapper {
+    position: relative;
+    margin: 0.75em 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    overflow: hidden;
+    width: fit-content;
+    max-width: 100%;
+}
+
+/* ─── Header bar ─── */
+.table-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-1) var(--space-4);
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border-color);
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-snug);
+    user-select: none;
+    min-height: calc(22 * var(--dp));
+}
+
+/* ─── Label ─── */
+.table-block-label {
+    color: var(--text-muted);
+    font-weight: var(--font-weight-medium);
+    text-transform: lowercase;
+    font-family: var(--font-mono);
+}
+
+/* ─── Actions group (right side) ─── */
+.table-block-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+/* ─── Copy dropdown trigger (copy icon + chevron) ─── */
+.table-block-copy-dropdown {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+/* ─── Header buttons: copy + wrap toggle + landscape view ─── */
+.table-block-copy-btn,
+.table-block-wrap-btn,
+.table-block-landscape-btn,
+.table-block-attach-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(22 * var(--dp));
+    height: calc(22 * var(--dp));
+    border: none;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
+    outline: none;
+    box-shadow: none;
+}
+
+.table-block-copy-btn:hover,
+.table-block-wrap-btn:hover,
+.table-block-landscape-btn:hover,
+.table-block-attach-btn:hover {
+    opacity: 1;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+}
+
+.table-block-copy-btn:active,
+.table-block-wrap-btn:active,
+.table-block-landscape-btn:active,
+.table-block-attach-btn:active {
+    background: var(--border-color);
+}
+
+/* ─── Active wrap state ─── */
+.table-block-wrap-btn.is-wrapped {
+    opacity: var(--opacity-hover);
+    color: var(--accent-color);
+}
+
+.table-block-wrap-btn.is-wrapped:hover {
+    opacity: 1;
+}
+
+/* ─── Copied state ───
+   The trigger's own state is in css/copy-button.css (it must stay auto-width:
+   it carries a chevron next to the glyph). */
+
+.table-block-copy-btn {
+    gap: 1px;
+    width: auto;
+    padding: 0 calc(3 * var(--dp));
+}
+
+.table-block-copy-btn svg:last-child {
+    opacity: var(--opacity-soft);
+}
+
+.table-block-copy-btn[aria-expanded="true"] {
+    opacity: 1;
+    color: var(--accent-color);
+    background: var(--bg-tertiary);
+}
+
+/* ─── Copy dropdown menu ───
+   `position: fixed`, NOT absolute: the menu is taller than a 1–2 row table, and
+   both `.table-block-wrapper` and the chat bubble (`.msg-card`) clip overflow —
+   an absolutely-positioned menu had its third item (Copy TSV) cut off on short
+   tables. Fixed escapes the clip chain; the opening click positions it against
+   the trigger (see positionTableMenu in useCodeBlockHeader.ts). No top/right
+   here — the inline style is authoritative. */
+.table-block-copy-menu {
+    position: fixed;
+    z-index: 100;
+    min-width: calc(140 * var(--dp));
+    padding: var(--space-2) 0;
+    background: var(--code-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md, 6px);
+    box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+}
+
+.table-block-copy-menu-item {
+    display: block;
+    width: 100%;
+    padding: calc(7 * var(--dp)) var(--space-6);
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.table-block-copy-menu-item:hover {
+    background: var(--bg-tertiary);
+}
+
+/* The menu item's tint comes from css/copy-button.css (it is listed there with
+   the other copy buttons). Its label stays put — the text IS the format
+   identity — so only the weight bump belongs here. */
+.table-block-copy-menu-item.is-copied {
+    font-weight: var(--font-weight-medium);
+}
+
+/* ─── Table-wrap inside wrapper ─── */
+.table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
+    border: none;
+    overflow-x: hidden;   /* 默认自动换行 */
+}
+
+.table-block-wrapper table {
+    display: table !important;     /* override display:block from ChatMessageItem */
+    table-layout: auto !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+}
+
+.table-block-wrapper th,
+.table-block-wrapper td {
+    white-space: normal !important;  /* override white-space:nowrap from ChatMessageItem */
+    word-break: break-word !important;
+}
+
+/* ─── No-wrap mode: horizontal scroll (toggled off) ─── */
+.table-block-wrapper.no-wrap .table-wrap {
+    overflow-x: auto !important;
+}
+
+.table-block-wrapper.no-wrap table {
+    display: block !important;
+    table-layout: auto !important;
+    max-width: none !important;
+    width: max-content !important;
+}
+
+.table-block-wrapper.no-wrap th,
+.table-block-wrapper.no-wrap td {
+    white-space: nowrap !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+}
+
+/* ─── 数据表：表格铺满、格子不换行、滚动交给组件自己 ─── */
+.table-block-wrapper.is-data-table {
+    width: 100%;
+}
+
+.table-block-wrapper.is-data-table .table-wrap {
+    overflow: visible !important;
+}
+
+.table-block-wrapper.is-data-table table.dt-grid,
+.table-block-wrapper.no-wrap.is-data-table table.dt-grid {
+    display: table !important;
+    table-layout: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+}
+
+.table-block-wrapper.is-data-table .dt.is-data th,
+.table-block-wrapper.is-data-table .dt.is-data td {
+    white-space: nowrap !important;
+    word-break: normal !important;
+}
+
+/* ─── 滚动容器（普通表 / 文件预览） ─── */
+.markdown-body .table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    margin: 1em 0;
+}
+
+.markdown-body .table-block-wrapper .table-wrap {
+    margin: 0;
+}
+
+.markdown-body .table-wrap table {
+    margin: 0;
+}
+
+/* Tables NOT inside a table-block-wrapper keep max-content width for scroll */
+.markdown-body .table-wrap:not(.table-block-wrapper .table-wrap) table {
+    width: max-content;
+}
+
+.table-row-value .table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
+    border: none;
+}
+
+/* 聊天气泡里的滚动容器（不在 .table-block-wrapper 里的表也要能横向滚） */
+.chat-message.user .table-wrap,
+.chat-message.assistant .table-wrap {
+    overflow-x: auto;
+    border: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    margin: 0.75em 0;
+}
+
+/* 外壳已经带了外边距与圆角，里面的 .table-wrap 不能再叠一层 */
+.chat-message.user .table-block-wrapper .table-wrap,
+.chat-message.assistant .table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. 普通表（markdown 表格 / 简单表）
+   ========================================================================== */
+
+.markdown-body table,
+.chat-message.assistant table {
+    border-collapse: collapse;
+}
+
+.markdown-body table {
+    font-size: var(--font-size-lg);
+}
+
+.markdown-body th,
+.markdown-body td,
+.chat-message.assistant th,
+.chat-message.assistant td {
+    padding: var(--space-4) calc(14 * var(--dp));
+    border: 1px solid var(--table-border);
+    text-align: left;
+}
+
+.markdown-body th,
+.chat-message.assistant th {
+    background: var(--bg-tertiary);
+    font-weight: var(--font-weight-semibold);
+}
+
+/* 斑马纹只给普通表：数据表有自己的底色（.dt-grid），`table:not(.dt-grid)`
+   把两者分开，避免要靠源码顺序去抢同特异性的 background。 */
+.markdown-body table:not(.dt-grid) tr:nth-child(odd) td,
+.chat-message.assistant table:not(.dt-grid) tr:nth-child(odd) td {
+    background: var(--bg-primary);
+}
+
+.markdown-body table:not(.dt-grid) tr:nth-child(even) td,
+.chat-message.assistant table:not(.dt-grid) tr:nth-child(even) td {
+    background: var(--bg-secondary);
+}
+
+/* ─── 用户气泡：蓝色底上的半透明白 ─── */
+.chat-message.user table,
+.chat-message.assistant table {
+    display: block;
+    margin: 0;
+    border-collapse: collapse;
+}
+
+.chat-message.user th {
+    font-size: var(--font-size-md);
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.chat-message.user td {
+    white-space: nowrap;
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.assistant th {
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
+}
+
+.chat-message.assistant td {
+    white-space: nowrap;
+}
+
+.chat-message.user .table-block-header {
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-label {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.chat-message.user .table-block-copy-btn,
+.chat-message.user .table-block-wrap-btn,
+.chat-message.user .table-block-landscape-btn {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.chat-message.user .table-block-copy-btn:hover,
+.chat-message.user .table-block-wrap-btn:hover,
+.chat-message.user .table-block-landscape-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-btn:active,
+.chat-message.user .table-block-wrap-btn:active,
+.chat-message.user .table-block-landscape-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-wrap-btn.is-wrapped {
+    color: #ffffff;
+}
+
+.chat-message.user .table-block-copy-btn.is-copied {
+    color: #ffffff;
+}
+
+.chat-message.user .table-block-copy-btn[aria-expanded="true"] {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-menu {
+    background: rgba(0, 0, 0, 0.75);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-copy-menu-item {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.chat-message.user .table-block-copy-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-menu-item.is-copied {
+    color: #ffffff;
+}
+
+.chat-message.user th,
+.chat-message.user td {
+    padding: var(--space-4) calc(14 * var(--dp));
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    text-align: left;
+}
+
+.chat-message.user th {
+    background: rgba(0, 0, 0, 0.15);
+    font-weight: var(--font-weight-semibold);
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.chat-message.user table:not(.dt-grid) tr:nth-child(odd) td {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.chat-message.user table:not(.dt-grid) tr:nth-child(even) td {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+/* ─── 行点击展开（TableRowModal） ─── */
+.markdown-body tbody tr[data-row-idx],
+.chat-message.assistant tbody tr[data-row-idx],
+.chat-message.user tbody tr[data-row-idx] {
+    cursor: pointer;
+    transition: background var(--duration-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.markdown-body tbody tr[data-row-idx]:hover,
+.chat-message.assistant tbody tr[data-row-idx]:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+}
+
+.markdown-body tbody tr[data-row-idx]:active,
+.chat-message.assistant tbody tr[data-row-idx]:active {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+}
+
+.chat-message.user tbody tr[data-row-idx]:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-message.user tbody tr[data-row-idx]:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* 行查看弹窗已经是聚焦的单行视图，横屏按钮会在它背后开一层，故隐藏 */
+.table-row-value .table-block-landscape-btn,
+.table-row-value .code-block-landscape-btn {
+    display: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3. 数据表（DataTable 的网格）
+
+   规则放最后：普通表的通用 th/td 与聊天气泡的 th/td 都在上一节，同特异性
+   下后写的这条赢。`border: 0` 是必须的——全局规则给的是四边边框，只写
+   border-bottom 的话左右两条会漏进来。
+
+   网格线只画「右边 + 下边」，第一列补左边、表头补上边：每格四边各画一条的
+   话，相邻两格在 separate 下不会合并，交界处就是 2px（手机上特别明显）。
+   这样拼出来仍然是完整的格子网格，但每条线只有一个像素。
+   ========================================================================== */
+
+/* 选择器带 `.dt` 不是多余的：`.markdown-body table`（0,1,1）比裸 `.dt-grid`
+   （0,1,0）更具体，会把字号抢走——预览里的表格因此从 12px 变成 14px。 */
+.dt .dt-grid {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: var(--font-size-sm);
+}
+
+/* 数据表必须自己声明合并方式：聊天里 `.chat-message.assistant table` 会把整张表
+   改成 collapse，两种上下文就不一致了。 */
+.dt.is-data .dt-grid {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.dt .dt-grid th,
+.dt .dt-grid td {
+    padding: calc(5 * var(--dp)) var(--space-4);
+    border: 0;
+    border-right: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+    background: var(--bg-primary);
+}
+
+/* 左边与上边只补一次，避免和相邻格子的右边/下边叠成 2px。 */
+.dt .dt-grid th:first-child,
+.dt .dt-grid td:first-child {
+    border-left: 1px solid var(--border-color);
+}
+
+.dt .dt-grid thead th {
+    border-top: 1px solid var(--border-color);
+}
+
+.dt.is-data .dt-grid th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding-right: calc(26 * var(--dp));
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+}
+
+.dt.is-data .dt-grid th:hover {
+    background: var(--bg-tertiary);
+}
+
+.dt.is-data .dt-grid td {
+    padding-right: calc(26 * var(--dp));
+}
+
+.dt-th-label {
+    display: inline-block;
+    max-width: calc(200 * var(--dp));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+}
+
+.dt.is-data .dt-grid th.is-sorted {
+    color: var(--text-primary);
+}
+
+/* ─── 每列筛选行 ─── */
+.dt.is-data .dt-grid .dt-filter-cell {
+    position: sticky;
+    top: calc(28 * var(--dp));
+    z-index: 2;
+    height: calc(28 * var(--dp));
+    padding: 0 !important;
+    background: var(--bg-secondary) !important;
+    border: 0;
+    border-right: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.dt.is-data .dt-grid .dt-filter-cell:first-child {
+    border-left: 1px solid var(--border-color);
+}
+
+/* ─── 单元格 ─── */
+.dt .dt-grid td {
+    position: relative;
+    color: var(--text-primary);
+}
+
+.dt.is-data .dt-row:hover td {
+    background: var(--bg-secondary);
+}
+
+.dt-cell {
+    position: relative;
+    z-index: 1;
+    display: block;
+    max-width: calc(320 * var(--dp));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 普通表保持 markdown 表格的老样子：允许换行、宽度跟内容走。
+   `white-space: inherit` 让 td 上的「自动换行」开关继续生效。 */
+.dt:not(.is-data) .dt-cell {
+    display: inline;
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: inherit;
+    word-break: inherit;
+}
+
+.dt-cell-bar {
+    position: absolute;
+    left: 0;
+    top: calc(3 * var(--dp));
+    bottom: calc(3 * var(--dp));
+    z-index: 0;
+    border-radius: 0 calc(3 * var(--dp)) calc(3 * var(--dp)) 0;
+    background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+    pointer-events: none;
+}
+
+.is-numeric {
+    text-align: right;
+}
+
+.is-numeric .dt-cell {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ─── 冻结列 ───
+   分隔线就是格子自己的 border-right，会跟着 sticky 一起走，不需要再叠一层
+   box-shadow（叠上去就是 2px）。这里只负责把背景盖住滚动过去的邻居。 */
+.dt.is-data .dt-grid th.is-frozen,
+.dt.is-data .dt-grid .dt-filter-cell.is-frozen {
+    z-index: 4;
+    background: var(--bg-secondary);
+}
+
+.dt.is-data .dt-grid td.is-frozen {
+    position: sticky;
+    z-index: 3;
+    background: var(--bg-primary);
+}
+
+.dt.is-data .dt-row:hover td.is-frozen {
+    background: var(--bg-secondary);
+}
+
+.dt-empty {
+    padding: calc(30 * var(--dp)) var(--space-6) !important;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    text-align: center;
+}
+
+/* ─── 合计行 ─── */
+.dt .dt-grid tfoot td {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-medium);
+}
+
+/* 合计行自己画了上边线，最后一条数据行就不该再画下边线（两条叠成 2px）。 */
+.dt.is-data .dt-grid.has-total tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+/* ─── 普通表模式 ─── */
+
+/* 普通表是「每格四边各 1px」的完整网格。基础规则用的是 separate（数据表要它
+   才能做粘性表头和冻结列），而 separate 下相邻两格的两条边会并排画出来——
+   1px + 1px = 2px，手机上看着就是一条粗线。普通表没有粘性/冻结需求，直接
+   改成 collapse，让相邻的两条边合成一条。 */
+.dt:not(.is-data) .dt-grid {
+    border-collapse: collapse;
+}
+
+.dt:not(.is-data) .dt-grid th,
+.dt:not(.is-data) .dt-grid td {
+    padding-right: var(--space-4);
+    border: 1px solid var(--border-color);
+    background: transparent;
+}
+
+.dt:not(.is-data) .dt-grid th {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-weight: var(--font-weight-semibold);
+    cursor: default;
+}
+
+/* 简单表的换行开关。聊天里外层 `.table-block-wrapper th/td` 的规则带
+   `!important`，这里必须用更高特异性 + `!important` 才能压过它。 */
+.dt.no-wrap:not(.is-data) .dt-grid th,
+.dt.no-wrap:not(.is-data) .dt-grid td {
+    white-space: nowrap !important;
+}
+
+.dt:not(.is-data) .is-numeric {
+    text-align: left;
+}
+
+.dt:not(.is-data) .is-numeric .dt-cell {
+    font-variant-numeric: normal;
+}
+
+/* 简单表不露合计行与筛选行（只有数据表才有这两块） */
+.dt:not(.is-data) .dt-grid tfoot,
+.dt:not(.is-data) .dt-grid .dt-filter-row {
+    display: none;
+}

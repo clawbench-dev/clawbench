@@ -15,8 +15,10 @@ import DOMPurify from 'dompurify'
  *   3. A CSP meta inside the document blocks every request except inline
  *      styles and (optionally) images, which is what stops tracking pixels.
  *
- * Remote images are OFF by default: a newsletter's tracking pixel reports that
- * the message was opened, and the user never asked to be measured.
+ * Remote images are blocked unless the caller allows them. The reading pane
+ * passes the user's preference (设置 → 邮件 → 邮件阅读, on by default): a
+ * newsletter's tracking pixel reports that the message was opened, so the
+ * decision has to be the user's, made in one place, rather than baked in here.
  */
 
 const FORBID_TAGS = [

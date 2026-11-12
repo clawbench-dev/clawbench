@@ -105,6 +105,68 @@ const REOPEN_DELAY_MS = 250
  */
 const BARGE_ARM_DELAY_MS = 500
 
+/**
+ * How long the capture may go without handing over a single frame before it is
+ * torn down and re-acquired.
+ *
+ * Measured on FRAME FLOW, deliberately never on the level inside the frames.
+ *
+ * An earlier version judged the capture dead when its frames carried no signal
+ * (below 0.0003 RMS, on the assumption that room tone is always at least
+ * 0.0005). That assumption is false on a phone: with noise suppression and echo
+ * cancellation engaged — the shipped defaults — Android hands over EXACT
+ * digital silence whenever the user is not speaking. "Three seconds of zeros"
+ * is therefore what a perfectly healthy microphone looks like in a quiet
+ * moment, and the watchdog tore the capture down mid-conversation twice and
+ * then left the mode with an error toast, about ten seconds after every start
+ * and always right after the user's first sentence had been sent.
+ *
+ * Nothing inside the page can tell "the OS is gating a silent microphone" apart
+ * from "the audio stack is stuck and delivering zeros" — both are frames of
+ * zeros on a live track, and the recogniser cannot help because it receives the
+ * same audio. Ending the mode over that is strictly worse than not detecting
+ * it, so only the provable failure is handled here: a graph that stopped
+ * producing frames at all (a suspended AudioContext, a capture that never
+ * started, a device the OS took away).
+ */
+const DEAD_CAPTURE_MS = 3000
+
+/**
+ * How many re-acquisitions are allowed before the mode gives up.
+ *
+ * A capture that keeps stalling after two fresh `getUserMedia` + AudioContext
+ * pairs is not going to come back from inside the page, and the loop must say
+ * so instead of pretending to listen.
+ *
+ * Only reachable once the capture HAS produced at least one frame: a capture
+ * that never produces one at all is left to the idle-exit timer, because "the
+ * graph has not started yet" is not distinguishable from "it will never start"
+ * at that point.
+ */
+const MAX_CAPTURE_RECOVERIES = 2
+
+/** How often the capture is checked. */
+const CAPTURE_WATCH_TICK_MS = 1000
+
+/**
+ * How many healthy ticks earn back one recovery attempt.
+ *
+ * Without this a capture that flaps (works, dies, works, dies) would re-acquire
+ * forever, each time costing the user the moment it spends without a
+ * microphone. A capture that has been delivering frames for this long is
+ * treated as genuinely fixed.
+ */
+const HEALTHY_TICKS_BEFORE_RESET = 10
+
+/**
+ * How long a stretch of pure digital silence is worth a log line.
+ *
+ * Diagnostic only — nothing is torn down over this (see `DEAD_CAPTURE_MS`). The
+ * two states look identical from inside the page, so the only honest thing to
+ * do is leave a trace that makes the next report diagnosable.
+ */
+const DIGITAL_SILENCE_LOG_MS = 15000
+
 // ── Module-level singleton ───────────────────────────────────────────────
 // One loop per app instance, like useAutoSpeech: the mode is a property of the
 // session being talked to, not of a component that may unmount.
@@ -188,6 +250,34 @@ let reopenTimer: ReturnType<typeof setTimeout> | null = null
 /** Recogniser socket that watches for an interruption (thinking/speaking). */
 let bargeWs: WebSocket | null = null
 let bargeTriggered = false
+/**
+ * When the capture last handed over a frame (epoch ms); 0 until the first one.
+ *
+ * A capture that has not produced a single frame yet is judged by
+ * `captureStartedAt` instead: "still starting up" and "never going to start"
+ * are the same observation until enough time has passed.
+ */
+let lastFrameAt = 0
+/** When the watchdog started observing the current capture graph (epoch ms). */
+let captureStartedAt = 0
+/**
+ * Whether any frame since the last tick carried signal.
+ *
+ * Diagnostic only: a frame that carries no signal is NOT a fault (see
+ * `DEAD_CAPTURE_MS`), it is what a healthy microphone delivers while nobody
+ * talks. It is still worth knowing, because it is what tells "the OS is gating
+ * a silent microphone" apart from "the audio stack is stuck" in a log.
+ */
+let heardSomething = false
+/** When the current stretch of pure silence started (epoch ms); 0 when not in one. */
+let silentSince = 0
+/** Consecutive ticks that did carry signal, for the recovery budget. */
+let healthyTicks = 0
+/** Re-acquisitions used up in this session — see MAX_CAPTURE_RECOVERIES. */
+let captureRecoveries = 0
+/** Set while a re-acquisition is in flight, so ticks cannot stack them. */
+let recoveringCapture = false
+let captureWatchTimer: ReturnType<typeof setInterval> | null = null
 /**
  * How long to wait for the engine's finished sentence after "end".
  *
@@ -370,11 +460,109 @@ function closeBargeSocket() {
   }
 }
 
+/** Stops the capture watchdog and forgets what it had measured. */
+function stopCaptureWatch() {
+  if (captureWatchTimer !== null) {
+    clearInterval(captureWatchTimer)
+    captureWatchTimer = null
+  }
+  lastFrameAt = 0
+  captureStartedAt = 0
+  heardSomething = false
+  silentSince = 0
+}
+
+/**
+ * Watches for a capture that stopped producing frames.
+ *
+ * The failure this exists for: after an interrupt the graph can stall entirely
+ * — the track stays `live`, the recogniser socket stays open, the UI keeps
+ * showing "正在听…", but no frame ever arrives again (the original report was a
+ * stuck Android capture whose every frame was digital zero; that state cannot
+ * be told apart from ordinary quiet, see `DEAD_CAPTURE_MS` for what is and is
+ * not treated as a fault).
+ *
+ * The check is on FRAME FLOW. A stretch of frames that all carry nothing is
+ * logged once per stretch (`DIGITAL_SILENCE_LOG_MS`) but never acted on: with
+ * noise suppression on, a healthy phone delivers exact zeros whenever the user
+ * is not speaking, and the original level-based watchdog killed the mode ten
+ * seconds into every conversation because of it.
+ */
+function startCaptureWatch() {
+  stopCaptureWatch()
+  captureStartedAt = Date.now()
+  captureWatchTimer = setInterval(() => {
+    if (phase.value === 'idle' || recoveringCapture) return
+    if (heardSomething) {
+      heardSomething = false
+      silentSince = 0
+      healthyTicks += 1
+      if (healthyTicks >= HEALTHY_TICKS_BEFORE_RESET) captureRecoveries = 0
+      return
+    }
+    healthyTicks = 0
+    if (silentSince === 0) silentSince = Date.now()
+    if (Date.now() - silentSince >= DIGITAL_SILENCE_LOG_MS) {
+      silentSince = Date.now()
+      // Not a fault — a breadcrumb. If the user reports "it stopped hearing
+      // me", this line is what makes the report diagnosable.
+      appLog.w(TAG, `capture has delivered only digital silence for ${DIGITAL_SILENCE_LOG_MS}ms (not recovering; silence is not a fault)`)
+    }
+    // Measured from the last frame, or from when this graph started when it has
+    // never produced one: a graph that delivers nothing at all is just as
+    // broken as one that used to deliver and stopped, and without the fallback
+    // the first case would be observed once and then never again.
+    const quietSince = lastFrameAt === 0 ? captureStartedAt : lastFrameAt
+    if (Date.now() - quietSince >= DEAD_CAPTURE_MS) {
+      recoverCapture(lastFrameAt === 0 ? 'never produced a frame' : 'stopped producing frames')
+    }
+  }, CAPTURE_WATCH_TICK_MS)
+}
+
+/**
+ * Tears the capture down and opens a fresh one, then re-attaches the frames.
+ *
+ * Both halves are rebuilt on purpose: the two ways this fails are a device
+ * whose track has gone dead and an AudioContext that stopped pulling audio
+ * after the route changed, and only a new pair rules out both.
+ */
+function recoverCapture(reason: string): void {
+  if (phase.value === 'idle' || recoveringCapture) return
+  silentSince = 0
+  healthyTicks = 0
+  if (captureRecoveries >= MAX_CAPTURE_RECOVERIES) {
+    // Two fresh captures in a row produced no frames at all: this page cannot
+    // capture anything. Say so — silently listening to nothing is the exact
+    // behaviour being fixed here.
+    appLog.e(TAG, `capture ${reason} after ${captureRecoveries} re-acquisitions; leaving the mode`)
+    stop({ notify: false })
+    useToast().show(gt('chat.voice.micSilent'), { icon: 'warning', type: 'error', duration: 8000 })
+    return
+  }
+  captureRecoveries += 1
+  recoveringCapture = true
+  const myGen = gen
+  appLog.w(TAG, `capture ${reason} for ${DEAD_CAPTURE_MS}ms; re-acquiring the microphone (attempt ${captureRecoveries})`)
+  closeCapture()
+  void ensureCapture().then((ok) => {
+    recoveringCapture = false
+    // A stop (or a restart) while the device was being reopened owns the loop
+    // now: re-attaching frames here would reopen a recogniser in a session the
+    // user has already left.
+    if (!ok || myGen !== gen || phase.value === 'idle') return
+    // The sockets' sink pointed at the old graph; re-open the recogniser the
+    // current phase uses, otherwise the fresh frames go nowhere.
+    if (phase.value === 'listening') void openListening()
+    else void openBargeListener()
+  })
+}
+
 /** Releases the microphone and its capture graph. */
 function closeCapture() {
   captureGen += 1
   capturePending = null
   frameSink = null
+  stopCaptureWatch()
   streamer?.stop()
   streamer = null
   if (micStream) {
@@ -431,6 +619,9 @@ export function stop(options: { notify?: boolean; silent?: boolean } = {}): void
   turnInFlight = false
   turnCancelledByUser = false
   canInterrupt.value = false
+  captureRecoveries = 0
+  recoveringCapture = false
+  healthyTicks = 0
   phase.value = 'idle'
   autoSpeechTurnedOnByUs = false
   onInterrupt = null
@@ -664,8 +855,21 @@ function ensureCapture(): Promise<boolean> {
       stream,
       tuning,
       onFrame: (frame) => frameSink?.(frame),
+      // The only evidence that the pipeline still runs, and whether what it
+      // carries is signal or digital silence. Frames flow whether or not the
+      // gate forwards them, so this measures the capture itself, not what the
+      // recogniser happens to be receiving.
+      //
+      // `rms > 0` rather than a floor: on a phone with noise suppression on,
+      // exact zeros are what a HEALTHY capture delivers between words, so the
+      // only thing worth recording is "was there any signal at all".
+      onLevel: (rms) => {
+        lastFrameAt = Date.now()
+        if (rms > 0) heardSomething = true
+      },
     })
     streamer = s
+    startCaptureWatch()
     void s.start().catch((err) => {
       appLog.e(TAG, 'pcm capture failed', err)
       lastError.value = gt('chat.voice.micUnavailable')
@@ -753,6 +957,11 @@ async function openListening(): Promise<void> {
     if (phase.value === 'listening') stop({ notify: false })
   }
   phase.value = 'listening'
+  // The phase is the ONLY thing the UI shows ("正在听…"), and it is set by the
+  // socket opening rather than by anything the microphone produced. Without a
+  // line here, "it looked like it was listening but heard nothing" cannot be
+  // reconstructed from the log at all.
+  appLog.i(TAG, 'dictation recogniser open (listening)')
   // No pause timer here: the pause is measured from the first recognised word
   // (see restartSilenceTimer), and the utterance is empty until one arrives.
   // The idle-exit timer does start now — "nothing was ever heard" is exactly
@@ -890,6 +1099,7 @@ async function openBargeListener(): Promise<void> {
     } catch { /* ignore malformed */ }
   }
   sock.onclose = () => { /* the playback watcher owns the lifecycle */ }
+  appLog.i(TAG, `interrupt recogniser open (${phase.value})`)
 }
 
 /** Applies the server settings and starts listening. */

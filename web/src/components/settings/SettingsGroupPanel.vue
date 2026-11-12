@@ -5,8 +5,9 @@
     <div v-if="showTitle && config.titleKey" class="group-panel__header">
       {{ t(config.titleKey) }}
     </div>
-    <!-- Enable toggle row. The port-forward panel's switch was
-         removed because the SSH listener is always on. -->
+    <!-- Enable toggle row. The port-forward panel has no switch: the feature is
+         always available, and its `port_forward.transport` field decides which
+         listener the server runs. -->
     <div v-if="config.enableKey" class="group-panel__enable-row">
       <div class="group-panel__enable-left">
         <span class="group-panel__enable-label">{{ t(config.enableLabelKey!) }}</span>
@@ -59,32 +60,6 @@
          server, which must not receive any of it. -->
     <WeChatLoginPanel v-if="isWeChatPushMode" />
 
-    <!-- Tunnel transport picker, shared by supported native hosts. A dedicated row
-         rather than a commonFields entry: the truth source is the host's own
-         store (Electron store / Android SharedPreferences), so it must not flow
-         through usePanelSnapshot's save routing (which would write localStorage
-         for 'local' or 400 the whole save for 'server'). Two values (ssh / h2) —
-         there is no automatic mode. Rendered only once the async initial value
-         has arrived, and hidden entirely on a host that lacks the bridge methods
-         (see transportPickerVisible). The value is a draft until Save writes it
-         and reconnects.
-
-         Deliberately the FIRST row of the port-forward panel, above the SSH
-         port field: the transport choice decides whether that port is used at
-         all (an h2 client hides the port row — see sshOnlyFieldsHidden), so
-         showing it first makes the dependency read top-down. -->
-    <template v-if="transportPickerVisible">
-      <SettingsItem
-        :label="t('settings.items.portForwardTransport')"
-        :description="t('settings.items.portForwardTransportDesc')"
-        type="select"
-        :model-value="transportPref"
-        :options="transportOptions"
-        :no-divider="sshOnlyFieldsHidden"
-        @update:model-value="onTransportChange"
-      />
-    </template>
-
     <!-- Field list with section headers -->
     <template v-for="(entry, idx) in renderList" :key="entry.key">
       <div v-if="entry.type === 'header'" class="group-panel__section-header">{{ entry.label }}</div>
@@ -119,10 +94,10 @@
       />
     </template>
 
-    <!-- Tunnel status, shown while the transport controls are on screen.
-         Applying a transport change tears the tunnel down and rebuilds it,
-         which can take up to CONNECT_TIMEOUT_MS (20s) — without this the Save
-         button spins with no explanation of what is happening or whether it
+    <!-- Tunnel status, shown on every host now that the transport is a server
+         setting. Switching it tears the tunnel down and rebuilds it on the new
+         wire, which can take up to CONNECT_TIMEOUT_MS (20s) — without this the
+         Save button spins with no explanation of what is happening or whether it
          worked. Reads the same usePortForward state the port-forward dock panel
          shows, so the two can never disagree. -->
     <template v-if="tunnelStatusVisible">
@@ -228,11 +203,11 @@
         v-for="opt in entryOptions"
         :key="opt.value as PropertyKey"
         class="group-panel__option"
-        :class="{ 'group-panel__option--active': localValues[config.entrySelector!.key] === opt.value }"
+        :class="{ 'group-panel__option--active': effectiveEngine === opt.value }"
         @click="handleEntrySelect(opt.value)"
       >
         <span class="group-panel__option-label">{{ t(opt.labelKey) }}</span>
-        <span v-if="localValues[config.entrySelector!.key] === opt.value" class="group-panel__option-check">&#10003;</span>
+        <span v-if="effectiveEngine === opt.value" class="group-panel__option-check">&#10003;</span>
       </div>
     </BottomSheet>
   </div>
@@ -245,6 +220,9 @@ import { ChevronRight, ListChecks, RotateCcw } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
+import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
+import { getNative } from '@/utils/clawbenchNative'
+import { buildLocalFileUrl } from '@/utils/download'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -252,7 +230,7 @@ import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
-import { getNative, reconnectTunnel } from '@/utils/clawbenchNative'
+import { reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
@@ -278,7 +256,7 @@ const emit = defineEmits<{
   restartNeeded: [fields: string[]]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const toast = useToast()
 const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
@@ -294,11 +272,27 @@ const {
   hotReloadWarning,
   hasFailedSave,
   hasChanges,
-  canSave,
+  canSave: snapshotCanSave,
   needsRestartHint,
   initSnapshot,
   handleSave,
 } = usePanelSnapshot(props.config)
+
+// ── Phone voice (a per-device option inside the engine list) ──
+//
+// Kept as a draft like every other field, so the panel's Save button means the
+// same thing everywhere. `localValues['tts.engine']` stays the SERVER engine:
+// a device-local choice must never overwrite what every other device uses.
+const { getServerValueWithDefault, setLocalConfig, localConfig: settingsLocalConfig } = useSettingsConfig()
+
+const phoneVoiceDraft = ref(settingsLocalConfig.systemSpeech === true)
+const phoneVoiceDirty = computed(() =>
+  phoneVoiceDraft.value !== (settingsLocalConfig.systemSpeech === true),
+)
+const phoneVoiceActive = computed(() => props.config.panelId === 'tts' && phoneVoiceDraft.value)
+// The phone choice alone is a valid change even when the server engine's
+// credentials are incomplete.
+const canSave = computed(() => snapshotCanSave.value || phoneVoiceDirty.value)
 
 const activeKey = ref<string | null>(null)
 const entryPicker = useTabDrawer('settings', { autoRestore: false })
@@ -376,6 +370,7 @@ const terminalThemePreviews = computed<Record<string, TerminalPreview> | undefin
 
 onMounted(() => {
   initSnapshot()
+  phoneVoiceDraft.value = settingsLocalConfig.systemSpeech === true
   registerGuard(`panel-${props.config.panelId}`, () => !panelDirty.value && !hasFailedSave.value)
   // Fetch RAG status on mount so progress counts are visible immediately
   if (props.config.panelId === 'rag') {
@@ -423,7 +418,7 @@ const fieldsDisabled = computed(() => {
 function isFieldDisabled(field: ItemSpec): boolean {
   if (fieldsDisabled.value) return true
   if (field.disableUnless) {
-    return !isDependsOnMet(field.disableUnless, (k) => localValues[k])
+    return !isDependsOnMet(field.disableUnless, dependencyValue)
   }
   return false
 }
@@ -441,17 +436,44 @@ const entryOptions = computed(() => {
   return props.config.entrySelector?.options ?? []
 })
 
+/** The engine the list should show as selected (phone voice shadows the server one). */
+const effectiveEngine = computed<unknown>(() =>
+  phoneVoiceActive.value ? 'system' : localValues['tts.engine'],
+)
+
+/** dependsOn resolver that sees the effective engine, not the server one. */
+function dependencyValue(key: string): unknown {
+  return key === 'tts.engine' ? effectiveEngine.value : localValues[key]
+}
+
 const entryDisplayLabel = computed(() => {
   const es = props.config.entrySelector
   if (!es) return ''
-  const val = localValues[es.key]
+  const val = dependencyValue(es.key)
   const opt = entryOptions.value.find(o => o.value === val)
   return opt ? t(opt.labelKey) : String(val ?? '')
 })
 
-function handleEntrySelect(value: unknown) {
+async function handleEntrySelect(value: unknown) {
   const es = props.config.entrySelector
   if (!es) return
+
+  if (value === 'system') {
+    // Turning the phone voice on is a promise that this phone can read Chinese.
+    // If it cannot, keep the current choice instead of accepting silently.
+    // Each engine attempt gets 2s natively; leave room for a few of them.
+    const probe = await probeSystemSpeech(8000)
+    if (!probe.ok) {
+      toast.show(t(systemSpeechErrorKey(probe.reason)), { icon: 'blocked', type: 'error', duration: 5000 })
+      return
+    }
+    phoneVoiceDraft.value = true
+    entryPicker.close()
+    return
+  }
+
+  // Picking a real engine means "this device goes back to the server voice".
+  phoneVoiceDraft.value = false
   // Only the selected value changes. Each engine owns its own settings, so
   // switching must not touch another engine's saved voice / credentials —
   // resetting them here overwrote the Edge voice whenever the user tried the
@@ -482,7 +504,7 @@ const renderList = computed((): RenderEntry[] => {
 
   // Common fields (filtered by dependsOn)
   for (const f of visibleCommonFields.value) {
-    if (!isDependsOnMet(f.dependsOn, (k) => localValues[k])) continue
+    if (!isDependsOnMet(f.dependsOn, dependencyValue)) continue
     if (f.sectionHeader) {
       result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
     }
@@ -491,7 +513,7 @@ const renderList = computed((): RenderEntry[] => {
 
   // Option sub-fields: matched against the entry selector's current value
   const subFieldKey = cfg.entrySelector?.key
-  const subFieldValue = subFieldKey ? localValues[subFieldKey] : undefined
+  const subFieldValue = subFieldKey ? dependencyValue(subFieldKey) : undefined
   const osf = (cfg.optionSubFields ?? []).find(o => o.when === subFieldValue)
   if (osf) {
     for (const f of osf.fields) {
@@ -510,10 +532,6 @@ function isLastInSection(idx: number): boolean {
   const next = renderList.value[idx + 1]
   return !next || next.type === 'header'
 }
-
-// ── Settings config for getLocalValue fallback ──
-
-const { getServerValueWithDefault, localConfig: settingsLocalConfig } = useSettingsConfig()
 
 // ── Field value helpers ──
 
@@ -635,151 +653,30 @@ function handleEditToggle(key: string, open: boolean) {
   }
 }
 
-// ── Tunnel transport preference (supported native hosts) ──
+// ── Tunnel transport ──
 //
-// The transport choice is a DRAFT, saved by the panel's own Save button rather
-// than written the moment the control moves. Two reasons:
-//
-//  1. Writing on change made the Save button lie — the control is a dedicated
-//     row (its truth source is the host's own store, not the server config, so
-//     it must not go through usePanelSnapshot's save routing), which meant the
-//     preference was already persisted while `hasChanges` still reported the
-//     panel clean.
-//  2. Applying a transport switch means tearing down the live tunnel, so it
-//     must happen at a moment the user chose. Save is that moment.
-//
-// The draft feeds `sshOnlyFieldsHidden` too, so the SSH-only rows appear and
-// disappear as the user edits — before anything is committed.
-//
-// Supported native hosts render the same two-option picker. They differ in the
-// bridge vocabulary — Electron stores 'ssh' | 'h2' through
-// get/setTunnelTransport; Android and HarmonyOS store a boolean through
-// get/setTunnelTransportH2Enabled — which the adapters below hide.
+// The transport is a plain server field (`port_forward.transport`, declared in
+// settingsFieldMap). The server enforces it — h2 means no SSH listener at all,
+// ssh means the h2 endpoints refuse — and every client follows, so there is no
+// host-side picker or bridge write left in this panel: it edits the same draft
+// and goes through the same Save as every other server field.
 
-// HarmonyOS advertises tunnel support separately from its host identity.
-// Older hosts must not expose a control that cannot persist its choice.
-const { isElectron: isDesktopShell, isAndroidApp, isHarmonyApp, isWebApp } = usePlatformDetect()
-const isMobileTunnelHost = computed(() => isAndroidApp.value ||
-  (isHarmonyApp?.value === true && getNative()?.getCapabilities?.()?.tunnel === true))
-
-/** 'ssh' | 'h2', or null while the initial value is still loading. */
-const transportPref = ref<'ssh' | 'h2' | null>(null)
-/** The persisted value, kept separate from the draft so Save can tell whether
- *  anything changed and so a failed write can roll back to the truth. */
-const transportInitial = ref<'ssh' | 'h2' | null>(null)
-/** Set once the async initial value has been read; gates the row's v-if so it
- *  never flashes a default before the real value arrives. */
-const transportLoaded = ref(false)
-/** The host lacks the bridge methods this row reads/writes through (an older
- *  APK or desktop build) — hide the row instead of offering a choice that
- *  cannot persist. */
-const transportUnsupported = ref(false)
-
-/**
- * Read the host's persisted transport preference, or null when this host cannot
- * report one. The shells store the same two-wire choice in different
- * shapes; this is the only place that knows the difference.
- */
-async function readTransportPref(): Promise<'ssh' | 'h2' | null> {
-  const native = getNative()
-  if (isMobileTunnelHost.value) {
-    // The getter's presence is the "new enough host" signal (the 2026 bug was a
-    // host that shipped the setter without it), so it gates the read too.
-    if (!native?.getTunnelTransportH2Enabled) return null
-    if (isHarmonyApp?.value && typeof native.setTunnelTransportH2Enabled !== 'function') return null
-    const on = await native.getTunnelTransportH2Enabled()
-    if (isHarmonyApp?.value && typeof on !== 'boolean') return null
-    return on ? 'h2' : 'ssh'
-  }
-  if (isDesktopShell.value) {
-    if (!native?.getTunnelTransport || !native?.setTunnelTransport) return null
-    const value = await native.getTunnelTransport()
-    // A store holding the retired 'both' is migrated to 'h2' by
-    // initTransportPreference() (it meant "probe h2 first"), so the host
-    // reports a value this picker can show.
-    return value === 'ssh' || value === 'h2' ? value : null
-  }
-  return null
-}
-
-/** Persist a preference to the host. Returns false when it was not accepted. */
-async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
-  const native = getNative()
-  if (isMobileTunnelHost.value) {
-    const setter = native?.setTunnelTransportH2Enabled
-    if (typeof setter !== 'function') return false
-    await setter.call(native, value === 'h2')
-    // Android's setter is a synchronous @JavascriptInterface void method, so a
-    // silent no-op (stubbed context, wrong key) would otherwise look like a
-    // successful write: the panel would report itself clean while the host kept
-    // the old value, and the user could not re-trigger the save. Read back
-    // through the same getter the initial value uses (SharedPreferences.apply
-    // updates the in-memory value synchronously, so this reflects the write).
-    // HarmonyOS has an async setter; awaiting it before the same readback
-    // prevents reporting success before its native preference was persisted.
-    const getter = native?.getTunnelTransportH2Enabled
-    if (typeof getter !== 'function') return false
-    const stored = await getter.call(native)
-    return typeof stored === 'boolean' && stored === (value === 'h2')
-  }
-  if (isDesktopShell.value) {
-    const setter = native?.setTunnelTransport
-    if (typeof setter !== 'function') return false
-    // The host validates too; a false answer means it stored nothing.
-    return (await setter.call(native, value)) !== false
-  }
-  return false
-}
-
-const transportPickerVisible = computed(() =>
-  (isMobileTunnelHost.value || isDesktopShell.value)
-  && props.config.panelId === 'portForward'
-  && transportLoaded.value
-  && !transportUnsupported.value
-)
+const { isWebApp } = usePlatformDetect()
 
 // The WeChat QR login block replaces the credential fields for that channel:
 // its "configuration" is a scan, not a value to type.
 const isWeChatPushMode = computed(() => localValues.push_mode === 'wechat')
 
-onMounted(async () => {
-  if ((!isMobileTunnelHost.value && !isDesktopShell.value) || props.config.panelId !== 'portForward') return
-  try {
-    const stored = await readTransportPref()
-    // Legacy host: no readable preference exists, so there is nothing truthful
-    // to render. Keep the row hidden rather than fall back to a non-persisting
-    // control.
-    if (stored === null) {
-      transportUnsupported.value = true
-      return
-    }
-    transportPref.value = stored
-    transportInitial.value = stored
-  } catch {
-    transportUnsupported.value = true
-    return
-  }
-  transportLoaded.value = true
-})
-
-/** Draft only — nothing is written until Save. */
-function onTransportChange(value: unknown) {
-  if (value !== 'ssh' && value !== 'h2') return
-  transportPref.value = value
-}
-
-/** True while the user's tunnel is on h2, on either host.
+/** True while the configured transport is h2.
  *
- *  `port_forward.port` is an SSH-server setting — it feeds `ssh.NewServer` and
- *  nothing else (cmd/server/main.go). The h2 wire rides the main HTTP port, so
- *  when this client is on h2 that row configures a port this client never dials.
- *
- *  The listener itself stays on regardless (it is pinned server-side), so this
- *  only hides a row, never a control. An unknown value (older host, web mode)
- *  keeps the row rather than guessing.
+ *  `port_forward.port` is the SSH listener's port — it feeds `ssh.NewServer`
+ *  and nothing else (cmd/server/main.go). The h2 wire rides the main HTTP port,
+ *  and with transport h2 the server does not open that listener at all, so the
+ *  row configures a port nothing dials. Reads the draft, so the row appears and
+ *  disappears as the user edits, before anything is committed.
  */
 const sshOnlyFieldsHidden = computed(() =>
-  props.config.panelId === 'portForward' && transportPref.value === 'h2'
+  props.config.panelId === 'portForward' && localValues['port_forward.transport'] === 'h2'
 )
 
 /** The SSH-server rows, minus the ones this transport does not use. */
@@ -789,62 +686,13 @@ const visibleCommonFields = computed(() =>
     : props.config.commonFields
 )
 
-/** Labels reuse `proxy.transportSsh` / `transportH2`, the same keys the
- *  port-forward panel uses for the live "current transport" line, so the two
- *  never drift. No third option: there is no automatic mode. */
-const transportOptions = computed(() => [
-  { label: t('proxy.transportSsh'), value: 'ssh' },
-  { label: t('proxy.transportH2'), value: 'h2' },
-])
+/** True while the panel has unsaved edits. The probe saves them first, so it
+ *  measures the wire the user is looking at rather than the previous one. */
+const transportDirty = computed(() => hasChanges.value)
 
-// ── Draft → save wiring ──
-
-/** True when the transport draft differs from what the host has persisted. */
-const transportDirty = computed(() =>
-  transportPickerVisible.value && transportPref.value !== transportInitial.value
-)
-
-/** The panel's own dirty flag, widened to include the transport draft — without
- *  this the Save button stays disabled (and the unsaved-changes guard stays
- *  open) when the transport is the only thing the user changed. */
-const panelDirty = computed(() => hasChanges.value || transportDirty.value)
-
-/**
- * Write the transport preference and reconnect, returning false when the host
- * rejected the write (nothing was stored, so the live tunnel is untouched).
- *
- * A failed RECONNECT is deliberately not rolled back: the preference was
- * accepted and persisted, so reverting the stored value would make the host and
- * the UI disagree. The user is told instead, and the monitor retries on its own.
- */
-async function applyTransportDraft(): Promise<boolean> {
-  if (!transportDirty.value) return true
-  const value = transportPref.value
-  if (value === null) return true
-
-  try {
-    if (!(await writeTransportPref(value))) return false
-  } catch (err) {
-    appLog.w(TAG, 'transport preference write failed', err)
-    return false
-  }
-  transportInitial.value = value
-
-  // With zero enabled mappings the native service is stopped on purpose, so a
-  // reconnect has nothing to rebuild and reports failure (Android answers
-  // false immediately when the service is not running). The write above IS the
-  // whole job then; the next check or link probe speaks for the new wire.
-  // Without this, saving a transport change on an idle host reported
-  // "重连失败，端口映射暂不可用" even though nothing was wrong.
-  if (!hasEnabledPorts.value) return true
-
-  try {
-    return await reconnectTunnel()
-  } catch (err) {
-    appLog.w(TAG, 'tunnel reconnect after transport change failed', err)
-    return false
-  }
-}
+/** The panel's own dirty flag (the transport is an ordinary field now, so
+ *  `hasChanges` already covers it). */
+const panelDirty = computed(() => hasChanges.value || phoneVoiceDirty.value)
 
 // ── Tunnel status ──
 
@@ -855,21 +703,15 @@ const {
 } = usePortForward()
 
 /**
- * Shown whenever a transport control is on screen — i.e. on a host that can
- * actually report and switch its wire — and in plain web mode, where it is the
+ * Shown on every host now that the transport is a server setting: it is the
  * single readiness signal that replaced the removed "Test Connection" button.
  *
  * Web mode has no client tunnel, but the row still answers the question the old
  * test button answered: can this server carry forwards at all? It reads server
  * readiness (SSH listener up, or an h2-capable transport) instead of a
- * client-side tunnel, so the derivations below have a web branch. A legacy
- * native host that cannot say which wire it runs still keeps the row out rather
- * than showing an "unknown" the user cannot act on.
+ * client-side tunnel, so the derivations below have a web branch.
  */
-const tunnelStatusVisible = computed(() =>
-  props.config.panelId === 'portForward'
-  && (isWebApp.value || transportPickerVisible.value)
-)
+const tunnelStatusVisible = computed(() => props.config.panelId === 'portForward')
 
 /**
  * Whether this server can carry forwards at all, independent of any client. An
@@ -986,10 +828,8 @@ async function onProbeTunnel() {
   if (transportDirty.value) {
     saving.value = true
     try {
-      if (!(await applyTransportDraft())) {
-        toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
-        return
-      }
+      const saved = await handleSave()
+      if (saved.failed) return
     } finally {
       saving.value = false
     }
@@ -1016,36 +856,49 @@ async function onProbeTunnel() {
 
 // ── Save ──
 
+/** Persist the per-device phone-voice draft (it never goes to the server). */
+function applyPhoneVoiceDraft() {
+  if (phoneVoiceDirty.value) {
+    setLocalConfig('systemSpeech', phoneVoiceDraft.value)
+  }
+}
+
 async function onSave() {
   const result = await handleSave()
   if (result.needsRestart && result.changedColdFields.length > 0) {
     emit('restartNeeded', result.changedColdFields)
   }
-  if (serverError.value) return
+  if (result.failed || serverError.value) return
 
-  // Applying the transport switch tears the tunnel down and rebuilds it,
-  // bounded by CONNECT_TIMEOUT_MS (20s). Reuse the Save button's own spinner so
-  // the wait is visible rather than looking like a hang.
-  const switchingTransport = transportDirty.value
-  if (switchingTransport) saving.value = true
-  try {
-    if (!(await applyTransportDraft())) {
-      if (switchingTransport) {
-        // The preference may or may not have been stored; either way the tunnel
-        // is not on it, so say so instead of the plain "saved" toast.
-        toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
-      }
+  // The phone-voice choice is per device, so it is applied here rather than
+  // sent to the server — but still only when the user presses Save.
+  applyPhoneVoiceDraft()
+
+  // Switching the transport makes the server start or stop its SSH listener,
+  // so the live tunnel has to be rebuilt on the new wire. The native monitor
+  // would notice within its 15s tick, but doing it here puts the wait under the
+  // Save button's own spinner instead of looking like a hang. Web mode has no
+  // client tunnel, so there is nothing to rebuild.
+  const switchingTransport = result.changedKeys.includes('port_forward.transport')
+  if (switchingTransport && !isWebApp.value) {
+    saving.value = true
+    try {
+      // With zero enabled mappings the native service is stopped on purpose, so
+      // a reconnect has nothing to rebuild and reports failure. The PATCH above
+      // is the whole job then; the next check or link probe speaks for the new
+      // wire.
+      if (hasEnabledPorts.value) await reconnectTunnel()
+    } catch (err) {
+      appLog.w(TAG, 'tunnel reconnect after transport change failed', err)
+      toast.show(t('settings.panel.transportApplyFailed'), { icon: 'warning', type: 'error', duration: 5000 })
       return
+    } finally {
+      saving.value = false
     }
-    if (switchingTransport) {
-      // The verdict on screen is a string rendered at check time, so after a
-      // transport switch it still names the OLD wire until the next check.
-      // Recompute now that the preference and the live tunnel have moved.
-      // Silent keeps the row's current verdict instead of flashing "unknown".
-      await checkTunnelHealth(true)
-    }
-  } finally {
-    if (switchingTransport) saving.value = false
+    // The verdict on screen was rendered at check time, so it still names the
+    // OLD wire. Silent keeps the row's current verdict instead of flashing
+    // "unknown".
+    await checkTunnelHealth(true)
   }
 
   toast.show(t('settings.panel.saved'), { icon: 'success', type: 'success', duration: 3000 })
@@ -1177,10 +1030,152 @@ async function handleFieldClick(_field: ItemSpec) {
 
 async function handleConnectivityTest() {
   clearConnectivityResults()
-  const values = { ...localValues } as Record<string, unknown>
-  const tests = props.config.getTestCategories?.(values) ?? [{ category: props.config.panelId, values }]
-  if (tests.length === 0) return
-  await runConnectivityTests(tests)
+
+  // The phone voice has no server config to probe: test it end to end by
+  // speaking a short sample and waiting for the engine's terminal event.
+  if (phoneVoiceActive.value) {
+    connectivityTesting.value = true
+    try {
+      connectivityTestResults.value = [await testSystemSpeech()]
+    } finally {
+      connectivityTesting.value = false
+    }
+    return
+  }
+
+  // Other panels keep the server-side connectivity test; only the voice panel
+  // is tested by hearing it.
+  if (props.config.panelId !== 'tts') {
+    const values = { ...localValues } as Record<string, unknown>
+    const tests = props.config.getTestCategories?.(values) ?? [{ category: props.config.panelId, values }]
+    if (tests.length === 0) return
+    await runConnectivityTests(tests)
+    return
+  }
+
+  // Every engine is tested by actually hearing it. The preview endpoint uses
+  // the SAVED provider, so a dirty draft has to be committed first — otherwise
+  // the test would speak with the previous engine and look broken.
+  if (panelDirty.value) {
+    const saved = await handleSave()
+    if (saved.failed || serverError.value) {
+      connectivityTestResults.value = [{ success: false, message: t('settings.saveFailed') }]
+      return
+    }
+    applyPhoneVoiceDraft()
+  }
+
+  connectivityTesting.value = true
+  try {
+    connectivityTestResults.value = [await testServerSpeech()]
+  } finally {
+    connectivityTesting.value = false
+  }
+}
+
+/**
+ * Synthesize one sample sentence with the saved engine and play it.
+ *
+ * The result is "did the audio play", not "is the endpoint reachable": a reach
+ * check already existed and it passed on engines whose voice was unusable.
+ */
+async function testServerSpeech(): Promise<{ success: boolean; message: string }> {
+  const sample = t('settings.panel.ttsTestPhrase', { engine: entryDisplayLabel.value })
+  let audioPath = ''
+  try {
+    const resp = await fetch('/api/tts/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: sample, language: locale.value }),
+    })
+    if (!resp.ok) {
+      let detail = ''
+      try {
+        const err = await resp.json()
+        detail = err?.error || ''
+      } catch { /* non-JSON error body */ }
+      return {
+        success: false,
+        message: t('settings.panel.ttsTestFailed', { reason: detail || `HTTP ${resp.status}` }),
+      }
+    }
+    const data = await resp.json()
+    audioPath = typeof data.audioPath === 'string' ? data.audioPath : ''
+  } catch (err) {
+    return {
+      success: false,
+      message: t('settings.panel.ttsTestFailed', { reason: err instanceof Error ? err.message : '' }),
+    }
+  }
+  if (!audioPath) {
+    return { success: false, message: t('settings.panel.ttsTestFailed', { reason: 'no audio' }) }
+  }
+
+  return await new Promise((resolve) => {
+    const audio = new Audio(buildLocalFileUrl(audioPath))
+    let settled = false
+    const finish = (success: boolean, message: string) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ success, message })
+    }
+    audio.onended = () => finish(true, t('settings.panel.ttsTestOk'))
+    audio.onerror = () => finish(false, t('settings.panel.ttsTestFailed', { reason: 'playback' }))
+    const timer = setTimeout(
+      () => finish(false, t('settings.panel.ttsTestFailed', { reason: 'timeout' })),
+      30000,
+    )
+    audio.play().catch(() => finish(false, t('settings.panel.ttsTestFailed', { reason: 'playback' })))
+  })
+}
+
+/**
+ * Speak a fixed short sentence on the phone and report what happened.
+ *
+ * A readiness probe alone would pass on an engine that accepts requests and
+ * then fails to synthesize (OPPO's does exactly that, ~30s later), so the test
+ * has to wait for the real terminal event.
+ */
+async function testSystemSpeech(): Promise<{ success: boolean; message: string }> {
+  const native = getNative()
+  if (!native?.ttsSpeak) {
+    return { success: false, message: t(systemSpeechErrorKey('no_bridge')) }
+  }
+  const probe = await probeSystemSpeech(8000)
+  if (!probe.ok) {
+    return { success: false, message: t(systemSpeechErrorKey(probe.reason)) }
+  }
+
+  return await new Promise((resolve) => {
+    const id = 'tts-test-' + Date.now()
+    let settled = false
+    const finish = (success: boolean, message: string) => {
+      if (settled) return
+      settled = true
+      window.removeEventListener('clawbench-tts-state', onState)
+      clearTimeout(timer)
+      resolve({ success, message })
+    }
+    const onState = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { id?: string; state?: string; message?: string }
+      if (detail?.id !== id) return
+      if (detail.state === 'done') {
+        finish(true, t('settings.panel.systemSpeechTestOk'))
+      } else if (detail.state === 'error') {
+        finish(false, t('settings.panel.systemSpeechTestFailed', { reason: detail.message || '' }))
+      }
+    }
+    window.addEventListener('clawbench-tts-state', onState)
+    const timer = setTimeout(
+      () => finish(false, t('settings.panel.systemSpeechTestFailed', { reason: 'timeout' })),
+      20000,
+    )
+    const accepted = native.ttsSpeak!(t('settings.panel.systemSpeechTestPhrase'), id)
+    if (accepted !== 'ready' && accepted !== 'initializing') {
+      finish(false, t('settings.panel.systemSpeechTestFailed', { reason: accepted }))
+    }
+  })
 }
 
 // Auto-clear test results when form values change (results become stale)

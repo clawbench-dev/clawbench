@@ -431,6 +431,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // placeholder only opens the section and must also be listed in
     // PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+    // How a message body is drawn. Local, not server: it changes nothing about
+    // what the server fetches or stores, only whether this screen lets the
+    // mail's own <img> tags hit the network. The default is ON, so the row is
+    // about letting a cautious reader turn the exposure off — the description
+    // has to name the risk (tracking pixels / read receipts), not just say
+    // "images".
+    { type: 'item', spec: { labelKey: 'settings.items.mailLoadImages', descriptionKey: 'settings.items.mailLoadImagesDesc', key: 'mailLoadRemoteImages', type: 'switch', source: 'local', sectionHeader: 'settings.items.mailReadSection' } },
   ],
   providers: [
     // Model-provider list (endpoint + credential). Same shape as the MCP
@@ -667,6 +674,15 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       entrySelector: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
         { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
         { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
+        { labelKey: 'settings.items.ttsEngineAlibaba', value: 'alibaba' },
+        { labelKey: 'settings.items.ttsEngineTencent', value: 'tencent' },
+        { labelKey: 'settings.items.ttsEngineVolcano', value: 'volcano' },
+        { labelKey: 'settings.items.ttsEngineMinimax', value: 'minimax' },
+        // Per-device, but deliberately in the same list: to the user this is
+        // just another voice. Selecting it stores a local flag and leaves
+        // tts.engine (the server-wide choice) untouched — see
+        // SettingsGroupPanel's effectiveEngine.
+        { labelKey: 'settings.items.ttsEngineSystem', value: 'system' },
       ]},
       commonFields: [
         // tts.voice belongs to the Edge engine. It is hidden for "openai" (that
@@ -698,8 +714,61 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
             ]},
           ],
         },
+        {
+          // Alibaba Cloud Model Studio (百炼 / DashScope). The endpoint, model
+          // and voice all have working defaults, so only the key is required.
+          when: 'alibaba',
+          fields: [
+            { labelKey: 'settings.items.alibabaTTSApiKey', descriptionKey: 'settings.items.alibabaTTSApiKeyDesc', key: 'tts.alibaba.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.ttsAlibabaHeader' },
+            { labelKey: 'settings.items.alibabaTTSBaseUrl', descriptionKey: 'settings.items.alibabaTTSBaseUrlDesc', key: 'tts.alibaba.base_url', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.alibabaTTSModel', descriptionKey: 'settings.items.alibabaTTSModelDesc', key: 'tts.alibaba.model', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.alibabaTTSVoice', descriptionKey: 'settings.items.alibabaTTSVoiceDesc', key: 'tts.alibaba.voice', type: 'text', source: 'server' },
+          ],
+        },
+        {
+          // Tencent Cloud. Auth is a signed request, so there is a SecretId /
+          // SecretKey pair instead of a single token; the voice is a numeric
+          // catalog id.
+          when: 'tencent',
+          fields: [
+            { labelKey: 'settings.items.tencentTTSSecretId', descriptionKey: 'settings.items.tencentTTSSecretIdDesc', key: 'tts.tencent.secret_id', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsTencentHeader' },
+            { labelKey: 'settings.items.tencentTTSSecretKey', descriptionKey: 'settings.items.tencentTTSSecretKeyDesc', key: 'tts.tencent.secret_key', type: 'password', source: 'server' },
+            { labelKey: 'settings.items.tencentTTSVoiceType', descriptionKey: 'settings.items.tencentTTSVoiceTypeDesc', key: 'tts.tencent.voice_type', type: 'number', source: 'server' },
+          ],
+        },
+        {
+          // Volcano Engine (火山引擎 / 豆包). One API key from the speech
+          // console, plus the resource id that matches the voice type.
+          when: 'volcano',
+          fields: [
+            { labelKey: 'settings.items.volcanoTTSApiKey', descriptionKey: 'settings.items.volcanoTTSApiKeyDesc', key: 'tts.volcano.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.ttsVolcanoHeader' },
+            { labelKey: 'settings.items.volcanoTTSResourceId', descriptionKey: 'settings.items.volcanoTTSResourceIdDesc', key: 'tts.volcano.resource_id', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.volcanoTTSVoice', descriptionKey: 'settings.items.volcanoTTSVoiceDesc', key: 'tts.volcano.voice', type: 'text', source: 'server' },
+          ],
+        },
+        {
+          // MiniMax (T2A v2). GroupId is optional — only older accounts need
+          // it — and the base URL selects the China / international site.
+          when: 'minimax',
+          fields: [
+            { labelKey: 'settings.items.minimaxTTSApiKey', descriptionKey: 'settings.items.minimaxTTSApiKeyDesc', key: 'tts.minimax.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.ttsMinimaxHeader' },
+            { labelKey: 'settings.items.minimaxTTSGroupId', descriptionKey: 'settings.items.minimaxTTSGroupIdDesc', key: 'tts.minimax.group_id', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.minimaxTTSBaseUrl', descriptionKey: 'settings.items.minimaxTTSBaseUrlDesc', key: 'tts.minimax.base_url', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.minimaxTTSModel', descriptionKey: 'settings.items.minimaxTTSModelDesc', key: 'tts.minimax.model', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.minimaxTTSVoice', descriptionKey: 'settings.items.minimaxTTSVoiceDesc', key: 'tts.minimax.voice', type: 'text', source: 'server' },
+          ],
+        },
       ],
-      requiredFields: ['tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
+      requiredFields: [
+        'tts.openai.base_url',
+        'tts.openai.model',
+        'tts.openai.voice',
+        'tts.alibaba.api_key',
+        'tts.tencent.secret_id',
+        'tts.tencent.secret_key',
+        'tts.volcano.api_key',
+        'tts.minimax.api_key',
+      ],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
     }},
@@ -709,9 +778,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       panelId: 'stt_engine',
       commonFields: [
         { labelKey: 'settings.items.sttProvider', descriptionKey: 'settings.items.sttProviderDesc', key: 'stt.provider', type: 'select', source: 'server', sectionHeader: 'settings.items.sttHeader', options: [
+          // The empty value is "not configured": no engine, no rows, and voice
+          // input tells the user to come back here instead of failing an upload.
+          { labelKey: 'settings.items.sttProviderNone', value: '' },
           { labelKey: 'settings.items.sttProviderVllm', value: 'vllm' },
           { labelKey: 'settings.items.sttProviderDoubao', value: 'doubao' },
           { labelKey: 'settings.items.sttProviderAlibaba', value: 'alibaba' },
+          { labelKey: 'settings.items.sttProviderTencent', value: 'tencent' },
         ] },
         // Each engine's credentials and options live in its own section. They
         // are NOT shared: a single set of fields meant switching the engine
@@ -744,12 +817,26 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.sttAlibabaApiKey', descriptionKey: 'settings.items.sttAlibabaApiKeyDesc', key: 'stt.alibaba.api_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttAlibabaBaseUrl', descriptionKey: 'settings.items.sttAlibabaBaseUrlDesc', key: 'stt.alibaba.base_url', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttAlibabaModel', descriptionKey: 'settings.items.sttAlibabaModelDesc', key: 'stt.alibaba.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+        { labelKey: 'settings.items.sttAlibabaFileModel', descriptionKey: 'settings.items.sttAlibabaFileModelDesc', key: 'stt.alibaba.file_model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttAlibabaLanguage', descriptionKey: 'settings.items.sttAlibabaLanguageDesc', key: 'stt.alibaba.language', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttStreamingDesc', key: 'stt.alibaba.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.alibaba.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttEnablePunc', descriptionKey: 'settings.items.sttEnablePuncDesc', key: 'stt.alibaba.enable_punc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.alibaba.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'alibaba' } },
         { labelKey: 'settings.items.sttEndWindowSize', descriptionKey: 'settings.items.sttEndWindowSizeDesc', key: 'stt.alibaba.end_window_size', type: 'number', source: 'server', min: 300, max: 5000, step: 100, dependsOn: { key: 'stt.provider', value: 'alibaba' } },
+
+        // Tencent Cloud signs every request with a SecretId/SecretKey pair; the
+        // realtime API additionally needs the numeric AppID in its URL path.
+        // The engine model name carries the language (16k_zh, 16k_en, …), so
+        // there is no separate language row.
+        { labelKey: 'settings.items.sttTencentSecretId', descriptionKey: 'settings.items.sttTencentSecretIdDesc', key: 'stt.tencent.secret_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentSecretKey', descriptionKey: 'settings.items.sttTencentSecretKeyDesc', key: 'stt.tencent.secret_key', type: 'password', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentAppId', descriptionKey: 'settings.items.sttTencentAppIdDesc', key: 'stt.tencent.app_id', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentModel', descriptionKey: 'settings.items.sttTencentModelDesc', key: 'stt.tencent.model', type: 'text', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttStreaming', descriptionKey: 'settings.items.sttTencentStreamingDesc', key: 'stt.tencent.streaming', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttEnableItn', descriptionKey: 'settings.items.sttEnableItnDesc', key: 'stt.tencent.enable_itn', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttEnableDdc', descriptionKey: 'settings.items.sttEnableDdcDesc', key: 'stt.tencent.enable_ddc', type: 'switch', source: 'server', dependsOn: { key: 'stt.provider', value: 'tencent' } },
+        { labelKey: 'settings.items.sttTencentEndWindowSize', descriptionKey: 'settings.items.sttTencentEndWindowSizeDesc', key: 'stt.tencent.end_window_size', type: 'number', source: 'server', min: 500, max: 2000, step: 100, dependsOn: { key: 'stt.provider', value: 'tencent' } },
 
         { labelKey: 'settings.items.sttShortcutKey', descriptionKey: 'settings.items.sttShortcutKeyDesc', key: 'stt.shortcut_key', type: 'text', source: 'server' },
 
@@ -889,12 +976,15 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   portForward: [
     { type: 'panel', config: {
       panelId: 'portForward',
-      // No enable switch: the SSH listener is always on (pinned server-side in
-      // ApplyDefaults). The switch used to live here, but its scope could not
-      // be honest — the listener is server-side while the transport choice is
-      // client-local, so no single value could serve every client of one
-      // server. Removing it also removed the need to explain the difference.
+      // No enable switch: the feature is always available (Enabled is pinned
+      // server-side in ApplyDefaults). What used to be a per-client choice is
+      // now the `port_forward.transport` row below — a server-side switch the
+      // clients follow, so it is visible and editable from the web too.
       commonFields: [
+        { labelKey: 'settings.items.portForwardTransport', descriptionKey: 'settings.items.portForwardTransportDesc', key: 'port_forward.transport', type: 'select', source: 'server', options: [
+          { labelKey: 'proxy.transportH2', value: 'h2' },
+          { labelKey: 'proxy.transportSsh', value: 'ssh' },
+        ] },
         { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: unknown) => v === 0 ? i18n.global.t('settings.items.portForwardPortAuto') : v },
       ],
       // No connectivity test button: the panel's tunnel status row is the single

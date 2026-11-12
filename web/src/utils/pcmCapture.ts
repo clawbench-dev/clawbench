@@ -98,6 +98,53 @@ const HANGOVER_FALLBACK_MS = 600
  */
 const PREROLL_FRAMES = 3
 
+/**
+ * Encode 16 kHz mono 16-bit PCM frames as a RIFF/WAVE blob.
+ *
+ * Exists for the one whole-file recogniser that cannot read the WebM container
+ * the MediaRecorder produces (Tencent's 一句话识别): the capture path already
+ * yields exactly the PCM a WAV needs, so the conversion happens here instead of
+ * requiring ffmpeg on the server.
+ */
+export function encodeWav(frames: readonly ArrayBuffer[]): Blob {
+  const byteLength = frames.reduce((n, f) => n + f.byteLength, 0)
+  // Whole samples only: a stray odd byte would desynchronise every later sample.
+  const dataLen = byteLength - (byteLength % 2)
+  const header = new ArrayBuffer(44)
+  const view = new DataView(header)
+  const writeTag = (offset: number, tag: string) => {
+    for (let i = 0; i < tag.length; i++) view.setUint8(offset + i, tag.charCodeAt(i))
+  }
+  writeTag(0, 'RIFF')
+  view.setUint32(4, 36 + dataLen, true)
+  writeTag(8, 'WAVE')
+  writeTag(12, 'fmt ')
+  view.setUint32(16, 16, true) // PCM chunk size
+  view.setUint16(20, 1, true) // format: PCM
+  view.setUint16(22, 1, true) // channels: mono
+  view.setUint32(24, PCM_SAMPLE_RATE, true)
+  view.setUint32(28, PCM_SAMPLE_RATE * 2, true) // byte rate
+  view.setUint16(32, 2, true) // block align
+  view.setUint16(34, 16, true) // bits per sample
+  writeTag(36, 'data')
+  view.setUint32(40, dataLen, true)
+
+  // Copy into one buffer rather than handing the Blob thousands of frames, and
+  // stop at `dataLen` so the bytes after the header always match the declared
+  // length — a blob longer than its header claims is what makes a decoder read
+  // garbage past the last sample.
+  const payload = new Uint8Array(dataLen)
+  let offset = 0
+  for (const frame of frames) {
+    const bytes = new Uint8Array(frame)
+    const n = Math.min(bytes.byteLength, dataLen - offset)
+    if (n <= 0) break
+    payload.set(bytes.subarray(0, n), offset)
+    offset += n
+  }
+  return new Blob([header, payload], { type: 'audio/wav' })
+}
+
 export interface PcmStreamerOptions {
   /** Microphone to capture from. The streamer does NOT stop its tracks. */
   stream: MediaStream

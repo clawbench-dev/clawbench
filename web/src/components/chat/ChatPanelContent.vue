@@ -84,6 +84,25 @@
     <!-- Agent Team roster (CodeBuddy teams) -->
     <TeamPanel />
 
+    <!-- Group member panel: who is speaking RIGHT NOW, who already answered, and
+         a one-tap jump to any member's latest reply. Same collapse pattern as
+         the plan / team cards; the chip's leading slot carries the speakers'
+         avatars instead of an icon (the team card already uses a people glyph).
+         Statuses are derived from the rendered messages — no extra backend
+         field, so it can never disagree with the bubbles on screen. -->
+    <GroupMemberPanel
+      v-if="isGroupSession"
+      :session-id="identity.currentSessionId.value"
+      :members="props.groupMembers"
+      :messages="messages"
+      :host-member-id="props.groupHostMemberId"
+      :running="loading"
+      @stop-member="handleStopMember"
+      @jump-message="handleJumpToMember"
+      @open-settings="$emit('open-group-settings')"
+      @changed="$emit('refresh-group-members')"
+    />
+
     <!-- Upstream retry notice — transient, never part of the transcript. Sits
          above the queue so a long silent retry explains itself. -->
     <RetryNotice :sessionId="identity.currentSessionId.value" :active="loading" />
@@ -320,6 +339,7 @@ import RetryNotice from './RetryNotice.vue'
 import QueuedMessageEditSheet from './QueuedMessageEditSheet.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
+import GroupMemberPanel from './GroupMemberPanel.vue'
 import BusyBar from '@/components/common/BusyBar.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
@@ -400,7 +420,7 @@ const props = defineProps({
      *  toggle is emitted back up so App owns the PATCH + roster refresh. */
     groupParallelDefault: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise', 'toggle-group-parallel'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search', 'open-group-settings', 'open-agent-config', 'toggle-group-cruise', 'toggle-group-parallel', 'refresh-group-members'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
@@ -499,6 +519,15 @@ async function handleStopMember(memberId) {
     toast.show(t('chat.input.stopMemberFailed'), { type: 'error', icon: 'error' })
   }
 }
+
+/** Jump to a member's latest reply from the member panel. The message list owns
+ *  the scroll + flash, and pages older history in when the target predates the
+ *  loaded window (the same path a session-search hit uses). */
+async function handleJumpToMember(messageId) {
+  if (messageId === null || messageId === undefined || messageId === '') return
+  await messageListRef.value?.jumpToUserMessage?.({ id: messageId })
+}
+
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({
@@ -1195,6 +1224,10 @@ watch(loading, (now, before) => {
 // Switching sessions ends the loop: the trigger words and the reply belong to
 // the conversation the user was talking to, and sending into a different one
 // would be worse than stopping.
+//
+// (Read-aloud of the session being left is stopped by useAutoSpeech itself, at
+// module scope — it owns the playback singleton and must do that whether or not
+// this panel is mounted.)
 watch(() => identity.currentSessionId.value, (sid) => {
   // Message ids are per session's history; carrying the set over would only
   // grow it. (A same-session reload keeps it, which is the point.)
@@ -3020,13 +3053,17 @@ defineExpose({
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 .chat-panel-content > div.plan-panel,
 .chat-panel-content > div.team-panel,
+.chat-panel-content > div.member-panel,
 .chat-panel-content > div.queued-bar {
   margin-top: var(--space-4);
 }
 
 .chat-panel-content > .plan-panel ~ div.team-panel,
+.chat-panel-content > .plan-panel ~ div.member-panel,
 .chat-panel-content > .plan-panel ~ div.queued-bar,
-.chat-panel-content > .team-panel ~ div.queued-bar {
+.chat-panel-content > .team-panel ~ div.member-panel,
+.chat-panel-content > .team-panel ~ div.queued-bar,
+.chat-panel-content > .member-panel ~ div.queued-bar {
   margin-top: 0;
 }
 

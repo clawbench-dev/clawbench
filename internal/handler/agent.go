@@ -1089,7 +1089,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 
 	// Validate and apply transport (only for agents that support ACP)
-	if v, exists := patch["transport"]; exists {
+	if v, exists := patch[jsonTransport]; exists {
 		// The two fields are mutually exclusive: acp_command already decides the
 		// transport (non-empty ⇒ acp-stdio), so honoring a second, independent
 		// transport value would make the outcome depend on branch order.

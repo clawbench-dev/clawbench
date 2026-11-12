@@ -363,6 +363,104 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+const (
+	// defaultTopSearchLimit is what the chat @ menu asks for. It renders a small
+	// popup, so a handful of best hits is the point — not a browsable list.
+	defaultTopSearchLimit = 8
+	maxTopSearchLimit     = 50
+)
+
+// DirSearchTopItem is one ranked hit returned by DirSearchTop.
+type DirSearchTopItem struct {
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	Type           string `json:"type"`
+	MatchedIndices []int  `json:"matchedIndices"`
+}
+
+// DirSearchTopResponse is the JSON body of GET /api/dir/search/top.
+type DirSearchTopResponse struct {
+	Items []DirSearchTopItem `json:"items"`
+	// Total is the number of files that matched before the limit was applied.
+	Total int `json:"total"`
+}
+
+// DirSearchTop handles GET /api/dir/search/top — the same recursive filename
+// search as DirSearch, but ranked and truncated to the best few hits.
+//
+// The chat input's @ menu re-queries on every keystroke and renders a small
+// popup, so streaming walk-order hits (DirSearch) is the wrong shape twice
+// over: it floods the wire, and walk order is directory order — the best match
+// for "input" can sit far past the first N hits. Here the whole tree is walked,
+// matches are ranked by fuzzy score, and only the top `limit` come back.
+func DirSearchTop(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" || len(query) > maxSearchQueryLen {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
+		return
+	}
+
+	limit := defaultTopSearchLimit
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > maxTopSearchLimit {
+		limit = maxTopSearchLimit
+	}
+
+	basePath, err := filepath.Abs(projectPath)
+	if err != nil {
+		slog.Error("failed to resolve project path", slog.String("path", projectPath), slog.String("err", err.Error()))
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+
+	type topHit struct {
+		name string
+		path string
+		kind string
+	}
+	var hits []topHit
+	walkAndMatchRecursive(r.Context(), basePath, basePath, query, false,
+		func(name, relPathStr, entryType string, _ []int, _ fs.FileInfo, _ string) {
+			hits = append(hits, topHit{name: name, path: relPathStr, kind: entryType})
+		})
+
+	names := make([]string, len(hits))
+	for i, h := range hits {
+		names[i] = h.name
+	}
+	// fuzzy.Find returns ALL matches sorted by score (best first); truncating
+	// after the sort is what makes this "top" rather than "first found".
+	ranked := fuzzy.Find(query, names)
+	items := make([]DirSearchTopItem, 0, min(limit, len(ranked)))
+	for i, m := range ranked {
+		if i >= limit {
+			break
+		}
+		h := hits[m.Index]
+		items = append(items, DirSearchTopItem{
+			Name:           h.name,
+			Path:           h.path,
+			Type:           h.kind,
+			MatchedIndices: m.MatchedIndexes,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, DirSearchTopResponse{Items: items, Total: len(ranked)})
+}
+
 // walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
 // On match, it calls onMatch with the entry's absolute path. It respects context cancellation.
 func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo, string)) {

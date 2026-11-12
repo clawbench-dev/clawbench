@@ -3,6 +3,7 @@ package ai
 
 import (
 	"encoding/json"
+	"strings"
 
 	"clawbench/internal/model"
 )
@@ -112,6 +113,20 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 			// of this block with it.
 			(*blocks)[idx].Text += event.Content
 			return (*blocks)[idx].ThinkID
+		}
+		// Nothing to merge into, so this delta would OPEN a block — and a
+		// whitespace-only delta is not a thought.
+		//
+		// Models emit lone space tokens between reasoning runs (measured in
+		// opencode's own store: 9944 single-space reasoning fragments). When a
+		// tool_use lands between two of them it closes the block, so the space
+		// alone became the ENTIRE content of a brand-new block: an expandable
+		// "深度思考" chip holding nothing (545 such rows across 58 messages in
+		// one real database). Only OPENING is refused — appending stays allowed,
+		// because there the space sits between two words and dropping it would
+		// glue them together.
+		if strings.TrimSpace(event.Content) == "" {
+			return ""
 		}
 		// A new block. Mint its identity HERE, at the moment it opens, so the
 		// event that opens it can carry the id and the client never has to
@@ -389,10 +404,23 @@ func MergeConsecutiveThinkingBlocks(blocks []model.ContentBlock) []model.Content
 	var currentThinking *model.ContentBlock
 
 	flushThinking := func() {
-		if currentThinking != nil && currentThinking.Text != "" {
-			result = append(result, *currentThinking)
-			currentThinking = nil
+		if currentThinking == nil {
+			return
 		}
+		// A whitespace-only block is not a thought: it renders as an expandable
+		// 「深度思考」chip with nothing inside. Dropping it here is the terminal
+		// gate — models emit lone space tokens between reasoning runs, and any
+		// path that reaches finalization with one would otherwise persist it.
+		//
+		// Cleared unconditionally. Leaving a blank block in place (the old
+		// `Text != ""` check) let the NEXT thinking block merge into it, which
+		// also crossed the parent boundary the check above just established —
+		// a sub-agent's reasoning could be appended to another parent's blank
+		// block.
+		if strings.TrimSpace(currentThinking.Text) != "" {
+			result = append(result, *currentThinking)
+		}
+		currentThinking = nil
 	}
 
 	for _, b := range blocks {

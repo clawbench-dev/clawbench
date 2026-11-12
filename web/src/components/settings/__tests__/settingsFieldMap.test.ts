@@ -37,6 +37,21 @@ describe('settingsFieldMap', () => {
   // 群聊: the nickname is also the meeting display name and the profile is
   // injected into every agent prompt. Guard both halves of the extraction so a
   // later refactor cannot silently put the nickname back under chat.
+  // Remote images in a mail body load by default; the row exists so a cautious
+  // reader can turn that off. Pin both halves — the panel entry and the value
+  // the reader actually consults — or the switch could render while changing
+  // nothing.
+  it('offers the mail image default as a local switch that is on', () => {
+    const row = categoryItems['mail'].find(
+      e => e.type === 'item' && (e as { spec: { key: string } }).spec.key === 'mailLoadRemoteImages',
+    )
+    expect(row).toBeDefined()
+    if (row!.type !== 'item') throw new Error('expected an item entry for mailLoadRemoteImages')
+    expect(row!.spec.type).toBe('switch')
+    expect(row!.spec.source).toBe('local')
+    expect(localConfig.mailLoadRemoteImages).toBe(true)
+  })
+
   it('identity category owns the user nickname and profile', () => {
     const identity = categoryItems['identity']
     expect(identity).toBeDefined()
@@ -523,10 +538,12 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('tts.engine')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(2)
-    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai'])
+    // `system` (the phone's own voice) sits in the same list on purpose: it is
+    // another voice to the user, even though it is stored per device.
+    expect(cfg.entrySelector!.options!.length).toBe(7)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai', 'alibaba', 'tencent', 'volcano', 'minimax', 'system'])
     expect(cfg.commonFields.length).toBe(3)
-    expect(cfg.optionSubFields!.length).toBe(1)
+    expect(cfg.optionSubFields!.length).toBe(5)
 
     const openaiSub = cfg.optionSubFields!.find(osf => osf.when === 'openai')
     expect(openaiSub).toBeDefined()
@@ -552,11 +569,57 @@ describe('settingsFieldMap', () => {
       'tts.openai.base_url',
       'tts.openai.model',
       'tts.openai.voice',
+      'tts.alibaba.api_key',
+      'tts.tencent.secret_id',
+      'tts.tencent.secret_key',
+      'tts.volcano.api_key',
+      'tts.minimax.api_key',
     ])
     // There is no engine-switch voice reset: tts.voice belongs to Edge, so
     // switching engines must leave it alone.
     expect(cfg.needsVoiceReset).toBeUndefined()
     expect(cfg.hasConnectivityTest).toBe(true)
+  })
+
+  // The three Chinese cloud engines each keep their own credentials in their
+  // own section: switching engines must never show (or overwrite) another
+  // engine's key.
+  it('tts_engine vendor panels expose per-engine credential fields', () => {
+    const cfg = getCategoryPanels('tts_engine')[0]
+    const keysOf = (when: string) => cfg.optionSubFields!.find(o => o.when === when)!.fields.map(f => f.key)
+
+    expect(keysOf('alibaba')).toEqual([
+      'tts.alibaba.api_key',
+      'tts.alibaba.base_url',
+      'tts.alibaba.model',
+      'tts.alibaba.voice',
+    ])
+    expect(keysOf('tencent')).toEqual([
+      'tts.tencent.secret_id',
+      'tts.tencent.secret_key',
+      'tts.tencent.voice_type',
+    ])
+    expect(keysOf('volcano')).toEqual([
+      'tts.volcano.api_key',
+      'tts.volcano.resource_id',
+      'tts.volcano.voice',
+    ])
+    expect(keysOf('minimax')).toEqual([
+      'tts.minimax.api_key',
+      'tts.minimax.group_id',
+      'tts.minimax.base_url',
+      'tts.minimax.model',
+      'tts.minimax.voice',
+    ])
+
+    // Every secret is masked.
+    for (const key of ['tts.alibaba.api_key', 'tts.tencent.secret_key', 'tts.volcano.api_key', 'tts.minimax.api_key']) {
+      const field = cfg.optionSubFields!.flatMap(o => o.fields).find(f => f.key === key)!
+      expect(field.type).toBe('password')
+    }
+    // The Tencent voice is a numeric catalog id, not free text.
+    const voiceType = cfg.optionSubFields!.flatMap(o => o.fields).find(f => f.key === 'tts.tencent.voice_type')!
+    expect(voiceType.type).toBe('number')
   })
 
   // The shared tts.voice row is a fixed per-engine dropdown. For "openai" it
@@ -650,18 +713,35 @@ describe('settingsFieldMap', () => {
     }
 
     // Each engine has its own api_key, and only that engine's row shows it.
+    // Tencent's credential is a SecretId/SecretKey pair, so it is checked
+    // separately below rather than through this api_key loop.
     for (const [engine, key] of [['vllm', 'stt.vllm.api_key'], ['doubao', 'stt.doubao.api_key'], ['alibaba', 'stt.alibaba.api_key']]) {
       const field = cfg.commonFields.find(f => f.key === key)
       expect(field, key).toBeDefined()
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
     }
 
+    // Tencent signs with SecretId/SecretKey and needs the numeric AppID for
+    // realtime; all of its rows must be gated on its own engine.
+    for (const key of ['stt.tencent.secret_id', 'stt.tencent.secret_key', 'stt.tencent.app_id',
+      'stt.tencent.model', 'stt.tencent.streaming', 'stt.tencent.end_window_size']) {
+      const field = cfg.commonFields.find(f => f.key === key)
+      expect(field, key).toBeDefined()
+      expect(field!.dependsOn, key).toEqual({ key: 'stt.provider', value: 'tencent' })
+    }
+    // The provider list must offer it, otherwise the rows can never render.
+    const provider = cfg.commonFields.find(f => f.key === 'stt.provider')
+    expect(provider!.options!.map(o => o.value)).toContain('tencent')
+    // "Not configured" is the default and comes first: an unset install must
+    // read as "nothing chosen", not as a localhost engine nobody set up.
+    expect(provider!.options![0]).toEqual({ labelKey: 'settings.items.sttProviderNone', value: '' })
+
     // The streaming switch exists only for the engines that can decode live
     // PCM, each gated on its own engine. vLLM gets no row at all: its value was
     // never read by any code path (dictation always uploads one recording), so
     // the row was a switch that did nothing.
     expect(keys).not.toContain('stt.vllm.streaming')
-    for (const engine of ['doubao', 'alibaba']) {
+    for (const engine of ['doubao', 'alibaba', 'tencent']) {
       const field = cfg.commonFields.find(f => f.key === `stt.${engine}.streaming`)
       expect(field, engine).toBeDefined()
       expect(field!.dependsOn).toEqual({ key: 'stt.provider', value: engine })
@@ -683,19 +763,33 @@ describe('settingsFieldMap', () => {
 
   // ── Port Forward panel ──
 
-  it('portForward panel has NO enable switch — the SSH listener is always on', () => {
-    // The switch was removed with the server-side pin (see ApplyDefaults): the
-    // listener is server-side while the transport choice is client-local, so no
-    // single value could serve every client of one server. Removing it also
-    // removed the "which one does this actually gate?" confusion.
+  it('portForward panel has NO enable switch — the transport row is the switch', () => {
+    // The enable switch was removed with the server-side pin (see ApplyDefaults):
+    // the feature is always available, and `port_forward.transport` below is the
+    // real server-side switch (ssh listener vs h2 endpoints).
     const panels = getCategoryPanels('portForward')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(cfg.enableKey).toBeUndefined()
     expect(cfg.enableLabelKey).toBeUndefined()
-    expect(cfg.commonFields.length).toBe(1)
-    expect(cfg.commonFields[0].key).toBe('port_forward.port')
-    expect(cfg.commonFields[0].needsRestart).toBeFalsy()
+    expect(cfg.commonFields.map(f => f.key)).toEqual([
+      'port_forward.transport',
+      'port_forward.port',
+    ])
+    for (const field of cfg.commonFields) expect(field.needsRestart).toBeFalsy()
+  })
+
+  it('portForward transport is a SERVER field with exactly ssh/h2', () => {
+    // It used to be a host-local picker (Electron store / Android
+    // SharedPreferences), which is why the web panel could not show it at all.
+    // Now the server decides and every client follows, so it is an ordinary
+    // server field and the retired "both" must not reappear as an option.
+    const field = getCategoryPanels('portForward')[0].commonFields
+      .find(f => f.key === 'port_forward.transport')
+    expect(field, 'port_forward.transport must exist').toBeTruthy()
+    expect(field!.type).toBe('select')
+    expect(field!.source).toBe('server')
+    expect((field!.options ?? []).map(o => o.value).sort()).toEqual(['h2', 'ssh'])
   })
 
   it('portForward panel has NO connectivity test button — the status row replaces it', () => {
@@ -715,7 +809,9 @@ describe('settingsFieldMap', () => {
     // user verbatim: SettingsItem stringifies whatever displayTransform returns
     // and never looks it up in i18n (SettingsItem.vue displayValue).
     const cfg = getCategoryPanels('portForward')[0]
-    const transform = cfg.commonFields[0].displayTransform
+    const portField = cfg.commonFields.find(f => f.key === 'port_forward.port')
+    expect(portField, 'port_forward.port must exist').toBeTruthy()
+    const transform = portField!.displayTransform
     expect(transform, 'port_forward.port must keep a displayTransform').toBeTruthy()
 
     const auto = String(transform!(0))

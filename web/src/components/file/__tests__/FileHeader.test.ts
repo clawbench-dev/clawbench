@@ -1265,3 +1265,39 @@ describe('FileHeader — toolbar labels', () => {
     expect(wrapper.find('[data-ab-more]').exists()).toBe(true)
   })
 })
+
+describe('draw.io export entry', () => {
+  function mountFor(file: Record<string, unknown>) {
+    return mount(FileHeader, {
+      props: {
+        file,
+        viewMode: 'source',
+        tocOpen: false,
+        searchOpen: false,
+        wordWrap: true,
+        showLineNumbers: true,
+        stickyScroll: true,
+        overlayOpen: false,
+      },
+      global: {
+        plugins: [i18n],
+        stubs: { Teleport: { template: '<div><slot /></div>' } },
+        provide: { openLightbox: vi.fn() },
+      },
+    })
+  }
+
+  it('offers an export menu item for .drawio files only', () => {
+    // The editor's own File > Export as is disabled in embed mode, so this menu
+    // item is the only way to get a PNG/SVG/XML out of a diagram.
+    // `isDrawio` is set by the store from the backend subtype; the viewer (and
+    // therefore this menu item) keys off that flag, not the extension.
+    const drawio = mountFor({ name: 'flow.drawio', path: '/tmp/flow.drawio', content: '<mxfile/>', isDrawio: true })
+    expect((drawio.vm as any).$.setupState.permanentMenuIds).toContain('exportDrawio')
+    drawio.unmount()
+
+    const text = mountFor({ name: 'main.ts', path: '/tmp/main.ts', content: 'code' })
+    expect((text.vm as any).$.setupState.permanentMenuIds).not.toContain('exportDrawio')
+    text.unmount()
+  })
+})

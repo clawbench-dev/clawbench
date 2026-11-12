@@ -90,6 +90,8 @@ describe('useVoiceInput', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: { getUserMedia: vi.fn().mockRejectedValue(new Error('denied')) },
     })
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.toggle()
@@ -99,11 +101,31 @@ describe('useVoiceInput', () => {
 
   it('reports a clear error when mediaDevices is missing (insecure context)', async () => {
     vi.stubGlobal('navigator', {}) // no mediaDevices → non-secure context
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.toggle()
     expect(v.state.value).toBe('idle')
     expect(v.error.value).toContain('HTTPS')
+  })
+
+  it('refuses to record when no engine is configured', async () => {
+    // Nothing selected means there is nowhere to send the audio. Recording a
+    // clip that can only fail is worse than one clear sentence pointing at the
+    // setting, and the microphone is never opened.
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: '' } }
+    const getUserMedia = vi.fn()
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(getUserMedia).not.toHaveBeenCalled()
+    expect(v.state.value).toBe('idle')
+    expect(v.error.value).toBeTruthy()
   })
 
   it('non-streaming release stops media tracks and nulls the stream', async () => {
@@ -125,6 +147,8 @@ describe('useVoiceInput', () => {
       json: async () => ({ text: '识别结果' }),
     }))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()
@@ -155,6 +179,8 @@ describe('useVoiceInput', () => {
       json: async () => ({ text: '识别结果' }),
     }))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()
@@ -187,6 +213,8 @@ describe('useVoiceInput', () => {
       Promise.resolve({ ok: true, json: async () => ({ text: texts[call++] }) })
     ))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
 
@@ -220,6 +248,8 @@ describe('useVoiceInput', () => {
       Promise.resolve({ ok: true, json: async () => ({ text: '识别结果' }) })
     ))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
 
@@ -229,12 +259,19 @@ describe('useVoiceInput', () => {
     await vi.waitFor(() => expect(v.inputText.value).toBe('已输入的文字识别结果'))
   })
 
-  // The composer is emptied when the message is sent, but a dictation started
-  // from that text is still in flight. Its snapshot has to be dropped at that
-  // point: the late transcript would otherwise rebuild "sent text + transcript"
-  // and drop it back into the box — the message looks unsent, and the next tap
-  // sends it a second time.
-  it('setStartText("") keeps a late transcript from resurrecting the sent text', async () => {
+  // ── dictating into a real field (any input/textarea, not just the chat box) ──
+
+  /** A focused textarea with its caret where the caller wants it. */
+  function makeField(value: string, caret = value.length): HTMLTextAreaElement {
+    const el = document.createElement('textarea')
+    el.value = value
+    document.body.appendChild(el)
+    el.focus()
+    el.setSelectionRange(caret, caret)
+    return el
+  }
+
+  it('does not announce 「已写入」 when the engine recognised nothing', async () => {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
     vi.stubGlobal('navigator', {
@@ -248,48 +285,112 @@ describe('useVoiceInput', () => {
       stop() { this.state = 'inactive'; this.onstop?.() }
       static isTypeSupported = vi.fn(() => true)
     })
-    // Hold the response until the composer has been cleared, so the ordering
-    // matches the real send (the POST is in flight when clearInput() runs).
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: '' }),
+    }))
+
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    const el = makeField('原有内容')
+
+    await v.startAt(el)
+    v.stop()
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+    // The field is untouched and the "已写入" pill is not shown: there is
+    // nothing to confirm.
+    expect(el.value).toBe('原有内容')
+    expect(v.targetEl.value).toBeNull()
+    el.remove()
+  })
+
+  it('writes a late transcript into the field even if the box was cleared by a send', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    // Hold the response until after the box has been cleared, matching the
+    // real send (the POST is in flight when clearInput() runs).
     let resolveFetch!: (v: unknown) => void
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { resolveFetch = resolve })))
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
+    const el = makeField('请看一下这个改动')
 
-    await v.start('请看一下这个改动')
+    await v.startAt(el)
     v.stop()
     // The message went out → the composer is empty.
-    v.setStartText('')
+    el.value = ''
     resolveFetch({ ok: true, json: async () => ({ text: '听写' }) })
 
     await vi.waitFor(() => expect(v.state.value).toBe('idle'))
-    expect(v.inputText.value).toBe('听写')
-    expect(v.inputText.value).not.toContain('请看一下这个改动')
+    expect(el.value).toBe('听写')
+    expect(el.value).not.toContain('请看一下这个改动')
+    el.remove()
   })
 
-  // Same hazard on the PCM path, where the partial is rebuilt from
-  // `voicePrefix` rather than appended — clearing only `inputText` there would
-  // leave the sent text in front of every partial.
-  it('setStartText("") also drops the PCM prefix that partials are built on', async () => {
+  it('re-anchors streaming partials after the field was cleared (no resurrected prefix)', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
-    await v.start('请看一下这个改动')
+    const el = makeField('请看一下这个改动')
+
+    await v.startAt(el)
     env.getWS()!.onopen!()
     await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
 
     env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
-    expect(v.inputText.value).toBe('请看一下这个改动听写')
+    expect(el.value).toBe('请看一下这个改动听写')
 
-    // The message was sent: the box is empty and the snapshot is gone.
-    v.setStartText('')
+    // The message was sent: the box is empty, so the next revision must land
+    // alone instead of rebuilding the sent text in front of it.
+    el.value = ''
     env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
-    expect(v.inputText.value).toBe('听写')
+    expect(el.value).toBe('听写')
 
     v.cancel()
+    el.remove()
+  })
+
+  it('writes into the field at the caret and keeps the text on both sides', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    const el = makeField('前后', 1) // caret between 前 and 后
+
+    await v.startAt(el)
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '中间' }) })
+    expect(el.value).toBe('前中间后')
+    // The recognition context is the text in front of the caret, not the whole box.
+    expect(JSON.parse(env.getWS()!.send.mock.calls[0][0] as string).context).toBe('前')
+
+    v.cancel()
+    // Cancelling takes the dictation back out and restores the caret.
+    expect(el.value).toBe('前后')
+    el.remove()
   })
 
   // ── streaming (PCM + AudioWorklet) ───────────────────────────────
@@ -398,6 +499,44 @@ describe('useVoiceInput', () => {
     const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
     expect(JSON.parse(last)).toEqual({ type: 'end' })
     // Releasing the button must also release the microphone.
+    expect(env.track.stop).toHaveBeenCalled()
+    v.cancel()
+  })
+
+  // The last couple of characters were being lost because the capture graph was
+  // torn down the instant the button was released: the audio still inside the
+  // microphone pipeline (device buffer, echo cancellation, the worklet's partial
+  // frame) never reached the socket, so the recogniser heard the last syllable
+  // cut short. The tail keeps the graph alive briefly after release.
+  it('keeps capturing briefly after release so the tail still in the pipeline is sent', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    const stopping = v.stop()
+    // The UI must read as "transcribing" straight away, not as still recording.
+    expect(v.state.value).toBe('transcribing')
+    expect(v.isRecording.value).toBe(false)
+
+    // A frame that was already inside the pipeline when the button came up is
+    // still forwarded, and the end marker has not been sent yet.
+    const frame = new Int16Array(160).fill(8000).buffer
+    env.workletNode.port.onmessage!({ data: frame })
+    expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
+    expect(env.getWS()!.send.mock.calls.at(-1)![0]).not.toBe(JSON.stringify({ type: 'end' }))
+
+    await stopping
+    const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
+    expect(JSON.parse(last)).toEqual({ type: 'end' })
+    // Only then is the graph torn down and the microphone released.
+    expect(env.workletNode.port.onmessage).toBeNull()
+    expect(env.workletNode.disconnect).toHaveBeenCalled()
     expect(env.track.stop).toHaveBeenCalled()
     v.cancel()
   })
@@ -609,6 +748,50 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
+  it('uses the PCM stream when the provider is tencent and streaming is on', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'tencent', tencent: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+
+    expect(env.getWS()).toBeDefined()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+    v.cancel()
+  })
+
+  it('uploads a WAV for tencent with streaming off (its whole-file API rejects WebM)', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'tencent', tencent: { streaming: false } } }
+    const env = stubStreamingEnv()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: '识别结果' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+    // One 100 ms frame of speech (RMS well above the standard threshold).
+    env.workletNode.port.onmessage!({ data: new Int16Array(1600).fill(1000).buffer })
+    await v.stop()
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = fetchMock.mock.calls[0][1].body as FormData
+    const file = body.get('file') as File
+    expect(file.name).toBe('recording.wav')
+    expect(file.type).toBe('audio/wav')
+    // 44-byte header + one 1600-sample (3200-byte) frame.
+    expect(file.size).toBe(44 + 3200)
+    expect(v.inputText.value).toBe('识别结果')
+  })
+
   it('partial messages replace the transcript while keeping the typed prefix', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
@@ -650,6 +833,8 @@ describe('useVoiceInput', () => {
       static isTypeSupported = vi.fn(() => false)
     })
 
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
     await v.start()

@@ -97,14 +97,29 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// TTS engine + sub-configs — recreate provider
-	"tts.engine":             true,
-	"tts.tts_model":          true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
-	"tts.format":             true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.openai.base_url":    true,
-	"tts.openai.api_key":     true,
-	"tts.openai.model":       true,
-	"tts.openai.voice":       true,
-	"tts.openai.stream_mode": true,
+	"tts.engine":              true,
+	"tts.tts_model":           true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":              true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.openai.base_url":     true,
+	"tts.openai.api_key":      true,
+	"tts.openai.model":        true,
+	"tts.openai.voice":        true,
+	"tts.openai.stream_mode":  true,
+	"tts.alibaba.api_key":     true,
+	"tts.alibaba.base_url":    true,
+	"tts.alibaba.model":       true,
+	"tts.alibaba.voice":       true,
+	"tts.tencent.secret_id":   true,
+	"tts.tencent.secret_key":  true,
+	"tts.tencent.voice_type":  true,
+	"tts.volcano.api_key":     true,
+	"tts.volcano.resource_id": true,
+	"tts.volcano.voice":       true,
+	"tts.minimax.api_key":     true,
+	"tts.minimax.group_id":    true,
+	"tts.minimax.base_url":    true,
+	"tts.minimax.model":       true,
+	"tts.minimax.voice":       true,
 	// STT — speech-to-text config, hot-reloadable. Credentials and engine
 	// options live under the engine's own section so editing one engine cannot
 	// overwrite another's.
@@ -127,12 +142,21 @@ var hotReloadFields = map[string]bool{
 	"stt.alibaba.api_key":          true,
 	"stt.alibaba.base_url":         true,
 	"stt.alibaba.model":            true,
+	"stt.alibaba.file_model":       true,
 	"stt.alibaba.language":         true,
 	"stt.alibaba.enable_itn":       true,
 	"stt.alibaba.enable_punc":      true,
 	"stt.alibaba.enable_ddc":       true,
 	"stt.alibaba.end_window_size":  true,
 	"stt.alibaba.streaming":        true,
+	"stt.tencent.secret_id":        true,
+	"stt.tencent.secret_key":       true,
+	"stt.tencent.app_id":           true,
+	"stt.tencent.model":            true,
+	"stt.tencent.enable_itn":       true,
+	"stt.tencent.enable_ddc":       true,
+	"stt.tencent.end_window_size":  true,
+	"stt.tencent.streaming":        true,
 	"stt.mic_echo_cancel":          true,
 	"stt.mic_noise_suppress":       true,
 	"stt.mic_auto_gain":            true,
@@ -156,10 +180,8 @@ var hotReloadFields = map[string]bool{
 	"meeting.language":           true,
 	"meeting.file_excerpts":      true,
 	"meeting.minutes_max_tokens": true,
-	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded.
-	// port_forward.transport is accepted but has no effect: it is pinned to
-	// "both" (see applyConfigPatch), so listing it here only avoids reporting a
-	// restart for a field that did not change.
+	// Port Forward — transport decides which listener exists; switching it
+	// starts or stops the SSH listener (see hotReloadSSH in cmd/server).
 	"port_forward.enabled":       true,
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
@@ -403,7 +425,7 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 		}
 		srv := model.MCPServer{}
 		srv.Name, _ = m["name"].(string)
-		srv.Transport, _ = m["transport"].(string)
+		srv.Transport, _ = m[jsonTransport].(string)
 		srv.Command, _ = m["command"].(string)
 		srv.URL, _ = m["url"].(string)
 		if args, ok := m["args"].([]any); ok {
@@ -503,13 +525,17 @@ type configTerminal struct {
 }
 
 type configTTS struct {
-	Engine        string           `json:"engine"`
-	TTSModel      string           `json:"tts_model"`
-	Format        string           `json:"format"`
-	Speed         float64          `json:"speed"`
-	Voice         string           `json:"voice"`
-	MaxCacheFiles int              `json:"max_cache_files"`
-	OpenAI        *configOpenAITTS `json:"openai,omitempty"`
+	Engine        string            `json:"engine"`
+	TTSModel      string            `json:"tts_model"`
+	Format        string            `json:"format"`
+	Speed         float64           `json:"speed"`
+	Voice         string            `json:"voice"`
+	MaxCacheFiles int               `json:"max_cache_files"`
+	OpenAI        *configOpenAITTS  `json:"openai,omitempty"`
+	Alibaba       *configAlibabaTTS `json:"alibaba,omitempty"`
+	Tencent       *configTencentTTS `json:"tencent,omitempty"`
+	Volcano       *configVolcanoTTS `json:"volcano,omitempty"`
+	Minimax       *configMinimaxTTS `json:"minimax,omitempty"`
 }
 
 type configOpenAITTS struct {
@@ -520,11 +546,39 @@ type configOpenAITTS struct {
 	StreamMode string `json:"stream_mode"`
 }
 
+type configAlibabaTTS struct {
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Voice   string `json:"voice"`
+}
+
+type configTencentTTS struct {
+	SecretID  string `json:"secret_id"`
+	SecretKey string `json:"secret_key"`
+	VoiceType int    `json:"voice_type"`
+}
+
+type configVolcanoTTS struct {
+	APIKey     string `json:"api_key"`
+	ResourceID string `json:"resource_id"`
+	Voice      string `json:"voice"`
+}
+
+type configMinimaxTTS struct {
+	APIKey  string `json:"api_key"`
+	GroupID string `json:"group_id"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Voice   string `json:"voice"`
+}
+
 type configSTT struct {
 	Provider    string           `json:"provider"`
 	VLLM        configSTTVLLM    `json:"vllm"`
 	Doubao      configSTTDoubao  `json:"doubao"`
 	Alibaba     configSTTAlibaba `json:"alibaba"`
+	Tencent     configSTTTencent `json:"tencent"`
 	ShortcutKey string           `json:"shortcut_key"`
 
 	MicEchoCancel        bool   `json:"mic_echo_cancel"`
@@ -567,9 +621,21 @@ type configSTTAlibaba struct {
 	APIKey        string `json:"api_key"`
 	BaseURL       string `json:"base_url"`
 	Model         string `json:"model"`
+	FileModel     string `json:"file_model"`
 	Language      string `json:"language"`
 	EnableITN     bool   `json:"enable_itn"`
 	EnablePunc    bool   `json:"enable_punc"`
+	EnableDDC     bool   `json:"enable_ddc"`
+	EndWindowSize int    `json:"end_window_size"`
+	Streaming     bool   `json:"streaming"`
+}
+
+type configSTTTencent struct {
+	SecretID      string `json:"secret_id"`
+	SecretKey     string `json:"secret_key"`
+	AppID         string `json:"app_id"`
+	Model         string `json:"model"`
+	EnableITN     bool   `json:"enable_itn"`
 	EnableDDC     bool   `json:"enable_ddc"`
 	EndWindowSize int    `json:"end_window_size"`
 	Streaming     bool   `json:"streaming"`
@@ -976,6 +1042,21 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.openai.model":                       true,
 	"tts.openai.voice":                       true,
 	"tts.openai.stream_mode":                 true,
+	"tts.alibaba.api_key":                    true,
+	"tts.alibaba.base_url":                   true,
+	"tts.alibaba.model":                      true,
+	"tts.alibaba.voice":                      true,
+	"tts.tencent.secret_id":                  true,
+	"tts.tencent.secret_key":                 true,
+	"tts.tencent.voice_type":                 true,
+	"tts.volcano.api_key":                    true,
+	"tts.volcano.resource_id":                true,
+	"tts.volcano.voice":                      true,
+	"tts.minimax.api_key":                    true,
+	"tts.minimax.group_id":                   true,
+	"tts.minimax.base_url":                   true,
+	"tts.minimax.model":                      true,
+	"tts.minimax.voice":                      true,
 	"stt.provider":                           true,
 	"stt.shortcut_key":                       true,
 	"stt.vllm.base_url":                      true,
@@ -995,12 +1076,21 @@ var PatchableConfigPaths = map[string]bool{
 	"stt.alibaba.api_key":                    true,
 	"stt.alibaba.base_url":                   true,
 	"stt.alibaba.model":                      true,
+	"stt.alibaba.file_model":                 true,
 	"stt.alibaba.language":                   true,
 	"stt.alibaba.enable_itn":                 true,
 	"stt.alibaba.enable_punc":                true,
 	"stt.alibaba.enable_ddc":                 true,
 	"stt.alibaba.end_window_size":            true,
 	"stt.alibaba.streaming":                  true,
+	"stt.tencent.secret_id":                  true,
+	"stt.tencent.secret_key":                 true,
+	"stt.tencent.app_id":                     true,
+	"stt.tencent.model":                      true,
+	"stt.tencent.enable_itn":                 true,
+	"stt.tencent.enable_ddc":                 true,
+	"stt.tencent.end_window_size":            true,
+	"stt.tencent.streaming":                  true,
 	"stt.mic_echo_cancel":                    true,
 	"stt.mic_noise_suppress":                 true,
 	"stt.mic_auto_gain":                      true,
@@ -1082,16 +1172,27 @@ var PatchableConfigPaths = map[string]bool{
 	"drawio.download_url": true,
 }
 
+// Engine identifiers for the TTS vendor engines. Constants because the same
+// name appears in the validation table, the PATCH applier, the GET payload and
+// the connectivity probes — a typo in one of them would create a second,
+// unrecognized engine that silently never matches.
+const (
+	engineAlibaba = "alibaba"
+	engineTencent = "tencent"
+	engineVolcano = "volcano"
+	engineMinimax = "minimax"
+)
+
 // validTTSEngines is the set of valid TTS engine values.
 var validTTSEngines = map[string]bool{
-	"edge": true, strOpenAI: true,
+	"edge": true, strOpenAI: true, engineAlibaba: true, engineTencent: true, engineVolcano: true, engineMinimax: true,
 }
 
 // validSTTProviders is the set of valid STT engine values. An unknown value
 // must be rejected rather than falling back to vLLM, otherwise a typo silently
 // sends recordings to a service the user did not configure.
 var validSTTProviders = map[string]bool{
-	"vllm": true, "doubao": true, "alibaba": true,
+	"vllm": true, "doubao": true, "alibaba": true, "tencent": true,
 }
 
 // validVoiceSensitivities is the set of voice-gate sensitivity values. The
@@ -1126,6 +1227,25 @@ var validTTSFormats = map[string]bool{
 // validOpenAIStreamModes is the set of valid OpenAI TTS stream modes.
 var validOpenAIStreamModes = map[string]bool{
 	"auto": true, "sse": true, "audio": true,
+}
+
+// effectiveTTSString returns a TTS sub-config string after applying the patch,
+// falling back to the saved value when the patch omits the field. It exists so
+// required-field validation sees what will actually be stored instead of
+// duplicating the nested-map walk for every vendor engine.
+func effectiveTTSString(patch map[string]any, section, field, current string) string {
+	tts, ok := patch["tts"].(map[string]any)
+	if !ok {
+		return current
+	}
+	sub, ok := tts[section].(map[string]any)
+	if !ok {
+		return current
+	}
+	if v, ok := sub[field].(string); ok {
+		return v
+	}
+	return current
 }
 
 // getBuildVersion returns a human-readable version string from build info.
@@ -1228,12 +1348,23 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 				APIKey:        cfg.STT.Alibaba.APIKey,
 				BaseURL:       cfg.STT.Alibaba.BaseURL,
 				Model:         cfg.STT.Alibaba.Model,
+				FileModel:     cfg.STT.Alibaba.FileModel,
 				Language:      cfg.STT.Alibaba.Language,
 				EnableITN:     cfg.STT.Alibaba.EnableITN,
 				EnablePunc:    cfg.STT.Alibaba.EnablePunc,
 				EnableDDC:     cfg.STT.Alibaba.EnableDDC,
 				EndWindowSize: cfg.STT.Alibaba.EndWindowSize,
 				Streaming:     cfg.STT.Alibaba.Streaming,
+			},
+			Tencent: configSTTTencent{
+				SecretID:      cfg.STT.Tencent.SecretID,
+				SecretKey:     cfg.STT.Tencent.SecretKey,
+				AppID:         cfg.STT.Tencent.AppID,
+				Model:         cfg.STT.Tencent.Model,
+				EnableITN:     cfg.STT.Tencent.EnableITN,
+				EnableDDC:     cfg.STT.Tencent.EnableDDC,
+				EndWindowSize: cfg.STT.Tencent.EndWindowSize,
+				Streaming:     cfg.STT.Tencent.Streaming,
 			},
 
 			MicEchoCancel:        cfg.STT.MicEchoCancel,
@@ -1261,18 +1392,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			RetentionDays:  cfg.RAG.RetentionDays,
 		},
 		PortForward: configPortForward{
-			// Pinned rather than echoed, like Transport below: the listener is
-			// always on (see ApplyDefaults), so reporting a stored false would
-			// only describe a state the runtime cannot be in.
+			// Pinned rather than echoed: the feature itself is always available
+			// (see ApplyDefaults). Which wire carries it is Transport below.
 			Enabled: true,
 			Port:    cfg.PortForward.Port,
-			// Pinned rather than echoed: the field is no longer configurable
-			// (see ApplyDefaults / applyConfigPatch), and the read point is the
-			// last place a stale value could leak to the web client's
-			// tunnelTransportAllowsH2() — which treats anything but h2/both as
-			// ssh-only and would hide the h2 panel. Always report the pinned
-			// constant.
-			Transport: model.DefaultPortForwardTransport,
+			// The server-side switch the clients follow. ApplyDefaults has
+			// already normalized it, so this is always "ssh" or "h2".
+			Transport: cfg.PortForward.Transport,
 		},
 		Summarize: configSummarize{
 			TTSBackend:    cfg.Summarize.TTSBackend,
@@ -1347,6 +1473,32 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Voice:      cfg.TTS.OpenAI.Voice,
 			StreamMode: cfg.TTS.OpenAI.StreamMode,
 		}
+	}
+	// The vendor engines' blocks are returned unconditionally, like the STT
+	// sections: switching engines must not hide (and then overwrite) the
+	// credentials saved for the engine you are not currently using.
+	resp.TTS.Alibaba = &configAlibabaTTS{
+		APIKey:  cfg.TTS.Alibaba.APIKey,
+		BaseURL: cfg.TTS.Alibaba.BaseURL,
+		Model:   cfg.TTS.Alibaba.Model,
+		Voice:   cfg.TTS.Alibaba.Voice,
+	}
+	resp.TTS.Tencent = &configTencentTTS{
+		SecretID:  cfg.TTS.Tencent.SecretID,
+		SecretKey: cfg.TTS.Tencent.SecretKey,
+		VoiceType: cfg.TTS.Tencent.VoiceType,
+	}
+	resp.TTS.Volcano = &configVolcanoTTS{
+		APIKey:     cfg.TTS.Volcano.APIKey,
+		ResourceID: cfg.TTS.Volcano.ResourceID,
+		Voice:      cfg.TTS.Volcano.Voice,
+	}
+	resp.TTS.Minimax = &configMinimaxTTS{
+		APIKey:  cfg.TTS.Minimax.APIKey,
+		GroupID: cfg.TTS.Minimax.GroupID,
+		BaseURL: cfg.TTS.Minimax.BaseURL,
+		Model:   cfg.TTS.Minimax.Model,
+		Voice:   cfg.TTS.Minimax.Voice,
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -1792,6 +1944,9 @@ func applySTTAlibabaPatch(cfg *model.STTAlibabaConfig, patch map[string]any) {
 	if v, ok := patch["model"].(string); ok {
 		cfg.Model = v
 	}
+	if v, ok := patch["file_model"].(string); ok {
+		cfg.FileModel = v
+	}
 	if v, ok := patch["language"].(string); ok {
 		cfg.Language = v
 	}
@@ -1800,6 +1955,34 @@ func applySTTAlibabaPatch(cfg *model.STTAlibabaConfig, patch map[string]any) {
 	}
 	if v, ok := patch["enable_punc"].(bool); ok {
 		cfg.EnablePunc = v
+	}
+	if v, ok := patch["enable_ddc"].(bool); ok {
+		cfg.EnableDDC = v
+	}
+	if v, ok := patch["end_window_size"].(float64); ok {
+		cfg.EndWindowSize = int(v)
+	}
+	if v, ok := patch["streaming"].(bool); ok {
+		cfg.Streaming = v
+	}
+}
+
+// applySTTTencentPatch writes the Tencent Cloud engine's own fields.
+func applySTTTencentPatch(cfg *model.STTTencentConfig, patch map[string]any) {
+	if v, ok := patch["secret_id"].(string); ok {
+		cfg.SecretID = v
+	}
+	if v, ok := patch["secret_key"].(string); ok {
+		cfg.SecretKey = v
+	}
+	if v, ok := patch["app_id"].(string); ok {
+		cfg.AppID = v
+	}
+	if v, ok := patch["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := patch["enable_itn"].(bool); ok {
+		cfg.EnableITN = v
 	}
 	if v, ok := patch["enable_ddc"].(bool); ok {
 		cfg.EnableDDC = v
@@ -1885,7 +2068,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if ok {
 		if engine, ok := tts["engine"].(string); ok {
 			if !validTTSEngines[engine] {
-				return fmt.Errorf("tts.engine must be one of: edge,openai")
+				return fmt.Errorf("tts.engine must be one of: edge,openai,alibaba,tencent,volcano,minimax")
 			}
 		}
 		if format, ok := tts["format"].(string); ok {
@@ -1911,12 +2094,31 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				}
 			}
 		}
+		if alibaba, ok := tts[engineAlibaba].(map[string]any); ok {
+			if v, ok := alibaba["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("tts.alibaba.base_url must be a valid URL")
+				}
+			}
+		}
+		if tencent, ok := tts[engineTencent].(map[string]any); ok {
+			if v, ok := tencent["voice_type"].(float64); ok && v < 0 {
+				return fmt.Errorf("tts.tencent.voice_type must be a positive integer")
+			}
+		}
+		if minimax, ok := tts[engineMinimax].(map[string]any); ok {
+			if v, ok := minimax["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("tts.minimax.base_url must be a valid URL")
+				}
+			}
+		}
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
 		if v, ok := sttVal["provider"].(string); ok && v != "" {
 			if !validSTTProviders[v] {
-				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba")
+				return fmt.Errorf("stt.provider must be one of: vllm,doubao,alibaba,tencent")
 			}
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
@@ -2213,6 +2415,40 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if effectiveVoice == "" {
 			return fmt.Errorf("tts.openai.voice is required when tts.engine is \"openai\"")
 		}
+	case engineAlibaba:
+		if engineSwitched {
+			break
+		}
+		// The endpoint, model and voice have documented defaults, so only the
+		// key is required — an unconfigured key would otherwise fail with an
+		// opaque 401 on the first spoken reply.
+		if effectiveTTSString(patch, engineAlibaba, "api_key", cfg.TTS.Alibaba.APIKey) == "" {
+			return fmt.Errorf("tts.alibaba.api_key is required when tts.engine is \"alibaba\"")
+		}
+	case engineTencent:
+		if engineSwitched {
+			break
+		}
+		if effectiveTTSString(patch, engineTencent, "secret_id", cfg.TTS.Tencent.SecretID) == "" {
+			return fmt.Errorf("tts.tencent.secret_id is required when tts.engine is \"tencent\"")
+		}
+		if effectiveTTSString(patch, engineTencent, "secret_key", cfg.TTS.Tencent.SecretKey) == "" {
+			return fmt.Errorf("tts.tencent.secret_key is required when tts.engine is \"tencent\"")
+		}
+	case engineVolcano:
+		if engineSwitched {
+			break
+		}
+		if effectiveTTSString(patch, engineVolcano, "api_key", cfg.TTS.Volcano.APIKey) == "" {
+			return fmt.Errorf("tts.volcano.api_key is required when tts.engine is \"volcano\"")
+		}
+	case engineMinimax:
+		if engineSwitched {
+			break
+		}
+		if effectiveTTSString(patch, engineMinimax, "api_key", cfg.TTS.Minimax.APIKey) == "" {
+			return fmt.Errorf("tts.minimax.api_key is required when tts.engine is \"minimax\"")
+		}
 	}
 
 	// 3. default_agent must be an existing, enabled agent ID.
@@ -2339,13 +2575,12 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
-	// port_forward.transport — accepted for API compatibility, then ignored.
-	// The field is pinned to "both" (see applyConfigPatch), so a caller that
-	// still sends ssh/h2/both gets a 200 and reads "both" back. An unrecognized
-	// value is still a 400: it is a caller bug, and silently storing it would
-	// put garbage in config.yaml for the next load to converge.
+	// port_forward.transport — the server-side switch clients follow. The
+	// retired "both" is still accepted (old clients send it) and normalized to
+	// h2 on apply; anything unrecognized is a 400 rather than a stored value
+	// that would only be converged on the next load.
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
-		if raw, present := pf["transport"]; present {
+		if raw, present := pf[jsonTransport]; present {
 			v, ok := raw.(string)
 			if !ok {
 				return fmt.Errorf("port_forward.transport must be a string")
@@ -2634,6 +2869,61 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 				cfg.TTS.OpenAI.StreamMode = v
 			}
 		}
+		// Vendor engines write only their own section, so editing one engine
+		// never touches another's saved credentials.
+		if alibaba, ok := tts[engineAlibaba].(map[string]any); ok {
+			if v, ok := alibaba["api_key"].(string); ok {
+				cfg.TTS.Alibaba.APIKey = v
+			}
+			if v, ok := alibaba["base_url"].(string); ok {
+				cfg.TTS.Alibaba.BaseURL = v
+			}
+			if v, ok := alibaba["model"].(string); ok {
+				cfg.TTS.Alibaba.Model = v
+			}
+			if v, ok := alibaba["voice"].(string); ok {
+				cfg.TTS.Alibaba.Voice = v
+			}
+		}
+		if tencent, ok := tts[engineTencent].(map[string]any); ok {
+			if v, ok := tencent["secret_id"].(string); ok {
+				cfg.TTS.Tencent.SecretID = v
+			}
+			if v, ok := tencent["secret_key"].(string); ok {
+				cfg.TTS.Tencent.SecretKey = v
+			}
+			if v, ok := tencent["voice_type"].(float64); ok {
+				cfg.TTS.Tencent.VoiceType = int(v)
+			}
+		}
+		if volcano, ok := tts[engineVolcano].(map[string]any); ok {
+			if v, ok := volcano["api_key"].(string); ok {
+				cfg.TTS.Volcano.APIKey = v
+			}
+			if v, ok := volcano["resource_id"].(string); ok {
+				cfg.TTS.Volcano.ResourceID = v
+			}
+			if v, ok := volcano["voice"].(string); ok {
+				cfg.TTS.Volcano.Voice = v
+			}
+		}
+		if minimax, ok := tts[engineMinimax].(map[string]any); ok {
+			if v, ok := minimax["api_key"].(string); ok {
+				cfg.TTS.Minimax.APIKey = v
+			}
+			if v, ok := minimax["group_id"].(string); ok {
+				cfg.TTS.Minimax.GroupID = v
+			}
+			if v, ok := minimax["base_url"].(string); ok {
+				cfg.TTS.Minimax.BaseURL = v
+			}
+			if v, ok := minimax["model"].(string); ok {
+				cfg.TTS.Minimax.Model = v
+			}
+			if v, ok := minimax["voice"].(string); ok {
+				cfg.TTS.Minimax.Voice = v
+			}
+		}
 	}
 
 	if sttVal, ok := patch["stt"].(map[string]any); ok {
@@ -2653,6 +2943,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := sttVal["alibaba"].(map[string]any); ok {
 			applySTTAlibabaPatch(&cfg.STT.Alibaba, v)
+		}
+		if v, ok := sttVal["tencent"].(map[string]any); ok {
+			applySTTTencentPatch(&cfg.STT.Tencent, v)
 		}
 		if v, ok := sttVal["mic_echo_cancel"].(bool); ok {
 			cfg.STT.MicEchoCancel = v
@@ -2723,11 +3016,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
-		// port_forward.enabled is deliberately NOT applied: the SSH listener is
-		// always on (see ApplyDefaults). It stays accepted so an older client
-		// that still sends it gets a 200 rather than a 400, and the value is
-		// pinned back to true here so a PATCH cannot leave the runtime — or the
-		// file — disagreeing with the load-time invariant.
+		// port_forward.enabled is deliberately NOT applied: the feature itself
+		// is always available (see ApplyDefaults); which wire carries it is the
+		// transport below. It stays accepted so an older client that still
+		// sends it gets a 200 rather than a 400, and the value is pinned back
+		// to true here so a PATCH cannot leave the runtime — or the file —
+		// disagreeing with the load-time invariant.
 		cfg.PortForward.Enabled = true
 		if v, ok := pf["port"].(float64); ok {
 			cfg.PortForward.Port = int(v)
@@ -2735,14 +3029,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := pf["allowed_ports"].(string); ok {
 			cfg.PortForward.AllowedPorts = v
 		}
-		// The transport is pinned, whether or not the patch carried it: any
-		// port_forward PATCH leaves the runtime at "both". The value the caller
-		// sent is deliberately not applied (that is the whole point — the state
-		// "the server says ssh-only" must not be expressible), and an omitted
-		// field must not leave a stale value behind either. Dropping it here
-		// rather than rejecting it in the validator keeps `ssh` a 200 while GET
-		// keeps answering "both".
-		cfg.PortForward.Transport = model.DefaultPortForwardTransport
+		// Only applied when the patch carries it: omitting the field must not
+		// reset the operator's choice. The retired "both" (old clients still
+		// send it) normalizes to "h2".
+		if v, ok := pf[jsonTransport].(string); ok {
+			cfg.PortForward.Transport = model.NormalizePortForwardTransport(v)
+		}
 	}
 
 	if summarize, ok := patch["summarize"].(map[string]any); ok {

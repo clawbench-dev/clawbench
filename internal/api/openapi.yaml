@@ -678,18 +678,14 @@ paths:
         偏好，不在配置中。
 
         `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：SSH 隧道监听器
-        常开，开关已移除（见 `ApplyDefaults` 的 `PortForward.Enabled` 钉死）。
-        `transport` **恒为 `both`**：服务端已把该字段钉死（`ApplyDefaults`
-        无条件归一），yaml 里写 `ssh` / `h2` / `both` / 非法值最终都是 `both`。
+        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：端口映射功能本身总是
+        可用，具体走哪条线由 `transport` 决定。
 
-        `transport` 现在只剩一个消费者：web 端健康检查门控
-        （`tunnelTransportAllowsH2()` 读该值，仅 `h2` / `both` 为真）——因此字段
-        保留、值恒为 `both`，不能删除（删掉会让前端读到 `undefined` 而误判为
-        ssh-only，反而隐藏 h2 面板）。传输方式的选择本身是**客户端本地**的
-        （Electron store 的 `tunnelTransport`，取 `ssh` / `h2`；Android 的
-        SharedPreferences 开关 `tunnel_transport_h2_enabled`），服务端读不到，
-        这正是监听器必须常开的原因：服务端无法用该值决定是否监听。
+        `transport` 是**服务端开关**，取 `ssh` 或 `h2`（默认 `h2`）：
+        `ssh` 时服务端监听 SSH 端口（`port`）并让 `/api/tunnel/*` 返回 503；
+        `h2` 时服务端**完全不监听** SSH 端口，转发走主 HTTP 端口的
+        `/api/tunnel/*`。已废弃的 `both` 仍被接受（老客户端会发），归一为 `h2`。
+        客户端通过 `/api/ssh/info` 的 `transport` 字段跟随该值，不再各自持有偏好。
 
         `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）。关闭后服务端
         停止轮询、不再产生 forge 事件与通知，**并清空所有项目的仓库绑定**（见
@@ -757,13 +753,12 @@ paths:
         因此关闭时无需确认、随时可恢复；热更新，不需要重启。
 
         `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
-        存储值恒为 `true`（监听器常开，与 `ApplyDefaults` 一致）。
+        存储值恒为 `true`（功能恒可用，走哪条线由 `transport` 决定）。
 
-        `port_forward.transport` 仍为白名单键，但**值被忽略**：`ssh` / `h2` /
-        `both` 都返回 200，存储值恒为 `both`（与 `ApplyDefaults` 一致，避免运行时
-        出现「重启后才被归一」的中间状态）。其他值返回 400
-        （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
-        （`port_forward.transport must be a string`）。
+        `port_forward.transport` 是真正的服务端开关：`ssh` / `h2` 会落库并在热更新里
+        立即启停 SSH 监听器（不需要重启）；已废弃的 `both` 仍返回 200 但存储为 `h2`。
+        其他值返回 400（`port_forward.transport must be one of: ssh,h2,both`），
+        非字符串返回 400（`port_forward.transport must be a string`）。
 
         `user.nickname` 非法值返回 400，与智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）；`user.profile` 超 4000 字符返回 400
@@ -773,6 +768,14 @@ paths:
         超出 `1000`–`8000` 返回 400（`msgKey=MeetingMinutesMaxTokensRange`，
         `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部是热更新：
         生成时读取 `ConfigInstance`，不需要重启。
+
+        `tts.engine` 接受 `edge` / `openai` / `alibaba` / `tencent` / `volcano` / `minimax`，
+        其他值返回 400（`tts.engine must be one of: edge,openai,alibaba,tencent,volcano,minimax`）。
+        三家国内厂商的凭据**分节存放**（`tts.alibaba.*` / `tts.tencent.*` /
+        `tts.volcano.*`），编辑一家不会改动另一家的配置；当引擎已经切到该厂商后，
+        缺少必填凭据返回 400（`tts.alibaba.api_key` / `tts.tencent.secret_id` +
+        `secret_key` / `tts.volcano.api_key` / `tts.minimax.api_key`）。`tts.alibaba.base_url`
+        与 `tts.minimax.base_url` 非法返回 400（`tts.alibaba.base_url must be a valid URL`）。
 
         `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
         `auto` / `sse` / `audio`，其他值返回 400
@@ -3503,6 +3506,59 @@ paths:
             text/event-stream:
               schema:
                 type: string
+
+  /api/dir/search/top:
+    get:
+      tags: [Files]
+      summary: 目录搜索（Top N）
+      description: |
+        与 `/api/dir/search` 同一次递归文件名搜索，但**按模糊匹配得分排序后
+        只返回前 `limit` 条**，一次性 JSON 返回。供聊天输入框的 `@` 文件引用
+        菜单使用：它每次按键都会重新查询，只需要最好的几条，流式返回的
+        walk 顺序（目录顺序）反而会把最相关的命中挤到很后面。
+
+        `total` 是截断前的命中总数。
+      operationId: dirSearchTop
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 文件名查询（只匹配文件名，不匹配目录部分）
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: 返回条数上限（默认 8，最大 50）
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 按得分排序的命中
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        path:
+                          type: string
+                          description: 项目相对路径
+                        type:
+                          type: string
+                          enum: [file, dir, image]
+                        matchedIndices:
+                          type: array
+                          items:
+                            type: integer
+                  total:
+                    type: integer
+                    description: 截断前的命中总数
 
   /api/file/content-search:
     get:
@@ -6774,9 +6830,66 @@ paths:
                     群聊发言人的显示名。设置后朗读音频会加上「<名>说：」前缀
                     （英文为「<名> says: 」），便于分辨并发发言者；该前缀只作用于
                     语音合成，不参与摘要、也不写入摘要缓存。
+                summarizeOnly:
+                  type: boolean
+                  description: >-
+                    只做摘要、不合成音频。返回 summary 与 speakText（speakText
+                    含发言人前缀），供使用设备自带语音引擎的客户端朗读；不会创建
+                    合成任务，也不会读写音频缓存。
       responses:
         "200":
-          description: 音频
+          description: >-
+            音频任务（默认，返回 jobId / streaming / cached / audioPath），或
+            summarizeOnly 时的 { summary, speakText }。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                  streaming:
+                    type: boolean
+                  cached:
+                    type: boolean
+                  audioPath:
+                    type: string
+                  summary:
+                    type: string
+                  speakText:
+                    type: string
+                    description: 实际要朗读的文本（含群聊发言人前缀），仅 summarizeOnly 返回。
+
+  /api/tts/preview:
+    post:
+      tags: [TTS]
+      summary: 试听当前引擎（合成一句样例）
+      operationId: ttsPreview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: 要念的样例文本，缺省为一句中文测试语，最长 200 字。
+                language:
+                  type: string
+                  description: 语言代码（如 zh / en），缺省 zh。
+      responses:
+        "200":
+          description: 合成好的样例音频路径
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  audioPath:
+                    type: string
+        "502":
+          description: 合成失败（引擎不可用或返回错误）
 
   /api/tts/stream/{jobId}:
     get:
@@ -7574,8 +7687,17 @@ paths:
       summary: 检查新版本
       description: |
         返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
+        `has_upgrade` 只在运行版本确实比 registry 上的版本旧时为真：自己构建的
+        commit-describe 版本（如 `v0.139.0-20-g9037e1d5a`）如果比 registry 上的
+        新，不算有新版（那条「升级」其实是降级）。只有版本号无法比较（`dev`、
+        裸哈希）的构建才一律报有新版。
         响应字段：`current_version`、`latest_version`、`has_upgrade`、
-        `install_writable`、`install_dir`、`is_docker`、`verification_warning`。
+        `install_writable`、`install_dir`、`is_docker`、`verification_warning`、
+        `skipped_version`。
+        `skipped_version` 是用户点过「跳过此版本」的版本号（存在服务端数据目录，
+        因此换设备、换访问地址（局域网 IP / 域名）都生效），为空表示没有跳过任何
+        版本。它**只**影响启动时的升级提示：`has_upgrade` 不变，设置页仍可手动
+        升级该版本。
         `verification_warning` 是给人看的展示文本，非空表示本次升级有校验无法
         完成，可能同时包含多个原因（发布签名未验证、registry 未提供完整性哈希）。
         `verification_issues` 是同一批问题的稳定标识（排序后的原因码），用于回传
@@ -7587,6 +7709,23 @@ paths:
       responses:
         "200":
           description: 版本信息
+
+  /api/upgrade/skip:
+    post:
+      tags: [Upgrade]
+      summary: 跳过某个版本
+      description: |
+        请求体 `{"version": "1.2.3"}`：记录该版本为「已跳过」，`/api/upgrade/check`
+        的 `skipped_version` 随即可见。版本号会被规范化（去首尾空白、去一个前导
+        `v`）。`version` 为空表示清除记录（下次仍会提示）。
+        记录落在服务端数据目录，所以换设备或换访问地址后仍然生效——客户端
+        localStorage 只是本地副本，不能作为唯一依据。
+      operationId: upgradeSkip
+      responses:
+        "200":
+          description: 已记录，返回规范化后的 `skipped_version`
+        "400":
+          description: 请求体非法
 
   /api/upgrade/start:
     post:
@@ -7801,14 +7940,16 @@ paths:
       description: |
         免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
         错误端口导致隧道静默失败。
-        仅返回 `enabled` 与 `port`。指纹、用户名、`ssh -L` 命令与连接统计
+        返回 `enabled`、`port` 与 `transport`（服务端当前使用的隧道方式，
+        `ssh` 或 `h2`；`h2` 时 `enabled` 为 false 且不监听 SSH 端口，客户端据此
+        改走 `/api/tunnel/*`）。指纹、用户名、`ssh -L` 命令与连接统计
         已移至需鉴权的 `/api/ssh/info/full`——其中命令会枚举全部转发端口及其
         内网目标主机，等同于内网拓扑，不应提供给匿名调用方。
       operationId: sshInfo
       security: []
       responses:
         "200":
-          description: 最小 SSH 信息（enabled、port）
+          description: 最小 SSH 信息（enabled、port、transport）
 
   /api/ssh/info/full:
     get:
@@ -7816,7 +7957,8 @@ paths:
       summary: SSH 隧道完整信息
       description: |
         需鉴权。供 Web UI 展示隧道命令、指纹与连接统计。
-        返回 host、port、username、fingerprint、command、connectionStats。
+        返回 host、port、username、fingerprint、command、connectionStats 与
+        transport（服务端当前使用的隧道方式）。
       operationId: sshInfoFull
       responses:
         "200":
@@ -7889,7 +8031,10 @@ paths:
         "502":
           description: 目标不可达（`net.Dial` 失败），响应头未被提前写出。
         "503":
-          description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
+          description: |
+            端口转发不可用：`ProxyService == nil`（无白名单可执行），或服务端当前
+            `port_forward.transport` 为 `ssh`（此时转发只走 SSH 监听器，h2 端点拒绝服务，
+            `msgKey=TunnelTransportDisabled`）。
 
   /api/tunnel/control:
     post:
@@ -7952,7 +8097,9 @@ paths:
         "426":
           description: 请求不是 HTTP/2（`-R` 需要 h2，见上方说明）。
         "503":
-          description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
+          description: |
+            端口转发不可用：`ProxyService == nil`，或服务端 `port_forward.transport`
+            为 `ssh`（h2 端点拒绝服务，`msgKey=TunnelTransportDisabled`）。
 
   /api/fonts/list:
     get:

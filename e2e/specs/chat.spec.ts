@@ -202,6 +202,26 @@ test.describe('Chat', () => {
     await expect(thinkingBlock.locator('.thinking-inline-content')).toBeVisible({ timeout: 5000 })
   })
 
+  // Models emit lone space tokens between reasoning runs. When a tool call sits
+  // between two of them, the space alone used to become the entire content of a
+  // brand-new thinking block — an expandable 「深度思考」chip holding nothing.
+  // This turn makes acp-mock emit exactly that shape after its tool call.
+  test('whitespace-only thought chunk does not create an empty thinking chip', async ({ page }) => {
+    await chat.waitForIdle()
+    await chat.createSessionWithAgent('acp-mock')
+    const countBefore = await chat.sendMessage('[mock:blank-thinking] think about this')
+    await chat.waitForReply(30000, countBefore)
+    await expect(chat.sendButton).toBeVisible({ timeout: 10000 })
+
+    const reply = chat.getLastAssistantMessage()
+    // Exactly one thinking block: the real one. The blank chunk must not open a
+    // second chip.
+    await expect(reply.locator('.chat-thinking')).toHaveCount(1)
+    // And that one must have content behind it, not be an empty shell.
+    await reply.locator('.chat-thinking .thinking-header').click()
+    await expect(reply.locator('.chat-thinking .thinking-inline-content')).toContainText('Processing user request')
+  })
+
   // ───────────────────────────────────────────────────────
   // Summary toggle
   // ───────────────────────────────────────────────────────

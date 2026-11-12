@@ -34,8 +34,11 @@ sequenceDiagram
 
 ### 功能清单
 
-- **双引擎 TTS**：支持 Edge TTS（微软语音）与 OpenAI 兼容 TTS（`/v1/audio/speech`），用户按需选择引擎。前者开箱即用，后者可接入任意兼容端点
+- **六种引擎**：支持 Edge TTS（微软语音）、OpenAI 兼容 TTS（`/v1/audio/speech`）、阿里云百炼（DashScope）、腾讯云语音合成、火山引擎（豆包）与 MiniMax，用户按需选择引擎。Edge 开箱即用，其余可接入对应厂商的账号
 - **总结后端三选一**：长文本先经 summarizer 压缩再合成语音。后端可选 `simple`（纯文本清洗，零延迟零成本）、`api`（LLM 二次压缩，复用 `ai_summary` 配置）或 `auto`（**按内容自动分流**：剥离出的"杂质"占比 ≥ `summarize.auto_junk_ratio`（默认 0.5），或清洗后文本超过 simple 的截断上限时走 LLM，否则直接朗读清洗文本）。短文本（< 300 字符）跳过摘要直接合成。`auto` 在未配置 `ai_summary` 时降级为 `simple`，不像 `api` 那样硬失败
+- **压缩失败就读全文，不从半截开始**：摘要模型出错（典型是推理模型把输出额度花在思考上、正文返回空）时，朗读文本退化为**清洗后的完整回复**，一个字不丢——此前兜底是「只留最后 1000 字」，听众听到的是从半句话开始的残段，而且听不出这是残段。这条兜底**不写摘要缓存**：它是原始文本而非浓缩，缓存下来会把一次临时失败永久钉在那条消息上，以后再也不重试压缩
+- **长回复按段合成、边合成边播**：Edge TTS 按句切成约 500 字一段，一段一个请求、各自独立超时，首段先出声、单段失败立即中止；整体合成预算按「能把长回复读完」给（10 分钟），不再按短句的量级掐断
+- **压缩额度按模型声明上限**：摘要请求的输出上限取自模型目录里声明的值（封顶 16384），查不到才用封顶值；用户手动填的值同样被模型上限压住——问多了是硬报错，不是更长
 - **文本清理**：合成前自动剥离 Markdown 格式、工具调用输出、thinking block 等不适合朗读的内容，保留可读的纯文本。清理**刻意保守**——保留 `snake_case` 标识符、乘号、时间、端口、Windows 路径、`C#` 等会因过度清洗而被静默篡改的技术文本；公式、代码围栏、链接等才真正删除。`StripMarkdownStats` 回报删除/保留 rune 数，正是 `auto` 分流的判据来源
 - **群聊轮流朗读**：群聊里每位成员**各自发言结束**即触发朗读，而不是等整轮结束只念最后一条。前端按发言者逐一触发并带上发言人名，播放走 FIFO 队列，多位成员并发发言时**按顺序轮流播放**、互不抢占；某位失败即推进下一位，不阻塞整轮。后端 `POST /api/tts/generate` 接收 `speakerName`，在摘要之后、合成之前拼上「`xxx`说：」前缀——**只作用于音频**，不进摘要、不写摘要缓存；缓存键并入发言人名，避免不同成员说同样的话共用音频
 - **文件缓存**：合成结果按「文本 + 发言人 + 合成配置」hash 缓存为音频文件，相同内容不重复合成。缓存上限 100 个文件，自动淘汰最旧的——避免存储空间无限增长
@@ -45,6 +48,13 @@ sequenceDiagram
 ### 设计要点
 
 - **两个引擎都是纯 HTTP 客户端**：Edge TTS 走 WebSocket 流式合成，OpenAI 兼容引擎走 `/v1/audio/speech`，两者都不依赖本地可执行文件
+- **国内三家的实现约束**（阿里云 / 腾讯云 / 火山引擎）：
+  - **必须输出 MP3**。整条链路只认 MP3——缓存文件名是 `.mp3`、浏览器按 `audio/mpeg` 播放、设备侧用 go-mp3 解码。因此阿里云走的是 `/api/v1/services/audio/tts/SpeechSynthesizer`（`input.format` 可指定 mp3），**不支持只出 WAV 的 `qwen3-tts-flash`**；**`sambert-*` 是例外，它只认 WebSocket**（HTTP 会回 `current user api does not support http call`），按模型名前缀分派到 `wss://.../api-ws/v1/inference`：run-task 里必须直接带 `input.text`（用 continue-task 送文本会被回 `Request text is invalid!` 且不出音频），收到 `task-started` 后发 finish-task，二进制帧即音频，`task-finished` 收尾；三家 provider 共用 `audioSink`，在写入前嗅探前 16 字节，服务端换了格式会立刻报「不是 mp3」而不是缓存一个放不出来的文件
+  - **单请求长度都有限**，长回复按句切段后写进同一个文件（与 Edge 同一套 `splitSpeechSegments`）：阿里云 500 rune、火山 500 rune、腾讯 120 rune（接口上限 150 汉字）
+  - **鉴权各不相同**：阿里云是 Bearer API Key；腾讯云是每次请求 TC3-HMAC-SHA256 签名（SecretId/SecretKey 不上线）；火山引擎是 `X-Api-Key` + 资源 ID 两个头（资源 ID 要与音色类型匹配）
+  - **只有火山是流式的**（v3 单向流式返回逐行 JSON，每行一段 base64 音频），因此只有它实现 `StreamingSpeechProvider`；阿里云（返回文件 URL 或整段 base64）、腾讯云（整段 base64）与 MiniMax（整段 hex）走非流式，播放在合成完成后开始
+  - **MiniMax 的音频是十六进制字符串不是 base64**（`output_format: "hex"`），且错误放在 200 响应的 `base_resp.status_code` 里；GroupId 只有老账号需要，故作为可选查询参数
+  - **失败必须点名**：三家都把厂商的原始 code/message 带进错误里（腾讯云是 200 响应里的 `Response.Error`，火山是行内 `code`，阿里云是 200 响应里的 `code`/`status_code`），否则「音色填错」会表现成一句无信息量的失败
 - **OpenAI 兼容引擎双形态流式**：`/v1/audio/speech` 的 `stream_format` 有两种取值。`sse` 每块音频是一个 `speech.audio.delta` 事件（base64），由 `speech.audio.done` 收尾，**只有新模型（`gpt-4o-mini-tts` 系）支持**；`audio` 是原始音频字节流（HTTP chunked），所有模型都支持。因此 provider **先请求 `sse`，收到 400 才回退 `audio`**——这样新模型拿到逐块事件、老模型（`tts-1` / `tts-1-hd`）仍然能流式播放而不会硬失败。判断实际返回的是哪种形态**看 `Content-Type` 而不是请求参数**：兼容服务器可能直接忽略 `stream_format` 并回原始音频，按请求参数判断会解析错。两条路径共用同一个 chunk 通道，因此前端 MSE 播放路径无需改动。**`tts.openai.stream_mode` 可手动覆盖**（`auto` 默认按模型名判断 / `sse` 强制逐块 / `audio` 强制整体）——当兼容服务的模型名无法判断是否支持 SSE 时给用户一条出路；该字段也折进 `CacheIdentity`（改变请求形状即改变音频来源）
 - **音色按引擎分开存，语速共用**：`tts.voice` 是 Edge 的音色，OpenAI 兼容引擎用自己的 `tts.openai.voice`，两者互不覆盖。这条以前是反的——共用一个 `tts.voice` 还不够糟，设置页在**切换引擎时还会主动把音色重置成新引擎的第一个**，于是「试一下另一个引擎」就等于把原来选的音色清掉，切回来也找不回。语速相反，它是「我想听多快」这一个偏好，两个引擎都按它执行，共有一份
 - **模型名与音色由用户填写，不设默认**：兼容服务器接受哪些模型/音色不受 OpenAI 文档列表约束（自定义音色以 `{"id":"voice_xxx"}` 引用），猜一个默认值只会在请求时得到一条难懂的上游错误。空值时 provider 在 `validate()` 阶段就报错并指名缺失的配置路径

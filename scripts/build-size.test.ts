@@ -235,6 +235,19 @@ describe('Build output verification (Issue #328)', () => {
             //     OfficePreview entry), so this is incremental dictionary and
             //     glue growth, not a heavy dependency leaking back in.
             //
+            //   - 2026-11-12 re-measured at 4,106,665 (+85,883 over the 11-10
+            //     number) — the 86-commit local backlog: 语音输入全局化与手机
+            //     朗读（voiceTarget / pcmCapture / systemSpeech 都是静态入口
+            //     模块）、分享中心面板、@ 菜单的项目内全局搜索、表格控件重写、
+            //     阿里云/腾讯云/火山/MiniMax 朗读引擎设置项。Attribution
+            //     checked before raising: the preload set is still the same 9
+            //     files (no katex/mermaid/CodeMirror/OfficePreview entry) and
+            //     web/package.json + package-lock.json are untouched by the
+            //     whole backlog. What grew is source (+16k lines) plus the
+            //     eagerly bundled i18n pair — both locales, so every new UI
+            //     string is paid twice (locales alone: +525 lines). Budget
+            //     raised by the same ~40KB headroom as before.
+            //
             // The headroom stays ~40KB on purpose (r1 review): raising this
             // number to whatever the build happens to weigh turns the test into
             // a rubber stamp. If it trips, re-measure and say in the commit
@@ -243,7 +256,7 @@ describe('Build output verification (Issue #328)', () => {
             // Going lower needs one of: lazy katex (582KB, invasive — the
             // render path is synchronous), per-locale i18n chunks (270KB), or
             // trimming the eager highlight.js language set.
-            const firstScreenThreshold = 4_060_000
+            const firstScreenThreshold = 4_147_000
 
             console.log(`  First-screen JS payload:`)
             for (const d of details) console.log(`    ${d}`)

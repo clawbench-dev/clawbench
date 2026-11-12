@@ -3221,6 +3221,36 @@ describe('sub-agent thinking_done', () => {
     expect(thinks.length).toBe(1)
     expect(thinks[0].text).toBe('real')
   })
+
+  // Models emit lone space tokens between reasoning runs. With nothing to merge
+  // into (a tool call closed the previous block) the space used to OPEN a block
+  // whose entire content it was — an expandable 「深度思考」chip holding nothing.
+  it('whitespace-only ws_thinking does not open a block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'real reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_tool_use', data: { id: 't1', name: 'Bash', parent_tool_call_id: 'call_a' } as any })
+    for (const ws of [' ', '  ', '\n', '\t']) {
+      s = chatMessageReducer(s, { type: 'ws_thinking', text: ws, parentToolCallId: 'call_a' })
+    }
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(1)
+    expect(thinks[0].text).toBe('real reasoning')
+    // A real delta afterwards still opens one.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'next', parentToolCallId: 'call_a' })
+    expect(s[0].blocks!.filter((b: any) => b.type === 'thinking').length).toBe(2)
+  })
+
+  // The other half of the rule: a space BETWEEN two words must survive, or they
+  // glue together ("letme" instead of "let me"). Only opening is refused.
+  it('whitespace ws_thinking still appends to an open block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'let', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' ', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'me', parentToolCallId: 'call_a' })
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(1)
+    expect(thinks[0].text).toBe('let me')
+  })
 })
 
 // ---------------------------------------------------------------------------

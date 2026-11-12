@@ -541,6 +541,48 @@ func TestAccumulateBlock_ThinkingDoneMarksOwnMostRecent(t *testing.T) {
 	assert.False(t, blocks[1].Done, "B never finished — the unfiltered scan would have closed this one")
 }
 
+// TestAccumulateBlock_WhitespaceOnlyDeltaDoesNotOpenBlock covers the
+// empty-chip defect: models emit lone space tokens between reasoning runs, and a
+// space arriving right after a tool call (where there is nothing to merge into)
+// used to open a thinking block whose entire content was that space. It
+// rendered as an expandable 「深度思考」chip with nothing inside.
+func TestAccumulateBlock_WhitespaceOnlyDeltaDoesNotOpenBlock(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "real reasoning", ParentToolCallID: "A"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Bash", ID: "t1", ParentToolCallID: "A"}})
+
+	// A lone space after the tool call: nothing to merge into, so this is the
+	// exact shape that used to mint a block.
+	id := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " ", ParentToolCallID: "A"})
+	assert.Empty(t, id, "a whitespace-only delta must not mint an identity")
+	assert.Len(t, blocks, 2, "it must not open a block either")
+	assert.Equal(t, "tool_use", blocks[1].Type)
+
+	// Other whitespace shapes behave the same.
+	for _, ws := range []string{"  ", "\n", "\t", " \n\t "} {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: ws, ParentToolCallID: "A"})
+		assert.Len(t, blocks, 2, "whitespace %q must not open a block", ws)
+	}
+
+	// A real delta afterwards still opens one normally.
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "next", ParentToolCallID: "A"})
+	require.Len(t, blocks, 3)
+	assert.Equal(t, "next", blocks[2].Text)
+}
+
+// TestAccumulateBlock_WhitespaceStillAppendsToOpenBlock is the other half of the
+// rule: a space BETWEEN two words must not be dropped, or the words glue
+// together ("letme" instead of "let me"). Only OPENING a block is refused.
+func TestAccumulateBlock_WhitespaceStillAppendsToOpenBlock(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "let", ParentToolCallID: "A"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " ", ParentToolCallID: "A"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "me", ParentToolCallID: "A"})
+
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "let me", blocks[0].Text, "the separating space must survive")
+}
+
 // TestAccumulateBlock_EmptyThinkingDeltaIgnored covers the other empty-spinner
 // source: an empty thinking delta must not create a text-less block.
 func TestAccumulateBlock_EmptyThinkingDeltaIgnored(t *testing.T) {
@@ -952,6 +994,39 @@ func TestMergeConsecutiveThinkingBlocks_PreservesNonThinking(t *testing.T) {
 	assert.Equal(t, "text", result[0].Type)
 	assert.Equal(t, "think1think2", result[1].Text)
 	assert.Equal(t, "text", result[2].Type)
+}
+
+func TestMergeConsecutiveThinkingBlocks_WhitespaceOnlyDropped(t *testing.T) {
+	// A whitespace-only block is not a thought — it renders as an expandable
+	// 「深度思考」chip holding nothing. Finalization must not persist it.
+	blocks := []model.ContentBlock{
+		{Type: "thinking", Text: "real"},
+		{Type: "tool_use", ID: "t1"},
+		{Type: "thinking", Text: " "},
+		{Type: "tool_use", ID: "t2"},
+		{Type: "thinking", Text: "\n\t"},
+		{Type: "text", Text: "answer"},
+	}
+	result := MergeConsecutiveThinkingBlocks(blocks)
+	assert.Len(t, result, 4, "both whitespace-only blocks must be dropped")
+	assert.Equal(t, "thinking", result[0].Type)
+	assert.Equal(t, "tool_use", result[1].Type)
+	assert.Equal(t, "tool_use", result[2].Type)
+	assert.Equal(t, "answer", result[3].Text)
+}
+
+func TestMergeConsecutiveThinkingBlocks_BlankDoesNotAbsorbNextBlock(t *testing.T) {
+	// A blank block must not survive to become the merge target of the next
+	// thinking block: with two different parents that would move one agent's
+	// reasoning under another agent's block.
+	blocks := []model.ContentBlock{
+		{Type: "thinking", Text: " ", ParentToolCallID: "A"},
+		{Type: "thinking", Text: "B reasoning", ParentToolCallID: "B"},
+	}
+	result := MergeConsecutiveThinkingBlocks(blocks)
+	require.Len(t, result, 1)
+	assert.Equal(t, "B reasoning", result[0].Text)
+	assert.Equal(t, "B", result[0].ParentToolCallID)
 }
 
 func TestMergeConsecutiveThinkingBlocks_DonePropagation(t *testing.T) {

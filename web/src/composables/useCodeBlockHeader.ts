@@ -6,6 +6,8 @@ import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 import { isShareMode } from '@/share/shareMode'
 import { openBlockLandscape } from '@/composables/useBlockLandscape.ts'
 import { getDefaultBlockWrap } from '@/utils/blockWrapPref.ts'
+import { extractTableData } from '@/utils/tableData'
+import { maximizeIconSvg } from '@/utils/blockHeaderIcons'
 
 // ── SVG icons (inline, same pattern as FILE_OPEN_ICON_SVG) ──────────────────
 // The copy/check glyphs are shared with every other hand-built copy button and
@@ -14,13 +16,8 @@ import { getDefaultBlockWrap } from '@/utils/blockWrapPref.ts'
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
-/**
- * Material Symbols `screen_rotation` — a phone caught mid-turn with two
- * rotation arrows. This is the canonical glyph for the gesture, and the only
- * filled icon in the header; it is deliberately the one shape that cannot be
- * mistaken for the copy / wrap glyphs beside it at 14px.
- */
-const BLOCK_LANDSCAPE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16.48 2.52c3.27 1.55 5.61 4.72 5.97 8.48h1.5C23.44 4.84 18.25 0 12 0l-.66.03 3.81 3.81 1.33-1.32zM10.23 1.75c-.59-.59-1.54-.59-2.12 0L1.75 8.11c-.59.59-.59 1.54 0 2.12l12.02 12.02c.59.59 1.54.59 2.12 0l6.36-6.36c.59-.59.59-1.54 0-2.12L10.23 1.75zm4.6 19.44L2.81 9.17l6.36-6.36 12.02 12.02-6.36 6.36zm-7.31.29C4.25 19.94 1.91 16.76 1.55 13H.05C.56 19.16 5.71 24 12 24l.66-.03-3.81-3.81-1.33 1.32z"/></svg>'
+/** 「全屏查看」图标与 DataTable 的表头栏共用一份定义（utils/blockHeaderIcons.ts）。 */
+const BLOCK_LANDSCAPE_ICON_SVG = maximizeIconSvg(14)
 
 
 /** Build the "attach to chat" header button (paperclip). Skipped entirely in
@@ -131,8 +128,7 @@ export function annotateCodeBlockHeadersIn(doc: Document): void {
         wrapBtn.innerHTML = WRAP_ICON_SVG
         actions.appendChild(wrapBtn)
 
-        // Landscape (full-screen) view — touch/narrow only; the CSS hides it on
-        // a desktop where the block is already readable in place.
+        // Full-screen (maximize) view — shown on every host, desktop included.
         const landscapeBtn = doc.createElement('button')
         landscapeBtn.className = 'code-block-landscape-btn'
         landscapeBtn.setAttribute('data-action', 'landscape')
@@ -304,8 +300,7 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         wrapBtn.innerHTML = TABLE_WRAP_ICON_SVG
         actions.appendChild(wrapBtn)
 
-        // Landscape (full-screen) view — touch/narrow only; the CSS hides it on
-        // a desktop where the table is already readable in place.
+        // Full-screen (maximize) view — shown on every host, desktop included.
         const landscapeBtn = doc.createElement('button')
         landscapeBtn.className = 'table-block-landscape-btn'
         landscapeBtn.setAttribute('data-action', 'landscape')
@@ -322,41 +317,6 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         wrapper.appendChild(header)
         wrapper.appendChild(tableWrap)
     }
-}
-
-/**
- * Extract table data: header row (first row / thead) and remaining data rows.
- */
-function extractTableData(table: HTMLTableElement): { headers: string[]; rows: string[][] } {
-    const rows: string[][] = []
-
-    // Determine header row and data rows
-    const thead = table.querySelector('thead')
-    const headers: string[] = []
-    // eslint-disable-next-line no-useless-assignment -- headerRow is used below in the for-loop skip check
-    let headerRow: HTMLTableRowElement | null = null
-
-    if (thead) {
-        headerRow = thead.querySelector('tr')
-        thead.querySelectorAll('th').forEach(th => headers.push((th.textContent || '').trim()))
-    } else {
-        // No <thead>, use first <tr> as header
-        headerRow = table.querySelector('tr')
-        if (headerRow) {
-            headerRow.querySelectorAll('th, td').forEach(cell => headers.push((cell.textContent || '').trim()))
-        }
-    }
-
-    // Extract data rows: all <tr> except the header row
-    const allRows = table.querySelectorAll('tr')
-    for (const tr of allRows) {
-        if (tr === headerRow) continue
-        const cells: string[] = []
-        tr.querySelectorAll('td, th').forEach(cell => cells.push((cell.textContent || '').trim()))
-        rows.push(cells)
-    }
-
-    return { headers, rows }
 }
 
 /**

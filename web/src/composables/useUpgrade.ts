@@ -19,6 +19,16 @@ const RELOAD_SESSION_KEY = 'clawbench-upgrade-reloaded'
 
 const RELEASES_BASE_URL = `${GITHUB_REPO_URL}/releases/tag/`
 
+/**
+ * Normalize a version for comparison with the skip record: trim, and drop one
+ * leading "v". The registry answers without the prefix while some callers
+ * spell it with one, and a mismatch there would make a skipped version look
+ * unskipped.
+ */
+function normalizeVersionString(version: string): string {
+  return version.trim().replace(/^v/i, '')
+}
+
 export interface UpgradeState {
   phase: string
   current_version: string
@@ -70,6 +80,20 @@ export const ERR_RESTART_FAILED = 'restart_failed'
 export const ERR_UNVERIFIED_NOT_CONFIRMED = 'unverified_not_confirmed'
 
 const SKIP_KEY = 'clawbench-upgrade-skip'
+
+/**
+ * Version the user asked not to be prompted about again, as reported by the
+ * server. Empty when nothing is recorded.
+ *
+ * This is the durable copy. `localStorage` is scoped to one origin on one
+ * device: the same account opening the app through a different hostname (LAN
+ * address vs public domain) starts with an empty store, and a WebView that
+ * drops its storage on teardown starts empty on every launch — either way the
+ * prompt came back even though the user had already skipped that version. The
+ * server value is therefore authoritative; the local copy below stays as a
+ * fallback for servers that predate the endpoint.
+ */
+const skippedVersion = ref('')
 
 // Module-level singleton state (shared across all component instances)
 const state = reactive<UpgradeState>({
@@ -284,10 +308,13 @@ export function useUpgrade() {
         is_docker?: boolean
         verification_warning?: string
         verification_issues?: string
+        skipped_version?: string
       }>('/api/upgrade/check')
       state.current_version = data.current_version
       state.latest_version = data.latest_version
       hasUpgrade.value = data.has_upgrade
+      // Absent on older servers — default to empty (nothing skipped).
+      skippedVersion.value = data.skipped_version ?? ''
       // Absent on older servers — default to writable so the UI is unchanged.
       installWritable.value = data.install_writable !== false
       installDir.value = data.install_dir ?? ''
@@ -400,9 +427,10 @@ export function useUpgrade() {
       await checkUpgrade()
       if (!hasUpgrade.value) return null
 
-      // Check skip preference
-      const skipped = localStorage.getItem(SKIP_KEY)
-      if (skipped === state.latest_version) return null
+      // "Skip this version" must survive a lost localStorage and a different
+      // origin, so the server's record is consulted first; the local one only
+      // covers servers that do not report it yet.
+      if (isVersionSkipped(state.latest_version)) return null
 
       return state.latest_version
     } catch {
@@ -410,9 +438,39 @@ export function useUpgrade() {
     }
   }
 
-  /** Skip this version (don't prompt again for this version) */
+  /**
+   * Skip this version (don't prompt again for it).
+   *
+   * Written locally first so the prompt stays suppressed even if the request
+   * fails, then recorded on the server so every device and origin sees the
+   * same decision.
+   */
   function skipVersion(version: string): void {
-    localStorage.setItem(SKIP_KEY, version)
+    const normalized = normalizeVersionString(version)
+    try {
+      localStorage.setItem(SKIP_KEY, normalized)
+    } catch (e) {
+      appLog.w(TAG, 'Failed to persist skipped version locally', e)
+    }
+    skippedVersion.value = normalized
+    appLog.i(TAG, `Skipped version ${normalized}`)
+    void apiPost('/api/upgrade/skip', { version: normalized }).catch((e) => {
+      appLog.w(TAG, 'Failed to persist skipped version on the server', e)
+    })
+  }
+
+  /** Whether `version` is the one the user asked not to be prompted about. */
+  function isVersionSkipped(version: string): boolean {
+    const target = normalizeVersionString(version)
+    if (!target) return false
+    if (normalizeVersionString(skippedVersion.value) === target) return true
+    let local = ''
+    try {
+      local = localStorage.getItem(SKIP_KEY) ?? ''
+    } catch {
+      // Storage unavailable — the server record above is all we have.
+    }
+    return normalizeVersionString(local) === target
   }
 
   /** GitHub release notes URL for the target (latest) version */
@@ -465,6 +523,7 @@ export function useUpgrade() {
     isDocker,
     verificationWarning,
     verificationIssues,
+    skippedVersion,
     isInProgress,
     isRestarting,
     isCompleted,

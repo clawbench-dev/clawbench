@@ -53,7 +53,7 @@ func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 		}
 		contentMap := map[string]any{strBlocks: blocks}
 		if currentRole == strAssistant {
-			contentMap["metadata"] = map[string]any{"transport": transportACP}
+			contentMap["metadata"] = map[string]any{jsonTransport: transportACP}
 		}
 		contentJSON, _ := json.Marshal(contentMap)
 		messages = append(messages, replayMessage{

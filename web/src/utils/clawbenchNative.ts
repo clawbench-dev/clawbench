@@ -107,6 +107,21 @@ export interface ClawBenchNative {
   /** Optional (Electron): report that notification-click listeners are registered. */
   rendererReady?(): void
   getLanguage(): string
+  /**
+   * Android system speech engine (the voice the phone already uses elsewhere).
+   *
+   * Exists only on Android: the desktop shell has no equivalent, and probing
+   * for it is how the caller decides whether the "use system read-aloud"
+   * setting can take effect. `ttsStatus` returns `ready` / `initializing` /
+   * `unavailable`; the first call starts initialization and never blocks.
+   *
+   * `ttsSpeak` returns immediately — completion arrives as a
+   * `clawbench-tts-state` window event carrying the same `utteranceId`, so a
+   * caller that ignores the event will look like it never finishes.
+   */
+  ttsStatus?(): string
+  ttsSpeak?(text: string, utteranceId: string): string
+  ttsStop?(): void
   /** Persist the language selected in the Web frontend to native prefs so native UI (splash, login page) follows it. */
   setLanguage?(lang: string): void
   showServerDialog(): void
@@ -246,35 +261,38 @@ export interface ClawBenchNative {
   isTunnelConnected(): Promise<boolean>
   getTunnelError(): Promise<string>
   getTunnelErrorType(): Promise<string>
-  /** The transport preference the native layer is currently using. */
+  /**
+   * The transport the host would dial: the server's `port_forward.transport`
+   * once it has been read, else the host's local fallback preference.
+   *
+   * Not what the UI shows — the panel reads the server config directly, because
+   * the server is what enforces the switch.
+   */
   getTunnelTransport?(): Promise<string> | string
   /**
-   * Write the tunnel transport preference ('ssh' | 'h2'). The host validates
-   * the value and persists it; it takes effect on the next reconnect.
+   * Write the host's local fallback transport preference ('ssh' | 'h2'). The
+   * server's setting is authoritative; this only applies when the server cannot
+   * be asked. Kept for hosts and older cached bundles.
    *
    * Desktop-only: the Android shell exposes the boolean
-   * `setTunnelTransportH2Enabled` instead, because its transport is a local
-   * SharedPreferences switch. There is no 'auto' mode — the host rejects
-   * anything else, so the type admits only the two wires.
+   * `setTunnelTransportH2Enabled` instead.
    */
   setTunnelTransport?(pref: 'ssh' | 'h2'): Promise<boolean> | boolean
   /**
    * 'ssh' | 'h2' — the transport that carried the last successful connect.
-   * Distinct from the configured preference, which is what a status display
-   * wants to show.
+   * Distinct from the configured value, which is what a status display wants.
    */
   getActiveTunnelTransport?(): Promise<string> | string
   /**
-   * The Android local h2 tunnel toggle's persisted state.
+   * The Android local h2 tunnel toggle's persisted state — the fallback used
+   * when the server's transport cannot be read.
    *
-   * The truth source is Android SharedPreferences (key
-   * `tunnel_transport_h2_enabled`), NOT the server's `port_forward.transport`:
-   * the toggle is Android-only and this is how the settings row reads its
-   * initial value.
+   * The server's `port_forward.transport` is authoritative; this preference is
+   * only consulted by the shell's transport decision when /api/ssh/info did not
+   * answer. Kept bridged for that fallback and for older cached bundles.
    *
-   * Optional: a host that predates the toggle lacks the method entirely (there
-   * is no older, non-persisting setter to fall back to), and the caller must
-   * then HIDE the settings row rather than show a false "off".
+   * Optional: a host that predates the toggle lacks the method entirely, and
+   * callers must treat its absence as "unknown", never as "off".
    */
   getTunnelTransportH2Enabled?(): Promise<boolean> | boolean
   /** Write the Android local h2 tunnel toggle (SharedPreferences). */

@@ -107,6 +107,9 @@ describe('useUpgrade', () => {
     vi.clearAllMocks()
     mockApiGet.mockReset()
     mockApiPost.mockReset()
+    // A resolved default: skipVersion fires the request without awaiting it,
+    // and an undefined return would break its .catch chain.
+    mockApiPost.mockResolvedValue({})
     mockOnEvent.mockReset()
     mockGetNative.mockReset()
     mockConnected.value = true
@@ -124,6 +127,7 @@ describe('useUpgrade', () => {
     upgrade.installDir.value = ''
     upgrade.isDocker.value = false
     upgrade.verificationWarning.value = ''
+    upgrade.skippedVersion.value = ''
     // Module-level too: a previous test may have left the progress dialog open.
     upgrade.clearShowProgressDialog()
     // Default: the user accepts an unverified upgrade when asked.
@@ -633,6 +637,52 @@ describe('useUpgrade', () => {
       expect(result).toBe('v1.2.0')
     })
 
+    // The durable record lives on the server: a different origin (LAN address
+    // vs public hostname) or a WebView that lost its localStorage starts with
+    // an empty local store, so the server value has to suppress the prompt on
+    // its own.
+    it('returns null when the server reports this version as skipped', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: '1.0.0',
+        latest_version: '1.1.0',
+        has_upgrade: true,
+        skipped_version: '1.1.0',
+      })
+
+      const upgrade = useUpgrade()
+      const result = await upgrade.checkForUpgradePrompt()
+
+      expect(result).toBeNull()
+    })
+
+    it('matches the server record across a leading v', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: '1.0.0',
+        latest_version: '1.1.0',
+        has_upgrade: true,
+        skipped_version: 'v1.1.0',
+      })
+
+      const upgrade = useUpgrade()
+      const result = await upgrade.checkForUpgradePrompt()
+
+      expect(result).toBeNull()
+    })
+
+    it('returns latest when the server skipped a different version', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: '1.0.0',
+        latest_version: '1.1.0',
+        has_upgrade: true,
+        skipped_version: '1.0.9',
+      })
+
+      const upgrade = useUpgrade()
+      const result = await upgrade.checkForUpgradePrompt()
+
+      expect(result).toBe('1.1.0')
+    })
+
     it('returns null on error', async () => {
       mockApiGet.mockRejectedValue(new Error('Network error'))
 
@@ -650,7 +700,43 @@ describe('useUpgrade', () => {
       const upgrade = useUpgrade()
       upgrade.skipVersion('v1.1.0')
 
-      expect(localStorage.getItem('clawbench-upgrade-skip')).toBe('v1.1.0')
+      // Stored normalized (no leading v), matching the server-side record, so
+      // two spellings of the same version cannot become two records.
+      expect(localStorage.getItem('clawbench-upgrade-skip')).toBe('1.1.0')
+    })
+
+    it('records the choice on the server so other devices honour it', () => {
+      mockApiPost.mockResolvedValue({ skipped_version: '1.1.0' })
+
+      const upgrade = useUpgrade()
+      upgrade.skipVersion('v1.1.0')
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/skip', { version: '1.1.0' })
+      expect(upgrade.skippedVersion.value).toBe('1.1.0')
+    })
+
+    // The prompt must stay suppressed even when the request fails (offline,
+    // older server), so the local write happens first and never throws.
+    it('keeps the local record when the request fails', async () => {
+      mockApiPost.mockRejectedValue(new Error('offline'))
+
+      const upgrade = useUpgrade()
+      upgrade.skipVersion('1.1.0')
+      await Promise.resolve()
+
+      expect(localStorage.getItem('clawbench-upgrade-skip')).toBe('1.1.0')
+    })
+
+    it('does not throw when localStorage is unavailable', () => {
+      mockApiPost.mockResolvedValue({ skipped_version: '1.1.0' })
+      const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('quota exceeded')
+      })
+
+      const upgrade = useUpgrade()
+      expect(() => upgrade.skipVersion('1.1.0')).not.toThrow()
+
+      spy.mockRestore()
     })
   })
 

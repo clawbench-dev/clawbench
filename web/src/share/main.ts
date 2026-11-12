@@ -14,6 +14,7 @@ import '../../css/markdown-common.css'
 import '../../css/code-block.css'
 import '../../css/code-block-header.css'
 import '../../css/content.css'
+import '../../css/table.css'
 import '../../css/media-block.css'
 import '../../css/components.css'
 // Shared diff-row tint + leading rail (git history, diff drawer, chat tool-call

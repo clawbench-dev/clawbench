@@ -217,21 +217,40 @@ vi.mock('./secrets', () => ({
   getPassword: () => 'test-password',
 }))
 
-const { fakeHttpGet } = vi.hoisted(() => ({
-  fakeHttpGet: (_url: string, _opts: unknown, cb: (res: unknown) => void) => {
+const { fakeHttpGet, sshInfoState } = vi.hoisted(() => {
+  /** Mutable /api/ssh/info answer. `fail` simulates an unreachable server (the
+   *  local preference then has to take over); `transport` is the server switch. */
+  const sshInfoState = { transport: '' as '' | 'ssh' | 'h2', fail: false }
+  const fakeHttpGet = (_url: string, _opts: unknown, cb: (res: unknown) => void) => {
     const handlers: Record<string, (d?: string) => void> = {}
     const res = {
       statusCode: 200,
       on(ev: string, h: (d?: string) => void) { handlers[ev] = h; return res },
     }
+    const req = {
+      on(ev: string, h: (d?: string) => void) {
+        // Failure path: the transport reads the error event, never `end`.
+        if (ev === 'error' && sshInfoState.fail) queueMicrotask(() => h())
+        return req
+      },
+    }
     queueMicrotask(() => {
-      handlers['data']?.('{"enabled":true,"port":20001,"username":"clawbench"}')
+      if (sshInfoState.fail) return
+      handlers['data']?.(
+        JSON.stringify({
+          enabled: true,
+          port: 20001,
+          username: 'clawbench',
+          ...(sshInfoState.transport ? { transport: sshInfoState.transport } : {}),
+        }),
+      )
       handlers['end']?.()
     })
     cb(res)
-    return { on: () => undefined }
-  },
-}))
+    return req
+  }
+  return { fakeHttpGet, sshInfoState }
+})
 
 vi.mock('node:http', () => ({ default: { get: fakeHttpGet } }))
 vi.mock('node:https', () => ({ default: { get: fakeHttpGet } }))
@@ -337,8 +356,11 @@ beforeEach(() => {
   h2State.closeCalls = 0
   netState.servers.length = 0
   FakeSshClient.instances = []
+  sshInfoState.transport = ''
+  sshInfoState.fail = false
   storeData.serverUrl = 'https://127.0.0.1:20000'
   delete storeData.tunnelTransport
+  delete storeData.tunnelTransportMigratedToH2
 })
 
 afterEach(() => {
@@ -410,30 +432,53 @@ describe('tunnel/h2: transport dispatch', () => {
 })
 
 describe('tunnel/h2: persisted transport preference', () => {
-  it('defaults to ssh when nothing is stored', () => {
-    initTransportPreference()
-    expect(getTransportPreference()).toBe('ssh')
-  })
-
-  it('hydrates the stored preference', () => {
-    storeData.tunnelTransport = 'h2'
+  it('defaults to h2 when nothing is stored', () => {
+    // HTTP/2 rides the main port, so a fresh install needs no extra port open.
     initTransportPreference()
     expect(getTransportPreference()).toBe('h2')
+    expect(storeData.tunnelTransport).toBe('h2')
+  })
+
+  it('moves an explicitly chosen ssh to h2 once, rewriting the store', () => {
+    // The default changed for everyone, not just for fresh installs: an install
+    // that picked SSH in an earlier build is moved over too.
+    storeData.tunnelTransport = 'ssh'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('h2')
+    expect(storeData.tunnelTransport).toBe('h2')
+    expect(storeData.tunnelTransportMigratedToH2).toBe(true)
   })
 
   it('migrates the retired "both" to h2 and rewrites the store', () => {
     // `both` meant "probe h2 first", so a deployment that stored it and
-    // connected was carried by h2. Mapping it to the SSH default would silently
-    // move those users onto a different wire.
+    // connected was carried by h2.
     storeData.tunnelTransport = 'both'
     initTransportPreference()
     expect(getTransportPreference()).toBe('h2')
     expect(storeData.tunnelTransport).toBe('h2')
   })
 
+  it('honours an ssh choice made after the migration', () => {
+    // The marker is what makes the rewrite a migration instead of a policy:
+    // once it has run, a deliberate SSH choice must survive a restart.
+    storeData.tunnelTransportMigratedToH2 = true
+    storeData.tunnelTransport = 'ssh'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('ssh')
+    expect(storeData.tunnelTransport).toBe('ssh')
+  })
+
+  it('hydrates the stored preference', () => {
+    storeData.tunnelTransportMigratedToH2 = true
+    storeData.tunnelTransport = 'h2'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('h2')
+  })
+
   it('ignores a stored value the dispatch does not recognize', () => {
     // The store is a hand-editable JSON file; an unknown value must not reach
     // transportCandidates().
+    storeData.tunnelTransportMigratedToH2 = true
     setTransportPreference('ssh')
     storeData.tunnelTransport = 'quic'
     initTransportPreference()
@@ -456,6 +501,7 @@ describe('tunnel/h2: persisted transport preference', () => {
 
   it('drives the dispatch after hydration', async () => {
     // End-to-end of the setting: store → module → which transport is probed.
+    storeData.tunnelTransportMigratedToH2 = true
     storeData.tunnelTransport = 'h2'
     initTransportPreference()
 
@@ -465,6 +511,48 @@ describe('tunnel/h2: persisted transport preference', () => {
     expect(h2State.connectCalls.length).toBe(1)
     expect(getActiveTransport()).toBe('h2')
     expect(FakeSshClient.instances.length).toBe(0)
+  })
+})
+
+describe('tunnel/h2: following the server-side transport switch', () => {
+  it('dials h2 when the server says h2, even though the local fallback is ssh', async () => {
+    // The server decides and every client follows; the local store is only the
+    // fallback for an unreachable/older server.
+    setTransportPreference('ssh')
+    sshInfoState.transport = 'h2'
+
+    await ensureTunnel()
+
+    expect(h2State.connectCalls.length).toBe(1)
+    expect(getActiveTransport()).toBe('h2')
+    expect(FakeSshClient.instances.length).toBe(0)
+    // The bridge reports the effective wire, not the stale local value.
+    expect(getTransportPreference()).toBe('h2')
+  })
+
+  it('dials ssh when the server says ssh, even though the local fallback is h2', async () => {
+    setTransportPreference('h2')
+    sshInfoState.transport = 'ssh'
+
+    const p = ensureTunnel()
+    await vi.waitFor(() => expect(FakeSshClient.instances.length).toBe(1))
+    FakeSshClient.last().emit('ready')
+
+    expect(await p).toBe(true)
+    expect(h2State.connectCalls.length).toBe(0)
+    expect(getActiveTransport()).toBe('ssh')
+    expect(getTransportPreference()).toBe('ssh')
+  })
+
+  it('falls back to the local preference when /api/ssh/info is unreachable', async () => {
+    // No answer means no switch to follow — an older server, or a network blip.
+    setTransportPreference('h2')
+    sshInfoState.fail = true
+
+    await ensureTunnel()
+
+    expect(h2State.connectCalls.length).toBe(1)
+    expect(getActiveTransport()).toBe('h2')
   })
 })
 

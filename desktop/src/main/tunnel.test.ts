@@ -285,7 +285,7 @@ import { initStore } from './store'
 import {
   addForwardedPort, removeForwardedPort, reconnectTunnel, ensureTunnel,
   getForwardedPorts, isTunnelConnected, testPortReachable, disconnectTunnel,
-  addReverseForwardedPort,
+  addReverseForwardedPort, setTransportPreference,
 } from './tunnel'
 
 const PORT_A = 28901
@@ -320,6 +320,9 @@ function resetModule(): void {
 beforeEach(() => {
   initStore()
   resetModule()
+  // This suite covers the SSH wire specifically. h2 is the module default now,
+  // so the transport has to be stated rather than inherited.
+  setTransportPreference('ssh')
   acceptedSockets.length = 0
   dials.length = 0
   disarmFakeReverseDial()

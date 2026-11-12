@@ -10,7 +10,7 @@ import { apiPost } from '@/utils/api'
 // ── Mock composables ──
 
 const mockInitSnapshot = vi.fn()
-const mockHandleSave = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [] })
+const mockHandleSave = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [], changedKeys: [], failed: false })
 const localValues = reactive<Record<string, unknown>>({})
 const mockSaving = ref(false)
 const mockServerError = ref('')
@@ -36,13 +36,21 @@ vi.mock('@/composables/usePanelSnapshot', () => ({
 }))
 
 const mockGetServerValueWithDefault = vi.fn()
+const mockSetLocalConfig = vi.fn()
 const settingsLocalConfig = reactive<Record<string, unknown>>({ theme: 'auto', locale: 'zh' })
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
     getServerValueWithDefault: mockGetServerValueWithDefault,
+    setLocalConfig: mockSetLocalConfig,
     localConfig: settingsLocalConfig,
   }),
+}))
+
+const { mockProbeSystemSpeech } = vi.hoisted(() => ({ mockProbeSystemSpeech: vi.fn() }))
+vi.mock('@/utils/systemSpeech', () => ({
+  probeSystemSpeech: mockProbeSystemSpeech,
+  systemSpeechErrorKey: (reason: string) => `settings.items.systemSpeech_${reason}`,
 }))
 
 const mockRegisterGuard = vi.fn()
@@ -177,6 +185,12 @@ const i18n = createI18n({
           testing: '测试中…',
           testConnectivity: '测试连通性',
           needsRestartHint: '需要重启生效',
+          ttsTestPhrase: '您好，这是一段{engine}朗读测试。',
+          ttsTestOk: '测试音频已播放',
+          ttsTestFailed: '朗读测试失败：{reason}',
+          systemSpeechTestPhrase: '你好，这是一段手机朗读测试。',
+          systemSpeechTestOk: '手机朗读正常',
+          systemSpeechTestFailed: '手机朗读失败：{reason}',
         },
         items: {
           terminalEnabled: '启用终端',
@@ -360,6 +374,7 @@ describe('SettingsGroupPanel', () => {
     vi.clearAllMocks()
     // Reset localValues
     for (const key of Object.keys(localValues)) delete localValues[key]
+    delete settingsLocalConfig.systemSpeech
     // Reset reactive refs
     mockSaving.value = false
     mockServerError.value = ''
@@ -625,6 +640,70 @@ describe('SettingsGroupPanel', () => {
       expect(opts).toHaveLength(2)
       expect(opts[0].value).toBe('edge')
       expect(opts[1].value).toBe('alt')
+    })
+
+    // The phone voice is an option in the same list (one choice for the user),
+    // but it is stored per device. Picking it must NOT rewrite tts.engine: that
+    // would switch every other device to a voice it cannot run. Like every
+    // other field, it only takes effect on Save.
+    it('selecting the phone voice is a draft until Save', async () => {
+      mockProbeSystemSpeech.mockResolvedValue({ ok: true })
+      settingsLocalConfig.systemSpeech = false
+      localValues['tts.engine'] = 'edge'
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleEntrySelect('system')
+
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', true)
+      expect(localValues['tts.engine']).toBe('edge')
+      expect(mockDrawerClose).toHaveBeenCalled()
+
+      await vm.$.setupState.onSave()
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', true)
+      expect(localValues['tts.engine']).toBe('edge')
+    })
+
+    it('refuses the phone voice when the device cannot read Chinese', async () => {
+      mockProbeSystemSpeech.mockResolvedValue({ ok: false, reason: 'no_chinese' })
+      settingsLocalConfig.systemSpeech = false
+      localValues['tts.engine'] = 'edge'
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleEntrySelect('system')
+
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', true)
+      expect(localValues['tts.engine']).toBe('edge')
+      expect(mockToastShow).toHaveBeenCalled()
+    })
+
+    it('tests the phone voice instead of the server engine', async () => {
+      settingsLocalConfig.systemSpeech = true
+      mockTestResults.value = []
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+
+      await vm.$.setupState.handleConnectivityTest()
+
+      // No server request: the phone voice has no server config to probe.
+      expect(mockRunConnectivityTests).not.toHaveBeenCalled()
+      expect(mockTestResults.value).toHaveLength(1)
+      // No bridge in this environment, so the result must say so rather than
+      // reporting a success it never measured.
+      expect(mockTestResults.value[0].success).toBe(false)
+    })
+
+    it('selecting a real engine clears the phone-voice flag on Save', async () => {
+      settingsLocalConfig.systemSpeech = true
+      localValues['tts.engine'] = 'edge'
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleEntrySelect('alt')
+
+      expect(localValues['tts.engine']).toBe('alt')
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', false)
+
+      await vm.$.setupState.onSave()
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', false)
     })
   })
 
@@ -912,7 +991,7 @@ describe('SettingsGroupPanel', () => {
     it('shows toast on successful save', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [], changedKeys: [], failed: false })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
@@ -922,7 +1001,7 @@ describe('SettingsGroupPanel', () => {
     it('emits restartNeeded when save returns needsRestart with changedColdFields', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['some.enabled'] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['some.enabled'], changedKeys: [], failed: false })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
@@ -933,7 +1012,7 @@ describe('SettingsGroupPanel', () => {
     it('does not emit restartNeeded when no restart needed', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [], changedKeys: [], failed: false })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
@@ -1018,12 +1097,51 @@ describe('SettingsGroupPanel', () => {
     })
 
     it('calls runConnectivityTests with getTestCategories result', async () => {
-      localValues['tts.engine'] = 'edge'
-      localValues['tts.voice'] = ''
-      const wrapper = mountPanel(makeTtsConfig())
+      const config: GroupPanelConfig = {
+        panelId: 'other',
+        commonFields: [{ labelKey: 'x', key: 'x.key', type: 'text', source: 'server' }],
+        hasConnectivityTest: true,
+        getTestCategories: (values) => [{ category: 'tts', values }],
+      }
+      localValues['x.key'] = 'v'
+      const wrapper = mountPanel(config)
       await wrapper.find('.group-panel__test-btn').trigger('click')
       expect(mockClearConnectivityResults).toHaveBeenCalled()
       expect(mockRunConnectivityTests).toHaveBeenCalledWith([{ category: 'tts', values: expect.any(Object) }])
+    })
+
+    it('plays a synthesized sample for the voice panel', async () => {
+      localValues['tts.engine'] = 'edge'
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ audioPath: '.clawbench/generated/tts-preview/a.mp3' }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const play = vi.fn().mockResolvedValue(undefined)
+      const audioInstances: any[] = []
+      vi.stubGlobal('Audio', vi.fn(function (this: any) {
+        this.play = play
+        this.onended = null
+        this.onerror = null
+        audioInstances.push(this)
+      }))
+
+      mockTestResults.value = []
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      const done = vm.$.setupState.handleConnectivityTest()
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+      expect(mockRunConnectivityTests).not.toHaveBeenCalled()
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(body.text).toContain('朗读测试')
+
+      await vi.waitFor(() => expect(audioInstances.length).toBe(1))
+      expect(play).toHaveBeenCalled()
+      audioInstances[0].onended()
+      await done
+
+      expect(mockTestResults.value[0].success).toBe(true)
     })
 
     it('defaults to panelId category when no getTestCategories', async () => {

@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -29,7 +31,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body := fmt.Sprintf(`{"category":"stt","values":{"stt.vllm.base_url":%q,"stt.vllm.model":"m"}}`, srv.URL)
+	body := fmt.Sprintf(`{"category":"stt","values":{"stt.provider":"vllm","stt.vllm.base_url":%q,"stt.vllm.model":"m"}}`, srv.URL)
 	r := httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	ServeConfigTest(w, r)
@@ -44,6 +46,7 @@ func TestServeConfigTest_STTCategory(t *testing.T) {
 // TestSTTConnectivity_EmptyBaseURL covers the missing base URL guard in testSTT.
 func TestSTTConnectivity_EmptyBaseURL(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": "",
 		"stt.vllm.model":    "m",
 	})
@@ -62,6 +65,7 @@ func TestSTTConnectivity_DefaultModel(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 	})
 	assert.True(t, res.Success, res.Message)
@@ -78,6 +82,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 		"stt.vllm.api_key":  "test-api-key",
@@ -88,6 +93,7 @@ func TestSTTConnectivity_WithAPIKey(t *testing.T) {
 // TestSTTConnectivity_Unreachable covers the client.Do network error path.
 func TestSTTConnectivity_Unreachable(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": "http://127.0.0.1:19999",
 		"stt.vllm.model":    "m",
 	})
@@ -99,6 +105,7 @@ func TestSTTConnectivity_Unreachable(t *testing.T) {
 // must report it rather than panicking or reporting success.
 func TestSTTConnectivity_NewRequestError(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": ":",
 		"stt.vllm.model":    "m",
 	})
@@ -272,10 +279,11 @@ func TestSTTConnectivity_AlibabaSuccess(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
-		"stt.provider":         "alibaba",
-		"stt.alibaba.api_key":  "sk-dash",
-		"stt.alibaba.base_url": srv.URL,
-		"stt.alibaba.language": "zh",
+		"stt.provider":           "alibaba",
+		"stt.alibaba.api_key":    "sk-dash",
+		"stt.alibaba.base_url":   srv.URL,
+		"stt.alibaba.language":   "zh",
+		"stt.alibaba.file_model": "qwen3-asr-flash",
 	})
 
 	assert.True(t, res.Success, res.Message)
@@ -317,6 +325,177 @@ func TestSTTConnectivity_AlibabaAuthFailure(t *testing.T) {
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "auth failed")
+}
+
+// TestSTTConnectivity_Tencent probes through the real signed request path and
+// checks the embedded speech clip is what got uploaded.
+func TestSTTConnectivity_Tencent(t *testing.T) {
+	var gotAction, gotData string
+	var gotDataLen int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAction = r.Header.Get("X-TC-Action")
+		var body struct {
+			Data    string `json:"Data"`
+			DataLen int    `json:"DataLen"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotData = body.Data
+		gotDataLen = body.DataLen
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, dials := tencentRealtimeStub(t, `{"code":0,"message":"success"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"AppId":1250000000}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+		"stt.tencent.app_id":     "1250000000",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "SentenceRecognition", gotAction)
+	assert.Equal(t, len(sttProbeAudio), gotDataLen)
+	decoded, err := base64.StdEncoding.DecodeString(gotData)
+	require.NoError(t, err)
+	assert.Equal(t, sttProbeAudio, decoded, "probe must upload the real speech clip")
+	assert.EqualValues(t, 1, dials.Load(), "the probe must open a realtime session")
+}
+
+// TestSTTConnectivity_TencentAppIDIsLookedUp: the AppID is read from the key
+// pair, so a value pasted from the wrong row of the console (the UIN sits right
+// next to it) is not what the handshake uses — and the result says which one
+// was used.
+func TestSTTConnectivity_TencentAppIDIsLookedUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, _ := tencentRealtimeStub(t, `{"code":0,"message":"success"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"AppId":1253717851}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+		"stt.tencent.app_id":     "100055003327", // the UIN, not the APPID
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "1253717851", "the result must name the AppID actually used")
+}
+
+// TestSTTConnectivity_TencentRealtimeAuthFailure is the case the file-only
+// probe could not see: 一句话识别 signs with the SecretKey alone and succeeds
+// even when the realtime handshake is rejected.
+func TestSTTConnectivity_TencentRealtimeAuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, _ := tencentRealtimeStub(t, `{"code":4002,"message":"鉴权失败，请检查输入的 AppID 与实际访问的 AppID 是否一致。"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"AppId":1253717851}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+		"stt.tencent.app_id":     "1253717851",
+	})
+
+	assert.False(t, res.Success, "a file-API success must not mask a broken realtime handshake")
+	assert.Contains(t, res.Message, "realtime handshake failed")
+	assert.Contains(t, res.Message, "4002")
+}
+
+// TestSTTConnectivity_TencentAppIDLookupDenied: a key scoped to ASR alone
+// cannot read account information, so the value the user typed is used — and
+// when there is none, the failure has to name the field instead of reporting a
+// generic handshake error.
+func TestSTTConnectivity_TencentAppIDLookupDenied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, _ := tencentRealtimeStub(t, `{"code":0,"message":"success"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"Error":{"Code":"AuthFailure.UnauthorizedOperation","Message":"no cam read"}}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	base := map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+	}
+
+	withTyped := map[string]any{"stt.tencent.app_id": "1253717851"}
+	for k, v := range base {
+		withTyped[k] = v
+	}
+	assert.True(t, testSTT(context.Background(), withTyped).Success, "a typed AppID must be used when the lookup is denied")
+
+	assert.False(t, testSTT(context.Background(), base).Success, "no AppID and no lookup must fail")
+}
+
+// stubTencentEndpoints points the three Tencent roots at local servers for the
+// duration of one test.
+func stubTencentEndpoints(t *testing.T, httpURL, wsURL, camURL string) {
+	t.Helper()
+	prevHTTP, prevWS, prevCAM := tencentSTTBaseURL, tencentSTTWSBaseURL, tencentSTTCAMBaseURL
+	tencentSTTBaseURL, tencentSTTWSBaseURL, tencentSTTCAMBaseURL = httpURL, wsURL, camURL
+	t.Cleanup(func() {
+		tencentSTTBaseURL, tencentSTTWSBaseURL, tencentSTTCAMBaseURL = prevHTTP, prevWS, prevCAM
+	})
+}
+
+// tencentCAMStub answers the APPID lookup with body.
+func tencentCAMStub(t *testing.T, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// tencentRealtimeStub answers one realtime handshake with ack and reports how
+// many times it was dialed.
+func tencentRealtimeStub(t *testing.T, ack string) (string, *atomic.Int32) {
+	t.Helper()
+	var dials atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dials.Add(1)
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		_ = conn.Write(context.Background(), websocket.MessageText, []byte(ack))
+		// Hold the socket open until the client closes it, like the real engine.
+		_, _, _ = conn.Read(context.Background())
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, &dials
+}
+
+// TestSTTConnectivity_TencentRequiresCredentials covers the missing-key guard.
+func TestSTTConnectivity_TencentRequiresCredentials(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "",
+		"stt.tencent.secret_key": "sk",
+		"stt.tencent.app_id":     "1",
+	})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "SecretId")
 }
 
 // ── Summarize Voice: provider branch ────────────────────────
@@ -441,6 +620,7 @@ func TestTestPortForward_ServerPortClosed(t *testing.T) {
 // base URL from a wrong key.
 func TestSTTConnectivity_UnreachableNamesEndpoint(t *testing.T) {
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": "http://127.0.0.1:1",
 		"stt.vllm.model":    "m",
 	})
@@ -457,7 +637,7 @@ func TestSTTConnectivity_UnclassifiedError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	res := testSTT(context.Background(), map[string]any{"stt.vllm.base_url": srv.URL, "stt.vllm.model": "m"})
+	res := testSTT(context.Background(), map[string]any{"stt.provider": "vllm", "stt.vllm.base_url": srv.URL, "stt.vllm.model": "m"})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "500")
 	assert.Contains(t, res.Message, "internal failure")
@@ -555,4 +735,50 @@ func TestIMProbes_UnbuildableRequests(t *testing.T) {
 	})
 	assert.False(t, feishu.Success)
 	assert.Contains(t, feishu.Message, "Failed to create request")
+}
+
+// TestSTTConnectivity_AlibabaDefaultsToFreeModel pins the default file model to
+// the one the console grants free seconds to, and to the native endpoint that
+// model lives on. A regression here silently moves every whole-file upload back
+// onto a metered model.
+func TestSTTConnectivity_AlibabaDefaultsToFreeModel(t *testing.T) {
+	var gotPath, gotModel, gotFormat, gotData string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		var body struct {
+			Model      string `json:"model"`
+			Parameters struct {
+				Format string `json:"format"`
+			} `json:"parameters"`
+			Input struct {
+				Messages []struct {
+					Content []struct {
+						Audio string `json:"audio"`
+					} `json:"content"`
+				} `json:"messages"`
+			} `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		gotModel = body.Model
+		gotFormat = body.Parameters.Format
+		if len(body.Input.Messages) > 0 && len(body.Input.Messages[0].Content) > 0 {
+			gotData = body.Input.Messages[0].Content[0].Audio
+		}
+		_, _ = w.Write([]byte(`{"output":{"output":{"text":"你好"},"text":"你好"}}`))
+	}))
+	defer srv.Close()
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":         "alibaba",
+		"stt.alibaba.api_key":  "sk-dash",
+		"stt.alibaba.base_url": srv.URL,
+		"stt.alibaba.language": "zh",
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "你好")
+	assert.Equal(t, "/api/v1/services/aigc/multimodal-generation/generation", gotPath)
+	assert.Equal(t, "qwen-audio-3.1-asr-flash", gotModel)
+	assert.Equal(t, "mp3", gotFormat, "the endpoint rejects the call when format is empty")
+	assert.True(t, strings.HasPrefix(gotData, "data:audio/mpeg;base64,"), gotData)
 }

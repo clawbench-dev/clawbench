@@ -11,6 +11,7 @@ import {
   Clock,
   FolderOpen,
   History,
+  Search,
   Share2,
   Sparkles,
   Upload,
@@ -33,6 +34,10 @@ export const SOURCE_META: Record<CompletionSource, SourceMeta> = {
   'recent-ref': { icon: History, color: '#8b5cf6', labelKey: 'chat.completion.source.recentRef' },
   'recent-upload': { icon: Upload, color: '#10b981', labelKey: 'chat.completion.source.recentUpload' },
   'recent-share': { icon: Share2, color: '#ec4899', labelKey: 'chat.completion.source.recentShare' },
+  // A project-wide search hit (any file under the project root, not just the
+  // current directory or recent files). Distinct icon so the user can tell it
+  // apart from a recent entry that happens to sit in the same folder.
+  global: { icon: Search, color: '#64748b', labelKey: 'chat.completion.source.global' },
   clawbench: { icon: Wrench, color: '#8b5cf6', labelKey: 'chat.completion.source.clawbench' },
   agent: { icon: Bot, color: '#0ea5e9', labelKey: 'chat.completion.source.agent' },
   // A discovered skill, referenced explicitly as `#name`. Distinct from

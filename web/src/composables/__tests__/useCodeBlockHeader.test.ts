@@ -7,6 +7,7 @@ import { _resetBlockWrapPref, setDefaultBlockWrap } from '@/utils/blockWrapPref.
 // Source of the menu's positioning rule — jsdom cannot reproduce overflow
 // clipping, so the escape-from-clip-chain assertion has to read the CSS.
 import tableHeaderCss from '../../../css/code-block-header.css?raw'
+import tableCss from '../../../css/table.css?raw'
 
 // Mock clipboard
 const { copyText } = vi.hoisted(() => ({ copyText: vi.fn() }))
@@ -58,11 +59,15 @@ describe('annotateCodeBlockHeaders', () => {
     expect(result).toContain('word-wrap')
   })
 
-  it('adds a landscape-view button to code blocks', () => {
+  it('adds a fullscreen (maximize) button to code blocks', () => {
     const result = annotateCodeBlockHeaders('<pre><code>code</code></pre>')
     expect(result).toContain('code-block-landscape-btn')
     expect(result).toContain('data-action="landscape"')
     expect(result).toContain('codeBlock.landscape')
+    // 图标是 lucide 的 maximize（四角括号，描边），和复制/换行同一套线条；
+    // 旧的实心「屏幕旋转」图形容易被读成旋转。
+    expect(result).toContain('M8 3H5a2 2 0 0 0-2 2v3')
+    expect(result).not.toContain('fill="currentColor"')
   })
 
   it('starts a code block in the wrap mode the user configured as default', () => {
@@ -272,11 +277,33 @@ describe('annotateTableBlockHeaders', () => {
     expect(unwrapped).toContain('tableBlock.wrapOff')
   })
 
-  it('adds a landscape-view button to the table header actions', () => {
+  it('adds a fullscreen (maximize) button to the table header actions', () => {
     const html = '<div class="table-wrap"><table><tr><td>data</td></tr></table></div>'
     const result = annotateTableBlockHeaders(html)
     expect(result).toContain('table-block-landscape-btn')
     expect(result).toContain('data-action="landscape"')
+    expect(result).toContain('M8 3H5a2 2 0 0 0-2 2v3')
+  })
+
+  it('全屏图标的图形只定义一处，两套表头共用', () => {
+    // 注入式表头（本文件测的这套）与 DataTable 自己的表头是两种渲染方式，
+    // 图形只能从 utils/blockHeaderIcons.ts 取；各自内联一份就会重演
+    // 「改了一处、另一处还是旋转图标」。
+    const root = resolve(__dirname, '..', '..')
+    const icon = readFileSync(resolve(root, 'utils', 'blockHeaderIcons.ts'), 'utf8')
+    const injector = readFileSync(resolve(root, 'composables', 'useCodeBlockHeader.ts'), 'utf8')
+    const dataTable = readFileSync(resolve(root, 'components', 'common', 'DataTable.vue'), 'utf8')
+    expect(icon).toContain('M8 3H5a2 2 0 0 0-2 2v3')
+    for (const source of [injector, dataTable]) {
+      expect(source).toContain('maximizeIconSvg')
+      expect(source).not.toContain('M8 3H5a2 2 0 0 0-2 2v3')
+    }
+  })
+
+  it('keeps the fullscreen button visible on every host (no pointer gating)', () => {
+    // 以前按钮只在触屏/窄屏出现，桌面端整块 CSS 隐藏；现在两端都要能点。
+    expect(tableHeaderCss).not.toMatch(/landscape-btn[^{]*\{[^}]*display:\s*none/)
+    expect(tableHeaderCss).not.toMatch(/@media[^\n]*pointer: coarse[\s\S]{0,400}landscape-btn/)
   })
 
   it('builds a copy dropdown menu with Markdown/HTML/TSV items', () => {
@@ -790,7 +817,8 @@ describe('table copy menu positioning', () => {
   it('menu CSS is fixed-positioned so the block wrapper cannot clip it', () => {
     // Source guard: jsdom cannot reproduce overflow clipping, so the one thing
     // that must hold is that the menu escapes the clip chain at all.
-    const rule = tableHeaderCss.match(/\.table-block-copy-menu\s*\{([^}]*)\}/)
+    // 复制菜单的样式已收口到 css/table.css（见 design-guide 样式归属表）。
+    const rule = tableCss.match(/\.table-block-copy-menu\s*\{([^}]*)\}/)
     expect(rule).not.toBeNull()
     expect(rule![1]).toMatch(/position:\s*fixed/)
     expect(rule![1]).not.toMatch(/position:\s*absolute/)

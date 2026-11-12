@@ -1,21 +1,20 @@
 import { test, expect } from '../fixtures'
 
 /**
- * Group member context panel: the roster row carries the member's OWN context
- * usage and clicking it opens a nested detail sheet.
+ * Group settings roster: each row names the model the member runs, and clicking
+ * a row opens that member's nested settings sheet.
  *
- * What can be asserted here is the INTERACTION, not the numbers: acp-mock never
- * reports a usage_update, so every member legitimately shows "—" and the panel
- * shows its empty state. That is itself the load-bearing half of the contract —
- * "never reported" must not render as a 0% bar — and the numeric paths are
+ * Context usage used to be a chip in this roster. It moved to the chat's member
+ * panel (per member, one tap from the conversation), so the roster must NOT
+ * carry a second copy — asserted below. The usage numbers themselves are
  * covered by the unit tests (usageDisplay / ContextUsageDetail /
- * MemberContextSheet).
+ * GroupMemberPanel).
  */
 test.describe.serial('group member context panel', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'serial group test')
   test.setTimeout(120000)
 
-  test('roster shows a usage slot per member and opens a nested panel', async ({ page }) => {
+  test('roster names each model, has no usage chip, and opens a nested panel', async ({ page }) => {
     // Create a group with two DISTINCT members through the API, then open THAT
     // group.
     //
@@ -57,19 +56,14 @@ test.describe.serial('group member context panel', () => {
     const count = await rows.count()
     expect(count).toBeGreaterThan(0)
 
-    // Every live member has a usage slot. acp-mock reports none, so each must
-    // read "—" (never 0%).
-    await expect(page.locator('.gm-usage')).toHaveCount(count)
-    for (let i = 0; i < count; i++) {
-      await expect(page.locator('.gm-usage').nth(i)).toContainText('—')
-    }
+    // Context usage lives in the chat's member panel now, not here: a second
+    // copy in the roster would be two places to read the same number.
+    await expect(page.locator('.gm-usage')).toHaveCount(0)
 
-    // Each row also names the model that member runs, on a second line inside
-    // the identity column (never a second trailing column — the row only has
-    // room for the usage chip there on a phone). acp-mock advertises models, so
-    // the inherited default is a real name; the assertion only requires a
-    // non-empty label, since which model the mock defaults to is its own
-    // business.
+    // Each row names the model that member runs, on a second line inside the
+    // identity column. acp-mock advertises models, so the inherited default is
+    // a real name; the assertion only requires a non-empty label, since which
+    // model the mock defaults to is its own business.
     const modelLines = page.locator('.gm-list .gm-identity .gm-model')
     await expect(modelLines).toHaveCount(count)
     for (let i = 0; i < count; i++) {

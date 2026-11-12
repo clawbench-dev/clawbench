@@ -11,7 +11,7 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 - **TTS 引擎入口**：进入引擎子页配置
 - **朗读摘要后端**：simple / api / auto
 
-引擎子页可选 Edge / OpenAI，并配置音色、语速、缓存上限；不同引擎有各自的专属字段（各引擎的字段见下方章节）。
+引擎子页可选 Edge / OpenAI 兼容 / 阿里云百炼 / 腾讯云 / 火山引擎 / MiniMax，并配置音色、语速、缓存上限；不同引擎有各自的专属字段（各引擎的字段见下方章节）。
 
 朗读的触发方式：
 
@@ -19,6 +19,10 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 - **自动朗读**（设置 → 聊天）：开启后 AI 回复完成即自动朗读。
 - **群聊轮流朗读**：群聊里每位成员**发言结束即朗读**（不等整轮跑完只念最后一条），多位成员并发发言时**按顺序轮流播放**、互不抢占，每段音频前会念一句「`xxx`说：」；某位朗读失败会自动跳到下一位，不影响整轮。
 - 移动端：语音朗读的 TTS 引擎与音色即消息「朗读」按钮所用配置。
+
+> **总结失败不会只读半截**：如果总结模型报错（比如推理模型把额度花在思考上、正文返回空），朗读会改为读**完整回复**（只清掉 Markdown 格式），不再截断成最后一千字，也不会把这次兜底缓存下来——下次播放还会重新尝试总结。
+>
+> **长回复按段合成**：Edge TTS 按句切成约 500 字一段逐段合成，第一段合成完就开始出声，长回复不用等整篇读完才播。
 
 > **TTS 缓存策略**：已朗读过的内容会将音频缓存到本地磁盘，下次播放同一内容时直接读缓存，不消耗 TTS API 额度。缓存上限为 100 个文件，超出后按 LRU（最近最少使用）驱逐策略自动清理旧缓存。缓存目录为 `{data-dir}/tts-cache/`，可直接查看或手动清理。
 
@@ -28,6 +32,10 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 |------|------|---------|
 | `edge` | 微软 Edge TTS，免费无限制（默认） | 需要网络 |
 | `openai` | 任意 OpenAI 兼容的 `/v1/audio/speech` 端点 | 需要网络 |
+| `alibaba` | 阿里云百炼（DashScope）语音合成，模型如 `cosyvoice-v3-flash` | 需要网络 + API Key |
+| `tencent` | 腾讯云语音合成（TextToVoice） | 需要网络 + SecretId/SecretKey |
+| `volcano` | 火山引擎（豆包）大模型语音合成 | 需要网络 + API Key |
+| `minimax` | MiniMax 语音合成（T2A v2） | 需要网络 + API Key |
 
 ## 总结后端
 
@@ -94,6 +102,94 @@ tts:
 **流式行为**：引擎优先请求 `stream_format: "sse"`（逐块事件，边合成边播放）。该形态**只有新模型支持**；若服务端返回 400（例如 `tts-1` / `tts-1-hd`），会自动回退为 `stream_format: "audio"`（原始音频字节流，所有模型都支持），播放体验仍然是边下边播，无需手动配置。设置页的 **`stream_mode`** 可手动覆盖这个自动判断：`auto`（默认，按模型名判断）/ `sse`（强制逐块流式）/ `audio`（强制整体音频）——当兼容服务的模型名无法判断是否支持 SSE 时，可手动指定。
 
 > 改动音色 / 模型 / 端点后，缓存键会随之变化，因此不会复用上一套配置生成的音频。
+
+---
+
+## 阿里云百炼（DashScope，需网络）
+
+支持百炼的两类合成模型，统一输出 MP3：
+
+- **CosyVoice 系列**（默认 `cosyvoice-v3-flash`）：走 HTTP 接口 `/api/v1/services/audio/tts/SpeechSynthesizer`。
+- **Sambert 系列**（如 `sambert-zhide-v1`）：这类模型只认 WebSocket（HTTP 调用会回 `current user api does not support http call`），本程序对 `sambert-` 开头的模型自动改走 `wss://.../api-ws/v1/inference`。**音色由模型名决定**，此时 `voice` 字段不生效；语速也不下发（该接口没有这个参数）。
+
+> **免费额度按模型发**：控制台的「每月 3 万字符、每月 1 号重置」只发给 sambert 各音色（每个音色各 3 万，汉字按 2 字符算，约 1.5 万汉字/月/音色）；CosyVoice 的 `v3-flash` / `v3-plus` / `v2` 没有任何免费额度，`v3.5-flash` / `v3.5-plus` 才有 1 万字符。
+
+```yaml
+tts:
+  engine: "alibaba"
+  speed: 1
+  alibaba:
+    api_key: "sk-..."                                  # 百炼 API Key
+    base_url: "https://dashscope.aliyuncs.com"         # 默认值；业务空间专属域名填这里
+    model: "cosyvoice-v3-flash"                        # 默认值；填 sambert-xxx-v1 则自动走 WebSocket
+    voice: "longanyang"                                # 默认值，可换系统音色 / 复刻音色 ID（sambert 忽略此项）
+```
+
+- 北京与新加坡是**两套独立的域名和密钥**，不能混用。用业务空间专属域名时填 `https://<业务空间ID>.cn-beijing.maas.aliyuncs.com`。
+- 默认模型是 CosyVoice 系列（支持 MP3）。**`qwen3-tts-flash` 与 `qwen-audio-3.1-tts-*` 不在支持范围内**——它们走另一条接口且只输出 WAV（或请求格式完全不同），与本程序的播放链路不兼容。
+- 语速会被限制在接口允许的 0.5～2.0 倍之间。
+
+---
+
+## 腾讯云语音合成（需网络）
+
+调用腾讯云 `TextToVoice` 接口，鉴权是**每次请求签名**（不是 Bearer 令牌），所以需要一对 SecretId / SecretKey。
+
+```yaml
+tts:
+  engine: "tencent"
+  speed: 1
+  tencent:
+    secret_id: "AKID..."    # 访问管理 → API 密钥管理
+    secret_key: "..."       # 只保存在本机
+    voice_type: 101001      # 数字音色编号，默认 101001（智瑜）
+```
+
+- 单次请求最多 150 个汉字，长回复会自动按句切成多段合成，听感上仍是连贯的一整段。
+- 不同音色的单价不同，选之前先在腾讯云控制台确认已开通该音色。
+- 语速会换算成腾讯云的 `-2～6` 档位（0 表示正常语速）。
+
+---
+
+## 火山引擎（豆包，需网络）
+
+调用火山引擎 v3 单向流式接口，边合成边播放。
+
+```yaml
+tts:
+  engine: "volcano"
+  speed: 1
+  volcano:
+    api_key: "..."                                # 语音技术控制台的 API Key
+    resource_id: "seed-tts-2.0"                   # 默认值，要和音色类型匹配
+    voice: "zh_female_vv_uranus_bigtts"           # 默认发音人
+```
+
+- 需要先在火山引擎语音技术控制台开通「语音合成大模型」并拿到 API Key。
+- `resource_id` 要和音色类型对应：官方 2.0 音色用 `seed-tts-2.0`，声音复刻音色用 `seed-icl-2.0`。
+- 音色名（发音人 ID）以控制台的音色列表为准；填错时「测试连通性」会直接报出服务端的原因。
+
+---
+
+## MiniMax（需网络）
+
+调用 MiniMax 的语音合成接口（`/v1/t2a_v2`），整段合成后播放。
+
+```yaml
+tts:
+  engine: "minimax"
+  speed: 1
+  minimax:
+    api_key: "..."                                # 开放平台的接口密钥
+    group_id: ""                                  # 可选，老账号才需要
+    base_url: "https://api.minimax.chat"          # 国内站；国际站换成对应域名
+    model: "speech-02-hd"                         # 默认值；低延迟可用 speech-02-turbo
+    voice: "female-shaonv"                        # 默认值（少女音）
+```
+
+- 国内站和国际站的域名、密钥都不通用，用哪边就把 `base_url` 和密钥换成哪边的。
+- 音色 ID 以控制台的「音色管理」为准，例如 `female-shaonv`、`female-yujie`、`male-qn-qingse`。
+- 语速会被限制在接口允许的 0.5～2.0 倍之间。
 
 ---
 

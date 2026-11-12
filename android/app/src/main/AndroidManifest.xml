@@ -48,6 +48,13 @@
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
         </intent>
+        <!-- TextToSpeech discovers the installed engine by querying this
+             action. Without it, API 30+ package visibility hides the engine,
+             TextToSpeech reports ERROR on init, and read-aloud looks like
+             "this phone has no speech engine" even on a phone that has one. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <application

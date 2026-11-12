@@ -13,7 +13,7 @@
  *   - Cache hits skip SSE entirely and play audio immediately.
  */
 
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import i18n from '@/i18n'
@@ -23,6 +23,9 @@ import { useWakeLock } from '@/composables/useWakeLock'
 import { MseAudioPlayer } from '@/composables/useMseAudio'
 import { appLog } from '@/utils/appLog'
 import { extractSpeakableText } from '@/utils/speakableText'
+import { getNative } from '@/utils/clawbenchNative'
+import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
+import { currentSessionIdRef } from '@/composables/useSessionIdentity.ts'
 
 // Re-exported so existing `@/composables/useAutoSpeech` importers keep working;
 // the implementation lives in the leaf module to avoid dragging this file's
@@ -80,6 +83,72 @@ let mseStreamEnded = false
  * clear the queue, since those are deliberate user actions.
  */
 let autoQueue: Array<{ id: string; text: string; speakerName?: string }> = []
+
+// --- Native (Android system speech engine) playback state ---
+
+/**
+ * The utterance id currently owned by the system engine, or ''.
+ *
+ * Native events are matched on this id rather than on a boolean: a stopped run
+ * and a new one can overlap by a frame, and adopting the other run's "done"
+ * would advance the queue twice.
+ */
+let nativeTtsId = ''
+/** Called when the current native utterance finishes (or fails). */
+let nativeTtsOnDone: (() => void) | null = null
+/** Fires when the engine never reports "start" (init hang, page navigation). */
+let nativeTtsStartTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearNativeTtsWatchdog() {
+  if (nativeTtsStartTimer) {
+    clearTimeout(nativeTtsStartTimer)
+    nativeTtsStartTimer = null
+  }
+}
+
+function reportError(message: string) {
+  lastError.value = message
+  toast.show(message, { icon: 'blocked', type: 'error', duration: 5000 })
+}
+
+/** Failure text with the native reason appended (e.g. "…（speak_failed）"). */
+function nativeFailureText(reason?: string): string {
+  if (!reason) return gt('autoSpeech.systemSpeechFailed')
+  // The wrapper punctuation is part of the sentence, so it lives in the locale
+  // tables rather than being hardcoded here (fullwidth parens in zh, ASCII in
+  // en).
+  return gt('autoSpeech.systemSpeechFailedWithReason', { reason })
+}
+
+// Registered once at module scope: the singleton state above is shared by every
+// consumer, so a per-instance listener would double-advance the queue.
+if (typeof window !== 'undefined') {
+  window.addEventListener('clawbench-tts-state', (e: Event) => {
+    const detail = (e as CustomEvent).detail as { id?: string; state?: string; message?: string } | undefined
+    if (!detail?.id || detail.id !== nativeTtsId) return
+
+    if (detail.state === 'start') {
+      appLog.i(TAG, 'native tts started: ' + detail.id)
+      clearNativeTtsWatchdog()
+      state.value = 'playing'
+      return
+    }
+    if (detail.state === 'done' || detail.state === 'error') {
+      const onDone = nativeTtsOnDone
+      nativeTtsId = ''
+      nativeTtsOnDone = null
+      clearNativeTtsWatchdog()
+      if (detail.state === 'error') {
+        // Keep the engine's own reason visible: without it every failure reads
+        // the same ("phone read-aloud failed") and cannot be diagnosed from
+        // the screen — the user has no way to enable logs on our behalf.
+        appLog.w(TAG, 'native tts error: ' + (detail.message || ''))
+        reportError(nativeFailureText(detail.message))
+      }
+      onDone?.()
+    }
+  })
+}
 
 function clearPlaybackEndTimer() {
   if (playbackEndTimer) {
@@ -193,6 +262,39 @@ if (typeof window !== 'undefined') {
   })
 }
 
+/**
+ * Stops read-aloud when the user opens a different session.
+ *
+ * Playback is a module singleton with ONE queue, so leaving it running across a
+ * session switch has two consequences, and the second is the one that gets
+ * reported as a bug:
+ *
+ *   1. The conversation the user just left keeps talking while they are looking
+ *      at another one.
+ *   2. `isBusy()` is still true when the NEW session's turn finishes, so its
+ *      reply is appended to the queue instead of being spoken. The user hears
+ *      the old session, the one on screen stays silent, and the whole feature
+ *      reads as "read-aloud stopped working".
+ *
+ * Registered at module scope rather than in ChatPanelContent: the panel is one
+ * consumer, and a switch can happen while it is not mounted (a notification
+ * deep link, the session drawer). The stop has to belong to whoever owns the
+ * audio.
+ *
+ * The actual teardown lives inside `useAutoSpeech()`'s closure (it owns the
+ * audio element, the sockets and the queue), so it is reached through this
+ * hook, installed the first time the composable is instantiated.
+ */
+let stopForSessionSwitch: (() => void) | null = null
+
+watch(currentSessionIdRef, () => {
+  if (!stopForSessionSwitch) return
+  appLog.i(TAG, 'session switched; stopping read-aloud of the previous session')
+  // The QUEUE belongs to the session being left too, so it is cleared rather
+  // than drained into the new one.
+  stopForSessionSwitch()
+})
+
 export function useAutoSpeech() {
   // --- Persistence ---
   function saveState() {
@@ -284,6 +386,12 @@ export function useAutoSpeech() {
   function stopPlayback(releaseScreenLock = true) {
     abortController?.abort()
     abortController = null
+    if (nativeTtsId) {
+      getNative()?.ttsStop?.()
+      nativeTtsId = ''
+      nativeTtsOnDone = null
+      clearNativeTtsWatchdog()
+    }
     if (currentEventSource) {
       currentEventSource.close()
       currentEventSource = null
@@ -325,10 +433,10 @@ export function useAutoSpeech() {
     stopPlayback(releaseScreenLock)
   }
 
-  function reportError(message: string) {
-    lastError.value = message
-    toast.show(message, { icon: 'blocked', type: 'error', duration: 5000 })
-  }
+  // Let the module-level session watcher reach the teardown above. Assigned on
+  // every instantiation (they all share the same closure state, so any one of
+  // them is correct) — see `stopForSessionSwitch`.
+  stopForSessionSwitch = () => stopAudio()
 
   // --- Internal: play audio from a path ---
   function playAudio(audioPath: string) {
@@ -531,6 +639,123 @@ export function useAutoSpeech() {
     }
   }
 
+  /**
+   * True when the user chose the phone voice.
+   *
+   * Whether the host can actually do it is checked inside — a missing bridge
+   * must be reported, not treated as "use the server instead".
+   */
+  function shouldUseSystemSpeech(): boolean {
+    return localConfig.systemSpeech === true
+  }
+
+  /**
+   * Read the reply with the phone's own speech engine.
+   *
+   * The server is still asked for the condensed text (a full reply takes
+   * minutes to read), but nothing is synthesized: `summarizeOnly` returns the
+   * text the audio path would have spoken.
+   *
+   * Never falls back to server synthesis: the user picked this voice on
+   * purpose, and switching to another voice behind their back makes it
+   * impossible to tell which one actually spoke. On any failure it reports the
+   * reason and ends the read.
+   *
+   * @returns always true (the request has been handled one way or another)
+   */
+  async function speakWithSystemSpeech(
+    id: string,
+    text: string,
+    speakerName: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const native = getNative()
+    if (!native?.ttsSpeak) {
+      reportError(nativeFailureText('no_bridge'))
+      advancePlayback()
+      return
+    }
+
+    // Check readiness on every read, not just when the option was chosen.
+    // The flag is stored per device and survives app upgrades, so it can be on
+    // for a phone whose engine no longer answers — without this check every
+    // read would spend its whole watchdog window waiting and then fail with a
+    // generic error.
+    const probe = await probeSystemSpeech(8000)
+    if (!probe.ok) {
+      appLog.w(TAG, 'system speech unavailable at read time: ' + probe.reason)
+      reportError(gt(systemSpeechErrorKey(probe.reason)))
+      advancePlayback()
+      return
+    }
+
+    state.value = 'summarizing'
+    const body: Record<string, unknown> = {
+      text,
+      language: i18n.global.locale.value,
+      summarizeOnly: true,
+    }
+    const msgId = parseInt(id, 10)
+    if (!isNaN(msgId)) body.messageId = msgId
+    if (speakerName) body.speakerName = speakerName
+
+    const resp = await fetch('/api/tts/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (!resp.ok) {
+      let errorMsg = gt('autoSpeech.generateFailed', { status: resp.status })
+      try {
+        const errData = await resp.json()
+        if (errData.error) errorMsg = gt('autoSpeech.generateFailedDetail', { error: errData.error })
+      } catch { /* ignore parse error */ }
+      throw new Error(errorMsg)
+    }
+
+    const data = await resp.json()
+    const summary = typeof data.summary === 'string' ? data.summary : ''
+    const spoken = typeof data.speakText === 'string' && data.speakText ? data.speakText : summary
+    if (!spoken) throw new Error(gt('autoSpeech.noResult'))
+
+    if (summary) playingSummary.value = summary
+    // Free-dialog compares the microphone against what is actually being read.
+    speakingText.value = spoken
+
+    state.value = 'synthesizing'
+    // The bridge hands back a STRING id, while message ids in the chat model
+    // are `string | number`. Comparing the two with `!==` silently fails, and
+    // every native event (start/done/error) is dropped — the read looks like it
+    // never starts and only the watchdog fires. Normalize at the boundary.
+    const utteranceId = String(id)
+    const accepted = native.ttsSpeak(spoken, utteranceId)
+    appLog.i(TAG, 'native tts speak id=' + utteranceId + ' len=' + spoken.length + ' accepted=' + accepted)
+    if (accepted !== 'ready' && accepted !== 'initializing') {
+      // The engine went away after the probe, or refused the request. Do not
+      // switch voices silently.
+      reportError(nativeFailureText(accepted))
+      advancePlayback()
+      return
+    }
+
+    nativeTtsId = utteranceId
+    nativeTtsOnDone = () => advancePlayback()
+    // The engine promises exactly one terminal event, but that promise crosses
+    // the WebView bridge — a navigation or a killed page can swallow it. This
+    // only covers the window before "start"; after that the utterance may
+    // legitimately run for minutes.
+    nativeTtsStartTimer = setTimeout(() => {
+      if (state.value !== 'synthesizing' || !nativeTtsId) return
+      const onDone = nativeTtsOnDone
+      nativeTtsId = ''
+      nativeTtsOnDone = null
+      nativeTtsStartTimer = null
+      reportError(nativeFailureText('timeout'))
+      onDone?.()
+    }, 10000)
+  }
+
   // --- Internal: generate and play TTS for text ---
   async function _speak(id: string, text: string, speakerName?: string) {
     if (!text) {
@@ -549,6 +774,11 @@ export function useAutoSpeech() {
     activeId.value = id
 
     try {
+      if (shouldUseSystemSpeech()) {
+        await speakWithSystemSpeech(id, text, speakerName, controller.signal)
+        return
+      }
+
       // Step 1: POST to create TTS job (or get cached result)
       const body: Record<string, unknown> = { text, language: i18n.global.locale.value }
       const msgId = parseInt(id, 10)

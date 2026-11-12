@@ -140,6 +140,13 @@ const acpMockSlowReplyPrefix = "[mock:slow-reply:"
 // turn adds two lines and there is nothing to scroll away from.
 const acpMockLongReplyMarker = "[mock:long-reply]"
 
+// acpMockBlankThinkingMarker makes that turn emit a whitespace-only thought
+// chunk AFTER the tool call. Real models do this between reasoning runs (a lone
+// space token); with nothing left to merge into it used to open a second
+// thinking block whose entire content was that space — an expandable 「深度思考」
+// chip holding nothing. The turn must end with exactly ONE thinking block.
+const acpMockBlankThinkingMarker = "[mock:blank-thinking]"
+
 // slowReplyDelayMs reports the per-turn reply delay requested by the prompt.
 func slowReplyDelayMs(prompt string) (int, bool) {
 	i := strings.Index(prompt, acpMockSlowReplyPrefix)
@@ -664,6 +671,23 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 			slog.Info("acp-mock: permission cancelled")
 		}
 		if err := pause(ctx, 50*time.Millisecond); err != nil {
+			return err
+		}
+	}
+
+	// 4c. A whitespace-only thought AFTER the tool call. Real models emit lone
+	// space tokens between reasoning runs; with nothing left to merge into (the
+	// tool call closed the previous block) that space used to open a block of
+	// its own, which the following text closed immediately — leaving an
+	// expandable 「深度思考」chip with nothing inside.
+	if strings.Contains(userText, acpMockBlankThinkingMarker) {
+		if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+			SessionId: acp.SessionId(sid),
+			Update:    acp.UpdateAgentThoughtText(" "),
+		}); err != nil {
+			return err
+		}
+		if err := pause(ctx, 30*time.Millisecond); err != nil {
 			return err
 		}
 	}

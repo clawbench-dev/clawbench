@@ -102,6 +102,8 @@ const props = defineProps({
   readonly: { type: Boolean, default: false },
 })
 
+const emit = defineEmits(['requestClose'])
+
 const { t, locale } = useI18n()
 const dialog = useDialog()
 const fileEditor = useFileEditor()
@@ -132,6 +134,9 @@ let iframeReady = false
 let dirty = false
 let latestXml = ''
 let pendingExport = null
+// A user-requested export (see requestExport), distinct from the save flow's
+// XML round trip above.
+let pendingUserExport = null
 
 const frameSrc = computed(() => {
   const lang = typeof locale.value === 'string' && locale.value.startsWith('zh') ? 'zh' : 'en'
@@ -331,7 +336,26 @@ function onMessage(e) {
         setDirty(true)
       }
       break
+    case 'save':
+      // drawio's own "Save & Exit" (the same message Ctrl+S sends). In embed
+      // mode this is drawio's ONLY save action and it carries no exit flag, so
+      // it always means "save and leave" — the host is the one that has to close
+      // the view, otherwise the button saves and then appears to do nothing.
+      if (typeof msg.xml === 'string' && msg.xml) {
+        latestXml = msg.xml
+        void persistXml(msg.xml).then((ok) => {
+          if (ok) emit('requestClose')
+        })
+      }
+      break
     case 'export':
+      if (pendingUserExport) {
+        const { resolve, timer } = pendingUserExport
+        clearTimeout(timer)
+        pendingUserExport = null
+        resolve({ format: msg.format || '', data: msg.data || '' })
+        break
+      }
       if (pendingExport) {
         pendingExport(msg.data || latestXml)
         pendingExport = null
@@ -351,6 +375,13 @@ function sendLoad() {
 
 function setDirty(v) {
   dirty = v
+  // "Editing" tracks unsaved work, not the fact that an editor is on screen.
+  // The back/close state machine routes every press to "exit edit mode" while
+  // this flag is set, so keeping it on permanently turned the close button into
+  // a no-op: the press was consumed by an exit that had nothing to do, and the
+  // viewer never closed. With it following `dirty`, a clean diagram closes in
+  // one click and an edited one still asks before throwing the changes away.
+  if (!props.readonly) fileEditor.setEditing(v)
 }
 
 /** Ask draw.io for the current XML; falls back to the last autosave. */
@@ -377,12 +408,15 @@ function requestXml() {
   })
 }
 
-async function saveCurrent() {
-  const xml = await requestXml()
+async function persistXml(xml) {
   if (!xml) return false
   const ok = await saveFile(props.file?.path || '', xml)
   if (ok) setDirty(false)
   return ok
+}
+
+async function saveCurrent() {
+  return persistXml(await requestXml())
 }
 
 // Same contract as ExcalidrawViewer: resolves true when the diagram is saved or
@@ -397,13 +431,10 @@ async function handleExit() {
     extraPrimedText: t('common.confirm'),
   })
   if (choice === true) {
-    const ok = await saveCurrent()
-    if (ok) fileEditor.setEditing(false)
-    return ok
+    return await saveCurrent()
   }
   if (choice === null) {
     setDirty(false)
-    fileEditor.setEditing(false)
     return true
   }
   return false
@@ -420,7 +451,6 @@ onMounted(async () => {
   // A read-only preview is not an editor: registering it would make the share
   // page's (nonexistent) back gesture think there is unsaved work.
   if (!props.readonly) {
-    fileEditor.setEditing(true)
     unregisterExitEdit = fileEditor.registerExitEditHandler(handleExit)
     unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => dirty)
   }
@@ -471,12 +501,37 @@ watch([locale, isDark], () => {
   iframeReady = false
 })
 
+/**
+ * Ask drawio for an export and hand back the raw payload.
+ *
+ * drawio's own "Export as" menu is disabled in embed mode, so this is the only
+ * way to produce a file — the caller decides where it goes.
+ */
+function requestExport(format) {
+  return new Promise((resolve, reject) => {
+    if (!iframeReady) {
+      reject(new Error(t('file.drawioExport.notReady')))
+      return
+    }
+    // Large diagrams take a while to rasterise; the timer only guards against
+    // an iframe that never answers.
+    const timer = setTimeout(() => {
+      if (pendingUserExport) {
+        pendingUserExport = null
+        reject(new Error(t('file.drawioExport.timeout')))
+      }
+    }, 20000)
+    pendingUserExport = { resolve, timer }
+    postToFrame({ action: 'export', format })
+  })
+}
+
 async function requestExit() {
   if (props.readonly) return true
   return handleExit()
 }
 
-defineExpose({ requestExit, isDirty: () => dirty })
+defineExpose({ requestExit, requestExport, isDirty: () => dirty })
 </script>
 
 <style scoped>

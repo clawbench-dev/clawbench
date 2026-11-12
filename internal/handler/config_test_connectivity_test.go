@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,6 +66,7 @@ func TestSTTConnectivity(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 	})
@@ -87,11 +89,20 @@ func TestSTTConnectivity_EmptyTranscriptFails(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "empty transcription")
+}
+
+// TestSTTConnectivity_NotConfigured pins the empty provider: the probe must say
+// the engine is missing rather than reporting a localhost Whisper as broken.
+func TestSTTConnectivity_NotConfigured(t *testing.T) {
+	res := testSTT(context.Background(), map[string]any{})
+	assert.False(t, res.Success)
+	assert.Contains(t, res.Message, "not configured")
 }
 
 // A server error is a failure. The probe used to treat any non-auth/non-404
@@ -104,6 +115,7 @@ func TestSTTConnectivity_ServerErrorFails(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
@@ -133,6 +145,7 @@ func TestSTTConnectivity_UploadsEmbeddedClip(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 		"stt.vllm.api_key":  "k-1",
@@ -154,6 +167,7 @@ func TestSTTConnectivity_AuthFailure(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
@@ -170,6 +184,7 @@ func TestSTTConnectivity_ModelNotFound(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "Qwen3-ASR-1.7B",
 	})
@@ -185,6 +200,7 @@ func TestSTTConnectivity_Endpoint404(t *testing.T) {
 	defer srv.Close()
 
 	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":      "vllm",
 		"stt.vllm.base_url": srv.URL,
 		"stt.vllm.model":    "m",
 	})
@@ -671,6 +687,59 @@ func TestTestTTS_RoutesToOpenAI(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.NotContains(t, result.Message, "Unknown TTS engine")
 	assert.Contains(t, result.Message, "base URL is required")
+}
+
+// ── Vendor TTS connectivity tests ────────────────────────────
+
+// Each vendor probe must report the missing credential by name instead of
+// attempting a request that would fail with an opaque auth error.
+func TestTestTTS_VendorRequiresCredentials(t *testing.T) {
+	orig := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	defer func() { model.ConfigInstance = orig }()
+
+	cases := []struct{ engine, wantSub string }{
+		{"alibaba", "API key is required"},
+		{"tencent", "SecretId"},
+		{"volcano", "API key is required"},
+		{"minimax", "API key is required"},
+	}
+	for _, tc := range cases {
+		result := testTTS(context.Background(), map[string]any{"tts.engine": tc.engine})
+		assert.False(t, result.Success, tc.engine)
+		assert.Contains(t, result.Message, tc.wantSub, tc.engine)
+	}
+}
+
+// The vendor probes synthesize a real one-word clip (that is what catches a
+// wrong model / voice / resource id). This exercises the Alibaba path end to
+// end against a mock endpoint — its base URL is configurable, which the other
+// two vendors' fixed hosts are not.
+func TestTestTTS_AlibabaProbeSynthesizes(t *testing.T) {
+	orig := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	defer func() { model.ConfigInstance = orig }()
+
+	audio := append([]byte("ID3"), []byte("0123456789abcdef")...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status_code": 200,
+			"output": map[string]any{
+				"audio": map[string]any{"data": base64.StdEncoding.EncodeToString(audio)},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	result := testTTS(context.Background(), map[string]any{
+		"tts.engine":           "alibaba",
+		"tts.alibaba.api_key":  "sk-test",
+		"tts.alibaba.base_url": srv.URL,
+		"tts.alibaba.model":    "cosyvoice-v3-flash",
+		"tts.alibaba.voice":    "longanyang",
+	})
+	assert.True(t, result.Success, result.Message)
+	assert.Contains(t, result.Message, "longanyang")
 }
 
 // ── Port Forward tests ────────────────────────────────────────

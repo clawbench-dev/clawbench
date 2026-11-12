@@ -1464,10 +1464,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		proxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 
 		// Reverse mappings bind ports on the server, so ClawBench's own HTTP
-		// port must never be handed out. The SSH port is always reserved: the
-		// listener is always on (see the start below), and reserving a port
-		// that is actually in use is the point — a reverse mapping that took
-		// 20001 would fight the tunnel itself.
+		// port must never be handed out. The SSH port stays reserved even when
+		// the transport is h2: otherwise a reverse mapping could squat 20001
+		// and a later switch back to ssh would fail to bind.
 		sshPort := cfg.PortForward.Port
 		if sshPort == 0 {
 			sshPort = port + 1
@@ -1477,11 +1476,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		defer proxyService.Stop()
 	}
 
-	// The SSH tunnel listener is always on; see ApplyDefaults for why the
-	// switch was removed.
-	sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-	startSSHServer(sshServerRef)
-	defer func() { sshServerRef.Close() }()
+	// The SSH listener exists only when the server's transport is ssh. With h2
+	// the forwards ride the always-on main HTTP server instead, so nothing
+	// listens on 20001 at all (see ApplyDefaults / shouldListenSSH).
+	if shouldListenSSH(cfg) {
+		sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+		startSSHServer(sshServerRef)
+		defer func() { sshServerRef.Close() }()
+	}
 
 	// Initialize DingTalk push notifications (enterprise internal bot via Stream API).
 	// DingTalk is disabled by default; requires app_key + app_secret configuration.
@@ -2224,6 +2226,14 @@ func newTTSProvider(cfg model.Config) speech.SpeechProvider {
 		return newEdgeTTSProvider(cfg)
 	case strOpenAI:
 		return newOpenAITTSProvider(cfg)
+	case "alibaba":
+		return newAlibabaTTSProvider(cfg)
+	case "tencent":
+		return newTencentTTSProvider(cfg)
+	case "volcano":
+		return newVolcanoTTSProvider(cfg)
+	case "minimax":
+		return newMinimaxTTSProvider(cfg)
 	default:
 		return newEdgeTTSProvider(cfg)
 	}
@@ -2265,6 +2275,80 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 		o.Speed = cfg.TTS.Speed
 	}
 	return o
+}
+
+// newAlibabaTTSProvider builds the Alibaba Cloud Model Studio (DashScope)
+// provider. Base URL, model and voice all have documented defaults applied by
+// model.ApplyDefaults, so only the key is required.
+func newAlibabaTTSProvider(cfg model.Config) *speech.AlibabaTTSProvider {
+	p := speech.NewAlibabaTTSProvider()
+	p.APIKey = cfg.TTS.Alibaba.APIKey
+	if cfg.TTS.Alibaba.BaseURL != "" {
+		p.BaseURL = cfg.TTS.Alibaba.BaseURL
+	}
+	if cfg.TTS.Alibaba.Model != "" {
+		p.Model = cfg.TTS.Alibaba.Model
+	}
+	if cfg.TTS.Alibaba.Voice != "" {
+		p.Voice = cfg.TTS.Alibaba.Voice
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
+}
+
+// newTencentTTSProvider builds the Tencent Cloud provider. The voice type has
+// a catalog default; the SecretId/SecretKey pair is required.
+func newTencentTTSProvider(cfg model.Config) *speech.TencentTTSProvider {
+	p := speech.NewTencentTTSProvider()
+	p.SecretID = cfg.TTS.Tencent.SecretID
+	p.SecretKey = cfg.TTS.Tencent.SecretKey
+	if cfg.TTS.Tencent.VoiceType > 0 {
+		p.VoiceType = cfg.TTS.Tencent.VoiceType
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
+}
+
+// newVolcanoTTSProvider builds the Volcano Engine (Doubao) provider. Resource
+// id and speaker have defaults; the API key is required.
+func newVolcanoTTSProvider(cfg model.Config) *speech.VolcanoTTSProvider {
+	p := speech.NewVolcanoTTSProvider()
+	p.APIKey = cfg.TTS.Volcano.APIKey
+	if cfg.TTS.Volcano.ResourceID != "" {
+		p.ResourceID = cfg.TTS.Volcano.ResourceID
+	}
+	if cfg.TTS.Volcano.Voice != "" {
+		p.Voice = cfg.TTS.Volcano.Voice
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
+}
+
+// newMinimaxTTSProvider builds the MiniMax provider. Base URL, model and voice
+// have documented defaults; the API key is required.
+func newMinimaxTTSProvider(cfg model.Config) *speech.MinimaxTTSProvider {
+	p := speech.NewMinimaxTTSProvider()
+	p.APIKey = cfg.TTS.Minimax.APIKey
+	p.GroupID = cfg.TTS.Minimax.GroupID
+	if cfg.TTS.Minimax.BaseURL != "" {
+		p.BaseURL = cfg.TTS.Minimax.BaseURL
+	}
+	if cfg.TTS.Minimax.Model != "" {
+		p.Model = cfg.TTS.Minimax.Model
+	}
+	if cfg.TTS.Minimax.Voice != "" {
+		p.Voice = cfg.TTS.Minimax.Voice
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
 }
 
 // buildAISummarizer creates an LLM summarizer from the shared ai_summary config.
@@ -2419,15 +2503,26 @@ func hotReloadSSH(cfg model.Config, port int) {
 		service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 	}
 
-	// The SSH listener is always on (cfg.PortForward.Enabled is pinned true in
-	// ApplyDefaults and in the PATCH path), so there is no "disable it" branch
-	// here any more — the listener either needs starting, restarting on a new
-	// port, or just reconfiguring.
+	// The transport decides whether an SSH listener should exist at all. It is
+	// the server-side switch the clients follow, so a PATCH that changes it has
+	// to actually start or stop the listener here — otherwise "transport: h2"
+	// would only be a hint.
 	newPort := cfg.PortForward.Port
 	if newPort == 0 {
 		newPort = port + 1
 	}
 	reserveSSHPorts(port, newPort)
+
+	if !shouldListenSSH(cfg) {
+		if sshRef != nil {
+			sshRef.Close()
+			// Unpublish through the compare-and-clear so a concurrently started
+			// successor is not stranded with a nil reference.
+			handler.ClearSSHServer(sshRef)
+			slog.Info("hot-reload: SSH tunnel listener stopped (transport is h2)")
+		}
+		return
+	}
 
 	if sshRef == nil {
 		// SSH was disabled (or its listener failed to bind) — start it. The
@@ -2496,11 +2591,28 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		if cfg.STT.Alibaba.Model != "" {
 			p.StreamModel = cfg.STT.Alibaba.Model
 		}
+		if cfg.STT.Alibaba.FileModel != "" {
+			p.FileModel = cfg.STT.Alibaba.FileModel
+		}
 		p.Language = cfg.STT.Alibaba.Language
 		p.EnableITN = cfg.STT.Alibaba.EnableITN
 		p.EnablePunc = cfg.STT.Alibaba.EnablePunc
 		p.EnableDDC = cfg.STT.Alibaba.EnableDDC
 		p.EndWindowSize = cfg.STT.Alibaba.EndWindowSize
+		return p
+	case "":
+		// No engine selected: voice input stays off instead of silently pointing
+		// at a localhost Whisper that was never configured.
+		return nil
+	case "tencent":
+		p := stt.NewTencentProvider(
+			cfg.STT.Tencent.SecretID, cfg.STT.Tencent.SecretKey, cfg.STT.Tencent.AppID)
+		if cfg.STT.Tencent.Model != "" {
+			p.Model = cfg.STT.Tencent.Model
+		}
+		p.EnableITN = cfg.STT.Tencent.EnableITN
+		p.EnableDDC = cfg.STT.Tencent.EnableDDC
+		p.EndWindowSize = cfg.STT.Tencent.EndWindowSize
 		return p
 	default:
 		return stt.NewVLLMProvider(

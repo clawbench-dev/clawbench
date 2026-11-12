@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { PcmStreamer } from '../pcmCapture'
+import { PcmStreamer, encodeWav } from '../pcmCapture'
 import { VOICE_TUNING_DEFAULTS } from '../audioTuning'
 
 /**
@@ -318,5 +318,50 @@ describe('PcmStreamer', () => {
     workletNode.port.onmessage!({ data: new ArrayBuffer(1) })
     expect(onFrame).toHaveBeenCalledTimes(1)
     s.stop()
+  })
+})
+
+describe('encodeWav', () => {
+  const frame = (samples: number[]) => Int16Array.from(samples).buffer
+
+  it('writes a 44-byte RIFF header describing 16 kHz mono 16-bit PCM', async () => {
+    const blob = encodeWav([frame([1, -1])])
+    expect(blob.type).toBe('audio/wav')
+    const bytes = new DataView(await blob.arrayBuffer())
+    const tag = (offset: number) =>
+      String.fromCharCode(...new Uint8Array(bytes.buffer, offset, 4))
+    expect(tag(0)).toBe('RIFF')
+    expect(tag(8)).toBe('WAVE')
+    expect(tag(12)).toBe('fmt ')
+    expect(tag(36)).toBe('data')
+    expect(bytes.getUint32(16, true)).toBe(16) // fmt chunk size
+    expect(bytes.getUint16(20, true)).toBe(1) // PCM
+    expect(bytes.getUint16(22, true)).toBe(1) // mono
+    expect(bytes.getUint32(24, true)).toBe(16000) // sample rate
+    expect(bytes.getUint32(28, true)).toBe(32000) // byte rate = rate × block align
+    expect(bytes.getUint16(32, true)).toBe(2) // block align
+    expect(bytes.getUint16(34, true)).toBe(16) // bits per sample
+    expect(bytes.getUint32(40, true)).toBe(4) // data length
+    expect(bytes.getUint32(4, true)).toBe(36 + 4) // RIFF size
+  })
+
+  it('concatenates every frame in order', async () => {
+    const blob = encodeWav([frame([1, 2]), frame([3])])
+    const view = new Int16Array(await blob.arrayBuffer(), 44)
+    expect(Array.from(view)).toEqual([1, 2, 3])
+    expect(blob.size).toBe(44 + 6)
+  })
+
+  it('drops a trailing odd byte instead of desynchronising the samples', async () => {
+    const blob = encodeWav([new ArrayBuffer(5)])
+    expect(blob.size).toBe(44 + 4)
+    const view = new DataView(await blob.arrayBuffer())
+    expect(view.getUint32(40, true)).toBe(4)
+  })
+
+  it('produces a header-only WAV when nothing was captured', async () => {
+    const blob = encodeWav([])
+    expect(blob.size).toBe(44)
+    expect(new DataView(await blob.arrayBuffer()).getUint32(40, true)).toBe(0)
   })
 })

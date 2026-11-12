@@ -76,7 +76,7 @@ public class MainActivityTunnelBridgeTest {
         // The tunnel-toggle bridge is backed by SharedPreferences, so the
         // activity needs a stubbed prefs store (a real Context would NPE under
         // Unsafe allocation). A missing key reads as the stored default, which
-        // is how the "default ssh" case stays honest.
+        // is how the "default h2" case stays honest.
         //
         // This store is an in-memory fake, so on its own it cannot prove the
         // value reached disk — the Robolectric-backed
@@ -260,10 +260,10 @@ public class MainActivityTunnelBridgeTest {
 
     @Test
     public void getTunnelTransportH2Enabled_readsThePreference() throws Exception {
-        // Absent key: the pre-tunnel default (SSH = false) must be reported,
-        // matching getTunnelTransport()'s "ssh" derivation.
-        assertEquals("an untouched install reports false (ssh)",
-                Boolean.FALSE, invoke("getTunnelTransportH2Enabled"));
+        // Absent key: the default (h2 = true) must be reported, matching
+        // getTunnelTransport()'s "h2" derivation.
+        assertEquals("an untouched install reports true (h2)",
+                Boolean.TRUE, invoke("getTunnelTransportH2Enabled"));
 
         // Drive the store directly so this pins `preference -> boolean` on its
         // own rather than re-testing what the setter wrote.
@@ -297,12 +297,11 @@ public class MainActivityTunnelBridgeTest {
     }
 
     @Test
-    public void getTunnelTransport_defaultsToSshBeforeAnyToggle() throws Exception {
+    public void getTunnelTransport_defaultsToH2BeforeAnyToggle() throws Exception {
         // No setter call: the key is absent, so the bridge must fall back to the
-        // pre-tunnel default. This is the compatibility contract the whole
-        // change rests on.
-        assertEquals("an untouched install reports ssh",
-                "ssh", invoke("getTunnelTransport"));
+        // default transport (HTTP/2).
+        assertEquals("an untouched install reports h2",
+                "h2", invoke("getTunnelTransport"));
         assertEquals("no key means no stored value",
                 null, prefsData.get("tunnel_transport_h2_enabled"));
     }

@@ -6,12 +6,11 @@ import { ref } from 'vue'
 /**
  * The transport row in the port-forwarding panel.
  *
- * The h2 stream tunnel and the legacy SSH tunnel are indistinguishable from the
- * UI's point of view — same ports, same URLs — so the panel surfaces which wire
- * is actually carrying them. The value comes from the native bridge and is
- * therefore optional: a host that predates the transport methods (older
- * Android/Electron builds) must render no row at all rather than a placeholder
- * or a wrong label.
+ * The h2 stream tunnel and the SSH tunnel are indistinguishable from the UI's
+ * point of view — same ports, same URLs — so the panel surfaces which wire
+ * carries them. The value is the SERVER's configured transport (every client
+ * follows it), so the row is meaningful in web mode too. An empty value (config
+ * not loaded) renders no row rather than a made-up label.
  */
 
 const i18n = createI18n({
@@ -197,12 +196,15 @@ describe('ProxyPanelContent transport row', () => {
     expect(wrapper.find('.tunnel-transport').exists()).toBe(false)
   })
 
-  it('hides the row in web mode', () => {
-    // No local tunnel exists in a plain browser, so there is nothing to label.
+  it('shows the server-configured transport in web mode too', () => {
+    // The transport is a server setting now (the clients follow it), so the row
+    // is not a client-tunnel artifact: a browser can and should show which wire
+    // the server carries the forwards over.
     isAppMode.value = false
     activeTransport.value = 'h2'
     const wrapper = mountPanel()
 
-    expect(wrapper.find('.tunnel-transport').exists()).toBe(false)
+    expect(wrapper.find('.tunnel-transport').exists()).toBe(true)
+    expect(wrapper.find('.tunnel-transport-value').text()).toBe('HTTP/2')
   })
 })

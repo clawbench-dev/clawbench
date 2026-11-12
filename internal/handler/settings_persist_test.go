@@ -410,6 +410,99 @@ func TestPersist_OpenAITTSStreamModeRejectsUnknown(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// ─── Vendor TTS engines ─────────────────────────────────────
+
+// Each vendor engine keeps its credentials in its own section, so switching
+// engines never overwrites the one you are not using.
+func TestPersist_AlibabaTTSSubConfig(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "alibaba"
+	model.ConfigInstance.TTS.Alibaba.APIKey = "sk-existing"
+
+	cfg := patchAndReadConfig(t, `{"tts":{"alibaba":{"base_url":"https://x.cn-beijing.maas.aliyuncs.com","model":"cosyvoice-v3-flash","voice":"longanyang"}}}`)
+	assert.Equal(t, "sk-existing", getNestedValue(cfg, "tts.alibaba.api_key"), "editing another field must not clear the key")
+	assert.Equal(t, "https://x.cn-beijing.maas.aliyuncs.com", getNestedValue(cfg, "tts.alibaba.base_url"))
+	assert.Equal(t, "cosyvoice-v3-flash", getNestedValue(cfg, "tts.alibaba.model"))
+	assert.Equal(t, "longanyang", getNestedValue(cfg, "tts.alibaba.voice"))
+}
+
+func TestPersist_TencentTTSSubConfig(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "tencent"
+	model.ConfigInstance.TTS.Tencent.SecretID = "AKID"
+	model.ConfigInstance.TTS.Tencent.SecretKey = "secret"
+
+	cfg := patchAndReadConfig(t, `{"tts":{"tencent":{"voice_type":101016}}}`)
+	assert.Equal(t, "AKID", getNestedValue(cfg, "tts.tencent.secret_id"))
+	assert.Equal(t, "secret", getNestedValue(cfg, "tts.tencent.secret_key"))
+	assert.Equal(t, 101016, getNestedValue(cfg, "tts.tencent.voice_type"))
+}
+
+func TestPersist_VolcanoTTSSubConfig(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "volcano"
+	model.ConfigInstance.TTS.Volcano.APIKey = "key"
+
+	cfg := patchAndReadConfig(t, `{"tts":{"volcano":{"resource_id":"seed-icl-2.0","voice":"zh_female_vv_uranus_bigtts"}}}`)
+	assert.Equal(t, "key", getNestedValue(cfg, "tts.volcano.api_key"))
+	assert.Equal(t, "seed-icl-2.0", getNestedValue(cfg, "tts.volcano.resource_id"))
+	assert.Equal(t, "zh_female_vv_uranus_bigtts", getNestedValue(cfg, "tts.volcano.voice"))
+}
+
+func TestPersist_MinimaxTTSSubConfig(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "minimax"
+	model.ConfigInstance.TTS.Minimax.APIKey = "mm-key"
+
+	cfg := patchAndReadConfig(t, `{"tts":{"minimax":{"group_id":"g-1","base_url":"https://api.minimax.chat","model":"speech-02-turbo","voice":"female-yujie"}}}`)
+	assert.Equal(t, "mm-key", getNestedValue(cfg, "tts.minimax.api_key"))
+	assert.Equal(t, "g-1", getNestedValue(cfg, "tts.minimax.group_id"))
+	assert.Equal(t, "https://api.minimax.chat", getNestedValue(cfg, "tts.minimax.base_url"))
+	assert.Equal(t, "speech-02-turbo", getNestedValue(cfg, "tts.minimax.model"))
+	assert.Equal(t, "female-yujie", getNestedValue(cfg, "tts.minimax.voice"))
+}
+
+// Switching TO a vendor engine must be accepted before its credentials are
+// filled in (the panel saves one field at a time), but saving a field while
+// that engine is already selected must require them.
+func TestPersist_TencentTTSRequiresCredentials(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.TTS.Engine = "tencent"
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(`{"tts":{"tencent":{"voice_type":101001}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "tts.tencent.secret_id")
+}
+
+func TestPersist_TTSEngineAcceptsVendorValues(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+	for _, engine := range []string{"alibaba", "tencent", "volcano", "minimax"} {
+		cfg := patchAndReadConfig(t, `{"tts":{"engine":"`+engine+`"}}`)
+		assert.Equal(t, engine, getNestedValue(cfg, "tts.engine"))
+	}
+}
+
 // ─── TTS API sub-config ──────────────────────────────────────
 
 func TestPersist_AISummaryProviderID(t *testing.T) {

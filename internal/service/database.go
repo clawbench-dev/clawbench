@@ -43,6 +43,7 @@ const (
 	migUsageLedgerHeal      = "2026-10-19_heal_usage_ledger"
 	migLedgerWallClock      = "2026-10-25_backfill_ledger_wall_clock"
 	migGroupMemberDisabled  = "2026-10-28_group_member_disabled"
+	migBlankThinking        = "2026-11-13_drop_blank_thinking_blocks"
 )
 
 // dataMigrationNames 是上表的名字集合，供测试遍历。
@@ -56,6 +57,7 @@ var dataMigrationNames = []string{
 	migUsageLedgerHeal,
 	migLedgerWallClock,
 	migGroupMemberDisabled,
+	migBlankThinking,
 }
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
@@ -2398,6 +2400,14 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// representation) become disabled rows. Runs last so it sees rows created by any
 	// earlier migration.
 	runOnce(migGroupMemberDisabled, MigrateGroupMemberDisabled)
+
+	// Migrate: drop thinking blocks whose whole content is whitespace, together
+	// with their chat_thinking rows. Models emit lone space tokens between
+	// reasoning runs; a space that landed right after a tool call used to open a
+	// block of its own, rendering as an expandable 「深度思考」chip with nothing
+	// inside. The writer is fixed, but finalized messages are never re-saved, so
+	// the existing ones must be cleaned here.
+	runOnce(migBlankThinking, MigrateBlankThinkingBlocks)
 
 	return nil
 }

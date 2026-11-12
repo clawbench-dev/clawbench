@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { annotateExternalLinkTargets, annotateExternalLinkTargetsIn, isNewTabLink } from '@/composables/useExternalLinkAnnotation'
 import { useAppMode } from '@/composables/useAppMode'
+import * as nativeBridge from '@/utils/clawbenchNative'
 
 const ORIGIN = 'https://clawbench.local'
 
@@ -145,9 +146,12 @@ describe('useExternalLinkAnnotation', () => {
 
   describe('app-mode gate', () => {
     it('skips annotation in native app mode', () => {
+      // The axis is re-read from the native bridge on every useAppMode() call
+      // (a bridge installed after first evaluation must still be picked up), so
+      // poking the ref would be undone by the next call. Drive the BRIDGE.
+      vi.spyOn(nativeBridge, 'isNativeApp').mockReturnValue(true)
       const { isAppMode } = useAppMode()
-      const original = isAppMode.value
-      isAppMode.value = true
+      expect(isAppMode.value).toBe(true)
       try {
         const doc = new DOMParser().parseFromString('<a href="https://example.com">x</a>', 'text/html')
         expect(annotateExternalLinkTargetsIn(doc)).toBe(false)
@@ -156,7 +160,7 @@ describe('useExternalLinkAnnotation', () => {
         expect(doc.querySelector('a')!.hasAttribute('target')).toBe(false)
         expect(annotate('<a href="https://example.com">x</a>')).not.toContain('target=')
       } finally {
-        isAppMode.value = original
+        vi.restoreAllMocks()
       }
     })
   })

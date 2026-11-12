@@ -42,10 +42,8 @@ const SHARED_CHROME = [
   'share-notice-text',
   'share-notice-divider',
   'share-notice-warning',
-  // Link bar
+  // Link bar (the address field itself lives in ShareAddressList.vue)
   'share-dialog-link-bar',
-  'share-dialog-link-input-wrap',
-  'share-dialog-link-input',
   'share-dialog-link-btn',
   'share-dialog-spin',
 ]
@@ -98,6 +96,21 @@ function read(rel: string): string {
       // Normalise `calc(N * var(--dp))` to `Npx` so the literal assertions
       // below keep pinning the same design numbers under font-driven scaling.
       return normalizeDp(readFileSync(join(base, rel), 'utf8'))
+    } catch {
+      // try the next candidate root
+    }
+  }
+  throw new Error(`${rel} not found from cwd: ${process.cwd()}`)
+}
+
+/**
+ * Un-normalised read, for comparisons that span two files written in different
+ * `--dp` spellings (`var(--dp)` vs `var(--dp, 1px)`).
+ */
+function readRaw(rel: string): string {
+  for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(join(base, rel), 'utf8')
     } catch {
       // try the next candidate root
     }
@@ -162,15 +175,47 @@ describe('share-dialog chrome lives in the shared asset', () => {
     }
   })
 
-  it('keeps the link-input geometry in the shared asset', () => {
-    const rule = sharedSource.match(/\.share-dialog-link-input\s*\{([\s\S]*?)\}/)
-    expect(rule, '.share-dialog-link-input base rule must exist').not.toBeNull()
-    for (const prop of [
-      'padding: 7px 84px 7px var(--space-5)',
-      'border-radius: var(--radius-sm, 6px)',
-      'font-family: var(--font-mono)',
-    ]) {
-      expect(rule![1], `.share-dialog-link-input must declare ${prop}`).toContain(prop)
+  it('keeps the trailing regenerate button in the flex flow, not overlaid', () => {
+    // Regression: when the single link input was replaced by ShareAddressList,
+    // this button kept its old `position: absolute; right: 4px`. The copy
+    // button is now a real flex item at the end of the row, so the absolute
+    // overlay landed ON TOP of it — two icons stacked at the field's edge.
+    const rule = sharedSource.match(/\.share-dialog-link-btn\s*\{([\s\S]*?)\}/)
+    expect(rule, '.share-dialog-link-btn base rule must exist').not.toBeNull()
+    expect(
+      rule![1],
+      'an absolute overlay lands on the copy button (a flex item in ShareAddressList)',
+    ).not.toContain('position: absolute')
+    expect(rule![1], '.share-dialog-link-btn must hold its place in the row').toContain('flex-shrink: 0')
+    // The dead input chrome must not come back either: the field is owned by
+    // ShareAddressList (`.share-addr-input`).
+    expect(sharedSource, 'the pre-ShareAddressList input styles are dead').not.toContain('.share-dialog-link-input')
+  })
+
+  it('keeps the copy button and the trailing button the same size', () => {
+    // The two rules live in different files (ShareAddressList.vue vs this
+    // asset), which is how they drifted apart in the first place. Same
+    // footprint is what makes them read as one cluster at the field's edge.
+    const copySource = readRaw('src/components/common/ShareAddressList.vue')
+    const copyRule = copySource.match(/\.share-addr-btn\s*\{([\s\S]*?)\}/)
+    expect(copyRule, '.share-addr-btn base rule must exist').not.toBeNull()
+    const trailingRule = sharedSource.match(/\.share-dialog-link-btn\s*\{([\s\S]*?)\}/)
+    expect(trailingRule, '.share-dialog-link-btn base rule must exist').not.toBeNull()
+
+    // Form-agnostic: ShareAddressList uses the `var(--dp, 1px)` fallback while
+    // the shared asset uses the bare `var(--dp)` (and `read()` already
+    // normalised the latter to `Npx`), so compare the design numbers rather
+    // than the literal text.
+    const size = (body: string, prop: string): number => {
+      const calc = new RegExp(`(?:^|[;\\s])${prop}:\\s*calc\\(([\\d.]+)\\s*\\*\\s*var\\(--dp`).exec(body)
+      if (calc) return Number(calc[1])
+      const literal = new RegExp(`(?:^|[;\\s])${prop}:\\s*([\\d.]+)px`).exec(body)
+      expect(literal, `${prop} must be a design length`).not.toBeNull()
+      return Number(literal![1])
+    }
+    for (const prop of ['width', 'height']) {
+      expect(size(copyRule![1], prop), `.share-addr-btn ${prop}`).toBe(28)
+      expect(size(trailingRule![1], prop), `.share-dialog-link-btn ${prop}`).toBe(28)
     }
   })
 
@@ -193,9 +238,7 @@ describe('share-dialog chrome lives in the shared asset', () => {
       { cls: 'share-notice', props: ['padding: 9px 11px', 'border-radius: var(--radius-sm)'] },
       { cls: 'share-notice-info', props: ['background: color-mix'] },
       { cls: 'share-notice-warning', props: ['font-weight: var(--font-weight-medium)'] },
-      { cls: 'share-dialog-link-input', props: ['font-family: var(--font-mono)', 'border-radius: var(--radius-sm, 6px)'] },
-      { cls: 'share-dialog-link-btn', props: ['position: absolute'] },
-      { cls: 'share-dialog-link-input-wrap', props: ['position: relative'] },
+      { cls: 'share-dialog-link-btn', props: ['flex-shrink: 0'] },
       { cls: 'share-dialog-body', props: ['display: flex'] },
     ]
 

@@ -140,7 +140,7 @@ func handleTTSWSCompletedJob(conn *websocket.Conn, jobID, projectPath string) {
 	if projectPath != "" {
 		absPath := filepath.Join(projectPath, relAudioPath)
 		if info, statErr := os.Stat(absPath); statErr == nil && info.Size() > 0 {
-			writeTTSAudioWSEvent(conn, map[string]any{ttsWSType: ttsWSDone, "audioPath": relAudioPath})
+			writeTTSAudioWSEvent(conn, map[string]any{ttsWSType: ttsWSDone, jsonAudioPath: relAudioPath})
 		} else {
 			writeTTSAudioWSError(conn, "job not found")
 		}
@@ -178,9 +178,9 @@ func ttsWSEventFromTTSEvent(event service.TTSEvent) any {
 			}
 		}
 		return map[string]any{
-			ttsWSType:    ttsWSDone,
-			"audioPath":  event.AudioPath,
-			ttsWSSummary: event.Summary,
+			ttsWSType:     ttsWSDone,
+			jsonAudioPath: event.AudioPath,
+			ttsWSSummary:  event.Summary,
 		}
 	}
 	return map[string]any{

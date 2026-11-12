@@ -74,6 +74,32 @@ describe('buildFileCandidates', () => {
     expect(items[0].source).toBe('recent-open')
   })
 
+  it('merges project-wide hits last, keeping a local source for the same file', () => {
+    const items = buildFileCandidates({
+      currentDir: [{ path: 'src/chat/Input.vue' }],
+      global: [
+        { path: 'src/chat/Input.vue' },
+        { path: 'lib/chat/deep/ChatInput.ts' },
+      ],
+    }, '')
+    // The duplicate keeps its local source; the genuinely new hit is 'global'.
+    expect(items.map(i => [i.key, i.source])).toEqual([
+      ['src/chat/Input.vue', 'current-dir'],
+      ['lib/chat/deep/ChatInput.ts', 'global'],
+    ])
+  })
+
+  it('filters project-wide hits by the query like any other source', () => {
+    const items = buildFileCandidates({
+      global: [
+        { path: 'src/chat/Input.vue' },
+        { path: 'src/mail/Send.ts' },
+      ],
+    }, 'input')
+    expect(items.map(i => i.key)).toEqual(['src/chat/Input.vue'])
+    expect(items[0].source).toBe('global')
+  })
+
   it('excludes already-attached paths', () => {
     const items = buildFileCandidates({
       currentDir: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }],

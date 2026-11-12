@@ -81,6 +81,10 @@ var allowedCJKFiles = map[string]string{
 	"internal/ai/backends/deepseek/discovery.go": "model-list output parser (（默认：/ 的模型)",
 	"internal/rag/chunker.go":                    "sentence-boundary detector (。！？) for chunking",
 	"internal/speech/edge_tts.go":                "TTS segmentation: sentence/segment boundary punctuation (。！？；…，) is matched, never rendered",
+	// The connectivity probe asks the engine to speak a fixed short clip and
+	// throws the audio away; the text is never shown to anyone. Kept Chinese
+	// because the probe targets Chinese-capable voices.
+	"internal/handler/config_test_connectivity.go": "TTS connectivity probe sample text (synthesized and discarded, never rendered)",
 	// Mail protocol layer. The CJK strings here are IMAP folder names that are
 	// MATCHED to infer special-use on servers without SPECIAL-USE (Chinese
 	// providers localize "Sent"/"Trash"), never rendered: the folder's display
@@ -202,9 +206,19 @@ func stripGoComments(src string) string {
 // stripJSComments removes // and /* */ comments but KEEPS string literals,
 // including backtick template literals — in JS/TS a backtick body is where
 // user-visible text most often lives, so it must be scanned.
+//
+// Regex literals are consumed whole. That is not cosmetic: a regex may contain
+// an unbalanced quote (`/[",\n]/`, `/'/`), and without this branch the scanner
+// takes that quote as the start of a string, then treats everything up to the
+// NEXT same quote as string body — so a comment far below ("// ── 复制单列 ──")
+// is scanned as if it were literal text and reported as hardcoded CJK. Every
+// file containing such a regex was a false positive.
 func stripJSComments(src string) string {
 	var out strings.Builder
 	i, n := 0, len(src)
+	// prev is the last significant byte outside strings/comments, used to tell
+	// a regex literal from a division operator.
+	var prev byte
 	for i < n {
 		c := src[i]
 		var next byte
@@ -222,6 +236,32 @@ func stripJSComments(src string) string {
 				i++
 			}
 			i += 2
+		case c == '/' && startsRegex(prev):
+			out.WriteByte(c)
+			i++
+			inClass := false
+			for i < n {
+				ch := src[i]
+				out.WriteByte(ch)
+				if ch == '\\' && i+1 < n {
+					i++
+					out.WriteByte(src[i])
+					i++
+					continue
+				}
+				if ch == '[' {
+					inClass = true
+				} else if ch == ']' {
+					inClass = false
+				} else if ch == '/' && !inClass {
+					i++
+					break
+				} else if ch == '\n' {
+					break // unterminated; bail rather than eat the file
+				}
+				i++
+			}
+			prev = '/'
 		case c == '"' || c == '\'' || c == '`':
 			quote := c
 			out.WriteByte(c)
@@ -240,12 +280,28 @@ func stripJSComments(src string) string {
 				}
 				i++
 			}
+			prev = quote
 		default:
 			out.WriteByte(c)
 			i++
+			if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+				prev = c
+			}
 		}
 	}
 	return out.String()
+}
+
+// startsRegex reports whether a '/' at this point begins a regex literal rather
+// than a division. A regex can only follow an operator, a delimiter or the start
+// of the file — after an identifier, a number, or a closing bracket it is
+// division.
+func startsRegex(prev byte) bool {
+	switch prev {
+	case 0, '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^', '\n':
+		return true
+	}
+	return false
 }
 
 // TestNoNewHardcodedUserVisibleCJK fails on any CJK in Go source outside the
@@ -341,6 +397,11 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 		"composables/useSettingsConfig.ts":     "the same defaults mirrored for the client fallback",
 		"utils/exportMarkdownHtml.ts":          "standalone export HTML embeds labels via ad-hoc isZh branch",
 		"components/file/CodeMirrorViewer.vue": "CodeMirror search panel labels via ad-hoc zh branch",
+		// Not copy: the numeric-cell parser. It recognizes fullwidth digits and
+		// Chinese unit suffixes (元 / 万 / 亿 / 毫秒) so a CSV column of "1.2万"
+		// or "120元" is treated as a number; nothing here is ever rendered — the
+		// cell keeps whatever text the file had.
+		"utils/csvTable.ts": "numeric-cell parser: fullwidth digits and Chinese unit suffixes (matched, not displayed)",
 	}
 
 	var offenders []string
@@ -427,6 +488,15 @@ func TestNoNewHardcodedUserVisibleCJKAndroid(t *testing.T) {
 		t.Skip("android/ not present")
 	}
 
+	// Java files whose CJK is legitimate. Each entry states why — the same
+	// contract as allowedCJKFiles above: a reason, never a blanket ignore.
+	allow := map[string]string{
+		// Punctuation the chunker MATCHES to find a natural place to split a
+		// long reply (the platform TTS engine truncates at 4000 units). The
+		// characters are never rendered — they are removed at the split.
+		"android/app/src/main/java/com/clawbench/app/SystemTtsChunker.java": "TTS chunk-splitter: CJK sentence/clause punctuation (matched, never displayed)",
+	}
+
 	var offenders []string
 	_ = filepath.Walk(androidRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -442,14 +512,18 @@ func TestNoNewHardcodedUserVisibleCJKAndroid(t *testing.T) {
 		if !strings.HasSuffix(path, ".java") {
 			return nil
 		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if _, ok := allow[rel]; ok {
+			return nil
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil //nolint:nilerr // unreadable file is skipped, not a scan failure
 		}
 		// Java: strip comments, keep string literals.
 		if cjkRe.MatchString(stripJavaComments(string(b))) {
-			rel, _ := filepath.Rel(root, path)
-			offenders = append(offenders, filepath.ToSlash(rel))
+			offenders = append(offenders, rel)
 		}
 		return nil
 	})
@@ -515,5 +589,49 @@ func TestCJKScannerCatchesKnownShapes(t *testing.T) {
 	// <style> is excluded (font names may be Chinese).
 	if cjkRe.MatchString(scanFrontendSource(".vue", "<template>ok</template><style>.x{content:'"+han+"'}</style>")) {
 		t.Error("Vue scanner must exclude <style> content")
+	}
+}
+
+// TestCJKScannerHandlesRegexLiterals pins the scanner against the bug that made
+// it report false positives: a regex containing an unbalanced quote.
+//
+// A regex like /[",\n]/ used to be read as "a string starts here", so the
+// scanner consumed everything up to the NEXT `"` as string body. That spans real
+// code and comments, and any Chinese comment in that span was reported as
+// hardcoded UI copy. Two files (DataTable.vue, csvTable.ts) were falsely flagged
+// for exactly this reason.
+func TestCJKScannerHandlesRegexLiterals(t *testing.T) {
+	han := "加载中"
+
+	// A comment BELOW a regex with an odd quote count must stay a comment.
+	src := "const re = /[\",\\n]/\n// " + han + "\nconst x = 1\n"
+	if cjkRe.MatchString(stripJSComments(src)) {
+		t.Errorf("comment after a quote-bearing regex was scanned as code: %q", stripJSComments(src))
+	}
+
+	// A real literal below such a regex must still be caught (the fix must not
+	// buy silence by swallowing the rest of the file).
+	src = "const re = /[\",\\n]/\nconst s = '" + han + "'\n"
+	if !cjkRe.MatchString(stripJSComments(src)) {
+		t.Errorf("literal after a quote-bearing regex was missed: %q", stripJSComments(src))
+	}
+
+	// Escapes, character classes and flags are consumed without desyncing.
+	src = `const re = /\/[a-z]+'/gi` + "\n// " + han + "\n"
+	if cjkRe.MatchString(stripJSComments(src)) {
+		t.Errorf("escaped quote inside a regex desynced the scanner: %q", stripJSComments(src))
+	}
+
+	// A '/' after an identifier is division, not a regex start — otherwise
+	// `a / b` would swallow the following lines.
+	src = "const n = a / b\n// " + han + "\n"
+	if cjkRe.MatchString(stripJSComments(src)) {
+		t.Errorf("division was parsed as a regex literal: %q", stripJSComments(src))
+	}
+
+	// A real literal inside a template-literal expression is still scanned.
+	src = "const s = `" + han + " ${a / b}`"
+	if !cjkRe.MatchString(stripJSComments(src)) {
+		t.Errorf("template literal with a division was missed: %q", stripJSComments(src))
 	}
 }

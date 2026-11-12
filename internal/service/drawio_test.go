@@ -423,3 +423,40 @@ func TestUnpackDrawio_CreatesExplicitDirectoryEntries(t *testing.T) {
 	require.NoError(t, unpackDrawio(path))
 	assert.FileExists(t, filepath.Join(DrawioInstallDir(), "assets", "icon.svg"))
 }
+
+func TestDownloadDrawioArchive_AcceptsASelfSignedMirror(t *testing.T) {
+	withDrawioDataDir(t)
+	archive := drawioZip(t, map[string]string{"index.html": "<html>mirror</html>"})
+	drawioExpectedChecksum = sha256Hex(archive)
+
+	// httptest.NewTLSServer serves a certificate no client can verify, which is
+	// exactly what an internal mirror looks like. The download must still work:
+	// integrity comes from the pinned hash, not from the transport.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer srv.Close()
+
+	path, err := downloadDrawioArchive(srv.URL + "/draw.war")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(path) }()
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, archive, body)
+}
+
+func TestDownloadDrawioArchive_AcceptsAPlainHTTPSource(t *testing.T) {
+	withDrawioDataDir(t)
+	archive := drawioZip(t, map[string]string{"index.html": "<html>lan</html>"})
+	drawioExpectedChecksum = sha256Hex(archive)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	}))
+	defer srv.Close()
+
+	path, err := downloadDrawioArchive(srv.URL + "/draw.war")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(path) })
+}

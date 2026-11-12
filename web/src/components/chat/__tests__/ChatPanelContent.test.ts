@@ -1112,3 +1112,42 @@ describe('ChatPanelContent — queued message edit', () => {
     expect(source).toMatch(/:editBusy="editBusy"/)
   })
 })
+
+// ── Session switch ──
+// Switching away must leave nothing of the old session running: its read-aloud
+// (handled inside useAutoSpeech, at module scope) and its 连续对话 loop. The
+// microphone staying open in a conversation the user is no longer looking at is
+// the worse outcome — the loop would keep sending the user's words into a chat
+// they left.
+describe('ChatPanelContent — switching sessions tears down the previous one', () => {
+  async function switchWatchRegion() {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const start = source.indexOf('watch(() => identity.currentSessionId.value, (sid) => {')
+    expect(start, 'the session-switch watcher should exist').toBeGreaterThanOrEqual(0)
+    return source.slice(start, source.indexOf('})', start))
+  }
+
+  it('stops 连续对话 when the user opens another session', async () => {
+    const region = await switchWatchRegion()
+    expect(region).toMatch(/freeDialog\.stop\(\)/)
+  })
+
+  it('keeps the loop when the id did not actually change', async () => {
+    // A same-session reload (history refresh, reconnect) re-assigns the same id;
+    // tearing the loop down there would stop the user's conversation for no
+    // reason.
+    const region = await switchWatchRegion()
+    expect(region).toMatch(/sid === freeDialogSessionId\(\)/)
+    expect(region).toMatch(/return/)
+  })
+
+  it('leaves read-aloud teardown to useAutoSpeech', async () => {
+    // Deliberate: the panel can be unmounted while a switch happens (a
+    // notification deep link), and the audio singleton must stop regardless of
+    // who is on screen. Stopping it here too would be a second owner of the
+    // same resource.
+    const region = await switchWatchRegion()
+    expect(region).not.toMatch(/autoSpeech\.stopAudio\(\)/)
+  })
+})

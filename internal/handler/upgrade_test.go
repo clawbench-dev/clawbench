@@ -496,3 +496,226 @@ func TestServeUpgradeStatus_MethodNotAllowed(t *testing.T) {
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// ── ServeUpgradeSkip / skipped_version ──
+
+// stubUpgradeSkip replaces the two skip-record functions for the duration of a
+// test and returns a pointer to the value the write recorded.
+func stubUpgradeSkip(t *testing.T, initial string) *string {
+	t.Helper()
+	origRead := upgradeReadSkippedVersion
+	origWrite := upgradeWriteSkippedVersion
+	t.Cleanup(func() {
+		upgradeReadSkippedVersion = origRead
+		upgradeWriteSkippedVersion = origWrite
+	})
+
+	stored := initial
+	upgradeReadSkippedVersion = func() string { return stored }
+	upgradeWriteSkippedVersion = func(version string) (string, error) {
+		stored = strings.TrimPrefix(strings.TrimSpace(version), "v")
+		return stored, nil
+	}
+	return &stored
+}
+
+func TestServeUpgradeCheck_ReportsSkippedVersion(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
+	}()
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
+	upgradeCompareVersions = func(a, b string) int { return -1 }
+	upgradeIsDevBuild = func(v string) bool { return false }
+	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
+	upgradeIsDocker = func() bool { return false }
+	stubUpgradeSkip(t, "1.1.0")
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "1.1.0", resp["skipped_version"])
+	// Skipping suppresses the startup prompt, not the availability: the
+	// settings dialog must still be able to install this version.
+	assert.Equal(t, true, resp["has_upgrade"])
+}
+
+func TestServeUpgradeSkip_StoresVersion(t *testing.T) {
+	stored := stubUpgradeSkip(t, "")
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/skip", map[string]any{"version": "1.2.3"})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "1.2.3", *stored)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "1.2.3", resp["skipped_version"])
+}
+
+// An empty version clears the record, so a future "unskip" needs no separate
+// endpoint.
+func TestServeUpgradeSkip_EmptyClears(t *testing.T) {
+	stored := stubUpgradeSkip(t, "1.2.3")
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/skip", map[string]any{"version": ""})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "", *stored)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "", resp["skipped_version"])
+}
+
+// A body-less request is valid and clears the record (same as an empty
+// version), matching how /api/upgrade/start treats an absent body.
+func TestServeUpgradeSkip_MissingBodyClears(t *testing.T) {
+	stored := stubUpgradeSkip(t, "1.2.3")
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/skip", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "", *stored)
+}
+
+func TestServeUpgradeSkip_InvalidBody(t *testing.T) {
+	stubUpgradeSkip(t, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upgrade/skip", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// The client must be able to tell "not remembered" from "remembered", so a
+// failed write is an error rather than a 200 with an empty value.
+func TestServeUpgradeSkip_WriteFailure(t *testing.T) {
+	origRead := upgradeReadSkippedVersion
+	origWrite := upgradeWriteSkippedVersion
+	defer func() {
+		upgradeReadSkippedVersion = origRead
+		upgradeWriteSkippedVersion = origWrite
+	}()
+	upgradeWriteSkippedVersion = func(string) (string, error) {
+		return "", errors.New("data directory is not configured")
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/skip", map[string]any{"version": "1.2.3"})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// A version the service refuses to store is the caller's mistake, not a server
+// fault — 400 so the client does not retry a request that cannot succeed.
+func TestServeUpgradeSkip_InvalidVersion(t *testing.T) {
+	origWrite := upgradeWriteSkippedVersion
+	defer func() { upgradeWriteSkippedVersion = origWrite }()
+	upgradeWriteSkippedVersion = func(string) (string, error) {
+		return "", service.ErrSkippedVersionInvalid
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/skip", map[string]any{"version": strings.Repeat("9", 200)})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeUpgradeSkip_MethodNotAllowed(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/upgrade/skip", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeSkip, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// A commit-describe build ahead of the registry must NOT be told an "upgrade"
+// exists: the only thing on offer is an older release, and offering it both
+// invites a downgrade and nags on every launch.
+func TestServeUpgradeCheck_DevBuildAheadOfRegistry(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeIsVersionedBuild = version.IsVersionedBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
+	}()
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{
+			CurrentVersion: "v0.139.0-20-g9037e1d5a-11121522",
+			LatestVersion:  "0.139.0",
+		}, nil
+	}
+	upgradeCompareVersions = version.CompareVersions
+	upgradeIsDevBuild = version.IsDevBuild
+	upgradeIsVersionedBuild = version.IsVersionedBuild
+	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
+	upgradeIsDocker = func() bool { return false }
+	stubUpgradeSkip(t, "")
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, false, resp["has_upgrade"], "a build ahead of the registry has nothing to upgrade to")
+}
+
+// The same dev build, once the registry moves past it, is upgradeable again.
+func TestServeUpgradeCheck_DevBuildBehindRegistry(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeIsVersionedBuild = version.IsVersionedBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
+	}()
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{
+			CurrentVersion: "v0.139.0-20-g9037e1d5a-11121522",
+			LatestVersion:  "0.140.0",
+		}, nil
+	}
+	upgradeCompareVersions = version.CompareVersions
+	upgradeIsDevBuild = version.IsDevBuild
+	upgradeIsVersionedBuild = version.IsVersionedBuild
+	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
+	upgradeIsDocker = func() bool { return false }
+	stubUpgradeSkip(t, "")
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["has_upgrade"])
+}

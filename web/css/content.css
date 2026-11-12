@@ -73,6 +73,12 @@
     margin-top: 0;
 }
 
+/* 表格拆成组件后，正文被包进 `.md-seg` 片段。片段自己的首块也要压掉上边距，
+   否则预览顶部会多出一条空白（和上面那条规则的原因相同）。 */
+.markdown-body .md-seg > :first-child {
+    margin-top: 0;
+}
+
 .markdown-body h1 { font-size: 1.6em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
 .markdown-body h2 { font-size: 1.3em; border-bottom: 1px solid var(--border-color); padding-bottom: 0.3em; }
 .markdown-body h3 { font-size: 1.1em; }
@@ -115,14 +121,7 @@
     font-size: inherit;
 }
 
-.markdown-body table {
-    font-size: var(--font-size-lg);
-}
-
-/* Tables NOT inside a table-block-wrapper keep max-content width for scroll */
-.markdown-body .table-wrap:not(.table-block-wrapper .table-wrap) table {
-    width: max-content;
-}
+/* 表格的宽度 / 滚动容器 / 字号见 css/table.css。 */
 
 .markdown-body img {
     height: auto;
@@ -131,20 +130,6 @@
 
 .markdown-body hr {
     margin: 2em 0;
-}
-
-.markdown-body .table-wrap {
-    width: 100%;
-    overflow-x: auto;
-    margin: 1em 0;
-}
-
-.markdown-body .table-block-wrapper .table-wrap {
-    margin: 0;
-}
-
-.markdown-body .table-wrap table {
-    margin: 0;
 }
 
 /* Mermaid Diagrams */

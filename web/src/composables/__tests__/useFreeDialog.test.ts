@@ -1379,4 +1379,103 @@ describe('useFreeDialog', () => {
     await flush()
     expect(onSpeakPendingReply).not.toHaveBeenCalled()
   })
+
+  it('re-acquires the microphone when the capture stops producing frames', async () => {
+    // The reported failure: after an interrupt the graph can stall — the track
+    // stays `live`, the socket is open, the phase is 'listening', but no frame
+    // ever arrives again. Nothing in the loop can tell that apart from a device
+    // that went away, and only a fresh device + AudioContext pair brings it
+    // back. (A graph that keeps producing ZERO-VALUED frames is NOT this case:
+    // see the digital-silence test below.)
+    const getUserMedia = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    streamer.emit(0.02)
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
+
+    // The frames stop coming entirely — no `emit` at all from here on.
+    for (let i = 0; i < 5; i++) vi.advanceTimersByTime(1000)
+    // Two flushes: the recovery re-acquires, then opens a socket whose `open`
+    // arrives on its own microtask.
+    await flush()
+    await flush()
+
+    expect(getUserMedia).toHaveBeenCalledTimes(2)
+    // Still listening, and on a recogniser that is fed by the NEW graph.
+    expect(useFreeDialog().phase.value).toBe('listening')
+    expect(sockets.at(-1)!.sent.some((m) => String(m).includes('"type":"start"'))).toBe(true)
+  })
+
+  it('leaves a phone that reports exact digital silence alone', async () => {
+    // The regression this locks down. With noise suppression and echo
+    // cancellation on — the shipped defaults — a healthy phone hands over
+    // frames of EXACT zeros whenever the user is not speaking. The old watchdog
+    // read "three seconds of zeros" as a dead device, tore the capture down
+    // twice and then left the mode with an error toast, about ten seconds after
+    // every start and always right after the user's first sentence had been
+    // sent. Silence is not a fault.
+    const getUserMedia = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    toastShow.mockClear()
+
+    // Say one thing, then sit in silence for far longer than the watchdog span.
+    streamer.emit(0.03)
+    for (let i = 0; i < 20; i++) {
+      vi.advanceTimersByTime(1000)
+      streamer.emit(0)
+    }
+    await flush()
+
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
+    expect(useFreeDialog().phase.value).toBe('listening')
+    expect(toastShow).not.toHaveBeenCalled()
+  })
+
+  it('leaves a quiet room alone: room tone is not a dead capture', async () => {
+    // Room tone (a fan, a fridge, traffic) must not be re-acquired on either —
+    // that would drop a moment of audio every few seconds for every user in a
+    // quiet room.
+    const getUserMedia = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>
+    const { startFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    for (let i = 0; i < 8; i++) {
+      vi.advanceTimersByTime(500)
+      streamer.emit(0.0012)
+    }
+    await flush()
+    expect(getUserMedia).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops with a reason when re-acquiring twice produces no frames at all', async () => {
+    // A capture that delivers no frame whatsoever IS provably broken (a
+    // suspended AudioContext, a device the OS took away). Two fresh captures
+    // that still deliver nothing mean the page cannot fix it, and silently
+    // "listening" to nothing is the exact behaviour being fixed. Say it out
+    // loud instead.
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    let streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    streamer.emit(0.02)
+    toastShow.mockClear()
+
+    // Three spans in a row where the graph delivers nothing at all: the third
+    // one exhausts the budget.
+    for (let round = 0; round < 3; round++) {
+      vi.advanceTimersByTime(4000)
+      await flush()
+      streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    }
+
+    expect(useFreeDialog().phase.value).toBe('idle')
+    expect(toastShow).toHaveBeenCalled()
+    expect(String(toastShow.mock.calls.at(-1)![0])).toMatch(/麦克风|microphone/i)
+  })
 })

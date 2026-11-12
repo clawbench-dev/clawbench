@@ -456,9 +456,9 @@ await page.evaluate(() => document.querySelector('.session-tags-dialog .st-chip'
 | 状态 | 关键选择器 | 按钮 |
 |---|---|---|
 | **未生成** | `.share-dialog-hint`（说明文案） | 「生成链接」（`.fbtn-primary`） |
-| **已生成** | `.share-dialog-link-input`（只读链接框） | 「打开页面」+「关闭分享」（`.fbtn-danger`） |
+| **已生成** | `.share-addr-input`（只读链接框） | 「打开页面」+「关闭分享」（`.fbtn-danger`） |
 
-- 链接栏内还有两个图标按钮：复制（`.share-dialog-link-btn`）与重新生成（同上，第二个）。
+- 链接栏右侧并排两枚图标按钮：复制（`.share-addr-btn`）与重新生成（`.share-dialog-link-btn`）。
 - 生成链接会**真实写入 `file_shares` 表**，记得拍完撤销（见下）。
 
 ### 分享页面（独立 SPA）
@@ -1079,7 +1079,7 @@ sqlite3 "file:$HOME/.clawbench/ClawBench.db?mode=ro&immutable=1" \
 1. **建群抽屉（`group-01-create`）**：点 `[data-action="create"]` → 点 `.agent-mode-tab[data-mode="group"]` 切到群聊 → 勾选 4 个 `.agent-option` → 点其中一个行内的 `.agent-host-btn` 设为主持人 → 用 `.agent-stepper` 的 `+` 给同一智能体加第 2 个实例。自检：`.agent-option-check.checked` 数 = 4、`.agent-host-btn.active` = 1、`.agent-count-hint` 显示「已添加 5/12 个」（**4 个智能体 + 1 个额外实例 = 5，不是 4**）、`.group-mode-hint-chip` 文本为「主持人模式」。**注意**：①抽屉头部没有 `.agent-header-mode`（旧文案），模式由页脚 `.group-mode-hint-chip` 表达；②成员名取 `.agent-option-name`（`.agent-option` 的 textContent 里还含描述与标签，用 `startsWith` 会误命中）。
 2. **主持人时间线（`group-02-host`）**：打开群 → 滚到底（历史是**倒序懒加载**，`scrollTop = scrollHeight` 反复几次才会补齐）→ 在 `.chat-message` 里按「有 `.msg-bcc` 优先、其次 `.msg-mention-summary`」打分，取**同时含 `.msg-speaker-host-tag`** 的最高分那条，`sc.scrollTop = target.offsetTop - 8`。**拍之前点开 `.msg-bcc-header` 展开密送卡**——折叠态只有一行「密送」二字，读者看不到卡里是什么；展开后气泡变高，必须**再对齐一次** `offsetTop`，否则它会被挤出视口。
 3. **自由时间线（`group-03-free`）**：打开自由群 → 同样滚到底 → 从后往前找含 `.msg-mention-summary` 或 `.msg-bcc` 的消息滚到顶。标题栏左侧的 `.group-mode-badge` 是 `@`。**图注必须按图里真实内容写**：这一条 `@` 的可能是**用户**（话权交回你），与「成员互相 @ 接力」不是一回事。
-4. **群设置抽屉**：点 `.group-avatar-stack`（Playwright `el.click()`，合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.6s。**两种模式各拍一张**：主持人版有「自动批准 + 自动巡航」两项，自由版有「并发执行 + 自动批准 + 自动巡航」**三项**（`#group-parallel` 仅自由模式）。自检：`.gm-row` 数 = 成员数、每行 `.gm-usage` 有百分比（CLI 传输的成员是 `—`）。抽屉标题是「群聊设置」。
+4. **群设置抽屉**：点 `.group-avatar-stack`（Playwright `el.click()`，合成 `.click()` 对 Teleport 抽屉不可靠）→ 等 ~1.6s。**两种模式各拍一张**：主持人版有「自动批准 + 自动巡航」两项，自由版有「并发执行 + 自动批准 + 自动巡航」**三项**（`#group-parallel` 仅自由模式）。自检：`.gm-row` 数 = 成员数、每行 `.gm-model` 有模型名（上下文用量已移到聊天里的成员面板，花名册不再有 `.gm-usage`）。抽屉标题是「群聊设置」。
 5. **@ 成员卡（`group-06-mention-card`）**：**必须用 Playwright 真实输入事件**——`ta.fill('@')` 打开 `.completion-item` 菜单（群会话里成员候选排最前，池名成员带 `.completion-real-name` 标签），用 `page.$$('.completion-item')` 取句柄后 `items[1].click()`（在 `evaluate` 里点 DOM 不触发 Vue 的选中逻辑）；**再点卡片**弹出密送批注框（`.dlg-textarea`），填入内容点「确定」→ 卡片出现锁（`.mention-card-lock` / `.is-private`）；最后 `ta.fill('问题正文')`。合成 `element.click()` / 直接设 `value` **不会**弹出该菜单（同 §八 第 10 条）。自检：`.chat-attachment-tags .mention-card` 存在且 `.mention-card-name` 非空、`.mention-card-lock` 存在、`.chat-textarea` 的 value **不含** `clawbench-mention`。
 6. **智能体设置（`group-07`/`group-08`）**：说明「智能体从哪来」用。点 `.wide-dock .dock-btn[data-tab="settings"]`（**只在 settings 标签未激活时点**，否则会把它切换关闭）→ 点 `.settings-index__row`（文本以「智能体」开头）→ 拍列表（`group-07`）；再点某行 `.settings-agents-index__row` 进详情（`group-08`）。自检：`group-07` 顶部有**两行** `[data-action="agent-create"]` / `[data-action="agent-rescan"]`（批量「测试全部」入口已移除，若截到第三行说明跑的是旧产物），且 `.settings-agents-index__row` > 0；`group-08` 的 `.settings-agent-detail` 存在，底部有**两组**按钮——`.settings-agent-detail__selftest-btn`（运行集成测试 / 跑一轮真实对话）×2、`.settings-agent-detail__action-btn`（复制/禁用）×2 与 `.settings-agent-detail__delete-btn`（删除）。**详情页要滚到底**（`.settings-page__body` 的 `scrollTop = scrollHeight`），否则自检按钮与删除按钮都在视口外。
 

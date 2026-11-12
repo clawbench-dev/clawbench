@@ -123,6 +123,40 @@ export function isUserScrolling(s: ScrollStateInput): boolean {
 }
 
 /**
+ * How long the "still streaming" pill lingers after the turn ends while the
+ * reader is still up in the history. It hands over to the direction FABs on
+ * the same 3s beat they use; vanishing on the exact frame the turn finished
+ * reads as "the UI broke", not as "the reply is done".
+ */
+export const STREAM_PILL_FAREWELL_MS = 3000
+
+export interface StreamPillInput {
+  /** The viewport is farther than NEAR_BOTTOM_PX from the newest line. */
+  awayFromBottom: boolean
+  /** A turn is in flight — the reply at the bottom is still growing. */
+  streaming: boolean
+  /** Inside the farewell window (see STREAM_PILL_FAREWELL_MS). */
+  farewell: boolean
+}
+
+/**
+ * Whether the streaming pill belongs on screen.
+ *
+ * It is a STATUS, not a navigation shortcut: while a reply is being written
+ * below the fold the reader needs to know content is still arriving, and the
+ * direction FABs are deliberately transient (they disappear 3s after the last
+ * scroll). Hence the pill stays for the whole turn, and only the farewell
+ * window extends its life past the end of the turn.
+ *
+ * `awayFromBottom` is the same threshold the FABs use — two separate cut-offs
+ * would let one appear without the other at the same scroll position.
+ */
+export function shouldShowStreamPill(s: StreamPillInput): boolean {
+  if (!s.awayFromBottom) return false
+  return s.streaming || s.farewell
+}
+
+/**
  * Whether a "pin to bottom" request may execute right now.
  *
  * - A finger on the screen always wins: never move the viewport out from under

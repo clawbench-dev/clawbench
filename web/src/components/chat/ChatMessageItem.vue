@@ -1731,43 +1731,6 @@ const copyPayload = quotableText
     border-top-color: rgba(255, 255, 255, 0.25);
 }
 
-.chat-message.user .table-wrap {
-    overflow-x: auto;
-    border: none;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    margin: 0.75em 0;
-}
-
-.chat-message.user .table-block-wrapper .table-wrap {
-    margin: 0;
-    border-radius: 0;
-}
-
-.chat-message.user table {
-    display: block;
-    margin: 0;
-}
-
-.chat-message.user th {
-    font-size: var(--font-size-md);
-    color: rgba(255, 255, 255, 0.95);
-    background: rgba(0, 0, 0, 0.15);
-    border-color: rgba(255, 255, 255, 0.2);
-}
-
-.chat-message.user td {
-    white-space: nowrap;
-    border-color: rgba(255, 255, 255, 0.15);
-}
-
-.chat-message.user tr:nth-child(odd) td {
-    background: rgba(0, 0, 0, 0.08);
-}
-
-.chat-message.user tr:nth-child(even) td {
-    background: rgba(0, 0, 0, 0.15);
-}
-
 /* File-path / commit / worktree annotations inside the user bubble.
    The chip plate, glyph colours and hover plate all come from `currentColor`
    (annotation-buttons.css + markdown-common.css), which is white here — so no
@@ -1859,32 +1822,6 @@ const copyPayload = quotableText
 
 .chat-message.assistant hr {
     margin: var(--space-4) 0;
-}
-
-.chat-message.assistant .table-wrap {
-    overflow-x: auto;
-    border: none;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    margin: 0.75em 0;
-}
-
-.chat-message.assistant .table-block-wrapper .table-wrap {
-    margin: 0;
-    border-radius: 0;
-}
-
-.chat-message.assistant table {
-    display: block;
-    margin: 0;
-}
-
-.chat-message.assistant th {
-    font-size: var(--font-size-md);
-    color: var(--text-primary);
-}
-
-.chat-message.assistant td {
-    white-space: nowrap;
 }
 
 /* ── Audio player in chat (non-scoped for v-html penetration) ── */

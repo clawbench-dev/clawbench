@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -357,11 +358,17 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 // testSTT tests connectivity to the configured speech-to-text backend.
 func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	providerName := resolveStringValue(values, "stt.provider", model.ConfigInstance.STT.Provider)
+	if providerName == "" {
+		return ConnectivityTestResult{Success: false, Message: "STT engine is not configured"}
+	}
 	if providerName == "doubao" {
 		return testDoubaoSTT(ctx, values)
 	}
-	if providerName == "alibaba" {
+	if providerName == engineAlibaba {
 		return testAlibabaSTT(ctx, values)
+	}
+	if providerName == engineTencent {
+		return testTencentSTT(ctx, values)
 	}
 
 	baseURL := resolveStringValue(values, "stt.vllm.base_url", model.ConfigInstance.STT.VLLM.BaseURL)
@@ -463,9 +470,11 @@ func testDoubaoSTT(ctx context.Context, values map[string]any) ConnectivityTestR
 }
 
 // testAlibabaSTT probes Alibaba Cloud Model Studio with the embedded "你好"
-// clip. It goes through the same Qwen3-ASR-Flash path real uploads use, so a
-// key from the wrong region, a missing model or a revoked key all surface as
-// the actual HTTP answer instead of "the host is reachable".
+// clip. It goes through the same file-transcription path real uploads use
+// (including the configured file model, which decides between the OpenAI-
+// compatible and the native multimodal endpoint), so a key from the wrong
+// region, a missing model or a revoked key all surface as the actual HTTP
+// answer instead of "the host is reachable".
 func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	apiKey := resolveStringValue(values, "stt.alibaba.api_key", model.ConfigInstance.STT.Alibaba.APIKey)
 	if apiKey == "" {
@@ -473,23 +482,107 @@ func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTest
 	}
 	baseURL := resolveStringValue(values, "stt.alibaba.base_url", model.ConfigInstance.STT.Alibaba.BaseURL)
 	language := resolveStringValue(values, "stt.alibaba.language", model.ConfigInstance.STT.Alibaba.Language)
+	fileModel := resolveStringValue(values, "stt.alibaba.file_model", model.ConfigInstance.STT.Alibaba.FileModel)
+	if fileModel == "" {
+		fileModel = stt.AlibabaDefaultFileModel
+	}
 
 	provider := stt.NewAlibabaProvider(apiKey)
 	if baseURL != "" {
 		provider.BaseURL = baseURL
 	}
 	provider.Language = language
+	provider.FileModel = fileModel
 	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
 	if err != nil {
-		return sttProbeFailure(provider.BaseURL, "qwen3-asr-flash", err)
+		return sttProbeFailure(provider.BaseURL, fileModel, err)
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud transcription returned empty text"}
 	}
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Alibaba Cloud transcription succeeded: %q", text)}
+}
+
+// tencentSTTBaseURL / tencentSTTWSBaseURL / tencentSTTCAMBaseURL are the
+// Tencent Cloud roots used by the connectivity test. Overridable in tests;
+// production always hits the real hosts.
+//
+//nolint:gochecknoglobals // test seams, mirror doubaoSTTBaseURL
+var (
+	tencentSTTBaseURL    = stt.TencentASRBaseURL
+	tencentSTTWSBaseURL  = stt.TencentASRWSBaseURL
+	tencentSTTCAMBaseURL = stt.TencentCAMBaseURL
+)
+
+// testTencentSTT probes 一句话识别 with the embedded "你好" clip. The signed
+// request exercises the real signature path, so a wrong SecretId/SecretKey or
+// an unopened service surfaces as the engine's own error code instead of "the
+// host answered".
+//
+// It then opens a realtime session, because the two APIs do not check the same
+// things: the file API signs with the SecretKey only, while the realtime
+// handshake also carries the account APPID in the path and is rejected (4002)
+// when that AppID is wrong. Dictation uses the realtime API, so a file-only
+// probe would report "success" for a configuration that cannot record a single
+// second. No audio is sent, so the probe costs nothing.
+func testTencentSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	secretID := resolveStringValue(values, "stt.tencent.secret_id", model.ConfigInstance.STT.Tencent.SecretID)
+	secretKey := resolveStringValue(values, "stt.tencent.secret_key", model.ConfigInstance.STT.Tencent.SecretKey)
+	appID := resolveStringValue(values, "stt.tencent.app_id", model.ConfigInstance.STT.Tencent.AppID)
+	engineModel := resolveStringValue(values, "stt.tencent.model", model.ConfigInstance.STT.Tencent.Model)
+
+	if secretID == "" || secretKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud SecretId and SecretKey are required"}
+	}
+
+	provider := stt.NewTencentProvider(secretID, secretKey, appID)
+	provider.BaseURL = tencentSTTBaseURL
+	provider.WSBaseURL = tencentSTTWSBaseURL
+	provider.CAMBaseURL = tencentSTTCAMBaseURL
+	if engineModel != "" {
+		provider.Model = engineModel
+	}
+	provider.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+	text, err := provider.Transcribe(ctx, bytes.NewReader(sttProbeAudio), "")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Tencent Cloud transcription failed: %v", err)}
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud transcription returned empty text"}
+	}
+	resolvedAppID, err := probeTencentRealtime(ctx, provider)
+	if err != nil {
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("Tencent Cloud transcription succeeded (%q) but the realtime handshake failed: %v", text, err),
+		}
+	}
+	return ConnectivityTestResult{
+		Success: true,
+		Message: fmt.Sprintf("Tencent Cloud transcription succeeded: %q (realtime AppID %s)", text, resolvedAppID),
+	}
+}
+
+// probeTencentRealtime opens and immediately closes a realtime session, which
+// is the only way to validate the AppID that dictation actually uses. It
+// returns the AppID that was used, so the result shows where a wrong value came
+// from.
+func probeTencentRealtime(ctx context.Context, provider *stt.TencentProvider) (string, error) {
+	appID, err := provider.EffectiveAppID(ctx)
+	if err != nil {
+		return "", err
+	}
+	session, err := provider.OpenStream(ctx, stt.StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		return appID, err
+	}
+	session.Close()
+	return appID, nil
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.
@@ -678,6 +771,14 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return testTTSEdge(ctx, values)
 	case strOpenAI:
 		return testTTSOpenAI(ctx, values)
+	case engineAlibaba:
+		return testTTSAlibaba(ctx, values)
+	case engineTencent:
+		return testTTSTencent(ctx, values)
+	case engineVolcano:
+		return testTTSVolcano(ctx, values)
+	case engineMinimax:
+		return testTTSMinimax(ctx, values)
 	default:
 		return ConnectivityTestResult{Success: false, Message: "Unknown TTS engine: " + engine}
 	}
@@ -770,6 +871,91 @@ func testTTSOpenAI(ctx context.Context, values map[string]any) ConnectivityTestR
 		Success: true,
 		Message: fmt.Sprintf("OpenAI TTS ready (model: %s, voice: %s)", ttsModel, voice),
 	}
+}
+
+// ── Vendor TTS engines ───────────────────────────────────────
+//
+// These probes drive the real provider against a one-word input instead of
+// hand-rolling a request: each vendor authenticates differently (bearer key,
+// per-request signature, app-id + access key), so a probe that re-implemented
+// the call could pass while synthesis itself fails. A real synthesis also
+// catches a wrong model / voice / resource id, which a bare connectivity check
+// would not.
+
+func testTTSAlibaba(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewAlibabaTTSProvider()
+	p.APIKey = resolveStringValue(values, "tts.alibaba.api_key", model.ConfigInstance.TTS.Alibaba.APIKey)
+	p.BaseURL = resolveStringValue(values, "tts.alibaba.base_url", model.ConfigInstance.TTS.Alibaba.BaseURL)
+	p.Model = resolveStringValue(values, "tts.alibaba.model", model.ConfigInstance.TTS.Alibaba.Model)
+	p.Voice = resolveStringValue(values, "tts.alibaba.voice", model.ConfigInstance.TTS.Alibaba.Voice)
+	if p.APIKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud API key is required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("Alibaba Cloud TTS ready (model: %s, voice: %s)", p.Model, p.Voice))
+}
+
+func testTTSTencent(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewTencentTTSProvider()
+	p.SecretID = resolveStringValue(values, "tts.tencent.secret_id", model.ConfigInstance.TTS.Tencent.SecretID)
+	p.SecretKey = resolveStringValue(values, "tts.tencent.secret_key", model.ConfigInstance.TTS.Tencent.SecretKey)
+	p.VoiceType = resolveIntValue(values, "tts.tencent.voice_type", model.ConfigInstance.TTS.Tencent.VoiceType)
+	if p.SecretID == "" || p.SecretKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud SecretId and SecretKey are required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("Tencent Cloud TTS ready (voice type: %d)", p.VoiceType))
+}
+
+func testTTSVolcano(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewVolcanoTTSProvider()
+	p.APIKey = resolveStringValue(values, "tts.volcano.api_key", model.ConfigInstance.TTS.Volcano.APIKey)
+	p.ResourceID = resolveStringValue(values, "tts.volcano.resource_id", model.ConfigInstance.TTS.Volcano.ResourceID)
+	p.Voice = resolveStringValue(values, "tts.volcano.voice", model.ConfigInstance.TTS.Volcano.Voice)
+	if p.APIKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Volcano Engine API key is required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("Volcano Engine TTS ready (voice: %s)", p.Voice))
+}
+
+func testTTSMinimax(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewMinimaxTTSProvider()
+	p.APIKey = resolveStringValue(values, "tts.minimax.api_key", model.ConfigInstance.TTS.Minimax.APIKey)
+	p.GroupID = resolveStringValue(values, "tts.minimax.group_id", model.ConfigInstance.TTS.Minimax.GroupID)
+	p.BaseURL = resolveStringValue(values, "tts.minimax.base_url", model.ConfigInstance.TTS.Minimax.BaseURL)
+	p.Model = resolveStringValue(values, "tts.minimax.model", model.ConfigInstance.TTS.Minimax.Model)
+	p.Voice = resolveStringValue(values, "tts.minimax.voice", model.ConfigInstance.TTS.Minimax.Voice)
+	if p.APIKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "MiniMax API key is required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("MiniMax TTS ready (model: %s, voice: %s)", p.Model, p.Voice))
+}
+
+// ttsProbeSample is what the connectivity probe asks the engine to speak. It is
+// a fixed clip, not UI copy: the probe only needs *some* short text that any
+// Chinese-capable voice can read, and the result is thrown away — the point is
+// whether synthesis returns audio at all.
+const ttsProbeSample = "你好"
+
+// probeTTSProvider runs one real synthesis into a temporary file and reports
+// the provider's own error verbatim — the vendor's message (bad key, unknown
+// voice, service not activated) is what the user needs to see.
+func probeTTSProvider(ctx context.Context, p speech.SpeechProvider, okMessage string) ConnectivityTestResult {
+	f, err := os.CreateTemp("", "clawbench-tts-probe-*.mp3")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create probe file: %v", err)}
+	}
+	path := f.Name()
+	_ = f.Close()
+	_ = os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
+
+	if synthErr := p.Synthesize(ctx, ttsProbeSample, path, "zh"); synthErr != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("TTS synthesis failed: %v", synthErr)}
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil || info.Size() == 0 {
+		return ConnectivityTestResult{Success: false, Message: "TTS service returned no audio"}
+	}
+	return ConnectivityTestResult{Success: true, Message: okMessage}
 }
 
 // testMCP probes one MCP server: it performs the real MCP handshake and lists

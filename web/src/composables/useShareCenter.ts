@@ -30,6 +30,12 @@ export interface ShareItem {
   kind: ShareKind
   /** The share token, as stored server-side. */
   token: string
+  /**
+   * The id of the thing behind the link, when it is not the token: a
+   * conversation's session id. '' for kinds whose source is addressed another
+   * way (a file by its path, a meeting by its own token).
+   */
+  sourceId: string
   /** Display name (file name, conversation title, meeting title). */
   name: string
   /** Secondary line: the file path, message count, or meeting time. */
@@ -152,6 +158,7 @@ export function useShareCenter() {
         key: `file:${s.token}`,
         kind: isDir ? 'dir' : 'file',
         token: s.token,
+        sourceId: '',
         name: s.name || s.path || s.token,
         detail: s.path || '',
         createdAt: s.createdAt || '',
@@ -171,6 +178,7 @@ export function useShareCenter() {
         key: `session:${s.token}`,
         kind: 'session',
         token: s.token,
+        sourceId: s.sessionId || '',
         name: s.title || s.token,
         detail: count > 0 ? String(count) : '',
         createdAt: s.createdAt || '',
@@ -196,6 +204,7 @@ export function useShareCenter() {
         key: `meeting:${m.token}`,
         kind: 'meeting',
         token: m.token,
+        sourceId: '',
         name: m.title || m.token,
         detail: meetingWhen(m.startedAt),
         createdAt: m.startedAt ? new Date(m.startedAt).toISOString() : '',

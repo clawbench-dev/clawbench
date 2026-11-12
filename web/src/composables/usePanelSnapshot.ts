@@ -191,7 +191,19 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
 
   // ── Save ──
 
-  async function handleSave(): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
+  /**
+   * Flush the panel's edits and report what happened.
+   *
+   * `changedKeys` and `failed` exist so a caller can react to a specific field
+   * (the port-forward panel reconnects its tunnel when the transport changed)
+   * without re-deriving the diff or sniffing `serverError`.
+   */
+  async function handleSave(): Promise<{
+    needsRestart: boolean
+    changedColdFields: string[]
+    changedKeys: string[]
+    failed: boolean
+  }> {
     const snap = snapshot.value
     serverError.value = ''
     hotReloadWarning.value = ''
@@ -224,6 +236,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
 
     let needsRestart = false
     let changedColdFields: string[] = []
+    let failed = false
 
     // Flush server changes
     if (Object.keys(serverChanges).length > 0) {
@@ -255,6 +268,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
         saving.value = false
         serverError.value = (err instanceof Error ? err.message : '') || i18n.global.t('settings.saveFailed')
         hasFailedSave.value = true
+        failed = true
       }
     } else {
       // Only local changes — already flushed, just finalize
@@ -265,7 +279,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
       hasFailedSave.value = false
     }
 
-    return { needsRestart, changedColdFields }
+    return { needsRestart, changedColdFields, changedKeys, failed }
   }
 
   return {

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -107,7 +108,25 @@ var (
 	drawioError      string
 	// drawioHTTPClient is a variable so tests can substitute a client backed by
 	// an in-memory server without touching the network.
-	drawioHTTPClient = &http.Client{Timeout: drawioDownloadTimeout}
+	//
+	// Certificate verification is OFF on purpose. Every byte is checked against
+	// drawioSHA256 before anything is unpacked, so a machine in the middle can
+	// only deliver the official archive (harmless) or something else (rejected
+	// before it is written). That is what makes an internal mirror with a
+	// self-signed certificate usable — the common case on a LAN — and it is
+	// equally why a plain http:// source is safe to accept.
+	//
+	// This trade is only sound while the pinned hash exists: if it is ever
+	// removed, verification has to come back with it.
+	drawioHTTPClient = &http.Client{
+		Timeout: drawioDownloadTimeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			// Verification is off by design here (G402 is excluded repo-wide for
+			// this reason); integrity comes from drawioSHA256, see above.
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	// drawioInstaller is the work StartDrawioInstall runs in the background.
 	// A variable so the concurrency test can hold it open instead of racing a
 	// real download.

@@ -5,7 +5,7 @@ import type { FileScrollEntry } from '@/utils/fileScrollCache'
 // directory in the file manager, and Back must return to the terminal. It needs
 // no SURFACE_TAB entry — surfaceToTab() already resolves it through PANEL_TABS,
 // which lists every panel tab id (terminal included).
-export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal' | 'settings' | 'proxy' | 'notifications' | 'live'
+export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge' | 'terminal' | 'settings' | 'proxy' | 'notifications' | 'live' | 'share'
 
 export interface NavigationOrigin {
   surface: NavigationSurface
@@ -115,6 +115,10 @@ const SURFACE_TAB = new Map<NavigationSurface, string>([
   // The meeting panel: opening a file/record from its detail must return to
   // that detail, not to whatever tab happened to precede the jump.
   ['live', 'live'],
+  // The share centre: its rows open the file/folder/conversation/meeting behind
+  // a link, and Back must land on the share list rather than on an unrelated
+  // panel.
+  ['share', 'share'],
 ])
 
 /** Tab ids that are already panel identifiers, so they map to themselves. */

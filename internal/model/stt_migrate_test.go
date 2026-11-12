@@ -252,6 +252,15 @@ func TestActiveAccessors(t *testing.T) {
 		t.Error("alibaba ActiveStreaming = false, want true")
 	}
 
+	cfg.Tencent = STTTencentConfig{Streaming: true}
+	cfg.Provider = "tencent"
+	if got := cfg.ActiveLanguage(); got != "" {
+		t.Errorf("tencent ActiveLanguage = %q, want empty (the model name carries the language)", got)
+	}
+	if !cfg.ActiveStreaming() {
+		t.Error("tencent ActiveStreaming = false, want true")
+	}
+
 	cfg.Provider = "vllm"
 	if got := cfg.ActiveLanguage(); got != "en" {
 		t.Errorf("vllm ActiveLanguage = %q, want en", got)
@@ -262,9 +271,13 @@ func TestActiveAccessors(t *testing.T) {
 		t.Error("vllm ActiveStreaming = true, want false")
 	}
 
-	// An unset provider behaves like the default engine.
+	// An unset provider means "not configured": there is no engine to tell a
+	// language to, and no vLLM endpoint hiding behind an empty value.
 	cfg.Provider = ""
-	if got := cfg.ActiveLanguage(); got != "en" {
-		t.Errorf("default ActiveLanguage = %q, want en", got)
+	if got := cfg.ActiveLanguage(); got != "" {
+		t.Errorf("unconfigured ActiveLanguage = %q, want empty", got)
+	}
+	if cfg.ActiveStreaming() {
+		t.Error("unconfigured ActiveStreaming = true, want false")
 	}
 }

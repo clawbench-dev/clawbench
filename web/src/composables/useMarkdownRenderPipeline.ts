@@ -81,12 +81,26 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
         let result = html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match: string, attrs: string) => {
             const srcMatch = attrs.match(/src="([^"]*)"/)
             if (!srcMatch) return match
-            const src = srcMatch[1]
+            // The attribute value as written by marked — used to locate the
+            // substring we replace, and nothing else.
+            const rawSrc = srcMatch[1]
             // Remote, embedded, or already-served srcs pass through untouched.
             // `/api/fs/raw/…` matters here: re-rendering markup that already
             // went through this step (or markup authored with a served URL) must
             // not be wrapped a second time into `?target=/api/fs/raw/…`.
-            if (/^(https?:|\/\/|data:|\/api\/fs\/)/i.test(src)) return match
+            if (/^(https?:|\/\/|data:|\/api\/fs\/)/i.test(rawSrc)) return match
+            // marked percent-encodes the destination it writes into `src`, so a
+            // CJK filename arrives as `%E5%9B%BE…`. Every URL form below must be
+            // built from the REAL filename: feeding the encoded form into
+            // `?path=` / `?target=` / the thumb target encodes it a second time
+            // (`%E5` → `%25E5`), and the backend then looks for a file literally
+            // named `%E5%9B%BE…` — which is why such an image never loaded.
+            // Decode ONCE here, at the top; the segment encoding each form needs
+            // is applied afterwards.
+            let src = rawSrc
+            try {
+                src = decodeURIComponent(rawSrc)
+            } catch { /* malformed encoding, use as-is */ }
             // An absolute src is a real filesystem path (the AI writing
             // `![](/tmp/chart.png)`), NOT a site-root URL: resolve it through
             // the absolute form so it renders instead of 404-ing at the site
@@ -94,10 +108,7 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             // markdown image srcs are resolved against the document's own
             // directory, and a root-relative reference has no local meaning.
             const isAbsoluteSrc = isAbsolutePath(src)
-            let resolved = isAbsoluteSrc ? normalizeSlashes(src) : joinPath(currentDir, src)
-            try {
-                resolved = decodeURIComponent(resolved)
-            } catch { /* malformed encoding, use as-is */ }
+            const resolved = isAbsoluteSrc ? normalizeSlashes(src) : joinPath(currentDir, src)
             const parts = splitPath(resolved)
             const normalized = []
             for (const part of parts) {
@@ -119,16 +130,16 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
                 // target and use the ?path= form; otherwise the token endpoint
                 // treats {rel} as relative to the shared file's directory.
                 if (isAbsolutePath(currentDir) || isAbsoluteSrc) {
-                    // Rebuild the absolute target from the raw (still-decoded)
-                    // src so `..` segments survive for the backend to resolve.
+                    // Rebuild the absolute target from the decoded src so `..`
+                    // segments survive for the backend to resolve.
                     const absTarget = isAbsoluteSrc
                         ? normalizeSlashes(src)
                         : normalizeSlashes(`${currentDir.replace(/\/+$/, '')}/${src}`)
                     const shareSrc = shareApiUrl('local') + '?path=' + encodeURIComponent(absTarget) + `&t=${imageTimestamp}`
-                    return match.replace(`src="${src}"`, `src="${shareSrc}"`)
+                    return match.replace(`src="${rawSrc}"`, `src="${shareSrc}"`)
                 }
                 const shareSrc = buildLocalMediaUrl(rel, imageTimestamp)
-                return match.replace(`src="${src}"`, `src="${shareSrc}"`)
+                return match.replace(`src="${rawSrc}"`, `src="${shareSrc}"`)
             }
             // Project-external absolute path: served through the ?path= form
             // (the relative form would resolve against the project root and
@@ -167,7 +178,7 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             const replacement = thumbSrc
                 ? `src="${thumbSrc}" data-full-src="${fullSrc}"${attachAttr}`
                 : `src="${fullSrc}"${attachAttr}`
-            return match.replace(`src="${src}"`, replacement)
+            return match.replace(`src="${rawSrc}"`, replacement)
         })
         // Mark bare inline <svg> so the media-block factory lifts it into the
         // unified figure, exactly as the chat pipeline does. This step is

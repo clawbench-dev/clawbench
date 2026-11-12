@@ -327,46 +327,29 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RecentProjects.MaxCount = 10
 	}
 
-	// --- Port Forward (SSH Tunnel) ---
-	// The SSH tunnel listener is ALWAYS on. It is pinned here rather than left
-	// to the file, for the same reason Transport is pinned below: the switch
-	// that used to control it was removed.
+	// --- Port Forward ---
+	// Enabled only says "the feature exists". Which wire carries the forwards
+	// is decided by Transport below — that is what actually opens or skips the
+	// SSH listener.
 	//
-	// Why it went away: the listener is server-side while the transport choice
-	// is client-local (Electron store / Android SharedPreferences), so a
-	// per-client toggle could never be enforced on the server — and a global
-	// one would let one client silently break another (an h2 desktop client
-	// turning the listener off would strand every SSH client, including the
-	// manual `ssh -L` path the web UI documents). Always-on removes the
-	// conflict instead of arbitrating it, and costs one idle loopback-adjacent
-	// listener that was already the default.
-	//
-	// The bool zero-value trap no longer applies: Enabled is unconditionally
-	// true, so a config that says false is converged on load.
+	// It is pinned here (rather than left to the file) because there is no
+	// longer a per-deployment reason to hide the whole feature: an install that
+	// only exposes the main HTTP port simply runs transport: h2. The bool
+	// zero-value trap no longer applies either, so a config that says false is
+	// converged on load.
 	cfg.PortForward.Enabled = true
 	// Persist host key to avoid SSH fingerprint mismatch after server restart
 	if cfg.PortForward.HostKey == "" {
 		cfg.PortForward.HostKey = filepath.Join(DataDir, "ssh_host_key")
 	}
-	// Transport is pinned to "both" unconditionally — whatever the file says.
+	// Transport is the server-side switch the clients follow. An omitted value,
+	// the retired "both" and anything unrecognized converge on the default
+	// (h2); "ssh" is the only other effective value.
 	//
-	// It is no longer a choice. Once the client-side consumers were removed
-	// (Electron clamps to "ssh" at its IPC boundary, Android uses its own
-	// SharedPreferences switch), the field had exactly two server-side readers
-	// left — the registry gate and the web health-check gate — and both are
-	// satisfied by "both". Pinning it here means the state "the server says
-	// ssh-only" cannot exist, so a client can no longer bypass an operator's
-	// `transport: ssh` by going straight to h2: there is nothing to bypass.
-	//
-	// The field and its three values are KEPT (not deleted) because the web
-	// client's tunnelTransportAllowsH2() reads `port_forward.transport` from
-	// /api/config and only `'h2' | 'both'` are truthy — an absent value would
-	// read as ssh-only and hide the proxy dock tab on an h2-capable server.
-	//
-	// This is the single repair point for hand-edited config.yaml: a value from
-	// a build that knew more transports (or a typo) is overwritten here, since
-	// there is no standalone validator on the load path.
-	cfg.PortForward.Transport = DefaultPortForwardTransport
+	// This is the single repair point for hand-edited config.yaml: there is no
+	// standalone validator on the load path, so garbage would otherwise survive
+	// until the first PATCH.
+	cfg.PortForward.Transport = NormalizePortForwardTransport(cfg.PortForward.Transport)
 
 	// --- TTS ---
 	if cfg.TTS.Engine == "" {
@@ -458,11 +441,39 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.TTS.OpenAI.StreamMode == "" {
 		cfg.TTS.OpenAI.StreamMode = "auto"
 	}
+	// Vendor engines: unlike the OpenAI-compatible engine (whose model and
+	// voice space is unbounded and therefore left empty), these three publish
+	// a fixed catalog, so a usable default keeps an engine switch from landing
+	// on a blank form that fails at synthesis time.
+	if cfg.TTS.Alibaba.BaseURL == "" {
+		cfg.TTS.Alibaba.BaseURL = "https://dashscope.aliyuncs.com"
+	}
+	if cfg.TTS.Alibaba.Model == "" {
+		cfg.TTS.Alibaba.Model = "cosyvoice-v3-flash"
+	}
+	if cfg.TTS.Alibaba.Voice == "" {
+		cfg.TTS.Alibaba.Voice = "longanyang"
+	}
+	if cfg.TTS.Tencent.VoiceType <= 0 {
+		cfg.TTS.Tencent.VoiceType = 101001
+	}
+	if cfg.TTS.Volcano.ResourceID == "" {
+		cfg.TTS.Volcano.ResourceID = "seed-tts-2.0"
+	}
+	if cfg.TTS.Volcano.Voice == "" {
+		cfg.TTS.Volcano.Voice = "zh_female_vv_uranus_bigtts"
+	}
+	if cfg.TTS.Minimax.BaseURL == "" {
+		cfg.TTS.Minimax.BaseURL = "https://api.minimax.chat"
+	}
+	if cfg.TTS.Minimax.Model == "" {
+		cfg.TTS.Minimax.Model = "speech-02-hd"
+	}
+	if cfg.TTS.Minimax.Voice == "" {
+		cfg.TTS.Minimax.Voice = "female-shaonv"
+	}
 
 	// --- STT ---
-	if cfg.STT.Provider == "" {
-		cfg.STT.Provider = "vllm"
-	}
 	// Each engine's own defaults. They are applied unconditionally (not only for
 	// the selected engine) so switching the engine in the settings UI starts
 	// from a usable configuration instead of an empty endpoint.
@@ -487,8 +498,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.STT.Alibaba.Model == "" {
 		cfg.STT.Alibaba.Model = "paraformer-realtime-v2"
 	}
+	if cfg.STT.Alibaba.FileModel == "" {
+		cfg.STT.Alibaba.FileModel = "qwen-audio-3.1-asr-flash"
+	}
 	if cfg.STT.Alibaba.Language == "" {
 		cfg.STT.Alibaba.Language = "zh"
+	}
+	if cfg.STT.Tencent.Model == "" {
+		cfg.STT.Tencent.Model = "16k_zh"
 	}
 	// Bool zero-value trap: ITN and punctuation default to ON, so only an
 	// explicit value in config.yaml may turn them off. The presence map uses the
@@ -506,11 +523,23 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if _, ok := presence["stt.alibaba.enable_punc"]; !ok {
 		cfg.STT.Alibaba.EnablePunc = true
 	}
+	if _, ok := presence["stt.tencent.enable_itn"]; !ok {
+		cfg.STT.Tencent.EnableITN = true
+	}
+	// Tencent streams by default: realtime has no 60-second ceiling and returns
+	// text while the user is still speaking. Only an explicit false turns it
+	// off, which switches dictation to a WAV upload.
+	if _, ok := presence["stt.tencent.streaming"]; !ok {
+		cfg.STT.Tencent.Streaming = true
+	}
 	if cfg.STT.Doubao.EndWindowSize <= 0 {
 		cfg.STT.Doubao.EndWindowSize = 800
 	}
 	if cfg.STT.Alibaba.EndWindowSize <= 0 {
 		cfg.STT.Alibaba.EndWindowSize = 800
+	}
+	if cfg.STT.Tencent.EndWindowSize <= 0 {
+		cfg.STT.Tencent.EndWindowSize = 1000
 	}
 	if cfg.STT.ShortcutKey == "" {
 		cfg.STT.ShortcutKey = "F9"

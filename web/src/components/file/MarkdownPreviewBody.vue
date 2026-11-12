@@ -41,7 +41,7 @@
         @load.capture="onMediaLoad"
         @click="handleBodyClick"
       >
-        <div class="markdown-content" v-html="renderedHtml" />
+        <div class="markdown-content"><RichTextBlock :html="renderedHtml" /></div>
       </div>
 
       <!-- Bottom hint: reaching the end loads the next lines automatically, so
@@ -72,6 +72,7 @@ import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
 import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
+import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 
 /**
  * Rendered-markdown sibling of CodePreviewBody.

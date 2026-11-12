@@ -603,18 +603,23 @@ describe('usePortForward', () => {
     })
 
     describe('activeTransport', () => {
-        it('reports the configured transport, not a stale live session', async () => {
-            // There is no automatic mode: the preference names the single wire
-            // every attempt uses. A live h2 session can belong to something else
-            // (Android keeps one for native background WebSocket work) or be the
-            // last successful connect (Electron), so preferring it made the
-            // status copy contradict the picker — the reported bug was
-            // "selected SSH, status says HTTP/2".
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => 'h2',
-                getTunnelTransport: async () => 'ssh',
-            }
+        it('reports the server-configured h2 wire', async () => {
+            // The transport is a SERVER setting that every client follows, so
+            // the row reports the server's value. It used to read the host's own
+            // preference first, which is what the server-side switch replaced:
+            // the two could disagree ("selected SSH, status says HTTP/2").
+            mockServerConfig.value = { port_forward: { transport: 'h2' } }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('h2')
+        })
+
+        it('reports the server-configured ssh wire', async () => {
+            mockServerConfig.value = { port_forward: { transport: 'ssh' } }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { activeTransport, refreshActiveTransport } = usePortForward()
@@ -622,16 +627,11 @@ describe('usePortForward', () => {
             await refreshActiveTransport()
 
             expect(activeTransport.value).toBe('ssh')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
         })
 
-        it('falls back to the live wire when the host cannot report a preference', async () => {
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => 'h2',
-            }
+        it('reports the server value in web mode too (no native tunnel needed)', async () => {
+            mockServerConfig.value = { port_forward: { transport: 'h2' } }
+            mockIsAppMode.value = false
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { activeTransport, refreshActiveTransport } = usePortForward()
@@ -639,17 +639,23 @@ describe('usePortForward', () => {
             await refreshActiveTransport()
 
             expect(activeTransport.value).toBe('h2')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
         })
 
-        it('falls back to the preference when no transport has won yet', async () => {
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => '',
-                getTunnelTransport: () => 'h2',
-            }
+        it('treats a missing config as ssh-only (never assumes h2)', async () => {
+            // Before /api/config resolves there is nothing to go on; assuming h2
+            // would advertise a wire the operator may never have enabled.
+            mockServerConfig.value = {}
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('ssh')
+        })
+
+        it('reads the retired "both" as h2 — that was its meaning', async () => {
+            mockServerConfig.value = { port_forward: { transport: 'both' } }
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { activeTransport, refreshActiveTransport } = usePortForward()
@@ -657,97 +663,6 @@ describe('usePortForward', () => {
             await refreshActiveTransport()
 
             expect(activeTransport.value).toBe('h2')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
-        })
-
-        it('rejects the retired "both" value rather than surfacing it', async () => {
-            // No shipped host reports 'both' any more (Electron migrates a
-            // stored one to 'h2', Android derives the family from the live
-            // session). If an unknown host ever sends it, it must read as
-            // unknown — not reach the panel as a label-able wire.
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => 'both',
-                getTunnelTransport: async () => 'both',
-            }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { activeTransport, refreshActiveTransport } = usePortForward()
-
-            await refreshActiveTransport()
-
-            expect(activeTransport.value).toBe('')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
-        })
-
-        it('degrades to unknown when the host predates the transport methods', async () => {
-            mockIsAppMode.value = true
-            // Android / older Electron: neither method exists. Must not throw
-            // and must not invent a value.
-            ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { activeTransport, refreshActiveTransport } = usePortForward()
-
-            await expect(refreshActiveTransport()).resolves.toBeUndefined()
-            expect(activeTransport.value).toBe('')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
-        })
-
-        it('degrades to unknown when the bridge throws', async () => {
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => { throw new Error('bridge') },
-                getTunnelTransport: async () => { throw new Error('bridge') },
-            }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { activeTransport, refreshActiveTransport } = usePortForward()
-
-            await refreshActiveTransport()
-
-            expect(activeTransport.value).toBe('')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
-        })
-
-        it('ignores a malformed transport value', async () => {
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => 42,
-                getTunnelTransport: async () => 'websocket',
-            }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { activeTransport, refreshActiveTransport } = usePortForward()
-
-            await refreshActiveTransport()
-
-            expect(activeTransport.value).toBe('')
-
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
-        })
-
-        it('reports unknown in web mode (no native tunnel exists)', async () => {
-            mockIsAppMode.value = false
-            ;(window as any).ClawBenchNative = { getActiveTunnelTransport: async () => 'h2' }
-
-            const { usePortForward } = await import('@/composables/usePortForward')
-            const { activeTransport, refreshActiveTransport } = usePortForward()
-
-            await refreshActiveTransport()
-
-            expect(activeTransport.value).toBe('')
-
-            delete (window as any).ClawBenchNative
         })
     })
 
@@ -895,11 +810,8 @@ describe('usePortForward', () => {
         })
 
         async function setActiveTransport(value: 'ssh' | 'h2' | '') {
-            mockIsAppMode.value = true
-            ;(window as any).ClawBenchNative = {
-                getActiveTunnelTransport: async () => value,
-                getTunnelTransport: async () => value,
-            }
+            // The transport now comes from the server config, not the host.
+            mockServerConfig.value = value ? { port_forward: { transport: value } } : {}
             const { usePortForward } = await import('@/composables/usePortForward')
             const pf = usePortForward()
             await pf.refreshActiveTransport()
@@ -909,22 +821,17 @@ describe('usePortForward', () => {
         it('wraps the SSH label through proxy.transportAnnotation for an ssh wire', async () => {
             const { transportAnnotation } = await setActiveTransport('ssh')
             expect(transportAnnotation()).toBe('(SSH)')
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
         })
 
         it('wraps the HTTP/2 label through proxy.transportAnnotation for an h2 wire', async () => {
             const { transportAnnotation } = await setActiveTransport('h2')
             expect(transportAnnotation()).toBe('(HTTP/2)')
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
         })
 
-        it('returns empty when no single wire is known', async () => {
+        it('falls back to SSH before the config has loaded', async () => {
+            // Conservative: an unloaded config must never claim h2.
             const { transportAnnotation } = await setActiveTransport('')
-            expect(transportAnnotation()).toBe('')
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
+            expect(transportAnnotation()).toBe('(SSH)')
         })
     })
 

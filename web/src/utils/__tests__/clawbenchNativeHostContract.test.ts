@@ -63,10 +63,11 @@ describe('Android host contract: bridge methods the frontend consumes', () => {
     expect(src).toContain('BackgroundService.setLiveUpdateEnabled(activity, enabled)')
   })
 
-  it('getTunnelTransportH2Enabled is bridged (read by the h2 settings row)', () => {
-    // SettingsGroupPanel.vue:617 HIDES the h2 toggle when this getter is absent,
-    // so without it the toggle can never be turned on in the app. This is the
-    // exact method whose absence shipped the 2026 blocking bug.
+  it('getTunnelTransportH2Enabled is bridged (local fallback for the transport)', () => {
+    // The server's port_forward.transport is authoritative now; this preference
+    // is only consulted when /api/ssh/info could not be read. Keep the bridge:
+    // BackgroundService.shouldUseH2() falls back to it, and older web bundles
+    // still call it.
     expect(androidBridgeExposes(src, 'getTunnelTransportH2Enabled')).toBe(true)
   })
 
@@ -74,8 +75,9 @@ describe('Android host contract: bridge methods the frontend consumes', () => {
     expect(src).toContain('BackgroundService.isTunnelTransportH2Enabled(activity)')
   })
 
-  it('setTunnelTransportH2Enabled is bridged (written by the h2 settings row)', () => {
-    // SettingsGroupPanel.vue:636 — the h2 toggle's write path.
+  it('setTunnelTransportH2Enabled is bridged (writes the local fallback)', () => {
+    // Writes the preference shouldUseH2() falls back to when the server cannot
+    // be asked. The server-side row no longer calls it.
     expect(androidBridgeExposes(src, 'setTunnelTransportH2Enabled')).toBe(true)
   })
 
@@ -83,23 +85,24 @@ describe('Android host contract: bridge methods the frontend consumes', () => {
     expect(src).toContain('BackgroundService.setTunnelTransportH2Enabled(activity, enabled)')
   })
 
-  it('getTunnelTransport is bridged (read by usePortForward.refreshActiveTransport)', () => {
-    // usePortForward.ts — the panel's "transport" line and status annotations
-    // are driven by this read (the configured wire). Both are optional in the
-    // TS contract, so a host that stops exposing this one silently hides the
-    // line instead of failing.
+  it('getTunnelTransport is bridged (kept for hosts and older web bundles)', () => {
+    // The settings/status rows now read the server's port_forward.transport, so
+    // this is no longer their source. It stays bridged because the shell and
+    // older cached bundles still call it.
     expect(androidBridgeExposes(src, 'getTunnelTransport')).toBe(true)
   })
 
-  it('getTunnelTransport derives the name from the local h2 preference', () => {
-    // Pins that the bridge reports the persisted preference rather than a stub
-    // string: 'h2' when the toggle is on, 'ssh' otherwise.
+  it('getTunnelTransport prefers the server-reported transport', () => {
+    // The server decides and the app follows; the local toggle is only the
+    // fallback when /api/ssh/info has not been read yet. A bridge that reported
+    // the local preference alone would describe a wire the server turned off.
+    expect(src).toContain('BackgroundService.getServerTransport()')
     expect(src).toContain('BackgroundService.isTunnelTransportH2Enabled(activity) ? "h2" : "ssh"')
   })
 
-  it('getActiveTunnelTransport is bridged (fallback in usePortForward.refreshActiveTransport)', () => {
-    // usePortForward.ts — used only when the preference is unknown (older
-    // host), reporting the wire that actually carried the last connect.
+  it('getActiveTunnelTransport is bridged (kept for diagnostics)', () => {
+    // No longer read by usePortForward (the row shows the server's value), but
+    // the bridge stays: it is how the live wire can be inspected on a device.
     expect(androidBridgeExposes(src, 'getActiveTunnelTransport')).toBe(true)
   })
 

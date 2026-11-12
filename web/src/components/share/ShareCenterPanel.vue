@@ -139,9 +139,27 @@
                  action twice. The share button degrades to copying on hosts
                  without a sheet, which is where the remaining copy lives. -->
             <ActionBar class="share-actions" mode="menu" size="bar">
-              <button class="fbtn" type="button" @click="openLink">
+              <!-- Open the THING, not the link: the file/folder in the viewer,
+                   the conversation in chat, the meeting record in its panel.
+                   Hidden for a row whose source is gone — the link still works
+                   (which is why the row is listed and revocable), but there is
+                   nothing left to land on. -->
+              <button
+                v-if="canOpenSource(item)"
+                class="fbtn"
+                type="button"
+                data-action="open-source"
+                @click="openSource(item)"
+              >
+                <Folder v-if="item.kind === 'dir'" :size="14" />
+                <FileText v-else-if="item.kind === 'file'" :size="14" />
+                <MessageSquareShare v-else-if="item.kind === 'session'" :size="14" />
+                <Video v-else :size="14" />
+                <span class="action-label">{{ t(sourceLabelKey(item)) }}</span>
+              </button>
+              <button class="fbtn" type="button" data-action="open-page" @click="openLink">
                 <ExternalLink :size="14" />
-                <span class="action-label">{{ t('shareCenter.open') }}</span>
+                <span class="action-label">{{ t('shareCenter.openPage') }}</span>
               </button>
               <button
                 class="fbtn"
@@ -202,6 +220,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { useShareCenter, type ShareItem } from '@/composables/useShareCenter'
 import { onShareChanged } from '@/composables/useShareEvents'
+import { openFilePath } from '@/composables/useFilePathAnnotation'
 import type { ShareLink } from '@/composables/useShareLinks'
 import { openExternalUrl } from '@/utils/externalLink'
 import { formatRelativeTime } from '@/utils/format'
@@ -282,6 +301,63 @@ function kindLabelKey(item: ShareItem): string {
     case 'file': return 'shareCenter.kindFile'
     case 'session': return 'shareCenter.kindSession'
     default: return 'shareCenter.kindMeeting'
+  }
+}
+
+/** Button label for opening the source — "open file" / "open folder" / …. */
+function sourceLabelKey(item: ShareItem): string {
+  switch (item.kind) {
+    case 'dir': return 'shareCenter.openDir'
+    case 'file': return 'shareCenter.openFile'
+    case 'session': return 'shareCenter.openSession'
+    default: return 'shareCenter.openMeeting'
+  }
+}
+
+/**
+ * Whether the row still has something to open.
+ *
+ * `sourceGone` covers both a deleted file and an archived conversation. An
+ * archived session is deliberately NOT addressable by id (its share is a frozen
+ * snapshot), so "open" there would switch to chat and load nothing.
+ */
+function canOpenSource(item: ShareItem): boolean {
+  if (item.sourceGone) return false
+  if (item.kind === 'file' || item.kind === 'dir') return !!item.detail
+  if (item.kind === 'session') return !!item.sourceId
+  return !!item.token
+}
+
+/**
+ * Open what the link points at, in the screen that owns it.
+ *
+ * Files and folders go through `openFilePath` — the same primitive a chat path
+ * annotation uses, so a folder opens in the file manager and a file in the
+ * viewer, and `share` is recorded as the jump origin so Back returns here.
+ * Conversations and meetings have their own deep-link events, already handled
+ * by App.vue (tab switch) and by the panel that owns the view.
+ */
+function openSource(item: ShareItem): void {
+  if (!canOpenSource(item)) return
+  switch (item.kind) {
+    case 'file':
+    case 'dir':
+      void openFilePath(item.detail, undefined, undefined, 'share')
+      return
+    case 'session':
+      // No `projectPath`: this list is already scoped to the project cookie, so
+      // the target is always in the project that is open.
+      window.dispatchEvent(new CustomEvent('clawbench-open-session', {
+        detail: { sessionId: item.sourceId },
+      }))
+      return
+    case 'meeting':
+      // The record token IS the meeting's identity and its share token. The
+      // meeting panel owns the list/detail/stage state and sets its own view.
+      window.dispatchEvent(new CustomEvent('clawbench-open-meeting', {
+        detail: { token: item.token },
+      }))
+      return
   }
 }
 

@@ -176,6 +176,35 @@ describe('createFixLocalImagePaths', () => {
     }
   })
 
+  it('decodes an already-encoded src once before putting it in ?path= (share)', () => {
+    // marked percent-encodes the destination it writes into src, so a CJK
+    // filename reaches this function as `%E5%9B%BE…`. Encoding that form again
+    // produced `%25E5%25…` and the share backend looked for a file literally
+    // named `%E5%9B%BE…` — the reported "share page image never loads".
+    setShareToken('tokcjk')
+    try {
+      const fix = createFixLocalImagePaths({ baseDir: '/home/u/proj/文档', imageTimestamp: 9, isWideScreen: true })
+      const out = fix('<img src="%E5%9B%BE%E7%89%87/%E6%88%AA%E5%9B%BE.png">')
+      expect(out).not.toContain('%25')
+      expect(out).toContain(
+        '?path=%2Fhome%2Fu%2Fproj%2F%E6%96%87%E6%A1%A3%2F%E5%9B%BE%E7%89%87%2F%E6%88%AA%E5%9B%BE.png'
+      )
+    } finally {
+      setShareToken(null)
+    }
+  })
+
+  it('decodes an already-encoded src once in the ?target= and thumb forms', () => {
+    // Same double-encoding on the two non-share absolute-path forms: an
+    // out-of-project image (the AI writing `![](/tmp/图.png)`) and its
+    // thumbnail. Both used the raw (still encoded) src.
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 4, isWideScreen: true })
+    const out = fix('<img src="/tmp/%E5%9B%BE.png">')
+    expect(out).not.toContain('%25')
+    expect(out).toContain('data-full-src="/api/fs/raw/?target=%2Ftmp%2F%E5%9B%BE.png&amp;t=4"')
+    expect(out).toContain('src="/api/fs/thumb?target=%2Ftmp%2F%E5%9B%BE.png&amp;w=1200"')
+  })
+
   it('keeps external URLs untouched in share mode with absolute dirs', () => {
     setShareToken('tokabs')
     try {
@@ -309,6 +338,27 @@ describe('buildMarkdownPreviewDom', () => {
       const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 5 })
       expect(html).toContain('src="/api/share/tokshare/local/img/x.png?t=5"')
       expect(html).not.toContain('/api/fs/thumb')
+    } finally {
+      setShareToken(null)
+    }
+  })
+
+  it('loads an image whose filename is Chinese (marked encodes it, we must not encode again)', () => {
+    // End-to-end through marked: the reported file is a doc that lives in a
+    // Chinese-named directory and embeds images from a Chinese-named assets
+    // folder. marked percent-encodes the destination, so re-encoding it here
+    // made the share backend look for a file literally named `%E6%88%AA…`.
+    setShareToken('tokcjk')
+    try {
+      const md = '![图](clawbench配置使用.assets/截图.png)'
+      const { html } = buildMarkdownPreviewDom(
+        { content: md, path: '/home/u/proj/docs/使用说明.md' },
+        { isWideScreen: true, imageTimestamp: 3 }
+      )
+      expect(html).not.toContain('%25')
+      expect(html).toContain(
+        '?path=%2Fhome%2Fu%2Fproj%2Fdocs%2Fclawbench%E9%85%8D%E7%BD%AE%E4%BD%BF%E7%94%A8.assets%2F%E6%88%AA%E5%9B%BE.png'
+      )
     } finally {
       setShareToken(null)
     }

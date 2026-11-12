@@ -41,15 +41,17 @@
     </ActionBar>
 
     <div class="proxy-panel">
+      <!-- Current transport. Server-configured (`port_forward.transport`), so it
+           is shown in web mode too: the server decides and every client
+           follows. Hidden while the value is still unknown rather than
+           guessing. -->
+      <div v-if="transportLabel" class="tunnel-transport">
+        <span class="tunnel-transport-key">{{ t('proxy.transportLabel') }}</span>
+        <span class="tunnel-transport-value">{{ transportLabel }}</span>
+      </div>
+
       <!-- App mode: tunnel status banners -->
       <template v-if="isNativeApp">
-        <!-- Current transport (ssh / h2 / auto). Hidden when the host cannot
-             report one (older Android/Electron bridge) rather than guessing. -->
-        <div v-if="transportLabel" class="tunnel-transport">
-          <span class="tunnel-transport-key">{{ t('proxy.transportLabel') }}</span>
-          <span class="tunnel-transport-value">{{ transportLabel }}</span>
-        </div>
-
         <!-- Tunnel problem banners. Gated on there being an enabled mapping to
              carry: with none, the native service is stopped on purpose (see
              syncToNative — it would otherwise burn battery for no work), so a
@@ -409,10 +411,9 @@ const { isNativeApp, isAndroidApp, isWebApp } = usePlatformDetect()
 // desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.
 const toast = useToast()
 
-// Human label for the transport currently carrying the tunnel. '' when the
-// host cannot report it (optional bridge methods absent on older hosts), so the
-// row is hidden instead of showing a made-up value. Only the two concrete wires
-// exist — there is no automatic mode.
+// Human label for the transport the server is configured to use. '' when the
+// value is not known yet, so the row is hidden instead of showing a made-up
+// value. Only the two concrete wires exist — there is no automatic mode.
 const transportLabel = computed(() => {
   switch (activeTransport.value) {
     case 'ssh': return t('proxy.transportSsh')

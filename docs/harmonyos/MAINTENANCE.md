@@ -1,5 +1,21 @@
 # 维护记录
 
+## 2026-11-12：对齐 v0.139.0、构建鸿蒙 0.2.12 并完成模拟器子场景验收
+
+- 从 GitHub 下载并覆盖参考源码至 `v0.139.0` / `733ab3ec0c039193eca80dd08816f2e9006aa0aa`，相对旧基线新增 81 个提交，逐文件校验 4,420 文件，没有创建旧版备份。归档 SHA-256 `93bbe3d1e8672615ce5fb679ed8f696893a4f69a6626a20b42ea837aedd753ca`，协议保持 1；PR #631、#636、#653、#662 已合入上游，未重复提交其运行时代码。
+- 核对 v0.138.0–v0.139.0 更新记录：附件文件选择 / 搜索坞、draw.io 按需安装与离线上传、灯箱下载进度、引用问答与用量、终端恢复、会议卡片及 Android 销毁 WebView 的单标签锁释放。共享 `ClawBenchNative` 必需接口没有新增；保留独立 HarmonyOS 宿主，不启用 Android CSS / APK 逻辑。
+- 修复共享 `AttachmentPicker` 在桌面式 UA 下遗漏鸿蒙宿主的问题：`isMobileLayout` 纳入 `isHarmonyApp`，恢复拍照 / 图库 / 上传来源栏；同时把宿主轴从「首次读取后固定」改为跟随 `useAppMode`，桥晚到也能自动恢复。回归覆盖三个入口点击、布局回退和「首次读取后桥才出现」的平台层场景。补丁单独保存在维护方本地，参考源码保持原始上游内容；共享 Vue 页面需由服务端部署，本轮未部署共享测试服务器。
+- 版本 `0.2.12 / 212`，包名 `com.clawbench.harmony`。DevEco Studio 26.0 / SDK 26 / Hvigor 6.26.8 完成 ArkTS、双架构 NAPI 和 debug HAP 构建；`bulid-hap/ClawBench-0.2.12-unsigned.hap`，**8,569,228 字节**，SHA-256 `3cdb64069751bea78fd93d063229701a9fdc95e6c31c5c23553b77906d8c4f28`。未签名，仅用于本地调试验收。
+- 鸿蒙维护与上游集成布局各 **316/316** 测试通过；共享前端附件、draw.io、灯箱、终端恢复和单标签锁五文件 **251/251** 通过，类型检查与生产构建通过。共享运行另报 8 处既有 vue-i18n Promise 泄漏及 Windows teardown 警告；不表述为全套运行零异常。CSS 全量 lint、plain-JS 守卫通过；修改的 Vue 文件 ESLint 通过，测试文件被仓库 ESLint 规则忽略。
+- 已运行 `scripts/pre-push-checks.sh --skip-coverage --skip-android`：前端类型、plain-JS、CSS、前端构建通过；Android lint 被跳过。Go lint 工具下载校验失败；Go 测试 / 构建初次因缺少 `internal/frontend/dist` 未完成，测试还报告 Windows 符号链接权限及路径等失败。随后将已验证的生产前端复制至忽略的 embed 目录，`go build ./cmd/server` 通过；未重复全量 Go 测试。全仓检查未取得全绿，不绕过下载校验；覆盖率未运行。
+
+### HarmonyOS 7 / API 26 / x86_64 手机模拟器
+
+- 无窗口启动既有隔离模拟器，安装 `0.2.12 / 212` HAP 成功，原生登录页显示新版本。经本机生产前端和只读 API 代理进入实际 ArkWeb 工作台，服务端健康检查为 `v0.139.0 / protocol 1`；附件面板显示文件选择 / 搜索及三种来源入口，“上传文件”打开系统文档选择器，取消后返回。没有发送聊天、邮件，未改服务器配置或会话。
+- 新增可复用本地夹具 `upstream-alignment-server.mjs`（需 Node ≥ 22.13，`/guard.js` 依赖 `node:module` 的 `stripTypeScriptTypes`），只监听本机，使用任意测试密码和合成图片。真实 HAP 报告 `host=harmonyos`、`version=0.2.12`；原生下载收到 68 字节后派发 `done=true`、空错误和未取消状态，确认完成事件链；未获得系统目录文件回读哈希，不将事件视为字节哈希校验。
+- 畸形 `mailto:?subject=%` 返回一次本地化 `clawbench-native-error` 并拒绝 Promise；未拉起邮件应用、未发送邮件。原生 `reloadApp()` 刷新后，实际共享 `useSingleTab` 再次取得锁；未把页面刷新等同于同进程销毁工作台 / 重连的验收，返回服务器列表的双 Back 路径也未取得成功证据。
+- `.war,.zip` 输入在 ArkWeb 打开系统文档选择器并可取消；没有上传归档，未验收 draw.io 编辑器下载、安装、编辑和保存。拍照 / 图库仅有入口与组件点击覆盖，本轮未完成实际捕获。会议、真实语音服务、外设、Frozen 通知和完整设备矩阵未新增验收；此前用户确认的邮件 / 媒体真机结果保持原范围。
+
 ## 2026-11-10：同步 v0.137.0 并完成鸿蒙 0.2.11 适配构建
 
 - 通过 GitHub 复核上游 main、最新 release 与 tag：`v0.137.0` / `21aeaff4c6ef066aa94ad50d884518b01b4744de`，比原 `06a43010` 新增 45 个提交。下载按 commit 锁定的 ZIP，经过路径、SHA-256 和镜像后逐文件校验覆盖到 `clawbench-source code/`，未创建旧版本备份。归档 SHA-256 `6d59d993249137c45bec992fde15072c25d5868aacc05b701ed87ab36c5af91a`，参考源码 4,380 文件，客户端协议保持 1；更新基线与已合并集成的 blob 标记，不重放历史补丁。
@@ -19,6 +35,7 @@
 - 回归结果：鸿蒙测试 **316/316**、共享前端构建通过、HAP 上传路径用例 **2/2**；WebKit 消息发送、思考块展开及流式滚动 **3/3** 通过。PR 更新后的 GitHub CI 将在推送后重新运行，结果另以 CI 状态为准。
 - DevEco Studio 26.0 debug HAP 构建成功：`bulid-hap/ClawBench-0.2.11-unsigned.hap`，**8,569,228 字节**，SHA-256 `4c92047dcb6ac91b70a4cb11fba8def90566660e72dc262a07c33f41289ac537`。未签名产物留在本地构建目录，不纳入 PR 源码。
 - 仅补充 PR 新评论，不修改原评审评论或 PR 描述；源码提交不包含 `AGENTS.md`、上游参考源码、HAP、账号凭据或测试输出。设备验收沿用既有用户确认范围，本次未新增设备验收声明。
+
 
 ### HarmonyOS 7 / API 26 模拟器验收（Pura 90 Pro x86_64）
 

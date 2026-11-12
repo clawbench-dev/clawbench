@@ -288,17 +288,18 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const dialog = useDialog()
 const toast = useToast()
-// Which attachment entries to show. "Mobile" here means the phone/tablet
-// platforms — Android, iOS, and iPadOS in desktop mode — not the INPUT axis:
-// a touchscreen laptop reports a coarse pointer in tablet mode but is still a
-// PC, and its file picker has no camera or photo library behind it. The host
-// axis is not the test either: Electron on a touch laptop stays desktop, and
-// a browser on a phone is still mobile.
-const { isAndroidApp } = usePlatformDetect()
-// computed, not `isMobileOSUA || isAndroidApp`: the latter returns the ref
+// Which attachment entries to show. "Mobile" here means a phone/tablet host:
+// a mobile OS in the UA (Android, iOS, iPadOS in desktop mode, HarmonyOS), or
+// a native shell that reports a mobile host — the HarmonyOS 2-in-1 sends a
+// desktop-looking UA, so the host axis has to be part of the test as well.
+// The INPUT axis is not: a touchscreen laptop reports a coarse pointer but is
+// still a PC, and its file dialog has no camera behind it. Electron likewise
+// stays desktop even on a touch laptop, and a browser on a phone is mobile.
+const { isAndroidApp, isHarmonyApp } = usePlatformDetect()
+// computed, not `isMobileOSUA || isAndroidApp || isHarmonyApp`: that returns a ref
 // object when the UA test is false, and a ref is always truthy — every desktop
 // browser would have been shown the mobile strip.
-const isMobileLayout = computed(() => isMobileOSUA || isAndroidApp.value)
+const isMobileLayout = computed(() => isMobileOSUA || isAndroidApp.value || isHarmonyApp.value)
 const { recentShares, fetchRecentShares, deleteRecentShare, clearRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads, deleteRecentUpload, clearRecentUploads } = useUploadRecent()
 

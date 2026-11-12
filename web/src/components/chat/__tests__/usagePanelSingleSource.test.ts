@@ -40,9 +40,11 @@ describe('context usage panel has a single implementation', () => {
     // Thresholds/formatting live in usageDisplay; a second copy of the colour
     // ramp would be the other way these two could disagree.
     expect(readWebFile(BAR)).toContain('@/utils/usageDisplay')
-    // The group roster's chip gets its numbers from the same helpers via
-    // GroupSettingsSheet (the row owns the chip).
-    expect(readWebFile('src/components/chat/GroupSettingsSheet.vue')).toContain('@/utils/usageDisplay')
+    // The group roster's chip was removed on purpose — the member row opens the
+    // shared SessionDrawer, whose usage tab is the single implementation. What
+    // must stay true is that the roster still routes through that drawer
+    // rather than growing a usage panel of its own.
+    expect(readWebFile(MEMBER)).toContain('<SessionDrawer')
     for (const src of [readWebFile(BAR), readWebFile(MEMBER), readWebFile(DETAIL)]) {
       expect(src).not.toContain('#ef4444')
       expect(src).not.toContain('#eab308')
