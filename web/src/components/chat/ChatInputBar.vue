@@ -155,11 +155,10 @@
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
         <div class="attach-menu-wrapper" ref="attachMenuRef">
-          <button v-if="voiceInThisField && (voiceState === 'recording' || voiceState === 'transcribing')" class="chat-attach-btn voice-rec-btn" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" disabled :title="voiceState === 'recording' ? t('chat.voice.recording') : t('chat.voice.transcribing')">
-            <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-            <LoadingIndicator v-else class="attach-btn-spinner" size="sm" inline />
-          </button>
-          <button v-else class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
+          <!-- Always the paperclip. Voice status now lives in the global pill
+               above the composer; swapping this button for a waveform made the
+               attach action vanish exactly when the user was mid-dictation. -->
+          <button class="chat-attach-btn" @click.stop="toggleAttachMenu" :disabled="inputDisabled" :title="t('chat.actions.attachment')">
             <Paperclip :size="15" />
           </button>
         </div>
@@ -965,7 +964,7 @@ watch(inputText, (text) => {
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
-const { state: voiceState, toggleAt: toggleVoiceAt } = voiceInput
+const { toggleAt: toggleVoiceAt } = voiceInput
 
 const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
@@ -1019,10 +1018,6 @@ function onSendPointerUp() {
 
 const rootRef = ref(null)
 const textareaRef = ref(null)
-// Dictation can now land in ANY field. The composer's own recording indicator
-// must only appear when this textarea is the one being written into — the
-// global overlay owns the pill for every other field.
-const voiceInThisField = computed(() => voiceInput.targetEl.value === textareaRef.value)
 const actionBarRef = ref(null)
 const isPasteOver = ref(false)
 let pasteOverlayTimer = 0
@@ -3410,47 +3405,6 @@ defineExpose({
 @keyframes stop-heartbeat {
   0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.5); }
   50%      { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
-}
-
-/* Voice recording indicator — red circle with animation, shown in the attach
-   slot. Geometry (26px square) comes from the base .chat-attach-btn rule; only
-   the shape and colour differ. */
-.chat-attach-btn.voice-rec-btn {
-  border-radius: 50%;
-  background: #ff3b30;
-  color: #fff;
-}
-.chat-attach-btn.voice-rec-btn:disabled {
-  opacity: 1;
-  cursor: default;
-}
-.chat-attach-btn.voice-rec-btn.transcribing {
-  background: var(--accent-color, #0066cc);
-}
-
-/* Audio-wave animation: animated vertical bars */
-.voice-wave {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: calc(14 * var(--dp));
-}
-.voice-wave i {
-  display: block;
-  width: calc(2 * var(--dp));
-  height: calc(6 * var(--dp));
-  border-radius: 1px;
-  background: currentColor;
-  animation: voice-wave 1s ease-in-out infinite;
-}
-.voice-wave i:nth-child(1) { animation-delay: 0s; }
-.voice-wave i:nth-child(2) { animation-delay: 0.1s; }
-.voice-wave i:nth-child(3) { animation-delay: 0.2s; }
-.voice-wave i:nth-child(4) { animation-delay: 0.3s; }
-.voice-wave i:nth-child(5) { animation-delay: 0.4s; }
-@keyframes voice-wave {
-  0%, 100% { height: 4px; }
-  50% { height: 13px; }
 }
 
 

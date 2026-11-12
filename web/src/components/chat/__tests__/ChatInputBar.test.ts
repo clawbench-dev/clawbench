@@ -4133,30 +4133,16 @@ describe('ChatInputBar', () => {
       vi.useRealTimers()
     })
 
-    it('shows the recording indicator only while this textarea is the dictation target', async () => {
+    // The voice status moved to the global pill above the composer. Swapping
+    // the attach button for a waveform hid the paperclip exactly while the
+    // user was dictating — and duplicated what the pill already says.
+    it('keeps the paperclip while dictating into the composer', async () => {
       const wrapper = mountBar()
       mockVoiceState.value = 'recording'
-      // Dictating into some other field: the global pill carries the status,
-      // the composer must not pretend it is the destination.
+      mockVoiceTargetEl.value = composerTextarea(wrapper)
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.voice-rec-btn').exists()).toBe(false)
-
-      mockVoiceTargetEl.value = composerTextarea(wrapper)
-      await wrapper.vm.$nextTick()
-      const recBtn = wrapper.find('.chat-attach-btn.voice-rec-btn.recording')
-      expect(recBtn.exists()).toBe(true)
-      expect(wrapper.find('.voice-wave').exists()).toBe(true)
-      wrapper.unmount()
-    })
-
-    it('renders transcribing indicator with spinner in the attach slot', async () => {
-      const wrapper = mountBar()
-      mockVoiceTargetEl.value = composerTextarea(wrapper)
-      mockVoiceState.value = 'transcribing'
-      await wrapper.vm.$nextTick()
-      const transBtn = wrapper.find('.chat-attach-btn.voice-rec-btn.transcribing')
-      expect(transBtn.exists()).toBe(true)
-      expect(transBtn.find('.attach-btn-spinner').exists()).toBe(true)
+      expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
       wrapper.unmount()
     })
 
