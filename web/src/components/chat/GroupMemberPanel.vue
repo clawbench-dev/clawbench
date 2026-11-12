@@ -78,21 +78,22 @@
                 <span v-if="modelLabel(m)" class="member-row__model">· {{ modelLabel(m) }}</span>
               </span>
             </span>
-            <!-- Context usage, same chip as the group settings roster (bar +
-                 percent, no "—" row: a dense list hides what it does not have).
-                 It outlives the model/agent detail on narrow cards, because
-                 "almost full, time to compact" is the more actionable number.
-                 Clicking it opens the member's own settings drawer on the usage
-                 tab — the same destination as clicking a row in the group
-                 settings roster, just one level more direct. -->
-            <button
+            <!-- A span with role=button, NOT a <button>: Android WebView keeps
+                 painting the native button chrome (grey rounded fill) even with
+                 `background: none`, which turned this chip into a grey box, and
+                 buttons also do not inherit the app font (digits fell back to
+                 Arial). The row above uses the same pattern. -->
+            <span
               v-if="usageOf(m)"
-              type="button"
               class="member-row__usage"
+              role="button"
+              tabindex="0"
               :title="usageTitle(m)"
               :aria-label="usageTitle(m)"
               data-action="member-usage"
               @click.stop="openUsage(m)"
+              @keydown.enter.prevent="openUsage(m)"
+              @keydown.space.prevent="openUsage(m)"
             >
               <Activity :size="11" class="member-row__usage-icon" aria-hidden="true" />
               <span class="member-row__usage-bar">
@@ -105,7 +106,7 @@
                 ></span>
               </span>
               <span class="member-row__usage-pct">{{ usagePctOf(usageOf(m)) }}%</span>
-            </button>
+            </span>
             <span v-if="running" class="member-row__pill" :class="`is-${statusOf(m)}`">
               {{ statusLabel(m) }}
             </span>
@@ -627,13 +628,9 @@ function jump(m: GroupMemberInfo) {
   gap: calc(3 * var(--dp));
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #6c757d);
-  /* A real button (opens the member's settings drawer on the usage tab) — strip
-     the UA chrome so it still reads as the roster's plain chip. */
-  border: 0;
-  padding: 0;
-  background: none;
   cursor: pointer;
   outline: none;
+  user-select: none;
 }
 .member-row__usage:hover { color: var(--text-secondary, #495057); }
 .member-row__usage:focus-visible {
@@ -712,6 +709,9 @@ function jump(m: GroupMemberInfo) {
   border-top: 1px solid var(--border-color, #dee2e6);
   background: transparent;
   color: var(--text-secondary, #495057);
+  /* A real <button>: it does not inherit the app font, so Latin text (numbers,
+     model names) would fall back to Arial. */
+  font: inherit;
   font-size: var(--font-size-xs);
   cursor: pointer;
 }

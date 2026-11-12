@@ -50,4 +50,13 @@ describe('GroupMemberPanel identity detail', () => {
   it('keeps the detail in the DOM (CSS hides it, not v-if)', () => {
     expect(src).toMatch(/v-if="hasMeta\(m\)"\s+class="member-row__meta"/)
   })
+
+  it('is not a real <button> (Android WebView paints native button chrome)', () => {
+    // Regression: as a <button> the usage chip rendered as a grey rounded box
+    // on the device (native button background survived `background: none`) and
+    // its digits fell back to Arial. role=button + keyboard handlers instead.
+    expect(src).not.toMatch(/<button[^>]*class="member-row__usage"/)
+    expect(src).toMatch(/<span[\s\S]{0,300}?class="member-row__usage"[\s\S]{0,300}?role="button"/)
+    expect(src).toMatch(/class="member-row__usage"[\s\S]{0,300}?@keydown\.enter\.prevent="openUsage\(m\)"/)
+  })
 })
