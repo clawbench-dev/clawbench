@@ -851,6 +851,13 @@ export function appendThinkingDelta(
     if (thinkId && !target.think_id) target.think_id = thinkId
     return
   }
+  // Nothing to merge into, so this delta would OPEN a block — and a
+  // whitespace-only delta is not a thought. Mirrors AccumulateBlock: models
+  // emit lone space tokens between reasoning runs, and when a tool call lands
+  // between two of them the space alone became a whole block — an expandable
+  // 「深度思考」chip holding nothing. Only OPENING is refused; appending stays
+  // allowed because there the space sits between two words.
+  if (!text.trim()) return
   blocks.push({
     type: 'thinking',
     text,
