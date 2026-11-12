@@ -761,19 +761,33 @@ describe('settingsFieldMap', () => {
 
   // ── Port Forward panel ──
 
-  it('portForward panel has NO enable switch — the SSH listener is always on', () => {
-    // The switch was removed with the server-side pin (see ApplyDefaults): the
-    // listener is server-side while the transport choice is client-local, so no
-    // single value could serve every client of one server. Removing it also
-    // removed the "which one does this actually gate?" confusion.
+  it('portForward panel has NO enable switch — the transport row is the switch', () => {
+    // The enable switch was removed with the server-side pin (see ApplyDefaults):
+    // the feature is always available, and `port_forward.transport` below is the
+    // real server-side switch (ssh listener vs h2 endpoints).
     const panels = getCategoryPanels('portForward')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(cfg.enableKey).toBeUndefined()
     expect(cfg.enableLabelKey).toBeUndefined()
-    expect(cfg.commonFields.length).toBe(1)
-    expect(cfg.commonFields[0].key).toBe('port_forward.port')
-    expect(cfg.commonFields[0].needsRestart).toBeFalsy()
+    expect(cfg.commonFields.map(f => f.key)).toEqual([
+      'port_forward.transport',
+      'port_forward.port',
+    ])
+    for (const field of cfg.commonFields) expect(field.needsRestart).toBeFalsy()
+  })
+
+  it('portForward transport is a SERVER field with exactly ssh/h2', () => {
+    // It used to be a host-local picker (Electron store / Android
+    // SharedPreferences), which is why the web panel could not show it at all.
+    // Now the server decides and every client follows, so it is an ordinary
+    // server field and the retired "both" must not reappear as an option.
+    const field = getCategoryPanels('portForward')[0].commonFields
+      .find(f => f.key === 'port_forward.transport')
+    expect(field, 'port_forward.transport must exist').toBeTruthy()
+    expect(field!.type).toBe('select')
+    expect(field!.source).toBe('server')
+    expect((field!.options ?? []).map(o => o.value).sort()).toEqual(['h2', 'ssh'])
   })
 
   it('portForward panel has NO connectivity test button — the status row replaces it', () => {
@@ -793,7 +807,9 @@ describe('settingsFieldMap', () => {
     // user verbatim: SettingsItem stringifies whatever displayTransform returns
     // and never looks it up in i18n (SettingsItem.vue displayValue).
     const cfg = getCategoryPanels('portForward')[0]
-    const transform = cfg.commonFields[0].displayTransform
+    const portField = cfg.commonFields.find(f => f.key === 'port_forward.port')
+    expect(portField, 'port_forward.port must exist').toBeTruthy()
+    const transform = portField!.displayTransform
     expect(transform, 'port_forward.port must keep a displayTransform').toBeTruthy()
 
     const auto = String(transform!(0))

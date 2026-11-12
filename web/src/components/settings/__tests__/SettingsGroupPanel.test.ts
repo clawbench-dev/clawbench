@@ -10,7 +10,7 @@ import { apiPost } from '@/utils/api'
 // ── Mock composables ──
 
 const mockInitSnapshot = vi.fn()
-const mockHandleSave = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [] })
+const mockHandleSave = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [], changedKeys: [], failed: false })
 const localValues = reactive<Record<string, unknown>>({})
 const mockSaving = ref(false)
 const mockServerError = ref('')
@@ -912,7 +912,7 @@ describe('SettingsGroupPanel', () => {
     it('shows toast on successful save', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [], changedKeys: [], failed: false })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
@@ -922,7 +922,7 @@ describe('SettingsGroupPanel', () => {
     it('emits restartNeeded when save returns needsRestart with changedColdFields', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['some.enabled'] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['some.enabled'], changedKeys: [], failed: false })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()
@@ -933,7 +933,7 @@ describe('SettingsGroupPanel', () => {
     it('does not emit restartNeeded when no restart needed', async () => {
       mockHasChanges.value = true
       mockCanSave.value = true
-      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [] })
+      mockHandleSave.mockResolvedValueOnce({ needsRestart: false, changedColdFields: [], changedKeys: [], failed: false })
       const wrapper = mountPanel(makeSimpleConfig())
       await wrapper.find('.group-panel__save-btn').trigger('click')
       await nextTick()

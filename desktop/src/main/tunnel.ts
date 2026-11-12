@@ -87,17 +87,21 @@ let sshTransport: TunnelTransport | null = null
 const DEFAULT_TRANSPORT_PREFERENCE: TransportPreference = 'h2'
 
 /**
- * Which transport to use. Defaults to HTTP/2 — the stream tunnel rides the
- * main HTTP port, so a fresh install needs no extra port open. The settings row
- * in the port-forward panel writes a preference (SSH / H2) that the bridge
- * persists, and `initTransportPreference()` hydrates this module from the store
- * at startup so the choice survives a restart.
+ * Which transport to use when the server cannot be asked. The server's
+ * `port_forward.transport` (read from /api/ssh/info) is authoritative; this
+ * local value is only the fallback for an unreachable or older server.
  *
- * `setTransportPreference()` itself stays pure (no persistence): it is the
- * in-memory setter the h2 dispatch tests drive directly, and folding a store
- * write into it would make those tests depend on electron-store.
+ * Defaults to HTTP/2 — the stream tunnel rides the main HTTP port, so a fresh
+ * install needs no extra port open.
  */
 let transportPreference: TransportPreference = DEFAULT_TRANSPORT_PREFERENCE
+
+/**
+ * The transport the server reported on the last successful /api/ssh/info read,
+ * or null while unknown. The server decides and every client follows, so this
+ * is what the transport dispatch actually uses.
+ */
+let serverTransport: 'ssh' | 'h2' | null = null
 
 /** Which transport actually carried the last successful connect. */
 let activeTransport: 'ssh' | 'h2' = DEFAULT_TRANSPORT_PREFERENCE
@@ -116,8 +120,9 @@ export function setTransportPreference(pref: TransportPreference): void {
   transportPreference = pref
 }
 
+/** The effective transport: what the server reports, else the local fallback. */
 export function getTransportPreference(): TransportPreference {
-  return transportPreference
+  return serverTransport ?? transportPreference
 }
 
 /**
@@ -186,15 +191,16 @@ export function getTunnelTransportKind(): 'tls' | 'h2c' | null {
 }
 
 /**
- * The transport candidate list for the current preference.
+ * The transport candidate list.
  *
- * Exactly one entry: the preference names the wire to use, and there is no
- * automatic fallback any more. A single-element list keeps `ensureTunnel`'s
- * loop (which handles the shared connect/error/rebuild bookkeeping) intact
- * rather than forking a second code path for the now-degenerate case.
+ * Exactly one entry: the server's transport (or the local fallback when the
+ * server could not be asked) names the wire to use, and there is no automatic
+ * fallback any more. A single-element list keeps `ensureTunnel`'s loop (which
+ * handles the shared connect/error/rebuild bookkeeping) intact rather than
+ * forking a second code path for the now-degenerate case.
  */
-function transportCandidates(): Array<'ssh' | 'h2'> {
-  return [transportPreference]
+function transportCandidates(fallback: 'ssh' | 'h2'): Array<'ssh' | 'h2'> {
+  return [serverTransport ?? fallback]
 }
 
 // Upper bound on a single connect attempt. Without it a connect that never
@@ -1035,6 +1041,8 @@ interface SshInfo {
   enabled: boolean
   port: number
   username: string
+  /** The server's transport switch. Absent on servers that predate it. */
+  transport: 'ssh' | 'h2' | null
 }
 
 /** Fetch SSH connection info from the server's public /api/ssh/info endpoint. */
@@ -1052,7 +1060,15 @@ function fetchSshInfo(serverUrl: string): Promise<SshInfo | null> {
         res.on('end', () => {
           try {
             const j = JSON.parse(data)
-            resolve({ enabled: !!j.enabled, port: j.port || -1, username: j.username || DEFAULT_SSH_USER })
+            resolve({
+              enabled: !!j.enabled,
+              port: j.port || -1,
+              username: j.username || DEFAULT_SSH_USER,
+              // The server decides which wire carries forwards; this is how the
+              // desktop shell follows. Anything unrecognized (or absent on an
+              // older server) leaves the local preference in charge.
+              transport: j.transport === 'ssh' || j.transport === 'h2' ? j.transport : null,
+            })
           } catch { resolve(null) }
         })
       })
@@ -1108,10 +1124,11 @@ async function attemptTransport(
  * replace each other's transport, leaving the first caller's promise pending
  * forever (the original hang that killed every forward).
  *
- * Dispatch: exactly one candidate, named by the preference — there is no
- * automatic fallback (see transportCandidates). Only the SSH path needs the
- * `/api/ssh/info` prelude (the SSH port and username) — h2 uses the main URL's
- * own host and port.
+ * Dispatch: exactly one candidate, named by the SERVER's transport (falling
+ * back to the local preference only when the server cannot be asked) — there is
+ * no automatic fallback (see transportCandidates). The /api/ssh/info prelude is
+ * fetched once per attempt: it carries both the transport switch and the SSH
+ * port/username.
  *
  * Rebuilding every desired forward is done HERE, once, for both transports
  * (see the success path below). It used to live in the ssh2 `'ready'` handler,
@@ -1130,26 +1147,29 @@ export function ensureTunnel(): Promise<boolean> {
     let url: URL
     try { url = new URL(serverUrl) } catch { return false }
 
-    const candidates = transportCandidates()
+    // One read per attempt: it carries the server's transport switch AND the
+    // SSH port/username. An unreachable server returns null, which leaves the
+    // local fallback in charge (and the attempt fails anyway).
+    const info = await fetchSshInfo(serverUrl)
+    if (info?.transport) serverTransport = info.transport
 
-    // SSH connection info is fetched lazily: an h2-first attempt should not
-    // pay for (or depend on) an endpoint only the SSH fallback needs.
-    let sshOpts: TransportConnectOptions | null = null
-    const loadSshOpts = async (): Promise<TransportConnectOptions> => {
-      if (sshOpts) return sshOpts
-      const info = await fetchSshInfo(serverUrl)
-      const sshPort = info && info.enabled && info.port > 0 ? info.port : Number(url.port || 80) + 1
-      sshOpts = { host: url.hostname, port: sshPort, username: info?.username || DEFAULT_SSH_USER }
-      return sshOpts
+    const candidates = transportCandidates(transportPreference)
+
+    // SSH connection options, derived from the same read. When the server
+    // reports no listener the port is still computed (main port + 1) so the
+    // attempt fails with a connection error rather than a bogus port 0.
+    const sshOpts: TransportConnectOptions = {
+      host: url.hostname,
+      port: info && info.enabled && info.port > 0 ? info.port : Number(url.port || 80) + 1,
+      username: info?.username || DEFAULT_SSH_USER,
     }
 
     for (const kind of candidates) {
       let ok = false
       if (kind === 'ssh') {
-        const opts = await loadSshOpts()
         // openClient() populates state.error/errorType itself; only the
         // "no client was even created" path leaves them empty.
-        ok = await attemptTransport('ssh', opts, () => {
+        ok = await attemptTransport('ssh', sshOpts, () => {
           if (!state.error) {
             state.error = 'SSH connection failed'
             state.errorType = 'unknown'
@@ -1227,6 +1247,7 @@ export function _rebuildAllForwardsForTesting(): Promise<void> {
 export function _resetTransportForTesting(): void {
   disconnectTunnel()
   transportPreference = DEFAULT_TRANSPORT_PREFERENCE
+  serverTransport = null
   activeTransport = DEFAULT_TRANSPORT_PREFERENCE
   lastH2Kind = null
   sshTransport = null

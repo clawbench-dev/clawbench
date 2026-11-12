@@ -678,18 +678,14 @@ paths:
         偏好，不在配置中。
 
         `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：SSH 隧道监听器
-        常开，开关已移除（见 `ApplyDefaults` 的 `PortForward.Enabled` 钉死）。
-        `transport` **恒为 `both`**：服务端已把该字段钉死（`ApplyDefaults`
-        无条件归一），yaml 里写 `ssh` / `h2` / `both` / 非法值最终都是 `both`。
+        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：端口映射功能本身总是
+        可用，具体走哪条线由 `transport` 决定。
 
-        `transport` 现在只剩一个消费者：web 端健康检查门控
-        （`tunnelTransportAllowsH2()` 读该值，仅 `h2` / `both` 为真）——因此字段
-        保留、值恒为 `both`，不能删除（删掉会让前端读到 `undefined` 而误判为
-        ssh-only，反而隐藏 h2 面板）。传输方式的选择本身是**客户端本地**的
-        （Electron store 的 `tunnelTransport`，取 `ssh` / `h2`；Android 的
-        SharedPreferences 开关 `tunnel_transport_h2_enabled`），服务端读不到，
-        这正是监听器必须常开的原因：服务端无法用该值决定是否监听。
+        `transport` 是**服务端开关**，取 `ssh` 或 `h2`（默认 `h2`）：
+        `ssh` 时服务端监听 SSH 端口（`port`）并让 `/api/tunnel/*` 返回 503；
+        `h2` 时服务端**完全不监听** SSH 端口，转发走主 HTTP 端口的
+        `/api/tunnel/*`。已废弃的 `both` 仍被接受（老客户端会发），归一为 `h2`。
+        客户端通过 `/api/ssh/info` 的 `transport` 字段跟随该值，不再各自持有偏好。
 
         `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）。关闭后服务端
         停止轮询、不再产生 forge 事件与通知，**并清空所有项目的仓库绑定**（见
@@ -757,13 +753,12 @@ paths:
         因此关闭时无需确认、随时可恢复；热更新，不需要重启。
 
         `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
-        存储值恒为 `true`（监听器常开，与 `ApplyDefaults` 一致）。
+        存储值恒为 `true`（功能恒可用，走哪条线由 `transport` 决定）。
 
-        `port_forward.transport` 仍为白名单键，但**值被忽略**：`ssh` / `h2` /
-        `both` 都返回 200，存储值恒为 `both`（与 `ApplyDefaults` 一致，避免运行时
-        出现「重启后才被归一」的中间状态）。其他值返回 400
-        （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
-        （`port_forward.transport must be a string`）。
+        `port_forward.transport` 是真正的服务端开关：`ssh` / `h2` 会落库并在热更新里
+        立即启停 SSH 监听器（不需要重启）；已废弃的 `both` 仍返回 200 但存储为 `h2`。
+        其他值返回 400（`port_forward.transport must be one of: ssh,h2,both`），
+        非字符串返回 400（`port_forward.transport must be a string`）。
 
         `user.nickname` 非法值返回 400，与智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）；`user.profile` 超 4000 字符返回 400
@@ -7835,14 +7830,16 @@ paths:
       description: |
         免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
         错误端口导致隧道静默失败。
-        仅返回 `enabled` 与 `port`。指纹、用户名、`ssh -L` 命令与连接统计
+        返回 `enabled`、`port` 与 `transport`（服务端当前使用的隧道方式，
+        `ssh` 或 `h2`；`h2` 时 `enabled` 为 false 且不监听 SSH 端口，客户端据此
+        改走 `/api/tunnel/*`）。指纹、用户名、`ssh -L` 命令与连接统计
         已移至需鉴权的 `/api/ssh/info/full`——其中命令会枚举全部转发端口及其
         内网目标主机，等同于内网拓扑，不应提供给匿名调用方。
       operationId: sshInfo
       security: []
       responses:
         "200":
-          description: 最小 SSH 信息（enabled、port）
+          description: 最小 SSH 信息（enabled、port、transport）
 
   /api/ssh/info/full:
     get:
@@ -7850,7 +7847,8 @@ paths:
       summary: SSH 隧道完整信息
       description: |
         需鉴权。供 Web UI 展示隧道命令、指纹与连接统计。
-        返回 host、port、username、fingerprint、command、connectionStats。
+        返回 host、port、username、fingerprint、command、connectionStats 与
+        transport（服务端当前使用的隧道方式）。
       operationId: sshInfoFull
       responses:
         "200":
@@ -7923,7 +7921,10 @@ paths:
         "502":
           description: 目标不可达（`net.Dial` 失败），响应头未被提前写出。
         "503":
-          description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
+          description: |
+            端口转发不可用：`ProxyService == nil`（无白名单可执行），或服务端当前
+            `port_forward.transport` 为 `ssh`（此时转发只走 SSH 监听器，h2 端点拒绝服务，
+            `msgKey=TunnelTransportDisabled`）。
 
   /api/tunnel/control:
     post:
@@ -7986,7 +7987,9 @@ paths:
         "426":
           description: 请求不是 HTTP/2（`-R` 需要 h2，见上方说明）。
         "503":
-          description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
+          description: |
+            端口转发不可用：`ProxyService == nil`，或服务端 `port_forward.transport`
+            为 `ssh`（h2 端点拒绝服务，`msgKey=TunnelTransportDisabled`）。
 
   /api/fonts/list:
     get:

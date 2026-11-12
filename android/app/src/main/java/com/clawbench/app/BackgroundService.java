@@ -145,6 +145,18 @@ public class BackgroundService extends Service {
     private static final boolean DEFAULT_TUNNEL_TRANSPORT_H2 = true;
 
     /**
+     * The transport the SERVER reported on the last /api/ssh/info read:
+     * {@code "ssh"}, {@code "h2"}, or {@code ""} when unknown (older server, or
+     * the read failed). The server decides and this app follows — the local
+     * preference above is only the fallback when the server cannot be asked.
+     *
+     * <p>Static because the WebView bridge (MainActivity) reports it for the
+     * settings/status rows without holding a service reference, and because
+     * there is exactly one service instance per process.
+     */
+    private static volatile String serverTransport = "";
+
+    /**
      * Marker for the one-time move to the h2 transport. Without it the rewrite
      * would also undo an SSH choice made *after* the migration, on every cold
      * start.
@@ -534,6 +546,30 @@ public class BackgroundService extends Service {
         // default, never a crash on a hot connect path.
         if (prefs == null) return DEFAULT_TUNNEL_TRANSPORT_H2;
         return prefs.getBoolean(KEY_TUNNEL_TRANSPORT_H2, DEFAULT_TUNNEL_TRANSPORT_H2);
+    }
+
+    /**
+     * The transport the server reported on the last /api/ssh/info read
+     * ({@code "ssh"} / {@code "h2"}), or {@code ""} when unknown. Read by the
+     * WebView bridge so the settings and status rows show the server's value
+     * rather than a stale local preference.
+     */
+    public static String getServerTransport() {
+        return serverTransport;
+    }
+
+    /**
+     * Which wire this connection attempt should use.
+     *
+     * <p>The server's {@code port_forward.transport} wins — it is the switch the
+     * server actually enforces (with h2 nothing listens on the SSH port at all,
+     * so dialling SSH would just fail). The local preference is consulted only
+     * when the server could not be asked.
+     */
+    private boolean shouldUseH2() {
+        if ("ssh".equals(serverTransport)) return false;
+        if ("h2".equals(serverTransport)) return true;
+        return isTunnelTransportH2Enabled(this);
     }
 
     /**
@@ -1303,7 +1339,7 @@ public class BackgroundService extends Service {
         // CRITICAL: the tunnel teardown must NOT run on the main thread.
         // disconnectInternal() is a synchronized method sharing the service
         // object lock with ensureConnection(), which performs Session.connect()
-        // (15s timeout) and fetchSSHPort() (5s + 5s) INSIDE that lock. With the
+        // (15s timeout) and the /api/ssh/info read (5s + 5s) INSIDE that lock. With the
         // frontend's reconnect poll keeping a connect attempt in flight almost
         // continuously, calling it here blocked the main thread past Android's
         // 5s input dispatch timeout — the "应用无响应" ANR (the
@@ -1759,11 +1795,11 @@ public class BackgroundService extends Service {
      * Ensure the selected port-forward transport is established, and replay the
      * desired forwards onto it. MUST be called from a background thread.
      *
-     * <p>The selection is the local {@code tunnel_transport_h2_enabled}
-     * preference ({@link #isTunnelTransportH2Enabled}), defaulting to h2 so a
-     * fresh install uses the main port without extra firewall work. The
-     * preference is read here rather than cached in a field, so a cold start /
-     * restart naturally picks up the persisted value.
+     * <p>The wire is chosen by {@link #shouldUseH2()}: the server's reported
+     * transport, falling back to the local {@code tunnel_transport_h2_enabled}
+     * preference only when the server cannot be asked. The server value is
+     * re-read here (not cached across reconnects) so switching it takes effect
+     * on the next attempt instead of after an app restart.
      */
     synchronized void ensureConnection() throws Exception {
         // Never open a session once the service is being destroyed. onDestroy()
@@ -1773,6 +1809,26 @@ public class BackgroundService extends Service {
         if (isShuttingDown) {
             throw new ServiceShuttingDownException();
         }
+        // Ask the server which wire it wants before dispatching — but only when
+        // a (re)connect is actually needed: a live session already runs on the
+        // transport chosen last time, and re-reading on every port add would put
+        // a network round trip on the hot path for nothing. One read also
+        // supplies the SSH port, so the SSH path does not need a second one.
+        SshEndpoint endpoint = null;
+        if (!isSelectedTransportConnected()) {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String serverUrl = prefs.getString(KEY_SERVER_URL, "");
+            Uri uri = serverUrl.isEmpty() ? null : Uri.parse(serverUrl);
+            // `Uri.parse` can be unavailable (null) outside a real Android
+            // runtime; treat that like an unreachable server and fall back to
+            // the local preference rather than guessing a port.
+            if (uri != null) {
+                int httpPort = uri.getPort();
+                if (httpPort < 0) httpPort = serverUrl.startsWith("https://") ? 443 : 80;
+                endpoint = fetchSshEndpoint(serverUrl, httpPort);
+                serverTransport = endpoint.transport;
+            }
+        }
         // The preference change takes effect on the next (re)connect, and that
         // reconnect must not leave the *previous* transport's session/listeners
         // alive: both would then forward the same ports at once. This is the
@@ -1780,21 +1836,26 @@ public class BackgroundService extends Service {
         // without disconnectInternal()), so the teardown has to live here too —
         // forceReconnectAsync() is safe only because it happens to call
         // disconnectInternal() first.
-        if (isTunnelTransportH2Enabled(this)) {
+        if (shouldUseH2()) {
             teardownSshIfAny();
             ensureH2Connection();
             return;
         }
         teardownH2IfAny();
-        ensureSshConnection();
+        ensureSshConnection(endpoint);
     }
 
     /**
      * Establish (or reuse) the SSH session and replay the forwards. Split out of
      * {@link #ensureConnection} so the transport dispatcher above can choose it;
      * the body is the pre-tunnel implementation, unchanged.
+     *
+     * @param endpoint the /api/ssh/info answer already fetched by the dispatcher,
+     *                 or null when it could not be read (server URL unset / the
+     *                 request failed). Null means "ask again here" so the SSH
+     *                 path keeps its own error reporting.
      */
-    private void ensureSshConnection() throws Exception {
+    private void ensureSshConnection(SshEndpoint endpoint) throws Exception {
         // Clear suspended flag — if something is explicitly requesting a connection
         // (addPortForward, screen-on resume), the tunnel is needed.
         sshScreenSuspended = false;
@@ -1822,8 +1883,11 @@ public class BackgroundService extends Service {
             httpPort = serverUrl.startsWith("https://") ? 443 : 80;
         }
 
-        // Fetch SSH port from /api/ssh/info endpoint
-        sshPort = fetchSSHPort(serverUrl, httpPort);
+        // Reuse the dispatcher's read when it has one; otherwise fetch here so
+        // the SSH path still reports a useful error on its own.
+        if (endpoint == null) endpoint = fetchSshEndpoint(serverUrl, httpPort);
+        serverTransport = endpoint.transport;
+        sshPort = endpoint.port;
         if (sshPort <= 0) {
             throw new Exception("Failed to get SSH port from server. Please check that SSH tunnel is enabled in server config.");
         }
@@ -2201,11 +2265,12 @@ public class BackgroundService extends Service {
         PortForwardTransport current = activeTransport;
         if (current != null) return current;
         // No session is live yet. Which transport a port operation should be
-        // issued against is decided by the local preference, NOT by "SSH is the
-        // only one that can be live without activeTransport": under h2 the
-        // adapter still has to release listeners and unbind after a disconnect,
-        // and routing those through JSch would silently skip them.
-        return isTunnelTransportH2Enabled(this) ? h2Transport() : sshTransport();
+        // issued against is decided by the same predicate the dispatcher uses
+        // (server value, else the local preference) — NOT by "SSH is the only
+        // one that can be live without activeTransport": under h2 the adapter
+        // still has to release listeners and unbind after a disconnect, and
+        // routing those through JSch would silently skip them.
+        return shouldUseH2() ? h2Transport() : sshTransport();
     }
 
     /**
@@ -2260,16 +2325,16 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * True when the transport selected by the local
-     * {@code tunnel_transport_h2_enabled} preference has a live session.
+     * True when the selected transport (server value, else the local
+     * preference) has a live session.
      *
-     * <p>The preference decides what "connected" means: under h2 there is no
+     * <p>The selection decides what "connected" means: under h2 there is no
      * JSch session at all, so testing {@code sshSession} alone would report the
      * tunnel down forever. Uses {@link TunnelStreams#peek()} so an SSH install
      * never builds an unused h2 transport just to answer a health check.
      */
     private boolean isSelectedTransportConnected() {
-        if (isTunnelTransportH2Enabled(this)) {
+        if (shouldUseH2()) {
             return tunnelStream().isConnected();
         }
         return sshSession != null && sshSession.isConnected();
@@ -2679,12 +2744,26 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Fetch SSH port from the /api/ssh/info endpoint.
+     * The /api/ssh/info answer: the SSH port to dial ({@code -1} when the
+     * server has no listener) and the server's transport switch ({@code "ssh"},
+     * {@code "h2"}, or {@code ""} on a server that predates it / a failed read).
+     */
+    private static final class SshEndpoint {
+        final int port;
+        final String transport;
+
+        SshEndpoint(int port, String transport) {
+            this.port = port;
+            this.transport = transport;
+        }
+    }
+
+    /**
+     * Fetch the tunnel endpoint from /api/ssh/info.
      * Handles self-signed HTTPS certificates (ClawBench often uses Let's Encrypt or self-signed certs).
-     * Returns the port number, or -1 on failure.
      * MUST be called from a background thread (network I/O).
      */
-    private int fetchSSHPort(String serverUrl, int httpPort) {
+    private SshEndpoint fetchSshEndpoint(String serverUrl, int httpPort) {
         try {
             Uri uri = Uri.parse(serverUrl);
             String scheme = uri.getScheme();
@@ -2716,22 +2795,24 @@ public class BackgroundService extends Service {
                 reader.close();
 
                 JSONObject json = new JSONObject(sb.toString());
+                // The transport is reported even when enabled is false: that is
+                // exactly the h2 case (nothing listens on the SSH port).
+                String transport = json.optString("transport", "");
+                if (!"ssh".equals(transport) && !"h2".equals(transport)) transport = "";
                 boolean enabled = json.optBoolean("enabled", false);
                 if (enabled) {
                     int port = json.optInt("port", -1);
-                    AppLog.i(TAG, "SSH: fetched SSH port " + port + " from /api/ssh/info");
-                    return port;
-                } else {
-                    AppLog.w(TAG, "SSH: SSH server is not enabled on the server");
-                    return -1;
+                    AppLog.i(TAG, "SSH: fetched SSH port " + port + " transport=" + transport + " from /api/ssh/info");
+                    return new SshEndpoint(port, transport);
                 }
-            } else {
-                AppLog.w(TAG, "SSH: /api/ssh/info returned HTTP " + code);
-                return -1;
+                AppLog.w(TAG, "SSH: SSH server is not enabled on the server (transport=" + transport + ")");
+                return new SshEndpoint(-1, transport);
             }
+            AppLog.w(TAG, "SSH: /api/ssh/info returned HTTP " + code);
+            return new SshEndpoint(-1, "");
         } catch (Exception e) {
             AppLog.w(TAG, "SSH: failed to fetch SSH info, will fallback to httpPort+1", e);
-            return -1;
+            return new SshEndpoint(-1, "");
         }
     }
 

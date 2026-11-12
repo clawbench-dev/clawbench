@@ -290,6 +290,22 @@ test('transport preference affects the next reconnect while the live transport s
   assert.equal(app.commands.filter(c => c.method === 'connect').at(-1).transport, 'h2');
 });
 
+test('the wire reported by prepare() wins over the local preference', async () => {
+  // The server decides which transport carries forwards; prepare() reports it
+  // back on the command. The live transport must follow that answer, not the
+  // stored preference — otherwise the status row and the real session disagree
+  // after the operator switches the server.
+  const app = fixture({
+    transport: 'ssh',
+    prepare: async (origin, transport) => ({
+      method: 'connect', origin, transport: 'h2', cookie: 'fixture=token'
+    })
+  });
+  assert.deepEqual(await app.policy.addForwardedPort(3000, 80, ''), { ok: true, port: 3000 });
+  assert.equal(app.policy.getActiveTunnelTransport(), 'h2');
+  assert.equal(app.commands.find(c => c.method === 'connect').transport, 'h2');
+});
+
 test('forgetting ports cancels a pending bind and persists an empty desired set', async () => {
   const pending = deferred();
   const started = deferred();

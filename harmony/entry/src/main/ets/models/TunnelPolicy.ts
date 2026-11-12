@@ -221,6 +221,9 @@ export class TunnelPolicy {
   }
 
   getTunnelTransport(): TunnelTransport {
+    // The LOCAL fallback. The server's port_forward.transport decides what is
+    // actually dialled (see TunnelService.prepare), so this can disagree with
+    // the live wire — getActiveTunnelTransport() reports that one.
     return this.transport;
   }
 
@@ -469,7 +472,12 @@ export class TunnelPolicy {
         this.driver.cancel();
         return false;
       }
-      if (!result.ok && transport === 'ssh' && result.errorType === 'hostkey' &&
+      // The server decides which wire carries forwards; `prepare` reports the
+      // effective one back on the command. Falling back to the requested value
+      // keeps older drivers (which never set it) working.
+      const wire: TunnelTransport = command.transport === 'ssh' || command.transport === 'h2'
+        ? command.transport : transport;
+      if (!result.ok && wire === 'ssh' && result.errorType === 'hostkey' &&
         validHostFingerprint(result.fingerprint || '') && allowPrompt) {
         const fingerprint = result.fingerprint || '';
         let approved = false;
@@ -494,7 +502,7 @@ export class TunnelPolicy {
         return false;
       }
       this.connected = true;
-      this.activeTransport = transport;
+      this.activeTransport = wire;
       this.error = '';
       this.errorType = '';
       this.failures = 0;

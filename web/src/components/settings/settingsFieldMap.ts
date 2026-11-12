@@ -973,12 +973,15 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   portForward: [
     { type: 'panel', config: {
       panelId: 'portForward',
-      // No enable switch: the SSH listener is always on (pinned server-side in
-      // ApplyDefaults). The switch used to live here, but its scope could not
-      // be honest — the listener is server-side while the transport choice is
-      // client-local, so no single value could serve every client of one
-      // server. Removing it also removed the need to explain the difference.
+      // No enable switch: the feature is always available (Enabled is pinned
+      // server-side in ApplyDefaults). What used to be a per-client choice is
+      // now the `port_forward.transport` row below — a server-side switch the
+      // clients follow, so it is visible and editable from the web too.
       commonFields: [
+        { labelKey: 'settings.items.portForwardTransport', descriptionKey: 'settings.items.portForwardTransportDesc', key: 'port_forward.transport', type: 'select', source: 'server', options: [
+          { labelKey: 'proxy.transportH2', value: 'h2' },
+          { labelKey: 'proxy.transportSsh', value: 'ssh' },
+        ] },
         { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: unknown) => v === 0 ? i18n.global.t('settings.items.portForwardPortAuto') : v },
       ],
       // No connectivity test button: the panel's tunnel status row is the single

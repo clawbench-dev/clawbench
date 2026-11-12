@@ -327,46 +327,29 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RecentProjects.MaxCount = 10
 	}
 
-	// --- Port Forward (SSH Tunnel) ---
-	// The SSH tunnel listener is ALWAYS on. It is pinned here rather than left
-	// to the file, for the same reason Transport is pinned below: the switch
-	// that used to control it was removed.
+	// --- Port Forward ---
+	// Enabled only says "the feature exists". Which wire carries the forwards
+	// is decided by Transport below — that is what actually opens or skips the
+	// SSH listener.
 	//
-	// Why it went away: the listener is server-side while the transport choice
-	// is client-local (Electron store / Android SharedPreferences), so a
-	// per-client toggle could never be enforced on the server — and a global
-	// one would let one client silently break another (an h2 desktop client
-	// turning the listener off would strand every SSH client, including the
-	// manual `ssh -L` path the web UI documents). Always-on removes the
-	// conflict instead of arbitrating it, and costs one idle loopback-adjacent
-	// listener that was already the default.
-	//
-	// The bool zero-value trap no longer applies: Enabled is unconditionally
-	// true, so a config that says false is converged on load.
+	// It is pinned here (rather than left to the file) because there is no
+	// longer a per-deployment reason to hide the whole feature: an install that
+	// only exposes the main HTTP port simply runs transport: h2. The bool
+	// zero-value trap no longer applies either, so a config that says false is
+	// converged on load.
 	cfg.PortForward.Enabled = true
 	// Persist host key to avoid SSH fingerprint mismatch after server restart
 	if cfg.PortForward.HostKey == "" {
 		cfg.PortForward.HostKey = filepath.Join(DataDir, "ssh_host_key")
 	}
-	// Transport is pinned to "both" unconditionally — whatever the file says.
+	// Transport is the server-side switch the clients follow. An omitted value,
+	// the retired "both" and anything unrecognized converge on the default
+	// (h2); "ssh" is the only other effective value.
 	//
-	// It is no longer a choice. Once the client-side consumers were removed
-	// (Electron clamps to "ssh" at its IPC boundary, Android uses its own
-	// SharedPreferences switch), the field had exactly two server-side readers
-	// left — the registry gate and the web health-check gate — and both are
-	// satisfied by "both". Pinning it here means the state "the server says
-	// ssh-only" cannot exist, so a client can no longer bypass an operator's
-	// `transport: ssh` by going straight to h2: there is nothing to bypass.
-	//
-	// The field and its three values are KEPT (not deleted) because the web
-	// client's tunnelTransportAllowsH2() reads `port_forward.transport` from
-	// /api/config and only `'h2' | 'both'` are truthy — an absent value would
-	// read as ssh-only and hide the proxy dock tab on an h2-capable server.
-	//
-	// This is the single repair point for hand-edited config.yaml: a value from
-	// a build that knew more transports (or a typo) is overwritten here, since
-	// there is no standalone validator on the load path.
-	cfg.PortForward.Transport = DefaultPortForwardTransport
+	// This is the single repair point for hand-edited config.yaml: there is no
+	// standalone validator on the load path, so garbage would otherwise survive
+	// until the first PATCH.
+	cfg.PortForward.Transport = NormalizePortForwardTransport(cfg.PortForward.Transport)
 
 	// --- TTS ---
 	if cfg.TTS.Engine == "" {

@@ -62,19 +62,13 @@ export type TunnelProbeVerdict = 'ok' | 'failed' | 'unsupported'
 export type TunnelErrorType = 'auth' | 'network' | 'hostkey' | 'unknown' | ''
 
 /**
- * Tunnel transport: the concrete wire that carried the last connect, or `''`
- * when unknown (web mode, or a host that predates the bridge methods).
+ * Tunnel transport: which wire carries the forwards, or `''` when unknown.
  *
- * There is no `'both'`: the automatic mode was removed, and no shipped host
- * reports it — Electron's `getActiveTransport()` is typed `'ssh' | 'h2'` and
- * migrates a stored `'both'` to `'h2'` on load, and Android derives the family
- * from the live session. (The server config still pins `port_forward.transport`
- * to `both`; that is a capability flag, not this value — see
- * `tunnelTransportAllowsH2`.)
+ * There is no `'both'` any more: the server-side switch is `ssh` | `h2`
+ * (`port_forward.transport`), and every client follows the value the server
+ * reports from /api/ssh/info. This type is only used for display.
  */
 export type TunnelTransport = 'ssh' | 'h2' | ''
-
-const TRANSPORTS: readonly string[] = ['ssh', 'h2']
 
 // Module-level shared state
 const ports = ref<ForwardedPort[]>([])
@@ -92,13 +86,10 @@ const tunnelChecking = ref(false)
 const tunnelError = ref('')
 const tunnelErrorType = ref<TunnelErrorType>('')
 
-// The transport the tunnel is configured to use ('ssh' | 'h2'), or '' when it
-// cannot be determined (web mode, or a host that predates the bridge methods).
-// Read from the native layer rather than the server config because the
-// preference lives in the host's own store. There is no automatic mode, so this
-// is also the wire any successful connect carries — the "last live session"
-// view of the bridge is deliberately NOT preferred, it can contradict the
-// picker (see refreshActiveTransport).
+// The transport the server is configured to use ('ssh' | 'h2'), or '' when it
+// cannot be determined yet. The server decides and the clients follow (see
+// `port_forward.transport`), so this is read from the server config rather than
+// from the host's own store — the two used to disagree.
 const activeTransport = ref<TunnelTransport>('')
 
 // True while probeTunnelLink() owns its temporary mapping — drives the probe
@@ -880,11 +871,12 @@ export function usePortForward() {
    * Whether the configured transport can carry traffic over h2, i.e. the tunnel
    * does NOT depend on the SSH listener.
    *
-   * Only 'h2' and 'both' qualify. Anything else — including a missing value
-   * before `/api/config` resolves, and a value from a newer build this client
-   * cannot interpret — is treated as ssh-only: assuming h2 would probe a
-   * transport the operator never enabled. The gate is an OR with SSH, so a
-   * conservative false only skips the check when SSH is off too.
+   * The server only stores 'h2' or 'ssh'; the retired 'both' is still treated
+   * as h2 because that was its meaning ("h2 is available"). Anything else —
+   * including a missing value before `/api/config` resolves, and a value from a
+   * newer build this client cannot interpret — is treated as ssh-only: assuming
+   * h2 would probe a transport the operator never enabled. The gate is an OR
+   * with SSH, so a conservative false only skips the check when SSH is off too.
    */
   function tunnelTransportAllowsH2(): boolean {
     let raw: unknown
@@ -897,49 +889,18 @@ export function usePortForward() {
   }
 
   /**
-   * Refresh `activeTransport` from the native tunnel.
+   * Refresh `activeTransport` from the server's configured transport.
    *
-   * Prefers the CONFIGURED transport (`getTunnelTransport`) and falls back to
-   * the live one. There is no automatic mode any more: the preference names the
-   * single wire every attempt uses, so "what the tunnel runs on" and "what the
-   * user chose" cannot legitimately differ. Reading the live value first made
-   * the status copy contradict the picker above it:
-   *
-   *  - Android reports a live h2 stream whenever one exists, including the one
-   *    kept alive for native background WebSocket work — so a client configured
-   *    for SSH was told `隧道未连接（HTTP/2）`.
-   *  - Electron's live value is the wire of the LAST SUCCESSFUL connect, which
-   *    survives switching to a wire that has not connected yet.
-   *
-   * Both bridge methods are optional, so an older host simply leaves the value
-   * unknown — never throws, never invents a transport.
+   * The transport is a SERVER setting (`port_forward.transport`) that the
+   * clients follow, so this row reports the server's value. It used to read the
+   * host's own preference first — that is precisely what the server-side switch
+   * replaced: two sources could disagree (Android keeps a live h2 stream for
+   * background WebSocket work, so a client configured for SSH was told
+   * `隧道未连接（HTTP/2）`), and a client could keep dialing a wire the operator
+   * had turned off.
    */
   async function refreshActiveTransport(): Promise<void> {
-    if (!isAppMode.value) {
-      activeTransport.value = ''
-      return
-    }
-    const native = getNative()
-    if (!native) {
-      activeTransport.value = ''
-      return
-    }
-    // Bound with .call(native) like the other bridge reads above: Android's
-    // @JavascriptInterface methods are host objects, and extracting them
-    // unbound would drop the receiver.
-    const read = async (method?: unknown): Promise<TunnelTransport> => {
-      if (typeof method !== 'function') return ''
-      try {
-        const value = await (method as () => unknown).call(native)
-        return typeof value === 'string' && TRANSPORTS.includes(value)
-          ? (value as TunnelTransport)
-          : ''
-      } catch {
-        return ''
-      }
-    }
-    const configured = await read(native.getTunnelTransport)
-    activeTransport.value = configured || await read(native.getActiveTunnelTransport)
+    activeTransport.value = tunnelTransportAllowsH2() ? 'h2' : 'ssh'
   }
 
   /**

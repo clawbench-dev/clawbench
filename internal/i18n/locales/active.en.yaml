@@ -409,6 +409,7 @@ ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
 ForgeDisabled: the GitHub/GitLab integration is disabled
 PortForwardUnavailable: port forwarding is not available
+TunnelTransportDisabled: the server uses the SSH tunnel, so the HTTP/2 tunnel is disabled
 TunnelTargetUnreachable: tunnel target is unreachable
 TunnelReverseRequiresHTTP2: reverse forwarding requires HTTP/2; use the SSH transport on HTTP/1.1
 UsageMeterOverTitle: Usage above plan

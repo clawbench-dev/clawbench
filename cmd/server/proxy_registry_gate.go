@@ -21,12 +21,10 @@ import "clawbench/internal/model"
 //
 //	cfg.PortForward.Enabled || cfg.PortForward.Transport != model.TransportSSH
 //
-// and its one false cell was `transport: "ssh"` with Enabled == false. That
-// cell is no longer expressible: model.ApplyDefaults pins
-// cfg.PortForward.Transport to "both" on every load (internal/model/defaults.go),
-// so the comparison was always true. Keeping the expression would advertise a
-// configurability that does not exist — and would re-open the hole it was
-// written to close if anyone ever made the transport settable again.
+// and its one false cell was `transport: "ssh"` with Enabled == false, which is
+// no longer expressible: ApplyDefaults pins Enabled to true (the feature is
+// always available; Transport picks the wire). Keeping the expression would
+// advertise a configurability that does not exist.
 //
 // Do NOT reintroduce the older gate (`cfg.PortForward.Enabled` alone): that
 // handed every tunnel request a nil registry and a 503
@@ -34,8 +32,8 @@ import "clawbench/internal/model"
 //
 // Creating the registry is side-effect-free with respect to SSH: it starts only
 // a 5s health-check goroutine and restores persisted port rows from the
-// database. It binds no port — listening remains ssh.NewServer's job, still
-// gated on PortForward.Enabled.
+// database. It binds no port — listening is ssh.NewServer's job, gated on the
+// transport (see shouldListenSSH).
 func shouldCreateProxyRegistry(_ model.Config) bool {
 	return true
 }

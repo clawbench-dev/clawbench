@@ -401,6 +401,7 @@ ForgeEventLabelAuthor: 作者
 ForgeEventViewDetail: 查看详情
 ForgeDisabled: GitHub/GitLab 集成已关闭
 PortForwardUnavailable: 端口转发不可用
+TunnelTransportDisabled: 服务端当前使用 SSH 隧道，HTTP/2 隧道已关闭
 TunnelTargetUnreachable: 隧道目标不可达
 TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输
 UsageMeterOverTitle: 用量超出计划

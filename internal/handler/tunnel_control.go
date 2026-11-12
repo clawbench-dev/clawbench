@@ -434,6 +434,14 @@ func TunnelControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Transport guard: with transport "ssh" the server carries forwards over
+	// the SSH listener only, so this endpoint must refuse rather than bind
+	// ports the operator turned off.
+	if !h2TransportEnabled() {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "TunnelTransportDisabled")
+		return
+	}
+
 	// `-R` needs HTTP/2, and refusing h1 here makes that failure clear and
 	// early. The reason is tunnelBinding: a claim is scoped to
 	// Binding.ConnID = r.RemoteAddr, which on h2 is the whole multiplexed

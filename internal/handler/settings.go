@@ -179,10 +179,8 @@ var hotReloadFields = map[string]bool{
 	"meeting.language":           true,
 	"meeting.file_excerpts":      true,
 	"meeting.minutes_max_tokens": true,
-	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded.
-	// port_forward.transport is accepted but has no effect: it is pinned to
-	// "both" (see applyConfigPatch), so listing it here only avoids reporting a
-	// restart for a field that did not change.
+	// Port Forward — transport decides which listener exists; switching it
+	// starts or stops the SSH listener (see hotReloadSSH in cmd/server).
 	"port_forward.enabled":       true,
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
@@ -1390,18 +1388,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			RetentionDays:  cfg.RAG.RetentionDays,
 		},
 		PortForward: configPortForward{
-			// Pinned rather than echoed, like Transport below: the listener is
-			// always on (see ApplyDefaults), so reporting a stored false would
-			// only describe a state the runtime cannot be in.
+			// Pinned rather than echoed: the feature itself is always available
+			// (see ApplyDefaults). Which wire carries it is Transport below.
 			Enabled: true,
 			Port:    cfg.PortForward.Port,
-			// Pinned rather than echoed: the field is no longer configurable
-			// (see ApplyDefaults / applyConfigPatch), and the read point is the
-			// last place a stale value could leak to the web client's
-			// tunnelTransportAllowsH2() — which treats anything but h2/both as
-			// ssh-only and would hide the h2 panel. Always report the pinned
-			// constant.
-			Transport: model.DefaultPortForwardTransport,
+			// The server-side switch the clients follow. ApplyDefaults has
+			// already normalized it, so this is always "ssh" or "h2".
+			Transport: cfg.PortForward.Transport,
 		},
 		Summarize: configSummarize{
 			TTSBackend:    cfg.Summarize.TTSBackend,
@@ -2575,11 +2568,10 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
-	// port_forward.transport — accepted for API compatibility, then ignored.
-	// The field is pinned to "both" (see applyConfigPatch), so a caller that
-	// still sends ssh/h2/both gets a 200 and reads "both" back. An unrecognized
-	// value is still a 400: it is a caller bug, and silently storing it would
-	// put garbage in config.yaml for the next load to converge.
+	// port_forward.transport — the server-side switch clients follow. The
+	// retired "both" is still accepted (old clients send it) and normalized to
+	// h2 on apply; anything unrecognized is a 400 rather than a stored value
+	// that would only be converged on the next load.
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
 		if raw, present := pf["transport"]; present {
 			v, ok := raw.(string)
@@ -3017,11 +3009,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
-		// port_forward.enabled is deliberately NOT applied: the SSH listener is
-		// always on (see ApplyDefaults). It stays accepted so an older client
-		// that still sends it gets a 200 rather than a 400, and the value is
-		// pinned back to true here so a PATCH cannot leave the runtime — or the
-		// file — disagreeing with the load-time invariant.
+		// port_forward.enabled is deliberately NOT applied: the feature itself
+		// is always available (see ApplyDefaults); which wire carries it is the
+		// transport below. It stays accepted so an older client that still
+		// sends it gets a 200 rather than a 400, and the value is pinned back
+		// to true here so a PATCH cannot leave the runtime — or the file —
+		// disagreeing with the load-time invariant.
 		cfg.PortForward.Enabled = true
 		if v, ok := pf["port"].(float64); ok {
 			cfg.PortForward.Port = int(v)
@@ -3029,14 +3022,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := pf["allowed_ports"].(string); ok {
 			cfg.PortForward.AllowedPorts = v
 		}
-		// The transport is pinned, whether or not the patch carried it: any
-		// port_forward PATCH leaves the runtime at "both". The value the caller
-		// sent is deliberately not applied (that is the whole point — the state
-		// "the server says ssh-only" must not be expressible), and an omitted
-		// field must not leave a stale value behind either. Dropping it here
-		// rather than rejecting it in the validator keeps `ssh` a 200 while GET
-		// keeps answering "both".
-		cfg.PortForward.Transport = model.DefaultPortForwardTransport
+		// Only applied when the patch carries it: omitting the field must not
+		// reset the operator's choice. The retired "both" (old clients still
+		// send it) normalizes to "h2".
+		if v, ok := pf["transport"].(string); ok {
+			cfg.PortForward.Transport = model.NormalizePortForwardTransport(v)
+		}
 	}
 
 	if summarize, ok := patch["summarize"].(map[string]any); ok {

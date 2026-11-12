@@ -3862,7 +3862,7 @@ export default {
       portForwardPortAutoResolved: 'Auto ({port})',
       portForwardPortDesc: 'Port the SSH tunnel server listens on, 0 for auto-assign (main port + 1)',
       portForwardTransport: 'Tunnel Transport',
-      portForwardTransportDesc: 'Which channel carries the port forwards; reconnects automatically on save',
+      portForwardTransportDesc: 'The server picks the channel and every client follows. Takes effect on save; with HTTP/2 the server stops listening on the SSH port',
       tunnelStatusConnected: 'Tunnel connected',
       tunnelStatusServerReady: 'Server ready — connect with the app or ssh to start tunneling',
       tunnelStatusServerReadyH2: 'Server ready — port mapping runs over H2 (main port)',

@@ -4053,11 +4053,17 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * The transport preference currently in effect, derived from the local
-         * toggle: {@code "h2"} when enabled, {@code "ssh"} otherwise.
+         * The transport in effect: the SERVER's {@code port_forward.transport}
+         * when it has been read, otherwise the local toggle's value.
+         *
+         * <p>The server decides and this app follows, so reporting the local
+         * preference here would let the settings/status rows describe a wire the
+         * server has already turned off.
          */
         @JavascriptInterface
         public String getTunnelTransport() {
+            String fromServer = BackgroundService.getServerTransport();
+            if ("ssh".equals(fromServer) || "h2".equals(fromServer)) return fromServer;
             return BackgroundService.isTunnelTransportH2Enabled(activity) ? "h2" : "ssh";
         }
 

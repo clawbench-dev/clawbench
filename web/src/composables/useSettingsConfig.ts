@@ -728,6 +728,9 @@ const serverDefaults: Record<string, unknown> = {
   'meeting.file_excerpts': true,
   'meeting.minutes_max_tokens': 0,
   'port_forward.allowed_ports': '1024-65535',
+  // Mirrors the server default (h2) so the transport row shows a value before
+  // /api/config lands instead of a blank select.
+  'port_forward.transport': 'h2',
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',

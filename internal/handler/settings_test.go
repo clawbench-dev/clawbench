@@ -3336,15 +3336,13 @@ func TestServeConfig_Patch_BingFileRejected(t *testing.T) {
 
 // --- port_forward.transport ---
 //
-// The field is PINNED to "both" on both the load path (ApplyDefaults) and the
-// PATCH path (applyConfigPatch). It is still whitelisted and still serialized
-// because the web client's tunnelTransportAllowsH2() reads it from /api/config,
-// but its value is ignored: `ssh`/`h2`/`both` all round-trip as `both`.
+// The field is a real server-side switch: PATCH stores what it was given
+// (normalized), GET echoes it, and the hot-reload path starts or stops the SSH
+// listener accordingly. The retired "both" is still accepted from old clients
+// and normalized to "h2".
 
-// The PATCH must accept the value, report no restart, and — critically — store
-// "both" rather than what was sent. A PATCH that wrote the value through would
-// leave the runtime in a state ApplyDefaults never allows, and a restart would
-// then silently change it.
+// A PATCH must store the transport it was given and must not demand a restart:
+// switching it starts/stops the SSH listener in place (cmd/server/hotReloadSSH).
 func TestServeConfigPatch_PortForwardTransport(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -3358,28 +3356,25 @@ func TestServeConfigPatch_PortForwardTransport(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-		"the transport is pinned; the patched value must not be applied")
+	assert.Equal(t, model.TransportH2, model.ConfigInstance.PortForward.Transport,
+		"the patched transport must be applied")
 
 	// Hot-reload: the change must not demand a restart.
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.False(t, resp["needs_restart"].(bool), "transport is a hot-reload field")
 
-	// GET must echo the PINNED value, not the patched one.
+	// GET must echo the stored value.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
 	assert.Equal(t, http.StatusOK, gw.Code)
-	assert.Contains(t, gw.Body.String(), `"transport":"both"`)
+	assert.Contains(t, gw.Body.String(), `"transport":"h2"`)
 }
 
-// TestServeConfigPatch_PortForwardTransportSSHStaysBoth is the core invariant:
-// patching `transport: ssh` — the value that used to confine the tunnel to SSH
-// — is accepted (200) but the runtime and GET both stay "both". This is the
-// regression guard for review M5: the state "the server says ssh-only" must not
-// be expressible, so no client can bypass it.
-func TestServeConfigPatch_PortForwardTransportSSHStaysBoth(t *testing.T) {
+// The ssh value is the one that confines the tunnel to the SSH listener — it
+// must survive the round trip, otherwise the switch could only ever select h2.
+func TestServeConfigPatch_PortForwardTransportSSHIsApplied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -3391,24 +3386,27 @@ func TestServeConfigPatch_PortForwardTransportSSHStaysBoth(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusOK, w.Code, "ssh is a recognized value, so it is a 200")
-	assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-		"patching ssh must still leave the runtime pinned to both")
+	assert.Equal(t, http.StatusOK, w.Code, "ssh is a recognized value")
+	assert.Equal(t, model.TransportSSH, model.ConfigInstance.PortForward.Transport,
+		"patching ssh must confine the runtime to the SSH listener")
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
 	assert.Equal(t, http.StatusOK, gw.Code)
-	assert.Contains(t, gw.Body.String(), `"transport":"both"`)
-	assert.NotContains(t, gw.Body.String(), `"transport":"ssh"`,
-		"GET must never report ssh — the web client would then hide the h2 panel")
+	assert.Contains(t, gw.Body.String(), `"transport":"ssh"`)
 }
 
-// Each of the three values must be accepted and stored as "both" — a validator
-// that only knew two of them would silently reject a legitimate setting, and
-// the pin must apply to all three equally.
+// Each accepted value must be stored — except the retired "both", which is
+// normalized to "h2" (its old meaning was "h2 is available, probe it first").
+// Old clients still send it, so rejecting it would break their save.
 func TestServeConfigPatch_PortForwardTransportAcceptedValues(t *testing.T) {
-	for _, sent := range []string{model.TransportSSH, model.TransportH2, model.TransportBoth} {
+	tests := map[string]string{
+		model.TransportSSH:  model.TransportSSH,
+		model.TransportH2:   model.TransportH2,
+		model.TransportBoth: model.TransportH2,
+	}
+	for sent, want := range tests {
 		t.Run(sent, func(t *testing.T) {
 			_, teardown := setupTestEnv(t)
 			defer teardown()
@@ -3422,8 +3420,8 @@ func TestServeConfigPatch_PortForwardTransportAcceptedValues(t *testing.T) {
 			w := callHandler(ServeConfig, req)
 
 			assert.Equal(t, http.StatusOK, w.Code)
-			assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-				"%q must be accepted and normalized to both", sent)
+			assert.Equal(t, want, model.ConfigInstance.PortForward.Transport,
+				"%q must be accepted and stored as %q", sent, want)
 		})
 	}
 }
@@ -3555,15 +3553,13 @@ func TestServeConfigPatch_PortForwardTransportWrongTypeRejected(t *testing.T) {
 	}
 }
 
-// Omitting the field must leave the stored value pinned to "both" — the
-// validator must not treat "absent" as "invalid", and an unrelated
-// port_forward PATCH must not un-pin the transport.
+// Omitting the field must leave the stored value alone — the validator must not
+// treat "absent" as "invalid", and an unrelated port_forward PATCH must not
+// silently reset the operator's transport choice.
 func TestServeConfigPatch_PortForwardTransportAbsentKeepsValue(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Seed a stale value on purpose: even a ConfigInstance that somehow holds
-	// "ssh" must come out of the patch path as "both".
 	cfg := model.Config{}
 	cfg.PortForward.Transport = model.TransportSSH
 	model.ConfigInstance = cfg
@@ -3575,36 +3571,39 @@ func TestServeConfigPatch_PortForwardTransportAbsentKeepsValue(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, model.TransportBoth, model.ConfigInstance.PortForward.Transport,
-		"an unrelated port_forward PATCH must leave the transport pinned to both")
+	assert.Equal(t, model.TransportSSH, model.ConfigInstance.PortForward.Transport,
+		"an unrelated port_forward PATCH must not reset the transport")
 }
 
-// GET /api/config must expose the transport pinned to "both" regardless of what
-// the in-memory config holds (the frontend reads it to decide whether to show
-// the h2 panel), and must not expose host_key.
+// GET /api/config must expose the stored transport (the web client reads it to
+// decide whether the h2 panel is reachable) and must not expose host_key.
 func TestServeConfigGet_PortForwardExposesTransport(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
+	for _, want := range []string{model.TransportSSH, model.TransportH2} {
+		t.Run(want, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
 
-	cfg := model.Config{}
-	cfg.PortForward.Enabled = true
-	cfg.PortForward.Port = 2222
-	cfg.PortForward.Transport = model.TransportH2 // stale/injected — GET must ignore it
-	cfg.PortForward.HostKey = "/secret/host_key"
-	model.ConfigInstance = cfg
+			cfg := model.Config{}
+			cfg.PortForward.Enabled = true
+			cfg.PortForward.Port = 2222
+			cfg.PortForward.Transport = want
+			cfg.PortForward.HostKey = "/secret/host_key"
+			model.ConfigInstance = cfg
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
+			req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	pf, ok := resp["port_forward"].(map[string]any)
-	require.True(t, ok, "port_forward must be present")
-	assert.Equal(t, "both", pf["transport"], "GET must report the pinned value, not the stored one")
-	assert.NotContains(t, pf, "host_key", "host_key must stay server-side")
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			pf, ok := resp["port_forward"].(map[string]any)
+			require.True(t, ok, "port_forward must be present")
+			assert.Equal(t, want, pf["transport"], "GET must report the stored transport")
+			assert.NotContains(t, pf, "host_key", "host_key must stay server-side")
+		})
+	}
 }
 
 // TestValidatePatchValues_MCPServers pins the save-time checks. The command

@@ -1464,10 +1464,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		proxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 
 		// Reverse mappings bind ports on the server, so ClawBench's own HTTP
-		// port must never be handed out. The SSH port is always reserved: the
-		// listener is always on (see the start below), and reserving a port
-		// that is actually in use is the point — a reverse mapping that took
-		// 20001 would fight the tunnel itself.
+		// port must never be handed out. The SSH port stays reserved even when
+		// the transport is h2: otherwise a reverse mapping could squat 20001
+		// and a later switch back to ssh would fail to bind.
 		sshPort := cfg.PortForward.Port
 		if sshPort == 0 {
 			sshPort = port + 1
@@ -1477,11 +1476,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		defer proxyService.Stop()
 	}
 
-	// The SSH tunnel listener is always on; see ApplyDefaults for why the
-	// switch was removed.
-	sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-	startSSHServer(sshServerRef)
-	defer func() { sshServerRef.Close() }()
+	// The SSH listener exists only when the server's transport is ssh. With h2
+	// the forwards ride the always-on main HTTP server instead, so nothing
+	// listens on 20001 at all (see ApplyDefaults / shouldListenSSH).
+	if shouldListenSSH(cfg) {
+		sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+		startSSHServer(sshServerRef)
+		defer func() { sshServerRef.Close() }()
+	}
 
 	// Initialize DingTalk push notifications (enterprise internal bot via Stream API).
 	// DingTalk is disabled by default; requires app_key + app_secret configuration.
@@ -2501,15 +2503,26 @@ func hotReloadSSH(cfg model.Config, port int) {
 		service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 	}
 
-	// The SSH listener is always on (cfg.PortForward.Enabled is pinned true in
-	// ApplyDefaults and in the PATCH path), so there is no "disable it" branch
-	// here any more — the listener either needs starting, restarting on a new
-	// port, or just reconfiguring.
+	// The transport decides whether an SSH listener should exist at all. It is
+	// the server-side switch the clients follow, so a PATCH that changes it has
+	// to actually start or stop the listener here — otherwise "transport: h2"
+	// would only be a hint.
 	newPort := cfg.PortForward.Port
 	if newPort == 0 {
 		newPort = port + 1
 	}
 	reserveSSHPorts(port, newPort)
+
+	if !shouldListenSSH(cfg) {
+		if sshRef != nil {
+			sshRef.Close()
+			// Unpublish through the compare-and-clear so a concurrently started
+			// successor is not stranded with a nil reference.
+			handler.ClearSSHServer(sshRef)
+			slog.Info("hot-reload: SSH tunnel listener stopped (transport is h2)")
+		}
+		return
+	}
 
 	if sshRef == nil {
 		// SSH was disabled (or its listener failed to bind) — start it. The

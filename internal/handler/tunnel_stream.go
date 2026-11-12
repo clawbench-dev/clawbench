@@ -61,6 +61,14 @@ func TunnelStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Transport guard: the server's configured transport decides which wire
+	// carries forwards. With "ssh" the h2 endpoints must refuse instead of
+	// quietly serving a path the operator turned off.
+	if !h2TransportEnabled() {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "TunnelTransportDisabled")
+		return
+	}
+
 	// The claim branch is checked first and ignores host/port entirely: a
 	// token names an already-accepted connection, so letting host/port alter
 	// the destination would be a second, unchecked dial path.

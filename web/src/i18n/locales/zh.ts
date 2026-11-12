@@ -3856,7 +3856,7 @@ export default {
       portForwardPortAutoResolved: '自动（{port}）',
       portForwardPortDesc: 'SSH 隧道服务端监听端口，0 表示自动分配（主端口 + 1）',
       portForwardTransport: '隧道传输方式',
-      portForwardTransportDesc: '选择端口映射使用的传输通道，保存后自动重连生效',
+      portForwardTransportDesc: '服务端决定用哪条通道，所有客户端跟随；保存后生效，选 HTTP/2 时服务端不再监听 SSH 端口',
       tunnelStatusConnected: '隧道已连接',
       tunnelStatusServerReady: '服务器已就绪，可用 App 或 ssh 建立隧道',
       tunnelStatusServerReadyH2: '服务器已就绪，端口映射走 H2（主端口）',

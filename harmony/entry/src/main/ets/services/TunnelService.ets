@@ -25,6 +25,8 @@ interface TrustedHost {
 interface SshInfo {
   enabled: boolean;
   port: number;
+  /** The server's transport switch. Absent on servers that predate it. */
+  transport?: string;
 }
 
 class TunnelPlatform implements TunnelDriver {
@@ -115,7 +117,7 @@ class TunnelPlatform implements TunnelDriver {
     });
   }
 
-  async prepare(origin: string, transport: TunnelTransport, isCurrent: () => boolean): Promise<TunnelCommand> {
+  async prepare(origin: string, requestedTransport: TunnelTransport, isCurrent: () => boolean): Promise<TunnelCommand> {
     const address = parseServerAddress(origin);
     if (address.origin !== origin || !isCurrent()) {
       throw new Error('Tunnel server changed');
@@ -125,9 +127,6 @@ class TunnelPlatform implements TunnelDriver {
       cookie = nativeCookieHeader(origin, webview.WebCookieManager.fetchCookieSync(origin + '/api/tunnel/stream'));
     } catch (_) {
       throw new TunnelFailure('auth', 'Native login session unavailable; sign in again');
-    }
-    if (transport === 'h2') {
-      return { method: 'connect', transport, origin, cookie };
     }
     const request = http.createHttp();
     this.requests.push(request);
@@ -142,12 +141,29 @@ class TunnelPlatform implements TunnelDriver {
         maxLimit: 65536,
         expectDataType: http.HttpDataType.STRING
       });
-      if (!isCurrent() || response.responseCode !== 200) {
+      if (!isCurrent()) {
+        throw new TunnelFailure('network', 'SSH information unavailable');
+      }
+      let info: SshInfo | undefined;
+      if (response.responseCode === 200) {
+        try {
+          info = JSON.parse(String(response.result)) as SshInfo;
+        } catch (_) {
+          info = undefined;
+        }
+      }
+      // The server decides which wire carries forwards and this client follows;
+      // the stored preference is only the fallback for a server that cannot
+      // answer (older build / a failed read).
+      const transport: TunnelTransport = info?.transport === 'ssh' || info?.transport === 'h2'
+        ? info.transport as TunnelTransport : requestedTransport;
+      if (transport === 'h2') {
+        return { method: 'connect', transport, origin, cookie };
+      }      if (response.responseCode !== 200) {
         throw new TunnelFailure(response.responseCode === 401 || response.responseCode === 403 ? 'auth' : 'network',
           'SSH information unavailable');
       }
-      const info = JSON.parse(String(response.result)) as SshInfo;
-      if (info.enabled !== true || !validTunnelPort(info.port)) {
+      if (!info || info.enabled !== true || !validTunnelPort(info.port)) {
         throw new TunnelFailure('disabled', 'SSH is not enabled on this server');
       }
       const password = await this.password(origin);

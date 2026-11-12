@@ -70,6 +70,10 @@ func ClearSSHServer(s *ssh.Server) {
 // host, which is a map of the operator's internal network and has no business
 // being served to anonymous callers. Those fields moved to the authenticated
 // ServeSSHInfoFull.
+//
+// `transport` IS included, even when enabled is false: it is how the native
+// clients learn which wire the server wants (ssh vs h2). Without it they would
+// keep their own local choice and could dial a wire the server turned off.
 func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -78,15 +82,17 @@ func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {
 	sshRef := GetSSHServer()
 	if sshRef == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": false,
-			"port":    0,
+			"enabled":   false,
+			"port":      0,
+			"transport": configuredTransport(),
 		})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": true,
-		"port":    sshRef.Port(),
+		"enabled":   true,
+		"port":      sshRef.Port(),
+		"transport": configuredTransport(),
 	})
 }
 
@@ -110,6 +116,7 @@ func ServeSSHInfoFull(w http.ResponseWriter, r *http.Request) {
 			"fingerprint":     "",
 			"command":         "",
 			"connectionStats": nil,
+			"transport":       configuredTransport(),
 		})
 		return
 	}
@@ -173,5 +180,6 @@ func ServeSSHInfoFull(w http.ResponseWriter, r *http.Request) {
 		"fingerprint":     fingerprint,
 		"command":         command,
 		"connectionStats": sshRef.ConnectionStats(),
+		"transport":       configuredTransport(),
 	})
 }

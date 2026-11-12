@@ -23,15 +23,13 @@ func ServeProxyPorts(w http.ResponseWriter, r *http.Request) {
 
 // requireProxyRegistry writes a 503 and reports false when no registry exists.
 //
-// The registry is created whenever a transport could carry traffic (see
-// cmd/server/proxy_registry_gate.go), so nil is only reachable with
-// `port_forward.transport: ssh` and `enabled: false` — the configuration where
-// port forwarding is provably off. Every handler on this surface used to
-// dereference service.ProxyService directly, which was safe only while the
-// registry was created for every non-SSH-disabled install; now that a
-// configuration exists where it is absent, each entry point must answer with a
-// refusal instead of a panic (the panic would be a 500 recovered by middleware,
-// not a crash, but "port forwarding unavailable" is the honest answer).
+// The registry is created unconditionally at startup (see
+// cmd/server/proxy_registry_gate.go) because it is shared by both transports,
+// so nil is only reachable if creation itself failed. Every handler on this
+// surface used to dereference service.ProxyService directly; each entry point
+// keeps this guard so a failed startup answers with a refusal instead of a
+// panic (the panic would be a 500 recovered by middleware, not a crash, but
+// "port forwarding unavailable" is the honest answer).
 func requireProxyRegistry(w http.ResponseWriter, r *http.Request) bool {
 	if service.ProxyService == nil {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "PortForwardUnavailable")

@@ -183,6 +183,9 @@ public class BackgroundServiceTransportTest {
         setStaticField("isRunning", true);
         setStaticField("nativeWsNeeded", false);
         setStaticField("lastError", null);
+        // The server-reported transport is process-global state; without this a
+        // case that pins it would leak into every later test in the class.
+        setStaticField("serverTransport", "");
 
         prefsData = new HashMap<>();
         prefsBools = new HashMap<>();
@@ -275,6 +278,43 @@ public class BackgroundServiceTransportTest {
         assertTrue(BackgroundService.isTunnelTransportH2Enabled(service));
         BackgroundService.setTunnelTransportH2Enabled(service, false);
         assertFalse(BackgroundService.isTunnelTransportH2Enabled(service));
+    }
+
+    @Test
+    public void ensureConnection_serverSaysH2_overridesTheLocalSshPreference() throws Exception {
+        // The server's port_forward.transport is what actually exists: with h2
+        // nothing listens on the SSH port, so a local "ssh" choice must not win.
+        selectSshPreference();
+        setStaticField("serverTransport", "h2");
+        tunnel.connected = false;
+        setField("activeTransport", null);
+
+        service.ensureConnection();
+
+        assertTrue("the h2 session must be built", tunnel.connected);
+        assertSame("the h2 adapter must become the active transport", h2, getField("activeTransport"));
+    }
+
+    @Test
+    public void ensureConnection_serverSaysSsh_overridesTheLocalH2Preference() throws Exception {
+        // The mirror case: with transport ssh the server refuses the h2
+        // endpoints, so dialling h2 would only fail later. No SSH endpoint can
+        // be resolved here (server URL unset), which is the observable proof the
+        // SSH branch was chosen.
+        enableH2Preference();
+        setStaticField("serverTransport", "ssh");
+        tunnel.connected = false;
+        setField("activeTransport", null);
+        serverUrl = null;
+
+        try {
+            service.ensureConnection();
+        } catch (Exception expected) {
+            // "Server URL not configured" from ensureSshConnection.
+        }
+
+        assertFalse("the h2 path must not run when the server says ssh", tunnel.connected);
+        assertNull("no h2 adapter may be adopted", getField("activeTransport"));
     }
 
     @Test
