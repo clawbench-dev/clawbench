@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   toastShow: vi.fn(),
   copyText: vi.fn(),
   openExternalUrl: vi.fn(),
+  openFilePath: vi.fn().mockResolvedValue(true),
   confirm: vi.fn().mockResolvedValue(true),
   compose: vi.fn().mockResolvedValue(true),
   openSystemMail: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: h.confi
 vi.mock('@/utils/clipboard', () => ({ copyText: (t: string, ok?: () => void) => { h.copyText(t); ok?.() } }))
 vi.mock('@/utils/externalLink', () => ({ openExternalUrl: (u: string) => h.openExternalUrl(u) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
+vi.mock('@/composables/useFilePathAnnotation', () => ({ openFilePath: h.openFilePath }))
 vi.mock('@/composables/useShareLinks', () => ({ buildShareLinks: h.buildShareLinks }))
 vi.mock('@/composables/useMailCompose', () => ({ useMailCompose: () => ({ compose: h.compose }) }))
 vi.mock('@/utils/shareActions', () => ({
@@ -75,7 +77,11 @@ const i18n = createI18n({
         meetingPrivate: 'Private',
         meetingPrivateHint: 'Private hint',
         meetingSharedHint: 'Shared hint',
-        open: 'Open',
+        openPage: 'Open page',
+        openFile: 'Open file',
+        openDir: 'Open folder',
+        openSession: 'Open conversation',
+        openMeeting: 'Open meeting',
         copy: 'Copy link',
         copied: 'Link copied',
         shareTo: 'Share to another app',
@@ -365,6 +371,111 @@ describe('ShareCenterPanel — actions', () => {
     expect(del, 'the file share list endpoint must be called with DELETE').toBeTruthy()
     expect(JSON.parse(String(del!.init!.body))).toEqual({ token: 'f1' })
     expect(wrapper.findAll('.share-row')).toHaveLength(3)
+  })
+})
+
+describe('ShareCenterPanel — opening the source', () => {
+  /** Capture the deep-link events the panel dispatches to other panels. */
+  function captureEvents(names: string[]) {
+    const seen: Array<{ type: string; detail: unknown }> = []
+    const bound = names.map((name) => {
+      const fn = (e: Event) => seen.push({ type: name, detail: (e as CustomEvent).detail })
+      window.addEventListener(name, fn)
+      return { name, fn }
+    })
+    return { seen, stop: () => bound.forEach((b) => window.removeEventListener(b.name, b.fn)) }
+  }
+
+  function stubWithDir() {
+    return stubFetch({
+      '/api/share/list': () => ({
+        body: {
+          shares: [
+            { token: 'f1', name: 'report.md', path: 'docs/report.md', createdAt: '2026-11-01T00:00:00Z', exists: true, isDir: false },
+            { token: 'd1', name: 'docs', path: 'docs', createdAt: '2026-10-20T00:00:00Z', exists: true, isDir: true },
+            { token: 'f2', name: 'old.txt', path: 'old.txt', createdAt: '2026-10-01T00:00:00Z', exists: false, isDir: false },
+          ],
+        },
+      }),
+      '/api/share/session/list': () => ({ body: SESSIONS }),
+      '/api/live-share/notes/sessions': () => ({ body: MEETINGS }),
+    })
+  }
+
+  it('opens a shared file through the shared path primitive, tagged as a share jump', async () => {
+    stubWithDir()
+    const wrapper = await openRow('report.md')
+
+    await wrapper.find('[data-action="open-source"]').trigger('click')
+
+    // `share` as the source is what makes Back return to this panel.
+    expect(h.openFilePath).toHaveBeenCalledWith('docs/report.md', undefined, undefined, 'share')
+    expect(wrapper.find('[data-action="open-source"]').text()).toBe('Open file')
+  })
+
+  it('opens a shared folder the same way (the primitive picks the file manager)', async () => {
+    stubWithDir()
+    const wrapper = await openRow('docs')
+
+    expect(wrapper.find('[data-action="open-source"]').text()).toBe('Open folder')
+    await wrapper.find('[data-action="open-source"]').trigger('click')
+    expect(h.openFilePath).toHaveBeenCalledWith('docs', undefined, undefined, 'share')
+  })
+
+  it('opens a shared conversation by session id', async () => {
+    stubWithDir()
+    const events = captureEvents(['clawbench-open-session'])
+    try {
+      const wrapper = await openRow('发版讨论')
+      expect(wrapper.find('[data-action="open-source"]').text()).toBe('Open conversation')
+
+      await wrapper.find('[data-action="open-source"]').trigger('click')
+      expect(events.seen).toEqual([
+        { type: 'clawbench-open-session', detail: { sessionId: 'sess-1' } },
+      ])
+    } finally {
+      events.stop()
+    }
+  })
+
+  it('opens a shared meeting by its record token', async () => {
+    stubWithDir()
+    const events = captureEvents(['clawbench-open-meeting'])
+    try {
+      const wrapper = await openRow('周会')
+      expect(wrapper.find('[data-action="open-source"]').text()).toBe('Open meeting')
+
+      await wrapper.find('[data-action="open-source"]').trigger('click')
+      expect(events.seen).toEqual([
+        { type: 'clawbench-open-meeting', detail: { token: 'm1' } },
+      ])
+    } finally {
+      events.stop()
+    }
+  })
+
+  it('hides the open action when the source is gone, and keeps the share page', async () => {
+    stubWithDir()
+
+    // Deleted file.
+    const deleted = await openRow('old.txt')
+    expect(deleted.find('[data-action="open-source"]').exists()).toBe(false)
+    expect(deleted.find('[data-action="open-page"]').exists()).toBe(true)
+
+    // Archived conversation: not addressable by id, so there is nothing to open.
+    const archived = await openRow('旧对话')
+    expect(archived.find('[data-action="open-source"]').exists()).toBe(false)
+    expect(archived.find('[data-action="open-page"]').exists()).toBe(true)
+  })
+
+  it('keeps "open page" as a separate action that opens the public link', async () => {
+    stubWithDir()
+    const wrapper = await openRow('report.md')
+
+    await wrapper.find('[data-action="open-page"]').trigger('click')
+    expect(h.openExternalUrl).toHaveBeenCalledWith('http://10.0.0.5:20000/share/f1')
+    // Opening the page is not opening the file.
+    expect(h.openFilePath).not.toHaveBeenCalled()
   })
 })
 

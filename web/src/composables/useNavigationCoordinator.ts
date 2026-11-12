@@ -147,6 +147,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'proxy') return t('file.nav.backToPortForward')
     if (surface === 'notifications') return t('file.nav.backToNotifications')
     if (surface === 'live') return t('file.nav.backToMeeting')
+    if (surface === 'share') return t('file.nav.backToShare')
     return t('common.back')
   }
 
@@ -506,7 +507,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
-    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings' || surface === 'notifications' || surface === 'live') {
+    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings' || surface === 'notifications' || surface === 'live' || surface === 'share') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
       const extra: Partial<NavigationOrigin> = normSurface === 'chat'
         ? { tab: 'chat' }
@@ -719,12 +720,17 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       // from the notification log while the meeting tab happens to be active
       // is not a meeting jump.
       const fromLive = source === 'live' || (!source && panelIsActive('live'))
+      // The share centre is a dock tab too: its rows open the thing behind a
+      // link, and Back must return to the share list.
+      const fromShare = source === 'share' || (!source && panelIsActive('share'))
       if (fromLive) {
         const view = getMeetingView()
         beginExternalJump('live', surfaceLabel('live'), {
           meetingToken: view.token || undefined,
           meetingTab: view.tab,
         })
+      } else if (fromShare) {
+        beginExternalJump('share', surfaceLabel('share'))
       } else if (fromChat) {
         beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
       } else if (fromTask) {

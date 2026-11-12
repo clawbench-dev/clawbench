@@ -182,6 +182,20 @@ describe('useNavigationCoordinator', () => {
       expect(takeMeetingReturn()).toEqual({ token: 'tok-1', tab: 'resources' })
     })
 
+    it('records a share origin when a file is opened from the share centre', () => {
+      // The share centre's rows open the file behind a link; Back has to land
+      // on the share list rather than on the tab that preceded it.
+      activeTab.value = 'share'
+      const coord = createCoordinator()
+
+      coord.handleOpenFileOverlay({
+        detail: { path: 'docs/report.md', source: 'share' },
+      } as any)
+
+      expect(navigation.origin.value?.surface).toBe('share')
+      expect(navigation.origin.value?.tab).toBe('share')
+    })
+
     it('starts origin and opens file from chat on wide screen', () => {
       isWideScreen.value = true
       activePane.value = PANE_RIGHT
@@ -515,6 +529,18 @@ describe('useNavigationCoordinator', () => {
       coord.handleOpenDirectoryFromEvent({ detail: {} } as any)
 
       expect(fakeStore.navigateToDir).not.toHaveBeenCalled()
+    })
+
+    it('records a share origin for a folder opened from the share centre', async () => {
+      activeTab.value = 'share'
+      const coord = createCoordinator()
+
+      coord.handleOpenDirectoryFromEvent({ detail: { path: 'docs', source: 'share' } } as any)
+      await flushPromises()
+
+      expect(fakeStore.navigateToDir).toHaveBeenCalledWith('docs')
+      expect(navigation.origin.value?.surface).toBe('share')
+      expect(navigation.origin.value?.tab).toBe('share')
     })
 
     it('reveals the requested entry after the directory loads (revealPath)', async () => {

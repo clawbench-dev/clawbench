@@ -287,6 +287,12 @@ describe('useNavigationContext', () => {
       expect(surfaceToTab('forge')).toBe('forge')
     })
 
+    it('映射 share 为 share', () => {
+      // The share centre's rows open the file/folder behind a link; Back must
+      // land on the share list, not on whatever tab preceded it.
+      expect(surfaceToTab('share')).toBe('share')
+    })
+
     it('未知 surface 返回 null 而不是静默回退到 chat', () => {
       expect(surfaceToTab('unknown')).toBeNull()
       expect(surfaceToTab('')).toBeNull()
