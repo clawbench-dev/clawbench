@@ -1,9 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { extractSpeakableText, useAutoSpeech } from '@/composables/useAutoSpeech'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 // vi.hoisted runs before vi.mock hoisting, so the mock factory can reference it
-const { toastShowMock } = vi.hoisted(() => ({
+const { toastShowMock, nativeTtsMock } = vi.hoisted(() => ({
   toastShowMock: vi.fn(),
+  nativeTtsMock: {
+    ttsSpeak: vi.fn(() => 'ready'),
+    ttsStatus: vi.fn(() => 'ready'),
+    ttsStop: vi.fn(),
+  },
 }))
 
 // Mock useToast since it's used at module level
@@ -15,6 +21,14 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
+
+// Only getNative is replaced: the rest of the module is imported by other
+// modules under test (download URLs, wake lock), and stubbing it out entirely
+// would leave those imports undefined.
+vi.mock('@/utils/clawbenchNative', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/clawbenchNative')>()
+  return { ...actual, getNative: () => nativeTtsMock }
+})
 
 describe('extractSpeakableText', () => {
   it('extracts text from text blocks', () => {
@@ -1248,5 +1262,139 @@ describe('useAutoSpeech — setEnabled', () => {
     toggle({ silent: true })
     expect(enabled.value).toBe(true)
     expect(toastShowMock).not.toHaveBeenCalled()
+  })
+})
+
+// ── Android system speech engine ───────────────────────────────────────────
+// When the device reads with its own engine, the server is asked for the
+// condensed text only. Getting this wrong is expensive in a way that is easy
+// to miss: a cloud synthesis is paid for, the audio is thrown away, and the
+// user hears a different voice than the one they chose.
+
+describe('useAutoSpeech — Android system speech engine', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    localConfig.systemSpeech = true
+    toastShowMock.mockClear()
+    nativeTtsMock.ttsSpeak.mockClear()
+    nativeTtsMock.ttsStop.mockClear()
+    nativeTtsMock.ttsStatus.mockReset()
+    nativeTtsMock.ttsStatus.mockReturnValue('ready')
+    nativeTtsMock.ttsSpeak.mockReturnValue('ready')
+    useAutoSpeech().stopAudio()
+  })
+
+  afterEach(() => {
+    useAutoSpeech().stopAudio()
+    localConfig.systemSpeech = false
+  })
+
+  it('asks for the summary only and reads it with the phone engine', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '核心结论', speakText: '核心结论' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('42', '一段很长的原文')
+
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalled())
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
+    expect(body.summarizeOnly).toBe(true)
+    expect(body.messageId).toBe(42)
+    expect(body.text).toBe('一段很长的原文')
+
+    expect(nativeTtsMock.ttsSpeak).toHaveBeenCalledWith('核心结论', '42')
+    expect(api.getSummary('42')).toBe('核心结论')
+  })
+
+  it('speaks speakText but shows the clean summary', async () => {
+    // Group chat: the server prefixes the SPOKEN text with "<name>说：" and
+    // keeps the summary clean for the UI chip.
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '同意', speakText: '小明说：同意' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('7', '我同意')
+
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalledWith('小明说：同意', '7'))
+    expect(api.getSummary('7')).toBe('同意')
+  })
+
+  it('goes to playing on start and finishes on done', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '结论', speakText: '结论' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('42', '原文')
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalled())
+
+    window.dispatchEvent(new CustomEvent('clawbench-tts-state', { detail: { id: '42', state: 'start' } }))
+    expect(api.isPlayingAudio('42')).toBe(true)
+
+    window.dispatchEvent(new CustomEvent('clawbench-tts-state', { detail: { id: '42', state: 'done' } }))
+    await vi.waitFor(() => expect(api.isActive('42')).toBe(false))
+  })
+
+  it('ignores events for a different utterance id', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '结论', speakText: '结论' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('42', '原文')
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalled())
+
+    window.dispatchEvent(new CustomEvent('clawbench-tts-state', { detail: { id: '99', state: 'done' } }))
+    expect(api.isActive('42')).toBe(true)
+  })
+
+  it('stops the phone engine when playback is stopped', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '结论', speakText: '结论' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('42', '原文')
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalled())
+
+    api.stopAudio()
+    expect(nativeTtsMock.ttsStop).toHaveBeenCalled()
+  })
+
+  it('falls back to server synthesis when the device has no engine', async () => {
+    nativeTtsMock.ttsStatus.mockReturnValue('unavailable')
+    fetchSpy.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'boom' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText('42', '原文')
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled())
+
+    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.systemSpeechUnavailable', expect.anything())
+    // The fallback is a normal server-synthesis request: no summarizeOnly, and
+    // the phone engine is never asked to speak.
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
+    expect(body.summarizeOnly).toBeUndefined()
+    expect(nativeTtsMock.ttsSpeak).not.toHaveBeenCalled()
   })
 })

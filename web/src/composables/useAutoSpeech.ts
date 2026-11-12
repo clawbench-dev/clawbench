@@ -23,6 +23,7 @@ import { useWakeLock } from '@/composables/useWakeLock'
 import { MseAudioPlayer } from '@/composables/useMseAudio'
 import { appLog } from '@/utils/appLog'
 import { extractSpeakableText } from '@/utils/speakableText'
+import { getNative } from '@/utils/clawbenchNative'
 
 // Re-exported so existing `@/composables/useAutoSpeech` importers keep working;
 // the implementation lives in the leaf module to avoid dragging this file's
@@ -80,6 +81,58 @@ let mseStreamEnded = false
  * clear the queue, since those are deliberate user actions.
  */
 let autoQueue: Array<{ id: string; text: string; speakerName?: string }> = []
+
+// --- Native (Android system speech engine) playback state ---
+
+/**
+ * The utterance id currently owned by the system engine, or ''.
+ *
+ * Native events are matched on this id rather than on a boolean: a stopped run
+ * and a new one can overlap by a frame, and adopting the other run's "done"
+ * would advance the queue twice.
+ */
+let nativeTtsId = ''
+/** Called when the current native utterance finishes (or fails). */
+let nativeTtsOnDone: (() => void) | null = null
+/** Fires when the engine never reports "start" (init hang, page navigation). */
+let nativeTtsStartTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearNativeTtsWatchdog() {
+  if (nativeTtsStartTimer) {
+    clearTimeout(nativeTtsStartTimer)
+    nativeTtsStartTimer = null
+  }
+}
+
+function reportError(message: string) {
+  lastError.value = message
+  toast.show(message, { icon: 'blocked', type: 'error', duration: 5000 })
+}
+
+// Registered once at module scope: the singleton state above is shared by every
+// consumer, so a per-instance listener would double-advance the queue.
+if (typeof window !== 'undefined') {
+  window.addEventListener('clawbench-tts-state', (e: Event) => {
+    const detail = (e as CustomEvent).detail as { id?: string; state?: string } | undefined
+    if (!detail?.id || detail.id !== nativeTtsId) return
+
+    if (detail.state === 'start') {
+      clearNativeTtsWatchdog()
+      state.value = 'playing'
+      return
+    }
+    if (detail.state === 'done' || detail.state === 'error') {
+      const onDone = nativeTtsOnDone
+      nativeTtsId = ''
+      nativeTtsOnDone = null
+      clearNativeTtsWatchdog()
+      if (detail.state === 'error') {
+        reportError(gt('autoSpeech.systemSpeechFailed'))
+      }
+      onDone?.()
+    }
+  })
+}
 
 function clearPlaybackEndTimer() {
   if (playbackEndTimer) {
@@ -284,6 +337,12 @@ export function useAutoSpeech() {
   function stopPlayback(releaseScreenLock = true) {
     abortController?.abort()
     abortController = null
+    if (nativeTtsId) {
+      getNative()?.ttsStop?.()
+      nativeTtsId = ''
+      nativeTtsOnDone = null
+      clearNativeTtsWatchdog()
+    }
     if (currentEventSource) {
       currentEventSource.close()
       currentEventSource = null
@@ -323,11 +382,6 @@ export function useAutoSpeech() {
   function stopAudio(releaseScreenLock = true) {
     autoQueue = []
     stopPlayback(releaseScreenLock)
-  }
-
-  function reportError(message: string) {
-    lastError.value = message
-    toast.show(message, { icon: 'blocked', type: 'error', duration: 5000 })
   }
 
   // --- Internal: play audio from a path ---
@@ -531,6 +585,96 @@ export function useAutoSpeech() {
     }
   }
 
+  /** True when this device can read with its own engine and the user chose it. */
+  function shouldUseSystemSpeech(): boolean {
+    return localConfig.systemSpeech === true && typeof getNative()?.ttsSpeak === 'function'
+  }
+
+  /**
+   * Read the reply with the phone's own speech engine.
+   *
+   * The server is still asked for the condensed text (a full reply takes
+   * minutes to read), but nothing is synthesized: `summarizeOnly` returns the
+   * text the audio path would have spoken.
+   *
+   * @returns true when this path took over; false only when the device has no
+   *   usable engine, in which case the caller falls back to server synthesis.
+   *   A failure after that point throws, so it is reported like any other.
+   */
+  async function speakWithSystemSpeech(
+    id: string,
+    text: string,
+    speakerName: string | undefined,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const native = getNative()
+    if (!native?.ttsSpeak) return false
+
+    if (native.ttsStatus?.() === 'unavailable') {
+      // Falling back silently would leave the user thinking the phone voice is
+      // in use; say so, then let the normal path run.
+      toast.show(gt('autoSpeech.systemSpeechUnavailable'), { icon: 'warning', type: 'error', duration: 4000 })
+      return false
+    }
+
+    state.value = 'summarizing'
+    const body: Record<string, unknown> = {
+      text,
+      language: i18n.global.locale.value,
+      summarizeOnly: true,
+    }
+    const msgId = parseInt(id, 10)
+    if (!isNaN(msgId)) body.messageId = msgId
+    if (speakerName) body.speakerName = speakerName
+
+    const resp = await fetch('/api/tts/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (!resp.ok) {
+      let errorMsg = gt('autoSpeech.generateFailed', { status: resp.status })
+      try {
+        const errData = await resp.json()
+        if (errData.error) errorMsg = gt('autoSpeech.generateFailedDetail', { error: errData.error })
+      } catch { /* ignore parse error */ }
+      throw new Error(errorMsg)
+    }
+
+    const data = await resp.json()
+    const summary = typeof data.summary === 'string' ? data.summary : ''
+    const spoken = typeof data.speakText === 'string' && data.speakText ? data.speakText : summary
+    if (!spoken) throw new Error(gt('autoSpeech.noResult'))
+
+    if (summary) playingSummary.value = summary
+    // Free-dialog compares the microphone against what is actually being read.
+    speakingText.value = spoken
+
+    state.value = 'synthesizing'
+    const accepted = native.ttsSpeak(spoken, id)
+    if (accepted !== 'ready' && accepted !== 'initializing') {
+      throw new Error(gt('autoSpeech.systemSpeechFailed'))
+    }
+
+    nativeTtsId = id
+    nativeTtsOnDone = () => advancePlayback()
+    // The engine promises exactly one terminal event, but that promise crosses
+    // the WebView bridge — a navigation or a killed page can swallow it. This
+    // only covers the window before "start"; after that the utterance may
+    // legitimately run for minutes.
+    nativeTtsStartTimer = setTimeout(() => {
+      if (state.value !== 'synthesizing' || !nativeTtsId) return
+      const onDone = nativeTtsOnDone
+      nativeTtsId = ''
+      nativeTtsOnDone = null
+      nativeTtsStartTimer = null
+      reportError(gt('autoSpeech.systemSpeechFailed'))
+      onDone?.()
+    }, 10000)
+    return true
+  }
+
   // --- Internal: generate and play TTS for text ---
   async function _speak(id: string, text: string, speakerName?: string) {
     if (!text) {
@@ -549,6 +693,11 @@ export function useAutoSpeech() {
     activeId.value = id
 
     try {
+      if (shouldUseSystemSpeech()) {
+        const handled = await speakWithSystemSpeech(id, text, speakerName, controller.signal)
+        if (handled) return
+      }
+
       // Step 1: POST to create TTS job (or get cached result)
       const body: Record<string, unknown> = { text, language: i18n.global.locale.value }
       const msgId = parseInt(id, 10)

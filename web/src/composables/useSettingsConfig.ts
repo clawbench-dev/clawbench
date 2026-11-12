@@ -398,6 +398,11 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   terminalTheme: 'auto',
   locale: 'zh',
   autoSpeech: false,
+  // Read replies with the phone's own speech engine instead of the server's
+  // TTS. Per device on purpose: it depends on which engines that phone has
+  // installed, and a tablet with a good Chinese voice should not change what a
+  // desktop hears.
+  systemSpeech: false,
   showHidden: false,
   wordWrap: true,
   // Markdown tables start wrapped unless the user turned the default off

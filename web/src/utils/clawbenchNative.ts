@@ -107,6 +107,21 @@ export interface ClawBenchNative {
   /** Optional (Electron): report that notification-click listeners are registered. */
   rendererReady?(): void
   getLanguage(): string
+  /**
+   * Android system speech engine (the voice the phone already uses elsewhere).
+   *
+   * Exists only on Android: the desktop shell has no equivalent, and probing
+   * for it is how the caller decides whether the "use system read-aloud"
+   * setting can take effect. `ttsStatus` returns `ready` / `initializing` /
+   * `unavailable`; the first call starts initialization and never blocks.
+   *
+   * `ttsSpeak` returns immediately — completion arrives as a
+   * `clawbench-tts-state` window event carrying the same `utteranceId`, so a
+   * caller that ignores the event will look like it never finishes.
+   */
+  ttsStatus?(): string
+  ttsSpeak?(text: string, utteranceId: string): string
+  ttsStop?(): void
   /** Persist the language selected in the Web frontend to native prefs so native UI (splash, login page) follows it. */
   setLanguage?(lang: string): void
   showServerDialog(): void

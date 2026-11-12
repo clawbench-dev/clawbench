@@ -6774,9 +6774,35 @@ paths:
                     群聊发言人的显示名。设置后朗读音频会加上「<名>说：」前缀
                     （英文为「<名> says: 」），便于分辨并发发言者；该前缀只作用于
                     语音合成，不参与摘要、也不写入摘要缓存。
+                summarizeOnly:
+                  type: boolean
+                  description: >-
+                    只做摘要、不合成音频。返回 summary 与 speakText（speakText
+                    含发言人前缀），供使用设备自带语音引擎的客户端朗读；不会创建
+                    合成任务，也不会读写音频缓存。
       responses:
         "200":
-          description: 音频
+          description: >-
+            音频任务（默认，返回 jobId / streaming / cached / audioPath），或
+            summarizeOnly 时的 { summary, speakText }。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                  streaming:
+                    type: boolean
+                  cached:
+                    type: boolean
+                  audioPath:
+                    type: string
+                  summary:
+                    type: string
+                  speakText:
+                    type: string
+                    description: 实际要朗读的文本（含群聊发言人前缀），仅 summarizeOnly 返回。
 
   /api/tts/stream/{jobId}:
     get:

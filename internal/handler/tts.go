@@ -97,6 +97,13 @@ type ttsGenerateRequest struct {
 	// it is deliberately kept out of the summary and the cached summary row, so
 	// it never participates in summarization ("不参与摘要").
 	SpeakerName string `json:"speakerName"`
+	// SummarizeOnly returns the spoken text without synthesizing audio.
+	//
+	// The Android client can read with the phone's own speech engine, which
+	// still needs the same condensed text (a full reply takes minutes to read
+	// aloud). Without this flag that client would have to pay for a cloud
+	// synthesis whose audio it never plays.
+	SummarizeOnly bool `json:"summarizeOnly"`
 }
 
 // ttsSynthesizeFunc is the signature for TTS synthesis operations (streaming or non-streaming).
@@ -263,17 +270,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	// content blocks instead of using the raw full text from the frontend.
 	// This uses ExtractLastAnswerFromBlocks (same logic as chat summary) to
 	// capture only the AI's final answer, skipping intermediate step commentary.
-	if req.MessageID > 0 {
-		if conclusion := ttsExtractConclusion(req.MessageID); conclusion != "" {
-			slog.Info(
-				"tts using conclusion from message blocks",
-				slog.Int64("message_id", req.MessageID),
-				slog.Int("original_len", len([]rune(req.Text))),
-				slog.Int("conclusion_len", len([]rune(conclusion))),
-			)
-			req.Text = conclusion
-		}
-	}
+	ttsApplyConclusion(&req)
 
 	if summarize.MaxTextRunes > 0 && len([]rune(req.Text)) > summarize.MaxTextRunes {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "TextTooLong", map[string]any{"MaxChars": summarize.MaxTextRunes})
@@ -290,6 +287,14 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	// ttsCacheKeyAndPrefix for why the speaker name and the provider identity
 	// are folded into the key).
 	cacheKey, speakerPrefix := ttsCacheKeyAndPrefix(req.Text, req.SpeakerName, req.Language, ttsProviderCacheIdentity(curProvider))
+
+	// Summarize-only: the client reads the text itself (Android system TTS).
+	// Returns the same condensed text the audio path would have spoken, with
+	// the speaker prefix applied, but synthesizes nothing and touches no cache.
+	if req.SummarizeOnly {
+		ttsSummarizeOnlyResponse(w, r, req, curSummarizer, speakerPrefix)
+		return
+	}
 
 	// Project-relative path (not server DataDir)
 	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+ttsAudioExt)
@@ -354,33 +359,90 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ttsApplyConclusion replaces the request text with the message's final answer
+// when a messageId is present, so intermediate step commentary is not read.
+func ttsApplyConclusion(req *ttsGenerateRequest) {
+	if req.MessageID <= 0 {
+		return
+	}
+	conclusion := ttsExtractConclusion(req.MessageID)
+	if conclusion == "" {
+		return
+	}
+	slog.Info(
+		"tts using conclusion from message blocks",
+		slog.Int64("message_id", req.MessageID),
+		slog.Int("original_len", len([]rune(req.Text))),
+		slog.Int("conclusion_len", len([]rune(conclusion))),
+	)
+	req.Text = conclusion
+}
+
+// ttsSummarizeOnlyResponse writes the condensed text without synthesizing it.
+// Split out of TTSGenerate to keep that handler's branch count down; the
+// response shape (summary + speakText) is the contract the Android client
+// reads, and speakText is what must actually be spoken (prefix included).
+func ttsSummarizeOnlyResponse(w http.ResponseWriter, r *http.Request, req ttsGenerateRequest, curSummarizer summarize.Summarizer, speakerPrefix string) {
+	summary, err := ttsComputeSummary(r.Context(), curSummarizer, req.Text, req.Language, req.MessageID, nil)
+	if err != nil {
+		slog.Error("tts summarize-only failed", slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "SummarizeFailed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"summary":   summary,
+		"speakText": ttsSynthText(speakerPrefix, summary),
+	})
+}
+
 // ttsSummarize performs the summarize phase for TTS generation.
 // Returns (summary, true) on success, or ("", false) if summarization failed
 // and a result event has already been sent.
 func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cacheKey, text, language string, messageID int64, errSummarizeFailed string, streaming bool) (string, bool) {
-	var summary string
-	cachedSummary, found := service.GetTTSSummaryByMessageID(messageID)
-	if found && cachedSummary != "" && messageID > 0 {
-		slog.Info(
-			"tts summary cache hit, skipping summarization",
-			slog.String("cache_key", cacheKey),
-		)
-		return cachedSummary, true
+	summary, err := ttsComputeSummary(ctx, curSummarizer, text, language, messageID, func() {
+		service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "summarizing", Streaming: streaming})
+	})
+	if err != nil {
+		service.SendTTSEvent(cacheKey, service.TTSEvent{
+			Type:             "result",
+			SynthesizeFailed: true,
+			SynthesizeError:  errSummarizeFailed,
+			Streaming:        streaming,
+		})
+		return "", false
+	}
+	return summary, true
+}
+
+// ttsComputeSummary produces the text that will be spoken.
+//
+// onStart runs only when a model call is actually about to happen — a cached
+// summary returns immediately and must not re-emit the "summarizing" phase
+// (callers pass nil when there is no event stream to feed).
+//
+// On model failure it falls back to reading the whole reply, cleaned of
+// markdown. A cap here is what once made playback start in the middle of a
+// long answer: the listener cannot tell a fragment from a complete reading.
+func ttsComputeSummary(ctx context.Context, curSummarizer summarize.Summarizer, text, language string, messageID int64, onStart func()) (string, error) {
+	if messageID > 0 {
+		if cachedSummary, found := service.GetTTSSummaryByMessageID(messageID); found && cachedSummary != "" {
+			slog.Info(
+				"tts summary cache hit, skipping summarization",
+				slog.Int64("message_id", messageID),
+			)
+			return cachedSummary, nil
+		}
 	}
 
-	service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "summarizing", Streaming: streaming})
+	if onStart != nil {
+		onStart()
+	}
 
-	// degraded records that the text below is the raw reply, not a condensation.
-	degraded := false
 	summarizeCtx, summarizeCancel := context.WithTimeout(ctx, ttsSummarizeTimeout)
-	var err error
-	summary, err = curSummarizer.Summarize(summarizeCtx, text, language)
+	summary, err := curSummarizer.Summarize(summarizeCtx, text, language)
 	summarizeCancel()
+	degraded := false
 	if err != nil {
-		// Condensing failed, so read the WHOLE reply (cleaned of markdown)
-		// instead of a fragment. A cap here is what made playback start in the
-		// middle of a long answer — the listener cannot tell a fragment from a
-		// complete reading.
 		slog.Warn(
 			"tts summarize failed, reading the full text instead",
 			slog.String("error", err.Error()),
@@ -388,13 +450,7 @@ func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cache
 		)
 		fallbackSummary, fallbackErr := summarize.NewSimple().Summarize(context.Background(), text, language)
 		if fallbackErr != nil || fallbackSummary == "" {
-			service.SendTTSEvent(cacheKey, service.TTSEvent{
-				Type:             "result",
-				SynthesizeFailed: true,
-				SynthesizeError:  errSummarizeFailed,
-				Streaming:        streaming,
-			})
-			return "", false
+			return "", err
 		}
 		summary = fallbackSummary
 		degraded = true
@@ -402,7 +458,6 @@ func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cache
 
 	slog.Info(
 		"tts summarize completed",
-		slog.String("cache_key", cacheKey),
 		slog.Int("original_len", len([]rune(text))),
 		slog.Int("summary_len", len([]rune(summary))),
 	)
@@ -420,7 +475,7 @@ func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cache
 		}
 	}
 
-	return summary, true
+	return summary, nil
 }
 
 // ttsExtractConclusion loads a message by ID, parses its content blocks,

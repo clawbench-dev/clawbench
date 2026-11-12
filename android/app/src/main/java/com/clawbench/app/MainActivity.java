@@ -138,6 +138,13 @@ public class MainActivity extends AppCompatActivity {
     private ObjectAnimator sweepAnimator;
     private SharedPreferences prefs;
 
+    /**
+     * Phone-side read-aloud engine. Created once per Activity and driven from
+     * the WebView bridge; null until onCreate so a destroyed Activity can never
+     * be called back into.
+     */
+    private volatile SystemTtsEngine systemTts;
+
     // Tracks whether the WebView is showing a successfully loaded remote page.
     // When false (login page or load error), the WebView is hidden behind the dark background.
     private boolean webViewConnected = false;
@@ -897,6 +904,11 @@ public class MainActivity extends AppCompatActivity {
 
         // JavaScript interface for native bridge
         webView.addJavascriptInterface(new WebAppInterface(this), "ClawBenchNative");
+
+        // Phone-side read-aloud. Constructing it is cheap; the TextToSpeech
+        // service is bound lazily on the first status/speak call, so users who
+        // never turn the feature on pay nothing.
+        systemTts = new SystemTtsEngine(this, this::dispatchTtsState);
 
         // Add 引用 / 评论 to the WebView's own text-selection menu. A plain
         // WebView has no API for this, so the view is a ClawBenchWebView
@@ -2167,6 +2179,77 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Forward one system-TTS state change into the page.
+     *
+     * <p>Mirrors {@link #dispatchDownloadEvent}: the renderer keys its playback
+     * state on the event name and the three field names, so this is the single
+     * writer of that wire format.
+     */
+    private void dispatchTtsState(String utteranceId, String state, String message) {
+        runOnUiThread(() -> {
+            WebView wv = webView;
+            if (wv == null || isFinishing() || isDestroyed()) return;
+            try {
+                wv.evaluateJavascript(buildTtsStateScript(utteranceId, state, message), null);
+            } catch (Exception e) {
+                AppLog.d(TAG, "dispatchTtsState failed", e);
+            }
+        });
+    }
+
+    /**
+     * Build the JS that dispatches one TTS state event.
+     *
+     * <p>Extracted (and package-private) so the wire format can be unit-tested.
+     * The utterance id is echoed back verbatim: the renderer compares it to
+     * the id it handed to {@code ttsSpeak}, and a mismatch would make a finished
+     * read look like it never ended.
+     */
+    static String buildTtsStateScript(String utteranceId, String state, String message) {
+        return "window.dispatchEvent(new CustomEvent('clawbench-tts-state', { detail: {"
+                + "\"id\":" + jsStringLiteral(utteranceId)
+                + ",\"state\":" + jsStringLiteral(state)
+                + ",\"message\":" + jsStringLiteral(message)
+                + "} }))";
+    }
+
+    /**
+     * Quote a Java string as a JS string literal.
+     *
+     * <p>The text being read comes from chat content, so it can contain quotes,
+     * backslashes and newlines. Interpolating it raw into
+     * {@code evaluateJavascript} would turn a message about a `"` into a
+     * syntax error and the page would never hear the event — the reader would
+     * appear to hang. U+2028/U+2029 are escaped too: they are valid in JS
+     * strings since ES2019 but still terminate lines in older WebViews.
+     */
+    static String jsStringLiteral(String value) {
+        if (value == null) return "null";
+        StringBuilder out = new StringBuilder(value.length() + 16);
+        out.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"': out.append("\\\""); break;
+                case '\\': out.append("\\\\"); break;
+                case '\n': out.append("\\n"); break;
+                case '\r': out.append("\\r"); break;
+                case '\t': out.append("\\t"); break;
+                case '\u2028': out.append("\\u2028"); break;
+                case '\u2029': out.append("\\u2029"); break;
+                default:
+                    if (c < 0x20) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+            }
+        }
+        out.append('"');
+        return out.toString();
+    }
+
+    /**
      * Build an OkHttpClient that trusts all SSL certificates (self-signed, hostname mismatch, etc.).
      * Used after the user explicitly confirms they trust the server's certificate.
      */
@@ -2678,6 +2761,11 @@ public class MainActivity extends AppCompatActivity {
         cancelConnectionTimeout();
         // Must run before destroyWebView(): it removes its timer from the WebView.
         cancelSplashFailSafe();
+        // Drop the TTS engine before the WebView goes away: its listener posts
+        // into the page, and a callback landing on a destroyed WebView throws.
+        SystemTtsEngine tts = systemTts;
+        systemTts = null;
+        if (tts != null) tts.shutdown();
         if (sweepAnimator != null) {
             sweepAnimator.cancel();
             sweepAnimator = null;
@@ -3607,6 +3695,39 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 return "1.0.0";
             }
+        }
+
+        /**
+         * Readiness of the phone's own speech engine: {@code ready},
+         * {@code initializing} or {@code unavailable}. The first call starts
+         * initialization; it never blocks.
+         */
+        @JavascriptInterface
+        public String ttsStatus() {
+            SystemTtsEngine engine = activity.systemTts;
+            return engine != null ? engine.status() : SystemTtsEngine.STATUS_UNAVAILABLE;
+        }
+
+        /**
+         * Read {@code text} with the phone engine.
+         *
+         * @param utteranceId echoed back in every {@code clawbench-tts-state}
+         *                    event so the page can match events to its request
+         * @return {@code ready} / {@code initializing} (queued until ready) /
+         *         {@code unavailable} / {@code bad_request}
+         */
+        @JavascriptInterface
+        public String ttsSpeak(String text, String utteranceId) {
+            SystemTtsEngine engine = activity.systemTts;
+            if (engine == null) return SystemTtsEngine.STATUS_UNAVAILABLE;
+            return engine.speak(text, utteranceId);
+        }
+
+        /** Stop reading; any queued text is dropped. */
+        @JavascriptInterface
+        public void ttsStop() {
+            SystemTtsEngine engine = activity.systemTts;
+            if (engine != null) engine.stop();
         }
 
         /**
