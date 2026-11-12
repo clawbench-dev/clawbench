@@ -538,8 +538,10 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('tts.engine')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(6)
-    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai', 'alibaba', 'tencent', 'volcano', 'minimax'])
+    // `system` (the phone's own voice) sits in the same list on purpose: it is
+    // another voice to the user, even though it is stored per device.
+    expect(cfg.entrySelector!.options!.length).toBe(7)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai', 'alibaba', 'tencent', 'volcano', 'minimax', 'system'])
     expect(cfg.commonFields.length).toBe(3)
     expect(cfg.optionSubFields!.length).toBe(5)
 

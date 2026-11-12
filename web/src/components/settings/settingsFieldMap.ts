@@ -657,9 +657,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   ],
   tts: [
     { type: 'item', spec: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'navigateTtsEngine', type: 'action', source: 'local', navigateTo: 'tts:tts_engine', sectionHeader: 'settings.items.ttsEngineSection' } },
-    // Per-device, not per-server: whether the phone has a usable Chinese voice
-    // installed is a property of the device, not of the account.
-    { type: 'item', spec: { labelKey: 'settings.items.systemSpeech', descriptionKey: 'settings.items.systemSpeechDesc', key: 'systemSpeech', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.ttsEngineSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.summarizeTtsSection', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', sectionHeader: 'settings.items.voiceSummarySection', options: [
       { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
       { labelKey: 'settings.items.summarizeApi', value: 'api' },
@@ -681,6 +678,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.ttsEngineTencent', value: 'tencent' },
         { labelKey: 'settings.items.ttsEngineVolcano', value: 'volcano' },
         { labelKey: 'settings.items.ttsEngineMinimax', value: 'minimax' },
+        // Per-device, but deliberately in the same list: to the user this is
+        // just another voice. Selecting it stores a local flag and leaves
+        // tts.engine (the server-wide choice) untouched — see
+        // SettingsGroupPanel's effectiveEngine.
+        { labelKey: 'settings.items.ttsEngineSystem', value: 'system' },
       ]},
       commonFields: [
         // tts.voice belongs to the Edge engine. It is hidden for "openai" (that

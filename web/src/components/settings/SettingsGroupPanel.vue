@@ -203,11 +203,11 @@
         v-for="opt in entryOptions"
         :key="opt.value as PropertyKey"
         class="group-panel__option"
-        :class="{ 'group-panel__option--active': localValues[config.entrySelector!.key] === opt.value }"
+        :class="{ 'group-panel__option--active': effectiveEngine === opt.value }"
         @click="handleEntrySelect(opt.value)"
       >
         <span class="group-panel__option-label">{{ t(opt.labelKey) }}</span>
-        <span v-if="localValues[config.entrySelector!.key] === opt.value" class="group-panel__option-check">&#10003;</span>
+        <span v-if="effectiveEngine === opt.value" class="group-panel__option-check">&#10003;</span>
       </div>
     </BottomSheet>
   </div>
@@ -220,6 +220,7 @@ import { ChevronRight, ListChecks, RotateCcw } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
+import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -398,7 +399,7 @@ const fieldsDisabled = computed(() => {
 function isFieldDisabled(field: ItemSpec): boolean {
   if (fieldsDisabled.value) return true
   if (field.disableUnless) {
-    return !isDependsOnMet(field.disableUnless, (k) => localValues[k])
+    return !isDependsOnMet(field.disableUnless, dependencyValue)
   }
   return false
 }
@@ -416,17 +417,55 @@ const entryOptions = computed(() => {
   return props.config.entrySelector?.options ?? []
 })
 
+/**
+ * Whether this device reads with its own voice.
+ *
+ * "Phone voice" is an option inside the engine list, not a separate switch: to
+ * the user it is just another voice, and where it runs is an implementation
+ * detail. The draft still holds the SERVER engine, so a per-device choice never
+ * overwrites what every other device uses.
+ */
+const phoneVoiceActive = computed(() =>
+  props.config.panelId === 'tts' && settingsLocalConfig.systemSpeech === true,
+)
+
+/** The engine the list should show as selected. */
+const effectiveEngine = computed<unknown>(() =>
+  phoneVoiceActive.value ? 'system' : localValues['tts.engine'],
+)
+
+/** dependsOn resolver that sees the effective engine, not the server one. */
+function dependencyValue(key: string): unknown {
+  return key === 'tts.engine' ? effectiveEngine.value : localValues[key]
+}
+
 const entryDisplayLabel = computed(() => {
   const es = props.config.entrySelector
   if (!es) return ''
-  const val = localValues[es.key]
+  const val = dependencyValue(es.key)
   const opt = entryOptions.value.find(o => o.value === val)
   return opt ? t(opt.labelKey) : String(val ?? '')
 })
 
-function handleEntrySelect(value: unknown) {
+async function handleEntrySelect(value: unknown) {
   const es = props.config.entrySelector
   if (!es) return
+
+  if (value === 'system') {
+    // Turning the phone voice on is a promise that this phone can read Chinese.
+    // If it cannot, keep the current choice instead of accepting silently.
+    const probe = await probeSystemSpeech()
+    if (!probe.ok) {
+      toast.show(t(systemSpeechErrorKey(probe.reason)), { icon: 'blocked', type: 'error', duration: 5000 })
+      return
+    }
+    setLocalConfig('systemSpeech', true)
+    entryPicker.close()
+    return
+  }
+
+  // Picking a real engine means "this device goes back to the server voice".
+  setLocalConfig('systemSpeech', false)
   // Only the selected value changes. Each engine owns its own settings, so
   // switching must not touch another engine's saved voice / credentials —
   // resetting them here overwrote the Edge voice whenever the user tried the
@@ -457,7 +496,7 @@ const renderList = computed((): RenderEntry[] => {
 
   // Common fields (filtered by dependsOn)
   for (const f of visibleCommonFields.value) {
-    if (!isDependsOnMet(f.dependsOn, (k) => localValues[k])) continue
+    if (!isDependsOnMet(f.dependsOn, dependencyValue)) continue
     if (f.sectionHeader) {
       result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
     }
@@ -466,7 +505,7 @@ const renderList = computed((): RenderEntry[] => {
 
   // Option sub-fields: matched against the entry selector's current value
   const subFieldKey = cfg.entrySelector?.key
-  const subFieldValue = subFieldKey ? localValues[subFieldKey] : undefined
+  const subFieldValue = subFieldKey ? dependencyValue(subFieldKey) : undefined
   const osf = (cfg.optionSubFields ?? []).find(o => o.when === subFieldValue)
   if (osf) {
     for (const f of osf.fields) {
@@ -488,7 +527,7 @@ function isLastInSection(idx: number): boolean {
 
 // ── Settings config for getLocalValue fallback ──
 
-const { getServerValueWithDefault, localConfig: settingsLocalConfig } = useSettingsConfig()
+const { getServerValueWithDefault, setLocalConfig, localConfig: settingsLocalConfig } = useSettingsConfig()
 
 // ── Field value helpers ──
 

@@ -36,13 +36,21 @@ vi.mock('@/composables/usePanelSnapshot', () => ({
 }))
 
 const mockGetServerValueWithDefault = vi.fn()
+const mockSetLocalConfig = vi.fn()
 const settingsLocalConfig = reactive<Record<string, unknown>>({ theme: 'auto', locale: 'zh' })
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
     getServerValueWithDefault: mockGetServerValueWithDefault,
+    setLocalConfig: mockSetLocalConfig,
     localConfig: settingsLocalConfig,
   }),
+}))
+
+const { mockProbeSystemSpeech } = vi.hoisted(() => ({ mockProbeSystemSpeech: vi.fn() }))
+vi.mock('@/utils/systemSpeech', () => ({
+  probeSystemSpeech: mockProbeSystemSpeech,
+  systemSpeechErrorKey: (reason: string) => `settings.items.systemSpeech_${reason}`,
 }))
 
 const mockRegisterGuard = vi.fn()
@@ -360,6 +368,7 @@ describe('SettingsGroupPanel', () => {
     vi.clearAllMocks()
     // Reset localValues
     for (const key of Object.keys(localValues)) delete localValues[key]
+    delete settingsLocalConfig.systemSpeech
     // Reset reactive refs
     mockSaving.value = false
     mockServerError.value = ''
@@ -625,6 +634,44 @@ describe('SettingsGroupPanel', () => {
       expect(opts).toHaveLength(2)
       expect(opts[0].value).toBe('edge')
       expect(opts[1].value).toBe('alt')
+    })
+
+    // The phone voice is an option in the same list (one choice for the user),
+    // but it is stored per device. Picking it must NOT rewrite tts.engine: that
+    // would switch every other device to a voice it cannot run.
+    it('selecting the phone voice stores a local flag and keeps the server engine', async () => {
+      mockProbeSystemSpeech.mockResolvedValue({ ok: true })
+      localValues['tts.engine'] = 'edge'
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleEntrySelect('system')
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', true)
+      expect(localValues['tts.engine']).toBe('edge')
+      expect(mockDrawerClose).toHaveBeenCalled()
+    })
+
+    it('refuses the phone voice when the device cannot read Chinese', async () => {
+      mockProbeSystemSpeech.mockResolvedValue({ ok: false, reason: 'no_chinese' })
+      localValues['tts.engine'] = 'edge'
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleEntrySelect('system')
+
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('systemSpeech', true)
+      expect(localValues['tts.engine']).toBe('edge')
+      expect(mockToastShow).toHaveBeenCalled()
+    })
+
+    it('selecting a real engine clears the phone-voice flag', async () => {
+      settingsLocalConfig.systemSpeech = true
+      localValues['tts.engine'] = 'edge'
+      const wrapper = mountPanel(makeTtsConfig())
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleEntrySelect('alt')
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('systemSpeech', false)
+      expect(localValues['tts.engine']).toBe('alt')
     })
   })
 
