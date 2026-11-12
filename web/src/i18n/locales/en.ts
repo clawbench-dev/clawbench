@@ -277,7 +277,7 @@ export default {
     tasks: 'Tasks',
     notifications: 'Notification Center',
     meeting: 'Video Meetings',
-    share: 'Sharing',
+    share: 'Sharing Center',
     mail: 'Mail',
     portForward: 'Port Mapping',
 
@@ -5260,7 +5260,7 @@ export default {
     confirmRevoke: 'Revoking the share immediately invalidates the current link. Continue?',
   },
   shareCenter: {
-    title: 'Sharing',
+    title: 'Sharing Center',
     refresh: 'Refresh',
     empty: 'Nothing shared yet',
     emptyDesc: 'Create links from the file preview, a conversation menu or a meeting result page — they all show up here.',

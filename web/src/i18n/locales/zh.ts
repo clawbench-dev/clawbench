@@ -275,7 +275,7 @@ export default {
     tasks: '任务',
     notifications: '通知中心',
     meeting: '视频会议',
-    share: '分享',
+    share: '分享中心',
     mail: '邮件',
     portForward: '端口映射',
 
@@ -5240,7 +5240,7 @@ export default {
     confirmRevoke: '关闭分享后，当前链接将立即失效，确定继续吗？',
   },
   shareCenter: {
-    title: '分享',
+    title: '分享中心',
     refresh: '刷新',
     empty: '还没有分享出去的链接',
     emptyDesc: '在文件预览、会话菜单或会议结果页里创建，之后都会出现在这里。',
