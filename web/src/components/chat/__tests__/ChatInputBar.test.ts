@@ -742,6 +742,32 @@ describe('ChatInputBar', () => {
     expect(strip.text()).toContain('帮我看下这个报错')
   })
 
+  it('keeps the newest words of the transcript in view as it grows', async () => {
+    // The strip is capped at two lines, so a long sentence overflows at the
+    // bottom — exactly where the words that just arrived are. Without the
+    // auto-scroll the user reads the oldest part of the sentence forever.
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      freeDialogPhase: 'listening',
+      freeDialogTranscript: '帮我看',
+    })
+    const textEl = wrapper.find('.free-dialog-text').element as HTMLElement
+    let top = 0
+    // jsdom never lays anything out, so the scrollable geometry is faked the
+    // same way the transcript-list tests do it.
+    Object.defineProperty(textEl, 'scrollHeight', { value: 48, configurable: true })
+    Object.defineProperty(textEl, 'scrollTop', {
+      get: () => top,
+      set: (v: number) => { top = v },
+      configurable: true,
+    })
+
+    await wrapper.setProps({ freeDialogTranscript: '帮我看下这个报错，就是刚才那个' })
+    await nextTick()
+
+    expect(top).toBe(48)
+  })
+
   it('falls back to the phase hint when nothing has been recognised yet', () => {
     const wrapper = mountBar({ currentSessionId: 's1', freeDialogPhase: 'thinking', freeDialogTranscript: '' })
     const strip = wrapper.find('[data-role="free-dialog-strip"]')

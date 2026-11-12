@@ -721,6 +721,26 @@ const props = defineProps({
   freeDialogCanInterrupt: { type: Boolean, default: false },
 })
 
+/**
+ * Keep the tail of the transcript in view.
+ *
+ * The strip is capped at two lines (see `.free-dialog-text`), so a long spoken
+ * sentence overflows — and it overflows at the *bottom*, which is where the
+ * words that just arrived are. Without this the user watches the oldest part
+ * of the sentence and never sees what the microphone heard a moment ago.
+ *
+ * Looked up from the root element instead of holding a template ref: a ref
+ * that only appears as a string `ref="…"` is not part of the setup state, so
+ * `ref.value` would stay `null` forever (the element lands in `$refs` only).
+ */
+function scrollFreeDialogTextToEnd() {
+  const el = rootRef.value?.querySelector('.free-dialog-text')
+  if (el) el.scrollTop = el.scrollHeight
+}
+watch(() => props.freeDialogTranscript, () => {
+  void nextTick(scrollFreeDialogTextToEnd)
+})
+
 const emit = defineEmits([
   'send',
   'btw',
@@ -2979,9 +2999,17 @@ defineExpose({
 .free-dialog-text {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Two lines max, then scroll. A single ellipsised line would cut off exactly
+     the words that just arrived; letting it grow unbounded would push the
+     composer up by however long the sentence is. The script keeps the newest
+     line at the bottom. */
+  max-height: calc(2 * var(--font-size-sm) * var(--line-height-tight));
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  scrollbar-width: none;
+}
+.free-dialog-text::-webkit-scrollbar {
+  display: none;
 }
 /* Nothing recognised yet: this is a hint, not content — muted so it is not
    mistaken for what the microphone heard. */
