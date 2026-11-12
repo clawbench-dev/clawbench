@@ -628,6 +628,7 @@
     </Teleport>
 
     <ToastNotification :toast="toast" />
+    <VoiceOverlay />
     <CompletionPopover />
     <DialogOverlay />
     <UploadConflictDialog />
@@ -698,6 +699,7 @@ import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ShareLinkDialog from './components/file/ShareLinkDialog.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
+import VoiceOverlay from './components/voice/VoiceOverlay.vue'
 import DownloadProgressBar from './components/common/DownloadProgressBar.vue'
 import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import CompletionPopover from './components/common/CompletionPopover.vue'

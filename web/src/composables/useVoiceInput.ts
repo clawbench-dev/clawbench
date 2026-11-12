@@ -1,5 +1,5 @@
 /**
- * useVoiceInput: speech-to-text (ASR) for the chat input box.
+ * useVoiceInput: speech-to-text (ASR), usable from anywhere.
  *
  * State machine: 'idle' → 'recording' → 'transcribing' → 'done' → 'idle'
  *
@@ -7,15 +7,32 @@
  * and incremental text is appended live. Non-streaming: the full recording is
  * POSTed on release and the result appears once.
  *
- * Recognized text is appended to `inputText` (the chat input box); it is never
- * auto-sent.
+ * Where the text goes depends on the caret at the moment recording starts:
+ *
+ *   - a writable input/textarea owns focus → `startAt` / `startGlobal` writes
+ *     into it at the caret (replacing the selection). This is the normal path
+ *     for every field in the app, not just the chat box.
+ *   - nothing writable is focused (password box, read-only view, terminal,
+ *     plain page) → the text collects in `inputText` and the capsule banner
+ *     shows it. The user then copies it, drops it into the chat box, or
+ *     discards it; it is never silently lost.
+ *
+ * Recognized text is never auto-sent.
  */
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import { useSettingsConfig } from './useSettingsConfig'
 import { useToast } from './useToast'
 import { useDialog } from './useDialog'
 import { appLog } from '@/utils/appLog'
 import { acquireMic, classifyMicError, describeMicError, logMicEnv } from '@/utils/micCapture'
+import {
+  createVoiceTarget,
+  findVoiceTarget,
+  removeVoiceText,
+  textBeforeTarget,
+  writeVoiceText,
+  type VoiceTarget,
+} from '@/utils/voiceTarget'
 import {
   VOICE_TUNING_DEFAULTS,
   buildMicConstraints,
@@ -30,20 +47,42 @@ import i18n from '@/i18n'
 
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
 
+/**
+ * Where this recording's text is going.
+ *
+ *   'field'  — into a live input/textarea at the caret
+ *   'buffer' — nowhere to type; the capsule owns it
+ */
+export type VoiceInputMode = 'idle' | 'field' | 'buffer'
+
 // Module-level singleton refs (mirrors useAutoSpeech pattern).
 const state = ref<VoiceInputState>('idle')
 const inputText = ref('')
 const error = ref('')
 const isRecording = ref(false)
+const mode = ref<VoiceInputMode>('idle')
+const targetEl = shallowRef<HTMLElement | null>(null)
+const targetLabel = ref('')
+/** True once a target-less transcript is finished and waiting in the capsule. */
+const draftPending = ref(false)
+
 let mediaRecorder: MediaRecorder | null = null
 let ws: WebSocket | null = null
 let mediaStream: MediaStream | null = null
+// The field this recording writes into, or null for the capsule path.
+let target: VoiceTarget | null = null
 // Text already in the input box when recording started; transcripts are
 // composed as prefix + recognized text.
 let voicePrefix = ''
 // Set by stop() so a socket that is still connecting does not start capturing
 // after the user has already released the button. Reset on every start().
 let stopRequested = false
+// Keeps the "已写入「XX」" pill on screen briefly after the field path finishes.
+let fieldDoneTimer: ReturnType<typeof setTimeout> | null = null
+// A finished capsule transcript that was set aside because the user started
+// dictating into a field. It goes back to the capsule when that run ends —
+// a pending draft is never thrown away by an unrelated recording.
+let heldDraft = ''
 // PCM capture for the streaming engine (band filter + worklet + voice gate).
 let pcm: PcmStreamer | null = null
 // PCM capture for the whole-file engines that cannot read WebM: frames are
@@ -178,8 +217,64 @@ export function useVoiceInput() {
     }
   }
 
+  /** Toggle for a known field (the chat mic button, its long-press gesture). */
+  async function toggleAt(el: Element | null) {
+    if (state.value === 'recording' || state.value === 'transcribing') {
+      await stop()
+    } else {
+      await startAt(el)
+    }
+  }
+
+  /**
+   * Starts dictation with no field: text collects in the capsule buffer.
+   *
+   * `prefix` is kept for callers that already hold text for that buffer (and
+   * for the unit tests that drive the recogniser without a DOM field).
+   */
   async function start(prefix = '') {
+    // Low-level buffer entry (used by callers that already hold the text and
+    // by the recogniser tests): a new recording starts from `prefix` alone.
+    // The global shortcut goes through `startGlobal`, which continues a
+    // pending capsule draft instead of replacing it.
+    heldDraft = ''
+    draftPending.value = false
+    await begin(null, prefix)
+  }
+
+  /** Starts dictation into a specific field (chat mic button / long press). */
+  async function startAt(el: Element | null) {
+    const t = createVoiceTarget(el)
+    await begin(t, t ? textBeforeTarget(t) : '')
+  }
+
+  /**
+   * Starts dictation wherever the caret is.
+   *
+   * This is the global shortcut's entry point: a writable field takes the
+   * text at its caret; anything else falls back to the capsule.
+   */
+  async function startGlobal() {
+    const t = findVoiceTarget()
+    if (t) {
+      await begin(t, textBeforeTarget(t))
+      return
+    }
+    // Nothing to type into. A transcript already waiting in the capsule is
+    // continued rather than overwritten — losing dictated text because the
+    // shortcut was pressed twice would be the worst possible outcome.
+    await begin(null, draftPending.value ? inputText.value : '')
+  }
+
+  async function begin(t: VoiceTarget | null, prefix: string) {
     if (state.value !== 'idle') return
+    // Cleared before the microphone opens: `stop()` may arrive while we are
+    // still waiting for permission, and that release must not be forgotten.
+    stopRequested = false
+    // A draft set aside by an earlier field run comes back first, so it can be
+    // continued (buffer) or set aside again (field) instead of being dropped.
+    restoreHeldDraft()
+    if (!t && !prefix && draftPending.value) prefix = inputText.value
     error.value = ''
     // Nothing configured means there is nowhere to send the audio. Say so before
     // asking for the microphone: recording a clip that can only fail is worse
@@ -216,13 +311,27 @@ export function useVoiceInput() {
       return
     }
 
+    // Released while the microphone was still starting (a quick tap): start
+    // nothing, or the recorder would run forever with no one holding the key.
+    if (stopRequested) {
+      stopRequested = false
+      stopMediaStream()
+      return
+    }
+
     // A new recording starts fresh — never echo transcriptions from earlier
     // recordings (appendText would otherwise pile them up). `prefix` carries
     // whatever the user already typed, so dictation appends to it instead of
     // wiping the input box.
+    target = t
+    mode.value = t ? 'field' : 'buffer'
+    targetEl.value = t?.el ?? null
+    targetLabel.value = t?.label ?? ''
+    heldDraft = t && draftPending.value ? inputText.value : ''
+    draftPending.value = false
+    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
     voicePrefix = prefix
-    inputText.value = prefix
-    stopRequested = false
+    if (!t) inputText.value = prefix
 
     if (usePcmStreaming()) {
       startStreaming()
@@ -318,6 +427,42 @@ export function useVoiceInput() {
     stopMediaStream()
     // Complete the documented 'done' → 'idle' transition so a new recording can start.
     state.value = 'idle'
+    completeTarget()
+  }
+
+  /**
+   * Wraps up whichever destination this recording used.
+   *
+   * Field path: the text is already in the field, so the only thing left is to
+   * keep `targetEl` around long enough for the "已写入" pill, then let it go.
+   * Buffer path: hand the transcript to the capsule and keep it there — a
+   * finished dictation must never evaporate because nothing was focused.
+   */
+  function completeTarget() {
+    if (mode.value === 'field') {
+      target = null
+      if (fieldDoneTimer) clearTimeout(fieldDoneTimer)
+      fieldDoneTimer = setTimeout(() => {
+        fieldDoneTimer = null
+        targetEl.value = null
+        targetLabel.value = ''
+        if (mode.value === 'field') mode.value = 'idle'
+        restoreHeldDraft()
+      }, 1600)
+      return
+    }
+    mode.value = 'buffer'
+    draftPending.value = inputText.value.trim() !== ''
+    if (!draftPending.value) mode.value = 'idle'
+  }
+
+  /** Puts a set-aside capsule transcript back in front of the user. */
+  function restoreHeldDraft() {
+    if (!heldDraft) return
+    inputText.value = heldDraft
+    heldDraft = ''
+    mode.value = 'buffer'
+    draftPending.value = true
   }
 
   /**
@@ -450,8 +595,19 @@ export function useVoiceInput() {
     }
   }
 
-  /** Replaces the transcript while keeping whatever the user had typed. */
+  /**
+   * Replaces the transcript while keeping whatever the user had typed.
+   *
+   * In a field this rewrites the exact range the previous partial occupied, so
+   * the recogniser can revise earlier words without disturbing anything the
+   * user typed around it.
+   */
   function setPartial(text: string) {
+    dropDeadTarget()
+    if (target) {
+      writeVoiceText(target, text)
+      return
+    }
     inputText.value = voicePrefix + text
   }
 
@@ -463,6 +619,7 @@ export function useVoiceInput() {
     isRecording.value = false
     // Complete the documented 'done' → 'idle' transition so a new recording can start.
     state.value = 'idle'
+    completeTarget()
   }
 
   /**
@@ -541,18 +698,57 @@ export function useVoiceInput() {
     }
     stopMediaStream()
     if (ws) { ws.close(); ws = null }
+    // Take back whatever this recording already wrote into a field, and drop
+    // the pending capsule draft. Cancelling is an explicit "forget this".
+    if (target) {
+      removeVoiceText(target)
+      target = null
+    }
+    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
+    targetEl.value = null
+    targetLabel.value = ''
+    draftPending.value = false
+    mode.value = 'idle'
     state.value = 'idle'
     isRecording.value = false
+    // Drop the live buffer transcript; a draft that predates this recording is
+    // not part of what was cancelled.
+    if (!heldDraft) inputText.value = ''
+    restoreHeldDraft()
+  }
+
+  /**
+   * A field can disappear mid-recording (the chat box is re-keyed when the
+   * composer is rebuilt). Writing into a detached node would swallow the
+   * transcript, so the text moves to the capsule instead of being lost.
+   */
+  function dropDeadTarget(): void {
+    if (!target || target.el.isConnected) return
+    const carried = target.applied
+    target = null
+    targetEl.value = null
+    targetLabel.value = ''
+    mode.value = 'buffer'
+    voicePrefix = carried
+    inputText.value = carried
   }
 
   function appendText(text: string) {
     if (!text) return
+    dropDeadTarget()
     // Concatenate without rewriting either side: the transcript continues
     // whatever is already in the box, so nothing is trimmed. A separator is
     // added only where the junction needs one — joining verbatim glued English
     // words together ("Please review" + "the diff" → "Please reviewthe diff"),
     // because the buffered engine emits one transcript per audio segment and
     // each starts a new utterance.
+    if (target) {
+      const written = target.applied
+      const prev = written || textBeforeTarget(target)
+      const next = written + (needsJunctionSpace(prev, text) ? ' ' : '') + text
+      writeVoiceText(target, next)
+      return
+    }
     const prev = inputText.value
     inputText.value = prev + (needsJunctionSpace(prev, text) ? ' ' : '') + text
   }
@@ -560,24 +756,11 @@ export function useVoiceInput() {
   function setState(s: VoiceInputState) { state.value = s }
   function setInputText(s: string) { inputText.value = s }
 
-  /**
-   * Replace the text this dictation started from.
-   *
-   * `start(prefix)` snapshots the input box in TWO places: `voicePrefix` (the
-   * PCM path rebuilds `voicePrefix + text` on every partial) and `inputText`
-   * (the buffered path appends to it). If the box is emptied while a recording
-   * is still in flight — the message was just sent — that snapshot is stale:
-   * the transcript that lands afterwards would put the sent text back into the
-   * box, and the next tap would send it a second time.
-   *
-   * Callers therefore re-point it at the box's new content (`''` after a send,
-   * the restored text after a failed one). Deliberately not part of `cancel()`:
-   * here the recording finishes normally and its transcript must still arrive —
-   * just without the old text in front of it.
-   */
-  function setStartText(text: string) {
-    voicePrefix = text
-    inputText.value = text
+  /** Drops the finished capsule transcript (the × button). */
+  function discardDraft() {
+    inputText.value = ''
+    draftPending.value = false
+    if (mode.value === 'buffer') mode.value = 'idle'
   }
 
   function reset() {
@@ -591,15 +774,22 @@ export function useVoiceInput() {
     inputText,
     error,
     isRecording,
+    mode,
+    targetEl,
+    targetLabel,
+    draftPending,
     toggle,
+    toggleAt,
     start,
+    startAt,
+    startGlobal,
     stop,
     cancel,
     reset,
     appendText,
+    discardDraft,
     setState,
     setInputText,
-    setStartText,
     shortcutKey,
     currentTuning,
   }

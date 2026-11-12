@@ -259,12 +259,19 @@ describe('useVoiceInput', () => {
     await vi.waitFor(() => expect(v.inputText.value).toBe('已输入的文字识别结果'))
   })
 
-  // The composer is emptied when the message is sent, but a dictation started
-  // from that text is still in flight. Its snapshot has to be dropped at that
-  // point: the late transcript would otherwise rebuild "sent text + transcript"
-  // and drop it back into the box — the message looks unsent, and the next tap
-  // sends it a second time.
-  it('setStartText("") keeps a late transcript from resurrecting the sent text', async () => {
+  // ── dictating into a real field (any input/textarea, not just the chat box) ──
+
+  /** A focused textarea with its caret where the caller wants it. */
+  function makeField(value: string, caret = value.length): HTMLTextAreaElement {
+    const el = document.createElement('textarea')
+    el.value = value
+    document.body.appendChild(el)
+    el.focus()
+    el.setSelectionRange(caret, caret)
+    return el
+  }
+
+  it('writes a late transcript into the field even if the box was cleared by a send', async () => {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
     vi.stubGlobal('navigator', {
@@ -278,8 +285,8 @@ describe('useVoiceInput', () => {
       stop() { this.state = 'inactive'; this.onstop?.() }
       static isTypeSupported = vi.fn(() => true)
     })
-    // Hold the response until the composer has been cleared, so the ordering
-    // matches the real send (the POST is in flight when clearInput() runs).
+    // Hold the response until after the box has been cleared, matching the
+    // real send (the POST is in flight when clearInput() runs).
     let resolveFetch!: (v: unknown) => void
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { resolveFetch = resolve })))
 
@@ -287,41 +294,68 @@ describe('useVoiceInput', () => {
     serverConfig.value = { stt: { provider: 'vllm' } }
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
+    const el = makeField('请看一下这个改动')
 
-    await v.start('请看一下这个改动')
+    await v.startAt(el)
     v.stop()
     // The message went out → the composer is empty.
-    v.setStartText('')
+    el.value = ''
     resolveFetch({ ok: true, json: async () => ({ text: '听写' }) })
 
     await vi.waitFor(() => expect(v.state.value).toBe('idle'))
-    expect(v.inputText.value).toBe('听写')
-    expect(v.inputText.value).not.toContain('请看一下这个改动')
+    expect(el.value).toBe('听写')
+    expect(el.value).not.toContain('请看一下这个改动')
+    el.remove()
   })
 
-  // Same hazard on the PCM path, where the partial is rebuilt from
-  // `voicePrefix` rather than appended — clearing only `inputText` there would
-  // leave the sent text in front of every partial.
-  it('setStartText("") also drops the PCM prefix that partials are built on', async () => {
+  it('re-anchors streaming partials after the field was cleared (no resurrected prefix)', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
 
     const { useVoiceInput } = await import('./useVoiceInput')
     const v = useVoiceInput()
-    await v.start('请看一下这个改动')
+    const el = makeField('请看一下这个改动')
+
+    await v.startAt(el)
     env.getWS()!.onopen!()
     await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
 
     env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
-    expect(v.inputText.value).toBe('请看一下这个改动听写')
+    expect(el.value).toBe('请看一下这个改动听写')
 
-    // The message was sent: the box is empty and the snapshot is gone.
-    v.setStartText('')
+    // The message was sent: the box is empty, so the next revision must land
+    // alone instead of rebuilding the sent text in front of it.
+    el.value = ''
     env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
-    expect(v.inputText.value).toBe('听写')
+    expect(el.value).toBe('听写')
 
     v.cancel()
+    el.remove()
+  })
+
+  it('writes into the field at the caret and keeps the text on both sides', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    const el = makeField('前后', 1) // caret between 前 and 后
+
+    await v.startAt(el)
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '中间' }) })
+    expect(el.value).toBe('前中间后')
+    // The recognition context is the text in front of the caret, not the whole box.
+    expect(JSON.parse(env.getWS()!.send.mock.calls[0][0] as string).context).toBe('前')
+
+    v.cancel()
+    // Cancelling takes the dictation back out and restores the caret.
+    expect(el.value).toBe('前后')
+    el.remove()
   })
 
   // ── streaming (PCM + AudioWorklet) ───────────────────────────────

@@ -155,7 +155,7 @@
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
         <div class="attach-menu-wrapper" ref="attachMenuRef">
-          <button v-if="voiceState === 'recording' || voiceState === 'transcribing'" class="chat-attach-btn voice-rec-btn" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" disabled :title="voiceState === 'recording' ? t('chat.voice.recording') : t('chat.voice.transcribing')">
+          <button v-if="voiceInThisField && (voiceState === 'recording' || voiceState === 'transcribing')" class="chat-attach-btn voice-rec-btn" :class="{ recording: voiceState === 'recording', transcribing: voiceState === 'transcribing' }" disabled :title="voiceState === 'recording' ? t('chat.voice.recording') : t('chat.voice.transcribing')">
             <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
             <LoadingIndicator v-else class="attach-btn-spinner" size="sm" inline />
           </button>
@@ -166,6 +166,8 @@
         <textarea class="chat-textarea"
           :key="inputEpoch"
           ref="textareaRef"
+          data-voice-chat-input
+          :data-voice-label="t('chat.voice.chatField')"
           v-model="inputText"
           :disabled="inputDisabled"
           :placeholder="dynamicPlaceholder"
@@ -964,7 +966,7 @@ watch(inputText, (text) => {
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
-const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, start: startVoice, stop: stopVoice, setStartText: setVoiceStartText, shortcutKey: voiceShortcutKey } = voiceInput
+const { state: voiceState, toggleAt: toggleVoiceAt } = voiceInput
 
 const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
@@ -995,10 +997,9 @@ function onSendPointerDown() {
       // the box the click is a real send, and any transcript lands in the input
       // afterwards (see useVoiceInput.start's `prefix`).
       voiceJustRecorded = !hasInputContent.value
-      // Long-press starts dictation regardless of what is already typed; the
-      // recognized text is appended to the existing content rather than
-      // replacing it (see useVoiceInput.start's `prefix`).
-      void toggleVoice(inputText.value)
+      // Long-press starts dictation into this textarea at the caret; whatever
+      // is already typed around it is left alone.
+      void toggleVoiceAt(textareaRef.value)
     }
   }, VOICE_LONG_PRESS_MS)
 }
@@ -1008,46 +1009,21 @@ function onSendPointerUp() {
   if (voicePressTimer) { clearTimeout(voicePressTimer); voicePressTimer = null }
   if (voiceLongPressActive) {
     voiceLongPressActive = false
-    void toggleVoice()
+    void toggleVoiceAt(textareaRef.value)
   }
 }
 
 // Sync recognized voice text into the input box (never auto-sends).
-watch(voiceInputText, (val) => {
-  if (val && val !== inputText.value) {
-    inputText.value = val
-  }
-})
-
-function onVoiceShortcutDown(e) {
-  // NOTE: Only the hardcoded F9 shortcut is currently supported.
-  // stt.shortcut_key may hold other values; matching those is out of scope
-  // and would require a lookup table of key/alt/ctrl/meta/shift combos.
-  const sc = voiceShortcutKey()
-  if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.repeat) {
-    e.preventDefault()
-    startVoice(inputText.value)
-  }
-}
-
-function onVoiceShortcutUp(e) {
-  const sc = voiceShortcutKey()
-  if (sc === 'F9' && e.code === 'F9' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-    e.preventDefault()
-    stopVoice()
-  }
-}
-
-// Safety net: if the window loses focus while F9 is held (keyup may never fire),
-// end the recording so it doesn't get stuck.
-function onVoiceBlurStop() {
-  if (voiceState.value === 'recording') {
-    stopVoice()
-  }
-}
+// The transcript is written straight into the textarea at the caret (see
+// utils/voiceTarget), so v-model picks it up through the dispatched `input`
+// event. Nothing to mirror here — a watch would fight the caret arithmetic.
 
 const rootRef = ref(null)
 const textareaRef = ref(null)
+// Dictation can now land in ANY field. The composer's own recording indicator
+// must only appear when this textarea is the one being written into — the
+// global overlay owns the pill for every other field.
+const voiceInThisField = computed(() => voiceInput.targetEl.value === textareaRef.value)
 const actionBarRef = ref(null)
 const isPasteOver = ref(false)
 let pasteOverlayTimer = 0
@@ -2203,11 +2179,10 @@ function handleWindowPaste(e) {
 
 function clearInput() {
   inputText.value = ''
-  // A dictation still in flight captured the text we just sent as its start
-  // text; re-point it at the now-empty box. Otherwise the transcript that
-  // arrives after the send rebuilds "sent text + transcript" and drops it back
-  // into the box — the message looks unsent and a second tap sends it twice.
-  setVoiceStartText('')
+  // An in-flight dictation writes into this textarea by caret index. Clearing
+  // the value is enough: the next partial notices the field no longer holds
+  // what it wrote and re-anchors to the (now empty) box, so the transcript
+  // lands alone instead of resurrecting the sent message.
   // Also clear the draft cache for current session so it doesn't linger
   if (props.currentSessionId) {
     deleteChatDraft(props.currentSessionId)
@@ -2221,10 +2196,8 @@ function clearInput() {
  *  must not silently disappear. */
 function restoreInput(text) {
   inputText.value = text ?? ''
-  // Keep the in-flight dictation's start text in step with the box: a send that
-  // failed cleared it (clearInput), so without this the transcript would
-  // replace the restored message instead of appending to it.
-  setVoiceStartText(text ?? '')
+  // Same re-anchor rule as clearInput: the dictation's next partial sees the
+  // restored value and continues from the caret instead of overwriting it.
   if (props.currentSessionId && text) {
     setChatDraft(props.currentSessionId, text)
   }
@@ -2357,9 +2330,6 @@ onMounted(() => {
   fetchItems()
   startPlaceholderRotation()
   window.addEventListener('paste', handleWindowPaste, true)
-  window.addEventListener('keydown', onVoiceShortcutDown)
-  window.addEventListener('keyup', onVoiceShortcutUp)
-  window.addEventListener('blur', onVoiceBlurStop)
   window.addEventListener('clawbench-recommendation', onRecommendationEvent)
   // Caret moves (clicks / arrow keys) can enter or leave an @ trigger without
   // changing the text, so the @ menu must re-evaluate on selection changes.
@@ -2380,9 +2350,6 @@ onBeforeUnmount(() => {
   }
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
-  window.removeEventListener('keydown', onVoiceShortcutDown)
-  window.removeEventListener('keyup', onVoiceShortcutUp)
-  window.removeEventListener('blur', onVoiceBlurStop)
   window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
   document.removeEventListener('selectionchange', onTextareaSelectionChange)
   stopMachine.destroy()
