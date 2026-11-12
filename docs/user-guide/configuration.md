@@ -207,7 +207,7 @@
 | `alibaba.streaming` | `false` | 边录边传 |
 | `tencent.secret_id` | 空 | 腾讯云 API 密钥的 SecretId |
 | `tencent.secret_key` | 空 | 与 SecretId 配对的 SecretKey |
-| `tencent.app_id` | 空 | 账号数字 AppID，实时识别必填 |
+| `tencent.app_id` | 空 | 账号数字 AppID，**留空即可**：实时识别会用上面的密钥自动查出账号 APPID；密钥无权读取账号信息时才需要手填 |
 | `tencent.model` | `16k_zh` | 引擎型号，同时决定语种（`16k_en`、`16k_zh_dialect` 等） |
 | `tencent.enable_itn` | `true` | 数字规范化（`convert_num_mode`） |
 | `tencent.enable_ddc` | `false` | 顺滑处理，去口头语（`filter_modal`） |

@@ -48,9 +48,6 @@ func (p *TencentProvider) OpenStream(ctx context.Context, opts StreamOptions) (S
 	if err := p.requireCredentials(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(p.AppID) == "" {
-		return nil, errors.New("stt: tencent AppID is required for realtime recognition")
-	}
 
 	model := p.model()
 	rate, err := tencentStreamRate(model, opts)
@@ -58,7 +55,15 @@ func (p *TencentProvider) OpenStream(ctx context.Context, opts StreamOptions) (S
 		return nil, err
 	}
 
-	wsURL, err := p.streamURL(model)
+	// The AppID is read from the key pair, not from the settings — see
+	// EffectiveAppID for why. Resolved after the cheap local checks so a bad
+	// request never costs a round trip.
+	appID, err := p.EffectiveAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	wsURL, err := p.streamURL(model, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +132,7 @@ func tencentStreamRate(model string, opts StreamOptions) (int, error) {
 }
 
 // streamURL builds and signs the realtime handshake URL.
-func (p *TencentProvider) streamURL(model string) (string, error) {
+func (p *TencentProvider) streamURL(model, appID string) (string, error) {
 	base := p.WSBaseURL
 	if base == "" {
 		base = TencentASRWSBaseURL
@@ -160,7 +165,7 @@ func (p *TencentProvider) streamURL(model string) (string, error) {
 		params.Set("vad_silence_time", strconv.Itoa(clampInt(p.EndWindowSize, 500, 2000)))
 	}
 
-	path := tencentStreamAudioPath + url.PathEscape(strings.TrimSpace(p.AppID))
+	path := tencentStreamAudioPath + url.PathEscape(strings.TrimSpace(appID))
 	// The signature covers exactly the query that goes on the wire, host
 	// included, so it is computed from the same encoded string.
 	query := params.Encode()
@@ -187,10 +192,24 @@ func tencentWaitHandshake(ctx context.Context, conn volcConn) error {
 			continue
 		}
 		if ack.Code != 0 {
-			return fmt.Errorf("stt: tencent stream handshake failed: code %d: %s", ack.Code, ack.Message)
+			return fmt.Errorf("stt: tencent stream handshake failed: code %d: %s%s", ack.Code, ack.Message, tencentHandshakeHint(ack.Code))
 		}
 		return nil
 	}
+}
+
+// tencentHandshakeHint explains the one auth failure users actually hit.
+//
+// The realtime API compares the AppID in the path with the account's APPID,
+// while 一句话识别 never looks at it. The console shows the UIN right next to
+// the APPID, so pasting the UIN passes every other check (including the
+// settings test, before it probed the realtime handshake) and fails here with
+// an error that only says "check the AppID".
+func tencentHandshakeHint(code int) string {
+	if code == 4002 {
+		return " (the AppID is the account APPID — 10 digits starting with 125 — not the UIN)"
+	}
+	return ""
 }
 
 // tencentNonce returns a positive integer below 10 digits, as the handshake

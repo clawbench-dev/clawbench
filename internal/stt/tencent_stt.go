@@ -11,9 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,6 +39,10 @@ const (
 	// TencentASRWSBaseURL is the realtime recognition host.
 	TencentASRWSBaseURL = "wss://asr.cloud.tencent.com"
 
+	// TencentCAMBaseURL is the CAM API root used to read the account APPID out
+	// of the key pair.
+	TencentCAMBaseURL = "https://cam.tencentcloudapi.com"
+
 	// TencentAPIVersion is the SentenceRecognition version.
 	TencentAPIVersion = "2019-06-14"
 
@@ -57,6 +63,19 @@ const (
 
 	// tencentStreamAudioPath is the realtime endpoint path prefix.
 	tencentStreamAudioPath = "/asr/v2/"
+
+	// tencentCAMService / tencentCAMAction / tencentCAMVersion describe the CAM
+	// call that returns the account APPID (GetUserAppId).
+	tencentCAMService = "cam"
+	tencentCAMAction  = "GetUserAppId"
+	tencentCAMVersion = "2019-01-16"
+	// tencentCAMRegion is required by the CAM frontend even though the call is
+	// account-wide; any valid region answers the same thing.
+	tencentCAMRegion = "ap-guangzhou"
+
+	// tencentAppIDLookupTimeout bounds the APPID lookup so a slow account API
+	// cannot hold up the first recording.
+	tencentAppIDLookupTimeout = 5 * time.Second
 )
 
 // Container names shared with the other providers' format detection.
@@ -80,7 +99,17 @@ type TencentProvider struct {
 	BaseURL   string
 	WSBaseURL string
 
+	// CAMBaseURL is the account API root used by EffectiveAppID. A field for
+	// the same reason as the two above.
+	CAMBaseURL string
+
 	HTTPClient *http.Client
+
+	// resolvedAppID caches the APPID read from the key pair (see
+	// EffectiveAppID). Providers are rebuilt whenever the config changes, so a
+	// cached value never outlives the credentials it was read with.
+	appIDMu       sync.Mutex
+	resolvedAppID string
 
 	// Recognition options shared by both APIs.
 	EnableITN     bool // convert_num_mode: 1 = smart Arabic numerals, 0 = Chinese numerals
@@ -109,6 +138,106 @@ func (p *TencentProvider) model() string {
 		return p.Model
 	}
 	return TencentDefaultModel
+}
+
+// EffectiveAppID returns the account APPID the realtime API needs.
+//
+// It is read from the key pair rather than trusted from the settings: the
+// console prints the UIN right next to the APPID, both are long numbers, and a
+// pasted UIN passes every other check (the file API never looks at the AppID)
+// only to fail every recording with a 4002 that just says "check the AppID".
+// A typed value is used when the lookup itself is refused — a key scoped to
+// ASR alone cannot read account information.
+func (p *TencentProvider) EffectiveAppID(ctx context.Context) (string, error) {
+	p.appIDMu.Lock()
+	defer p.appIDMu.Unlock()
+	if p.resolvedAppID != "" {
+		return p.resolvedAppID, nil
+	}
+	if err := p.requireCredentials(); err != nil {
+		return "", err
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, tencentAppIDLookupTimeout)
+	defer cancel()
+	appID, err := p.lookupAppID(lookupCtx)
+	if err != nil {
+		if typed := strings.TrimSpace(p.AppID); typed != "" {
+			slog.Warn("stt: tencent AppID lookup failed, using the configured value",
+				slog.String("error", err.Error()))
+			p.resolvedAppID = typed
+			return typed, nil
+		}
+		return "", fmt.Errorf("stt: tencent AppID is not configured and could not be read from the credentials: %w", err)
+	}
+	if typed := strings.TrimSpace(p.AppID); typed != "" && typed != appID {
+		slog.Info("stt: tencent AppID in the settings is not this key pair's account APPID, using the account's",
+			slog.String("configured", typed), slog.String("account", appID))
+	}
+	p.resolvedAppID = appID
+	return appID, nil
+}
+
+// tencentAppIDResponse is the GetUserAppId answer. Errors arrive with HTTP 200.
+type tencentAppIDResponse struct {
+	Response struct {
+		AppID int64 `json:"AppId"`
+		Error *struct {
+			Code    string `json:"Code"`
+			Message string `json:"Message"`
+		} `json:"Error"`
+	} `json:"Response"`
+}
+
+// lookupAppID asks CAM which account the key pair belongs to.
+func (p *TencentProvider) lookupAppID(ctx context.Context) (string, error) {
+	base := p.CAMBaseURL
+	if base == "" {
+		base = TencentCAMBaseURL
+	}
+	body := []byte("{}")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+tencentSentencePath, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("stt: create appid request: %w", err)
+	}
+	now := time.Now()
+	req.Header.Set("Content-Type", tencentJSONContentType)
+	req.Header.Set("X-TC-Action", tencentCAMAction)
+	req.Header.Set("X-TC-Version", tencentCAMVersion)
+	req.Header.Set("X-TC-Region", tencentCAMRegion)
+	req.Header.Set("X-TC-Timestamp", strconv.FormatInt(now.Unix(), 10))
+	req.Header.Set("Authorization", tencentTC3Authorization(
+		p.SecretID, p.SecretKey, tencentCAMService, tencentCAMAction,
+		req.URL.Host, string(body), now,
+	))
+
+	client := p.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("stt: appid lookup failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("stt: read appid response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", &APIError{Status: resp.StatusCode, Body: string(respBody)}
+	}
+	var parsed tencentAppIDResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", fmt.Errorf("stt: decode appid response (HTTP %d): %s", resp.StatusCode, truncate(respBody))
+	}
+	if e := parsed.Response.Error; e != nil && e.Code != "" {
+		return "", fmt.Errorf("stt: appid lookup returned %s: %s", e.Code, e.Message)
+	}
+	if parsed.Response.AppID <= 0 {
+		return "", fmt.Errorf("stt: appid lookup returned no AppId")
+	}
+	return strconv.FormatInt(parsed.Response.AppID, 10), nil
 }
 
 // tencentSentenceRequest is the SentenceRecognition body.

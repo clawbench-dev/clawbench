@@ -3732,7 +3732,7 @@ export default {
       sttTencentSecretKey: 'SecretKey',
       sttTencentSecretKeyDesc: '与 SecretId 配对的 SecretKey，只保存在服务端',
       sttTencentAppId: 'AppID',
-      sttTencentAppIdDesc: '账号中心里的数字 AppID，实时识别要用，整段上传不需要',
+      sttTencentAppIdDesc: '可留空：服务端会用上面的密钥自动查出账号 APPID（实时识别要用）。只有密钥没有读取账号信息的权限时才需要手填',
       sttTencentModel: '识别引擎',
       sttTencentModelDesc: '引擎型号同时决定语种：16k_zh 中文普通话、16k_en 英语、16k_zh_dialect 多方言等，默认 16k_zh',
       sttTencentStreamingDesc: '默认开启。关掉后录音会在本地转成 WAV 再上传（体积比 WebM 大，且整段识别单次最多 60 秒）；实时识别没有这个限制',

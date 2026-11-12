@@ -3738,7 +3738,7 @@ export default {
       sttTencentSecretKey: 'SecretKey',
       sttTencentSecretKeyDesc: 'SecretKey paired with the SecretId; stored on the server only',
       sttTencentAppId: 'AppID',
-      sttTencentAppIdDesc: 'Numeric AppID from the account center; required by realtime recognition, not by whole-file uploads',
+      sttTencentAppIdDesc: 'Optional: the server reads the account AppID from the key pair above (realtime recognition needs it). Fill it in only when the key cannot read account information',
       sttTencentModel: 'Engine model',
       sttTencentModelDesc: 'The engine name also selects the language: 16k_zh, 16k_en, 16k_zh_dialect, … (default 16k_zh)',
       sttTencentStreamingDesc: 'On by default. Turning it off makes the browser convert the recording to WAV before uploading (larger than WebM, and whole-file recognition caps at 60 s); realtime has no such limit',

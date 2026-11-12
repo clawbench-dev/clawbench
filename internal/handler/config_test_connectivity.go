@@ -499,16 +499,28 @@ func testAlibabaSTT(ctx context.Context, values map[string]any) ConnectivityTest
 	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Alibaba Cloud transcription succeeded: %q", text)}
 }
 
-// tencentSTTBaseURL is the Tencent Cloud ASR root used by the connectivity
-// test. Overridable in tests; production always hits the real host.
+// tencentSTTBaseURL / tencentSTTWSBaseURL / tencentSTTCAMBaseURL are the
+// Tencent Cloud roots used by the connectivity test. Overridable in tests;
+// production always hits the real hosts.
 //
-//nolint:gochecknoglobals // test seam, mirrors doubaoSTTBaseURL
-var tencentSTTBaseURL = stt.TencentASRBaseURL
+//nolint:gochecknoglobals // test seams, mirror doubaoSTTBaseURL
+var (
+	tencentSTTBaseURL    = stt.TencentASRBaseURL
+	tencentSTTWSBaseURL  = stt.TencentASRWSBaseURL
+	tencentSTTCAMBaseURL = stt.TencentCAMBaseURL
+)
 
 // testTencentSTT probes 一句话识别 with the embedded "你好" clip. The signed
 // request exercises the real signature path, so a wrong SecretId/SecretKey or
 // an unopened service surfaces as the engine's own error code instead of "the
 // host answered".
+//
+// It then opens a realtime session, because the two APIs do not check the same
+// things: the file API signs with the SecretKey only, while the realtime
+// handshake also carries the account APPID in the path and is rejected (4002)
+// when that AppID is wrong. Dictation uses the realtime API, so a file-only
+// probe would report "success" for a configuration that cannot record a single
+// second. No audio is sent, so the probe costs nothing.
 func testTencentSTT(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	secretID := resolveStringValue(values, "stt.tencent.secret_id", model.ConfigInstance.STT.Tencent.SecretID)
 	secretKey := resolveStringValue(values, "stt.tencent.secret_key", model.ConfigInstance.STT.Tencent.SecretKey)
@@ -518,12 +530,11 @@ func testTencentSTT(ctx context.Context, values map[string]any) ConnectivityTest
 	if secretID == "" || secretKey == "" {
 		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud SecretId and SecretKey are required"}
 	}
-	if appID == "" {
-		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud AppID is required for realtime recognition"}
-	}
 
 	provider := stt.NewTencentProvider(secretID, secretKey, appID)
 	provider.BaseURL = tencentSTTBaseURL
+	provider.WSBaseURL = tencentSTTWSBaseURL
+	provider.CAMBaseURL = tencentSTTCAMBaseURL
 	if engineModel != "" {
 		provider.Model = engineModel
 	}
@@ -537,7 +548,34 @@ func testTencentSTT(ctx context.Context, values map[string]any) ConnectivityTest
 	if text == "" {
 		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud transcription returned empty text"}
 	}
-	return ConnectivityTestResult{Success: true, Message: fmt.Sprintf("Tencent Cloud transcription succeeded: %q", text)}
+	resolvedAppID, err := probeTencentRealtime(ctx, provider)
+	if err != nil {
+		return ConnectivityTestResult{
+			Success: false,
+			Message: fmt.Sprintf("Tencent Cloud transcription succeeded (%q) but the realtime handshake failed: %v", text, err),
+		}
+	}
+	return ConnectivityTestResult{
+		Success: true,
+		Message: fmt.Sprintf("Tencent Cloud transcription succeeded: %q (realtime AppID %s)", text, resolvedAppID),
+	}
+}
+
+// probeTencentRealtime opens and immediately closes a realtime session, which
+// is the only way to validate the AppID that dictation actually uses. It
+// returns the AppID that was used, so the result shows where a wrong value came
+// from.
+func probeTencentRealtime(ctx context.Context, provider *stt.TencentProvider) (string, error) {
+	appID, err := provider.EffectiveAppID(ctx)
+	if err != nil {
+		return "", err
+	}
+	session, err := provider.OpenStream(ctx, stt.StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
+	if err != nil {
+		return appID, err
+	}
+	session.Close()
+	return appID, nil
 }
 
 // isSTTModelNotFound reports whether an STT error body indicates an unknown model.

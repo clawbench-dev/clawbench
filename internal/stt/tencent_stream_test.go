@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +20,18 @@ import (
 // wsBase turns an httptest HTTP URL into the ws:// base the provider dials.
 func wsBase(srv *httptest.Server) string {
 	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+// camStub answers the APPID lookup so unit tests never reach Tencent's account
+// API. Every provider that dials the realtime host needs one: the AppID comes
+// from the key pair, not from the struct.
+func camStub(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"Response":{"AppId":1250000000}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func TestTencentOpenStream(t *testing.T) {
@@ -62,6 +75,7 @@ func TestTencentOpenStream(t *testing.T) {
 
 	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
 	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
 	p.EndWindowSize = 900
 
 	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
@@ -154,6 +168,7 @@ func TestTencentStreamSignature(t *testing.T) {
 
 	p := NewTencentProvider("AKIDtest", "secretkey", "1250000000")
 	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
 
 	session, err := p.OpenStream(context.Background(), StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16})
 	if err != nil {
@@ -191,6 +206,7 @@ func TestTencentOpenStreamHandshakeFailure(t *testing.T) {
 
 	p := NewTencentProvider("bad", "bad", "1")
 	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
 
 	_, err := p.OpenStream(context.Background(), StreamOptions{})
 	if err == nil {
@@ -198,6 +214,11 @@ func TestTencentOpenStreamHandshakeFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "4002") || !strings.Contains(err.Error(), "鉴权失败") {
 		t.Fatalf("err = %v, want the engine's code and message", err)
+	}
+	// The UIN sits next to the APPID in the console and passes every other
+	// check, so the one auth failure users hit has to name the field.
+	if !strings.Contains(err.Error(), "not the UIN") {
+		t.Fatalf("err = %v, want the AppID-vs-UIN hint", err)
 	}
 }
 
@@ -209,7 +230,6 @@ func TestTencentOpenStreamRejectsBadOptions(t *testing.T) {
 		want string
 	}{
 		{"no credentials", NewTencentProvider("", "", "1"), StreamOptions{}, "SecretId"},
-		{"no appid", NewTencentProvider("id", "key", " "), StreamOptions{}, "AppID"},
 		{"stereo", NewTencentProvider("id", "key", "1"), StreamOptions{Channels: 2}, "mono"},
 		{"8-bit", NewTencentProvider("id", "key", "1"), StreamOptions{Bits: 8}, "16-bit"},
 		{"8k model on 16k audio", func() *TencentProvider {
@@ -250,6 +270,7 @@ func TestTencentStreamErrorFrame(t *testing.T) {
 
 	p := NewTencentProvider("id", "key", "1")
 	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
 	session, err := p.OpenStream(context.Background(), StreamOptions{})
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
@@ -296,6 +317,7 @@ func TestTencentStreamIgnoresRepeatedFinalIndex(t *testing.T) {
 
 	p := NewTencentProvider("id", "key", "1")
 	p.WSBaseURL = wsBase(srv)
+	p.CAMBaseURL = camStub(t)
 	session, err := p.OpenStream(context.Background(), StreamOptions{})
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
@@ -324,7 +346,7 @@ func TestTencentStreamIgnoresRepeatedFinalIndex(t *testing.T) {
 
 func TestTencentStreamURLDefaults(t *testing.T) {
 	p := NewTencentProvider("id", "key", "1250000000")
-	u, err := p.streamURL("16k_zh")
+	u, err := p.streamURL("16k_zh", "1250000000")
 	if err != nil {
 		t.Fatalf("streamURL: %v", err)
 	}
@@ -337,7 +359,7 @@ func TestTencentStreamURLDefaults(t *testing.T) {
 
 	// A provider whose base is an HTTP URL must still dial wss.
 	p.WSBaseURL = "https://asr.cloud.tencent.com"
-	u, err = p.streamURL("16k_zh")
+	u, err = p.streamURL("16k_zh", "1250000000")
 	if err != nil {
 		t.Fatalf("streamURL: %v", err)
 	}

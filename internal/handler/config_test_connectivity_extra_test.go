@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -342,9 +344,9 @@ func TestSTTConnectivity_Tencent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	prev := tencentSTTBaseURL
-	tencentSTTBaseURL = srv.URL
-	t.Cleanup(func() { tencentSTTBaseURL = prev })
+	wsURL, dials := tencentRealtimeStub(t, `{"code":0,"message":"success"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"AppId":1250000000}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
 
 	res := testSTT(context.Background(), map[string]any{
 		"stt.provider":           "tencent",
@@ -360,6 +362,127 @@ func TestSTTConnectivity_Tencent(t *testing.T) {
 	decoded, err := base64.StdEncoding.DecodeString(gotData)
 	require.NoError(t, err)
 	assert.Equal(t, sttProbeAudio, decoded, "probe must upload the real speech clip")
+	assert.EqualValues(t, 1, dials.Load(), "the probe must open a realtime session")
+}
+
+// TestSTTConnectivity_TencentAppIDIsLookedUp: the AppID is read from the key
+// pair, so a value pasted from the wrong row of the console (the UIN sits right
+// next to it) is not what the handshake uses — and the result says which one
+// was used.
+func TestSTTConnectivity_TencentAppIDIsLookedUp(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, _ := tencentRealtimeStub(t, `{"code":0,"message":"success"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"AppId":1253717851}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+		"stt.tencent.app_id":     "100055003327", // the UIN, not the APPID
+	})
+
+	assert.True(t, res.Success, res.Message)
+	assert.Contains(t, res.Message, "1253717851", "the result must name the AppID actually used")
+}
+
+// TestSTTConnectivity_TencentRealtimeAuthFailure is the case the file-only
+// probe could not see: 一句话识别 signs with the SecretKey alone and succeeds
+// even when the realtime handshake is rejected.
+func TestSTTConnectivity_TencentRealtimeAuthFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, _ := tencentRealtimeStub(t, `{"code":4002,"message":"鉴权失败，请检查输入的 AppID 与实际访问的 AppID 是否一致。"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"AppId":1253717851}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	res := testSTT(context.Background(), map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+		"stt.tencent.app_id":     "1253717851",
+	})
+
+	assert.False(t, res.Success, "a file-API success must not mask a broken realtime handshake")
+	assert.Contains(t, res.Message, "realtime handshake failed")
+	assert.Contains(t, res.Message, "4002")
+}
+
+// TestSTTConnectivity_TencentAppIDLookupDenied: a key scoped to ASR alone
+// cannot read account information, so the value the user typed is used — and
+// when there is none, the failure has to name the field instead of reporting a
+// generic handshake error.
+func TestSTTConnectivity_TencentAppIDLookupDenied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Response":{"Result":"你好","RequestId":"req"}}`))
+	}))
+	defer srv.Close()
+
+	wsURL, _ := tencentRealtimeStub(t, `{"code":0,"message":"success"}`)
+	camURL := tencentCAMStub(t, `{"Response":{"Error":{"Code":"AuthFailure.UnauthorizedOperation","Message":"no cam read"}}}`)
+	stubTencentEndpoints(t, srv.URL, wsURL, camURL)
+
+	base := map[string]any{
+		"stt.provider":           "tencent",
+		"stt.tencent.secret_id":  "AKIDtest",
+		"stt.tencent.secret_key": "sk-test",
+	}
+
+	withTyped := map[string]any{"stt.tencent.app_id": "1253717851"}
+	for k, v := range base {
+		withTyped[k] = v
+	}
+	assert.True(t, testSTT(context.Background(), withTyped).Success, "a typed AppID must be used when the lookup is denied")
+
+	assert.False(t, testSTT(context.Background(), base).Success, "no AppID and no lookup must fail")
+}
+
+// stubTencentEndpoints points the three Tencent roots at local servers for the
+// duration of one test.
+func stubTencentEndpoints(t *testing.T, httpURL, wsURL, camURL string) {
+	t.Helper()
+	prevHTTP, prevWS, prevCAM := tencentSTTBaseURL, tencentSTTWSBaseURL, tencentSTTCAMBaseURL
+	tencentSTTBaseURL, tencentSTTWSBaseURL, tencentSTTCAMBaseURL = httpURL, wsURL, camURL
+	t.Cleanup(func() {
+		tencentSTTBaseURL, tencentSTTWSBaseURL, tencentSTTCAMBaseURL = prevHTTP, prevWS, prevCAM
+	})
+}
+
+// tencentCAMStub answers the APPID lookup with body.
+func tencentCAMStub(t *testing.T, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// tencentRealtimeStub answers one realtime handshake with ack and reports how
+// many times it was dialed.
+func tencentRealtimeStub(t *testing.T, ack string) (string, *atomic.Int32) {
+	t.Helper()
+	var dials atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dials.Add(1)
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		_ = conn.Write(context.Background(), websocket.MessageText, []byte(ack))
+		// Hold the socket open until the client closes it, like the real engine.
+		_, _, _ = conn.Read(context.Background())
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, &dials
 }
 
 // TestSTTConnectivity_TencentRequiresCredentials covers the missing-key guard.
@@ -372,20 +495,6 @@ func TestSTTConnectivity_TencentRequiresCredentials(t *testing.T) {
 	})
 	assert.False(t, res.Success)
 	assert.Contains(t, res.Message, "SecretId")
-}
-
-// TestSTTConnectivity_TencentRequiresAppID names the field the realtime API
-// needs but the file API does not, so a half-configured account is caught here
-// instead of at the first recording.
-func TestSTTConnectivity_TencentRequiresAppID(t *testing.T) {
-	res := testSTT(context.Background(), map[string]any{
-		"stt.provider":           "tencent",
-		"stt.tencent.secret_id":  "AKIDtest",
-		"stt.tencent.secret_key": "sk",
-		"stt.tencent.app_id":     "",
-	})
-	assert.False(t, res.Success)
-	assert.Contains(t, res.Message, "AppID")
 }
 
 // ── Summarize Voice: provider branch ────────────────────────

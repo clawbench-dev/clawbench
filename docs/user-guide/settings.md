@@ -309,7 +309,7 @@ ClawBench 会把所有来源的技能（含 `SKILL.md` 的目录）汇总起来�
 | **流式识别 / ITN / 标点 / DDC / 中文变体** | 豆包专有：边录边传、数字规范化、自动标点、顺滑处理（去口头语）、简繁输出 |
 | **阿里云 API Key / 服务地址 / 实时识别模型 / 识别语言** | 阿里云专有：默认 `https://dashscope.aliyuncs.com`（新加坡地域填 `https://dashscope-intl.aliyuncs.com`），实时模型默认 `paraformer-realtime-v2`；整段上传固定用 `qwen3-asr-flash`。识别语言只作提示，留空即自动识别 |
 | **流式识别 / ITN / 标点 / DDC** | 阿里云专有 |
-| **腾讯云 SecretId / SecretKey / AppID** | 腾讯云专有：API 密钥对，AppID 是账号中心里的数字编号，实时识别要用。密钥只保存在服务端 |
+| **腾讯云 SecretId / SecretKey / AppID** | 腾讯云专有：API 密钥对。AppID **可以留空**——服务端会用这对密钥自动查出账号 APPID（实时识别要用）；只有密钥没有读取账号信息的权限时才需要手填。密钥只保存在服务端 |
 | **识别引擎 / 流式识别 / ITN / DDC / 断句静音** | 腾讯云专有：引擎型号同时决定语种（`16k_zh` 普通话、`16k_en` 英语、`16k_zh_dialect` 多方言等）。**流式识别默认开启**——关掉后录音会在浏览器里转成 WAV 再上传（体积大一些，且整段识别单次最多 60 秒） |
 
 ### 麦克风处理
