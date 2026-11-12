@@ -434,6 +434,44 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
+  // The last couple of characters were being lost because the capture graph was
+  // torn down the instant the button was released: the audio still inside the
+  // microphone pipeline (device buffer, echo cancellation, the worklet's partial
+  // frame) never reached the socket, so the recogniser heard the last syllable
+  // cut short. The tail keeps the graph alive briefly after release.
+  it('keeps capturing briefly after release so the tail still in the pipeline is sent', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    const stopping = v.stop()
+    // The UI must read as "transcribing" straight away, not as still recording.
+    expect(v.state.value).toBe('transcribing')
+    expect(v.isRecording.value).toBe(false)
+
+    // A frame that was already inside the pipeline when the button came up is
+    // still forwarded, and the end marker has not been sent yet.
+    const frame = new Int16Array(160).fill(8000).buffer
+    env.workletNode.port.onmessage!({ data: frame })
+    expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
+    expect(env.getWS()!.send.mock.calls.at(-1)![0]).not.toBe(JSON.stringify({ type: 'end' }))
+
+    await stopping
+    const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
+    expect(JSON.parse(last)).toEqual({ type: 'end' })
+    // Only then is the graph torn down and the microphone released.
+    expect(env.workletNode.port.onmessage).toBeNull()
+    expect(env.workletNode.disconnect).toHaveBeenCalled()
+    expect(env.track.stop).toHaveBeenCalled()
+    v.cancel()
+  })
+
   it('stop() while the socket is still connecting releases the mic and never starts capture', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
