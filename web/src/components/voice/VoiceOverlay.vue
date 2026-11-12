@@ -6,6 +6,7 @@
         v-if="pillVisible"
         ref="pillEl"
         class="voice-pill"
+        :class="{ 'is-compact': pillCompact }"
         :style="pillStyle"
         role="status"
       >
@@ -152,6 +153,10 @@ const pillEl = ref<HTMLElement | null>(null)
 const pillPos = ref({ top: 0, left: 0 })
 
 const pillVisible = computed(() => !!targetEl.value && (voiceMode.value === 'field' || voiceState.value !== 'idle'))
+// Inside the chat composer the pill tucks into the metadata row at the bottom
+// of the input box: close to what you are typing, and clear of the text and of
+// the toolbar above it.
+const pillCompact = computed(() => !!targetEl.value?.closest('.chat-input-wrapper'))
 const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pillPos.value.left}px` }))
 
 /**
@@ -162,15 +167,27 @@ const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pill
 function placePill() {
   const el = targetEl.value
   if (!el || !el.isConnected) return
-  // Anchor to the composer as a whole when the field lives in one: the chat
-  // textarea has a toolbar row directly above it, and a badge "above the
-  // field" would sit on those buttons.
-  const r = (el.closest('.chat-input-wrapper') ?? el).getBoundingClientRect()
-  const h = 34
+  const width = pillEl.value?.offsetWidth || 120
+  const height = pillEl.value?.offsetHeight || 24
+
+  const composer = el.closest('.chat-input-wrapper')
+  if (composer) {
+    // Bottom-right corner of the input box: the metadata row there is empty,
+    // so the pill never covers the text being written or the toolbar above.
+    const info = composer.querySelector('.chat-session-info') ?? composer
+    const r = info.getBoundingClientRect()
+    pillPos.value = {
+      top: r.bottom - height,
+      left: Math.max(8, r.right - width - 4),
+    }
+    return
+  }
+
+  // Any other field: just above it, never on top of the line being written.
+  const r = el.getBoundingClientRect()
   const gap = 8
-  let top = r.top - h - gap
+  let top = r.top - height - gap
   if (top < 8) top = r.bottom + gap
-  const width = pillEl.value?.offsetWidth || 220
   const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
   pillPos.value = { top, left }
 }
@@ -424,6 +441,15 @@ watch(voiceMode, () => { reposition() })
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-primary);
+}
+/* Compact form used inside the chat composer's metadata row. */
+.voice-pill.is-compact {
+  height: calc(24 * var(--dp));
+  padding: 0 calc(9 * var(--dp));
+  gap: calc(6 * var(--dp));
+}
+.voice-pill.is-compact .voice-wave {
+  height: calc(14 * var(--dp));
 }
 .voice-pill-hint {
   color: var(--text-hint);
