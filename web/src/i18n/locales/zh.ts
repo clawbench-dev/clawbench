@@ -3484,7 +3484,7 @@ export default {
       filePreviewModeDesc: '在文件管理器工具栏开启后，点击文件即在下方窗格中预览',
       drawioSection: 'draw.io 编辑器',
       drawioDownloadUrl: '下载地址',
-      drawioDownloadUrlDesc: '编辑器约 118MB，首次打开 .drawio 文件时才下载。留空则依次尝试内置加速镜像和 GitHub 官方地址。服务器连不上外网时，在这里填一个能访问到的完整下载地址，或者直接在文件查看器里上传 draw.war。官方文件地址：https://github.com/jgraph/drawio/releases/download/v32.6.10/draw.war',
+      drawioDownloadUrlDesc: '编辑器约 118MB，首次打开 .drawio 文件时才下载。留空则依次尝试内置加速镜像和 GitHub 官方地址。服务器连不上外网时，在这里填一个能访问到的完整下载地址（普通 http 和内网自签名的 https 都支持），或者直接在文件查看器里上传 draw.war。官方文件地址：https://github.com/jgraph/drawio/releases/download/v32.6.10/draw.war',
       fileView: '默认视图',
       fileViewDesc: '文件管理器的默认展示方式',
       fileViewList: '列表',

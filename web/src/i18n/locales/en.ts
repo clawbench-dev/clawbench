@@ -3490,7 +3490,7 @@ export default {
       filePreviewModeDesc: 'When enabled from the file manager toolbar, tapping a file previews it in a pane below the list',
       drawioSection: 'draw.io editor',
       drawioDownloadUrl: 'Download URL',
-      drawioDownloadUrlDesc: 'The editor is about 118 MB and is downloaded the first time a .drawio file is opened. Leave empty to try the built-in mirrors and then GitHub. When the server cannot reach the internet, fill in a full download URL here or upload draw.war from the file viewer. Official file: https://github.com/jgraph/drawio/releases/download/v32.6.10/draw.war',
+      drawioDownloadUrlDesc: 'The editor is about 118 MB and is downloaded the first time a .drawio file is opened. Leave empty to try the built-in mirrors and then GitHub. When the server cannot reach the internet, fill in a full download URL here (plain http and self-signed https on a LAN both work) or upload draw.war from the file viewer. Official file: https://github.com/jgraph/drawio/releases/download/v32.6.10/draw.war',
       fileView: 'Default View',
       fileViewDesc: 'Default display mode for the file manager',
       fileViewList: 'List',
