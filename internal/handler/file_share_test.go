@@ -2099,6 +2099,27 @@ func TestSharePublic_LocalMissingReferencedFileIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// The share SPA addresses an image outside the document's own directory through
+// `?path=<url-encoded absolute path>`. A CJK directory or filename must survive
+// that round trip: the query value is percent-decoded exactly once, so the
+// client has to encode the REAL path — encoding an already-encoded one makes
+// the backend stat a file literally named `%E5%9B%BE…` and 404.
+func TestSharePublic_LocalAbsolutePathWithCJKName(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "使用说明.md", "# 文档")
+	token := createShareViaAPI(t, env, absPath)
+	createTestFile(t, env.ProjectDir, "clawbench配置使用.assets/截图.png", "png-bytes")
+	imgAbs := filepath.Join(env.ProjectDir, "clawbench配置使用.assets", "截图.png")
+
+	req := newRequest(t, http.MethodGet,
+		"/api/share/"+token+"/local?path="+url.QueryEscape(imgAbs), nil)
+	w := callHandler(ServeSharePublic, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "png-bytes", w.Body.String())
+}
+
 // A path the filesystem refuses outright (a NUL byte survives path.Clean) must
 // be rejected by validation, not handed to os.Stat.
 func TestSharePublic_LocalInvalidPathIs404(t *testing.T) {

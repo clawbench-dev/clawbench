@@ -79,18 +79,32 @@ function resolveMediaSrc(src: string, projectRoot?: string): ResolvedMediaSrc | 
         return { url: localFileUrlForRelative(rel), thumbPath: encodeSegments(rel) }
       }
     }
-    return { url: `/api/fs/raw/?target=${encodeURIComponent(src)}`, thumbPath: encodeSegments(src) }
+    return { url: `/api/fs/raw/?target=${encodeURIComponent(decodePathOnce(src))}`, thumbPath: encodeSegments(src) }
   }
 
   if (!projectRoot) return null
   return { url: localFileUrlForRelative(src), thumbPath: encodeSegments(src) }
 }
 
+/**
+ * Percent-decode a path once, tolerating malformed escapes.
+ *
+ * `marked` percent-encodes the destination it writes into an <img src>, so a
+ * CJK filename reaches us as `%E5%9B%BE…`. Every URL form must be built from
+ * the REAL filename — handing the encoded form to `encodeURIComponent` encodes
+ * it a second time (`%E5` → `%25E5`) and the file is never found.
+ */
+function decodePathOnce(path: string): string {
+  try {
+    return decodeURIComponent(path)
+  } catch {
+    return path // malformed encoding, use as-is
+  }
+}
+
 /** Segment-encode a project-relative path, tolerating malformed escapes. */
 function encodeSegments(rel: string): string {
-  let decoded = rel
-  try { decoded = decodeURIComponent(rel) } catch { /* malformed encoding, use as-is */ }
-  return decoded.split('/').map((s: string) => encodeURIComponent(s)).join('/')
+  return decodePathOnce(rel).split('/').map((s: string) => encodeURIComponent(s)).join('/')
 }
 
 /** Build the `/api/fs/raw/<rel>` URL for an already segment-encoded rel. */

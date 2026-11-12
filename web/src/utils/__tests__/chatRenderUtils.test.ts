@@ -130,6 +130,18 @@ describe('rewriteImageUrls', () => {
     expect(result).not.toContain('/api/fs/thumb')
   })
 
+  it('decodes a CJK path marked already encoded before putting it in ?target=', () => {
+    // marked percent-encodes the destination it writes into src, so a CJK
+    // filename arrives as `%E5%9B%BE…`. Passing that straight to
+    // encodeURIComponent encoded it a second time (`%25E5%25…`) and the file
+    // was never found — the reported "image with a Chinese name never loads".
+    const html = '<img src="/tmp/%E5%9B%BE.png">'
+    const result = rewriteImageUrls(html, projectRoot)
+    expect(result).not.toContain('%25')
+    expect(result).toContain('data-full-src="/api/fs/raw/?target=%2Ftmp%2F%E5%9B%BE.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=/tmp/%E5%9B%BE.png&w=1200"')
+  })
+
   // ── Empty projectRoot ──
 
   it('does not rewrite any paths when projectRoot is empty', () => {
