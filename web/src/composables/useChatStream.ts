@@ -8,7 +8,7 @@ import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
 import { updateTeamState } from './useTeamState'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, isElicitationRequest, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -877,8 +877,15 @@ export function useChatStream(options: UseChatStreamOptions) {
         } else if (!data.done) {
           // Progress event: reset the stall watchdog so long-running tools
           // that keep emitting updates are never falsely marked done.
-          if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
-            const block = existing || blocksAfter[blocksAfter.length - 1]
+          //
+          // An elicitation card (ACP `elicitation/create`) waits on the USER,
+          // not on the tool: its `done` only arrives once the answer is
+          // submitted (or the request expires). The 30s fallback must not fire
+          // here — it flipped the card to its read-only form, which dropped
+          // every option click and left the agent blocked until the server's
+          // 30-minute timeout (issue #676).
+          const block = existing || blocksAfter[blocksAfter.length - 1]
+          if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name) && !isElicitationRequest(block?.input)) {
             toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
               if (block && !block.done) {
                 appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)

@@ -287,6 +287,21 @@ export function isSubagentToolName(name?: string): boolean {
 }
 
 /**
+ * Whether a tool block is a live ACP elicitation (`elicitation/create`).
+ *
+ * Such a block renders as the AskUserQuestion card and the agent BLOCKS on the
+ * RPC until the user answers it. Its `done` therefore means "answered / expired",
+ * never "the tool went silent" — so the generic 30s tool watchdog must leave it
+ * alone. Marking it done flipped the card to its read-only form, every option
+ * click was dropped, and the agent sat blocked until the server's 30-minute
+ * timeout (issue #676).
+ */
+export function isElicitationRequest(input?: unknown): boolean {
+  const id = (input as { elicitationId?: unknown } | null | undefined)?.elicitationId
+  return typeof id === 'string' && id !== ''
+}
+
+/**
  * A single created/modified file along with the Write/Edit tool call IDs that
  * produced it. toolIds let the drill-down view fetch the diff content on
  * demand from the tool-call API (blocks in loaded/summary view are slim and
