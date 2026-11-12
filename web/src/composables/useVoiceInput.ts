@@ -9,17 +9,17 @@
  *
  * Where the text goes depends on the caret at the moment recording starts:
  *
- *   - a writable input/textarea owns focus → the live transcript is shown in
- *     the capsule while recording, and written into that field at the caret
- *     ONCE, on release. Nothing is spliced into the field mid-utterance, so a
- *     cancelled take leaves no half sentence behind.
+ *   - a writable input/textarea owns focus → `startAt` / `startGlobal` writes
+ *     into it at the caret (replacing the selection). This is the normal path
+ *     for every field in the app, not just the chat box.
  *   - nothing writable is focused (password box, read-only view, terminal,
- *     plain page) → the transcript stays in the capsule afterwards; the user
- *     copies it, drops it into the chat box, or discards it. Never lost.
+ *     plain page) → the text collects in `inputText` and the capsule banner
+ *     shows it. The user then copies it, drops it into the chat box, or
+ *     discards it; it is never silently lost.
  *
  * Recognized text is never auto-sent.
  */
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import { useSettingsConfig } from './useSettingsConfig'
 import { useToast } from './useToast'
 import { useDialog } from './useDialog'
@@ -28,6 +28,7 @@ import { acquireMic, classifyMicError, describeMicError, logMicEnv } from '@/uti
 import {
   createVoiceTarget,
   findVoiceTarget,
+  removeVoiceText,
   textBeforeTarget,
   writeVoiceText,
   type VoiceTarget,
@@ -47,10 +48,10 @@ import i18n from '@/i18n'
 export type VoiceInputState = 'idle' | 'recording' | 'transcribing' | 'done'
 
 /**
- * Where this recording's text will end up.
+ * Where this recording's text is going.
  *
- *   'field'  — written into a live input/textarea at the caret on release
- *   'buffer' — nowhere to type; the capsule keeps it
+ *   'field'  — into a live input/textarea at the caret
+ *   'buffer' — nowhere to type; the capsule owns it
  */
 export type VoiceInputMode = 'idle' | 'field' | 'buffer'
 
@@ -60,10 +61,9 @@ const inputText = ref('')
 const error = ref('')
 const isRecording = ref(false)
 const mode = ref<VoiceInputMode>('idle')
+const targetEl = shallowRef<HTMLElement | null>(null)
 /** True once a target-less transcript is finished and waiting in the capsule. */
 const draftPending = ref(false)
-/** True for a moment after a field take was written (the capsule says 已写入). */
-const justWrote = ref(false)
 
 let mediaRecorder: MediaRecorder | null = null
 let ws: WebSocket | null = null
@@ -76,15 +76,12 @@ let voicePrefix = ''
 // Set by stop() so a socket that is still connecting does not start capturing
 // after the user has already released the button. Reset on every start().
 let stopRequested = false
-// Set by cancel(): the take is being thrown away. A recorder that was already
-// stopped still fires `onstop` (and the upload may already be in flight), so
-// every completion path has to check this before writing anything.
+// Set by cancel(): this take is being thrown away. A recorder that was already
+// stopped still fires `onstop`, and an upload may already be in flight, so
+// every completion path checks this before writing anything back.
 let cancelled = false
-// Keeps the "已写入" confirmation on screen briefly after a field take lands.
-let flashTimer: ReturnType<typeof setTimeout> | null = null
-// Text the live transcript is displayed on top of (a pending capsule draft);
-// empty when dictating into a field, where only the new words are shown.
-let draftBase = ''
+// Keeps the "已写入「XX」" pill on screen briefly after the field path finishes.
+let fieldDoneTimer: ReturnType<typeof setTimeout> | null = null
 // A finished capsule transcript that was set aside because the user started
 // dictating into a field. It goes back to the capsule when that run ends —
 // a pending draft is never thrown away by an unrelated recording.
@@ -342,14 +339,12 @@ export function useVoiceInput() {
     // wiping the input box.
     target = t
     mode.value = t ? 'field' : 'buffer'
-    // A pending capsule draft is set aside while we dictate into a field.
+    targetEl.value = t?.el ?? null
     heldDraft = t && draftPending.value ? inputText.value : ''
-    draftBase = t ? '' : prefix
-    voicePrefix = prefix
     draftPending.value = false
-    justWrote.value = false
-    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
-    inputText.value = draftBase
+    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
+    voicePrefix = prefix
+    if (!t) inputText.value = prefix
 
     if (usePcmStreaming()) {
       startStreaming()
@@ -371,8 +366,8 @@ export function useVoiceInput() {
       // The recording is complete once this fires, so the capture indicator can
       // go off while the upload runs — without cutting the final chunk.
       stopMediaStream()
-      // Cancelled takes stop the recorder too; that must not turn into an
-      // upload (the text would resurface in the capsule).
+      // Cancelled takes stop the recorder too; that must not become an upload,
+      // or the transcript would reappear in the box after the user cancelled.
       if (cancelled) return
       await uploadRecording(new Blob(chunks, { type: 'audio/webm' }), 'recording.webm')
     }
@@ -458,47 +453,35 @@ export function useVoiceInput() {
   /**
    * Wraps up whichever destination this recording used.
    *
-   * Field path: the transcript lands in the field ONCE, now — that is the whole
-   * point of keeping it in the capsule while speaking. Buffer path: it stays in
-   * the capsule, because a finished dictation must never evaporate.
+   * Field path: the text is already in the field, so the only thing left is to
+   * keep `targetEl` around long enough for the "已写入" pill, then let it go.
+   * Buffer path: hand the transcript to the capsule and keep it there — a
+   * finished dictation must never evaporate because nothing was focused.
    */
   function completeTarget() {
-    const transcript = inputText.value
-
-    if (mode.value === 'field' && target) {
-      const t = target
+    if (mode.value === 'field') {
+      // Nothing recognised (silent clip, engine error): there is no "已写入"
+      // to announce. Clearing the target now also hides the pill immediately.
+      const wrote = !!target?.applied
       target = null
-
-      if (transcript.trim() && t.el.isConnected) {
-        // Continue the text in front of the caret the way typing would: a
-        // space only when the junction needs one.
-        const before = textBeforeTarget(t)
-        const text = (needsJunctionSpace(before, transcript) ? ' ' : '') + transcript
-        writeVoiceText(t, text)
-        inputText.value = ''
-        justWrote.value = true
-        if (flashTimer) clearTimeout(flashTimer)
-        flashTimer = setTimeout(() => {
-          flashTimer = null
-          justWrote.value = false
-          mode.value = 'idle'
-          restoreHeldDraft()
-        }, 1400)
+      if (fieldDoneTimer) clearTimeout(fieldDoneTimer)
+      if (!wrote) {
+        targetEl.value = null
+        mode.value = 'idle'
+        restoreHeldDraft()
         return
       }
-
-      // Nothing recognised, or the field vanished while we were speaking:
-      // fall through to the capsule so no words are thrown away.
+      fieldDoneTimer = setTimeout(() => {
+        fieldDoneTimer = null
+        targetEl.value = null
+        if (mode.value === 'field') mode.value = 'idle'
+        restoreHeldDraft()
+      }, 1600)
+      return
     }
-
-    target = null
     mode.value = 'buffer'
-    draftPending.value = transcript.trim() !== ''
-    if (!draftPending.value) {
-      mode.value = 'idle'
-      inputText.value = ''
-      restoreHeldDraft()
-    }
+    draftPending.value = inputText.value.trim() !== ''
+    if (!draftPending.value) mode.value = 'idle'
   }
 
   /** Puts a set-aside capsule transcript back in front of the user. */
@@ -648,8 +631,12 @@ export function useVoiceInput() {
    * user typed around it.
    */
   function setPartial(text: string) {
-    // Always the capsule: the field is only touched on release.
-    inputText.value = draftBase + text
+    dropDeadTarget()
+    if (target) {
+      writeVoiceText(target, text)
+      return
+    }
+    inputText.value = voicePrefix + text
   }
 
   function finalize() {
@@ -740,29 +727,55 @@ export function useVoiceInput() {
     }
     stopMediaStream()
     if (ws) { ws.close(); ws = null }
-    // Nothing was written into the field yet (that only happens on release),
-    // so cancelling is just forgetting this take.
-    target = null
-    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
+    // Take back whatever this recording already wrote into a field, and drop
+    // the pending capsule draft. Cancelling is an explicit "forget this".
+    if (target) {
+      removeVoiceText(target)
+      target = null
+    }
+    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
+    targetEl.value = null
     draftPending.value = false
-    justWrote.value = false
     mode.value = 'idle'
     state.value = 'idle'
     isRecording.value = false
-    // Drop the live transcript; a draft that predates this take is not part of
-    // what was cancelled.
+    // Drop the live buffer transcript; a draft that predates this recording is
+    // not part of what was cancelled.
     if (!heldDraft) inputText.value = ''
     restoreHeldDraft()
   }
 
+  /**
+   * A field can disappear mid-recording (the chat box is re-keyed when the
+   * composer is rebuilt). Writing into a detached node would swallow the
+   * transcript, so the text moves to the capsule instead of being lost.
+   */
+  function dropDeadTarget(): void {
+    if (!target || target.el.isConnected) return
+    const carried = target.applied
+    target = null
+    targetEl.value = null
+    mode.value = 'buffer'
+    voicePrefix = carried
+    inputText.value = carried
+  }
+
   function appendText(text: string) {
     if (!text) return
+    dropDeadTarget()
     // Concatenate without rewriting either side: the transcript continues
-    // whatever is already there, so nothing is trimmed. A separator is added
-    // only where the junction needs one — joining verbatim glued English words
-    // together ("Please review" + "the diff" → "Please reviewthe diff"),
+    // whatever is already in the box, so nothing is trimmed. A separator is
+    // added only where the junction needs one — joining verbatim glued English
+    // words together ("Please review" + "the diff" → "Please reviewthe diff"),
     // because the buffered engine emits one transcript per audio segment and
     // each starts a new utterance.
+    if (target) {
+      const written = target.applied
+      const prev = written || textBeforeTarget(target)
+      const next = written + (needsJunctionSpace(prev, text) ? ' ' : '') + text
+      writeVoiceText(target, next)
+      return
+    }
     const prev = inputText.value
     inputText.value = prev + (needsJunctionSpace(prev, text) ? ' ' : '') + text
   }
@@ -789,8 +802,8 @@ export function useVoiceInput() {
     error,
     isRecording,
     mode,
+    targetEl,
     draftPending,
-    justWrote,
     configured,
     toggle,
     toggleAt,

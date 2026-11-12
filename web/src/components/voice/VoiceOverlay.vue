@@ -1,8 +1,30 @@
 <template>
   <Teleport to="body">
-    <!-- ── 语音胶囊 ──
-         录音中在这里滚动显示识别到的文字；说完才写进输入框（有光标时）
-         或留在这里等处理（没有光标时）。 -->
+    <!-- ── 光标模式：贴在输入框上方的迷你胶囊 ── -->
+    <Transition name="voice-pop">
+      <div
+        v-if="pillVisible"
+        ref="pillEl"
+        class="voice-pill"
+        :style="pillStyle"
+        role="status"
+      >
+        <span v-if="voiceState === 'recording'" class="voice-dot" aria-hidden="true"></span>
+        <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <LoadingIndicator v-else-if="voiceState === 'transcribing'" size="sm" inline />
+        <Check v-else :size="13" />
+        <!-- While recording: just the timer. Where the text is going is already
+             on screen (it is being written into the field under this pill), so
+             naming the field was pure noise. -->
+        <span v-if="voiceState === 'recording'" class="voice-pill-hint">{{ elapsedText }}</span>
+        <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text">{{ t('chat.voice.transcribing') }}</span>
+        <span v-else class="voice-pill-text">{{ t('chat.voice.written') }}</span>
+      </div>
+    </Transition>
+
+    <!-- ── 没有可写光标：底部胶囊横幅 ── -->
     <Transition name="voice-slide">
       <div
         v-if="capsuleVisible"
@@ -15,21 +37,17 @@
         <span v-else-if="voiceState === 'transcribing'" class="voice-wave" aria-hidden="true">
           <i></i><i></i><i></i><i></i><i></i>
         </span>
-        <Check v-else-if="justWrote" :size="15" class="voice-capsule-mic" />
         <Mic v-else :size="15" class="voice-capsule-mic" />
 
         <div class="voice-capsule-body">
-          <div
-            ref="capTextEl"
-            class="voice-capsule-text"
-            :class="{ 'is-empty': !voiceText.trim() && !justWrote }"
-          >{{ justWrote ? t('chat.voice.written') : (voiceText.trim() ? voiceText : t('chat.voice.listening')) }}</div>
+          <div class="voice-capsule-text" :class="{ 'is-empty': !voiceText.trim() }">
+            {{ voiceText.trim() ? voiceText : t('chat.voice.listening') }}
+          </div>
           <div class="voice-capsule-sub">
             <template v-if="voiceState === 'recording'">
               {{ elapsedText }} · {{ t('chat.voice.releaseToStop') }} · {{ t('chat.voice.escToCancel') }}
             </template>
             <template v-else-if="voiceState === 'transcribing'">{{ t('chat.voice.transcribing') }}</template>
-            <template v-else-if="justWrote" />
             <template v-else>{{ t('chat.voice.capsuleDoneHint') }}</template>
           </div>
         </div>
@@ -72,23 +90,22 @@
 /**
  * VoiceOverlay — the global surface of voice input.
  *
- * Mounted once (App.vue). One rule: *wherever the caret is*.
+ * Mounted once (App.vue). Three pieces, one rule: *wherever the caret is*.
  *
- *   - a field owns the caret → the capsule shows the live transcript while you
- *     speak; on release the whole text is written into that field at the caret
- *     (useVoiceInput's `field` mode). Nothing is spliced in mid-utterance, so a
- *     take that gets cancelled leaves no half sentence behind.
- *   - nothing writable owns the caret → the capsule keeps the transcript and
- *     offers copy / send to chat / discard (the `buffer` mode).
+ *   - a field owns the caret → a small pill sits above that field, the
+ *     transcript is written into it (useVoiceInput's `field` mode).
+ *   - nothing writable owns the caret → the capsule banner collects the text
+ *     and offers copy / send to chat / discard (the `buffer` mode).
  *   - touch devices → a mic button floats next to the focused field, because
- *     there is no F9 to hold. Sliding off it cancels the take.
+ *     there is no F9 to hold.
  *
  * The F9 shortcut lives here rather than in the chat composer: it has to work
  * with focus anywhere in the app, and only one place may own it.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Mic, X } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useToast } from '@/composables/useToast'
@@ -100,9 +117,10 @@ const { isTouchPrimary } = usePlatformDetect()
 
 const {
   state: voiceState,
+  mode: voiceMode,
   inputText: voiceText,
+  targetEl,
   draftPending,
-  justWrote,
   configured,
   startGlobal,
   startAt,
@@ -136,26 +154,38 @@ watch(voiceState, (s) => {
   else stopTicker()
 })
 
-/* ── capsule ──────────────────────────────────────────────────────── */
-const capTextEl = ref<HTMLElement | null>(null)
-const capsuleVisible = computed(() =>
-  voiceState.value !== 'idle' || draftPending.value || justWrote.value,
-)
-const capsuleDone = computed(() => draftPending.value && voiceState.value === 'idle')
-const capsuleBottom = ref(16)
+/* ── mini pill (caret mode) ───────────────────────────────────────── */
+const pillEl = ref<HTMLElement | null>(null)
+const pillPos = ref({ top: 0, left: 0 })
+
+const pillVisible = computed(() => !!targetEl.value && (voiceMode.value === 'field' || voiceState.value !== 'idle'))
+const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pillPos.value.left}px` }))
 
 /**
- * Follow the newest words while speaking: the transcript can be longer than
- * the two visible lines, and the end is the part the user is waiting for.
- * Once it is done, jump back to the top so it reads from the beginning.
+ * Sits just above the field — never over it. The user is watching the words
+ * land in that box; a badge on top of the line being written defeats the
+ * point. Falls below only when there is no room above.
  */
-watch([voiceText, voiceState], () => {
-  const el = capTextEl.value
-  if (!el) return
-  void nextTick(() => {
-    el.scrollTop = voiceState.value === 'recording' ? el.scrollHeight : 0
-  })
-})
+function placePill() {
+  const el = targetEl.value
+  if (!el || !el.isConnected) return
+  // Always just above the field itself — for the chat composer that means it
+  // floats over the toolbar row, which is fine: it is the closest spot to the
+  // line being written, and the pill never takes clicks.
+  const r = el.getBoundingClientRect()
+  const width = pillEl.value?.offsetWidth || 120
+  const height = pillEl.value?.offsetHeight || 34
+  const gap = 6
+  let top = r.top - height - gap
+  if (top < 8) top = r.bottom + gap
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
+  pillPos.value = { top, left }
+}
+
+/* ── capsule (no caret) ───────────────────────────────────────────── */
+const capsuleVisible = computed(() => voiceMode.value === 'buffer' && (voiceState.value !== 'idle' || draftPending.value))
+const capsuleDone = computed(() => draftPending.value && voiceState.value === 'idle')
+const capsuleBottom = ref(16)
 
 /**
  * Sits above whatever is pinned to the bottom of the current screen: the
@@ -220,7 +250,7 @@ const fabVisible = computed(() => {
   // No recognition engine → no button. Pressing it could only ever produce
   // "go configure it"; F9 still gives that hint for discoverability.
   if (!configured.value) return false
-  if (!isTouchPrimary.value || voiceState.value !== 'idle') return false
+  if (!isTouchPrimary.value || voiceState.value !== 'idle' || targetEl.value) return false
   const el = focusEl.value
   if (!el) return false
   return !!createVoiceTarget(el)
@@ -239,6 +269,7 @@ function placeFab() {
   if (!el) return
   const vv = window.visualViewport
   const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
+  // Same anchor rule as the pill: clear the composer's toolbar, not just the field.
   const r = (el.closest('.chat-input-wrapper') ?? el).getBoundingClientRect()
   let top = r.top - 50
   // A field near the top of the screen has no room above it; keep the button
@@ -352,10 +383,25 @@ function reposition() {
   if (raf) return
   raf = requestAnimationFrame(() => {
     raf = 0
+    placePill()
     placeCapsule()
     placeFab()
   })
 }
+
+let followTimer: ReturnType<typeof setInterval> | null = null
+
+watch(pillVisible, (on) => {
+  if (on) {
+    placePill()
+    if (!followTimer) followTimer = setInterval(placePill, 300)
+  } else if (followTimer) {
+    clearInterval(followTimer)
+    followTimer = null
+  }
+})
+watch([capsuleVisible, capsuleDone], () => { placeCapsule() })
+watch(fabVisible, (on) => { if (on) placeFab() })
 
 /**
  * Our surfaces are chrome, not page content. Any popup/drawer that dismisses
@@ -368,6 +414,13 @@ function reposition() {
  * otherwise also swallow the element's own listener); for the capsule it only
  * hides the press — its buttons act on `click`, which is unaffected.
  */
+function onWindowTouchStart(e: TouchEvent) {
+  const el = e.target as HTMLElement | null
+  // Belt and braces for WebViews that move the caret on the touch itself
+  // rather than on the compatibility mouse events.
+  if (el?.closest?.('.voice-fab')) e.preventDefault()
+}
+
 function onWindowPointerDown(e: PointerEvent) {
   const el = e.target as HTMLElement | null
   if (!el || typeof el.closest !== 'function') return
@@ -378,13 +431,6 @@ function onWindowPointerDown(e: PointerEvent) {
     return
   }
   if (el.closest('.voice-capsule')) e.stopPropagation()
-}
-
-function onWindowTouchStart(e: TouchEvent) {
-  const el = e.target as HTMLElement | null
-  // Belt and braces for WebViews that move the caret on the touch itself
-  // rather than on the compatibility mouse events.
-  if (el?.closest?.('.voice-fab')) e.preventDefault()
 }
 
 onMounted(() => {
@@ -416,16 +462,22 @@ onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('scroll', reposition)
   cleanupFabPointer()
   stopTicker()
+  if (followTimer) { clearInterval(followTimer); followTimer = null }
   if (raf) cancelAnimationFrame(raf)
   // A dictation must not outlive the overlay (logout / project switch).
   cancel()
 })
+
+// Keep the "is there a target" check honest when the mode changes without a
+// focus event (e.g. the field was removed mid-recording).
+watch(voiceMode, () => { reposition() })
 </script>
 
 <style scoped>
-/* The two surfaces share one elevated look: card background, hairline border,
-   soft shadow. They sit above modals (3000) and below toasts (--z-toast), so a
-   result toast is never hidden by them. */
+/* The three surfaces share one elevated look: card background, hairline
+   border, soft shadow. They sit above modals (3000) and below toasts
+   (--z-toast), so a result toast is never hidden by them. */
+.voice-pill,
 .voice-capsule,
 .voice-fab {
   position: fixed;
@@ -443,7 +495,31 @@ onBeforeUnmount(() => {
     0 10px 28px rgba(0, 0, 0, 0.22);
 }
 
-/* ── capsule ── */
+/* ── mini pill ── */
+.voice-pill {
+  display: flex;
+  align-items: center;
+  gap: calc(7 * var(--dp));
+  max-width: min(calc(320 * var(--dp)), calc(100vw - 16 * var(--dp)));
+  height: calc(34 * var(--dp));
+  padding: 0 calc(11 * var(--dp));
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.voice-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+.voice-pill-hint {
+  color: var(--text-hint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── capsule banner ── */
 .voice-capsule {
   left: 50%;
   transform: translateX(-50%);
@@ -459,13 +535,12 @@ onBeforeUnmount(() => {
   font-size: var(--font-size-md);
   line-height: var(--line-height-snug);
   color: var(--text-primary);
-  /* Two lines tall; longer transcripts scroll inside while speaking. */
-  max-height: calc(var(--font-size-md) * 2.9);
-  overflow-y: auto;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   overflow-wrap: break-word;
-  scrollbar-width: none;
 }
-.voice-capsule-text::-webkit-scrollbar { display: none; }
 .voice-capsule-text.is-empty { color: var(--text-muted); }
 .voice-capsule-sub {
   margin-top: calc(2 * var(--dp));

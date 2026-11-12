@@ -299,10 +299,10 @@ describe('useVoiceInput', () => {
     await v.startAt(el)
     v.stop()
     await vi.waitFor(() => expect(v.state.value).toBe('idle'))
-    // The field is untouched and no "已写入" confirmation is shown: there is
+    // The field is untouched and the "已写入" pill is not shown: there is
     // nothing to confirm.
     expect(el.value).toBe('原有内容')
-    expect(v.justWrote.value).toBe(false)
+    expect(v.targetEl.value).toBeNull()
     el.remove()
   })
 
@@ -343,7 +343,7 @@ describe('useVoiceInput', () => {
     el.remove()
   })
 
-  it('keeps partials in the capsule and writes only once, on release', async () => {
+  it('re-anchors streaming partials after the field was cleared (no resurrected prefix)', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
@@ -357,36 +357,13 @@ describe('useVoiceInput', () => {
     await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
 
     env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
-    // The field is untouched while speaking; the capsule holds the words.
-    expect(el.value).toBe('请看一下这个改动')
-    expect(v.inputText.value).toBe('听写')
-
-    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'done', final: '听写' }) })
     expect(el.value).toBe('请看一下这个改动听写')
-    expect(v.justWrote.value).toBe(true)
 
-    v.cancel()
-    el.remove()
-  })
-
-  it('re-anchors when the field was cleared mid-take (no resurrected prefix)', async () => {
-    const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
-    const env = stubStreamingEnv()
-
-    const { useVoiceInput } = await import('./useVoiceInput')
-    const v = useVoiceInput()
-    const el = makeField('请看一下这个改动')
-
-    await v.startAt(el)
-    env.getWS()!.onopen!()
-    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
-
-    // The message went out while we were speaking: the box is empty.
+    // The message was sent: the box is empty, so the next revision must land
+    // alone instead of rebuilding the sent text in front of it.
     el.value = ''
-    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'done', final: '听写' }) })
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '听写' }) })
     expect(el.value).toBe('听写')
-    expect(el.value).not.toContain('请看一下这个改动')
 
     v.cancel()
     el.remove()
@@ -406,13 +383,13 @@ describe('useVoiceInput', () => {
     await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
 
     env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '中间' }) })
-    expect(el.value).toBe('前后')
+    expect(el.value).toBe('前中间后')
     // The recognition context is the text in front of the caret, not the whole box.
     expect(JSON.parse(env.getWS()!.send.mock.calls[0][0] as string).context).toBe('前')
 
-    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'done', final: '中间' }) })
-    expect(el.value).toBe('前中间后')
-    expect(el.selectionStart).toBe(3)
+    v.cancel()
+    // Cancelling takes the dictation back out and restores the caret.
+    expect(el.value).toBe('前后')
     el.remove()
   })
 
