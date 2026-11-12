@@ -62,7 +62,6 @@ const error = ref('')
 const isRecording = ref(false)
 const mode = ref<VoiceInputMode>('idle')
 const targetEl = shallowRef<HTMLElement | null>(null)
-const targetLabel = ref('')
 /** True once a target-less transcript is finished and waiting in the capsule. */
 const draftPending = ref(false)
 
@@ -326,7 +325,6 @@ export function useVoiceInput() {
     target = t
     mode.value = t ? 'field' : 'buffer'
     targetEl.value = t?.el ?? null
-    targetLabel.value = t?.label ?? ''
     heldDraft = t && draftPending.value ? inputText.value : ''
     draftPending.value = false
     if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
@@ -445,7 +443,6 @@ export function useVoiceInput() {
       fieldDoneTimer = setTimeout(() => {
         fieldDoneTimer = null
         targetEl.value = null
-        targetLabel.value = ''
         if (mode.value === 'field') mode.value = 'idle'
         restoreHeldDraft()
       }, 1600)
@@ -706,7 +703,6 @@ export function useVoiceInput() {
     }
     if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
     targetEl.value = null
-    targetLabel.value = ''
     draftPending.value = false
     mode.value = 'idle'
     state.value = 'idle'
@@ -727,7 +723,6 @@ export function useVoiceInput() {
     const carried = target.applied
     target = null
     targetEl.value = null
-    targetLabel.value = ''
     mode.value = 'buffer'
     voicePrefix = carried
     inputText.value = carried
@@ -776,7 +771,6 @@ export function useVoiceInput() {
     isRecording,
     mode,
     targetEl,
-    targetLabel,
     draftPending,
     toggle,
     toggleAt,

@@ -167,7 +167,6 @@
           :key="inputEpoch"
           ref="textareaRef"
           data-voice-chat-input
-          :data-voice-label="t('chat.voice.chatField')"
           v-model="inputText"
           :disabled="inputDisabled"
           :placeholder="dynamicPlaceholder"

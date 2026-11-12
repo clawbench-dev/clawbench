@@ -477,7 +477,6 @@ vi.mock('@/composables/useVoiceInput', () => ({
     isRecording: ref(false),
     mode: ref('idle'),
     targetEl: mockVoiceTargetEl,
-    targetLabel: ref(''),
     draftPending: ref(false),
     toggle: vi.fn(),
     toggleAt: mockVoiceToggleAt,

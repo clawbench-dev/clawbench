@@ -120,18 +120,9 @@ describe('voiceTarget', () => {
     expect(createVoiceTarget(el)).toBeNull()
   })
 
-  it('finds the focused field and reads its label', () => {
+  it('finds the focused field', () => {
     const el = textarea('hello', 5)
-    el.placeholder = '搜索文件…'
     expect(findVoiceTarget()?.el).toBe(el)
-    expect(findVoiceTarget()?.label).toBe('搜索文件…')
-  })
-
-  it('prefers an explicit data-voice-label over the placeholder', () => {
-    const el = textarea('hello')
-    el.placeholder = '搜索文件…'
-    el.dataset.voiceLabel = '文件搜索'
-    expect(createVoiceTarget(el)?.label).toBe('文件搜索')
   })
 
   it('reports the text in front of the caret as recognition context', () => {

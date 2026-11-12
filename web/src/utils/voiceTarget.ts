@@ -19,8 +19,6 @@
 
 export interface VoiceTarget {
   el: HTMLInputElement | HTMLTextAreaElement
-  /** Shown to the user ("正在写入「文件搜索」"). */
-  label: string
   /** Index in `el.value` where our text starts. */
   start: number
   /** Length of the text we currently occupy. */
@@ -48,13 +46,6 @@ function isEditableField(el: Element | null): el is HTMLInputElement | HTMLTextA
   return false
 }
 
-/** Human name for the field, used in the status pill. */
-function labelOf(el: HTMLInputElement | HTMLTextAreaElement): string {
-  const explicit = el.dataset.voiceLabel || el.getAttribute('aria-label') || ''
-  const text = (explicit || el.getAttribute('placeholder') || '').trim()
-  return text.length > 24 ? text.slice(0, 24) + '…' : text
-}
-
 /**
  * Wraps a field as a target, capturing the caret and any selected text.
  *
@@ -71,7 +62,6 @@ export function createVoiceTarget(el: Element | null): VoiceTarget | null {
   const end = el.selectionEnd ?? start
   return {
     el,
-    label: labelOf(el),
     start,
     inserted: 0,
     applied: '',

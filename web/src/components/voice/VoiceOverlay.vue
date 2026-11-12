@@ -14,9 +14,13 @@
           <i></i><i></i><i></i><i></i><i></i>
         </span>
         <LoadingIndicator v-else-if="voiceState === 'transcribing'" size="sm" inline />
-        <Mic v-else :size="13" />
-        <span class="voice-pill-text">{{ pillText }}</span>
-        <span v-if="pillHint" class="voice-pill-hint">{{ pillHint }}</span>
+        <Check v-else :size="13" />
+        <!-- While recording: just the timer. Where the text is going is already
+             on screen (it is being written into the field under this pill), so
+             naming the field was pure noise. -->
+        <span v-if="voiceState === 'recording'" class="voice-pill-hint">{{ elapsedText }}</span>
+        <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text">{{ t('chat.voice.transcribing') }}</span>
+        <span v-else class="voice-pill-text">{{ t('chat.voice.written') }}</span>
       </div>
     </Transition>
 
@@ -94,7 +98,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Mic, X } from 'lucide-vue-next'
+import { Check, Mic, X } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
@@ -110,7 +114,6 @@ const {
   mode: voiceMode,
   inputText: voiceText,
   targetEl,
-  targetLabel,
   draftPending,
   startGlobal,
   startAt,
@@ -149,12 +152,6 @@ const pillEl = ref<HTMLElement | null>(null)
 const pillPos = ref({ top: 0, left: 0 })
 
 const pillVisible = computed(() => !!targetEl.value && (voiceMode.value === 'field' || voiceState.value !== 'idle'))
-const pillText = computed(() => {
-  if (voiceState.value === 'recording') return t('chat.voice.writingTo', { name: targetLabel.value })
-  if (voiceState.value === 'transcribing') return t('chat.voice.transcribing')
-  return t('chat.voice.writtenTo', { name: targetLabel.value })
-})
-const pillHint = computed(() => (voiceState.value === 'recording' ? `${elapsedText.value} · ${t('chat.voice.escToCancel')}` : ''))
 const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pillPos.value.left}px` }))
 
 /**
@@ -165,7 +162,10 @@ const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pill
 function placePill() {
   const el = targetEl.value
   if (!el || !el.isConnected) return
-  const r = el.getBoundingClientRect()
+  // Anchor to the composer as a whole when the field lives in one: the chat
+  // textarea has a toolbar row directly above it, and a badge "above the
+  // field" would sit on those buttons.
+  const r = (el.closest('.chat-input-wrapper') ?? el).getBoundingClientRect()
   const h = 34
   const gap = 8
   let top = r.top - h - gap
@@ -255,7 +255,9 @@ function placeFab() {
   if (!el) return
   const vv = window.visualViewport
   const visibleBottom = vv ? vv.offsetTop + vv.height : window.innerHeight
-  let top = el.getBoundingClientRect().top - 50
+  // Same anchor rule as the pill: clear the composer's toolbar, not just the field.
+  const r = (el.closest('.chat-input-wrapper') ?? el).getBoundingClientRect()
+  let top = r.top - 50
   // A field near the top of the screen has no room above it; keep the button
   // inside the visible area rather than off-screen.
   top = Math.max(8, Math.min(top, visibleBottom - 50))
@@ -353,7 +355,6 @@ watch(pillVisible, (on) => {
 })
 watch([capsuleVisible, capsuleDone], () => { placeCapsule() })
 watch(fabVisible, (on) => { if (on) placeFab() })
-watch(elapsedText, () => { if (pillVisible.value) placePill() })
 
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown, true)
