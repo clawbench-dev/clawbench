@@ -85,6 +85,13 @@ public final class SystemTtsEngine {
     /** Engines to try in order; index 0 is null = let the system choose. */
     private final List<String> engineAttempts = new ArrayList<>();
     private int engineAttempt = -1;
+    /**
+     * A hung engine never calls back at all, so waiting for a failure would
+     * block the whole list. Each attempt gets a short window before the next
+     * one is tried.
+     */
+    private static final long INIT_TIMEOUT_MS = 2000;
+    private Runnable initTimeoutRunnable;
 
     private String currentId;
     private int lastIndex = -1;
@@ -166,6 +173,7 @@ public final class SystemTtsEngine {
     /** Release the engine. Called when the Activity is destroyed. */
     public void shutdown() {
         main.post(() -> {
+            cancelInitTimeout();
             stopOnMain();
             if (tts != null) {
                 tts.shutdown();
@@ -193,6 +201,7 @@ public final class SystemTtsEngine {
 
     /** Try one entry of {@link #engineAttempts}; null means "system default". */
     private void startEngineAttempt(int index) {
+        cancelInitTimeout();
         engineAttempt = index;
         if (index >= engineAttempts.size()) {
             internalState = INTERNAL_UNAVAILABLE;
@@ -219,6 +228,14 @@ public final class SystemTtsEngine {
 
         String packageName = engineAttempts.get(index);
         final int attempt = index;
+        initTimeoutRunnable = () -> {
+            if (attempt != engineAttempt) {
+                return;
+            }
+            AppLog.w(TAG, "init timeout engine=" + packageName);
+            startEngineAttempt(index + 1);
+        };
+        main.postDelayed(initTimeoutRunnable, INIT_TIMEOUT_MS);
         try {
             if (packageName == null) {
                 tts = new TextToSpeech(context, status -> handleInitResult(status, attempt));
@@ -236,6 +253,7 @@ public final class SystemTtsEngine {
         if (attempt != engineAttempt) {
             return;
         }
+        cancelInitTimeout();
         String packageName = engineAttempts.get(attempt);
         if (status == TextToSpeech.SUCCESS && tts != null) {
             tts.setOnUtteranceProgressListener(progress);
@@ -286,6 +304,13 @@ public final class SystemTtsEngine {
             AppLog.w(TAG, "query engines failed: " + t);
         }
         return packages;
+    }
+
+    private void cancelInitTimeout() {
+        if (initTimeoutRunnable != null) {
+            main.removeCallbacks(initTimeoutRunnable);
+            initTimeoutRunnable = null;
+        }
     }
 
     /** Must run on the main thread. */

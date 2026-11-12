@@ -1415,11 +1415,14 @@ describe('useAutoSpeech — Android system speech engine', () => {
 
     await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled())
 
-    expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.systemSpeechUnavailable', expect.anything())
+    expect(toastShowMock).toHaveBeenCalledWith('settings.items.systemSpeechNoEngine', expect.anything())
     // The fallback is a normal server-synthesis request: no summarizeOnly, and
     // the phone engine is never asked to speak.
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
     expect(body.summarizeOnly).toBeUndefined()
     expect(nativeTtsMock.ttsSpeak).not.toHaveBeenCalled()
+    // Stop retrying on this device: every read would otherwise wait out the
+    // probe and then fall back anyway.
+    expect(localConfig.systemSpeech).toBe(false)
   })
 })

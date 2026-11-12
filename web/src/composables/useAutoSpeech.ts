@@ -24,6 +24,7 @@ import { MseAudioPlayer } from '@/composables/useMseAudio'
 import { appLog } from '@/utils/appLog'
 import { extractSpeakableText } from '@/utils/speakableText'
 import { getNative } from '@/utils/clawbenchNative'
+import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
 
 // Re-exported so existing `@/composables/useAutoSpeech` importers keep working;
 // the implementation lives in the leaf module to avoid dragging this file's
@@ -621,10 +622,19 @@ export function useAutoSpeech() {
     const native = getNative()
     if (!native?.ttsSpeak) return false
 
-    if (native.ttsStatus?.() === 'unavailable') {
-      // Falling back silently would leave the user thinking the phone voice is
-      // in use; say so, then let the normal path run.
-      toast.show(gt('autoSpeech.systemSpeechUnavailable'), { icon: 'warning', type: 'error', duration: 4000 })
+    // Check readiness on every read, not just when the option was chosen.
+    // The flag is stored per device and survives app upgrades, so it can be on
+    // for a phone whose engine no longer answers — without this check every
+    // read would spend its whole watchdog window waiting and then fail with a
+    // generic error.
+    const probe = await probeSystemSpeech(8000)
+    if (!probe.ok) {
+      appLog.w(TAG, 'system speech unavailable at read time: ' + probe.reason)
+      toast.show(gt(systemSpeechErrorKey(probe.reason)), { icon: 'warning', type: 'error', duration: 5000 })
+      // Stop trying on this device. Otherwise every read waits out the probe
+      // and then falls back to the server anyway — worse than just using the
+      // server voice, and it hides the real problem.
+      setLocalConfig('systemSpeech', false)
       return false
     }
 

@@ -454,7 +454,8 @@ async function handleEntrySelect(value: unknown) {
   if (value === 'system') {
     // Turning the phone voice on is a promise that this phone can read Chinese.
     // If it cannot, keep the current choice instead of accepting silently.
-    const probe = await probeSystemSpeech()
+    // Each engine attempt gets 2s natively; leave room for a few of them.
+    const probe = await probeSystemSpeech(8000)
     if (!probe.ok) {
       toast.show(t(systemSpeechErrorKey(probe.reason)), { icon: 'blocked', type: 'error', duration: 5000 })
       return
