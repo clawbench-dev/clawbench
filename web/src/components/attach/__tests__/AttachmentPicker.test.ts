@@ -461,7 +461,8 @@ describe('AttachmentPicker', () => {
   it('keeps all three source entries usable in a HarmonyOS host with a desktop UA', async () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.ad-source-bar').exists()).toBe(false)
-    // Host detection can settle after the first render.
+    // The host axis follows the bridge (usePlatformDetect watches useAppMode),
+    // so it can flip after mount; the component must re-render off the ref.
     mockIsHarmonyApp.value = true
     await nextTick()
     expect(wrapper.findAll('.ad-source-label').map((label) => label.text()))

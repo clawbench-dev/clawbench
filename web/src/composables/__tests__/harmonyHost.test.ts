@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 const hostWindow = window as unknown as {
   ClawBenchNative?: unknown
@@ -31,6 +32,31 @@ describe('HarmonyOS host compatibility', () => {
     expect(platform.isAndroidApp.value).toBe(false)
     expect(platform.isElectron.value).toBe(false)
     expect(platform.isWebApp.value).toBe(false)
+    expect(platform.isNativeApp.value).toBe(true)
+    expect(document.documentElement.hasAttribute('data-webview-mode')).toBe(false)
+  })
+
+  it('follows a host bridge that appears after the first read', async () => {
+    // A page that evaluates before the host injected its bridge would latch
+    // "web" forever if either module cached the answer. The HarmonyOS
+    // attachment layout depends on this recovering without a reload.
+    const { usePlatformDetect } = await import('../usePlatformDetect')
+    const platform = usePlatformDetect()
+    expect(platform.isHarmonyApp.value).toBe(false)
+
+    hostWindow.ClawBenchHarmony = {
+      isNativeApp: () => true,
+      isDesktopApp: () => false,
+      getHostPlatform: () => 'harmonyos',
+    }
+    // Any later useAppMode() call re-reads the bridge; the platform axes follow
+    // through their watcher (pre-flush, hence the tick).
+    const { useAppMode } = await import('../useAppMode')
+    useAppMode()
+    await nextTick()
+
+    expect(platform.isHarmonyApp.value).toBe(true)
+    expect(platform.isAndroidApp.value).toBe(false)
     expect(platform.isNativeApp.value).toBe(true)
     expect(document.documentElement.hasAttribute('data-webview-mode')).toBe(false)
   })

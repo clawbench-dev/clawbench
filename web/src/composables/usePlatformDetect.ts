@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useAppMode } from './useAppMode'
 
 const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
@@ -55,8 +55,9 @@ export const isMobileOSUA = isAndroidUA || isIOSUA || isIPadOSUA || isHarmonyUA
 // boolean is what made the old `isPC` wrong at every one of those edges.
 
 /**
- * HOST axis. Which shell hosts the app. Set once from useAppMode(), which
- * reads the native bridge; in a plain browser all three resolve to web.
+ * HOST axis. Which shell hosts the app. Mirrors useAppMode(), which reads the
+ * native bridge; in a plain browser all three resolve to web. Not a one-shot
+ * snapshot — see `applyHostAxes` for why it follows the source.
  *
  * `isElectron` is the desktop shell; `isAndroidApp` is the Android WebView.
  * The two are NOT interchangeable: several behaviours exist only for Android
@@ -97,6 +98,8 @@ const isNativeApp = ref(false)
 const isTouchPrimary = ref(false)
 
 let platformInitialized = false
+/** Stops the host-axis watcher (set up on init, dropped by the test hooks). */
+let stopFollowingHost: (() => void) | null = null
 
 /** `(pointer: coarse)` with a UA fallback for engines without matchMedia. */
 function detectTouchPrimary(): boolean {
@@ -111,27 +114,48 @@ function detectTouchPrimary(): boolean {
 }
 
 /**
- * Initializes the host and input axes once.
+ * Copies the host axes out of `useAppMode()`.
  *
- * IMPORTANT: useAppMode() must be initialized (called at least once) before
- * usePlatformDetect() reads it. Currently App.vue initializes useAppMode early,
- * so this order dependency is satisfied. If usePlatformDetect() were called
- * first, isAppMode would still be its default (false) — which is correct for
- * the web case, and only native hosts are affected.
+ * `isAndroidApp` is NOT just `isAppMode`: both native shells report true there,
+ * and every Android-only behaviour would then leak onto Electron. `isHarmonyApp`
+ * is not interchangeable with either — see the HOST axis note above.
+ */
+function applyHostAxes(src: ReturnType<typeof useAppMode>) {
+  isElectron.value = src.isDesktopApp.value
+  isHarmonyApp.value = src.isHarmonyApp?.value === true
+  isAndroidApp.value = src.isAppMode.value && !src.isDesktopApp.value && !isHarmonyApp.value
+  isWebApp.value = !src.isAppMode.value
+  // Roll-up: `isAppMode` is isNativeApp() from the bridge, which is true for
+  // both shells. Kept as its own ref (rather than a computed) so the test hook
+  // can keep it consistent without re-reading the bridge.
+  isNativeApp.value = src.isAppMode.value
+}
+
+/**
+ * Initializes the host and input axes once, then keeps the host ones in sync
+ * with `useAppMode()`.
+ *
+ * The input axis is read once on purpose (see `isTouchPrimary`). The host axes
+ * follow the source instead of being a snapshot: `useAppMode()` re-reads the
+ * bridge on every call, so a host that reports itself after the first read —
+ * the case that made HarmonyOS fall back to the desktop attachment layout —
+ * still reaches every consumer through this watcher. A latched copy would
+ * never recover without a reload.
  */
 export function usePlatformDetect() {
   if (!platformInitialized) {
     platformInitialized = true
-    const { isAppMode, isDesktopApp, isHarmonyApp: harmony } = useAppMode()
-    isElectron.value = isDesktopApp.value
-    isHarmonyApp.value = harmony?.value === true
-    isAndroidApp.value = isAppMode.value && !isDesktopApp.value && !isHarmonyApp.value
-    isWebApp.value = !isAppMode.value
-    // Roll-up: `isAppMode` is isNativeApp() from the bridge, which is true for
-    // both shells. Kept as its own ref (rather than a computed) so the test
-    // hook can keep it consistent without re-reading the bridge.
-    isNativeApp.value = isAppMode.value
+    const source = useAppMode()
+    applyHostAxes(source)
     isTouchPrimary.value = detectTouchPrimary()
+    stopFollowingHost = watch(
+      [
+        () => source.isAppMode.value,
+        () => source.isDesktopApp.value,
+        () => source.isHarmonyApp?.value === true,
+      ],
+      () => applyHostAxes(source),
+    )
   }
   return { isElectron, isAndroidApp, isHarmonyApp, isWebApp, isNativeApp, isTouchPrimary }
 }
@@ -153,10 +177,16 @@ export function _setPlatformForTest(v: {
   // Derived: keep the native flag consistent with whichever host axes were set,
   // so a test that only names isAndroidApp/isElectron still gets isNativeApp.
   isNativeApp.value = isElectron.value || isAndroidApp.value || isHarmonyApp.value
+  // The forced values must win: drop the follow watcher, otherwise the next
+  // bridge change would overwrite what the test just set.
+  stopFollowingHost?.()
+  stopFollowingHost = null
   platformInitialized = true
 }
 
 export function _resetPlatformForTest() {
+  stopFollowingHost?.()
+  stopFollowingHost = null
   platformInitialized = false
   isElectron.value = false
   isAndroidApp.value = false

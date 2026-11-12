@@ -58,7 +58,7 @@ npm --prefix harmony test
 
 0.2.12：鸿蒙契约测试 316/316、共享前端五文件 251/251、类型检查、生产前端和 DevEco debug HAP 构建通过；共享测试另报 8 处既有 vue-i18n Promise 泄漏。HarmonyOS 7 / API 26 / x86_64 手机模拟器验证原生登录版本、附件上传与 `.war,.zip` 系统选择器和取消、68 字节下载完成事件、非法邮件错误，以及页面刷新后的单标签锁重新获取。未验证 draw.io 安装 / 编辑 / 保存、实际拍照 / 图库、同进程销毁后重连或新增媒体组合；全仓 Go 预检未全绿，具体原因见 [维护记录](../docs/harmonyos/MAINTENANCE.md)。共享附件修复需部署服务端前端，HAP 不内嵌整套 Vue。
 
-本地模拟器夹具：从仓库根运行 `node harmony/tests/fixtures/upstream-alignment-server.mjs`，将本机 21713 端口通过 HDC 反向映射，再在模拟器添加 `http://127.0.0.1:21713`。使用任意测试密码，仅返回合成图片和桥接观察数据。
+本地模拟器夹具：从仓库根运行 `node harmony/tests/fixtures/upstream-alignment-server.mjs`（需 Node ≥ 22.13，可用 `CLAWBENCH_FIXTURE_PORT` 改端口），将本机 21713 端口通过 HDC 反向映射，再在模拟器添加 `http://127.0.0.1:21713`。使用任意测试密码，仅返回合成图片和桥接观察数据。
 
 0.1.3 阶段：25 项鸿蒙 Node 测试通过，未签名 HAP 构建成功；在 Pura 90 Pro / HarmonyOS 7 / API 26 / x86_64 模拟器验证安装、已保存凭据登录、服务器管理、竖屏安全区和聊天键盘布局。模拟器旋转检查时连接丢失，横屏设备验收待补。
 

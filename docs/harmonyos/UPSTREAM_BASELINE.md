@@ -16,7 +16,7 @@
 | 客户端协议号 | `1`，来自 `internal/version/client_protocol.txt` |
 | 鸿蒙工程版本 | `0.2.12 / 212`，包名 `com.clawbench.harmony` |
 | HarmonyOS 集成状态 | PR #631、#636、#653、#662 已合并；本地开工时的邮件评审修改与当前上游运行时代码一致，不重复提交 |
-| 本轮共享修复 | `web/src/components/attach/AttachmentPicker.vue` 与对应回归测试；维护方另存补丁归档 |
+| 本轮共享修复 | `AttachmentPicker.vue`、`useAppMode` / `usePlatformDetect`（宿主轴改为跟随）与对应回归测试；维护方另存补丁归档 |
 | release 资产 | 最新正式 release 没有 HarmonyOS HAP，应用内升级来源仍待上游发布 |
 
 共享前端与服务端单独部署，HAP 不内嵌整套 Vue 应用。附件宿主判定修复须由服务端更新前端后生效，单独安装 HAP 不会替换服务端页面。原始参考目录、账户配置、签名材料和本地指令文件不进入贡献改动。

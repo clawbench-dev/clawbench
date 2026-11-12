@@ -3,10 +3,18 @@ import { readFileSync, existsSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 
 // Local emulator acceptance only. No production accounts or remote writes.
-const root = new URL('../../', import.meta.url);
-const guardPath = [new URL('clawbench-source code/web/src/composables/useSingleTab.ts', root),
-  new URL('web/src/composables/useSingleTab.ts', root),
-  new URL('../web/src/composables/useSingleTab.ts', root)].find(existsSync);
+// Requires Node >= 22.13: /guard.js is produced by stripping the TypeScript
+// types off useSingleTab.ts with the (still experimental) node:module API.
+const port = Number(process.env.CLAWBENCH_FIXTURE_PORT || 21713);
+// Reference checkout first, then this repo's own copy. Resolved from the
+// fixture's location, so it works from any working directory.
+const guardCandidates = [
+  new URL('../../../clawbench-source code/web/src/composables/useSingleTab.ts', import.meta.url),
+  new URL('../../clawbench-source code/web/src/composables/useSingleTab.ts', import.meta.url),
+  new URL('../../../web/src/composables/useSingleTab.ts', import.meta.url),
+];
+const guardPath = guardCandidates.find(existsSync);
+if (!guardPath) console.warn('useSingleTab.ts not found — /guard.js will 404');
 const events = [];
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1sAAAAASUVORK5CYII=', 'base64');
 const page = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -47,4 +55,4 @@ const server=http.createServer(async(req,res)=>{
  if(url.pathname==='/'){res.setHeader('Content-Type','text/html;charset=utf-8');res.end(page);return}
  res.writeHead(404);res.end();
 });
-server.listen(Number(process.env.PORT||21713),'127.0.0.1',()=>console.log('HarmonyOS acceptance fixture ready'));
+server.listen(port,'127.0.0.1',()=>console.log(`HarmonyOS acceptance fixture ready on http://127.0.0.1:${port}`));
