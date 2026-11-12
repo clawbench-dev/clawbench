@@ -40,7 +40,7 @@
         <Mic v-else :size="15" class="voice-capsule-mic" />
 
         <div class="voice-capsule-body">
-          <div class="voice-capsule-text" :class="{ 'is-empty': !voiceText.trim() }">
+          <div ref="capTextEl" class="voice-capsule-text" :class="{ 'is-empty': !voiceText.trim() }">
             {{ voiceText.trim() ? voiceText : t('chat.voice.listening') }}
           </div>
           <div class="voice-capsule-sub">
@@ -102,7 +102,7 @@
  * The F9 shortcut lives here rather than in the chat composer: it has to work
  * with focus anywhere in the app, and only one place may own it.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Mic, X } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -183,7 +183,21 @@ function placePill() {
 }
 
 /* ── capsule (no caret) ───────────────────────────────────────────── */
+const capTextEl = ref<HTMLElement | null>(null)
 const capsuleVisible = computed(() => voiceMode.value === 'buffer' && (voiceState.value !== 'idle' || draftPending.value))
+
+/**
+ * Follow the newest words while speaking: the transcript can be longer than
+ * the two visible lines, and the end is the part the user is waiting for.
+ * Once it is done, jump back to the top so it reads from the beginning.
+ */
+watch([voiceText, voiceState], () => {
+  const el = capTextEl.value
+  if (!el) return
+  void nextTick(() => {
+    el.scrollTop = voiceState.value === 'recording' ? el.scrollHeight : 0
+  })
+})
 const capsuleDone = computed(() => draftPending.value && voiceState.value === 'idle')
 const capsuleBottom = ref(16)
 
@@ -535,12 +549,15 @@ watch(voiceMode, () => { reposition() })
   font-size: var(--font-size-md);
   line-height: var(--line-height-snug);
   color: var(--text-primary);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* Two lines tall, then it scrolls: clamping (the old behaviour) hid every
+     word after the second line, so the user could not see the transcript
+     growing. */
+  max-height: calc(var(--font-size-md) * 2.9);
+  overflow-y: auto;
   overflow-wrap: break-word;
+  scrollbar-width: none;
 }
+.voice-capsule-text::-webkit-scrollbar { display: none; }
 .voice-capsule-text.is-empty { color: var(--text-muted); }
 .voice-capsule-sub {
   margin-top: calc(2 * var(--dp));
