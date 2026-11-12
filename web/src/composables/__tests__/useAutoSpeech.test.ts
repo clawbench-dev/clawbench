@@ -1329,6 +1329,27 @@ describe('useAutoSpeech — Android system speech engine', () => {
     expect(api.getSummary('7')).toBe('同意')
   })
 
+  it('matches native events when the message id is a number', async () => {
+    // Chat messages carry `string | number` ids, but the bridge echoes a
+    // string. Comparing them with `!==` drops every event, so the read looks
+    // like it never starts and only the watchdog fires.
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ summary: '结论', speakText: '结论' }),
+    })
+
+    const api = useAutoSpeech()
+    api.speakText(42 as any, '原文')
+    await vi.waitFor(() => expect(nativeTtsMock.ttsSpeak).toHaveBeenCalledWith('结论', '42'))
+
+    window.dispatchEvent(new CustomEvent('clawbench-tts-state', { detail: { id: '42', state: 'start' } }))
+    expect(api.isPlayingAudio(42 as any)).toBe(true)
+
+    window.dispatchEvent(new CustomEvent('clawbench-tts-state', { detail: { id: '42', state: 'done' } }))
+    await vi.waitFor(() => expect(api.isActive(42 as any)).toBe(false))
+  })
+
   it('goes to playing on start and finishes on done', async () => {
     fetchSpy.mockResolvedValueOnce({
       ok: true,
@@ -1370,6 +1391,9 @@ describe('useAutoSpeech — Android system speech engine', () => {
       expect.anything(),
     )
     expect(api.isActive('42')).toBe(false)
+    // Do not keep a broken engine selected: the next read must go straight to
+    // the server instead of waiting out the same timeout again.
+    expect(localConfig.systemSpeech).toBe(false)
   })
 
   it('ignores events for a different utterance id', async () => {

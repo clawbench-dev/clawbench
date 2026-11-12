@@ -140,6 +140,11 @@ if (typeof window !== 'undefined') {
         // the screen — the user has no way to enable logs on our behalf.
         appLog.w(TAG, 'native tts error: ' + (detail.message || ''))
         reportError(nativeFailureText(detail.message))
+        // A failed synthesis is not transient on a given phone: the engine
+        // either refuses this app or has no working voice. Turn the option off
+        // so the next read uses the server immediately instead of waiting out
+        // another 30-second engine timeout in silence.
+        setLocalConfig('systemSpeech', false)
       }
       onDone?.()
     }
@@ -673,8 +678,13 @@ export function useAutoSpeech() {
     speakingText.value = spoken
 
     state.value = 'synthesizing'
-    const accepted = native.ttsSpeak(spoken, id)
-    appLog.i(TAG, 'native tts speak id=' + id + ' len=' + spoken.length + ' accepted=' + accepted)
+    // The bridge hands back a STRING id, while message ids in the chat model
+    // are `string | number`. Comparing the two with `!==` silently fails, and
+    // every native event (start/done/error) is dropped — the read looks like it
+    // never starts and only the watchdog fires. Normalize at the boundary.
+    const utteranceId = String(id)
+    const accepted = native.ttsSpeak(spoken, utteranceId)
+    appLog.i(TAG, 'native tts speak id=' + utteranceId + ' len=' + spoken.length + ' accepted=' + accepted)
     if (accepted === 'unavailable' || accepted === 'no_chinese') {
       // The engine went away after the probe (voice uninstalled, service
       // killed). Falling back beats going silent.
@@ -685,7 +695,7 @@ export function useAutoSpeech() {
       throw new Error(nativeFailureText(accepted))
     }
 
-    nativeTtsId = id
+    nativeTtsId = utteranceId
     nativeTtsOnDone = () => advancePlayback()
     // The engine promises exactly one terminal event, but that promise crosses
     // the WebView bridge — a navigation or a killed page can swallow it. This
