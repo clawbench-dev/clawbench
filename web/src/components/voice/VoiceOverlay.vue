@@ -76,9 +76,6 @@
         :style="fabStyle"
         :title="t('chat.voice.holdToTalk')"
         :aria-label="t('chat.voice.holdToTalk')"
-        @pointerdown.prevent="onFabDown"
-        @touchstart.prevent
-        @mousedown.prevent
         @pointerup="onFabUp"
         @pointercancel="onFabUp"
       >
@@ -286,8 +283,8 @@ function onFocusOut() {
 }
 
 function onFabDown() {
-  // `.prevent` on pointerdown keeps the field focused — losing it would drop
-  // the caret we are about to write into.
+  // Focus is kept by the window-capture handler below (preventDefault before
+  // the browser can move the caret); starting here would race it.
   void startAt(focusEl.value)
   // The button unmounts the moment recording starts (the status pill replaces
   // it), so its own pointerup never fires. Watch the window instead — otherwise
@@ -364,7 +361,39 @@ watch(pillVisible, (on) => {
 watch([capsuleVisible, capsuleDone], () => { placeCapsule() })
 watch(fabVisible, (on) => { if (on) placeFab() })
 
+/**
+ * Our surfaces are chrome, not page content. Any popup/drawer that dismisses
+ * on "click outside" (they listen on document, usually in the capture phase)
+ * must not treat a press on the mic button or the capsule as outside — the
+ * quote bar would vanish the moment dictation starts over its input.
+ *
+ * The listener runs on `window` capture, which is ahead of every document
+ * listener. For the FAB the press is handled HERE (stopPropagation would
+ * otherwise also swallow the element's own listener); for the capsule it only
+ * hides the press — its buttons act on `click`, which is unaffected.
+ */
+function onWindowTouchStart(e: TouchEvent) {
+  const el = e.target as HTMLElement | null
+  // Belt and braces for WebViews that move the caret on the touch itself
+  // rather than on the compatibility mouse events.
+  if (el?.closest?.('.voice-fab')) e.preventDefault()
+}
+
+function onWindowPointerDown(e: PointerEvent) {
+  const el = e.target as HTMLElement | null
+  if (!el || typeof el.closest !== 'function') return
+  if (el.closest('.voice-fab')) {
+    e.preventDefault()
+    e.stopPropagation()
+    onFabDown()
+    return
+  }
+  if (el.closest('.voice-capsule')) e.stopPropagation()
+}
+
 onMounted(() => {
+  window.addEventListener('pointerdown', onWindowPointerDown, true)
+  window.addEventListener('touchstart', onWindowTouchStart, { capture: true, passive: false })
   window.addEventListener('keydown', onKeyDown, true)
   window.addEventListener('keyup', onKeyUp, true)
   window.addEventListener('blur', onWindowBlur)
@@ -378,6 +407,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', onWindowPointerDown, true)
+  window.removeEventListener('touchstart', onWindowTouchStart, true)
   window.removeEventListener('keydown', onKeyDown, true)
   window.removeEventListener('keyup', onKeyUp, true)
   window.removeEventListener('blur', onWindowBlur)
@@ -494,6 +525,11 @@ watch(voiceMode, () => { reposition() })
   height: calc(28 * var(--dp));
   display: grid;
   place-items: center;
+  /* A <button> keeps the UA's default face (a light rounded chip) unless it is
+     cleared — in dark themes that reads as a broken white square. */
+  background: transparent;
+  border: none;
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
 }
