@@ -448,8 +448,17 @@ export function useVoiceInput() {
    */
   function completeTarget() {
     if (mode.value === 'field') {
+      // Nothing recognised (silent clip, engine error): there is no "已写入"
+      // to announce. Clearing the target now also hides the pill immediately.
+      const wrote = !!target?.applied
       target = null
       if (fieldDoneTimer) clearTimeout(fieldDoneTimer)
+      if (!wrote) {
+        targetEl.value = null
+        mode.value = 'idle'
+        restoreHeldDraft()
+        return
+      }
       fieldDoneTimer = setTimeout(() => {
         fieldDoneTimer = null
         targetEl.value = null

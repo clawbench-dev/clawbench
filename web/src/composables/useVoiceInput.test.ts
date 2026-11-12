@@ -271,6 +271,41 @@ describe('useVoiceInput', () => {
     return el
   }
 
+  it('does not announce 「已写入」 when the engine recognised nothing', async () => {
+    const track = { stop: vi.fn() }
+    const stream = { getTracks: () => [track] }
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    })
+    vi.stubGlobal('MediaRecorder', class {
+      state = 'recording'
+      ondataavailable: unknown = null
+      onstop: (() => void) | null = null
+      start() { this.state = 'recording' }
+      stop() { this.state = 'inactive'; this.onstop?.() }
+      static isTypeSupported = vi.fn(() => true)
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: '' }),
+    }))
+
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'vllm' } }
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    const el = makeField('原有内容')
+
+    await v.startAt(el)
+    v.stop()
+    await vi.waitFor(() => expect(v.state.value).toBe('idle'))
+    // The field is untouched and the "已写入" pill is not shown: there is
+    // nothing to confirm.
+    expect(el.value).toBe('原有内容')
+    expect(v.targetEl.value).toBeNull()
+    el.remove()
+  })
+
   it('writes a late transcript into the field even if the box was cleared by a send', async () => {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
