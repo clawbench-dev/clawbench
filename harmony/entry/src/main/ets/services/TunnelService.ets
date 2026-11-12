@@ -59,9 +59,23 @@ class TunnelPlatform implements TunnelDriver {
             for (const mapping of server.mappings.slice(0, 32)) {
               try { mappings.push(tunnelMapping(mapping.port, mapping.targetPort, mapping.host, mapping.direction)); } catch (_) {}
             }
-            this.servers.push({ origin, transport: server.transport === 'h2' ? 'h2' : 'ssh', mappings });
+            this.servers.push({ origin, transport: server.transport === 'ssh' ? 'ssh' : 'h2', mappings });
           } catch (_) {}
         }
+      }
+    } catch (_) {}
+    // One-time move to the HTTP/2 transport. The default changed for everyone,
+    // not just for fresh installs, so a saved SSH choice is moved over too. The
+    // marker keeps a later, deliberate SSH choice from being reverted on the
+    // next launch.
+    try {
+      if (String(await this.prefs.get('transportMigratedToH2', 'false')) !== 'true') {
+        for (const server of this.servers) {
+          server.transport = 'h2';
+        }
+        await this.prefs.put('servers', JSON.stringify(this.servers));
+        await this.prefs.put('transportMigratedToH2', 'true');
+        await this.prefs.flush();
       }
     } catch (_) {}
     try {
@@ -81,7 +95,7 @@ class TunnelPlatform implements TunnelDriver {
 
   settings(origin: string): TunnelSettings {
     const server = this.servers.find((item) => item.origin === origin);
-    return server ? { transport: server.transport, mappings: server.mappings } : { transport: 'ssh', mappings: [] };
+    return server ? { transport: server.transport, mappings: server.mappings } : { transport: 'h2', mappings: [] };
   }
 
   async execute(command: TunnelCommand): Promise<TunnelResult> {

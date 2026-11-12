@@ -195,8 +195,8 @@ public class BackgroundServiceTransportTest {
         when(mockPrefs.getString(eq("server_url"), anyString())).thenAnswer(inv ->
                 serverUrl != null ? serverUrl : inv.getArgument(1));
         // Boolean reads honour the written value first, then the stored default
-        // (false for the h2 toggle). An absent key therefore answers the
-        // pre-tunnel default = SSH.
+        // (true for the h2 toggle). An absent key therefore answers the
+        // transport default = HTTP/2.
         when(mockPrefs.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> {
             String key = inv.getArgument(0);
             return prefsBools.containsKey(key) ? prefsBools.get(key) : inv.getArgument(1);
@@ -245,17 +245,26 @@ public class BackgroundServiceTransportTest {
         prefsBools.put("tunnel_transport_h2_enabled", true);
     }
 
+    /**
+     * Make the service read {@code tunnel_transport_h2_enabled = false}.
+     *
+     * <p>h2 is the default now, so a test that exercises the SSH branch has to
+     * state that choice explicitly instead of inheriting it.
+     */
+    private void selectSshPreference() {
+        prefsBools.put("tunnel_transport_h2_enabled", false);
+    }
+
     // ==================================================================
     // Transport selection
     // ==================================================================
 
     @Test
-    public void defaultPreferenceIsSsh() {
-        // The whole compatibility story: an install that never opts in must
-        // keep behaving exactly as before the tunnel existed. The preference is
-        // now persisted, so the default is what an unstubbed SharedPreferences
-        // hands back for an absent key.
-        assertFalse(BackgroundService.isTunnelTransportH2Enabled(service));
+    public void defaultPreferenceIsH2() {
+        // HTTP/2 rides the main HTTP port, so a fresh install needs no extra
+        // port open. The preference is persisted, so the default is what an
+        // unstubbed SharedPreferences hands back for an absent key.
+        assertTrue(BackgroundService.isTunnelTransportH2Enabled(service));
     }
 
     @Test
@@ -305,6 +314,7 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addPortForward_underSsh_stillCallsSetPortForwardingL() throws Exception {
+        selectSshPreference();
         Session session = mock(Session.class);
         when(session.isConnected()).thenReturn(true);
         doReturn(0).when(session).setPortForwardingL(anyString(), anyInt(), anyString(), anyInt());
@@ -487,6 +497,7 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addReversePortForward_underSsh_stillCallsSetPortForwardingR() throws Exception {
+        selectSshPreference();
         Session session = mock(Session.class);
         when(session.isConnected()).thenReturn(true);
         setField("sshSession", session);
@@ -691,9 +702,10 @@ public class BackgroundServiceTransportTest {
         // set), so the teardown's identity check clears it.
         setField("activeTransport", adapter);
 
-        // Preference is already SSH (the default). Fail the SSH dial fast so
-        // the test never touches the network — the teardown runs first either
-        // way, which is the whole point.
+        // Preference is SSH: state it explicitly (h2 is the default now). Fail
+        // the SSH dial fast so the test never touches the network — the
+        // teardown runs first either way, which is the whole point.
+        selectSshPreference();
         serverUrl = null;
         try {
             service.ensureConnection();
@@ -734,9 +746,11 @@ public class BackgroundServiceTransportTest {
         when(session.isConnected()).thenReturn(true);
         setField("sshSession", session);
 
-        // Preference is SSH (the default). WITHOUT the guard in teardownH2IfAny
-        // this call propagates "close blew up" and never reaches
-        // ensureSshConnection(), so every assertion below fails.
+        // Preference is SSH: state it explicitly (h2 is the default now).
+        // WITHOUT the guard in teardownH2IfAny this call propagates "close blew
+        // up" and never reaches ensureSshConnection(), so every assertion below
+        // fails.
+        selectSshPreference();
         service.ensureConnection();
 
         verify(throwing).close();

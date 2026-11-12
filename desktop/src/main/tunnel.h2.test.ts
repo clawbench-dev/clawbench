@@ -339,6 +339,7 @@ beforeEach(() => {
   FakeSshClient.instances = []
   storeData.serverUrl = 'https://127.0.0.1:20000'
   delete storeData.tunnelTransport
+  delete storeData.tunnelTransportMigratedToH2
 })
 
 afterEach(() => {
@@ -410,30 +411,53 @@ describe('tunnel/h2: transport dispatch', () => {
 })
 
 describe('tunnel/h2: persisted transport preference', () => {
-  it('defaults to ssh when nothing is stored', () => {
-    initTransportPreference()
-    expect(getTransportPreference()).toBe('ssh')
-  })
-
-  it('hydrates the stored preference', () => {
-    storeData.tunnelTransport = 'h2'
+  it('defaults to h2 when nothing is stored', () => {
+    // HTTP/2 rides the main port, so a fresh install needs no extra port open.
     initTransportPreference()
     expect(getTransportPreference()).toBe('h2')
+    expect(storeData.tunnelTransport).toBe('h2')
+  })
+
+  it('moves an explicitly chosen ssh to h2 once, rewriting the store', () => {
+    // The default changed for everyone, not just for fresh installs: an install
+    // that picked SSH in an earlier build is moved over too.
+    storeData.tunnelTransport = 'ssh'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('h2')
+    expect(storeData.tunnelTransport).toBe('h2')
+    expect(storeData.tunnelTransportMigratedToH2).toBe(true)
   })
 
   it('migrates the retired "both" to h2 and rewrites the store', () => {
     // `both` meant "probe h2 first", so a deployment that stored it and
-    // connected was carried by h2. Mapping it to the SSH default would silently
-    // move those users onto a different wire.
+    // connected was carried by h2.
     storeData.tunnelTransport = 'both'
     initTransportPreference()
     expect(getTransportPreference()).toBe('h2')
     expect(storeData.tunnelTransport).toBe('h2')
   })
 
+  it('honours an ssh choice made after the migration', () => {
+    // The marker is what makes the rewrite a migration instead of a policy:
+    // once it has run, a deliberate SSH choice must survive a restart.
+    storeData.tunnelTransportMigratedToH2 = true
+    storeData.tunnelTransport = 'ssh'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('ssh')
+    expect(storeData.tunnelTransport).toBe('ssh')
+  })
+
+  it('hydrates the stored preference', () => {
+    storeData.tunnelTransportMigratedToH2 = true
+    storeData.tunnelTransport = 'h2'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('h2')
+  })
+
   it('ignores a stored value the dispatch does not recognize', () => {
     // The store is a hand-editable JSON file; an unknown value must not reach
     // transportCandidates().
+    storeData.tunnelTransportMigratedToH2 = true
     setTransportPreference('ssh')
     storeData.tunnelTransport = 'quic'
     initTransportPreference()
@@ -456,6 +480,7 @@ describe('tunnel/h2: persisted transport preference', () => {
 
   it('drives the dispatch after hydration', async () => {
     // End-to-end of the setting: store → module → which transport is probed.
+    storeData.tunnelTransportMigratedToH2 = true
     storeData.tunnelTransport = 'h2'
     initTransportPreference()
 

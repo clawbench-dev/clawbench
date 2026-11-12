@@ -80,20 +80,27 @@ let transport: TunnelTransport | null = null
 let sshTransport: TunnelTransport | null = null
 
 /**
- * Which transport to use. Defaults to SSH — today's behaviour, and what the
- * existing test suite assumes. The settings row in the port-forward panel
- * writes a preference (SSH / H2 / Auto) that the bridge persists, and
- * `initTransportPreference()` hydrates this module from the store at startup
- * so the choice survives a restart.
+ * The wire used when the store holds no usable preference (fresh install, or a
+ * value the dispatch does not recognize). HTTP/2: it rides the main HTTP port,
+ * so a fresh install does not need the separate SSH port opened.
+ */
+const DEFAULT_TRANSPORT_PREFERENCE: TransportPreference = 'h2'
+
+/**
+ * Which transport to use. Defaults to HTTP/2 — the stream tunnel rides the
+ * main HTTP port, so a fresh install needs no extra port open. The settings row
+ * in the port-forward panel writes a preference (SSH / H2) that the bridge
+ * persists, and `initTransportPreference()` hydrates this module from the store
+ * at startup so the choice survives a restart.
  *
  * `setTransportPreference()` itself stays pure (no persistence): it is the
  * in-memory setter the h2 dispatch tests drive directly, and folding a store
  * write into it would make those tests depend on electron-store.
  */
-let transportPreference: TransportPreference = 'ssh'
+let transportPreference: TransportPreference = DEFAULT_TRANSPORT_PREFERENCE
 
 /** Which transport actually carried the last successful connect. */
-let activeTransport: 'ssh' | 'h2' = 'ssh'
+let activeTransport: 'ssh' | 'h2' = DEFAULT_TRANSPORT_PREFERENCE
 
 /**
  * The h2 wire kind (h2-over-TLS vs h2c) that worked last. A plaintext
@@ -116,28 +123,30 @@ export function getTransportPreference(): TransportPreference {
 /**
  * Load the persisted preference into the module. Called once by `registerBridge`
  * before any window exists, so the first `ensureTunnel` already uses the user's
- * choice instead of the SSH default.
+ * choice instead of the module default.
  *
- * The stored value is re-validated here rather than trusted: the store is a
- * plain JSON file a user can hand-edit, and an unrecognized value must not
- * reach the transport dispatch.
+ * The first run after this build performs a one-time move to the HTTP/2
+ * default. It covers every existing install — including one that explicitly
+ * picked SSH earlier — because the default changed for everyone, not just for
+ * fresh installs. The marker is what makes this a migration instead of a
+ * policy: an SSH choice made *afterwards* is stored as `'ssh'` and honoured on
+ * the next launch.
  *
- * The retired `'both'` value migrates to `'h2'`, not to the SSH default: `both`
- * meant "probe h2 first", so a deployment that stored it and connected was
- * almost certainly carried by h2. Mapping it to SSH would silently move those
- * users onto a different wire; mapping it to h2 preserves what they were
- * actually running, and an h2 failure is loud (a visible connect error) rather
- * than a silent downgrade.
+ * After the migration the stored value is re-validated rather than trusted: the
+ * store is a plain JSON file a user can hand-edit, and an unrecognized value
+ * must not reach the transport dispatch (the module default stays in place).
  */
 export function initTransportPreference(): void {
-  const stored = getStore().get('tunnelTransport')
-  if (stored === 'ssh' || stored === 'h2') {
-    transportPreference = stored
+  const store = getStore()
+  if (!store.get('tunnelTransportMigratedToH2')) {
+    transportPreference = DEFAULT_TRANSPORT_PREFERENCE
+    store.set('tunnelTransport', DEFAULT_TRANSPORT_PREFERENCE)
+    store.set('tunnelTransportMigratedToH2', true)
     return
   }
-  if (stored === 'both') {
-    transportPreference = 'h2'
-    getStore().set('tunnelTransport', 'h2')
+  const stored = store.get('tunnelTransport')
+  if (stored === 'ssh' || stored === 'h2') {
+    transportPreference = stored
   }
 }
 
@@ -1217,8 +1226,8 @@ export function _rebuildAllForwardsForTesting(): Promise<void> {
  */
 export function _resetTransportForTesting(): void {
   disconnectTunnel()
-  transportPreference = 'ssh'
-  activeTransport = 'ssh'
+  transportPreference = DEFAULT_TRANSPORT_PREFERENCE
+  activeTransport = DEFAULT_TRANSPORT_PREFERENCE
   lastH2Kind = null
   sshTransport = null
   h2Transport = null

@@ -148,7 +148,7 @@ export class TunnelPolicy {
   private driver: TunnelDriver;
   private rebound: (requested: number, actual: number) => void;
   private origin: string = '';
-  private transport: TunnelTransport = 'ssh';
+  private transport: TunnelTransport = 'h2';
   private activeTransport: string = '';
   private foreground: boolean = true;
   private closed: boolean = false;
@@ -178,7 +178,7 @@ export class TunnelPolicy {
   setServer(origin: string, settings: TunnelSettings): void {
     this.invalidate();
     this.origin = origin;
-    this.transport = settings.transport === 'h2' ? 'h2' : 'ssh';
+    this.transport = settings.transport === 'ssh' ? 'ssh' : 'h2';
     this.desired.clear();
     for (const mapping of settings.mappings.slice(0, 32)) {
       try {

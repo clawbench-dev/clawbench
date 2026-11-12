@@ -4041,7 +4041,7 @@ public class MainActivity extends AppCompatActivity {
          *
          * <p>Reads the same {@code tunnel_transport_h2_enabled} SharedPreferences
          * value the setter writes ({@link BackgroundService#isTunnelTransportH2Enabled}),
-         * defaulting to false (SSH) on an untouched install. The settings row
+         * defaulting to h2 on an untouched install. The settings row
          * uses this to seed its switch; its presence is also what tells the
          * frontend the host is new enough to persist the toggle at all.
          */

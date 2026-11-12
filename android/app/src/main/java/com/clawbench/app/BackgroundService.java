@@ -131,11 +131,25 @@ public class BackgroundService extends Service {
     private static final String KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled";
     private static final String KEY_LIVE_UPDATE_ENABLED = "live_update_enabled";
     /**
-     * Local opt-in for the experimental h2 port-forward transport. Default
-     * false = SSH, so an install that never opts in behaves exactly as it did
-     * before the h2 tunnel existed.
+     * Local preference for the h2 port-forward transport. The key is only
+     * written once the user touches the settings row; an absent key means
+     * {@link #DEFAULT_TUNNEL_TRANSPORT_H2} applies.
      */
     private static final String KEY_TUNNEL_TRANSPORT_H2 = "tunnel_transport_h2_enabled";
+
+    /**
+     * Transport used when the preference key is absent. HTTP/2 rides the main
+     * HTTP port, so a fresh install needs no extra port open — SSH stays
+     * available for networks that block the h2 stream.
+     */
+    private static final boolean DEFAULT_TUNNEL_TRANSPORT_H2 = true;
+
+    /**
+     * Marker for the one-time move to the h2 transport. Without it the rewrite
+     * would also undo an SSH choice made *after* the migration, on every cold
+     * start.
+     */
+    private static final String KEY_TUNNEL_TRANSPORT_MIGRATED = "tunnel_transport_migrated_to_h2";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -505,21 +519,44 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Check whether the experimental h2 port-forward transport is enabled.
+     * Check whether the h2 port-forward transport is enabled.
      *
      * <p>This is the single source of truth for the transport: the value is
      * persisted, so a cold start / {@code START_STICKY} restart keeps it, and
-     * {@link #ensureConnection()} reads it at use time. Defaults to false
-     * (SSH) — an install that never opts in is byte-for-byte the pre-tunnel
-     * behaviour.
+     * {@link #ensureConnection()} reads it at use time. An untouched install
+     * gets {@link #DEFAULT_TUNNEL_TRANSPORT_H2} (h2); an explicit SSH choice
+     * stays stored and wins.
      */
     public static boolean isTunnelTransportH2Enabled(Context context) {
-        if (context == null) return false;
+        if (context == null) return DEFAULT_TUNNEL_TRANSPORT_H2;
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        // A stubbed/misbehaving context can hand back null; the safe answer is
-        // the pre-tunnel default (SSH), never a crash on a hot connect path.
-        if (prefs == null) return false;
-        return prefs.getBoolean(KEY_TUNNEL_TRANSPORT_H2, false);
+        // A stubbed/misbehaving context can hand back null; fall back to the
+        // default, never a crash on a hot connect path.
+        if (prefs == null) return DEFAULT_TUNNEL_TRANSPORT_H2;
+        return prefs.getBoolean(KEY_TUNNEL_TRANSPORT_H2, DEFAULT_TUNNEL_TRANSPORT_H2);
+    }
+
+    /**
+     * One-time move of every install onto the h2 transport.
+     *
+     * <p>The default changed for everyone, not just for fresh installs: an
+     * install that explicitly picked SSH in an earlier build is moved over too.
+     * The marker makes it a migration rather than a policy — an SSH choice made
+     * afterwards is stored and honoured on the next start.
+     *
+     * <p>Called from {@code ClawBenchApp.onCreate()}, so it runs once per
+     * process before any tunnel code reads the preference. Idempotent.
+     */
+    public static void migrateTunnelTransportToH2(Context context) {
+        if (context == null) return;
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (prefs == null) return;
+        if (prefs.getBoolean(KEY_TUNNEL_TRANSPORT_MIGRATED, false)) return;
+        prefs.edit()
+                .putBoolean(KEY_TUNNEL_TRANSPORT_H2, DEFAULT_TUNNEL_TRANSPORT_H2)
+                .putBoolean(KEY_TUNNEL_TRANSPORT_MIGRATED, true)
+                .apply();
+        AppLog.i(TAG, "Tunnel: migrated transport preference to h2");
     }
 
     /**
@@ -1723,10 +1760,10 @@ public class BackgroundService extends Service {
      * desired forwards onto it. MUST be called from a background thread.
      *
      * <p>The selection is the local {@code tunnel_transport_h2_enabled}
-     * preference ({@link #isTunnelTransportH2Enabled}), defaulting to SSH so an
-     * install that never opted in keeps its old behavior. The preference is read
-     * here rather than cached in a field, so a cold start / restart naturally
-     * picks up the persisted value.
+     * preference ({@link #isTunnelTransportH2Enabled}), defaulting to h2 so a
+     * fresh install uses the main port without extra firewall work. The
+     * preference is read here rather than cached in a field, so a cold start /
+     * restart naturally picks up the persisted value.
      */
     synchronized void ensureConnection() throws Exception {
         // Never open a session once the service is being destroyed. onDestroy()

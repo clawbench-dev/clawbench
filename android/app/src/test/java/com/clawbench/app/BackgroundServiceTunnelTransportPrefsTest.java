@@ -78,14 +78,14 @@ public class BackgroundServiceTunnelTransportPrefsTest {
     }
 
     // =====================================================
-    // Default (compatibility story)
+    // Default
     // =====================================================
 
     @Test
-    public void defaultsToSsh() {
-        // An install that never opted in must behave exactly as before the h2
-        // tunnel existed: the absent key answers false.
-        assertFalse("the h2 toggle must default to off (SSH)",
+    public void defaultsToH2() {
+        // HTTP/2 rides the main HTTP port, so a fresh install needs no extra
+        // port open: the absent key answers true.
+        assertTrue("the h2 toggle must default to on (HTTP/2)",
                 BackgroundService.isTunnelTransportH2Enabled(appContext));
     }
 
@@ -96,6 +96,31 @@ public class BackgroundServiceTunnelTransportPrefsTest {
         // indistinguishable and the default could silently drift.
         assertFalse(appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .contains(KEY));
+    }
+
+    // =====================================================
+    // One-time migration
+    // =====================================================
+
+    @Test
+    public void migration_movesAnExplicitSshChoiceToH2() {
+        // The default changed for everyone, not just fresh installs: an install
+        // that explicitly picked SSH in an earlier build is moved over too.
+        BackgroundService.setTunnelTransportH2Enabled(appContext, false);
+        BackgroundService.migrateTunnelTransportToH2(appContext);
+        assertTrue("an earlier explicit SSH choice must be moved over",
+                BackgroundService.isTunnelTransportH2Enabled(appContext));
+    }
+
+    @Test
+    public void migration_doesNotUndoALaterSshChoice() {
+        // The marker makes this a migration rather than a policy: once it has
+        // run, a deliberate SSH choice must survive the next start.
+        BackgroundService.migrateTunnelTransportToH2(appContext);
+        BackgroundService.setTunnelTransportH2Enabled(appContext, false);
+        BackgroundService.migrateTunnelTransportToH2(appContext);
+        assertFalse("a post-migration SSH choice must not be reverted",
+                BackgroundService.isTunnelTransportH2Enabled(appContext));
     }
 
     // =====================================================
@@ -160,23 +185,23 @@ public class BackgroundServiceTunnelTransportPrefsTest {
     // =====================================================
 
     @Test
-    public void nullContext_returnsFalseWithoutThrowing() {
+    public void nullContext_returnsTheDefaultWithoutThrowing() {
         // The guard exists because ensureConnection() is a hot path: a null
-        // context must degrade to SSH, never NPE.
-        assertFalse("a null context must answer the SSH default",
+        // context must degrade to the default (h2), never NPE.
+        assertTrue("a null context must answer the default (HTTP/2)",
                 BackgroundService.isTunnelTransportH2Enabled(null));
     }
 
     @Test
-    public void nullPreferences_returnsFalseWithoutThrowing() throws Exception {
+    public void nullPreferences_returnsTheDefaultWithoutThrowing() throws Exception {
         // The second half of the guard: a context whose getSharedPreferences
-        // returns null (stub/misbehaving) must also answer false, not crash.
+        // returns null (stub/misbehaving) must also answer the default, not crash.
         Context context = mock(Context.class);
         org.mockito.Mockito.when(context.getSharedPreferences(
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt())).thenReturn(null);
 
-        assertFalse("a null prefs handle must answer the SSH default",
+        assertTrue("a null prefs handle must answer the default (HTTP/2)",
                 BackgroundService.isTunnelTransportH2Enabled(context));
     }
 

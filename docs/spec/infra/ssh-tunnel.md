@@ -100,7 +100,7 @@ sequenceDiagram
 
 ## 传输方式
 
-端口转发支持两种线缆（SSH 通道 / h2 流隧道），选择**由客户端本地持有**：桌面端存 Electron store（`tunnelTransport`，值 `ssh` | `h2`），Android 存 SharedPreferences（`tunnel_transport_h2_enabled` 布尔）。服务端的 `port_forward.transport` 字段仍保留但**已钉死为 `both`**（`internal/model/defaults.go` 的 `ApplyDefaults` 无条件归一，yaml 写 `ssh` / `h2` / `both` / 非法值 / 缺省最终都是 `both`），PATCH 路径同样忽略传入值。**「服务端只准 ssh」这个状态不存在。**
+端口转发支持两种线缆（SSH 通道 / h2 流隧道），选择**由客户端本地持有**：桌面端存 Electron store（`tunnelTransport`，值 `ssh` | `h2`，缺省 `h2`），Android 存 SharedPreferences（`tunnel_transport_h2_enabled` 布尔，缺省开）。服务端的 `port_forward.transport` 字段仍保留但**已钉死为 `both`**（`internal/model/defaults.go` 的 `ApplyDefaults` 无条件归一，yaml 写 `ssh` / `h2` / `both` / 非法值 / 缺省最终都是 `both`），PATCH 路径同样忽略传入值。**「服务端只准 ssh」这个状态不存在。**
 
 **为什么服务端钉死、选择放在客户端**：SSH 监听器在服务端（`mainPort+1`），而传输选择在客户端本地——服务端读不到客户端的选择，因此无法据此决定是否监听。于是 SSH 监听器**无条件常开**（`ApplyDefaults` 把 `port_forward.enabled` 也钉死为 `true`；原先的开关已移除——一个客户端关掉监听会连累另一个客户端，包括 web UI 文档里的手动 `ssh -L` 路径），客户端选哪条线是它自己的事。`transport` 字段只剩一个消费者：web 端健康检查门控（`web/src/composables/usePortForward.ts` 的 `tunnelTransportAllowsH2()`，仅 `'h2' | 'both'` 为真）。一个无法执行的设置比没有设置更糟，故直接移除其可配置性（review M5）。
 
@@ -108,7 +108,7 @@ sequenceDiagram
 
 > **⚠️ 两个原生客户端各自持有选择，都**不消费**服务端 `port_forward.transport`**：
 > - **Electron 可切换且持久化**：设置页的传输选择器经 `native:set-tunnel-transport` 写 Electron store（`desktop/src/main/tunnel.ts` 的 `persistTransportPreference`，只接受 `'ssh' | 'h2'`，其余拒绝）；`native:get-tunnel-transport` 读偏好，`native:get-active-tunnel-transport` 读**实际承载本次连接**的线缆（`getActiveTransport`，与偏好区分——偏好是意图、active 是事实）。`transport.ts` 的 `TransportPreference` 只有 `'ssh' | 'h2'` 两值，**没有 `both`**；旧存储的 `'both'` 在加载时迁移为 `'h2'`（`both` 的语义是"先探 h2"，故迁移到 h2 而非 ssh）。
-> - **Android 用本地布尔开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；桥方法同名（`get/setTunnelTransportH2Enabled`），**没有 `BOTH`**，不做失败回退。
+> - **Android 用本地布尔开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，缺省 `true` = HTTP/2），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；桥方法同名（`get/setTunnelTransportH2Enabled`），**没有 `BOTH`**，不做失败回退。
 > - 前端向原生推送 `transport` 的 `syncTunnelTransportToNative` 已删除。设置页的两个原生宿主渲染**同一个 SSH / h2 二选一选择器**，只是桥词汇不同（Electron 用 `get/setTunnelTransport` 字符串，Android 用布尔 `get/setTunnelTransportH2Enabled`）——浏览器两者都没有，但 web 仍能读服务端配置做健康门控。
 
 因此下表描述的是**字段的历史语义**，现已全部收敛为 `both`：
@@ -154,8 +154,10 @@ fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，�
 
 两个原生宿主都让用户**显式二选一**（`ssh` 或 `h2`），**没有 `both` / auto 模式**。曾经的 `both` 语义是"先探 h2、失败静默回退 SSH"，它让用户的选择不可观测（同一个设置可能走任意一条线），并在一条线已知不可用的部署上把连接超时翻倍。现在设置页直接问要哪条线——用户比探测更清楚自己的部署。
 
-- **Electron**：`TransportPreference = 'ssh' | 'h2'`（`desktop/src/main/transport.ts`），持久化到 Electron store；旧存的 `'both'` 在加载时迁移为 `'h2'`。
-- **Android**：本地布尔开关（`tunnel_transport_h2_enabled`），默认 SSH。
+- **Electron**：`TransportPreference = 'ssh' | 'h2'`（`desktop/src/main/transport.ts`），持久化到 Electron store，缺省 `h2`；旧存的 `'both'` 在加载时迁移为 `'h2'`。
+- **Android**：本地布尔开关（`tunnel_transport_h2_enabled`），缺省开（HTTP/2）。
+
+**升级迁移（一次性）**：默认值从 SSH 换成 HTTP/2 时，三端都在启动时把已存的 `ssh` 改写为 `h2`——**包括用户此前手动选过 SSH 的安装**（默认值是整体更换的，不区分新装与升级）。迁移带标记（Electron store 的 `tunnelTransportMigratedToH2`、Android 的 `tunnel_transport_migrated_to_h2`、鸿蒙 preferences 的 `transportMigratedToH2`），标记存在后不再改写：迁移之后手动选回 SSH 会一直保持，不会被下次启动改回来。Android 的迁移在 `ClawBenchApp.onCreate()` 里跑（早于任何隧道代码读取偏好），桌面在 `initTransportPreference()` 里跑，鸿蒙在 `TunnelService.init()` 加载完服务器列表后跑。
 
 **h2 内部仍有一条候选链**（与上面的 ssh/h2 选择无关）：选定 h2 后，首次连接按 **h2-over-TLS → h2c** 顺序探测，并**记住上次成功的 kind** 供重连复用——明文部署下首次会白付一次 TLS 失败（握手即被拒，很快）。这是 `H2TransportKind` 的偏好，不是自动回退到 SSH。
 
@@ -364,7 +366,7 @@ sequenceDiagram
 ### h2 设计要点
 
 - **单端口是 h2 传输的核心收益**：SSH 要额外放行 `mainPort+1`，h2 复用 20000，用户只需一条防火墙规则
-- **h2 不取代 SSH**：SSH 保留为可选项，也用于 h2 被中间设备阻断的场景。两个原生客户端都让用户显式二选一——Electron 的传输偏好持久化到 store（默认 SSH），Android 用本地布尔开关（默认 SSH），**均无失败自动回退**（选 h2 而 h2 不可用就报错，不会偷偷改走 SSH）。
+- **h2 不取代 SSH**：SSH 保留为可选项，也用于 h2 被中间设备阻断的场景。两个原生客户端都让用户显式二选一——Electron 的传输偏好持久化到 store（默认 HTTP/2），Android 用本地布尔开关（默认 HTTP/2），**均无失败自动回退**（选 h2 而 h2 不可用就报错，不会偷偷改走 SSH）。
 - **`-R` 的认领机制是 h2 协议限制的必然结果**，不是设计偏好：服务端不能发起流，只能让客户端主动认领
 - **半关闭差异必须告知使用者**：依赖「target 先 FIN 后仍能持续写入」的协议在 h2 下会在 5s 后丢字节；这类场景应改用 SSH 传输
 

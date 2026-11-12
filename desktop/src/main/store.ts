@@ -37,12 +37,22 @@ export interface ServerListSchema {
    * hydrates the tunnel module from it at startup, so the choice survives a
    * restart.
    *
-   * Defaults to 'ssh' — the shell's long-standing behaviour. A stored value is
+   * Defaults to 'h2' — the HTTP/2 stream tunnel, which rides the main port
+   * instead of needing the separate SSH port open. A stored value is
    * re-validated on read (a hand-edited or downgraded config could hold
    * anything, including the retired 'both'), and an unrecognized one falls back
    * to this default rather than reaching the transport dispatch.
    */
   tunnelTransport: TransportPreference
+  /**
+   * Whether the one-time move to the HTTP/2 transport has run.
+   *
+   * The default changed for every install, including one that explicitly picked
+   * SSH in an earlier build, so `initTransportPreference()` rewrites the stored
+   * value once. Without this marker that rewrite would also undo an SSH choice
+   * made *after* the migration, on every launch.
+   */
+  tunnelTransportMigratedToH2: boolean
   /**
    * Last main-window geometry, so the app reopens where the user left it.
    *
@@ -91,7 +101,8 @@ const defaults: ServerListSchema = {
   nativePushEnabled: true,
   theme: DEFAULT_THEME_ID,
   language: '',
-  tunnelTransport: 'ssh',
+  tunnelTransport: 'h2',
+  tunnelTransportMigratedToH2: false,
   windowBounds: null,
   windowMaximized: false,
   floatingEnabled: false,
