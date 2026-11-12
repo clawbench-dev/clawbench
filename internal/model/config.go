@@ -212,20 +212,24 @@ type Config struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)
 	} `yaml:"recent_projects"`
 	TTS struct {
-		Engine string `yaml:"engine"` // TTS engine: "edge" (default) or "openai"
+		Engine string `yaml:"engine"` // TTS engine: "edge" (default), "openai", "alibaba", "tencent" or "volcano"
 		// Voice is the Edge engine's voice. It used to be shared by both
 		// engines, and the settings page actively reset it on every engine
 		// switch — so picking a voice for Edge and then trying the OpenAI
 		// engine silently overwrote it with that engine's first voice. The
 		// OpenAI engine has its own tts.openai.voice.
-		Voice             string          `yaml:"voice"`               // Edge voice (default: "zh-CN-XiaoxiaoNeural")
-		TTSModel          string          `yaml:"tts_model"`           // forward-compatible: MiniMax TTS model name (no-op until that provider is wired)
-		Speed             float64         `yaml:"speed"`               // Speech speed multiplier (default: 1.0) — shared: "how fast I want to hear it" is one preference
-		Format            string          `yaml:"format"`              // forward-compatible: audio format override (no-op, inferred from engine)
-		InlineCodeMaxLen  int             `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
-		MaxSummarizeRunes int             `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
-		MaxCacheFiles     int             `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
-		OpenAI            OpenAITTSConfig `yaml:"openai"`              // OpenAI-compatible /v1/audio/speech configuration (only used when engine: "openai")
+		Voice             string           `yaml:"voice"`               // Edge voice (default: "zh-CN-XiaoxiaoNeural")
+		TTSModel          string           `yaml:"tts_model"`           // legacy reserved field; MiniMax now uses tts.minimax.model (this key has no effect)
+		Speed             float64          `yaml:"speed"`               // Speech speed multiplier (default: 1.0) — shared: "how fast I want to hear it" is one preference
+		Format            string           `yaml:"format"`              // legacy reserved field; the audio format is per engine and not configurable (no effect)
+		InlineCodeMaxLen  int              `yaml:"inline_code_max_len"` // Max inline code content length (runes) to preserve for TTS; longer code is removed (default: 100)
+		MaxSummarizeRunes int              `yaml:"max_summarize_runes"` // Max runes for summarization input; longer text is truncated (default: 10000, simple mode: 1000)
+		MaxCacheFiles     int              `yaml:"max_cache_files"`     // Max cached TTS audio files to keep; oldest are auto-deleted (0=unlimited, default: 100)
+		OpenAI            OpenAITTSConfig  `yaml:"openai"`              // OpenAI-compatible /v1/audio/speech configuration (only used when engine: "openai")
+		Alibaba           TTSAlibabaConfig `yaml:"alibaba"`             // Alibaba Cloud Model Studio (DashScope) configuration (only used when engine: "alibaba")
+		Tencent           TTSTencentConfig `yaml:"tencent"`             // Tencent Cloud speech synthesis configuration (only used when engine: "tencent")
+		Volcano           TTSVolcanoConfig `yaml:"volcano"`             // Volcano Engine (Doubao) speech synthesis configuration (only used when engine: "volcano")
+		Minimax           TTSMinimaxConfig `yaml:"minimax"`             // MiniMax speech synthesis configuration (only used when engine: "minimax")
 	} `yaml:"tts"`
 	STT         STTConfig         `yaml:"stt"`          // Speech-to-text (voice input) configuration
 	AISummary   AISummaryConfig   `yaml:"ai_summary"`   // Shared AI model configuration (TTS summary + next-step recommendation)
@@ -719,6 +723,56 @@ type OpenAITTSConfig struct {
 	Model      string `yaml:"model"`       // TTS model, e.g. "gpt-4o-mini-tts"; user-supplied (no default)
 	Voice      string `yaml:"voice"`       // Voice name or custom voice id, e.g. "alloy" / "voice_1234"
 	StreamMode string `yaml:"stream_mode"` // "auto" (default, per-model), "sse" (force SSE), "audio" (force raw body)
+}
+
+// TTSAlibabaConfig holds configuration for Alibaba Cloud Model Studio (百炼 /
+// DashScope) speech synthesis.
+//
+// It carries its own key and endpoint: a DashScope key is scoped to one region
+// (Beijing / Singapore are different keys and hosts), and enterprise accounts
+// reach the service through a workspace-specific host.
+type TTSAlibabaConfig struct {
+	APIKey  string `yaml:"api_key"`  // DashScope API key (sk-…)
+	BaseURL string `yaml:"base_url"` // default https://dashscope.aliyuncs.com; workspace hosts go here
+	Model   string `yaml:"model"`    // default cosyvoice-v3-flash
+	Voice   string `yaml:"voice"`    // default longanyang; any system / cloned / designed voice
+}
+
+// TTSTencentConfig holds configuration for Tencent Cloud speech synthesis
+// (TextToVoice, API 2019-08-23).
+//
+// The cloud API authenticates with a SecretId/SecretKey pair signed per
+// request (TC3-HMAC-SHA256); there is no bearer token. VoiceType is a numeric
+// catalog id — 101001 is the classic "智瑜" premium voice.
+type TTSTencentConfig struct {
+	SecretID  string `yaml:"secret_id"`  // Tencent Cloud SecretId
+	SecretKey string `yaml:"secret_key"` // Tencent Cloud SecretKey
+	VoiceType int    `yaml:"voice_type"` // voice catalog id (default 101001)
+}
+
+// TTSVolcanoConfig holds configuration for Volcano Engine (火山引擎 / 豆包)
+// large-model speech synthesis over the v3 unidirectional HTTP API.
+//
+// Auth is a single API key from the speech console, plus the resource id that
+// matches the voice type (seed-tts-2.0 for official 2.0 voices, seed-icl-2.0
+// for cloned ones).
+type TTSVolcanoConfig struct {
+	APIKey     string `yaml:"api_key"`     // speech console API key
+	ResourceID string `yaml:"resource_id"` // default seed-tts-2.0
+	Voice      string `yaml:"voice"`       // speaker id, e.g. zh_female_vv_uranus_bigtts
+}
+
+// TTSMinimaxConfig holds configuration for MiniMax speech synthesis (T2A v2).
+//
+// GroupId is optional: older accounts (notably on the China site) require it as
+// a query parameter, newer ones accept the API key alone. The China and
+// international sites use different hosts and different keys.
+type TTSMinimaxConfig struct {
+	APIKey  string `yaml:"api_key"`  // MiniMax API key
+	GroupID string `yaml:"group_id"` // optional GroupId query parameter
+	BaseURL string `yaml:"base_url"` // default https://api.minimax.chat
+	Model   string `yaml:"model"`    // default speech-02-hd
+	Voice   string `yaml:"voice"`    // voice id, e.g. female-shaonv
 }
 
 // APIConfig holds configuration for the API-based summarization backend.

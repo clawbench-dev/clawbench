@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -360,7 +361,7 @@ func testSTT(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	if providerName == "doubao" {
 		return testDoubaoSTT(ctx, values)
 	}
-	if providerName == "alibaba" {
+	if providerName == engineAlibaba {
 		return testAlibabaSTT(ctx, values)
 	}
 
@@ -678,6 +679,14 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return testTTSEdge(ctx, values)
 	case strOpenAI:
 		return testTTSOpenAI(ctx, values)
+	case engineAlibaba:
+		return testTTSAlibaba(ctx, values)
+	case engineTencent:
+		return testTTSTencent(ctx, values)
+	case engineVolcano:
+		return testTTSVolcano(ctx, values)
+	case engineMinimax:
+		return testTTSMinimax(ctx, values)
 	default:
 		return ConnectivityTestResult{Success: false, Message: "Unknown TTS engine: " + engine}
 	}
@@ -770,6 +779,85 @@ func testTTSOpenAI(ctx context.Context, values map[string]any) ConnectivityTestR
 		Success: true,
 		Message: fmt.Sprintf("OpenAI TTS ready (model: %s, voice: %s)", ttsModel, voice),
 	}
+}
+
+// ── Vendor TTS engines ───────────────────────────────────────
+//
+// These probes drive the real provider against a one-word input instead of
+// hand-rolling a request: each vendor authenticates differently (bearer key,
+// per-request signature, app-id + access key), so a probe that re-implemented
+// the call could pass while synthesis itself fails. A real synthesis also
+// catches a wrong model / voice / resource id, which a bare connectivity check
+// would not.
+
+func testTTSAlibaba(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewAlibabaTTSProvider()
+	p.APIKey = resolveStringValue(values, "tts.alibaba.api_key", model.ConfigInstance.TTS.Alibaba.APIKey)
+	p.BaseURL = resolveStringValue(values, "tts.alibaba.base_url", model.ConfigInstance.TTS.Alibaba.BaseURL)
+	p.Model = resolveStringValue(values, "tts.alibaba.model", model.ConfigInstance.TTS.Alibaba.Model)
+	p.Voice = resolveStringValue(values, "tts.alibaba.voice", model.ConfigInstance.TTS.Alibaba.Voice)
+	if p.APIKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Alibaba Cloud API key is required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("Alibaba Cloud TTS ready (model: %s, voice: %s)", p.Model, p.Voice))
+}
+
+func testTTSTencent(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewTencentTTSProvider()
+	p.SecretID = resolveStringValue(values, "tts.tencent.secret_id", model.ConfigInstance.TTS.Tencent.SecretID)
+	p.SecretKey = resolveStringValue(values, "tts.tencent.secret_key", model.ConfigInstance.TTS.Tencent.SecretKey)
+	p.VoiceType = resolveIntValue(values, "tts.tencent.voice_type", model.ConfigInstance.TTS.Tencent.VoiceType)
+	if p.SecretID == "" || p.SecretKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Tencent Cloud SecretId and SecretKey are required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("Tencent Cloud TTS ready (voice type: %d)", p.VoiceType))
+}
+
+func testTTSVolcano(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewVolcanoTTSProvider()
+	p.APIKey = resolveStringValue(values, "tts.volcano.api_key", model.ConfigInstance.TTS.Volcano.APIKey)
+	p.ResourceID = resolveStringValue(values, "tts.volcano.resource_id", model.ConfigInstance.TTS.Volcano.ResourceID)
+	p.Voice = resolveStringValue(values, "tts.volcano.voice", model.ConfigInstance.TTS.Volcano.Voice)
+	if p.APIKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "Volcano Engine API key is required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("Volcano Engine TTS ready (voice: %s)", p.Voice))
+}
+
+func testTTSMinimax(ctx context.Context, values map[string]any) ConnectivityTestResult {
+	p := speech.NewMinimaxTTSProvider()
+	p.APIKey = resolveStringValue(values, "tts.minimax.api_key", model.ConfigInstance.TTS.Minimax.APIKey)
+	p.GroupID = resolveStringValue(values, "tts.minimax.group_id", model.ConfigInstance.TTS.Minimax.GroupID)
+	p.BaseURL = resolveStringValue(values, "tts.minimax.base_url", model.ConfigInstance.TTS.Minimax.BaseURL)
+	p.Model = resolveStringValue(values, "tts.minimax.model", model.ConfigInstance.TTS.Minimax.Model)
+	p.Voice = resolveStringValue(values, "tts.minimax.voice", model.ConfigInstance.TTS.Minimax.Voice)
+	if p.APIKey == "" {
+		return ConnectivityTestResult{Success: false, Message: "MiniMax API key is required"}
+	}
+	return probeTTSProvider(ctx, p, fmt.Sprintf("MiniMax TTS ready (model: %s, voice: %s)", p.Model, p.Voice))
+}
+
+// probeTTSProvider runs one real synthesis into a temporary file and reports
+// the provider's own error verbatim — the vendor's message (bad key, unknown
+// voice, service not activated) is what the user needs to see.
+func probeTTSProvider(ctx context.Context, p speech.SpeechProvider, okMessage string) ConnectivityTestResult {
+	f, err := os.CreateTemp("", "clawbench-tts-probe-*.mp3")
+	if err != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Failed to create probe file: %v", err)}
+	}
+	path := f.Name()
+	_ = f.Close()
+	_ = os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
+
+	if synthErr := p.Synthesize(ctx, "你好", path, "zh"); synthErr != nil {
+		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("TTS synthesis failed: %v", synthErr)}
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil || info.Size() == 0 {
+		return ConnectivityTestResult{Success: false, Message: "TTS service returned no audio"}
+	}
+	return ConnectivityTestResult{Success: true, Message: okMessage}
 }
 
 // testMCP probes one MCP server: it performs the real MCP handshake and lists

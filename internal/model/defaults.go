@@ -458,6 +458,37 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.TTS.OpenAI.StreamMode == "" {
 		cfg.TTS.OpenAI.StreamMode = "auto"
 	}
+	// Vendor engines: unlike the OpenAI-compatible engine (whose model and
+	// voice space is unbounded and therefore left empty), these three publish
+	// a fixed catalog, so a usable default keeps an engine switch from landing
+	// on a blank form that fails at synthesis time.
+	if cfg.TTS.Alibaba.BaseURL == "" {
+		cfg.TTS.Alibaba.BaseURL = "https://dashscope.aliyuncs.com"
+	}
+	if cfg.TTS.Alibaba.Model == "" {
+		cfg.TTS.Alibaba.Model = "cosyvoice-v3-flash"
+	}
+	if cfg.TTS.Alibaba.Voice == "" {
+		cfg.TTS.Alibaba.Voice = "longanyang"
+	}
+	if cfg.TTS.Tencent.VoiceType <= 0 {
+		cfg.TTS.Tencent.VoiceType = 101001
+	}
+	if cfg.TTS.Volcano.ResourceID == "" {
+		cfg.TTS.Volcano.ResourceID = "seed-tts-2.0"
+	}
+	if cfg.TTS.Volcano.Voice == "" {
+		cfg.TTS.Volcano.Voice = "zh_female_vv_uranus_bigtts"
+	}
+	if cfg.TTS.Minimax.BaseURL == "" {
+		cfg.TTS.Minimax.BaseURL = "https://api.minimax.chat"
+	}
+	if cfg.TTS.Minimax.Model == "" {
+		cfg.TTS.Minimax.Model = "speech-02-hd"
+	}
+	if cfg.TTS.Minimax.Voice == "" {
+		cfg.TTS.Minimax.Voice = "female-shaonv"
+	}
 
 	// --- STT ---
 	if cfg.STT.Provider == "" {

@@ -97,14 +97,29 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// TTS engine + sub-configs — recreate provider
-	"tts.engine":             true,
-	"tts.tts_model":          true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
-	"tts.format":             true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.openai.base_url":    true,
-	"tts.openai.api_key":     true,
-	"tts.openai.model":       true,
-	"tts.openai.voice":       true,
-	"tts.openai.stream_mode": true,
+	"tts.engine":              true,
+	"tts.tts_model":           true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":              true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.openai.base_url":     true,
+	"tts.openai.api_key":      true,
+	"tts.openai.model":        true,
+	"tts.openai.voice":        true,
+	"tts.openai.stream_mode":  true,
+	"tts.alibaba.api_key":     true,
+	"tts.alibaba.base_url":    true,
+	"tts.alibaba.model":       true,
+	"tts.alibaba.voice":       true,
+	"tts.tencent.secret_id":   true,
+	"tts.tencent.secret_key":  true,
+	"tts.tencent.voice_type":  true,
+	"tts.volcano.api_key":     true,
+	"tts.volcano.resource_id": true,
+	"tts.volcano.voice":       true,
+	"tts.minimax.api_key":     true,
+	"tts.minimax.group_id":    true,
+	"tts.minimax.base_url":    true,
+	"tts.minimax.model":       true,
+	"tts.minimax.voice":       true,
 	// STT — speech-to-text config, hot-reloadable. Credentials and engine
 	// options live under the engine's own section so editing one engine cannot
 	// overwrite another's.
@@ -503,13 +518,17 @@ type configTerminal struct {
 }
 
 type configTTS struct {
-	Engine        string           `json:"engine"`
-	TTSModel      string           `json:"tts_model"`
-	Format        string           `json:"format"`
-	Speed         float64          `json:"speed"`
-	Voice         string           `json:"voice"`
-	MaxCacheFiles int              `json:"max_cache_files"`
-	OpenAI        *configOpenAITTS `json:"openai,omitempty"`
+	Engine        string            `json:"engine"`
+	TTSModel      string            `json:"tts_model"`
+	Format        string            `json:"format"`
+	Speed         float64           `json:"speed"`
+	Voice         string            `json:"voice"`
+	MaxCacheFiles int               `json:"max_cache_files"`
+	OpenAI        *configOpenAITTS  `json:"openai,omitempty"`
+	Alibaba       *configAlibabaTTS `json:"alibaba,omitempty"`
+	Tencent       *configTencentTTS `json:"tencent,omitempty"`
+	Volcano       *configVolcanoTTS `json:"volcano,omitempty"`
+	Minimax       *configMinimaxTTS `json:"minimax,omitempty"`
 }
 
 type configOpenAITTS struct {
@@ -518,6 +537,33 @@ type configOpenAITTS struct {
 	Model      string `json:"model"`
 	Voice      string `json:"voice"`
 	StreamMode string `json:"stream_mode"`
+}
+
+type configAlibabaTTS struct {
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Voice   string `json:"voice"`
+}
+
+type configTencentTTS struct {
+	SecretID  string `json:"secret_id"`
+	SecretKey string `json:"secret_key"`
+	VoiceType int    `json:"voice_type"`
+}
+
+type configVolcanoTTS struct {
+	APIKey     string `json:"api_key"`
+	ResourceID string `json:"resource_id"`
+	Voice      string `json:"voice"`
+}
+
+type configMinimaxTTS struct {
+	APIKey  string `json:"api_key"`
+	GroupID string `json:"group_id"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Voice   string `json:"voice"`
 }
 
 type configSTT struct {
@@ -976,6 +1022,21 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.openai.model":                       true,
 	"tts.openai.voice":                       true,
 	"tts.openai.stream_mode":                 true,
+	"tts.alibaba.api_key":                    true,
+	"tts.alibaba.base_url":                   true,
+	"tts.alibaba.model":                      true,
+	"tts.alibaba.voice":                      true,
+	"tts.tencent.secret_id":                  true,
+	"tts.tencent.secret_key":                 true,
+	"tts.tencent.voice_type":                 true,
+	"tts.volcano.api_key":                    true,
+	"tts.volcano.resource_id":                true,
+	"tts.volcano.voice":                      true,
+	"tts.minimax.api_key":                    true,
+	"tts.minimax.group_id":                   true,
+	"tts.minimax.base_url":                   true,
+	"tts.minimax.model":                      true,
+	"tts.minimax.voice":                      true,
 	"stt.provider":                           true,
 	"stt.shortcut_key":                       true,
 	"stt.vllm.base_url":                      true,
@@ -1082,9 +1143,20 @@ var PatchableConfigPaths = map[string]bool{
 	"drawio.download_url": true,
 }
 
+// Engine identifiers for the TTS vendor engines. Constants because the same
+// name appears in the validation table, the PATCH applier, the GET payload and
+// the connectivity probes — a typo in one of them would create a second,
+// unrecognized engine that silently never matches.
+const (
+	engineAlibaba = "alibaba"
+	engineTencent = "tencent"
+	engineVolcano = "volcano"
+	engineMinimax = "minimax"
+)
+
 // validTTSEngines is the set of valid TTS engine values.
 var validTTSEngines = map[string]bool{
-	"edge": true, strOpenAI: true,
+	"edge": true, strOpenAI: true, engineAlibaba: true, engineTencent: true, engineVolcano: true, engineMinimax: true,
 }
 
 // validSTTProviders is the set of valid STT engine values. An unknown value
@@ -1126,6 +1198,25 @@ var validTTSFormats = map[string]bool{
 // validOpenAIStreamModes is the set of valid OpenAI TTS stream modes.
 var validOpenAIStreamModes = map[string]bool{
 	"auto": true, "sse": true, "audio": true,
+}
+
+// effectiveTTSString returns a TTS sub-config string after applying the patch,
+// falling back to the saved value when the patch omits the field. It exists so
+// required-field validation sees what will actually be stored instead of
+// duplicating the nested-map walk for every vendor engine.
+func effectiveTTSString(patch map[string]any, section, field, current string) string {
+	tts, ok := patch["tts"].(map[string]any)
+	if !ok {
+		return current
+	}
+	sub, ok := tts[section].(map[string]any)
+	if !ok {
+		return current
+	}
+	if v, ok := sub[field].(string); ok {
+		return v
+	}
+	return current
 }
 
 // getBuildVersion returns a human-readable version string from build info.
@@ -1347,6 +1438,32 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Voice:      cfg.TTS.OpenAI.Voice,
 			StreamMode: cfg.TTS.OpenAI.StreamMode,
 		}
+	}
+	// The vendor engines' blocks are returned unconditionally, like the STT
+	// sections: switching engines must not hide (and then overwrite) the
+	// credentials saved for the engine you are not currently using.
+	resp.TTS.Alibaba = &configAlibabaTTS{
+		APIKey:  cfg.TTS.Alibaba.APIKey,
+		BaseURL: cfg.TTS.Alibaba.BaseURL,
+		Model:   cfg.TTS.Alibaba.Model,
+		Voice:   cfg.TTS.Alibaba.Voice,
+	}
+	resp.TTS.Tencent = &configTencentTTS{
+		SecretID:  cfg.TTS.Tencent.SecretID,
+		SecretKey: cfg.TTS.Tencent.SecretKey,
+		VoiceType: cfg.TTS.Tencent.VoiceType,
+	}
+	resp.TTS.Volcano = &configVolcanoTTS{
+		APIKey:     cfg.TTS.Volcano.APIKey,
+		ResourceID: cfg.TTS.Volcano.ResourceID,
+		Voice:      cfg.TTS.Volcano.Voice,
+	}
+	resp.TTS.Minimax = &configMinimaxTTS{
+		APIKey:  cfg.TTS.Minimax.APIKey,
+		GroupID: cfg.TTS.Minimax.GroupID,
+		BaseURL: cfg.TTS.Minimax.BaseURL,
+		Model:   cfg.TTS.Minimax.Model,
+		Voice:   cfg.TTS.Minimax.Voice,
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -1885,7 +2002,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if ok {
 		if engine, ok := tts["engine"].(string); ok {
 			if !validTTSEngines[engine] {
-				return fmt.Errorf("tts.engine must be one of: edge,openai")
+				return fmt.Errorf("tts.engine must be one of: edge,openai,alibaba,tencent,volcano,minimax")
 			}
 		}
 		if format, ok := tts["format"].(string); ok {
@@ -1908,6 +2025,25 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			if v, ok := openai["stream_mode"].(string); ok {
 				if !validOpenAIStreamModes[v] {
 					return fmt.Errorf("tts.openai.stream_mode must be one of: auto,sse,audio")
+				}
+			}
+		}
+		if alibaba, ok := tts[engineAlibaba].(map[string]any); ok {
+			if v, ok := alibaba["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("tts.alibaba.base_url must be a valid URL")
+				}
+			}
+		}
+		if tencent, ok := tts[engineTencent].(map[string]any); ok {
+			if v, ok := tencent["voice_type"].(float64); ok && v < 0 {
+				return fmt.Errorf("tts.tencent.voice_type must be a positive integer")
+			}
+		}
+		if minimax, ok := tts[engineMinimax].(map[string]any); ok {
+			if v, ok := minimax["base_url"].(string); ok && v != "" {
+				if _, err := url.ParseRequestURI(v); err != nil {
+					return fmt.Errorf("tts.minimax.base_url must be a valid URL")
 				}
 			}
 		}
@@ -2212,6 +2348,40 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if effectiveVoice == "" {
 			return fmt.Errorf("tts.openai.voice is required when tts.engine is \"openai\"")
+		}
+	case engineAlibaba:
+		if engineSwitched {
+			break
+		}
+		// The endpoint, model and voice have documented defaults, so only the
+		// key is required — an unconfigured key would otherwise fail with an
+		// opaque 401 on the first spoken reply.
+		if effectiveTTSString(patch, engineAlibaba, "api_key", cfg.TTS.Alibaba.APIKey) == "" {
+			return fmt.Errorf("tts.alibaba.api_key is required when tts.engine is \"alibaba\"")
+		}
+	case engineTencent:
+		if engineSwitched {
+			break
+		}
+		if effectiveTTSString(patch, engineTencent, "secret_id", cfg.TTS.Tencent.SecretID) == "" {
+			return fmt.Errorf("tts.tencent.secret_id is required when tts.engine is \"tencent\"")
+		}
+		if effectiveTTSString(patch, engineTencent, "secret_key", cfg.TTS.Tencent.SecretKey) == "" {
+			return fmt.Errorf("tts.tencent.secret_key is required when tts.engine is \"tencent\"")
+		}
+	case engineVolcano:
+		if engineSwitched {
+			break
+		}
+		if effectiveTTSString(patch, engineVolcano, "api_key", cfg.TTS.Volcano.APIKey) == "" {
+			return fmt.Errorf("tts.volcano.api_key is required when tts.engine is \"volcano\"")
+		}
+	case engineMinimax:
+		if engineSwitched {
+			break
+		}
+		if effectiveTTSString(patch, engineMinimax, "api_key", cfg.TTS.Minimax.APIKey) == "" {
+			return fmt.Errorf("tts.minimax.api_key is required when tts.engine is \"minimax\"")
 		}
 	}
 
@@ -2632,6 +2802,61 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			}
 			if v, ok := openai["stream_mode"].(string); ok {
 				cfg.TTS.OpenAI.StreamMode = v
+			}
+		}
+		// Vendor engines write only their own section, so editing one engine
+		// never touches another's saved credentials.
+		if alibaba, ok := tts[engineAlibaba].(map[string]any); ok {
+			if v, ok := alibaba["api_key"].(string); ok {
+				cfg.TTS.Alibaba.APIKey = v
+			}
+			if v, ok := alibaba["base_url"].(string); ok {
+				cfg.TTS.Alibaba.BaseURL = v
+			}
+			if v, ok := alibaba["model"].(string); ok {
+				cfg.TTS.Alibaba.Model = v
+			}
+			if v, ok := alibaba["voice"].(string); ok {
+				cfg.TTS.Alibaba.Voice = v
+			}
+		}
+		if tencent, ok := tts[engineTencent].(map[string]any); ok {
+			if v, ok := tencent["secret_id"].(string); ok {
+				cfg.TTS.Tencent.SecretID = v
+			}
+			if v, ok := tencent["secret_key"].(string); ok {
+				cfg.TTS.Tencent.SecretKey = v
+			}
+			if v, ok := tencent["voice_type"].(float64); ok {
+				cfg.TTS.Tencent.VoiceType = int(v)
+			}
+		}
+		if volcano, ok := tts[engineVolcano].(map[string]any); ok {
+			if v, ok := volcano["api_key"].(string); ok {
+				cfg.TTS.Volcano.APIKey = v
+			}
+			if v, ok := volcano["resource_id"].(string); ok {
+				cfg.TTS.Volcano.ResourceID = v
+			}
+			if v, ok := volcano["voice"].(string); ok {
+				cfg.TTS.Volcano.Voice = v
+			}
+		}
+		if minimax, ok := tts[engineMinimax].(map[string]any); ok {
+			if v, ok := minimax["api_key"].(string); ok {
+				cfg.TTS.Minimax.APIKey = v
+			}
+			if v, ok := minimax["group_id"].(string); ok {
+				cfg.TTS.Minimax.GroupID = v
+			}
+			if v, ok := minimax["base_url"].(string); ok {
+				cfg.TTS.Minimax.BaseURL = v
+			}
+			if v, ok := minimax["model"].(string); ok {
+				cfg.TTS.Minimax.Model = v
+			}
+			if v, ok := minimax["voice"].(string); ok {
+				cfg.TTS.Minimax.Voice = v
 			}
 		}
 	}

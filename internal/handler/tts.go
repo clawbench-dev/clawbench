@@ -230,8 +230,9 @@ func ttsRunJob(
 	}()
 }
 
-// ttsAudioExt is the audio file extension of the synthesized output. Both
-// supported providers (Edge TTS, OpenAI-compatible) produce MP3; the extension
+// ttsAudioExt is the audio file extension of the synthesized output. Every
+// engine is asked for MP3 (Edge, OpenAI-compatible, and the three vendor
+// engines — see speech.audioSink, which rejects anything else); the extension
 // feeds the playback URL, so a mismatch would yield a silent failure.
 const ttsAudioExt = ".mp3"
 

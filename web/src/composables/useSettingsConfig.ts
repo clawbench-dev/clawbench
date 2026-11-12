@@ -637,6 +637,17 @@ const serverDefaults: Record<string, unknown> = {
   'tts.format': '',
   'tts.speed': 1.0,
   'tts.max_cache_files': 100,
+  // Vendor TTS engines: documented defaults, mirroring model.ApplyDefaults so
+  // switching engines lands on a usable form instead of blank fields.
+  'tts.alibaba.base_url': 'https://dashscope.aliyuncs.com',
+  'tts.alibaba.model': 'cosyvoice-v3-flash',
+  'tts.alibaba.voice': 'longanyang',
+  'tts.tencent.voice_type': 101001,
+  'tts.volcano.resource_id': 'seed-tts-2.0',
+  'tts.volcano.voice': 'zh_female_vv_uranus_bigtts',
+  'tts.minimax.base_url': 'https://api.minimax.chat',
+  'tts.minimax.model': 'speech-02-hd',
+  'tts.minimax.voice': 'female-shaonv',
   'stt.provider': 'vllm',
   // Per-engine defaults, mirroring model.ApplyDefaults. Every engine keeps its
   // own credentials and options, so switching the engine never inherits (or

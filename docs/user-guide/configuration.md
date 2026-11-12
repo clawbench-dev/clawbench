@@ -132,20 +132,35 @@
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `engine` | `edge` | 引擎：`edge`（免密钥）或 `openai`（OpenAI 兼容接口） |
+| `engine` | `edge` | 引擎：`edge`（免密钥）、`openai`（OpenAI 兼容接口）、`alibaba`（阿里云百炼）、`tencent`（腾讯云）、`volcano`（火山引擎） |
 | `voice` | `zh-CN-XiaoxiaoNeural` | Edge 引擎的音色 |
 | `speed` | `1.0` | 语速，两个引擎共用（「我想听多快」只有一个答案） |
 | `inline_code_max_len` | `100` | 行内代码多长以内还念出来，更长的直接跳过 |
 | `max_summarize_runes` | `10000` | 送去摘要的最长字数，超出截断（simple 模式是 1000） |
 | `max_cache_files` | `100` | 朗读音频缓存最多留几个文件，超了按最久没用清掉。`-1`＝不限 |
-| `tts_model` / `format` | 空 | 预留字段，当前不生效 |
+| `tts_model` / `format` | 空 | 历史预留字段，不生效（MiniMax 的模型用 `minimax.model`） |
 | `openai.base_url` | 空 | OpenAI 兼容 TTS 的地址（填到 `/v1` 即可） |
 | `openai.api_key` | 空 | 上面那个接口的密钥 |
 | `openai.model` | 空 | TTS 模型，比如 `gpt-4o-mini-tts`。没有默认值，要自己填 |
 | `openai.voice` | 空 | 音色名或自定义音色 id |
 | `openai.stream_mode` | `auto` | `auto` 按模型决定，`sse` 强制流式，`audio` 强制整段返回 |
+| `alibaba.api_key` | 空 | 阿里云百炼（DashScope）的 API Key |
+| `alibaba.base_url` | `https://dashscope.aliyuncs.com` | 百炼接入地址；用业务空间专属域名时填这里 |
+| `alibaba.model` | `cosyvoice-v3-flash` | 语音合成模型（输出 MP3） |
+| `alibaba.voice` | `longanyang` | 系统音色名，或复刻/设计音色的 id |
+| `tencent.secret_id` | 空 | 腾讯云 SecretId |
+| `tencent.secret_key` | 空 | 腾讯云 SecretKey（每次请求签名用，不上传） |
+| `tencent.voice_type` | `101001` | 腾讯云的数字音色编号 |
+| `volcano.api_key` | 空 | 火山引擎语音控制台的 API Key |
+| `volcano.resource_id` | `seed-tts-2.0` | 资源编号，要与音色类型匹配（复刻音色用 `seed-icl-2.0`） |
+| `volcano.voice` | `zh_female_vv_uranus_bigtts` | 发音人 ID |
+| `minimax.api_key` | 空 | MiniMax 开放平台的接口密钥 |
+| `minimax.group_id` | 空 | 可选，老账号（尤其国内站）需要 |
+| `minimax.base_url` | `https://api.minimax.chat` | 国内站地址；国际站换成对应域名 |
+| `minimax.model` | `speech-02-hd` | 语音模型 |
+| `minimax.voice` | `female-shaonv` | 音色 ID |
 
-> 界面入口：设置 → 语音朗读。两个引擎的音色各存一份，切来切去不会互相覆盖。
+> 界面入口：设置 → 语音朗读。每个引擎的音色和密钥各存一份，切来切去不会互相覆盖。
 
 ### 语音识别 `stt`
 

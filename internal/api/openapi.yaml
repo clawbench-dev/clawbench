@@ -774,6 +774,14 @@ paths:
         `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部是热更新：
         生成时读取 `ConfigInstance`，不需要重启。
 
+        `tts.engine` 接受 `edge` / `openai` / `alibaba` / `tencent` / `volcano` / `minimax`，
+        其他值返回 400（`tts.engine must be one of: edge,openai,alibaba,tencent,volcano,minimax`）。
+        三家国内厂商的凭据**分节存放**（`tts.alibaba.*` / `tts.tencent.*` /
+        `tts.volcano.*`），编辑一家不会改动另一家的配置；当引擎已经切到该厂商后，
+        缺少必填凭据返回 400（`tts.alibaba.api_key` / `tts.tencent.secret_id` +
+        `secret_key` / `tts.volcano.api_key` / `tts.minimax.api_key`）。`tts.alibaba.base_url`
+        与 `tts.minimax.base_url` 非法返回 400（`tts.alibaba.base_url must be a valid URL`）。
+
         `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
         `auto` / `sse` / `audio`，其他值返回 400
         （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto`

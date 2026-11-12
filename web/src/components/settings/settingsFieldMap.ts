@@ -670,6 +670,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       entrySelector: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
         { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
         { labelKey: 'settings.items.ttsEngineOpenAI', value: 'openai' },
+        { labelKey: 'settings.items.ttsEngineAlibaba', value: 'alibaba' },
+        { labelKey: 'settings.items.ttsEngineTencent', value: 'tencent' },
+        { labelKey: 'settings.items.ttsEngineVolcano', value: 'volcano' },
+        { labelKey: 'settings.items.ttsEngineMinimax', value: 'minimax' },
       ]},
       commonFields: [
         // tts.voice belongs to the Edge engine. It is hidden for "openai" (that
@@ -701,8 +705,61 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
             ]},
           ],
         },
+        {
+          // Alibaba Cloud Model Studio (百炼 / DashScope). The endpoint, model
+          // and voice all have working defaults, so only the key is required.
+          when: 'alibaba',
+          fields: [
+            { labelKey: 'settings.items.alibabaTTSApiKey', descriptionKey: 'settings.items.alibabaTTSApiKeyDesc', key: 'tts.alibaba.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.ttsAlibabaHeader' },
+            { labelKey: 'settings.items.alibabaTTSBaseUrl', descriptionKey: 'settings.items.alibabaTTSBaseUrlDesc', key: 'tts.alibaba.base_url', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.alibabaTTSModel', descriptionKey: 'settings.items.alibabaTTSModelDesc', key: 'tts.alibaba.model', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.alibabaTTSVoice', descriptionKey: 'settings.items.alibabaTTSVoiceDesc', key: 'tts.alibaba.voice', type: 'text', source: 'server' },
+          ],
+        },
+        {
+          // Tencent Cloud. Auth is a signed request, so there is a SecretId /
+          // SecretKey pair instead of a single token; the voice is a numeric
+          // catalog id.
+          when: 'tencent',
+          fields: [
+            { labelKey: 'settings.items.tencentTTSSecretId', descriptionKey: 'settings.items.tencentTTSSecretIdDesc', key: 'tts.tencent.secret_id', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsTencentHeader' },
+            { labelKey: 'settings.items.tencentTTSSecretKey', descriptionKey: 'settings.items.tencentTTSSecretKeyDesc', key: 'tts.tencent.secret_key', type: 'password', source: 'server' },
+            { labelKey: 'settings.items.tencentTTSVoiceType', descriptionKey: 'settings.items.tencentTTSVoiceTypeDesc', key: 'tts.tencent.voice_type', type: 'number', source: 'server' },
+          ],
+        },
+        {
+          // Volcano Engine (火山引擎 / 豆包). One API key from the speech
+          // console, plus the resource id that matches the voice type.
+          when: 'volcano',
+          fields: [
+            { labelKey: 'settings.items.volcanoTTSApiKey', descriptionKey: 'settings.items.volcanoTTSApiKeyDesc', key: 'tts.volcano.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.ttsVolcanoHeader' },
+            { labelKey: 'settings.items.volcanoTTSResourceId', descriptionKey: 'settings.items.volcanoTTSResourceIdDesc', key: 'tts.volcano.resource_id', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.volcanoTTSVoice', descriptionKey: 'settings.items.volcanoTTSVoiceDesc', key: 'tts.volcano.voice', type: 'text', source: 'server' },
+          ],
+        },
+        {
+          // MiniMax (T2A v2). GroupId is optional — only older accounts need
+          // it — and the base URL selects the China / international site.
+          when: 'minimax',
+          fields: [
+            { labelKey: 'settings.items.minimaxTTSApiKey', descriptionKey: 'settings.items.minimaxTTSApiKeyDesc', key: 'tts.minimax.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.ttsMinimaxHeader' },
+            { labelKey: 'settings.items.minimaxTTSGroupId', descriptionKey: 'settings.items.minimaxTTSGroupIdDesc', key: 'tts.minimax.group_id', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.minimaxTTSBaseUrl', descriptionKey: 'settings.items.minimaxTTSBaseUrlDesc', key: 'tts.minimax.base_url', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.minimaxTTSModel', descriptionKey: 'settings.items.minimaxTTSModelDesc', key: 'tts.minimax.model', type: 'text', source: 'server' },
+            { labelKey: 'settings.items.minimaxTTSVoice', descriptionKey: 'settings.items.minimaxTTSVoiceDesc', key: 'tts.minimax.voice', type: 'text', source: 'server' },
+          ],
+        },
       ],
-      requiredFields: ['tts.openai.base_url', 'tts.openai.model', 'tts.openai.voice'],
+      requiredFields: [
+        'tts.openai.base_url',
+        'tts.openai.model',
+        'tts.openai.voice',
+        'tts.alibaba.api_key',
+        'tts.tencent.secret_id',
+        'tts.tencent.secret_key',
+        'tts.volcano.api_key',
+        'tts.minimax.api_key',
+      ],
       hasConnectivityTest: true,
       getTestCategories: (values) => [{ category: 'tts', values }],
     }},

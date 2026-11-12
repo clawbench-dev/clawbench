@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -671,6 +672,59 @@ func TestTestTTS_RoutesToOpenAI(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.NotContains(t, result.Message, "Unknown TTS engine")
 	assert.Contains(t, result.Message, "base URL is required")
+}
+
+// ── Vendor TTS connectivity tests ────────────────────────────
+
+// Each vendor probe must report the missing credential by name instead of
+// attempting a request that would fail with an opaque auth error.
+func TestTestTTS_VendorRequiresCredentials(t *testing.T) {
+	orig := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	defer func() { model.ConfigInstance = orig }()
+
+	cases := []struct{ engine, wantSub string }{
+		{"alibaba", "API key is required"},
+		{"tencent", "SecretId"},
+		{"volcano", "API key is required"},
+		{"minimax", "API key is required"},
+	}
+	for _, tc := range cases {
+		result := testTTS(context.Background(), map[string]any{"tts.engine": tc.engine})
+		assert.False(t, result.Success, tc.engine)
+		assert.Contains(t, result.Message, tc.wantSub, tc.engine)
+	}
+}
+
+// The vendor probes synthesize a real one-word clip (that is what catches a
+// wrong model / voice / resource id). This exercises the Alibaba path end to
+// end against a mock endpoint — its base URL is configurable, which the other
+// two vendors' fixed hosts are not.
+func TestTestTTS_AlibabaProbeSynthesizes(t *testing.T) {
+	orig := model.ConfigInstance
+	model.ConfigInstance = model.Config{}
+	defer func() { model.ConfigInstance = orig }()
+
+	audio := append([]byte("ID3"), []byte("0123456789abcdef")...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status_code": 200,
+			"output": map[string]any{
+				"audio": map[string]any{"data": base64.StdEncoding.EncodeToString(audio)},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	result := testTTS(context.Background(), map[string]any{
+		"tts.engine":           "alibaba",
+		"tts.alibaba.api_key":  "sk-test",
+		"tts.alibaba.base_url": srv.URL,
+		"tts.alibaba.model":    "cosyvoice-v3-flash",
+		"tts.alibaba.voice":    "longanyang",
+	})
+	assert.True(t, result.Success, result.Message)
+	assert.Contains(t, result.Message, "longanyang")
 }
 
 // ── Port Forward tests ────────────────────────────────────────

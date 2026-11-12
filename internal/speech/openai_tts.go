@@ -291,7 +291,7 @@ func (p *OpenAITTSProvider) doRequest(ctx context.Context, text, streamFormat st
 		Model:          p.Model,
 		Input:          text,
 		Voice:          p.Voice,
-		ResponseFormat: "mp3", // mp3 keeps the existing MSE playback path (audio/mpeg)
+		ResponseFormat: mp3Format, // mp3 keeps the existing MSE playback path (audio/mpeg)
 		StreamFormat:   streamFormat,
 	}
 	if p.Speed > 0 {

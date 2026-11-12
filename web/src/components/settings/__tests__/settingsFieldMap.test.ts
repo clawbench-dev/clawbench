@@ -523,10 +523,10 @@ describe('settingsFieldMap', () => {
     expect(cfg.entrySelector).toBeDefined()
     expect(cfg.entrySelector!.key).toBe('tts.engine')
     expect(cfg.entrySelector!.type).toBe('select')
-    expect(cfg.entrySelector!.options!.length).toBe(2)
-    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai'])
+    expect(cfg.entrySelector!.options!.length).toBe(6)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['edge', 'openai', 'alibaba', 'tencent', 'volcano', 'minimax'])
     expect(cfg.commonFields.length).toBe(3)
-    expect(cfg.optionSubFields!.length).toBe(1)
+    expect(cfg.optionSubFields!.length).toBe(5)
 
     const openaiSub = cfg.optionSubFields!.find(osf => osf.when === 'openai')
     expect(openaiSub).toBeDefined()
@@ -552,11 +552,57 @@ describe('settingsFieldMap', () => {
       'tts.openai.base_url',
       'tts.openai.model',
       'tts.openai.voice',
+      'tts.alibaba.api_key',
+      'tts.tencent.secret_id',
+      'tts.tencent.secret_key',
+      'tts.volcano.api_key',
+      'tts.minimax.api_key',
     ])
     // There is no engine-switch voice reset: tts.voice belongs to Edge, so
     // switching engines must leave it alone.
     expect(cfg.needsVoiceReset).toBeUndefined()
     expect(cfg.hasConnectivityTest).toBe(true)
+  })
+
+  // The three Chinese cloud engines each keep their own credentials in their
+  // own section: switching engines must never show (or overwrite) another
+  // engine's key.
+  it('tts_engine vendor panels expose per-engine credential fields', () => {
+    const cfg = getCategoryPanels('tts_engine')[0]
+    const keysOf = (when: string) => cfg.optionSubFields!.find(o => o.when === when)!.fields.map(f => f.key)
+
+    expect(keysOf('alibaba')).toEqual([
+      'tts.alibaba.api_key',
+      'tts.alibaba.base_url',
+      'tts.alibaba.model',
+      'tts.alibaba.voice',
+    ])
+    expect(keysOf('tencent')).toEqual([
+      'tts.tencent.secret_id',
+      'tts.tencent.secret_key',
+      'tts.tencent.voice_type',
+    ])
+    expect(keysOf('volcano')).toEqual([
+      'tts.volcano.api_key',
+      'tts.volcano.resource_id',
+      'tts.volcano.voice',
+    ])
+    expect(keysOf('minimax')).toEqual([
+      'tts.minimax.api_key',
+      'tts.minimax.group_id',
+      'tts.minimax.base_url',
+      'tts.minimax.model',
+      'tts.minimax.voice',
+    ])
+
+    // Every secret is masked.
+    for (const key of ['tts.alibaba.api_key', 'tts.tencent.secret_key', 'tts.volcano.api_key', 'tts.minimax.api_key']) {
+      const field = cfg.optionSubFields!.flatMap(o => o.fields).find(f => f.key === key)!
+      expect(field.type).toBe('password')
+    }
+    // The Tencent voice is a numeric catalog id, not free text.
+    const voiceType = cfg.optionSubFields!.flatMap(o => o.fields).find(f => f.key === 'tts.tencent.voice_type')!
+    expect(voiceType.type).toBe('number')
   })
 
   // The shared tts.voice row is a fixed per-engine dropdown. For "openai" it

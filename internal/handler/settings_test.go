@@ -1233,6 +1233,67 @@ func TestServeConfig_Patch_OpenAIInvalidBaseURL(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "tts.openai.base_url must be a valid URL")
 }
 
+func TestServeConfig_Patch_AlibabaInvalidBaseURL(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"tts":{"alibaba":{"base_url":"not a url"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "tts.alibaba.base_url must be a valid URL")
+}
+
+// GET must return every vendor block regardless of which engine is selected:
+// hiding the saved credentials of the engines you are not using makes switching
+// back look like the configuration was lost.
+func TestServeConfig_Get_VendorTTSBlocksAlwaysPresent(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.TTS.Engine = "edge"
+	cfg.TTS.Alibaba.APIKey = "sk-a"
+	cfg.TTS.Tencent.SecretID = "AKID"
+	cfg.TTS.Tencent.VoiceType = 101001
+	cfg.TTS.Volcano.APIKey = "key-x"
+	cfg.TTS.Volcano.Voice = "voice-x"
+	cfg.TTS.Minimax.APIKey = "mm-key"
+	cfg.TTS.Minimax.Voice = "voice-m"
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	tts, ok := resp["tts"].(map[string]any)
+	require.True(t, ok, "response must carry a tts object")
+
+	alibaba, ok := tts["alibaba"].(map[string]any)
+	require.True(t, ok, "alibaba block must be present")
+	assert.Equal(t, "sk-a", alibaba["api_key"])
+
+	tencent, ok := tts["tencent"].(map[string]any)
+	require.True(t, ok, "tencent block must be present")
+	assert.Equal(t, "AKID", tencent["secret_id"])
+
+	volcano, ok := tts["volcano"].(map[string]any)
+	require.True(t, ok, "volcano block must be present")
+	assert.Equal(t, "voice-x", volcano["voice"])
+
+	minimax, ok := tts["minimax"].(map[string]any)
+	require.True(t, ok, "minimax block must be present")
+	assert.Equal(t, "voice-m", minimax["voice"])
+}
+
 func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

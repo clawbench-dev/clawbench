@@ -2224,6 +2224,14 @@ func newTTSProvider(cfg model.Config) speech.SpeechProvider {
 		return newEdgeTTSProvider(cfg)
 	case strOpenAI:
 		return newOpenAITTSProvider(cfg)
+	case "alibaba":
+		return newAlibabaTTSProvider(cfg)
+	case "tencent":
+		return newTencentTTSProvider(cfg)
+	case "volcano":
+		return newVolcanoTTSProvider(cfg)
+	case "minimax":
+		return newMinimaxTTSProvider(cfg)
 	default:
 		return newEdgeTTSProvider(cfg)
 	}
@@ -2265,6 +2273,80 @@ func newOpenAITTSProvider(cfg model.Config) *speech.OpenAITTSProvider {
 		o.Speed = cfg.TTS.Speed
 	}
 	return o
+}
+
+// newAlibabaTTSProvider builds the Alibaba Cloud Model Studio (DashScope)
+// provider. Base URL, model and voice all have documented defaults applied by
+// model.ApplyDefaults, so only the key is required.
+func newAlibabaTTSProvider(cfg model.Config) *speech.AlibabaTTSProvider {
+	p := speech.NewAlibabaTTSProvider()
+	p.APIKey = cfg.TTS.Alibaba.APIKey
+	if cfg.TTS.Alibaba.BaseURL != "" {
+		p.BaseURL = cfg.TTS.Alibaba.BaseURL
+	}
+	if cfg.TTS.Alibaba.Model != "" {
+		p.Model = cfg.TTS.Alibaba.Model
+	}
+	if cfg.TTS.Alibaba.Voice != "" {
+		p.Voice = cfg.TTS.Alibaba.Voice
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
+}
+
+// newTencentTTSProvider builds the Tencent Cloud provider. The voice type has
+// a catalog default; the SecretId/SecretKey pair is required.
+func newTencentTTSProvider(cfg model.Config) *speech.TencentTTSProvider {
+	p := speech.NewTencentTTSProvider()
+	p.SecretID = cfg.TTS.Tencent.SecretID
+	p.SecretKey = cfg.TTS.Tencent.SecretKey
+	if cfg.TTS.Tencent.VoiceType > 0 {
+		p.VoiceType = cfg.TTS.Tencent.VoiceType
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
+}
+
+// newVolcanoTTSProvider builds the Volcano Engine (Doubao) provider. Resource
+// id and speaker have defaults; the API key is required.
+func newVolcanoTTSProvider(cfg model.Config) *speech.VolcanoTTSProvider {
+	p := speech.NewVolcanoTTSProvider()
+	p.APIKey = cfg.TTS.Volcano.APIKey
+	if cfg.TTS.Volcano.ResourceID != "" {
+		p.ResourceID = cfg.TTS.Volcano.ResourceID
+	}
+	if cfg.TTS.Volcano.Voice != "" {
+		p.Voice = cfg.TTS.Volcano.Voice
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
+}
+
+// newMinimaxTTSProvider builds the MiniMax provider. Base URL, model and voice
+// have documented defaults; the API key is required.
+func newMinimaxTTSProvider(cfg model.Config) *speech.MinimaxTTSProvider {
+	p := speech.NewMinimaxTTSProvider()
+	p.APIKey = cfg.TTS.Minimax.APIKey
+	p.GroupID = cfg.TTS.Minimax.GroupID
+	if cfg.TTS.Minimax.BaseURL != "" {
+		p.BaseURL = cfg.TTS.Minimax.BaseURL
+	}
+	if cfg.TTS.Minimax.Model != "" {
+		p.Model = cfg.TTS.Minimax.Model
+	}
+	if cfg.TTS.Minimax.Voice != "" {
+		p.Voice = cfg.TTS.Minimax.Voice
+	}
+	if cfg.TTS.Speed > 0 {
+		p.Speed = cfg.TTS.Speed
+	}
+	return p
 }
 
 // buildAISummarizer creates an LLM summarizer from the shared ai_summary config.
