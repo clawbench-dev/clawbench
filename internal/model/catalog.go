@@ -229,6 +229,14 @@ func RefreshCatalog(ctx context.Context) (*Catalog, error) {
 		case <-flight.done:
 			return flight.cat, flight.err
 		case <-ctx.Done():
+			// Give the slot back: this caller never receives the result, so
+			// leaving it counted would make "how many callers are waiting on
+			// this flight" report a joiner that already left. Tests use that
+			// number to decide when it is safe to let the download finish, and
+			// a stale count there releases the server before the real joiner
+			// has attached — which is a second download, the thing this
+			// function exists to prevent.
+			flight.waiters.Add(-1)
 			return nil, ctx.Err()
 		}
 	}
@@ -238,12 +246,22 @@ func RefreshCatalog(ctx context.Context) (*Catalog, error) {
 
 	cat, err := fetchCatalog(ctx)
 
+	// Publish the result BEFORE clearing the in-flight slot.
+	//
+	// The other order leaves a window where a joiner sees "no flight" (the slot
+	// is already nil) while this flight has not produced its result yet — so it
+	// starts a SECOND download. That is the exact doubling this function exists
+	// to prevent, and it is what made the "concurrent callers share one
+	// download" test flaky on CI: the window is short but the assertion is
+	// exact. Closing done first also gives every joiner that grabbed the flight
+	// pointer a happens-before edge on cat/err.
+	flight.cat, flight.err = cat, err
+	close(flight.done)
+
 	catalogMu.Lock()
 	catalogRefresh = nil
 	catalogMu.Unlock()
 
-	flight.cat, flight.err = cat, err
-	close(flight.done)
 	if err != nil {
 		return nil, err
 	}
