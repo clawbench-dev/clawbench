@@ -53,7 +53,7 @@
         </div>
 
         <div v-if="capsuleDone" class="voice-capsule-actions">
-          <button class="voice-cap-btn" @click="copyDraft">{{ t('chat.voice.copy') }}</button>
+          <CopyButton :text="voiceText" class="voice-cap-icon-btn" />
           <button class="voice-cap-btn primary" @click="draftToChat">{{ t('chat.voice.toChat') }}</button>
           <button class="voice-cap-x" :title="t('chat.voice.discard')" @click="discardDraft">
             <X :size="14" />
@@ -105,11 +105,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Mic, X } from 'lucide-vue-next'
+import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useToast } from '@/composables/useToast'
 import { createVoiceTarget, writeVoiceText } from '@/utils/voiceTarget'
+import { copyText } from '@/utils/clipboard'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -217,15 +219,6 @@ function placeCapsule() {
 const capsuleStyle = computed(() => ({ bottom: `${capsuleBottom.value}px` }))
 
 /* ── actions on the finished transcript ───────────────────────────── */
-async function copyDraft() {
-  const text = voiceText.value
-  try {
-    await navigator.clipboard.writeText(text)
-    toast.show(t('chat.voice.copied'), { icon: 'success', type: 'success', duration: 2000 })
-  } catch {
-    toast.show(t('chat.voice.copyFailed'), { icon: 'warning', type: 'error', duration: 4000 })
-  }
-}
 
 /**
  * Drops the transcript into the chat composer at its caret.
@@ -238,7 +231,9 @@ function draftToChat() {
   const el = document.querySelector<HTMLTextAreaElement>('[data-voice-chat-input]')
   const target = createVoiceTarget(el)
   if (!target) {
-    void copyDraft()
+    // No composer on this screen: copying is the only honest fallback.
+    copyText(voiceText.value)
+    toast.show(t('chat.voice.copied'), { icon: 'success', type: 'success', duration: 2000 })
     return
   }
   writeVoiceText(target, voiceText.value)
@@ -588,6 +583,7 @@ watch(voiceMode, () => { reposition() })
   color: #fff;
 }
 .voice-cap-btn.primary:hover { background: var(--accent-hover, var(--accent-color)); }
+.voice-cap-icon-btn,
 .voice-cap-x {
   width: calc(28 * var(--dp));
   height: calc(28 * var(--dp));
@@ -601,6 +597,7 @@ watch(voiceMode, () => { reposition() })
   border-radius: var(--radius-sm);
   color: var(--text-muted);
 }
+.voice-cap-icon-btn:hover,
 .voice-cap-x:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* ── touch mic ── */
