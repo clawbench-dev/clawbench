@@ -12,7 +12,6 @@
         <span class="settings-page__title">{{ t('nav.settings') }}</span>
         <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
       </template>
-      <PanelWindowControls />
     </header>
     <div class="settings-page__body">
       <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" />
@@ -49,7 +48,6 @@ import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
 import SettingsBreadcrumb, { type BreadcrumbCrumb } from './SettingsBreadcrumb.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { useSettingsNavigation, consumePendingSettingsCategory, pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import '@/assets/modal-footer-btn.css'

@@ -21,7 +21,6 @@
         />
       </div>
       <button class="search-cancel" @click.stop="closeSearch">{{ t('common.cancel') }}</button>
-      <PanelWindowControls />
     </div>
     <div v-else-if="!(commits.length === 0 && untracked) && isGit" class="drilldown-header git-toolbar">
       <div v-if="showBranchBar" class="branch-picker">
@@ -173,7 +172,6 @@
                the bar where it read as a peer of search/refresh rather than as
                "everything about branches". -->
         </ActionBar>
-        <PanelWindowControls />
       </div>
 
       <!-- Reading another branch is a read-only view: nothing is checked out, so
@@ -357,7 +355,6 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { refLabelText } from '@/utils/gitGraph'

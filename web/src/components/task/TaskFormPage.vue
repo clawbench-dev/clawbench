@@ -3,7 +3,6 @@
     <!-- Compact header: breadcrumb -->
     <div class="form-header">
       <TaskBreadcrumb />
-      <PanelWindowControls />
     </div>
 
     <!-- Scrollable form content -->
@@ -368,7 +367,6 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { AlertTriangle, ChevronDown, GitBranch, Info, Save } from 'lucide-vue-next'
 import TaskScriptEditor from '@/components/task/TaskScriptEditor.vue'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'

@@ -35,7 +35,6 @@
           <span class="action-label">{{ t('shareCenter.clearAll') }}</span>
         </button>
       </ActionBar>
-      <PanelWindowControls />
     </div>
 
     <div class="share-filters" role="tablist">
@@ -229,7 +228,6 @@ import {
   Video,
 } from 'lucide-vue-next'
 import ActionBar from '@/components/common/ActionBar.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'

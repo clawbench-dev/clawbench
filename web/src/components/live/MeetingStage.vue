@@ -45,7 +45,6 @@
       >
         <MessageSquare :size="14" />
       </button>
-      <PanelWindowControls />
     </div>
 
     <!-- While publishing the panel is three surfaces, not one long form: the
@@ -479,7 +478,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, Captions, ImageIcon, MessageSquare, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'

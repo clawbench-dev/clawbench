@@ -42,7 +42,6 @@
           <span class="action-label">{{ t('actionLabels.quote') }}</span>
         </button>
       </ActionBar>
-      <PanelWindowControls />
     </div>
 
     <!-- First load: the pane below the header is an article (minutes /
@@ -369,7 +368,6 @@ import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
 import ActionBar from '@/components/common/ActionBar.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{ token: string; initialTab?: MeetingDetailTab }>()

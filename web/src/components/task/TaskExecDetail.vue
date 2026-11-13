@@ -4,7 +4,6 @@
     <div class="exec-detail-header">
       <TaskBreadcrumb />
       <RefreshButton class="header-btn refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('common.refresh')" @click="onRefresh" />
-      <PanelWindowControls />
     </div>
 
     <!-- Summary / Original tabs — pinned directly under the header, OUTSIDE the
@@ -142,7 +141,6 @@ import { MessageSquare, Square, Zap, ExternalLink, ChevronDown } from 'lucide-vu
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import TaskScriptResultCard from '@/components/task/TaskScriptResultCard.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import { mergeDbBlocksWithLive } from '@/utils/chatBlocks'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'

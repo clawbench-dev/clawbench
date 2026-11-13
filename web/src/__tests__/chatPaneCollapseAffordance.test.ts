@@ -139,20 +139,24 @@ describe('chat pane collapse affordance', () => {
     expect(src).not.toContain('data-action="hide-chat"')
   })
 
-  it('offers the maximize affordance from the shared panel window controls', () => {
-    // The file viewer used to carry its own maximize button. It now uses the
-    // same three-button cluster every panel header gets, so the operation has
-    // one implementation and one home instead of one per panel.
+  it('offers the maximize affordance from the shared panel title bar', () => {
+    // The file viewer used to carry its own maximize button. It now lives in
+    // the one title bar above the panel, so the operation has one home instead
+    // of one per panel (and no drill-down page can cover it).
     const controls = readWebFile('src/components/common/PanelWindowControls.vue')
     expect(controls).toContain('@click.stop="toggleChatPane"')
     expect(controls).toContain('chatCollapsed')
     expect(controls).toContain("t('nav.maximizePanel')")
     expect(controls).toContain("t('nav.restorePanel')")
 
-    // The file header's private copy is gone, replaced by the shared cluster.
+    const app = readWebFile(APP)
+    expect(app).toMatch(/<div v-if="isWideScreen" class="panel-titlebar">/)
+    expect(app).toContain('<PanelWindowControls />')
+
+    // No panel header owns a copy any more.
     const header = readWebFile('src/components/file/FileHeader.vue')
     expect(header).not.toContain('data-action="toggle-maximize-pane"')
-    expect(header).toMatch(/<PanelWindowControls\b/)
+    expect(header).not.toContain('PanelWindowControls')
   })
 
   it('keeps the divider handle as the discoverable entry point', () => {

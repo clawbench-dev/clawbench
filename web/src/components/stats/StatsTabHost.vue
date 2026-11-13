@@ -28,7 +28,6 @@
           @click="onRefresh"
         />
       </div>
-      <PanelWindowControls />
     </div>
 
     <div class="stats-tab-body">
@@ -45,7 +44,6 @@ import { useI18n } from 'vue-i18n'
 import { defineAsyncComponent } from 'vue'
 import { Coins, Files, GitCommitHorizontal } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'

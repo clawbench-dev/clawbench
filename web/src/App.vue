@@ -101,12 +101,15 @@
           >
             <template #left>
               <div class="col-left" :class="{ 'col-left--chrome': isWideScreen }" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
-                <!-- Fallback window controls for a panel that has no header in
-                     its current state (file viewer with no file open, git
-                     history in a non-repo, mail with no account). Hidden by
-                     CSS as soon as the ACTIVE panel renders its own cluster;
-                     the hidden, still-mounted panels do not count. -->
-                <div v-if="isWideScreen" class="panel-fallback-controls">
+                <!-- Panel title bar: one row for every left-column tab —
+                     icon, tab name, and the two window controls. It sits ABOVE
+                     the panel's own header so drill-down pages (meeting detail,
+                     mail reader, task detail) cannot cover the controls. Wide
+                     screens only: with one column there is no second pane to
+                     minimize or maximize. -->
+                <div v-if="isWideScreen" class="panel-titlebar">
+                  <component :is="wideDockTabIcon(leftTab)" :size="14" class="panel-titlebar-icon" />
+                  <span class="panel-titlebar-title">{{ dockTabTitle(leftTab) }}</span>
                   <PanelWindowControls />
                 </div>
                 <!-- File Manager Tab (directory browsing only) -->
@@ -5196,12 +5199,45 @@ onUnmounted(() => {
    buttons. Sits at the panel's top-right in the same 36px band a header would
    occupy; components.css hides it as soon as the ACTIVE panel renders its own
    cluster. */
-.panel-fallback-controls {
+/* Panel title bar (wide screen only). The TabPanels are absolutely positioned
+   with `inset: 0`, so the bar overlays the top and the panels start below it.
+   On narrow screens the class is absent and no bar exists. */
+.panel-titlebar {
     position: absolute;
     top: 0;
+    left: 0;
     right: 0;
+    z-index: 5;
     height: var(--header-height);
-    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding-left: var(--space-5);
+    /* Room for the two window controls, which are absolutely positioned at the
+       right end of this bar (PanelWindowControls). */
+    padding-right: calc(52 * var(--dp));
+    background: var(--bg-secondary);
+    user-select: none;
+}
+
+.panel-titlebar-icon {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+}
+
+.panel-titlebar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.col-left--chrome > .tab-panel {
+    top: var(--header-height);
 }
 
 /* Wide-screen split panes — positioned ancestors for the absolute TabPanels */
@@ -5209,16 +5245,6 @@ onUnmounted(() => {
 .col-right {
     position: relative;
     height: 100%;
-}
-
-/* Width reserved at the right end of every panel header for the three panel
-   window controls (components/common/PanelWindowControls.vue). Declared here
-   because this is the element that only exists on a wide screen: on narrow
-   layouts the class is absent, the variable falls back to 0px, and each header
-   keeps its own right padding. The value is 3 × 26dp — keep it in sync with
-   the component's button width. */
-.col-left--chrome {
-    --panel-controls-w: calc(52 * var(--dp));
 }
 .col-right {
     display: flex;

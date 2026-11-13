@@ -116,7 +116,6 @@
             <span class="action-label">{{ t('jump.button') }}</span>
           </button>
         </ActionBar>
-        <PanelWindowControls />
       </div>
 
       <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
@@ -574,7 +573,6 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { startAttachDrag, hasAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath, postForBlobWithProgress } from '@/utils/download.ts'
 import ActionBar from '@/components/common/ActionBar.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
 import DropOverlay from '@/components/common/DropOverlay.vue'

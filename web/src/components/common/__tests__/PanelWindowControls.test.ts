@@ -13,8 +13,8 @@ vi.mock('vue-i18n', () => ({
 
 let wrapper: VueWrapper | null = null
 
-function mountControls(props: { closable?: boolean } = {}) {
-  wrapper = mount(PanelWindowControls, { props, attachTo: document.body })
+function mountControls() {
+  wrapper = mount(PanelWindowControls, { attachTo: document.body })
   return wrapper
 }
 
@@ -52,28 +52,6 @@ describe('PanelWindowControls', () => {
     expect(control('max').attributes('title')).toBe('nav.maximizePanel')
     // No close cell by default: closing the panel is what minimize does.
     expect(wrapper!.findAll('.panel-control--close')).toHaveLength(0)
-  })
-
-  it('renders a close cell only when the host asks for one', () => {
-    // The file viewer is the one panel where close means something different
-    // (close the open file), so it opts in.
-    mountControls({ closable: true })
-    expect(wrapper!.findAll('.panel-control')).toHaveLength(3)
-    expect(control('close').attributes('title')).toBe('nav.closePanel')
-  })
-
-  it('close emits and does not touch the layout', async () => {
-    const { leftCollapsed, chatCollapsed } = useWideScreenLayout()
-    // The panel starts collapsed by default (VS Code style), so the assertion
-    // is "unchanged", not "visible".
-    const before = { left: leftCollapsed.value, chat: chatCollapsed.value }
-    mountControls({ closable: true })
-
-    await control('close').trigger('click')
-
-    expect(wrapper!.emitted('close')).toHaveLength(1)
-    expect(leftCollapsed.value).toBe(before.left)
-    expect(chatCollapsed.value).toBe(before.chat)
   })
 
   it('maximize toggles the chat pane and the glyph/title follow it', async () => {

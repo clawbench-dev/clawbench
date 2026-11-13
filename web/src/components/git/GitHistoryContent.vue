@@ -58,7 +58,6 @@
           :title="t('git.history.refresh')"
           @click.stop="onFilesRefresh"
         />
-        <PanelWindowControls />
       </div>
       <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :disable-file-actions="isOtherBranch" @open-file="onOpenFile" @reveal-file="onRevealFile" />
       <div class="drilldown-body">
@@ -172,7 +171,6 @@
             <ChevronDown :size="14" />
           </button>
         </div>
-        <PanelWindowControls />
       </div>
       <div class="drilldown-body">
         <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" :disable-file-actions="isOtherBranch" @open-file="onOpenFile" @reveal-file="onRevealFile" />
@@ -191,7 +189,6 @@
     <div v-else-if="currentView === 'manage'" class="drilldown-page">
       <div class="drilldown-header">
         <GitBreadcrumb mode="project" current-view="manage" @navigate="drillBack" />
-        <PanelWindowControls />
       </div>
       <GitManageContent />
     </div>
@@ -211,7 +208,6 @@ import GitDiffView from './GitDiffView.vue'
 import GitBreadcrumb from './GitBreadcrumb.vue'
 import GitManageContent from './GitManageContent.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { store } from '@/stores/app.ts'
 import { consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
 import { useDiffNavigation } from '@/composables/useDiffNavigation.ts'

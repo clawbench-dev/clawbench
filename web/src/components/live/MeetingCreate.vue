@@ -6,7 +6,6 @@
       </button>
       <span class="meeting-header__title">{{ t('meeting.create.title') }}</span>
       <span class="meeting-header__spacer" />
-      <PanelWindowControls />
     </div>
 
     <!-- The desktop shell can capture on http (its own origin is promoted), but
@@ -247,7 +246,6 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen, Radio } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'

@@ -4,7 +4,6 @@
          its buttons exactly like every other panel header (the same rule as
          tasks / notifications / forge): labels when they fit, then icons, then
          a More menu. -->
-    <div class="panel-head-row">
     <ActionBar class="proxy-header" mode="menu" size="header">
       <div class="proxy-header-leading">
         <span class="proxy-header-icon">
@@ -40,8 +39,6 @@
         <span class="action-label">{{ t('actionLabels.addPort') }}</span>
       </button>
     </ActionBar>
-    <PanelWindowControls />
-    </div>
 
     <div class="proxy-panel">
       <!-- Current transport. Server-configured (`port_forward.transport`), so it
@@ -344,7 +341,6 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'

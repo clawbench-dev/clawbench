@@ -28,7 +28,6 @@
           <span class="action-label">{{ t('common.refresh') }}</span>
         </RefreshButton>
       </ActionBar>
-      <PanelWindowControls />
     </div>
 
     <HttpsNotice v-if="showHttpsNotice" variant="banner" />
@@ -275,7 +274,6 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
-import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
 import { getNative } from '@/utils/clawbenchNative'

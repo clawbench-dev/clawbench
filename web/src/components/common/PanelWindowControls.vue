@@ -1,17 +1,13 @@
 <template>
   <!--
-    Window controls for the left-column panel, drawn at the right end of the
-    panel's own header row: minimize (hide) and maximize/restore (give the
-    panel the whole width). There is deliberately no close button — it did
-    exactly what minimize does, and two identical controls in a three-cell
-    block read as a mistake.
+    Window controls for the left-column panel: minimize (hide) and
+    maximize/restore (give the panel the whole width). Rendered in the panel
+    title bar, not in a panel's own header — a drill-down page replaces that
+    header, and the controls must not disappear with it. There is deliberately
+    no close button: closing the panel is what minimize does.
 
-    Absolutely positioned on purpose: every panel header is a different height
-    (26 / 28 / 34 / 36 design px) and a different flex row, so a flex child
-    would either be squeezed or force a height. `top: 0; bottom: 0` takes the
-    header's real height, and the header reserves room with
-    `--panel-controls-w` (see components.css) so its own buttons never sit
-    underneath.
+    Absolutely positioned inside the title bar: `top: 0; bottom: 0` fills the
+    bar's height, and the bar reserves their width with padding.
 
     Wide screens only: on a single-column layout there is no second pane to
     hide or maximize.
@@ -43,19 +39,6 @@
         <rect x="4" y="4" width="16" height="16" rx="1.5" />
       </svg>
     </button>
-    <!-- Only the file viewer passes `closable`: closing its open file is a
-         distinct action. Everywhere else "close the panel" would be the same
-         thing as minimize, so the button is not rendered at all. -->
-    <button
-      v-if="closable"
-      class="panel-control panel-control--close"
-      type="button"
-      :title="closeTitle || t('nav.closePanel')"
-      :aria-label="closeTitle || t('nav.closePanel')"
-      @click.stop="emit('close')"
-    >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-    </button>
   </div>
 </template>
 
@@ -66,18 +49,6 @@ import {
   minimizeLeftPanel,
   toggleChatPane,
 } from '@/composables/useWideScreenLayout'
-
-withDefaults(defineProps<{
-  /** Render the third (close) cell. Only the file viewer needs it. */
-  closable?: boolean
-  /** Tooltip for that cell — the file viewer closes a file, not the panel. */
-  closeTitle?: string
-}>(), {
-  closable: false,
-  closeTitle: '',
-})
-
-const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { t } = useI18n()
 const { isWideScreen, chatCollapsed } = getWideScreenState()
