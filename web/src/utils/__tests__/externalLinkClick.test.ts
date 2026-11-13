@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { installExternalLinkClick, confirmAndOpenExternalLink } from '@/utils/externalLinkClick'
+import { registerLightboxImageOpener } from '@/utils/lightboxOpener'
 
 /**
  * External links are rendered as spans (see markedConfig's `link` renderer) so
@@ -11,6 +12,7 @@ import { installExternalLinkClick, confirmAndOpenExternalLink } from '@/utils/ex
 
 const mockOpenExternalUrl = vi.fn()
 const mockConfirm = vi.fn()
+const mockOpenImage = vi.fn()
 
 vi.mock('@/utils/externalLink', () => ({
   openExternalUrl: (url: string) => mockOpenExternalUrl(url),
@@ -29,12 +31,16 @@ let dispose: (() => void) | null = null
 beforeEach(() => {
   mockOpenExternalUrl.mockReset()
   mockConfirm.mockReset()
+  mockOpenImage.mockReset()
   document.body.innerHTML = ''
 })
 
 afterEach(() => {
   dispose?.()
   dispose = null
+  // The opener is a module singleton; leaving a spy registered would make
+  // every later case look like "a viewer is mounted".
+  registerLightboxImageOpener(null)
   document.body.innerHTML = ''
 })
 
@@ -220,6 +226,106 @@ describe('installExternalLinkClick', () => {
 
     click(renderSpan())
     expect(mockConfirm).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * An image link is content, not a destination: it must be shown in the in-app
+ * viewer, without asking about the browser. Anything that is not displayable
+ * keeps the confirmation step — leaving the app is the only way to see it.
+ */
+describe('installExternalLinkClick — image links', () => {
+  it('shows an image link in the viewer instead of asking about the browser', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+    const span = renderSpan('https://example.com/chart.png')
+
+    click(span)
+
+    expect(mockOpenImage).toHaveBeenCalledWith('https://example.com/chart.png')
+    expect(mockConfirm, 'no browser dialog for something we can display').not.toHaveBeenCalled()
+    expect(mockOpenExternalUrl).not.toHaveBeenCalled()
+  })
+
+  it('classifies on the path, so a query string does not hide the extension', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+
+    click(renderSpan('https://example.com/chart.svg?raw=1'))
+
+    expect(mockOpenImage).toHaveBeenCalledWith('https://example.com/chart.svg?raw=1')
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
+  it('still asks for a link the viewer cannot display', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+    mockConfirm.mockResolvedValue(false)
+
+    click(renderSpan('https://example.com/report.pdf'))
+
+    expect(mockOpenImage).not.toHaveBeenCalled()
+    expect(mockConfirm).toHaveBeenCalled()
+  })
+
+  it('asks instead of swallowing the click when no viewer is mounted', () => {
+    dispose = installExternalLinkClick()
+    mockConfirm.mockResolvedValue(false)
+
+    click(renderSpan('https://example.com/chart.png'))
+
+    expect(mockConfirm).toHaveBeenCalledWith('https://example.com/chart.png', expect.any(Object))
+  })
+
+  it('consumes the click, so a host handler cannot also act on it', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+    const span = renderSpan('https://example.com/chart.png')
+
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1 })
+    span.dispatchEvent(ev)
+
+    expect(ev.defaultPrevented).toBe(true)
+  })
+
+  it('opens from the keyboard too', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+    const span = renderSpan('https://example.com/chart.png')
+
+    span.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+
+    expect(mockOpenImage).toHaveBeenCalledWith('https://example.com/chart.png')
+  })
+
+  // `data-href` can be planted by raw HTML in an AI message, and it is not
+  // covered by DOMPurify's URI allowlist — so the scheme must be vetted before
+  // the value reaches an <img>. A trailing image extension must not be enough.
+  it('refuses a planted non-external scheme even with an image extension', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+
+    click(renderSpan('javascript:alert(1).png'))
+
+    expect(mockOpenImage).not.toHaveBeenCalled()
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
+  // localhost means "a port on the server" (tunnel-only); that rule outranks
+  // the image rule, and the host's own handler must still see the click.
+  it('leaves a localhost image to the tunnel handler', () => {
+    dispose = installExternalLinkClick()
+    registerLightboxImageOpener(mockOpenImage)
+    const host = document.createElement('div')
+    host.innerHTML = '<span class="md-external-link" data-href="http://localhost:5173/a.png" data-localhost role="link" tabindex="0">x</span>'
+    document.body.appendChild(host)
+    let hostSaw = false
+    host.addEventListener('click', () => { hostSaw = true })
+
+    click(host.querySelector('.md-external-link')!)
+
+    expect(mockOpenImage).not.toHaveBeenCalled()
+    expect(hostSaw).toBe(true)
   })
 })
 

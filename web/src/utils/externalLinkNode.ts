@@ -87,6 +87,32 @@ const MEDIA_EXTENSIONS = [
  */
 const EXTERNAL_HREF_RE = /^(?:(?:f|ht)tps?:|mailto:|tel:|callto:|sms:|\/\/)/i
 
+/**
+ * Extensions the in-app viewer can display.
+ *
+ * Such a link is CONTENT, not a destination: clicking it shows the picture in
+ * the lightbox instead of asking whether to hand the URL to a browser. The list
+ * is exactly what an `<img>` can render — anything else (a PDF, a zip, a page)
+ * still needs the browser.
+ */
+const IMAGE_EXTENSIONS = [
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.ico', '.apng',
+    // `img` renders a remote SVG fine; it just cannot run scripts there.
+    '.svg',
+]
+
+/**
+ * True when the URL's path ends in a displayable image extension.
+ *
+ * The query/hash is cut BEFORE matching: image links routinely carry `?raw=1`
+ * or `?t=…`, and a signed URL's parameters are part of the URL, not part of the
+ * file name.
+ */
+export function isImageHref(href: string): boolean {
+    const path = href.trim().split(/[?#]/)[0].toLowerCase()
+    return IMAGE_EXTENSIONS.some(ext => path.endsWith(ext))
+}
+
 /** True when `href` points outside the app (http/https/mailto/…). */
 export function isExternalHref(href: string): boolean {
     return EXTERNAL_HREF_RE.test(href.trim())

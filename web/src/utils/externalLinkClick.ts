@@ -1,6 +1,7 @@
 import { useDialog } from '@/composables/useDialog'
 import { openExternalUrl } from '@/utils/externalLink'
-import { isExternalHref, LOCALHOST_LINK_ATTR } from '@/utils/externalLinkNode'
+import { isExternalHref, isImageHref, LOCALHOST_LINK_ATTR } from '@/utils/externalLinkNode'
+import { openImageInLightbox } from '@/utils/lightboxOpener'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ExternalLinkClick'
@@ -27,6 +28,13 @@ const t = (key: string) => i18n.global.t(key)
  * we must NOT restore: a stray tap while scrolling a chat message would yank
  * the user out to a browser. So a tap opens a confirm dialog showing the exact
  * URL, and only an explicit confirm leaves the app.
+ *
+ * ## The exception: images
+ *
+ * A link whose path ends in an image extension is not a place to go, it is
+ * something to look at. Leaving the app for it is both slower and worse — the
+ * browser drops the reader out of the conversation for a picture. So it opens
+ * in the in-app viewer directly, no dialog (see `isImageHref`).
  *
  * ## Why one global listener
  *
@@ -65,6 +73,16 @@ export function installExternalLinkClick(): () => void {
         const href = span.getAttribute('data-href')
         if (!href) return
 
+        // An image link is shown in the app, not sent to the browser — and
+        // without a confirmation step, which would only delay looking at it.
+        // Falls through to the dialog when no viewer is mounted (a host that
+        // renders markdown without one), so the click is never swallowed.
+        if (isImageLink(href) && openImageInLightbox(href)) {
+            e.preventDefault()
+            e.stopPropagation()
+            return
+        }
+
         e.preventDefault()
         e.stopPropagation()
         void confirmAndOpenExternalLink(href)
@@ -94,6 +112,10 @@ export function installExternalLinkClick(): () => void {
 
         const href = span.getAttribute('data-href')
         if (!href) return
+        if (isImageLink(href) && openImageInLightbox(href)) {
+            e.preventDefault()
+            return
+        }
         e.preventDefault()
         void confirmAndOpenExternalLink(href)
     }
@@ -104,6 +126,18 @@ export function installExternalLinkClick(): () => void {
         document.removeEventListener('click', handler, true)
         document.removeEventListener('keydown', keyHandler, true)
     }
+}
+
+/**
+ * True when this href is an external URL pointing at a displayable image.
+ *
+ * `isExternalHref` is part of the test on purpose: `data-href` is not covered
+ * by DOMPurify's URI allowlist (see `confirmAndOpenExternalLink`), so the
+ * scheme must be vetted before the value is handed to an `<img>` — a planted
+ * `data-href` is the one way into this path that the renderer did not produce.
+ */
+function isImageLink(href: string): boolean {
+    return isExternalHref(href) && isImageHref(href)
 }
 
 /**

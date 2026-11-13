@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import Lightbox from '@/components/media/Lightbox.vue'
 import { bumpMediaVersion, resetMediaWatch, setMediaProjectRoot } from '@/composables/useMediaWatch.ts'
 import { downloadBlob, downloadFileByPath } from '@/utils/download.ts'
+import { openImageInLightbox } from '@/utils/lightboxOpener.ts'
 import {
   beginDownload, cancelDownload, endDownload, nextDownloadId, useDownloadProgress,
 } from '@/composables/useDownloadProgress'
@@ -1148,6 +1149,61 @@ describe('Lightbox', () => {
       expect(vm.currentUrl).toBe('')
       expect(vm.siblingFiles).toHaveLength(0)
       expect(vm.currentIndex).toBe(-1)
+    })
+  })
+
+  // ── Remote (external-link) images ──
+
+  /**
+   * Images opened from an external link are served by someone else's server.
+   * The local-file cache-buster must not touch them: it strips a `t=` that may
+   * be a signed URL's token and appends a parameter that invalidates the
+   * signature.
+   */
+  describe('remote image URLs', () => {
+    it('opens a remote URL verbatim (no cache-buster, no param stripping)', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.open('https://example.com/a.png?t=sig&x=1')
+      await nextTick()
+
+      expect(vm.currentUrl).toBe('https://example.com/a.png?t=sig&x=1')
+      expect(vm.displayUrl).toBe('https://example.com/a.png?t=sig&x=1')
+    })
+
+    it('keeps a remote URL verbatim in the markdown gallery too', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      vm.openMdImages([
+        { src: 'https://example.com/a.png?t=sig', name: 'a.png' },
+        { src: 'https://example.com/b.png', name: 'b.png' },
+      ], 0)
+      await nextTick()
+
+      expect(vm.currentUrl).toBe('https://example.com/a.png?t=sig')
+    })
+
+    it('registers itself so the external-link layer can open an image', async () => {
+      const wrapper = mountLightbox()
+      await nextTick()
+
+      expect(openImageInLightbox('https://example.com/a.png')).toBe(true)
+      expect((wrapper.vm as any).currentUrl).toBe('https://example.com/a.png')
+    })
+
+    it('unregisters on unmount', () => {
+      const wrapper = mountLightbox()
+      expect(openImageInLightbox('https://example.com/a.png')).toBe(true)
+
+      // Already torn down here, so take it out of the shared teardown list —
+      // unmounting twice would throw.
+      const idx = mountedWrappers.indexOf(wrapper)
+      if (idx >= 0) mountedWrappers.splice(idx, 1)
+      wrapper.unmount()
+
+      expect(openImageInLightbox('https://example.com/b.png')).toBe(false)
     })
   })
 

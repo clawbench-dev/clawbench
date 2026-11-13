@@ -83,7 +83,7 @@
 
 <script setup>
 import { X, ChevronLeft, ChevronRight, Download } from 'lucide-vue-next'
-import { ref, computed, provide, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, provide, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
@@ -96,6 +96,7 @@ import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
 import { extractImageName } from '@/utils/lightbox.ts'
+import { registerLightboxImageOpener } from '@/utils/lightboxOpener.ts'
 import { mediaPathFromUrl, mediaVersionFor, stripVersionParam, withVersionParam } from '@/composables/useMediaWatch.ts'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
@@ -449,6 +450,26 @@ function withCacheBuster(url) {
     return url + sep + 't=' + Date.now()
 }
 
+/**
+ * True for an image served by someone else's server (an external link opened in
+ * the viewer) as opposed to one this app serves from disk.
+ */
+const REMOTE_URL_RE = /^https?:\/\//i
+
+/**
+ * The URL to hand `<img>` for a freshly opened image.
+ *
+ * Remote URLs pass through VERBATIM. The `t=` normalisation below exists for
+ * local files whose bytes change on disk, and applying it to a remote URL is
+ * actively harmful: it strips a `t=` the server may use (a signed URL's token
+ * is part of the query, and adding or removing a parameter invalidates the
+ * signature), and our own cache-buster means nothing on a server we do not
+ * control.
+ */
+function mediaUrlFor(url) {
+    return REMOTE_URL_RE.test(url) ? url : withCacheBuster(normalizeUrl(url))
+}
+
 function navigateMdImage(newIdx, direction) {
     const img = mdImages.value[newIdx]
     if (!img) return
@@ -474,7 +495,7 @@ function navigateMdImage(newIdx, direction) {
         currentUrl.value = ''
     } else {
         // collectMdImages pre-resolves data-full-src into src
-        currentUrl.value = withCacheBuster(normalizeUrl(img.src))
+        currentUrl.value = mediaUrlFor(img.src)
         currentSvg.value = ''
     }
 }
@@ -489,7 +510,7 @@ function navigateMdImage(newIdx, direction) {
  * what the file viewer's own header button relies on.
  */
 function open(url, svg = '', filePath = '') {
-    currentUrl.value = svg ? '' : withCacheBuster(normalizeUrl(url))
+    currentUrl.value = svg ? '' : mediaUrlFor(url)
     currentSvg.value = svg
     lightboxVisible.value = true
     beginMedia(!!svg)
@@ -541,7 +562,7 @@ function openMdImages(imgs, startIndex) {
         beginMedia(true)
     } else {
         // collectMdImages pre-resolves data-full-src into src
-        currentUrl.value = withCacheBuster(normalizeUrl(img.src))
+        currentUrl.value = mediaUrlFor(img.src)
         currentSvg.value = ''
         beginMedia(false)
     }
@@ -600,7 +621,14 @@ function resetAndRefresh() {
     ty.value = 0
     lastTx.value = 0
     lastTy.value = 0
-    if (currentUrl.value) {
+    if (currentUrl.value && REMOTE_URL_RE.test(currentUrl.value)) {
+        // A remote URL cannot be cache-busted (see mediaUrlFor), and assigning
+        // the same src again would not re-request anything. Drop it for one
+        // tick so the <img> is re-created, which does.
+        const url = currentUrl.value
+        currentUrl.value = ''
+        void nextTick(() => { currentUrl.value = url })
+    } else if (currentUrl.value) {
         currentUrl.value = withCacheBuster(normalizeUrl(currentUrl.value))
     }
 }
@@ -642,7 +670,7 @@ function handleDownload() {
 
     // External URL — construct download link directly
     const a = document.createElement('a')
-    const baseUrl = normalizeUrl(currentUrl.value)
+    const baseUrl = REMOTE_URL_RE.test(currentUrl.value) ? currentUrl.value : normalizeUrl(currentUrl.value)
     a.href = baseUrl
     a.download = currentFileName.value || ''
     document.body.appendChild(a)
@@ -973,12 +1001,16 @@ onMounted(() => {
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
     document.addEventListener('click', handleLightboxClick)
+    // Lets the document-level external-link layer show an image link here
+    // without needing a component context (see utils/lightboxOpener.ts).
+    registerLightboxImageOpener(open)
 })
 
 onUnmounted(() => {
     document.removeEventListener('mousemove', handleMouseMove)
     document.removeEventListener('mouseup', handleMouseUp)
     document.removeEventListener('click', handleLightboxClick)
+    registerLightboxImageOpener(null)
     if (unregisterBack) {
         unregisterBack()
         unregisterBack = null
