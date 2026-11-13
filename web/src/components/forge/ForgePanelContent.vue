@@ -75,7 +75,6 @@
              sits outside its ActionBar. -->
         <div class="forge-header">
           <span class="forge-header-title">
-            <Github :size="14" />
             <button
               v-if="items.binding.value"
               ref="repoBadgeRef"

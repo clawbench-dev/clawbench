@@ -150,7 +150,7 @@ describe('chat pane collapse affordance', () => {
     expect(controls).toContain("t('nav.restorePanel')")
 
     const app = readWebFile(APP)
-    expect(app).toMatch(/<div v-if="isWideScreen" class="panel-titlebar">/)
+    expect(app).toMatch(/<div v-if="isWideScreen" class="panel-head">/)
     expect(app).toContain('<PanelWindowControls />')
 
     // No panel header owns a copy any more.

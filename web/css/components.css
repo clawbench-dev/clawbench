@@ -1782,3 +1782,45 @@
 .ab-measuring * {
     transition: none !important;
 }
+
+/* ==========================================================================
+   One header row for every left panel
+
+   The shared tab icon and the two window controls (App.vue's .panel-head) are
+   overlaid on the panel's OWN header row, so there is a single row rather than
+   a title bar stacked on a toolbar. Each header reserves the two ends with
+   padding: the icon and controls never cover its content, and an ActionBar
+   inside it folds against the reduced width on its own.
+
+   This list is every header row a panel can show, drill-down pages included —
+   a missing one lets its right-side buttons slide under the controls.
+   ========================================================================== */
+.col-left--chrome .tab-panel :is(
+    .dir-toolbar,
+    .file-header-bar,
+    .settings-page__header,
+    .share-header,
+    .forge-header,
+    .list-header,
+    .detail-header,
+    .form-header,
+    .exec-detail-header,
+    .drilldown-header,
+    .proxy-header,
+    .meeting-header,
+    .live-panel__header,
+    .mail-bar__top,
+    .mail-bar__search-row,
+    .mail-reader__head,
+    .mail-compose__head,
+    .stats-tab-bar,
+    .terminal-tab-bar
+) {
+    /* One row height everywhere, so the overlay's cells line up with whatever
+       header the current view draws (32 / 28 / 34px rows otherwise). */
+    height: var(--header-height);
+    /* 10 left + 14 icon + 8 gap. */
+    padding-left: calc(32 * var(--dp));
+    /* 8 gap + two 26px control cells. */
+    padding-right: calc(var(--space-2) + 52 * var(--dp));
+}

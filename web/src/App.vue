@@ -101,15 +101,13 @@
           >
             <template #left>
               <div class="col-left" :class="{ 'col-left--chrome': isWideScreen }" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
-                <!-- Panel title bar: one row for every left-column tab —
-                     icon, tab name, and the two window controls. It sits ABOVE
-                     the panel's own header so drill-down pages (meeting detail,
-                     mail reader, task detail) cannot cover the controls. Wide
-                     screens only: with one column there is no second pane to
-                     minimize or maximize. -->
-                <div v-if="isWideScreen" class="panel-titlebar">
-                  <component :is="wideDockTabIcon(leftTab)" :size="14" class="panel-titlebar-icon" />
-                  <span class="panel-titlebar-title">{{ dockTabTitle(leftTab) }}</span>
+                <!-- Shared head cells over the panel's own header row: the
+                     tab icon on the left, the two window controls on the right.
+                     The middle is whatever header the current view renders —
+                     including drill-down pages — so there is ONE row, not two,
+                     and the controls cannot be covered. Wide screens only. -->
+                <div v-if="isWideScreen" class="panel-head">
+                  <component :is="wideDockTabIcon(leftTab)" :size="14" class="panel-head-icon" />
                   <PanelWindowControls />
                 </div>
                 <!-- File Manager Tab (directory browsing only) -->
@@ -5199,45 +5197,28 @@ onUnmounted(() => {
    buttons. Sits at the panel's top-right in the same 36px band a header would
    occupy; components.css hides it as soon as the ACTIVE panel renders its own
    cluster. */
-/* Panel title bar (wide screen only). The TabPanels are absolutely positioned
-   with `inset: 0`, so the bar overlays the top and the panels start below it.
-   On narrow screens the class is absent and no bar exists. */
-.panel-titlebar {
+/* The shared head cells sit ON the panel's own header row (no second row).
+   They are an overlay so they survive drill-down pages, which replace the
+   header content but keep the same row. Pointer events pass through the empty
+   middle; only the controls take clicks (PanelWindowControls sets its own
+   `pointer-events: auto`). */
+.panel-head {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     z-index: 5;
     height: var(--header-height);
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding-left: var(--space-5);
-    /* Room for the two window controls, which are absolutely positioned at the
-       right end of this bar (PanelWindowControls). */
-    padding-right: calc(52 * var(--dp));
-    background: var(--bg-secondary);
+    pointer-events: none;
     user-select: none;
 }
 
-.panel-titlebar-icon {
-    flex: 0 0 auto;
+.panel-head-icon {
+    position: absolute;
+    top: 50%;
+    left: var(--space-5);
+    transform: translateY(-50%);
     color: var(--text-muted);
-}
-
-.panel-titlebar-title {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--font-size-md);
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-.col-left--chrome > .tab-panel {
-    top: var(--header-height);
 }
 
 /* Wide-screen split panes — positioned ancestors for the absolute TabPanels */

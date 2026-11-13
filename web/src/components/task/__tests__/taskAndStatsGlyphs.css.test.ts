@@ -41,38 +41,6 @@ function baseRule(css: string, cls: string): string | null {
   return m ? m[1] : null
 }
 
-describe('task breadcrumb root glyph', () => {
-  const src = readWebFile('src/components/task/TaskBreadcrumb.vue')
-
-  it('renders the glyph on the root crumb only', () => {
-    // One crumb-icon in the template: the root. Adding it to every crumb would
-    // turn the row into a row of repeated icons.
-    const count = (src.match(/class="crumb-icon"/g) || []).length
-    expect(count, 'exactly one .crumb-icon is expected (the root crumb)').toBe(1)
-  })
-
-  it('makes the crumb a flex row so the glyph and label share a baseline', () => {
-    const decls = baseRule(src, 'crumb')
-    expect(decls, '.crumb rule must exist').not.toBeNull()
-    expect(decls).toMatch(/display:\s*inline-flex/)
-    expect(decls).toMatch(/align-items:\s*center/)
-  })
-
-  it('keeps the glyph from being squeezed by a long task name', () => {
-    // The crumbs live in one overflow-x:auto row, so a flex item without
-    // min-width:0/flex-shrink:0 would be compressed by a long neighbour.
-    expect(baseRule(src, 'crumb-icon')).toMatch(/flex-shrink:\s*0/)
-  })
-
-  it('imports the glyph so the crumb is not empty', () => {
-    // A missing import renders no svg at all, which a class-existence assertion
-    // would not catch (concurrent_git_safety §9).
-    const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
-    expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('Clock')
-  })
-})
-
 describe('stats tab bar with icons', () => {
   const src = readWebFile('src/components/stats/StatsTabHost.vue')
 

@@ -61,10 +61,12 @@ describe('notifications tab reads as a log, not an alert channel', () => {
     expect(meta, 'the notifications tab must not map to Bell').not.toMatch(/notifications:\s*Bell\b/)
   })
 
-  it('uses the same Inbox glyph in the panel header and empty state', () => {
-    // A bell in the header would re-introduce the alert reading the tab just
-    // dropped; the empty state should be an empty inbox, not a muted bell.
-    expect(panel).toMatch(/<Inbox class="crumb-icon"/)
+  it('uses the Inbox glyph in the empty state, not in the panel header', () => {
+    // The section glyph now lives in the shared panel head (App.vue); the panel
+    // header must not repeat it. The empty state still shows an empty inbox,
+    // not a muted bell.
+    expect(panel).not.toMatch(/<Inbox class="crumb-icon"/)
+    expect(panel).toMatch(/:icon="Inbox"/)
     expect(panel).not.toMatch(/<Bell\b/)
     expect(panel).not.toMatch(/<BellOff\b/)
     // And the imports must not carry the unused bell glyphs either.

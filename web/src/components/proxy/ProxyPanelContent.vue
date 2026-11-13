@@ -6,9 +6,6 @@
          a More menu. -->
     <ActionBar class="proxy-header" mode="menu" size="header">
       <div class="proxy-header-leading">
-        <span class="proxy-header-icon">
-          <NetworkIcon :size="14" />
-        </span>
         <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
       </div>
       <RefreshButton
@@ -662,12 +659,6 @@ async function handleRetryTunnel() {
   text-overflow: ellipsis;
 }
 
-.proxy-header-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary, #666);
-  flex-shrink: 0;
-}
 
 /* Size, radius, colour and hover come from the shared ActionBar row rules
    (size="header"); only what is genuinely theirs lives here. */

@@ -63,6 +63,9 @@ const { isWideScreen, chatCollapsed } = getWideScreenState()
   z-index: 3;
   display: flex;
   overflow: hidden;
+  /* The overlay that hosts this cluster is pointer-events: none so the panel
+     header underneath stays clickable; the buttons must opt back in. */
+  pointer-events: auto;
   /* Mixed from the text colour, not a fixed background token: headers use
      --bg-primary, --bg-secondary and transparent (wallpaper) backgrounds, and
      a fixed token would show as a patch on two of the three. */

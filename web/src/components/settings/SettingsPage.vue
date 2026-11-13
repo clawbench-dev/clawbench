@@ -8,7 +8,6 @@
            and it runs through the same unsaved-changes guard. -->
       <SettingsBreadcrumb v-if="navStack.length > 0" :crumbs="breadcrumbs" @navigate="handleCrumbNavigate" />
       <template v-else>
-        <Settings :size="14" class="settings-page__header-icon" />
         <span class="settings-page__title">{{ t('nav.settings') }}</span>
         <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
       </template>
@@ -43,7 +42,7 @@
 
 <script setup lang="ts">
 import { computed, watch, onMounted } from 'vue'
-import { RefreshCw, Settings } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
@@ -291,10 +290,6 @@ watch(() => props.active, (val) => {
   text-overflow: ellipsis;
 }
 
-.settings-page__header-icon {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
 
 .settings-page__version {
   margin-left: auto;

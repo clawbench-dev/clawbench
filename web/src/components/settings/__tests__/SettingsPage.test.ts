@@ -161,7 +161,7 @@ describe('SettingsPage', () => {
 
   it('shows index view when nav stack is empty', () => {
     const wrapper = mountPage()
-    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
+    expect(wrapper.find('.settings-page__title').exists()).toBe(true)
     expect(hasBreadcrumb(wrapper)).toBe(false)
   })
 
@@ -171,7 +171,6 @@ describe('SettingsPage', () => {
     await nextTick()
 
     expect(hasBreadcrumb(wrapper)).toBe(true)
-    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
   it('does not show restart button when no restart is needed', () => {
@@ -193,7 +192,6 @@ describe('SettingsPage', () => {
 
     expect(navStack.value).toEqual(['appearance'])
     expect(hasBreadcrumb(wrapper)).toBe(true)
-    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
   it('shows restart button only when needsRestart is true', async () => {
@@ -232,7 +230,7 @@ describe('SettingsPage', () => {
     const wrapper = mountPage()
 
     expect(wrapper.find('.settings-page__header').exists()).toBe(true)
-    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
+    expect(wrapper.find('.settings-page__title').exists()).toBe(true)
     expect(wrapper.find('.settings-page__version').exists()).toBe(true)
     expect(wrapper.find('.settings-page__version').text()).toBe('1.2.3')
     expect(hasBreadcrumb(wrapper)).toBe(false)
@@ -244,7 +242,6 @@ describe('SettingsPage', () => {
     await nextTick()
 
     expect(hasBreadcrumb(wrapper)).toBe(true)
-    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
     expect(wrapper.find('.settings-page__version').exists()).toBe(false)
   })
 

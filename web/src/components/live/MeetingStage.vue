@@ -19,9 +19,6 @@
       >
         <ArrowLeft :size="14" />
       </button>
-      <span class="live-panel__icon">
-        <MonitorUp :size="14" />
-      </span>
       <span class="live-panel__title">{{ t('nav.meeting') }}</span>
       <span v-if="isLive" class="live-panel__live" data-role="live-badge">
         <span class="live-panel__dot" />
@@ -1783,12 +1780,6 @@ watch(
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
-.live-panel__icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary, #666);
-  flex-shrink: 0;
-}
 
 /* Same geometry as the record view's `.meeting-icon-btn`, so the two headers
    read as one family. The negative margin absorbs the header's own left

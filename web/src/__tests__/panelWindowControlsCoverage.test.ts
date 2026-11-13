@@ -2,17 +2,39 @@ import { describe, expect, it } from 'vitest'
 import { readWebFile } from '@/testUtils/readWebFile'
 
 /**
- * Guard: the left-column window controls live in ONE title bar above the panel,
- * not inside each panel's own header.
+ * Guard: the left column draws ONE header row.
  *
- * The per-header design failed in practice: a drill-down page (meeting detail,
- * mail reader, task detail) replaces the header row, so the controls vanished
- * exactly when the user was deepest in the panel. One bar that is a sibling of
- * the TabPanels cannot be covered by anything a panel renders.
+ * The shared tab icon and the two window controls are overlaid on the panel's
+ * own header (App.vue's `.panel-head`), and every header row reserves the two
+ * ends with padding. There is no second title bar and no per-panel copy of the
+ * controls — either one reintroduces the two-row look, and a per-panel copy is
+ * what drill-down pages used to cover up.
  *
- * Source-level assertions because mounting App.vue is mounting the whole app;
- * the failure this prevents (a panel growing its own copy again) is structural.
+ * Source-level assertions because mounting App.vue means mounting the app; the
+ * invariants here are structural.
  */
+const HEADERS = [
+  '.dir-toolbar',
+  '.file-header-bar',
+  '.settings-page__header',
+  '.share-header',
+  '.forge-header',
+  '.list-header',
+  '.detail-header',
+  '.form-header',
+  '.exec-detail-header',
+  '.drilldown-header',
+  '.proxy-header',
+  '.meeting-header',
+  '.live-panel__header',
+  '.mail-bar__top',
+  '.mail-bar__search-row',
+  '.mail-reader__head',
+  '.mail-compose__head',
+  '.stats-tab-bar',
+  '.terminal-tab-bar',
+]
+
 const PANEL_VIEWS = [
   'src/components/file/FileManagerContent.vue',
   'src/components/file/FileHeader.vue',
@@ -39,28 +61,31 @@ const PANEL_VIEWS = [
   'src/components/settings/SettingsPage.vue',
 ]
 
-describe('panel title bar', () => {
+describe('one panel header row', () => {
   const APP = readWebFile('src/App.vue')
 
-  it('renders one bar with the tab icon, its name and the window controls', () => {
-    expect(APP).toContain('class="panel-titlebar"')
+  it('overlays the tab icon and the window controls on the header row', () => {
+    expect(APP).toContain('class="panel-head"')
     expect(APP).toContain('wideDockTabIcon(leftTab)')
-    expect(APP).toContain('dockTabTitle(leftTab)')
     expect(APP).toContain('<PanelWindowControls />')
-    // Wide screens only: a single-column layout has no second pane to manage.
-    expect(APP).toMatch(/<div v-if="isWideScreen" class="panel-titlebar">/)
+    expect(APP).toMatch(/<div v-if="isWideScreen" class="panel-head">/)
+    // It must not push the panels down — that would be a second row again.
+    expect(APP).not.toMatch(/\.col-left--chrome > \.tab-panel\s*\{[^}]*top:/)
   })
 
-  it('sits above the TabPanels, which start below it', () => {
-    const bar = APP.indexOf('class="panel-titlebar"')
-    const firstPanel = APP.indexOf('<TabPanel')
-    expect(bar).toBeGreaterThan(-1)
-    expect(firstPanel).toBeGreaterThan(bar)
-    expect(APP).toMatch(/\.col-left--chrome > \.tab-panel\s*\{[^}]*top:\s*var\(--header-height\)/)
+  it('reserves the left and right ends of every header row', () => {
+    const css = readWebFile('css/components.css')
+    const rule = css.match(/\.col-left--chrome \.tab-panel :is\(([\s\S]*?)\)\s*\{([\s\S]*?)\}/)
+    expect(rule, 'the reservation rule must exist').not.toBeNull()
+    for (const cls of HEADERS) {
+      expect(rule![1], `${cls} must reserve its ends`).toContain(cls)
+    }
+    expect(rule![2]).toMatch(/padding-left:\s*calc\(32 \* var\(--dp\)\)/)
+    expect(rule![2]).toMatch(/padding-right:\s*calc\(var\(--space-2\) \+ 52 \* var\(--dp\)\)/)
+    expect(rule![2]).toMatch(/height:\s*var\(--header-height\)/)
   })
 
   it('is not duplicated inside any panel view', () => {
-    // A panel-owned copy is exactly what the drill-down pages covered up.
     for (const file of PANEL_VIEWS) {
       expect(readWebFile(file), `${file} must not render the window controls`).not.toContain(
         'PanelWindowControls',
@@ -68,14 +93,32 @@ describe('panel title bar', () => {
     }
   })
 
+  it('does not repeat the section glyph inside the headers', () => {
+    // The shared head owns the tab icon. These are the page-level glyphs that
+    // used to sit next to the title; they would now be a second icon.
+    for (const [file, needle] of [
+      ['src/components/settings/SettingsPage.vue', 'settings-page__header-icon'],
+      ['src/components/settings/SettingsBreadcrumb.vue', 'crumb-icon'],
+      ['src/components/task/TaskBreadcrumb.vue', 'crumb-icon'],
+      ['src/components/notifications/NotificationsPanelContent.vue', '<Inbox class="crumb-icon"'],
+      ['src/components/live/MeetingList.vue', 'meeting-header__icon'],
+      ['src/components/live/MeetingStage.vue', 'live-panel__icon'],
+      ['src/components/proxy/ProxyPanelContent.vue', 'proxy-header-icon'],
+      ['src/components/share/ShareCenterPanel.vue', 'crumb-icon'],
+    ] as const) {
+      expect(readWebFile(file), `${file} must not repeat the section glyph`).not.toContain(needle)
+    }
+    // Forge keeps a Github glyph in its repo menu; only the header must be free
+    // of the section icon.
+    expect(readWebFile('src/components/forge/ForgePanelContent.vue')).not.toMatch(
+      /forge-header-title[\s\S]{0,120}<Github/,
+    )
+  })
+
   it('reserves exactly two button-widths for the controls', () => {
     const component = readWebFile('src/components/common/PanelWindowControls.vue')
     const button = component.match(/\.panel-control\s*\{[^}]*width:\s*calc\((\d+)\s*\*\s*var\(--dp\)\)/)
     expect(button, 'the button width must be expressed in design px').not.toBeNull()
-    const buttonWidth = Number(button![1])
-
-    const reserve = APP.match(/padding-right:\s*calc\((\d+)\s*\*\s*var\(--dp\)\)/)
-    expect(reserve, 'the title bar must reserve room for the controls').not.toBeNull()
-    expect(Number(reserve![1])).toBe(buttonWidth * 2)
+    expect(Number(button![1]) * 2).toBe(52)
   })
 })

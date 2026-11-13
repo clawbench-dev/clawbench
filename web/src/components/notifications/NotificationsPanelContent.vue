@@ -3,7 +3,6 @@
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
     <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
-        <Inbox class="crumb-icon" :size="14" />
         <span>{{ t('notifications.title') }}</span>
       </div>
       <RefreshButton
@@ -636,7 +635,6 @@ function forgeTargetFromItemKey(key: string) {
   white-space: nowrap;
   overflow: hidden;
 }
-.crumb-icon { color: var(--accent-color); flex-shrink: 0; }
 /* Header buttons take their size, radius, colour and hover from the shared
    ActionBar rules (size="header"); only what is genuinely theirs lives here. */
 .header-btn {

@@ -5,7 +5,6 @@
          main way to find a link again ("which conversations did I share?"). -->
     <div class="share-header">
       <div class="share-breadcrumb">
-        <Share2 :size="14" class="crumb-icon" />
         <span>{{ t('shareCenter.title') }}</span>
         <span v-if="items.length > 0" class="share-count">{{ t('shareCenter.count', { count: items.length }) }}</span>
       </div>
@@ -583,10 +582,6 @@ watch(
   white-space: nowrap;
 }
 
-.crumb-icon {
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
 
 .share-count {
   font-size: var(--font-size-xs);
