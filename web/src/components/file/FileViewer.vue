@@ -12,6 +12,7 @@
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
       :editing="editing"
+      :visual-editing="editing && markdownEditMode === 'wysiwyg'"
       :can-navigate-back="canNavigateBack"
       :can-go-back-file="fileNav.canGoBack.value"
       :can-go-forward-file="fileNav.canGoForward.value"

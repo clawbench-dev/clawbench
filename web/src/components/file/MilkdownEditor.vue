@@ -42,7 +42,7 @@
  */
 import { ref, shallowRef, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
+import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, prosePluginsCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history, undoCommand, redoCommand } from '@milkdown/kit/plugin/history'
@@ -50,6 +50,8 @@ import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { callCommand, getMarkdown, $view } from '@milkdown/kit/utils'
 import { imageSchema } from '@milkdown/kit/preset/commonmark'
 import { resolveMarkdownImageSrc } from '@/utils/markdownImageSrc.ts'
+import { createMathPlugins } from './milkdownMath.ts'
+import { createCodeBlockView, createHighlightPlugin } from './milkdownCodeBlock.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { appLog } from '@/utils/appLog.ts'
 
@@ -119,6 +121,13 @@ const imageView = $view(imageSchema.node, () => (node) => {
     }
 })
 
+// Formulas are atoms; double-clicking one edits its LaTeX in a prompt.
+const mathPlugins = createMathPlugins((value) =>
+    dialog.prompt(t('file.editor.editMath'), { value, title: t('file.editor.editMath') }),
+)
+const codeBlockView = createCodeBlockView()
+const highlightPlugin = createHighlightPlugin()
+
 // Ctrl/Cmd+S mirrors the save button. Registered on the host (not window) so it
 // only fires while the editor owns focus.
 function handleKeydown(e) {
@@ -172,12 +181,16 @@ onMounted(async () => {
                 ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
                     dirty.value = markdown !== baseline.value
                 })
+                // ProseMirror plugins (not Milkdown plugins) go through this ctx.
+                ctx.update(prosePluginsCtx, (plugins) => [...plugins, highlightPlugin])
             })
             .use(commonmark)
             .use(gfm)
             .use(history)
             .use(listener)
             .use(imageView)
+            .use(mathPlugins)
+            .use(codeBlockView)
             .create()
         if (!mounted) {
             // Unmounted while the async create was in flight.
@@ -308,5 +321,28 @@ defineExpose({ getValue, isDirty, handleExit })
     height: auto;
     border-radius: var(--radius-md);
     vertical-align: bottom;
+}
+/* Rendered formulas (atoms): inline ones sit in the text flow, display ones
+   take a centred block like the preview's `.katex-display`. Double-click edits
+   the source, so give them a pointer cursor and no text selection. */
+.md-editor-host .md-math-inline,
+.md-editor-host .md-math-block {
+    cursor: pointer;
+    user-select: none;
+}
+.md-editor-host .md-math-block {
+    margin: 1em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+/* Mermaid preview sits above the still-editable fenced source. */
+.md-editor-host .md-code-block {
+    margin: 1em 0;
+}
+.md-editor-host .md-code-preview {
+    margin-bottom: var(--space-4);
+}
+.md-editor-host .md-code-preview .mermaid {
+    margin: 0;
 }
 </style>

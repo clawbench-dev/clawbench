@@ -99,4 +99,53 @@ describe('MilkdownEditor', () => {
 
         wrapper.unmount()
     })
+
+    it('renders inline and display formulas and keeps their source', async () => {
+        const source = '行内 $a_1 + b_2$ 公式\n\n$$\n\\int_0^1 x^2 dx\n$$\n'
+        const wrapper = mountEditor(source)
+        await waitForEditor(wrapper)
+
+        expect(wrapper.findAll('.ProseMirror .katex').length).toBeGreaterThan(0)
+        expect(wrapper.find('.ProseMirror .md-math-inline').exists()).toBe(true)
+        expect(wrapper.find('.ProseMirror .md-math-block').exists()).toBe(true)
+
+        const value = wrapper.vm.getValue()
+        expect(value).toContain('$a_1 + b_2$')
+        expect(value).toContain('\\int_0^1 x^2 dx')
+
+        wrapper.unmount()
+    })
+
+    it('colours a fenced code block with the shared highlight classes', async () => {
+        const source = '```js\nconst answer = 42\n```\n'
+        const wrapper = mountEditor(source)
+        await waitForEditor(wrapper)
+
+        const code = wrapper.find('.ProseMirror .md-code-block code')
+        expect(code.exists()).toBe(true)
+        // Decorations are computed when the editor state is created.
+        expect(code.findAll('span[class*="hljs-"]').length).toBeGreaterThan(0)
+        // The document still holds plain text (decorations never rewrite it).
+        expect(wrapper.vm.getValue()).toContain('const answer = 42')
+
+        wrapper.unmount()
+    })
+
+    it('keeps a mermaid fence editable and mounts a preview slot for it', async () => {
+        const source = '```mermaid\ngraph TD\n  A --> B\n```\n'
+        const wrapper = mountEditor(source)
+        await waitForEditor(wrapper)
+
+        expect(wrapper.find('.ProseMirror .md-code-block .md-code-preview').exists()).toBe(true)
+        expect(wrapper.find('.ProseMirror .md-code-block pre code').text()).toContain('graph TD')
+        expect(wrapper.vm.getValue()).toContain('```mermaid')
+
+        // The preview slot is revealed after the debounce, even if the diagram
+        // itself cannot be measured in jsdom (the util paints its own card).
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        const preview = wrapper.find('.ProseMirror .md-code-preview')
+        expect(preview.attributes('hidden')).toBeUndefined()
+
+        wrapper.unmount()
+    })
 })

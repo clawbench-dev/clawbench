@@ -53,7 +53,7 @@
       </button>
 
       <!-- Search button (only for file types that support search) -->
-      <button v-if="hasSearch" data-toolbar-id="search" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
+      <button v-if="hasSearch && !visualEditing" data-toolbar-id="search" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
         <Search :size="14" />
         <span class="action-label">{{ t('file.header.search') }}</span>
       </button>
@@ -229,6 +229,10 @@ const props = defineProps({
     editing: Boolean,
     /** Wide-screen header back button: view-back target exists. */
     canNavigateBack: Boolean,
+    /** Visual (WYSIWYG) markdown editing: the in-editor search UI does not
+     *  exist there, so the button would be dead. Ctrl+F still works through
+     *  the browser's own find (App lets contenteditable keep the key). */
+    visualEditing: Boolean,
     /** Wide-screen header back button: in-file jump history has a previous entry. */
     canGoBackFile: Boolean,
     canGoForwardFile: Boolean,

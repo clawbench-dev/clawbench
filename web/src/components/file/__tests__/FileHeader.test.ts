@@ -806,6 +806,11 @@ describe('FileHeader', () => {
       await nextTick()
       expect(wrapper.emitted('editWysiwyg')).toBeTruthy()
     })
+
+    it('hides the search button while visual editing (no in-editor find UI)', () => {
+      const wrapper = mountHeader({ file: markdownFile, visualEditing: true })
+      expect(renderedToolbarIds(wrapper)).not.toContain('search')
+    })
   })
 
   describe('effectiveViewMode', () => {
