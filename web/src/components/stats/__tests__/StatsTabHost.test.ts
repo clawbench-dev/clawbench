@@ -168,6 +168,75 @@ describe('StatsTabHost', () => {
   })
 })
 
+describe('StatsTabHost tab strip scrolling', () => {
+  /**
+   * A narrow panel cannot fit all three labels. The strip must clip its own
+   * overflow (so the last tab can never paint over the refresh button or the
+   * window controls) and scroll sideways. jsdom has no layout and no
+   * scrollWidth, so the overflow branch is driven through a fake
+   * ResizeObserver with the measured sizes stubbed on the element.
+   */
+  function stubStripSize(el: Element, scrollWidth: number, clientWidth: number) {
+    Object.defineProperty(el, 'scrollWidth', { value: scrollWidth, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: clientWidth, configurable: true })
+  }
+
+  function stubResizeObserver() {
+    const callbacks: (() => void)[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          callbacks.push(cb)
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    return { fire: () => callbacks.forEach((cb) => cb()) }
+  }
+
+  it('routes the wheel to horizontal scrolling', () => {
+    // Vue compiles @wheel into an attached listener, not an onwheel attribute,
+    // so this is asserted at the source; the behaviour lives in the shared
+    // onHorizontalWheel util, which has its own tests.
+    const src = readFileSync(
+      join(__dirname, '..', 'StatsTabHost.vue'),
+      'utf8',
+    )
+    expect(src).toContain('@wheel="onHorizontalWheel"')
+    expect(src).toContain("from '@/utils/horizontalWheelScroll'")
+    expect(src).toContain("from '@/utils/dragScroll'")
+  })
+
+  it('stays inert while the tabs fit (no grab cursor, no drag handler)', async () => {
+    const wrapper = await mountHost()
+    const strip = wrapper.find('.stats-tab-list')
+    expect(strip.classes()).not.toContain('is-overflowing')
+  })
+
+  it('turns on drag scrolling only once the strip really overflows', async () => {
+    const ro = stubResizeObserver()
+    const wrapper = await mountHost()
+    const strip = wrapper.find('.stats-tab-list')
+
+    // Fits → inert.
+    stubStripSize(strip.element, 300, 300)
+    ro.fire()
+    await nextTick()
+    expect(wrapper.find('.stats-tab-list').classes()).not.toContain('is-overflowing')
+
+    // Narrowed panel → overflowing → grab affordance appears.
+    stubStripSize(strip.element, 420, 300)
+    ro.fire()
+    await nextTick()
+    expect(wrapper.find('.stats-tab-list').classes()).toContain('is-overflowing')
+
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  })
+})
+
 describe('StatsTabHost lazy panels', () => {
   /**
    * The three panels used to be built with a bare `defineAsyncComponent`

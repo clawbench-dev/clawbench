@@ -7,7 +7,18 @@
          activation, so switching preserves scroll positions and only the
          visible pane ever covers the body area. -->
     <div class="stats-tab-bar">
-      <div class="stats-tab-list">
+      <!-- Horizontally scrollable strip. The three labels keep their natural
+           width; a narrow panel scrolls them sideways instead of letting the
+           row overflow its box (which painted the last tab on top of the
+           refresh button and under the panel's window controls). Touch pans
+           natively; a mouse drags and the wheel scrolls sideways, because the
+           scrollbar is hidden — it would be taller than the 34px row. -->
+      <div
+        ref="tabStripRef"
+        class="stats-tab-list"
+        :class="{ 'is-overflowing': tabStripOverflow }"
+        @wheel="onHorizontalWheel"
+      >
         <button
           v-for="s in sections"
           :key="s.id"
@@ -39,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defineAsyncComponent } from 'vue'
 import { Coins, Files, GitCommitHorizontal } from 'lucide-vue-next'
@@ -47,6 +58,8 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
+import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 
 defineProps<{
   active: boolean
@@ -86,6 +99,68 @@ const sections: { id: StatsSection; labelKey: string; icon: typeof Coins }[] = [
 ]
 
 const section = ref<StatsSection>('usage')
+
+// ── Tab strip scrolling ──
+// A narrow panel cannot fit all three labels. Before this the row simply
+// overflowed its box, so the last tab was painted over the refresh button and
+// under the panel's window controls. The strip now clips at its own edge and
+// scrolls: touch pans natively, the mouse drags (attachDragScroll) and the
+// wheel scrolls sideways — the scrollbar stays hidden because it is taller
+// than the 34px row.
+const tabStripRef = ref<HTMLElement | null>(null)
+const tabStripOverflow = ref(false)
+let stopTabDragScroll: (() => void) | null = null
+let tabResizeObserver: ResizeObserver | null = null
+
+/** Attach/detach drag-to-scroll to match whether the strip actually overflows. */
+function syncTabDragScroll() {
+  const el = tabStripRef.value
+  if (!el) return
+  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  tabStripOverflow.value = shouldAttach
+  if (shouldAttach && !stopTabDragScroll) {
+    stopTabDragScroll = attachDragScroll(el)
+  } else if (!shouldAttach && stopTabDragScroll) {
+    stopTabDragScroll()
+    stopTabDragScroll = null
+  }
+}
+
+/** Keep the ACTIVE tab visible: after a split-ratio change the strip may sit
+ *  scrolled away from it, and the accent line is the only selection cue. */
+function scrollActiveTabIntoView() {
+  const el = tabStripRef.value
+  if (!el) return
+  const active = el.querySelector('.stats-tab.active')
+  if (!active || typeof active.scrollIntoView !== 'function') return
+  active.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' })
+}
+
+watch(section, () => {
+  void nextTick(scrollActiveTabIntoView)
+})
+
+onMounted(() => {
+  void nextTick(syncTabDragScroll)
+  // The overflow depends on the rendered width: the split ratio changes it
+  // continuously, and the panel is hidden (width 0) until the tab is opened.
+  if (typeof ResizeObserver !== 'undefined') {
+    tabResizeObserver = new ResizeObserver(() => {
+      syncTabDragScroll()
+      // A narrowing panel can push the selected tab out of view; the accent
+      // line is the only cue for which pane is showing, so bring it back.
+      if (tabStripOverflow.value) scrollActiveTabIntoView()
+    })
+    if (tabStripRef.value) tabResizeObserver.observe(tabStripRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  stopTabDragScroll?.()
+  stopTabDragScroll = null
+  tabResizeObserver?.disconnect()
+  tabResizeObserver = null
+})
 
 // The shared refresh button drives whichever panel is active.
 const usageStats = useUsageStats()
@@ -133,6 +208,29 @@ function onRefresh() {
   gap: 0;
   flex: 1;
   min-width: 0;
+  /* Scroll sideways rather than squeezing the labels: `overflow-x: auto` also
+     clips the strip at its own edge, so an overlong row can never paint over
+     the refresh button or the window controls on the right. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Hidden scrollbar: it would be taller than the 34px row, and a visible bar
+     under the labels reads as a second border. */
+  scrollbar-width: none;
+}
+.stats-tab-list::-webkit-scrollbar {
+  display: none;
+}
+/* Drag affordance only when the strip really overflows (class is measured). */
+.stats-tab-list.is-overflowing {
+  cursor: grab;
+}
+.stats-tab-list.is-overflowing.is-dragging,
+.stats-tab-list.is-overflowing.is-dragging .stats-tab {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .stats-tab {
   display: flex;
@@ -149,14 +247,10 @@ function onRefresh() {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   position: relative;
-}
-/* The bar is a fixed-height strip, so a label that does not fit must be
-   ellipsised rather than wrapped — wrapping would clip it mid-line. The icon
-   keeps its size and only the text shrinks. */
-.stats-tab-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Natural width, never compressed — a squeezed label is worse than one the
+     user scrolls to. The bar is a fixed-height strip, so the label must also
+     stay on one line. */
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 .stats-tab > :deep(svg) {

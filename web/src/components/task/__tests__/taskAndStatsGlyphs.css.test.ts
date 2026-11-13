@@ -13,9 +13,9 @@ import { join } from 'node:path'
  *  1. the task breadcrumb's root glyph holds its size in a scrolling flex row,
  *     and its crumb became a flex row (otherwise the icon and label sit on
  *     different baselines);
- *  2. the stats tab bar keeps its labels from wrapping now that each tab
- *     carries an icon — the bar is a fixed 34px strip, so a wrapping label is
- *     clipped mid-line instead of reflowing.
+ *  2. the stats tab strip clips its own overflow and scrolls sideways now that
+ *     each tab carries an icon — a narrow panel must not paint the last tab
+ *     over the refresh button and the panel's window controls.
  */
 
 function readWebFile(relPath: string): string {
@@ -74,15 +74,22 @@ describe('stats tab bar with icons', () => {
     expect(src).toContain(':is="s.icon"')
   })
 
-  it('ellipsises the label instead of wrapping in the fixed-height strip', () => {
-    const decls = baseRule(src, 'stats-tab-label')
-    expect(decls, '.stats-tab-label rule must exist').not.toBeNull()
-    expect(decls).toMatch(/white-space:\s*nowrap/)
-    expect(decls).toMatch(/text-overflow:\s*ellipsis/)
-    expect(decls).toMatch(/overflow:\s*hidden/)
-    // Without min-width:0 the flex item keeps its intrinsic width and the
-    // ellipsis never engages.
-    expect(decls).toMatch(/min-width:\s*0/)
+  it('scrolls the strip sideways instead of squeezing or overflowing it', () => {
+    // A narrow panel used to let the row overflow its box, painting the last
+    // tab over the refresh button and under the window controls. The strip now
+    // owns the overflow: it clips at its own edge and scrolls.
+    const list = baseRule(src, 'stats-tab-list')
+    expect(list, '.stats-tab-list rule must exist').not.toBeNull()
+    expect(list).toMatch(/overflow-x:\s*auto/)
+    expect(list).toMatch(/overflow-y:\s*hidden/)
+    expect(list).toMatch(/scrollbar-width:\s*none/)
+    expect(src).toContain('.stats-tab-list::-webkit-scrollbar')
+
+    // Tabs keep their natural width — shrinking is what squeezed the labels.
+    const tab = baseRule(src, 'stats-tab')
+    expect(tab, '.stats-tab rule must exist').not.toBeNull()
+    expect(tab).toMatch(/flex:\s*0 0 auto/)
+    expect(tab).toMatch(/white-space:\s*nowrap/)
   })
 
   it('keeps the tab icon from being squeezed', () => {
