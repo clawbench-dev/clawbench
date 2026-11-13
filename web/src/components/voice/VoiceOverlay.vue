@@ -14,13 +14,13 @@
           <i></i><i></i><i></i><i></i><i></i>
         </span>
         <LoadingIndicator v-else-if="voiceState === 'transcribing'" size="sm" inline />
-        <Check v-else :size="13" />
         <!-- While recording: just the timer. Where the text is going is already
              on screen (it is being written into the field under this pill), so
-             naming the field was pure noise. -->
+             naming the field was pure noise. Once the words have landed the
+             pill is gone — a "已写入" badge would only repeat what the field
+             already shows. -->
         <span v-if="voiceState === 'recording'" class="voice-pill-hint">{{ elapsedText }}</span>
         <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text">{{ t('chat.voice.transcribing') }}</span>
-        <span v-else class="voice-pill-text">{{ t('chat.voice.written') }}</span>
       </div>
     </Transition>
 
@@ -104,7 +104,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Mic, X } from 'lucide-vue-next'
+import { Mic, X } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
@@ -161,7 +161,10 @@ watch(voiceState, (s) => {
 const pillEl = ref<HTMLElement | null>(null)
 const pillPos = ref({ top: 0, left: 0 })
 
-const pillVisible = computed(() => !!targetEl.value && (voiceMode.value === 'field' || voiceState.value !== 'idle'))
+// Only while a take is actually running (recording / transcribing). The pill
+// used to linger with a "已写入" badge afterwards; that is gone, so an idle
+// state with a target left over never shows anything.
+const pillVisible = computed(() => !!targetEl.value && voiceState.value !== 'idle')
 const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pillPos.value.left}px` }))
 
 /**
@@ -185,7 +188,7 @@ function placePill() {
   const gap = 6
   let top = r.top - height - gap
   // No room above (or the anchor is taller than the viewport): sit below it,
-  // but never past the bottom edge — an off-screen "已写入" badge is no badge.
+  // but never past the bottom edge — an off-screen status badge is no badge.
   if (top < 8) top = Math.min(r.bottom + gap, window.innerHeight - height - 8)
   const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
   pillPos.value = { top, left }
@@ -360,7 +363,12 @@ function cleanupFabPointer() {
 
 function onFabUp() {
   cleanupFabPointer()
-  if (voiceState.value === 'recording') void stop()
+  // Release ALWAYS ends the take, not just when the state already says
+  // 'recording'. The microphone takes a moment to open, and a press released
+  // inside that window used to leave a take that started after the finger was
+  // gone — recording forever, with nothing left on screen to stop it. stop()
+  // records the release, and begin() aborts as soon as the microphone arrives.
+  void stop()
 }
 function onFabCancel() {
   cleanupFabPointer()

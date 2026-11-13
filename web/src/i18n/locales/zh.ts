@@ -1206,7 +1206,6 @@ export default {
       listening: '正在听…',
       releaseToStop: '松开 F9 结束',
       escToCancel: 'Esc 取消',
-      written: '已写入',
       capsuleDoneHint: '还没插入，选个去处',
       copied: '已复制',
       toChat: '放到聊天框',

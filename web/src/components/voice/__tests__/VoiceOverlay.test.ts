@@ -172,4 +172,75 @@ describe('VoiceOverlay', () => {
     expect(el.value).toBe('abc')
     expect(el.selectionStart).toBe(3)
   })
+
+  /* ── touch mic: press to talk ─────────────────────────────────────── */
+
+  function pointer(type: string, el: Element, clientX: number, clientY = 300) {
+    el.dispatchEvent(new PointerEvent(type, {
+      clientX,
+      clientY,
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: 'touch',
+    }))
+  }
+
+  async function showFab() {
+    _setPlatformForTest({ isTouchPrimary: true })
+    mountOverlay()
+    field('abc')
+    await vi.waitFor(() => expect(document.querySelector('.voice-fab')).not.toBeNull())
+    return document.querySelector('.voice-fab') as HTMLElement
+  }
+
+  it('starts dictating when the mic button is held down', async () => {
+    const fab = await showFab()
+    const el = document.querySelector('textarea') as HTMLTextAreaElement
+
+    pointer('pointerdown', fab, 900)
+    await vi.waitFor(() => expect(useVoiceInput().state.value).toBe('recording'))
+    // The button is unmounted while recording; release reaches the window
+    // listener registered on press.
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, pointerType: 'touch' }))
+
+    await vi.waitFor(() => expect(el.value).toBe('abc 听写'))
+    // No "已写入" badge afterwards: the words in the field are the whole
+    // confirmation, and the pill's box must not stay on screen.
+    await vi.waitFor(() => expect(document.querySelector('.voice-pill')).toBeNull())
+  })
+
+  it('does not start a take when the finger is lifted while the microphone is still opening', async () => {
+    // The reported bug: the finger came up while getUserMedia was still
+    // pending. The take started afterwards and, with the button already gone
+    // from the screen, recorded forever.
+    const fab = await showFab()
+    let release!: (s: MediaStream) => void
+    const pending = new Promise<MediaStream>((resolve) => { release = resolve })
+    navigator.mediaDevices.getUserMedia = vi.fn(() => pending)
+
+    pointer('pointerdown', fab, 900)
+    // The microphone has not answered yet.
+    await new Promise((r) => setTimeout(r, 200))
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, pointerType: 'touch' }))
+    release({ getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaStream)
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(useVoiceInput().state.value).toBe('idle')
+  })
+
+  it('does not start a take when the gesture is cancelled while the microphone is opening', async () => {
+    const fab = await showFab()
+    let release!: (s: MediaStream) => void
+    const pending = new Promise<MediaStream>((resolve) => { release = resolve })
+    navigator.mediaDevices.getUserMedia = vi.fn(() => pending)
+
+    pointer('pointerdown', fab, 900)
+    await new Promise((r) => setTimeout(r, 200))
+    pointer('pointercancel', fab, 900)
+    release({ getTracks: () => [{ stop: vi.fn() }] } as unknown as MediaStream)
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(useVoiceInput().state.value).toBe('idle')
+  })
 })

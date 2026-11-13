@@ -1204,7 +1204,6 @@ export default {
       listening: 'Listening…',
       releaseToStop: 'Release F9 to finish',
       escToCancel: 'Esc to cancel',
-      written: 'Inserted',
       capsuleDoneHint: 'Not inserted — pick a destination',
       copied: 'Copied',
       toChat: 'Put in chat',

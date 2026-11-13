@@ -80,8 +80,6 @@ let stopRequested = false
 // stopped still fires `onstop`, and an upload may already be in flight, so
 // every completion path checks this before writing anything back.
 let cancelled = false
-// Keeps the "已写入「XX」" pill on screen briefly after the field path finishes.
-let fieldDoneTimer: ReturnType<typeof setTimeout> | null = null
 // A finished capsule transcript that was set aside because the user started
 // dictating into a field. It goes back to the capsule when that run ends —
 // a pending draft is never thrown away by an unrelated recording.
@@ -345,9 +343,10 @@ export function useVoiceInput() {
       return
     }
 
-    // Released while the microphone was still starting (a quick tap): start
-    // nothing, or the recorder would run forever with no one holding the key.
-    if (stopRequested) {
+    // Released or cancelled while the microphone was still starting (a quick
+    // tap, or a slide-off during the wait): start nothing, or the recorder
+    // would run forever with no one holding the key.
+    if (stopRequested || cancelled) {
       stopRequested = false
       stopMediaStream()
       return
@@ -362,7 +361,6 @@ export function useVoiceInput() {
     targetEl.value = t?.el ?? null
     heldDraft = t && draftPending.value ? inputText.value : ''
     draftPending.value = false
-    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
     voicePrefix = prefix
     if (!t) inputText.value = prefix
 
@@ -473,30 +471,19 @@ export function useVoiceInput() {
   /**
    * Wraps up whichever destination this recording used.
    *
-   * Field path: the text is already in the field, so the only thing left is to
-   * keep `targetEl` around long enough for the "已写入" pill, then let it go.
+   * Field path: the text is already in the field, so there is nothing left to
+   * do — and nothing to announce either. A "已写入" badge that lingers for a
+   * second after the words have visibly landed says only what the user can
+   * already see, so the target is released immediately.
    * Buffer path: hand the transcript to the capsule and keep it there — a
    * finished dictation must never evaporate because nothing was focused.
    */
   function completeTarget() {
     if (mode.value === 'field') {
-      // Nothing recognised (silent clip, engine error): there is no "已写入"
-      // to announce. Clearing the target now also hides the pill immediately.
-      const wrote = !!target?.applied
       target = null
-      if (fieldDoneTimer) clearTimeout(fieldDoneTimer)
-      if (!wrote) {
-        targetEl.value = null
-        mode.value = 'idle'
-        restoreHeldDraft()
-        return
-      }
-      fieldDoneTimer = setTimeout(() => {
-        fieldDoneTimer = null
-        targetEl.value = null
-        if (mode.value === 'field') mode.value = 'idle'
-        restoreHeldDraft()
-      }, 1600)
+      targetEl.value = null
+      mode.value = 'idle'
+      restoreHeldDraft()
       return
     }
     mode.value = 'buffer'
@@ -771,7 +758,6 @@ export function useVoiceInput() {
       removeVoiceText(target)
       target = null
     }
-    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
     targetEl.value = null
     draftPending.value = false
     mode.value = 'idle'
