@@ -19,6 +19,7 @@
       @delete="handleDeleteRequest(file.path)"
       @toggle-view="handleToggleViewRequest"
       @toggle-edit="handleToggleEdit"
+      @edit-wysiwyg="handleWysiwygEdit"
       @show-details="emit('showDetails')"
       @open-git-history="emit('openGitHistory')"
       @toggle-toc="emit('toggleToc')"
@@ -157,6 +158,20 @@
           @open-git-history="emit('openGitHistory')"
           @close-search="emit('closeSearch')"
           @capture-scroll="(entry) => emit('captureScroll', entry)"
+        />
+        <!-- Visual (WYSIWYG) editing — the second editing mode. Loaded lazily
+             and only mounted while this mode is active. -->
+        <MilkdownEditor
+          v-else-if="editing && markdownEditMode === 'wysiwyg'"
+          :key="file.path || '__untitled__'"
+          ref="mdEditorRef"
+          :content="file.content"
+          :saving="saving"
+          :file="file"
+          @save="handleSave"
+          @save-and-exit="handleSaveAndExit"
+          @cancel="editing = false"
+          @exit-edit="handleExitEdit"
         />
         <!-- Source/raw mode: a single CodeMirrorViewer for both browse and edit
              (editable toggles), so scroll survives the edit toggle. -->
@@ -324,6 +339,7 @@ import MarkdownPreview from './MarkdownPreview.vue'
 import TablePreviewBody from './TablePreviewBody.vue'
 import PreviewSearchBar from './PreviewSearchBar.vue'
 const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./CodeMirrorViewer.vue') }))
+const MilkdownEditor = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./MilkdownEditor.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('./OpenApiPreview.vue') }))
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
@@ -346,6 +362,7 @@ import { attachIframeSelectionQuoteBridge, installIframeSearchShortcut, resolveI
 import { makeIframeQuoteShowHandler, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
+import { wysiwygBlockReason } from '@/utils/markdownWysiwyg.ts'
 import { getNative } from '@/utils/clawbenchNative'
 
 const { t, locale } = useI18n()
@@ -395,7 +412,7 @@ const isCodeMirrorView = computed(() => {
     if (!props.file || props.file.isExcalidraw || props.file.isDrawio) return false
     if (props.file.isImage || props.file.isAudio || props.file.isVideo || props.file.isPdf || props.file.isOffice) return false
     if (props.file.isBinary || props.file.tooLarge || props.file.error) return false
-    if (isMarkdown.value) return editing.value || props.markdownViewMode !== 'rendered'
+    if (isMarkdown.value) return (editing.value && markdownEditMode.value === 'source') || (!editing.value && props.markdownViewMode !== 'rendered')
     if (isHtml.value || isOpenapi.value) return props.markdownViewMode !== 'rendered'
     if (isTableFile.value) return !isTableRenderedView.value
     return true
@@ -570,6 +587,19 @@ const excalidrawViewerRef = ref(null)
 const drawioViewerRef = ref(null)
 const mdPreviewRef = ref(null)
 /**
+ * Which editor the current markdown edit session uses. Source is the default
+ * and the only mode for untitled buffers; the visual mode is opted into from
+ * the header's "Visual edit" button.
+ */
+const markdownEditMode = ref('source')
+const mdEditorRef = ref(null)
+
+/** The editor that currently owns the markdown text, if any. */
+function activeTextEditor() {
+    if (isMarkdown.value && markdownEditMode.value === 'wysiwyg') return mdEditorRef.value
+    return cmEditorRef.value
+}
+/**
  * Resolves when an in-flight first save of an Untitled buffer finishes (true on
  * success). The editor's exit flow emits 'saveAndExit' without awaiting the
  * save, so the close has to wait here — otherwise the viewer, and the filename
@@ -599,7 +629,12 @@ function handleExitEditRequest() {
         return
     }
     if (!isUntitled.value) {
-        cmEditorRef.value?.handleExit?.()
+        const active = activeTextEditor()
+        if (active) {
+            active.handleExit?.()
+            return
+        }
+        // Editor chunk still loading — nothing can be dirty yet.
         return
     }
     Promise.resolve(cmEditorRef.value?.handleExit?.()).then(async (exited) => {
@@ -621,7 +656,7 @@ let unregisterDirtyGetter = null
 let unregisterLeaveGuard = null
 onMounted(() => {
     unregisterExitEdit = fileEditor.registerExitEditHandler(handleExitEditRequest)
-    unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => cmEditorRef.value?.isDirty?.() ?? false)
+    unregisterDirtyGetter = fileEditor.registerDirtyGetter(() => activeTextEditor()?.isDirty?.() ?? false)
     // A project switch unmounts this viewer and would silently drop unsaved
     // edits. Reuse the canonical guard (save/discard/cancel) without the back
     // gesture's untitled close side effect, so the switch aborts only when the
@@ -741,6 +776,25 @@ function handleToggleEdit() {
         return guardExitEdit(() => {})
     }
     const saved = scrollRestore.captureScroll(scrollRestore.currentScrollEl())
+    markdownEditMode.value = 'source'
+    editing.value = true
+    scrollRestore.restoreAfterContainerSwitch(saved)
+}
+
+/**
+ * Enter the visual (WYSIWYG) markdown editor. Refused up front for files whose
+ * structure the visual document model cannot represent (frontmatter) — the
+ * source editor stays available for those.
+ */
+function handleWysiwygEdit() {
+    if (editing.value) return
+    const reason = wysiwygBlockReason(props.file?.content)
+    if (reason) {
+        toast.show(t('file.header.wysiwygBlockedFrontmatter'), { type: 'error' })
+        return
+    }
+    const saved = scrollRestore.captureScroll(scrollRestore.currentScrollEl())
+    markdownEditMode.value = 'wysiwyg'
     editing.value = true
     scrollRestore.restoreAfterContainerSwitch(saved)
 }
@@ -773,7 +827,8 @@ async function guardExitEdit(action) {
     // dirty — an empty new file still needs its save/discard decision before the
     // visit is closed.
     if (editing.value || isUntitled.value) {
-        const exited = await cmEditorRef.value?.handleExit?.()
+        const active = activeTextEditor()
+        const exited = active?.handleExit ? await active.handleExit() : true
         if (exited !== true) return false
         // The "save and exit" path clears editing asynchronously; wait for it so
         // dependent UI (e.g. MarkdownPreview gated on !editing) is consistent.

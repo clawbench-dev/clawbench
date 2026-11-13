@@ -55,6 +55,7 @@
     "@dicebear/styles": "^10.6.0",
     "@intlify/unplugin-vue-i18n": "^6.0.8",
     "@lobehub/icons-static-svg": "^1.94.0",
+    "@milkdown/kit": "^7.23.0",
     "@replit/codemirror-lang-csharp": "^6.2.0",
     "@vue-office/docx": "^1.6.3",
     "@vue-office/excel": "^1.7.14",

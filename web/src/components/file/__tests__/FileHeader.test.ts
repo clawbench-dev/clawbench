@@ -782,6 +782,32 @@ describe('FileHeader', () => {
     })
   })
 
+  describe('visual edit button', () => {
+    const markdownFile = { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }
+
+    it('is offered for a markdown file outside edit mode', () => {
+      const wrapper = mountHeader({ file: markdownFile })
+      expect(renderedToolbarIds(wrapper)).toContain('wysiwygEdit')
+    })
+
+    it('is hidden while editing (the edit toggle owns the exit flow)', () => {
+      const wrapper = mountHeader({ file: markdownFile, editing: true })
+      expect(renderedToolbarIds(wrapper)).not.toContain('wysiwygEdit')
+    })
+
+    it('is not offered for non-markdown files', () => {
+      const wrapper = mountHeader()
+      expect(renderedToolbarIds(wrapper)).not.toContain('wysiwygEdit')
+    })
+
+    it('emits editWysiwyg when clicked', async () => {
+      const wrapper = mountHeader({ file: markdownFile })
+      ;(wrapper.vm as any).$.setupState.handleWysiwygEdit()
+      await nextTick()
+      expect(wrapper.emitted('editWysiwyg')).toBeTruthy()
+    })
+  })
+
   describe('effectiveViewMode', () => {
     it('returns raw for source view on non-markdown file', () => {
       const wrapper = mountHeader({ viewMode: 'source' })

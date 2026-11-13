@@ -39,9 +39,13 @@ vi.mock('@/composables/useAppMode.ts', () => ({
   useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
+const mockToastShow = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast.ts', () => ({
-  useToast: () => ({ show: vi.fn() }),
+  useToast: () => ({ show: mockToastShow }),
 }))
+
+// The visual editor is a lazy chunk; the `stubs` table below replaces it by
+// tag name, so its module is never resolved in these tests.
 
 vi.mock('@/composables/useDiffDrawer.ts', () => ({
   useDiffDrawer: () => ({
@@ -254,6 +258,18 @@ const codeMirrorViewerStub = {
   },
 }
 
+const milkdownEditorStub = {
+  name: 'MilkdownEditor',
+  props: ['content', 'saving'],
+  emits: ['save', 'saveAndExit', 'exitEdit'],
+  template: '<div class="milkdown-stub" />',
+  methods: {
+    getValue: () => '',
+    isDirty: () => false,
+    handleExit: () => true,
+  },
+}
+
 // The CSV table owns its own search box; the viewer only forwards to it.
 const tablePreviewStub = {
   name: 'TablePreviewBody',
@@ -282,6 +298,7 @@ const stubs = {
     methods: { focus: () => mockHtmlSearchFocus() },
   },
   CodeMirrorViewer: codeMirrorViewerStub,
+  MilkdownEditor: milkdownEditorStub,
   TablePreviewBody: tablePreviewStub,
   DiffDrawer: true,
   TocDock: {
@@ -876,6 +893,59 @@ describe('FileViewer', () => {
       expect(mockHandleExit).toHaveBeenCalled()
       expect(wrapper.emitted('toggleView')).toBeFalsy()
       expect(ss.editing).toBe(true)
+    })
+  })
+
+  describe('visual markdown editing', () => {
+    const mdFile = {
+      name: 'readme.md',
+      path: '/tmp/readme.md',
+      content: '# Title\n\nsome text',
+      isMarkdown: true,
+      isHtml: false,
+      isImage: false,
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      isOffice: false,
+      isBinary: false,
+      tooLarge: false,
+    }
+
+    beforeEach(async () => {
+      ;(await import('@/composables/useFileEditor'))._resetForTesting()
+      mockToastShow.mockClear()
+    })
+
+    function setupState(wrapper: ReturnType<typeof mount>) {
+      return (wrapper.vm as any).$.setupState
+    }
+
+    it('enters visual mode and mounts the visual editor instead of CodeMirror', async () => {
+      const wrapper = mountViewer({ file: mdFile })
+      setupState(wrapper).handleWysiwygEdit()
+      await flushPromises()
+      await nextTick()
+      expect(setupState(wrapper).editing).toBe(true)
+      expect(wrapper.find('.milkdown-stub').exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(false)
+    })
+
+    it('refuses a file with frontmatter and stays out of edit mode', async () => {
+      const wrapper = mountViewer({ file: { ...mdFile, content: '---\nname: x\n---\n\n# Title' } })
+      setupState(wrapper).handleWysiwygEdit()
+      await flushPromises()
+      expect(setupState(wrapper).editing).toBe(false)
+      expect(mockToastShow).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('.milkdown-stub').exists()).toBe(false)
+    })
+
+    it('keeps source editing on CodeMirror', async () => {
+      const wrapper = mountViewer({ file: mdFile })
+      setupState(wrapper).handleToggleEdit()
+      await flushPromises()
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(true)
+      expect(wrapper.find('.milkdown-stub').exists()).toBe(false)
     })
   })
 

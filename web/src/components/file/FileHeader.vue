@@ -105,6 +105,15 @@
         <span class="action-label">{{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}</span>
       </button>
 
+      <!-- Visual (WYSIWYG) markdown editing — the second editing mode. Only
+           offered while not editing: once inside, the existing edit toggle owns
+           the exit flow, and switching editors mid-session would have to carry
+           unsaved text between two different document models. -->
+      <button v-if="canWysiwygEdit" data-toolbar-id="wysiwygEdit" class="file-header-btn" @click.stop="handleWysiwygEdit" :title="t('file.header.wysiwygEdit')">
+        <PenLine :size="14" />
+        <span class="action-label">{{ t('file.header.wysiwygEdit') }}</span>
+      </button>
+
       <!-- Word wrap / line numbers / sticky scroll moved to the More menu
            (permanentMenuIds): they are editor preferences, set once and rarely
            touched, and all three are also available in Settings → File display. -->
@@ -195,7 +204,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Mail } from 'lucide-vue-next'
+import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, PenLine, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Mail } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -225,7 +234,7 @@ const props = defineProps({
     canGoForwardFile: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'editWysiwyg', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -332,6 +341,12 @@ const isEditable = computed(() => {
 })
 const hasToc = computed(() => fileSupportsToc(props.file, effectiveViewMode.value))
 
+// Visual markdown editing: only for a real markdown file with loaded text, and
+// only while not already editing (the edit toggle owns the exit flow then).
+const canWysiwygEdit = computed(
+  () => isMarkdown.value && !isUntitled.value && !props.editing && hasTextContent.value && !isMediaFile.value,
+)
+
 // Search button for any file with searchable text. For the rendered markdown
 // preview it opens the SearchDrawer bottom sheet; for CodeMirror-rendered
 // views (code, markdown raw/editing, HTML/OpenAPI raw) it opens CodeMirror's
@@ -388,6 +403,10 @@ function handleToggleView() {
 
 function handleToggleEdit() {
     emit('toggleEdit')
+}
+
+function handleWysiwygEdit() {
+    emit('editWysiwyg')
 }
 
 function handleToggleWordWrap() {

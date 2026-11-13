@@ -2364,6 +2364,8 @@ export default {
       setAsBackground: '设置为主题背景',
       edit: '编辑',
       finishEditing: '完成编辑',
+      wysiwygEdit: '可视化编辑',
+      wysiwygBlockedFrontmatter: '这个文件开头有 frontmatter 配置块，可视化编辑会把它弄坏，请用源码编辑',
     },
     editor: {
       save: '保存',

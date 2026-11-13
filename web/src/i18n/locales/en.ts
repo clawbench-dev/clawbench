@@ -2366,6 +2366,8 @@ export default {
       setAsBackground: 'Set as theme background',
       edit: 'Edit',
       finishEditing: 'Finish editing',
+      wysiwygEdit: 'Visual edit',
+      wysiwygBlockedFrontmatter: 'This file starts with a frontmatter block — visual editing would destroy it. Use source editing instead.',
     },
     editor: {
       save: 'Save',
