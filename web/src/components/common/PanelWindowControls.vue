@@ -59,7 +59,9 @@ const { isWideScreen, chatCollapsed } = getWideScreenState()
   position: absolute;
   top: 0;
   right: 0;
-  bottom: 0;
+  /* Stop above the header's 1px bottom border: painting over it tinted the
+     line under the buttons, so the border changed colour at the right end. */
+  bottom: 1px;
   z-index: 3;
   display: flex;
   overflow: hidden;
