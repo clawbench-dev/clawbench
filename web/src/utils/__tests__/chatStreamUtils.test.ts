@@ -24,6 +24,7 @@ import {
   isInFlightSend,
   resetInFlightSendsForTest,
   isSubagentToolName,
+  isElicitationRequest,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('isSubagentToolName', () => {
@@ -39,6 +40,21 @@ describe('isSubagentToolName', () => {
     expect(isSubagentToolName('Bash')).toBe(false)
     expect(isSubagentToolName('')).toBe(false)
     expect(isSubagentToolName(undefined)).toBe(false)
+  })
+})
+
+describe('isElicitationRequest', () => {
+  it('recognizes a live elicitation by its id on the tool input', () => {
+    expect(isElicitationRequest({ elicitationId: 'elic_1794481619248565000_4', questions: [] })).toBe(true)
+  })
+
+  it('rejects a plain ask card (no pending request behind it)', () => {
+    expect(isElicitationRequest({ questions: [{ question: 'Pick one' }] })).toBe(false)
+    expect(isElicitationRequest({ elicitationId: '' })).toBe(false)
+    expect(isElicitationRequest({ elicitationId: 42 })).toBe(false)
+    expect(isElicitationRequest({})).toBe(false)
+    expect(isElicitationRequest(undefined)).toBe(false)
+    expect(isElicitationRequest(null)).toBe(false)
   })
 })
 

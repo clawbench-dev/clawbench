@@ -302,6 +302,51 @@ describe('useTaskExecStream', () => {
       stream.stopPreview()
     })
 
+    it('does not mark a live elicitation block done after the 30s tool watchdog', () => {
+      // Same rule as the chat stream: the agent is blocked on the user, so
+      // `done` cannot be inferred from silence (issue #676).
+      vi.useFakeTimers()
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('tool_use', {
+        name: 'AskUserQuestion',
+        id: 'elic_1',
+        done: false,
+        input: { elicitationId: 'elic_1', questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+      })
+
+      vi.advanceTimersByTime(31000)
+
+      const toolBlock = stream.streamingMsg.value!.blocks.find((b: any) => b.id === 'elic_1')
+      expect(toolBlock!.done).toBe(false)
+
+      stream.stopPreview()
+      vi.useRealTimers()
+    })
+
+    it('still marks a plain AskUserQuestion done (no elicitation behind it) (control)', () => {
+      // The exemption keys on `input.elicitationId`, not on the tool name.
+      vi.useFakeTimers()
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('tool_use', {
+        name: 'AskUserQuestion',
+        id: 'ask_1',
+        done: false,
+        input: { questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+      })
+
+      vi.advanceTimersByTime(31000)
+
+      const toolBlock = stream.streamingMsg.value!.blocks.find((b: any) => b.id === 'ask_1')
+      expect(toolBlock!.done).toBe(true)
+
+      stream.stopPreview()
+      vi.useRealTimers()
+    })
+
     it('updates input on an existing tool_use block when a later event carries it', () => {
       const { stream } = createStream()
       stream.startPreview()

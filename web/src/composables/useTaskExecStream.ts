@@ -1,7 +1,7 @@
 import { ref, onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from './useGlobalEvents'
-import { appendThinkingDelta, findLastBlockOfType, isSubagentToolName, type ContentBlock } from '@/utils/chatStreamUtils.ts'
+import { appendThinkingDelta, findLastBlockOfType, isSubagentToolName, isElicitationRequest, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 
@@ -48,9 +48,13 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
   // session whose inner events aren't forwarded over ACP, so the outer call
   // legitimately exceeds TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the
   // 30s fallback, otherwise a long-running subagent looks like it already
-  // finished. Same for PermissionApproval, which waits on user interaction.
-  function shouldSkipWatchdog(name?: unknown): boolean {
-    return name === 'PermissionApproval' || isSubagentToolName(name as string | undefined)
+  // finished. Same for PermissionApproval, which waits on user interaction, and
+  // for a live elicitation (AskUserQuestion with an elicitationId), whose `done`
+  // only arrives once the user answers — see isElicitationRequest.
+  function shouldSkipWatchdog(name?: unknown, input?: unknown): boolean {
+    return name === 'PermissionApproval'
+      || isSubagentToolName(name as string | undefined)
+      || isElicitationRequest(input)
   }
 
   const { onEvent, sendWsMessage, connected } = useGlobalEvents()
@@ -177,7 +181,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.file_path !== undefined) existing.file_path = data.file_path
             // Progress event: reset the stall watchdog so long-running tools
             // that keep emitting updates are never falsely marked done.
-            if (!shouldSkipWatchdog(existing.name)) {
+            if (!shouldSkipWatchdog(existing.name, existing.input)) {
               toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
                 if (!existing.done) {
                   appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
@@ -196,7 +200,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.display_name) newBlock.display_name = data.display_name
             if (data.file_path) newBlock.file_path = data.file_path
             blocks.push(newBlock)
-            if (!shouldSkipWatchdog(data.name)) {
+            if (!shouldSkipWatchdog(data.name, data.input)) {
               toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
                 if (!newBlock.done) {
                   appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
