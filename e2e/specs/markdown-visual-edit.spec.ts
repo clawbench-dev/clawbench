@@ -176,6 +176,22 @@ test.describe('Markdown visual editing', () => {
     await exitVisualEdit(page)
   })
 
+  test('keeps source editing on CodeMirror', async ({ page }) => {
+    await openMarkdown(page, fm, nav, 'table-demo.md')
+
+    const overlay = page.locator('.file-overlay')
+    const inline = overlay.locator('[data-toolbar-id="edit"]')
+    if ((await inline.count()) > 0 && (await inline.first().isVisible())) {
+      await inline.first().click()
+    } else {
+      await overlay.locator('[data-ab-more]').first().click()
+      await page.locator('.ab-menu-item').filter({ hasText: /^(Edit|编辑)$/ }).first().click()
+    }
+
+    await expect(page.locator('.file-overlay .cm-scroller')).toBeVisible({ timeout: 20000 })
+    await expect(page.locator('.md-editor')).toHaveCount(0)
+  })
+
   test('refuses a file with frontmatter and keeps source editing available', async ({ page }) => {
     await page.request.post('/api/file/write', {
       data: { path: TEMP_FRONTMATTER, content: '---\nname: demo\n---\n\n# 标题\n' },
