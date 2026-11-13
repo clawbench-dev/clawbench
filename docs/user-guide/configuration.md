@@ -283,6 +283,22 @@
 >
 > `ollama_base_url` / `ollama_model` 是旧字段名，加载时会自动迁移到 `base_url` / `model`。
 
+### 知识库 `kb`
+
+知识库复用上面的 `rag.base_url` / `rag.model` / `rag.api_key` 做嵌入，切模型后记得重建一次语义索引。关键词检索始终可用，嵌入服务不可用时只影响语义检索。
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 知识库总开关 |
+| `auto_inject` | `true` | 聊天时是否自动带相关知识库片段（每个库还能单独关） |
+| `inject_top_n` | `4` | 每轮最多带几段 |
+| `inject_max_chars` | `2000` | 每轮最多带多少字 |
+| `inject_min_similarity` | `0.35` | 纯语义命中的最低相似度，低于它不带 |
+| `max_file_mb` | `50` | 单个文件大小上限 |
+| `max_text_mb` | `20` | 单个文件最多保留多少文字，超出会截断并标注 |
+| `poll_interval` | `2s` | 索引器兜底扫描间隔（新增文件会立刻唤醒，不必等） |
+| `embed_batch_size` | `16` | 每次向嵌入接口发多少个片段 |
+
 ### 终端 `terminal`
 
 | 字段 | 默认 | 说明 |

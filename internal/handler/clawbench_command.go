@@ -8,6 +8,7 @@ import (
 
 	userguide "clawbench/docs/user-guide"
 	"clawbench/internal/api"
+	"clawbench/internal/kb"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 )
@@ -23,6 +24,7 @@ const (
 	ClawbenchCmdUserGuide  = "/cb-user-guide"
 	ClawbenchCmdAgent      = "/cb-agent"
 	ClawbenchCmdMCP        = "/cb-mcp"
+	ClawbenchCmdKBSearch   = "/cb-kbsearch"
 )
 
 // The endpoint reference embedded in each template is rendered from the
@@ -51,6 +53,28 @@ Required parameters:
 When the search spans more than one project, say which project each result belongs to.
 After searching, present the results in a natural, readable format (e.g. a summary paragraph or bullet list). Mention the session titles and key findings.
 If no results found, answer based on your own knowledge — do NOT mention the search process.
+`
+
+// kbSearchInjectTemplate is the on-demand instruction template injected when
+// the user sends a message starting with "/cb-kbsearch ".
+const kbSearchInjectTemplate = `[You have access to the user's knowledge base for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
+
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
+
+Endpoints:
+{{ENDPOINTS}}
+
+Scope:
+- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request so project-scoped knowledge bases are visible. Global knowledge bases are always visible; collections from other projects never are.
+- Search first, answer second. Never assume a document exists.
+
+How to use:
+- Call "POST /api/kb/search" with body {"q": "<the user's question>"}. Each result carries document_title, collection_name, location (page / sheet / slide / line), chunk_text and match_positions.
+- To answer "what is in the knowledge base", call "GET /api/kb/collections" and then "GET /api/kb/documents?collection_id=<id>".
+- Cite the document title and location for every claim taken from a passage, e.g. "《员工手册.pdf》第 12 页".
+- If the search returns nothing relevant, say so plainly instead of inventing an answer.
+- Do not add, delete or reindex anything unless the user explicitly asks.
 `
 
 // taskInjectTemplate is the on-demand instruction template injected when
@@ -276,7 +300,8 @@ func IsClawbenchCommand(rawMsg string) bool {
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdAgent) ||
-		matchClawbenchCommand(rawMsg, ClawbenchCmdMCP)
+		matchClawbenchCommand(rawMsg, ClawbenchCmdMCP) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdKBSearch)
 }
 
 // clawbenchNow is the current time in the form the AI needs for RFC3339 query
@@ -319,6 +344,17 @@ func clawbenchCommandPrecheck(w http.ResponseWriter, r *http.Request, rawMsg str
 	if matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide) {
 		if userguide.Dir() == "" {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "UserGuideNotAvailable")
+			return false
+		}
+		return true
+	}
+	if matchClawbenchCommand(rawMsg, ClawbenchCmdKBSearch) {
+		if !kb.Available() {
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "KBUnavailable")
+			return false
+		}
+		if strings.TrimSpace(strings.TrimPrefix(rawMsg, ClawbenchCmdKBSearch)) == "" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
 			return false
 		}
 		return true
@@ -374,6 +410,11 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 		return renderAgentTemplate(projectPath)
 	case matchClawbenchCommand(rawMsg, ClawbenchCmdMCP):
 		return renderMCPTemplate(projectPath)
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdKBSearch):
+		if strings.TrimSpace(strings.TrimPrefix(rawMsg, ClawbenchCmdKBSearch)) == "" {
+			return rawMsg, nil
+		}
+		return renderKBSearchTemplate(projectPath)
 	}
 	return rawMsg, nil
 }
@@ -424,6 +465,18 @@ func renderChatSearchTemplate(projectPath, sessionID string) (string, error) {
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
+	return applyAuthPlaceholders(tmpl), nil
+}
+
+func renderKBSearchTemplate(projectPath string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandKBSearch)
+	if err != nil {
+		return "", fmt.Errorf("render kb-search endpoints: %w", err)
+	}
+	tmpl := strings.ReplaceAll(kbSearchInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	return applyAuthPlaceholders(tmpl), nil
 }
 

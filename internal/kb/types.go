@@ -1,0 +1,166 @@
+// Package kb implements the knowledge base: multiple collections, each scoped
+// either globally or to one project, with files copied into the data directory
+// and indexed for both keyword (FTS5) and semantic (sqlite-vec) search.
+//
+// It deliberately keeps its own tables. The chat history index (internal/rag)
+// has chat-specific columns and invariants (message_id, session_id, per-message
+// chunk uniqueness); folding documents into it would make every chat search
+// query carry a "not a knowledge base row" predicate and every chat indexer
+// pass skip document rows. The two indexes share only the chunker, the Chinese
+// segmenter and the embedding client.
+package kb
+
+import (
+	"errors"
+	"time"
+)
+
+// Collection scopes.
+const (
+	ScopeGlobal  = "global"
+	ScopeProject = "project"
+)
+
+// Document statuses.
+const (
+	// StatusPending means the document is queued for extraction.
+	StatusPending = "pending"
+	// StatusExtracting means the indexer is reading the file right now.
+	StatusExtracting = "extracting"
+	// StatusReady means the keyword index is complete. Semantic indexing may
+	// still be in flight; VectorReady reports that separately.
+	StatusReady = "ready"
+	// StatusFailed means extraction or chunking failed; Error says why.
+	StatusFailed = "failed"
+)
+
+// Sentinel errors mapped to HTTP statuses by the handler.
+var (
+	ErrCollectionNotFound = errors.New("knowledge base collection not found")
+	ErrDocumentNotFound   = errors.New("knowledge base document not found")
+	ErrDuplicateDocument  = errors.New("the same file is already in this collection")
+	ErrUnsupportedFile    = errors.New("this file type cannot be indexed")
+	ErrFileTooLarge       = errors.New("file exceeds the knowledge base size limit")
+	ErrNoText             = errors.New("no extractable text in this file")
+	ErrInvalidScope       = errors.New("invalid knowledge base scope")
+	ErrAccessDenied       = errors.New("knowledge base is not accessible from this project")
+	ErrUnavailable        = errors.New("knowledge base is not enabled")
+)
+
+// Collection is one knowledge base. A global collection has ProjectID 0 and is
+// visible from every project; a project collection is visible only from the
+// project it was created in.
+type Collection struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Scope       string    `json:"scope"`
+	ProjectID   int64     `json:"-"`
+	ProjectPath string    `json:"project_path,omitempty"`
+	AutoInject  bool      `json:"auto_inject"`
+	DocCount    int       `json:"doc_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Document is one file added to a collection. StoredPath is the copy inside
+// {DataDir}/knowledge/<collection id>/; SourcePath is the original location and
+// is display-only (the original may be moved or deleted).
+type Document struct {
+	ID           int64     `json:"id"`
+	CollectionID int64     `json:"collection_id"`
+	Title        string    `json:"title"`
+	SourcePath   string    `json:"source_path,omitempty"`
+	StoredPath   string    `json:"-"`
+	Ext          string    `json:"ext,omitempty"`
+	SizeBytes    int64     `json:"size_bytes"`
+	ContentHash  string    `json:"-"`
+	Status       string    `json:"status"`
+	Error        string    `json:"error,omitempty"`
+	Warning      string    `json:"warning,omitempty"`
+	ChunkCount   int       `json:"chunk_count"`
+	FTSReady     bool      `json:"fts_ready"`
+	VectorReady  bool      `json:"vector_ready"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// Chunk is one searchable segment of a document. Location is a human-readable
+// position ("第 12 页", "工作表 报价", "第 30–45 行") and travels with the hit so
+// the user can find the passage in the original file.
+type Chunk struct {
+	ID                 int64
+	DocumentID         int64
+	CollectionID       int64
+	ProjectID          int64
+	ChunkIndex         int
+	ChunkText          string
+	ChunkTextSegmented string
+	Location           string
+	TokenCount         int
+	Embedding          []float64
+	HasEmbedding       bool
+	EmbeddingDim       int
+	CreatedAt          time.Time
+}
+
+// ChunkEmbedding pairs a chunk id with its computed vector.
+type ChunkEmbedding struct {
+	ChunkID      int64
+	DocumentID   int64
+	CollectionID int64
+	ProjectID    int64
+	Vector       []float64
+}
+
+// MatchRange is a rune-offset span inside ChunkText, used for highlighting.
+type MatchRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+// SearchHit is one result. Score is the fused (RRF) score; VectorScore and
+// FTSScore are kept so callers can apply a similarity floor to vector-only
+// hits without penalizing keyword matches.
+type SearchHit struct {
+	ChunkID        int64        `json:"chunk_id"`
+	DocumentID     int64        `json:"document_id"`
+	DocumentTitle  string       `json:"document_title"`
+	CollectionID   int64        `json:"collection_id"`
+	CollectionName string       `json:"collection_name"`
+	Location       string       `json:"location,omitempty"`
+	ChunkText      string       `json:"chunk_text"`
+	Score          float64      `json:"score"`
+	VectorScore    float64      `json:"vector_score,omitempty"`
+	FTSScore       float64      `json:"fts_score,omitempty"`
+	MatchPositions []MatchRange `json:"match_positions,omitempty"`
+}
+
+// SearchResult is the response of a knowledge base search.
+type SearchResult struct {
+	Results []SearchHit `json:"results"`
+	Total   int         `json:"total"`
+	Mode    string      `json:"mode"` // "hybrid" | "vector" | "fts"
+}
+
+// Stats is the index health snapshot shown in the panel.
+type IndexStats struct {
+	Collections    int   `json:"collections"`
+	Documents      int   `json:"documents"`
+	ReadyDocs      int   `json:"ready_docs"`
+	FailedDocs     int   `json:"failed_docs"`
+	PendingDocs    int   `json:"pending_docs"`
+	Chunks         int   `json:"chunks"`
+	EmbeddedChunks int   `json:"embedded_chunks"`
+	StoredBytes    int64 `json:"stored_bytes"`
+}
+
+// Ref is one injected snippet, kept for logging and (later) the UI chip.
+type Ref struct {
+	DocumentID     int64  `json:"document_id"`
+	DocumentTitle  string `json:"document_title"`
+	CollectionID   int64  `json:"collection_id"`
+	CollectionName string `json:"collection_name"`
+	Location       string `json:"location,omitempty"`
+	Text           string `json:"text"`
+}

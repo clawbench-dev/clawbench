@@ -129,6 +129,14 @@ const i18n = createI18n({
           creditUsed: '本次消耗 {value} 积分',
           costUsed: '本次花费 {value}',
           tokenUsed: '输入 {input} / 输出 {output}',
+          kbRefs: {
+            summary: '参考了知识库 · {count} 段',
+            summaryOne: '参考了知识库 · {count} 段',
+            from: '来自 {name}',
+            untitled: '未命名文档',
+            expand: '查看来源片段',
+            collapse: '收起来源片段',
+          },
         },
         contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中', mergedIntoPrev: '回复已并入上一轮' },
@@ -137,6 +145,17 @@ const i18n = createI18n({
         busy: { forking: '正在分叉会话…', syncing: '正在同步原生会话…', elapsed: '{elapsed}s' },
       },
       common: { remove: '移除', copy: '复制' },
+      kb: {
+        locationPage: '第 {n} 页',
+        locationSlide: '幻灯片 {n}',
+        locationSheetRow: '工作表 {name} 第 {n} 行',
+        locationSheetRows: '工作表 {name} 第 {start}–{end} 行',
+        locationLines: '第 {start}–{end} 行',
+        locationLine: '第 {n} 行',
+        locationParagraphs: '第 {start}–{end} 段',
+        locationParagraph: '第 {n} 段',
+        locationTitle: '标题',
+      },
     },
   },
 })
@@ -1816,5 +1835,71 @@ describe('ChatMessageItem — summary toggle leads the meta action row', () => {
       active: true,
     })
     expect(wrapper.find('.chat-meta-actions .chat-summary-anchor').exists()).toBe(false)
+  })
+})
+
+describe('ChatMessageItem — knowledge-base citations', () => {
+  const withRefs = {
+    id: 77,
+    role: 'assistant',
+    content: 'answer',
+    blocks: [{ type: 'text', text: 'answer' }],
+    metadata: {
+      kbRefs: [
+        {
+          documentId: 7,
+          documentTitle: 'handbook.md',
+          collectionName: '制度',
+          location: 'L1-L3',
+          text: '报销流程：先提交申请。',
+        },
+      ],
+    },
+  }
+
+  it('shows the citation chip below the bubble and expands to the snippet', async () => {
+    const wrapper = createWrapper({ msg: withRefs, index: 0, active: true })
+
+    const toggle = wrapper.find('[data-action="toggle-kb-refs"]')
+    expect(toggle.exists()).toBe(true)
+    expect(toggle.text()).toContain('参考了知识库 · 1 段')
+
+    await toggle.trigger('click')
+    expect(wrapper.find('.chat-kb-ref-title').text()).toBe('handbook.md')
+    expect(wrapper.find('.chat-kb-ref-location').text()).toBe('第 1–3 行')
+    expect(wrapper.find('.chat-kb-ref-text').text()).toBe('报销流程：先提交申请。')
+  })
+
+  it('renders no chip when the turn had no refs', () => {
+    const wrapper = createWrapper({
+      msg: { id: 78, role: 'assistant', content: 'answer', blocks: [{ type: 'text', text: 'answer' }], metadata: {} },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('[data-action="toggle-kb-refs"]').exists()).toBe(false)
+  })
+
+  it('renders no chip on a user message even if metadata carries refs', () => {
+    const wrapper = createWrapper({
+      msg: { ...withRefs, id: 79, role: 'user' },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('[data-action="toggle-kb-refs"]').exists()).toBe(false)
+  })
+
+  it('drops malformed refs instead of showing an empty source card', () => {
+    const wrapper = createWrapper({
+      msg: {
+        id: 80,
+        role: 'assistant',
+        content: 'answer',
+        blocks: [{ type: 'text', text: 'answer' }],
+        metadata: { kbRefs: [{ documentTitle: 'no text' }, null] },
+      },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('[data-action="toggle-kb-refs"]').exists()).toBe(false)
   })
 })

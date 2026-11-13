@@ -3403,3 +3403,64 @@ func TestSessionExecutor_SteerBoundary_CancelledTurnDoesNotReanchor(t *testing.T
 		t.Fatalf("a cancelled split turn must not re-anchor last_read_at: got %q, want %q", got, anchor)
 	}
 }
+
+// The knowledge base passages are retrieved while BUILDING the request, before
+// the turn runs. The executor must stamp them onto the assistant message
+// metadata so the citation marker survives a reload (the live WS metadata event
+// carries the same object).
+func TestSessionExecutor_Finalize_PersistsKBRefs(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"kb-ref-agent": {ID: "kb-ref-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "kb-ref-agent")
+	refs := []ai.KBRef{{
+		DocumentID:     7,
+		DocumentTitle:  "handbook.md",
+		CollectionName: "制度",
+		Location:       "L1-L3",
+		Text:           "报销流程：先提交申请，再等财务审批。",
+	}}
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "kb-ref-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "报销流程是什么", KBRefs: refs},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	finalized := executor.Finalize(RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "先提交申请。"}},
+		Metadata:         &ai.Metadata{},
+	}, nil)
+
+	require.Len(t, finalized.Metadata.KBRefs, 1)
+	require.Equal(t, "handbook.md", finalized.Metadata.KBRefs[0].DocumentTitle)
+	require.NotZero(t, finalized.MsgID)
+
+	// The persisted content carries the same refs under camelCase JSON keys the
+	// frontend reads.
+	var content string
+	require.NoError(t, store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content))
+	var parsed struct {
+		Metadata struct {
+			KBRefs []struct {
+				DocumentID     int64  `json:"documentId"`
+				DocumentTitle  string `json:"documentTitle"`
+				CollectionName string `json:"collectionName"`
+				Location       string `json:"location"`
+				Text           string `json:"text"`
+			} `json:"kbRefs"`
+		} `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(content), &parsed))
+	require.Len(t, parsed.Metadata.KBRefs, 1)
+	require.Equal(t, int64(7), parsed.Metadata.KBRefs[0].DocumentID)
+	require.Equal(t, "制度", parsed.Metadata.KBRefs[0].CollectionName)
+	require.Equal(t, "L1-L3", parsed.Metadata.KBRefs[0].Location)
+}

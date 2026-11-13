@@ -22,6 +22,8 @@ const (
 	// CommandMCP backs /cb-mcp — managing the global MCP server list and the
 	// per-agent enable policy.
 	CommandMCP Command = "mcp"
+	// CommandKBSearch backs /cb-kbsearch — searching the user's knowledge base.
+	CommandKBSearch Command = "kbsearch"
 )
 
 // Spec tags referenced by commandOperations. They are named constants so the
@@ -31,6 +33,7 @@ const (
 	tagTasks    = "Tasks"
 	tagAgents   = "Agents"
 	tagProjects = "Projects"
+	tagKB       = "KnowledgeBase"
 )
 
 // commandOperations lists the exact operations each command exposes to the AI,
@@ -91,6 +94,14 @@ var commandOperations = map[Command][]struct {
 		// (not one with a flag) because the deep one costs tokens.
 		{"agentsSelfTest", tagAgents},
 		{"agentsSelfTestDeep", tagAgents},
+	},
+	CommandKBSearch: {
+		// Collections and documents let the AI answer "what is in my knowledge
+		// base"; search is the retrieval itself. Writes (add/delete/reindex) are
+		// deliberately absent — a question must not mutate the library.
+		{"kbCollectionsList", tagKB},
+		{"kbDocumentsList", tagKB},
+		{"kbSearch", tagKB},
 	},
 	CommandMCP: {
 		// The config pair carries the global server list; the agent pair carries

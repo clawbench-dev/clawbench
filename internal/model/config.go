@@ -237,6 +237,7 @@ type Config struct {
 	Meeting     MeetingConfig     `yaml:"meeting"`      // AI 听记 / meeting minutes defaults and output limits
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
+	KB          KBConfig          `yaml:"kb"`           // Knowledge base (collections, file indexing, auto-inject)
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
@@ -733,6 +734,35 @@ type RAGConfig struct {
 	SearchLimit    int    `yaml:"search_limit"`     // Default search result limit (default: 100)
 	SearchPoolSize int    `yaml:"search_pool_size"` // Candidates per search source before RRF fusion (default: 20)
 	RetentionDays  int    `yaml:"retention_days"`   // Archived data retention days (0=keep forever, default: 90)
+}
+
+// KBConfig holds configuration for the knowledge base.
+//
+// Embedding is not configured here: the knowledge base reuses rag.{base_url,
+// model, api_key}, so there is exactly one embedding endpoint to maintain and
+// one place to change the model. Chunk size/overlap are also shared with RAG.
+type KBConfig struct {
+	Enabled bool `yaml:"enabled"` // Master switch (default: true)
+	// AutoInject prepends retrieved snippets to each user turn. Per-collection
+	// toggles refine this; this is the global switch.
+	AutoInject bool `yaml:"auto_inject"` // default: true
+	// InjectTopN caps how many chunks are prepended per turn.
+	InjectTopN int `yaml:"inject_top_n"` // default: 4
+	// InjectMaxChars caps the total characters of injected snippets.
+	InjectMaxChars int `yaml:"inject_max_chars"` // default: 2000
+	// InjectMinSimilarity drops vector-only hits below this cosine similarity.
+	// FTS hits are not thresholded (a term matched by definition).
+	InjectMinSimilarity float64 `yaml:"inject_min_similarity"` // default: 0.35
+	// MaxFileMB caps the size of a file added to a collection.
+	MaxFileMB int `yaml:"max_file_mb"` // default: 50
+	// MaxTextMB caps the extracted text kept per document (longer text is
+	// truncated and the document carries a warning).
+	MaxTextMB int `yaml:"max_text_mb"` // default: 20
+	// PollInterval is the indexer's fallback tick; adds and rebuilds also wake
+	// it immediately.
+	PollInterval string `yaml:"poll_interval"` // default: "2s"
+	// EmbedBatchSize is how many chunks are sent to the embedding API per call.
+	EmbedBatchSize int `yaml:"embed_batch_size"` // default: 16
 }
 
 // OpenAITTSConfig holds configuration for the OpenAI-compatible TTS engine.

@@ -50,6 +50,7 @@ import (
 	"clawbench/internal/forge"
 	"clawbench/internal/frontend"
 	"clawbench/internal/handler"
+	"clawbench/internal/kb"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/push/common"
@@ -1236,6 +1237,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Warn("failed to initialize RAG system, search will be limited", slog.String("err", err.Error()))
 	}
 	defer rag.Shutdown()
+
+	// Knowledge base: its own tables and indexer, sharing the embedder config
+	// with RAG. Failure here must not stop the server — chat and file browsing
+	// still work without a knowledge base.
+	if err := kb.Init(cfg.KB, cfg.RAG); err != nil {
+		slog.Warn("failed to initialize knowledge base", slog.String("err", err.Error()))
+	}
+	defer kb.Shutdown()
 	defer service.StopSessionCleanupWorker()
 	defer service.StopUploadCleanupWorker()
 	defer service.StopUsageMeterWorker()
@@ -1381,6 +1390,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	if rag.GlobalStore != nil {
 		rag.StartIndexer(cfg.RAG)
 	}
+
+	// Knowledge base indexer: extraction and embedding both run off the request
+	// path, so a large PDF never blocks the upload response.
+	kb.StartIndexer()
 
 	// Start cleanup worker for archived data
 	rag.StartCleanupWorker(cfg.RAG)
@@ -2032,6 +2045,9 @@ func hotReloadReconfigure(port int) {
 
 	// --- RAG: reconfigure embedder, indexer, cleanup worker ---
 	rag.Reconfigure(cfg.RAG)
+
+	// --- Knowledge base: same embedder settings, its own indexer ---
+	kb.Reconfigure(cfg.KB, cfg.RAG)
 
 	// --- Session cleanup: reconfigure archive retention worker ---
 	service.ReconfigureSessionCleanup(cfg)

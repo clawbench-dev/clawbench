@@ -73,6 +73,10 @@ var allowedCJKFiles = map[string]string{
 	"internal/summarize/task.go":               "AI summarization prompt",
 	"internal/summarize/recommend.go":          "AI recommendation prompt + its quick-command header",
 	"internal/summarize/title.go":              "AI title-output prefix stripping (标题：)",
+	// Knowledge base retrieval context: the block is prepended to the model's
+	// prompt ([知识库参考] + citation rules). It never reaches a human; the
+	// user-facing notice is a frontend chip.
+	"internal/kb/search.go": "AI-facing knowledge base injection prompt ([知识库参考] block)",
 	// Parsers that must recognize CJK punctuation/numerals in model or CLI
 	// output; the literals are matched, not displayed.
 	"internal/grouprouting/grouprouting.go":      "group routing mention target delimiters (CJK comma and dunhao)",

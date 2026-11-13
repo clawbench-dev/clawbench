@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"clawbench/internal/kb"
 	"clawbench/internal/rag"
 	"clawbench/internal/store"
 )
@@ -120,6 +121,9 @@ func DeleteProjectData(id int64) error {
 		slog.Warn("failed to purge RAG data for deleted project",
 			slog.Int64("project_id", id), slog.String("path", path), slog.String("err", err.Error()))
 	}
+	// Knowledge base collections scoped to this project, plus their stored
+	// copies. Best-effort for the same reason as RAG: the rows are already gone.
+	kb.DeleteProjectData(id)
 	if rs := rag.StoreForCleanup(); rs != nil {
 		rs.InvalidateProjectPathCache(path)
 	}

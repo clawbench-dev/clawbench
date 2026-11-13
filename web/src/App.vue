@@ -266,6 +266,12 @@
                   <MailPanel :active="panelIsActive('mail')" @open-settings="openMailSettings" />
                 </TabPanel>
 
+                <!-- 知识库 Tab: multiple collections (global or per project),
+                     each a set of files indexed for keyword + semantic search. -->
+                <TabPanel tabId="kb" :activeTab="leftPanelActive" :noHeader="true">
+                  <KnowledgePanel :active="panelIsActive('kb')" />
+                </TabPanel>
+
                 <!-- 分享 Tab: every public link this project has handed out. -->
                 <TabPanel tabId="share" :activeTab="leftPanelActive" :noHeader="true">
                   <ShareCenterPanel :active="panelIsActive('share')" />
@@ -703,6 +709,11 @@ const MailPanel = defineAsyncComponent(
 // composer plumbing, none of which is needed until the tab is opened.
 const ShareCenterPanel = defineAsyncComponent(
   buildAsyncComponentOptions({ loader: () => import('./components/share/ShareCenterPanel.vue') }),
+)
+// 知识库: collections, file indexing status and search. Async like the other
+// heavyweight panels — nothing here is needed until the tab is opened.
+const KnowledgePanel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('./components/kb/KnowledgePanel.vue') }),
 )
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'

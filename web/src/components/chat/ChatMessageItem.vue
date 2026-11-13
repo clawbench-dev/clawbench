@@ -198,6 +198,12 @@
     </div>
     </div><!-- /.msg-card -->
 
+    <!-- Knowledge-base citations for THIS reply. The chip states how many
+         passages were prepended to the prompt; expanding it shows the exact
+         snippets. It sits outside the bubble so the source cards read on the
+         panel background, and before the meta bar so the actions stay last. -->
+    <ChatKBRefs v-if="msg.role === 'assistant' && kbRefs.length > 0" :refs="kbRefs" />
+
     <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
          Assistant: duration + friendly time on the left, actions on the right.
          User: friendly time + copy + details. Same row layout, same styles —
@@ -340,6 +346,7 @@ import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare,
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { formatCompactCount, formatCompactCredit, formatTailCost } from '@/utils/usageFormat.ts'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay.ts'
+import { parseKBRefs } from '@/utils/kbRefs.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -354,6 +361,7 @@ import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
+import ChatKBRefs from './ChatKBRefs.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
 import FileChangesDrawer from './FileChangesDrawer.vue'
 import FileDiffsDrawer from './FileDiffsDrawer.vue'
@@ -636,6 +644,13 @@ const copyableUserText = computed(() => {
   if (props.msg?.role !== 'user') return ''
   return extractSpeakableText(props.msg?.blocks || []) || (props.msg?.content || '')
 })
+
+/**
+ * Knowledge-base passages this reply was grounded in. The backend stores them
+ * in the message metadata, so the citation marker survives a reload. Parsing
+ * (and dropping malformed entries) lives in utils/kbRefs.ts.
+ */
+const kbRefs = computed(() => parseKBRefs(props.msg?.metadata?.kbRefs))
 
 /**
  * This turn's consumption, rendered inside the bubble.

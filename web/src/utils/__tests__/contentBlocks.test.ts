@@ -489,6 +489,14 @@ describe('extractSlashCommand', () => {
     expect(result!.clawbench).toBe(true)
   })
 
+  it('marks ClawBench /cb-kbsearch as clawbench', () => {
+    const result = extractSlashCommand('/cb-kbsearch 报销流程')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-kbsearch')
+    expect(result!.rest).toBe(' 报销流程')
+    expect(result!.clawbench).toBe(true)
+  })
+
   it('marks ClawBench /cb-task as clawbench (no rest)', () => {
     const result = extractSlashCommand('/cb-task')
     expect(result).not.toBeNull()

@@ -92,7 +92,7 @@ const i18n = createI18n({
           edit: 'Edit',
         },
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
-        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage', btwDesc: 'Side question' },
+        clawbenchCommand: { chatsearchDesc: 'Search', kbsearchDesc: 'Knowledge', taskDesc: 'Task', usageDesc: 'Usage', btwDesc: 'Side question' },
         btw: { title: 'By the way', answering: 'Answering…', failed: 'Failed' },
         slashCommand: { title: 'Slash' },
         completion: {

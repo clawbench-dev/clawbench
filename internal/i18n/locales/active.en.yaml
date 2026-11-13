@@ -526,3 +526,25 @@ MailQuoteFrom: From
 MailQuoteDate: Date
 MailQuoteSubject: Subject
 MailAccountInvalid: Fill in a valid email address and both server hosts
+KBUnavailable: The knowledge base is not enabled
+KBNotFound: This knowledge base item does not exist or was deleted
+KBDuplicate: This file is already in the selected knowledge base
+KBFileTooLarge: The file is too large to add
+KBUnsupportedFile: This file type is not supported
+KBNameRequired: A knowledge base name is required and must be at most 100 characters
+KBReasonLegacyDoc: Legacy Word format (.doc) is not supported; save it as .docx and add it again
+KBReasonLegacyXls: Legacy Excel format (.xls) is not supported; save it as .xlsx and add it again
+KBReasonLegacyPpt: Legacy PowerPoint format (.ppt) is not supported; save it as .pptx and add it again
+KBReasonImage: Text inside images cannot be read directly (OCR is required); convert it to text first
+KBReasonSVG: Text inside SVG cannot be extracted reliably; convert it to text first
+KBReasonAudioVideo: Audio and video need transcription first; the knowledge base does not support them
+KBReasonArchive: Extract the archive and add its files one by one
+KBReasonExecutable: Executable files cannot be knowledge base content
+KBReasonBinary: This file looks like binary data and has no indexable text
+KBReasonFont: Font files cannot be knowledge base content
+KBReasonPDFEncrypted: Could not open the PDF (the file may be damaged or encrypted)
+KBReasonPDFNoText: This PDF has no extractable text (it may be a scanned document)
+KBReasonNoText: This file has no extractable text
+KBReasonFileTooLarge: "The file is too large ({{.MaxMB}} MB); the limit is {{.LimitMB}} MB"
+KBReasonNotRegular: Only files can be added, not directories
+KBReasonUnknownFormat: Could not parse this file (it may be damaged or encrypted)

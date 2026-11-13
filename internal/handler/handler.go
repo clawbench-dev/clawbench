@@ -819,6 +819,17 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/session-search", ServeRAGSessionSearch)
 	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
 
+	// Knowledge base: multiple collections scoped globally or per project,
+	// files copied into the data directory and indexed for keyword + semantic
+	// search. Separate tables from the chat index above.
+	register("/api/kb/collections", ServeKBCollections)
+	register("/api/kb/documents", ServeKBDocuments)
+	register("/api/kb/documents/upload", ServeKBDocumentUpload)
+	register("/api/kb/documents/reindex", ServeKBDocumentReindex)
+	register("/api/kb/search", ServeKBSearch)
+	register("/api/kb/reindex", ServeKBReindex)
+	register("/api/kb/status", ServeKBStatus)
+
 	// Client log collection — auth-protected.
 	// This is an append-only write primitive into a file on the server, so an
 	// unauthenticated caller could forge log lines or rotate the log file to

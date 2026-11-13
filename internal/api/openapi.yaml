@@ -1481,6 +1481,13 @@ paths:
             （`{type, teamName, isAutoTeam, hasLiveMembers, members}`）。`team_update`
             是纯实时事件（只在团队变化时推送），中途打开或重连的客户端拿不到，团队
             面板就会永远不出现；这里随历史响应补发缓存快照，与 `planState` 同一处理。
+
+            `messages[].metadata.kbRefs`（仅助手消息，未注入知识库时缺席）：本轮
+            拼进 prompt 的知识库片段，供气泡下方的「参考了知识库 · N 段」标记与
+            来源展开使用。每项为 `{documentId, documentTitle, collectionName,
+            location, text}`；`location` 是语言中立标签（`p.12` / `slide 3` /
+            `sheet 报价 · rows 1-50` / `L1-L80` / `¶1-¶6`），由客户端按界面语言
+            格式化。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -7680,6 +7687,308 @@ paths:
             首条消息。群聊消息带 `agent_id`（发言人成员行 id），供搜索详情把
             该条归属到具体成员；1:1 会话的消息不含该字段。
 
+  # ── Knowledge base ────────────────────────────────────────────────────────
+  # Multiple collections, each scoped globally or to one project. Files are
+  # copied into {data-dir}/knowledge/<collection id>/ and indexed for keyword
+  # (FTS5) and semantic (sqlite-vec) search. The index is separate from the
+  # chat-history RAG index: chat search never returns knowledge base content.
+  /api/kb/collections:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出当前可见的知识库
+      description: |
+        返回全局知识库 + 当前项目（由 `clawbench_project` cookie 决定）的知识库。
+        没有选择项目时只返回全局知识库。`doc_count` 是文件数量。
+      operationId: kbCollectionsList
+      responses:
+        "200":
+          description: 知识库列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KBCollection"
+    post:
+      tags: [KnowledgeBase]
+      summary: 新建知识库
+      description: |
+        `scope` 为 `global`（任何项目可见）或 `project`（仅当前项目可见，需要
+        已选择项目）。归属创建后不可修改。
+      operationId: kbCollectionCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                description:
+                  type: string
+                scope:
+                  type: string
+                  enum: [global, project]
+                  default: project
+      responses:
+        "201":
+          description: 已创建
+        "400":
+          description: 名称为空、超长或 scope 非法
+        "403":
+          description: scope=project 但没有选择项目
+    patch:
+      tags: [KnowledgeBase]
+      summary: 修改知识库
+      description: 只更新请求体里出现的字段；`auto_inject` 控制该库是否参与聊天的自动检索。
+      operationId: kbCollectionUpdate
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                auto_inject:
+                  type: boolean
+      responses:
+        "200":
+          description: 修改后的知识库
+        "404":
+          description: 知识库不存在
+    delete:
+      tags: [KnowledgeBase]
+      summary: 删除知识库
+      description: 删除知识库、其中所有文件、索引与磁盘副本。不可恢复。
+      operationId: kbCollectionDelete
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 已删除
+        "404":
+          description: 知识库不存在
+
+  /api/kb/documents:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出文件或查看文件详情
+      description: |
+        `?collection_id=` 返回该库的文件列表；`?id=` 返回单个文件及其前 20 个
+        文本片段（含定位信息，如「第 12 页」「工作表 Sheet1 第 1–50 行」）。
+      operationId: kbDocumentsList
+      parameters:
+        - name: collection_id
+          in: query
+          schema:
+            type: integer
+        - name: id
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 文件列表或详情
+        "400":
+          description: 缺少 collection_id 或 id
+    post:
+      tags: [KnowledgeBase]
+      summary: 添加服务器上的文件
+      description: |
+        文件会被复制到数据目录，原文件移动或删除不影响知识库。支持文本类、
+        PDF、`.docx` / `.xlsx` / `.pptx`；旧版 `.doc` / `.xls` / `.ppt`、
+        图片、音视频、压缩包与可执行文件会被拒绝并说明原因。
+        内容相同的文件在同一知识库内不会重复添加。
+      operationId: kbDocumentAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection_id, path]
+              properties:
+                collection_id:
+                  type: integer
+                path:
+                  type: string
+                  description: 服务器上的文件路径（相对项目根或绝对路径）。
+      responses:
+        "201":
+          description: 已加入，后台开始解析与建索引
+        "400":
+          description: 不支持的文件类型或没有可提取的文字
+        "409":
+          description: 同一知识库里已有相同内容的文件
+        "413":
+          description: 文件超过大小上限
+    delete:
+      tags: [KnowledgeBase]
+      summary: 删除文件
+      operationId: kbDocumentDelete
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 已删除
+
+  /api/kb/documents/upload:
+    post:
+      tags: [KnowledgeBase]
+      summary: 上传文件到知识库
+      description: multipart 表单，字段 `file` 与 `collection_id`（也可用查询参数传 `collection_id`）。
+      operationId: kbDocumentUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, collection_id]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                collection_id:
+                  type: integer
+      responses:
+        "201":
+          description: 已上传，后台开始解析与建索引
+        "400":
+          description: 不支持的文件类型或表单不完整
+        "413":
+          description: 文件超过大小上限
+
+  /api/kb/documents/reindex:
+    post:
+      tags: [KnowledgeBase]
+      summary: 重建单个文件的索引
+      description: 清空该文件的片段并重新解析、分块、建索引。立即返回 202。
+      operationId: kbDocumentReindex
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "202":
+          description: 已排队
+        "404":
+          description: 文件不存在
+
+  /api/kb/search:
+    post:
+      tags: [KnowledgeBase]
+      summary: 搜索知识库
+      description: |
+        默认混合检索：关键词（BM25）与语义（向量）结果用 RRF 融合。嵌入服务
+        不可用时自动退化为关键词检索，不报错。`collection_ids` 为空时搜索当前
+        项目可见的全部知识库（全局 + 本项目），不会跨项目。返回的每个片段带
+        `location`（页码/工作表/幻灯片/行号）与 `match_positions`（字符偏移，
+        用于高亮）。
+      operationId: kbSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [q]
+              properties:
+                q:
+                  type: string
+                collection_ids:
+                  type: array
+                  items:
+                    type: integer
+                limit:
+                  type: integer
+                  default: 10
+                  maximum: 100
+                mode:
+                  type: string
+                  enum: [hybrid, fts, vector]
+      responses:
+        "200":
+          description: 搜索结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KBSearchHit"
+                  total:
+                    type: integer
+                  mode:
+                    type: string
+                    enum: [hybrid, vector, fts]
+
+  /api/kb/reindex:
+    post:
+      tags: [KnowledgeBase]
+      summary: 重建知识库索引
+      description: |
+        `{"collection_id": 3}` 重建一个库；`{"kind": "vector"}` 只丢弃并重建
+        语义索引（换嵌入模型后用）；空对象重建当前可见的全部知识库。
+        全部立即返回 202，由后台索引器执行。
+      operationId: kbReindex
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                collection_id:
+                  type: integer
+                kind:
+                  type: string
+                  enum: [vector]
+      responses:
+        "202":
+          description: 已排队
+
+  /api/kb/status:
+    get:
+      tags: [KnowledgeBase]
+      summary: 知识库索引状态
+      description: |
+        `available` 表示知识库已启用；`vector_enabled` 表示配置了嵌入服务；
+        `stats` 含库数、文件数（就绪/失败/排队）、片段数、已嵌入片段数与
+        磁盘副本占用。
+      operationId: kbStatus
+      responses:
+        "200":
+          description: 状态快照
+
   # ── Upgrade ───────────────────────────────────────────────────────────────
   /api/upgrade/check:
     get:
@@ -9467,6 +9776,52 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    KBCollection:
+      type: object
+      description: |
+        一个知识库。`scope` 为 `global`（任何项目可见）或 `project`（仅创建它的
+        项目可见）；`auto_inject` 控制它是否参与聊天时的自动片段检索。
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        scope: { type: string, enum: [global, project] }
+        project_path: { type: string, description: 项目级知识库所属项目；全局库为空 }
+        auto_inject: { type: boolean }
+        doc_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    KBSearchHit:
+      type: object
+      description: |
+        一个命中片段。`score` 是融合后的排序分；`vector_score` 与 `fts_score`
+        分别来自语义/关键词通道，可用于判断命中来源。`location` 是原文位置
+        （页码 / 工作表 / 幻灯片 / 行号），`match_positions` 是片段内的字符偏移。
+      properties:
+        chunk_id: { type: integer }
+        document_id: { type: integer }
+        document_title: { type: string }
+        collection_id: { type: integer }
+        collection_name: { type: string }
+        location:
+          type: string
+          description: |
+            语言中立的定位标签：`p.12`（页）、`slide 3`（幻灯片）、
+            `sheet 报价 · rows 1-50`（工作表行区间）、`L1-L80`（行）、
+            `¶1-¶6`（段）。面板按当前界面语言格式化展示。
+        chunk_text: { type: string }
+        score: { type: number }
+        vector_score: { type: number }
+        fts_score: { type: number }
+        match_positions:
+          type: array
+          items:
+            type: object
+            properties:
+              start: { type: integer }
+              end: { type: integer }
+
     TLSStatus:
       type: object
       description: |

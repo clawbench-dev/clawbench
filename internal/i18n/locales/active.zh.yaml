@@ -514,3 +514,25 @@ MailQuoteFrom: 发件人
 MailQuoteDate: 时间
 MailQuoteSubject: 主题
 MailAccountInvalid: 请填写有效的邮箱地址和收发服务器
+KBUnavailable: 知识库没有启用
+KBNotFound: 知识库内容不存在或已被删除
+KBDuplicate: 这个文件已经在当前知识库里了
+KBFileTooLarge: 文件太大，无法加入知识库
+KBUnsupportedFile: 这个文件类型不支持
+KBNameRequired: 知识库名称不能为空，且不超过 100 个字
+KBReasonLegacyDoc: 旧版 Word 格式（.doc）不支持，请另存为 .docx 后重新添加
+KBReasonLegacyXls: 旧版 Excel 格式（.xls）不支持，请另存为 .xlsx 后重新添加
+KBReasonLegacyPpt: 旧版 PowerPoint 格式（.ppt）不支持，请另存为 .pptx 后重新添加
+KBReasonImage: 图片里的文字无法直接读取（需要 OCR），请先转成文本
+KBReasonSVG: SVG 里的文字无法稳定提取，请先转成文本
+KBReasonAudioVideo: 音视频需要先转写为文字，知识库暂不支持
+KBReasonArchive: 压缩包请先解压后逐个添加文件
+KBReasonExecutable: 可执行文件无法作为知识库内容
+KBReasonBinary: 这个文件看起来是二进制内容，没有可索引的文字
+KBReasonFont: 字体文件无法作为知识库内容
+KBReasonPDFEncrypted: 打开 PDF 失败（文件可能损坏或已加密）
+KBReasonPDFNoText: 这份 PDF 里没有可提取的文字（可能是扫描件）
+KBReasonNoText: 这个文件里没有可提取的文字
+KBReasonFileTooLarge: "文件太大（{{.MaxMB}} MB），上限 {{.LimitMB}} MB"
+KBReasonNotRegular: 只能添加文件，不能添加目录
+KBReasonUnknownFormat: 无法解析这个文件（可能已损坏或已加密）

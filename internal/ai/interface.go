@@ -24,6 +24,11 @@ type ChatRequest struct {
 	AssistantMessageCount  int    // Number of finalized assistant messages in the session (0 for new sessions). Used for logging and periodic summary logic.
 	HasConversationHistory bool   // True if the session has any messages in DB (user + assistant, finalized + streaming). Drives shouldNewSessionFallback: true blocks silent fallback to NewSession on recovery failure (amnesia prevention). Differs from AssistantMessageCount: a session with only an in-flight user prompt has AssistantMessageCount=0 but HasConversationHistory=true.
 	ForkContext            string // Formatted history from parent session, injected on fork's first message so the AI has context
+	// KBRefs are the knowledge-base passages prepended to Prompt. The executor
+	// copies them into the assistant message metadata so the bubble can show
+	// what the reply was grounded in, and let the reader reopen the sources
+	// after a reload. Empty means this turn did not consult the knowledge base.
+	KBRefs []KBRef
 	// Compacted marks the turn that follows a context compaction (auto or a
 	// user-issued /compact). Compaction rewrites the conversation into a summary,
 	// so the injected system prompt may no longer be in context; this forces a
@@ -58,17 +63,32 @@ func (r ChatRequest) ShouldInjectSystemPrompt() bool {
 	return r.AssistantMessageCount > 0 && r.AssistantMessageCount%interval == 0
 }
 
+// KBRef is one knowledge-base passage retrieved for a turn. It rides the
+// assistant message metadata so the chat bubble can show which documents the
+// reply was grounded in and let the reader reopen the exact snippets later.
+type KBRef struct {
+	DocumentID     int64  `json:"documentId"`
+	DocumentTitle  string `json:"documentTitle"`
+	CollectionName string `json:"collectionName,omitempty"`
+	Location       string `json:"location,omitempty"`
+	Text           string `json:"text"`
+}
+
 // Metadata contains additional information about the AI response
 type Metadata struct {
-	Mode           string  `json:"mode,omitempty"`           // ACP mode (e.g., "code", "ask", "architect")
-	ThinkingEffort string  `json:"thinkingEffort,omitempty"` // Thinking effort level (e.g., "low", "medium", "high")
-	Transport      string  `json:"transport,omitempty"`      // Backend transport type: "acp-stdio" or "cli"
-	Model          string  `json:"model,omitempty"`
-	InputTokens    int     `json:"inputTokens,omitempty"`
-	OutputTokens   int     `json:"outputTokens,omitempty"`
-	DurationMs     int     `json:"durationMs,omitempty"` // CLI self-reported duration
-	WallMs         int     `json:"wallMs,omitempty"`     // Backend wall-clock duration (time from ExecuteStream start to finalization)
-	CostUSD        float64 `json:"costUsd,omitempty"`
+	Mode           string `json:"mode,omitempty"`           // ACP mode (e.g., "code", "ask", "architect")
+	ThinkingEffort string `json:"thinkingEffort,omitempty"` // Thinking effort level (e.g., "low", "medium", "high")
+	Transport      string `json:"transport,omitempty"`      // Backend transport type: "acp-stdio" or "cli"
+	Model          string `json:"model,omitempty"`
+	// KBRefs are the knowledge-base passages prepended to this turn's prompt.
+	// Empty means the turn did not consult the knowledge base. Persisted with
+	// the message so the citation marker survives a reload.
+	KBRefs       []KBRef `json:"kbRefs,omitempty"`
+	InputTokens  int     `json:"inputTokens,omitempty"`
+	OutputTokens int     `json:"outputTokens,omitempty"`
+	DurationMs   int     `json:"durationMs,omitempty"` // CLI self-reported duration
+	WallMs       int     `json:"wallMs,omitempty"`     // Backend wall-clock duration (time from ExecuteStream start to finalization)
+	CostUSD      float64 `json:"costUsd,omitempty"`
 	// CostCumulative marks CostUSD as the session's CUMULATIVE cost rather than
 	// this turn's cost. ACP's usage_update.cost is defined as "Total cumulative
 	// cost for session", so every ACP-sourced cost sets this. The executor

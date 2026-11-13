@@ -629,6 +629,36 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RAG.RetentionDays = 90
 	}
 
+	// --- Knowledge base ---
+	// Bool zero-value trap: both switches default to true when absent.
+	if !presence["kb.enabled"] {
+		cfg.KB.Enabled = true
+	}
+	if !presence["kb.auto_inject"] {
+		cfg.KB.AutoInject = true
+	}
+	if cfg.KB.InjectTopN <= 0 {
+		cfg.KB.InjectTopN = 4
+	}
+	if cfg.KB.InjectMaxChars <= 0 {
+		cfg.KB.InjectMaxChars = 2000
+	}
+	if cfg.KB.InjectMinSimilarity <= 0 {
+		cfg.KB.InjectMinSimilarity = 0.35
+	}
+	if cfg.KB.MaxFileMB <= 0 {
+		cfg.KB.MaxFileMB = 50
+	}
+	if cfg.KB.MaxTextMB <= 0 {
+		cfg.KB.MaxTextMB = 20
+	}
+	if cfg.KB.PollInterval == "" {
+		cfg.KB.PollInterval = "2s"
+	}
+	if cfg.KB.EmbedBatchSize <= 0 {
+		cfg.KB.EmbedBatchSize = 16
+	}
+
 	// --- Terminal ---
 	// Bool zero-value trap: same as proxy/port_forward — default to true when absent.
 	if !presence["terminal.enabled"] {

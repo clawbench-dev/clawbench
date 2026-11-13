@@ -742,8 +742,14 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 
-		// Build the first chat request
-		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments)
+		// Build the first chat request. Knowledge base snippets are injected
+		// only here (not on the retry/confirm requests below), so a recovered
+		// turn does not carry the same retrieved context twice.
+		var firstOpts []service.ChatRequestOption
+		if !ai.IsACPSlashCommand(req.Message) {
+			firstOpts = append(firstOpts, service.WithKBInjection())
+		}
+		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments, firstOpts...)
 
 		// Execute first message
 		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
@@ -1062,8 +1068,8 @@ func executeStreamRun(
 // Kept as a thin wrapper (rather than updating the ~30 call sites and tests that
 // use it) so the unification lands as one behavioral change: the handler no
 // longer has its own copy to drift from the queue/push path.
-func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments)
+func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool, opts ...service.ChatRequestOption) ai.ChatRequest {
+	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments, opts...)
 }
 
 // buildForkContext delegates to the service layer's single implementation.
@@ -1140,7 +1146,11 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	// model and transport a direct send would. Passing them here as well would
 	// duplicate that lookup and invite the two paths to drift again.
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments), nil
+	var opts []service.ChatRequestOption
+	if !ai.IsACPSlashCommand(qMsg.Text) {
+		opts = append(opts, service.WithKBInjection())
+	}
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments, opts...), nil
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.

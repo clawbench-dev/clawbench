@@ -603,8 +603,19 @@ func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolC
 		return msg.Content
 	}
 
+	// Knowledge-base citations are private to the authenticated owner: the
+	// snippets come from a library the anonymous share viewer has no access to.
+	// Strip them so a shared conversation never leaks document text. The marker
+	// itself disappears with them (it renders from this same metadata).
+	stripped := stripShareOnlyMetadata(wrapper)
+
 	blocksRaw, ok := wrapper["blocks"]
 	if !ok {
+		if stripped {
+			if out, err := json.Marshal(wrapper); err == nil {
+				return string(out)
+			}
+		}
 		return msg.Content
 	}
 	blocks, ok := blocksRaw.([]any)
@@ -626,6 +637,21 @@ func inlineMessageContent(msg model.ChatMessage, toolCalls map[toolCallKey]ToolC
 		return msg.Content
 	}
 	return string(out)
+}
+
+// stripShareOnlyMetadata removes fields that must never leave the authenticated
+// app. It reports whether the wrapper changed, so a block-less message can be
+// re-marshaled instead of returned verbatim.
+func stripShareOnlyMetadata(wrapper map[string]any) bool {
+	meta, ok := wrapper["metadata"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, ok := meta["kbRefs"]; !ok {
+		return false
+	}
+	delete(meta, "kbRefs")
+	return true
 }
 
 // inlineShareBlock restores one content block's heavy fields (tool input/output,

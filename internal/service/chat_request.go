@@ -1,13 +1,43 @@
 package service
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/kb"
 	"clawbench/internal/model"
+	"clawbench/internal/store"
 )
+
+// ChatRequestOption refines BuildChatRequest without changing its long
+// positional signature for every caller. Options are opt-in: internal turns
+// (group member speech, /compact, auto-continue) deliberately do not pass any.
+type ChatRequestOption func(*chatRequestOptions)
+
+type chatRequestOptions struct {
+	injectKB bool
+	kbQuery  string
+}
+
+// WithKBInjection prepends knowledge base snippets retrieved with this turn's
+// message. Callers pass it only for turns that carry a real user question.
+func WithKBInjection() ChatRequestOption {
+	return func(o *chatRequestOptions) { o.injectKB = true }
+}
+
+// WithKBQuery injects knowledge base snippets but retrieves them with an
+// explicit query instead of the full prompt. Group member prompts carry the
+// whole injected timeline; searching that would drown the user's actual
+// question in old turns.
+func WithKBQuery(query string) ChatRequestOption {
+	return func(o *chatRequestOptions) {
+		o.injectKB = true
+		o.kbQuery = query
+	}
+}
 
 // chat_request.go holds the ONE implementation of "turn a user message into an
 // ai.ChatRequest", plus the fork-context builder it depends on.
@@ -39,7 +69,7 @@ import (
 // agent's default. That ordering is why a queued message now honors the model
 // the user selected in the session, instead of silently reverting to the
 // agent default.
-func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
+func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool, opts ...ChatRequestOption) ai.ChatRequest { //nolint:gocyclo // request assembly: every branch is a distinct compatibility rule
 	agentID = ResolveAgentID(sessionID, agentID)
 
 	// An explicit per-request pick always describes the model being sent right
@@ -172,6 +202,37 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		prompt = BuildCruiseSingleAddendum() + "\n\n" + prompt
 	}
 
+	// Knowledge base context rides the PROMPT for the same reason as the cruise
+	// addendum: a resumed CLI turn does not necessarily re-send the system
+	// prompt, and the prompt is transient (never persisted as the user bubble).
+	//
+	// The search is bounded by kb.BuildContext (1.5s, small top-N); a dead
+	// embedding endpoint or an empty knowledge base returns "" and changes
+	// nothing. Slash commands are exempt for the same reason as cruise: a
+	// prefixed prompt would stop ACP from recognizing the command.
+	var reqOpts chatRequestOptions
+	for _, opt := range opts {
+		opt(&reqOpts)
+	}
+	var kbRefs []ai.KBRef
+	if reqOpts.injectKB && !ai.IsACPSlashCommand(prompt) && kb.Available() {
+		projectID := int64(0)
+		if id, ok, err := store.ProjectIDByPath(projectPath); err == nil && ok {
+			projectID = id
+		}
+		query := prompt
+		if reqOpts.kbQuery != "" {
+			query = reqOpts.kbQuery
+		}
+		if ctxText, refs := kb.BuildContext(context.Background(), query, projectID, model.ConfigInstance.KB); ctxText != "" {
+			prompt = ctxText + "\n\n" + prompt
+			kbRefs = toAIKBRefs(refs)
+			slog.Info("kb: injected context into turn",
+				slog.String("session_id", sessionID),
+				slog.Int("refs", len(refs)))
+		}
+	}
+
 	req := ai.ChatRequest{
 		Prompt:                 prompt,
 		SessionID:              effectiveSessionID,
@@ -187,6 +248,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		AssistantMessageCount:  GetAssistantMessageCount(sessionID),
 		HasConversationHistory: hasConversationHistory,
 		ForkContext:            forkContext,
+		KBRefs:                 kbRefs,
 		Compacted:              compacted,
 	}
 
@@ -574,4 +636,24 @@ func appendMediaPrompt(systemPrompt string) string {
 		return systemPrompt + "\n\n" + mediaPrompt
 	}
 	return mediaPrompt
+}
+
+// toAIKBRefs converts the retrieval result into the wire/metadata shape. Kept
+// here (rather than having the kb package import ai) so the knowledge base stays
+// a leaf: it must not depend on the chat layer.
+func toAIKBRefs(refs []kb.Ref) []ai.KBRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]ai.KBRef, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, ai.KBRef{
+			DocumentID:     r.DocumentID,
+			DocumentTitle:  r.DocumentTitle,
+			CollectionName: r.CollectionName,
+			Location:       r.Location,
+			Text:           r.Text,
+		})
+	}
+	return out
 }

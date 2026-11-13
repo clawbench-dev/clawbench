@@ -31,6 +31,7 @@ export type TabId =
   | 'live'
   | 'share'
   | 'mail'
+  | 'kb'
   | 'proxy'
   | 'stats'
   | 'settings'
@@ -88,6 +89,10 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   // global rather than per-project — a mailbox belongs to the person, not to a
   // repository — so the tab looks the same in every project.
   { id: 'mail', titleKey: 'nav.mail' },
+  // 知识库: multiple collections (global or per project), each a set of files
+  // indexed for keyword + semantic search. It sits next to 邮件 because both
+  // are reference material rather than project state.
+  { id: 'kb', titleKey: 'nav.knowledgeBase' },
   // 视频会议: the meeting records, and the meeting itself — screen/camera or
   // voice. It used to be two tabs (听记 and 桌面共享) even though both drove the
   // same recorder, the same endpoints and the same artifact folder; a record

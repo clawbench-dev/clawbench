@@ -802,7 +802,11 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 
 	agentID := ResolveAgentID(cfg.SessionID, cfg.AgentID)
 
-	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
+	var opts []ChatRequestOption
+	if !ai.IsACPSlashCommand(cfg.Message) {
+		opts = append(opts, WithKBInjection())
+	}
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.

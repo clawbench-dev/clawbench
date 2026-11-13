@@ -237,6 +237,10 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// same background work but deletes nothing (accounts survive), so a
 		// reader cannot infer its semantics from the forge paragraph.
 		CommandMCP: 10900,
+		// Three read-only operations (collections, documents, search). The
+		// writes are deliberately absent: a question must not mutate the
+		// library. Measured at 1070; headroom covers the search contract.
+		CommandKBSearch: 1600,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)

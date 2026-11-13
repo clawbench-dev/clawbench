@@ -1376,3 +1376,32 @@ func sessionTypeOf(t *testing.T, raw string) string {
 	value, _ := session["sessionType"].(string)
 	return value
 }
+
+// A shared conversation is served to an anonymous viewer. Knowledge-base
+// citations point into a library that viewer cannot access, so the snippet text
+// (and the marker that renders from it) must not ride along.
+func TestSessionSharePayload_StripsKnowledgeBaseRefs(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"done"}],"metadata":{
+		"model":"claude-sonnet-4",
+		"kbRefs":[{"documentId":7,"documentTitle":"handbook.md","collectionName":"制度","location":"L1-L3","text":"报销流程：先提交申请。"}]
+	}}`, 0, 0)
+
+	raw, _, err := buildAllForSession(t, "s1")
+	require.NoError(t, err)
+
+	content, ok := payloadMessages(t, raw)[0]["content"].(string)
+	require.True(t, ok)
+
+	var wrapper struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(content), &wrapper))
+	_, has := wrapper.Metadata["kbRefs"]
+	require.False(t, has, "kbRefs must not reach an anonymous share viewer")
+	// Other metadata is still served: the viewer's details panel keeps working.
+	require.Equal(t, "claude-sonnet-4", wrapper.Metadata["model"])
+}

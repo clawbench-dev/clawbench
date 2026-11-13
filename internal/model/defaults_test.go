@@ -1899,3 +1899,28 @@ func TestApplyDefaults_MeetingClampsAndSanitizes(t *testing.T) {
 		t.Errorf("unknown meeting.language = %q, want empty", cfg.Meeting.Language)
 	}
 }
+
+func TestApplyDefaults_KnowledgeBase(t *testing.T) {
+	cfg := Config{}
+	ApplyDefaults(&cfg, map[string]bool{})
+	if !cfg.KB.Enabled || !cfg.KB.AutoInject {
+		t.Fatalf("KB switches must default to true: %+v", cfg.KB)
+	}
+	if cfg.KB.InjectTopN != 4 || cfg.KB.InjectMaxChars != 2000 {
+		t.Fatalf("unexpected injection defaults: %+v", cfg.KB)
+	}
+	if cfg.KB.InjectMinSimilarity != 0.35 || cfg.KB.MaxFileMB != 50 || cfg.KB.MaxTextMB != 20 {
+		t.Fatalf("unexpected numeric defaults: %+v", cfg.KB)
+	}
+	if cfg.KB.PollInterval != "2s" || cfg.KB.EmbedBatchSize != 16 {
+		t.Fatalf("unexpected worker defaults: %+v", cfg.KB)
+	}
+
+	// An explicit false must survive: the presence map is what distinguishes
+	// "user turned it off" from "section omitted".
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{"kb.enabled": true, "kb.auto_inject": true})
+	if cfg.KB.Enabled || cfg.KB.AutoInject {
+		t.Fatalf("explicit false was overwritten: %+v", cfg.KB)
+	}
+}

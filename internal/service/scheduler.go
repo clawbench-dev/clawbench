@@ -16,6 +16,7 @@ import (
 	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/kb"
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
@@ -1132,6 +1133,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.Error("failed to write user message for task", slog.String("err", err.Error()))
 	}
 
+	// Knowledge base context is added AFTER the user row is written, so the
+	// transcript keeps the task's own text. It rides the prompt only.
+	promptForAI, kbRefs := withKnowledgeBaseContext(renderedPrompt, projectPath, sessionID)
+
 	// Build chat request — no session resume, standalone execution.
 	//
 	// Anti-recursion relies on the prompt layer alone: the task-management
@@ -1166,7 +1171,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.Transport == transportACPStdio)
 
 	chatReq := ai.ChatRequest{
-		Prompt:             renderedPrompt,
+		Prompt:             promptForAI,
 		SessionID:          sessionID,
 		WorkDir:            projectPath,
 		SystemPrompt:       systemPrompt,
@@ -1176,6 +1181,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		ThinkingEffort:     effectiveThinking,
 		Resume:             false,
 		ScheduledExecution: true,
+		KBRefs:             kbRefs,
 	}
 
 	// Execute AI backend (no timeout - let AI run indefinitely). ctx/cancel were
@@ -1936,4 +1942,26 @@ func triggerModeOrDefault(task *model.ScheduledTask) string {
 		return "cron"
 	}
 	return task.TriggerMode
+}
+
+// withKnowledgeBaseContext prepends retrieved knowledge base passages to a
+// scheduled task's prompt. Kept separate from executeTask so the retrieval
+// wiring is testable without running a whole task. It also returns the refs so
+// the assistant message can carry the same citations a chat turn does.
+func withKnowledgeBaseContext(prompt, projectPath, sessionID string) (string, []ai.KBRef) {
+	if ai.IsACPSlashCommand(prompt) || !kb.Available() {
+		return prompt, nil
+	}
+	projectID := int64(0)
+	if id, ok, err := store.ProjectIDByPath(projectPath); err == nil && ok {
+		projectID = id
+	}
+	ctxText, refs := kb.BuildContext(context.Background(), prompt, projectID, model.ConfigInstance.KB)
+	if ctxText == "" {
+		return prompt, nil
+	}
+	slog.Info("kb: injected context into scheduled task",
+		slog.String("session_id", sessionID),
+		slog.Int("refs", len(refs)))
+	return ctxText + "\n\n" + prompt, toAIKBRefs(refs)
 }

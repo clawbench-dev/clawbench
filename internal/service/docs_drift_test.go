@@ -341,14 +341,19 @@ func TestDatabaseDocListsExactlyTheRealTables(t *testing.T) {
 		t.Fatal("no table sections found in database.md — the guard would be vacuous")
 	}
 
-	// The RAG tables are documented in their own section; they are created by
-	// the RAG store (separate connection pool), not by InitDB, and rag_vec is
-	// created lazily on first vector write so it never exists in a fresh DB.
-	ragOnly := map[string]bool{"rag_chunks": true, "rag_chunks_fts": true, "rag_vec": true}
+	// The RAG and knowledge base tables are documented in their own sections;
+	// they are created by their own stores (separate connection pools), not by
+	// InitDB, and both vec0 tables are created lazily on first vector write so
+	// they never exist in a fresh DB.
+	sidePoolTables := map[string]bool{
+		"rag_chunks": true, "rag_chunks_fts": true, "rag_vec": true,
+		"kb_collections": true, "kb_documents": true, "kb_chunks": true,
+		"kb_chunks_fts": true, "kb_vec": true,
+	}
 
 	var ghost, missing []string
 	for name := range documented {
-		if ragOnly[name] {
+		if sidePoolTables[name] {
 			continue
 		}
 		if !actual[name] {

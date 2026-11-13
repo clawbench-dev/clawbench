@@ -1766,6 +1766,11 @@ func (e *SessionExecutor) drainAndPersistCancelledMetadata(eventCh <-chan ai.Str
 	if meta == nil || msgID <= 0 {
 		return
 	}
+	// This path never reaches Finalize, so the citation refs must be stamped
+	// here too; otherwise an abandoned turn loses the sources it consulted.
+	if len(e.cfg.ChatRequest.KBRefs) > 0 {
+		meta.KBRefs = e.cfg.ChatRequest.KBRefs
+	}
 	// buildResult never ran on this path, so nothing has stamped the runtime.
 	// Without it a cancelled turn — which can have run for minutes — records
 	// wall_ms = 0 and silently disappears from the runtime statistics.
@@ -1834,6 +1839,12 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	e.persistAskToolCalls(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
+	// The knowledge base passages were retrieved while building the request,
+	// before the turn ran. Copy them onto the message metadata so the citation
+	// marker survives a reload (the WS metadata event carries this same value).
+	if responseMetadata != nil && len(e.cfg.ChatRequest.KBRefs) > 0 {
+		responseMetadata.KBRefs = e.cfg.ChatRequest.KBRefs
+	}
 	donePost()
 
 	// Rewrite a cumulative cost into this turn's delta BEFORE the content JSON is

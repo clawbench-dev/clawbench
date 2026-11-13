@@ -187,16 +187,26 @@ var hotReloadFields = map[string]bool{
 	"port_forward.allowed_ports": true,
 	"port_forward.transport":     true,
 	// RAG — reconfigure embedder, indexer, cleanup worker
-	"rag.vector_enabled":        true,
-	"rag.base_url":              true,
-	"rag.model":                 true,
-	"rag.api_key":               true,
-	"rag.chunk_size":            true,
-	"rag.chunk_overlap":         true,
-	"rag.batch_size":            true,
-	"rag.search_limit":          true,
-	"rag.search_pool_size":      true,
-	"rag.retention_days":        true,
+	"rag.vector_enabled":   true,
+	"rag.base_url":         true,
+	"rag.model":            true,
+	"rag.api_key":          true,
+	"rag.chunk_size":       true,
+	"rag.chunk_overlap":    true,
+	"rag.batch_size":       true,
+	"rag.search_limit":     true,
+	"rag.search_pool_size": true,
+	"rag.retention_days":   true,
+	// Knowledge base — its own indexer, sharing the RAG embedder settings
+	"kb.enabled":                true,
+	"kb.auto_inject":            true,
+	"kb.inject_top_n":           true,
+	"kb.inject_max_chars":       true,
+	"kb.inject_min_similarity":  true,
+	"kb.max_file_mb":            true,
+	"kb.max_text_mb":            true,
+	"kb.poll_interval":          true,
+	"kb.embed_batch_size":       true,
 	"dingtalk.enabled":          true,
 	"dingtalk.app_key":          true,
 	"dingtalk.app_secret":       true,
@@ -1112,6 +1122,15 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.search_limit":                       true,
 	"rag.search_pool_size":                   true,
 	"rag.retention_days":                     true,
+	"kb.enabled":                             true,
+	"kb.auto_inject":                         true,
+	"kb.inject_top_n":                        true,
+	"kb.inject_max_chars":                    true,
+	"kb.inject_min_similarity":               true,
+	"kb.max_file_mb":                         true,
+	"kb.max_text_mb":                         true,
+	"kb.poll_interval":                       true,
+	"kb.embed_batch_size":                    true,
 	"port_forward.enabled":                   true,
 	"port_forward.port":                      true,
 	"port_forward.allowed_ports":             true,
@@ -2568,6 +2587,27 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	if kbVal, ok := patch["kb"].(map[string]any); ok {
+		if v, ok := kbVal["inject_top_n"].(float64); ok && (v < 1 || v > 20) {
+			return fmt.Errorf("kb.inject_top_n must be between 1 and 20")
+		}
+		if v, ok := kbVal["inject_max_chars"].(float64); ok && v < 200 {
+			return fmt.Errorf("kb.inject_max_chars must be at least 200")
+		}
+		if v, ok := kbVal["inject_min_similarity"].(float64); ok && (v < 0 || v > 1) {
+			return fmt.Errorf("kb.inject_min_similarity must be between 0 and 1")
+		}
+		if v, ok := kbVal["max_file_mb"].(float64); ok && (v < 1 || v > 1024) {
+			return fmt.Errorf("kb.max_file_mb must be between 1 and 1024")
+		}
+		if v, ok := kbVal["max_text_mb"].(float64); ok && (v < 1 || v > 512) {
+			return fmt.Errorf("kb.max_text_mb must be between 1 and 512")
+		}
+		if v, ok := kbVal["embed_batch_size"].(float64); ok && (v < 1 || v > 128) {
+			return fmt.Errorf("kb.embed_batch_size must be between 1 and 128")
+		}
+	}
+
 	// Validate push_mode value
 	if v, ok := patch["push_mode"].(string); ok {
 		if v != "native" && v != "dingtalk" && v != "feishu" && v != "wechat" && v != "disabled" {
@@ -3012,6 +3052,36 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := rag["retention_days"].(float64); ok {
 			cfg.RAG.RetentionDays = int(v)
+		}
+	}
+
+	if kbVal, ok := patch["kb"].(map[string]any); ok {
+		if v, ok := kbVal["enabled"].(bool); ok {
+			cfg.KB.Enabled = v
+		}
+		if v, ok := kbVal["auto_inject"].(bool); ok {
+			cfg.KB.AutoInject = v
+		}
+		if v, ok := kbVal["inject_top_n"].(float64); ok {
+			cfg.KB.InjectTopN = int(v)
+		}
+		if v, ok := kbVal["inject_max_chars"].(float64); ok {
+			cfg.KB.InjectMaxChars = int(v)
+		}
+		if v, ok := kbVal["inject_min_similarity"].(float64); ok {
+			cfg.KB.InjectMinSimilarity = v
+		}
+		if v, ok := kbVal["max_file_mb"].(float64); ok {
+			cfg.KB.MaxFileMB = int(v)
+		}
+		if v, ok := kbVal["max_text_mb"].(float64); ok {
+			cfg.KB.MaxTextMB = int(v)
+		}
+		if v, ok := kbVal["poll_interval"].(string); ok {
+			cfg.KB.PollInterval = v
+		}
+		if v, ok := kbVal["embed_batch_size"].(float64); ok {
+			cfg.KB.EmbedBatchSize = int(v)
 		}
 	}
 

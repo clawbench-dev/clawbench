@@ -11,6 +11,7 @@ import {
   Github,
   Inbox,
   Mail,
+  BookOpen,
   Share2,
 } from 'lucide-vue-next'
 import { DOCK_TABS, type DockTabId, type DockTabDescriptor } from '@/composables/dockTabs'
@@ -46,6 +47,7 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
   // icon next to it already carries the "screen" half of that idea.
   share: Share2,
   mail: Mail,
+  kb: BookOpen,
   proxy: Network,
   stats: BarChart3,
   settings: Settings,
