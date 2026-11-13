@@ -88,6 +88,14 @@ let fieldDoneTimer: ReturnType<typeof setTimeout> | null = null
 let heldDraft = ''
 // PCM capture for the streaming engine (band filter + worklet + voice gate).
 let pcm: PcmStreamer | null = null
+// Frames the capture produced while the streaming socket was still connecting.
+let pendingPcm: ArrayBuffer[] = []
+/**
+ * Ceiling for that backlog. The handshake normally takes tens of milliseconds,
+ * so a handful of frames; the limit only exists so a socket that never opens
+ * cannot grow the buffer without bound (100 frames ≈ 10 s of audio).
+ */
+const PCM_BACKLOG_LIMIT = 100
 // PCM capture for the whole-file engines that cannot read WebM: frames are
 // collected and encoded as WAV when the user stops.
 let wavStreamer: PcmStreamer | null = null
@@ -539,14 +547,31 @@ export function useVoiceInput() {
       stream: mediaStream,
       tuning,
       onFrame: (frame) => {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame)
+        const sock = ws
+        if (!sock) return
+        // Capture starts before the socket finishes its handshake (see
+        // startStreaming): whatever the graph produces in the meantime is held
+        // here and sent the moment `start` has gone out. Dropping those frames
+        // is what makes a short utterance arrive as nothing.
+        if (sock.readyState === WebSocket.OPEN) { sock.send(frame); return }
+        if (sock.readyState === WebSocket.CONNECTING && pendingPcm.length < PCM_BACKLOG_LIMIT) {
+          pendingPcm.push(frame)
+        }
       },
     })
     pcm = streamer
     await streamer.start()
   }
 
+  /** Sends the frames captured while the socket was still connecting. */
+  function flushPendingPcm(sock: WebSocket): void {
+    const held = pendingPcm
+    pendingPcm = []
+    for (const frame of held) sock.send(frame)
+  }
+
   function stopPcmCapture(): void {
+    pendingPcm = []
     pcm?.stop()
     pcm = null
   }
@@ -554,6 +579,7 @@ export function useVoiceInput() {
   function startStreaming() {
     state.value = 'recording'
     isRecording.value = true
+    pendingPcm = []
     const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
     ws = sock
     // Every callback ignores a socket that is no longer the active one: stop()
@@ -591,9 +617,8 @@ export function useVoiceInput() {
     sock.onopen = () => {
       if (ws !== sock) return
       if (stopRequested) {
-        // The button was released while the socket was still connecting: never
-        // start capturing, and drop the socket so the engine has nothing to
-        // transcribe.
+        // The button was released while the socket was still connecting: drop
+        // the socket so the engine has nothing to transcribe.
         finalize()
         return
       }
@@ -604,12 +629,16 @@ export function useVoiceInput() {
         bits: 16,
         context: voicePrefix,
       }))
-      startPcmCapture().catch((e) => {
-        appLog.e('VoiceInput', 'pcm capture failed', e)
-        fail(i18n.global.t('chat.voice.micUnavailable'))
-        cancel()
-      })
+      flushPendingPcm(sock)
     }
+    // The graph is built NOW rather than on `onopen`: it takes longer to produce
+    // its first frame than the handshake takes, and running them one after the
+    // other threw away the first ~150 ms of speech — most of a short utterance.
+    startPcmCapture().catch((e) => {
+      appLog.e('VoiceInput', 'pcm capture failed', e)
+      fail(i18n.global.t('chat.voice.micUnavailable'))
+      cancel()
+    })
     sock.onerror = () => {
       if (ws !== sock) return
       fail(i18n.global.t('chat.voice.connectFailed'))
@@ -650,20 +679,6 @@ export function useVoiceInput() {
     completeTarget()
   }
 
-  /**
-   * How long the capture keeps running after the user lets go.
-   *
-   * The microphone pipeline sits between the air and `onFrame`: the device's own
-   * buffer, echo cancellation / noise suppression, the resampler into the
-   * worklet, the worklet's partial 100 ms frame and the message queue. Tearing
-   * the graph down on pointer-up throws all of that away, so the recogniser
-   * hears the last syllable cut short — reported as "the last couple of
-   * characters are never recognized". The state flips to `transcribing` first,
-   * so this reads as the normal wait for the final text rather than as extra
-   * recording.
-   */
-  const RELEASE_TAIL_MS = 300
-
   async function stop() {
     stopRequested = true
     if (ws) {
@@ -672,7 +687,18 @@ export function useVoiceInput() {
       // open for the release tail below.
       state.value = 'transcribing'
       isRecording.value = false
-      await new Promise((resolve) => window.setTimeout(resolve, RELEASE_TAIL_MS))
+      // Hand over what the gate and the worklet are still holding, then let the
+      // microphone pipeline drain. The microphone chain (device buffer, echo
+      // cancellation, resampler, worklet) delays the audio, so tearing the graph
+      // down on release cuts the last syllable — and 150 ms of a missing ending
+      // already turns a two-character utterance into nothing. The wait is
+      // measured from the last speech frame, not from the release, so it covers
+      // however long this device's pipeline is.
+      if (pcm) {
+        pcm.flush()
+        const wait = pcm.tailWaitMs()
+        if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait))
+      }
       // A cancel (or a finalize triggered by the engine) may have torn this
       // recording down while the tail was running.
       if (ws !== sock) return
@@ -681,8 +707,8 @@ export function useVoiceInput() {
       if (sock.readyState === WebSocket.OPEN) {
         sock.send(JSON.stringify({ type: 'end' }))
       } else if (sock.readyState === WebSocket.CONNECTING) {
-        // Nothing was captured yet; abort the handshake instead of waiting for
-        // it to open and then starting capture on a released button.
+        // The handshake never finished, so nothing was sent; abort it instead
+        // of letting it open on a released button.
         sock.close()
       }
       stopMediaStream()

@@ -428,7 +428,10 @@ describe('useVoiceInput', () => {
     })
 
     const workletNode = {
-      port: { onmessage: null as ((e: { data: ArrayBuffer }) => void) | null },
+      port: {
+        onmessage: null as ((e: { data: ArrayBuffer }) => void) | null,
+        postMessage: vi.fn(),
+      },
       connect: vi.fn(),
       disconnect: vi.fn(),
     }
@@ -503,12 +506,38 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
+  // The graph used to be built only after the socket opened, so the handshake
+  // sat in front of the microphone: the first ~150 ms of speech — most of a
+  // two-character utterance — was never captured at all.
+  it('captures while the socket is still connecting and sends that audio once it opens', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv(0) // CONNECTING
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    const frame = new Int16Array(160).fill(8000).buffer
+    env.workletNode.port.onmessage!({ data: frame })
+    // There is no socket to write to yet; the frame must not be dropped.
+    expect(env.getWS()!.send).not.toHaveBeenCalled()
+
+    env.getWS()!.readyState = 1
+    env.getWS()!.onopen!()
+    const sent = env.getWS()!.send.mock.calls.map((c) => c[0])
+    expect(JSON.parse(sent[0] as string).type).toBe('start')
+    expect(sent[1]).toBe(frame)
+    v.cancel()
+  })
+
   // The last couple of characters were being lost because the capture graph was
   // torn down the instant the button was released: the audio still inside the
   // microphone pipeline (device buffer, echo cancellation, the worklet's partial
   // frame) never reached the socket, so the recogniser heard the last syllable
-  // cut short. The tail keeps the graph alive briefly after release.
-  it('keeps capturing briefly after release so the tail still in the pipeline is sent', async () => {
+  // cut short. The tail keeps the graph alive until that audio has come through.
+  it('keeps capturing after release until the last speech frame has drained', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
@@ -519,13 +548,16 @@ describe('useVoiceInput', () => {
     env.getWS()!.onopen!()
     await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
 
+    // A word that has already been heard: this is what starts the drain clock.
+    env.workletNode.port.onmessage!({ data: new Int16Array(160).fill(8000).buffer })
+
     const stopping = v.stop()
     // The UI must read as "transcribing" straight away, not as still recording.
     expect(v.state.value).toBe('transcribing')
     expect(v.isRecording.value).toBe(false)
 
-    // A frame that was already inside the pipeline when the button came up is
-    // still forwarded, and the end marker has not been sent yet.
+    // Audio that reaches the graph while the drain runs still goes out, and the
+    // end marker has not been sent yet.
     const frame = new Int16Array(160).fill(8000).buffer
     env.workletNode.port.onmessage!({ data: frame })
     expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
@@ -541,7 +573,36 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
-  it('stop() while the socket is still connecting releases the mic and never starts capture', async () => {
+  // A pause before letting go means the pipeline is already empty: waiting for
+  // a tail that is not there would only delay the transcript.
+  it('does not wait when the user paused before releasing', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    vi.useFakeTimers()
+    try {
+      env.workletNode.port.onmessage!({ data: new Int16Array(160).fill(8000).buffer })
+      // Two seconds of silence later the graph has nothing left to flush.
+      vi.advanceTimersByTime(2000)
+      const stopping = v.stop()
+      await vi.advanceTimersByTimeAsync(0)
+      await stopping
+      const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
+      expect(JSON.parse(last)).toEqual({ type: 'end' })
+    } finally {
+      vi.useRealTimers()
+    }
+    v.cancel()
+  })
+
+  it('stop() while the socket is still connecting releases the mic without sending anything', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv(0) // CONNECTING
@@ -553,10 +614,9 @@ describe('useVoiceInput', () => {
 
     expect(env.track.stop).toHaveBeenCalled()
 
-    // The socket opens only after the button was released: it must not start
-    // capturing (the mic indicator stays off) and must not send a start frame.
+    // The socket opens only after the button was released: it must not send a
+    // start frame, and the microphone is already closed.
     env.getWS()!.onopen!()
-    expect(env.workletNode.port.onmessage).toBeNull()
     expect(env.getWS()!.send).not.toHaveBeenCalled()
     expect(v.state.value).toBe('idle')
     expect(v.isRecording.value).toBe(false)

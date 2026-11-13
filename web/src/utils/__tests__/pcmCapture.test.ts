@@ -21,13 +21,13 @@ interface FakeNode {
 let createdFilters: FakeNode[] = []
 /** Set to make the fake context refuse to build a biquad (degradation path). */
 let failBiquad = false
-let workletNode: { port: { onmessage: ((e: { data: ArrayBuffer }) => void) | null }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
+let workletNode: { port: { onmessage: ((e: { data: ArrayBuffer }) => void) | null; postMessage: ReturnType<typeof vi.fn> }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
 let audioCtx: { state: string; sampleRate: number; destination: unknown; audioWorklet: { addModule: ReturnType<typeof vi.fn> }; createMediaStreamSource: ReturnType<typeof vi.fn>; createBiquadFilter: ReturnType<typeof vi.fn>; resume: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 
 function installAudioFakes() {
   createdFilters = []
   failBiquad = false
-  workletNode = { port: { onmessage: null }, connect: vi.fn(), disconnect: vi.fn() }
+  workletNode = { port: { onmessage: null, postMessage: vi.fn() }, connect: vi.fn(), disconnect: vi.fn() }
   const source = { connect: vi.fn(), disconnect: vi.fn() }
 
   vi.stubGlobal('AudioWorkletNode', class {
@@ -298,6 +298,50 @@ describe('PcmStreamer', () => {
   it('can be stopped before it ever started', () => {
     const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
     expect(() => s.stop()).not.toThrow()
+  })
+
+  it('hands over the withheld frames when the take ends', async () => {
+    // A word trailing off below the threshold is real audio: the gate withheld
+    // it because it looked like silence, and the release is the last chance to
+    // send it. Dropping it here is the "last characters are never recognised"
+    // report.
+    const onFrame = vi.fn()
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame })
+    await s.start()
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    expect(onFrame).not.toHaveBeenCalled()
+    s.flush()
+    expect(onFrame).toHaveBeenCalledTimes(2)
+    // ...and the worklet is asked for the frame it has not filled yet.
+    expect(workletNode.port.postMessage).toHaveBeenCalledWith('flush')
+    s.stop()
+  })
+
+  it('asks for the tail only while the last speech frame is recent', async () => {
+    // The wait runs through the gate's own hangover — it is still forwarding
+    // what it considers the end of the word — plus a margin for the frame in
+    // flight. It is measured from the last frame the gate heard as speech, so a
+    // user who paused before letting go is already drained.
+    const s = new PcmStreamer({
+      stream,
+      tuning: { ...VOICE_TUNING_DEFAULTS, hangoverMs: 600 },
+      onFrame: vi.fn(),
+    })
+    await s.start()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    expect(s.tailWaitMs()).toBe(0) // nothing heard yet
+
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    expect(s.tailWaitMs()).toBe(750)
+
+    vi.advanceTimersByTime(250)
+    expect(s.tailWaitMs()).toBe(500)
+
+    vi.advanceTimersByTime(1000)
+    expect(s.tailWaitMs()).toBe(0)
+    s.stop()
   })
 
   it('does not build a graph when it was stopped while the worklet loaded', async () => {
