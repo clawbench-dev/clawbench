@@ -12,6 +12,8 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { syntaxHighlighting } from '@codemirror/language'
 import { buildLangExtension } from '@/utils/codeEditorLang'
 import { codeHighlightStyle } from '@/utils/codeHighlightStyle'
+import { registerVoiceHost } from '@/utils/voiceTarget'
+import { codeMirrorVoiceHost } from '@/utils/codeMirrorVoice'
 
 /**
  * Editable CodeMirror surface for the scheduled task's gating script.
@@ -34,6 +36,10 @@ const hostRef = ref(null)
 // CodeMirror's state identity must not be proxied by Vue's ref(), or undo/redo
 // transactions fail with a "doesn't start from the previous state" RangeError.
 const view = shallowRef(null)
+// Dictation writes through a registered host instead of the DOM: focus sits on
+// `.cm-content` (contenteditable), and only a real transaction reaches the
+// document, the undo history and the `update:modelValue` listener.
+let unregisterVoiceHost = null
 const langCompartment = new Compartment()
 const editableCompartment = new Compartment()
 // The placeholder is a localized string, so it must follow a locale switch
@@ -114,10 +120,16 @@ onMounted(() => {
     parent: hostRef.value,
     state: EditorState.create({ doc: props.modelValue || '', extensions: buildExtensions() }),
   })
+  const editor = view.value
+  unregisterVoiceHost = registerVoiceHost(editor.dom, () =>
+    props.disabled ? null : codeMirrorVoiceHost(editor),
+  )
   mountLang()
 })
 
 onUnmounted(() => {
+  unregisterVoiceHost?.()
+  unregisterVoiceHost = null
   view.value?.destroy()
   view.value = null
 })

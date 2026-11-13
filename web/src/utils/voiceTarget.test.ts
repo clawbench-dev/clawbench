@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   createVoiceTarget,
   findVoiceTarget,
+  registerVoiceHost,
   removeVoiceText,
   textBeforeTarget,
   writeVoiceText,
+  type VoiceTargetHost,
 } from './voiceTarget'
 
 function textarea(value: string, start = value.length, end = start): HTMLTextAreaElement {
@@ -128,5 +130,84 @@ describe('voiceTarget', () => {
   it('reports the text in front of the caret as recognition context', () => {
     const el = textarea('前中间后', 3)
     expect(textBeforeTarget(createVoiceTarget(el)!)).toBe('前中间')
+  })
+
+  it('caps the recognition context so a whole file is never uploaded', () => {
+    const el = textarea(`${'x'.repeat(5000)}尾巴`, 5002)
+    expect(textBeforeTarget(createVoiceTarget(el)!)).toHaveLength(200)
+  })
+
+  /**
+   * CodeMirror and friends: focus sits on a contenteditable child, so the only
+   * way in is a host registered for the editor box. This fake stands in for
+   * that editor — the point is that the caret arithmetic works against it.
+   */
+  function registeredEditor(initial: string, caret = initial.length) {
+    const container = document.createElement('div')
+    container.className = 'cm-editor'
+    const content = document.createElement('div')
+    // jsdom does not implement the `contentEditable` property, so the attribute
+    // has to be set explicitly for the div to be focusable here.
+    content.setAttribute('contenteditable', 'true')
+    container.appendChild(content)
+    document.body.appendChild(container)
+    let doc = initial
+    let sel = { from: caret, to: caret }
+    const host: VoiceTargetHost = {
+      read: () => doc,
+      range: () => sel,
+      focused: () => document.activeElement === content,
+      replace: (from, to, text) => {
+        doc = doc.slice(0, from) + text + doc.slice(to)
+        sel = { from: from + text.length, to: from + text.length }
+        return true
+      },
+      select: (from, to) => { sel = { from, to } },
+      alive: () => container.isConnected,
+    }
+    const unregister = registerVoiceHost(container, () => host)
+    return { container, content, unregister, doc: () => doc, selection: () => sel }
+  }
+
+  it('writes into a registered editor at its caret, and cancels back out', () => {
+    const editor = registeredEditor('const a = 1\n')
+    const t = createVoiceTarget(editor.content)!
+    // The editor box is the anchor (the pill must not hug the text flow).
+    expect(t.el).toBe(editor.container)
+
+    writeVoiceText(t, '// 注释')
+    expect(editor.doc()).toBe('const a = 1\n// 注释')
+
+    // Streaming partials rewrite the same range instead of appending.
+    writeVoiceText(t, '// 注释完成')
+    expect(editor.doc()).toBe('const a = 1\n// 注释完成')
+
+    removeVoiceText(t)
+    expect(editor.doc()).toBe('const a = 1\n')
+    expect(editor.selection()).toEqual({ from: 12, to: 12 })
+  })
+
+  it('finds a registered editor from the focused node inside it', () => {
+    const editor = registeredEditor('abc', 1)
+    editor.content.focus()
+    expect(findVoiceTarget()?.el).toBe(editor.container)
+  })
+
+  it('ignores a registered editor that reports itself unavailable', () => {
+    const container = document.createElement('div')
+    const content = document.createElement('div')
+    content.setAttribute('contenteditable', 'true')
+    container.appendChild(content)
+    document.body.appendChild(container)
+    // Read-only / disabled: the factory answers null.
+    registerVoiceHost(container, () => null)
+    expect(createVoiceTarget(content)).toBeNull()
+  })
+
+  it('stops resolving once the editor unregisters', () => {
+    const editor = registeredEditor('abc')
+    expect(createVoiceTarget(editor.content)).not.toBeNull()
+    editor.unregister()
+    expect(createVoiceTarget(editor.content)).toBeNull()
   })
 })

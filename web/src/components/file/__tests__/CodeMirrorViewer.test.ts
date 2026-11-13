@@ -47,6 +47,7 @@ const fetchSymbolsMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useCodeSymbols.ts', () => ({ fetchCodeSymbols: (...a: unknown[]) => fetchSymbolsMock(...a) }))
 
 import CodeMirrorViewer from '../CodeMirrorViewer.vue'
+import { findVoiceTarget, removeVoiceText, writeVoiceText } from '@/utils/voiceTarget'
 import { diffMarkers } from '@/composables/useMarkdownDiff.ts'
 import { syncMarkersFor } from '@/composables/useFileRefresh.ts'
 import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
@@ -92,6 +93,34 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     const wrapper = mountViewer({ editable: true })
     expect(wrapper.find('.code-editor-actions').exists()).toBe(true)
     expect(wrapper.classes()).not.toContain('cm-readonly')
+  })
+
+  // Voice dictation: focus lands on the contenteditable `.cm-content`, so the
+  // editor has to be reachable as a voice target through its registration —
+  // otherwise F9 silently falls back to the "no field" capsule.
+  it('takes dictation at the caret while editing', async () => {
+    const wrapper = mountViewer({ editable: true, content: 'const a = 1\n' })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 5 } })
+    view.focus()
+
+    const target = findVoiceTarget()
+    expect(target).not.toBeNull()
+    writeVoiceText(target!, '// hi')
+    expect(view.state.doc.toString()).toBe('const// hi a = 1\n')
+
+    // Cancelling must put the document back exactly as it was.
+    removeVoiceText(target!)
+    expect(view.state.doc.toString()).toBe('const a = 1\n')
+  })
+
+  it('does not take dictation in read-only browse mode', async () => {
+    const wrapper = mountViewer({ content: 'const a = 1\n' })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.focus()
+    expect(findVoiceTarget()).toBeNull()
   })
 
   it('emits save with current content on save button click', async () => {

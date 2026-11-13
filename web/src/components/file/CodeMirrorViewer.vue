@@ -58,6 +58,8 @@ import { LINE_FLASH_MS, flashElement } from '@/utils/domFlash'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
 import { parseGoToLine } from '@/utils/goToLine.ts'
+import { registerVoiceHost } from '@/utils/voiceTarget'
+import { codeMirrorVoiceHost } from '@/utils/codeMirrorVoice'
 
 const props = defineProps({
     file: Object,
@@ -86,6 +88,10 @@ const editorHost = ref(null)
 // "transaction doesn't start from the previous state" RangeError that silently
 // breaks the Undo/Redo buttons.
 const view = shallowRef(null)
+// Voice dictation reaches this editor through a registered host (see
+// utils/codeMirrorVoice): focus lands on `.cm-content`, which is a
+// contenteditable div, so `voiceTarget` cannot splice text in on its own.
+let unregisterVoiceHost = null
 const diffLineMap = ref(new Map())
 
 // ─── Change navigation (prev/next over the markers) ───
@@ -633,6 +639,12 @@ onMounted(() => {
         parent: editorHost.value,
         state: EditorState.create({ doc: props.content || '', extensions: buildAllExtensions() }),
     })
+    // Read-only browsing must not accept dictation: the factory answers null
+    // and voiceTarget falls back to the capsule.
+    const editor = view.value
+    unregisterVoiceHost = registerVoiceHost(editor.dom, () =>
+        props.editable ? codeMirrorVoiceHost(editor) : null,
+    )
     updateInputMode()
     savedSnapshot = props.content || ''
     recomputeOverlay()
@@ -663,6 +675,8 @@ onUnmounted(() => {
     if (selDebounceTimer) clearTimeout(selDebounceTimer)
     sticky.teardown()
     if (view.value) unregisterEditorView(view.value.scrollDOM)
+    unregisterVoiceHost?.()
+    unregisterVoiceHost = null
     view.value?.destroy()
     view.value = null
 })

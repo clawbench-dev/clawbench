@@ -130,6 +130,7 @@ const {
   cancel,
   discardDraft: discardVoiceDraft,
   shortcutKey,
+  targetRect,
 } = useVoiceInput()
 
 /* ── elapsed timer (only while recording) ─────────────────────────── */
@@ -174,12 +175,18 @@ function placePill() {
   // Always just above the field itself — for the chat composer that means it
   // floats over the toolbar row, which is fine: it is the closest spot to the
   // line being written, and the pill never takes clicks.
-  const r = el.getBoundingClientRect()
+  //
+  // Editors that know where the caret is (CodeMirror) report that line instead
+  // of their whole box: a file editor fills the screen, and its top edge is
+  // nowhere near the text being written.
+  const r = targetRect() ?? el.getBoundingClientRect()
   const width = pillEl.value?.offsetWidth || 120
   const height = pillEl.value?.offsetHeight || 34
   const gap = 6
   let top = r.top - height - gap
-  if (top < 8) top = r.bottom + gap
+  // No room above (or the anchor is taller than the viewport): sit below it,
+  // but never past the bottom edge — an off-screen "已写入" badge is no badge.
+  if (top < 8) top = Math.min(r.bottom + gap, window.innerHeight - height - 8)
   const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
   pillPos.value = { top, left }
 }
@@ -287,15 +294,26 @@ function placeFab() {
   fabPos.value = { top, right: 12 }
 }
 
+/**
+ * Focus can land on a node *inside* a writable surface — CodeMirror focuses a
+ * contenteditable `.cm-content`, not the editor box. Resolving the target once
+ * here keeps the mic anchored to the editor and stops the per-scroll
+ * positioning pass from rebuilding a target (which reads the whole document).
+ */
+function focusAnchor(el: HTMLElement): HTMLElement {
+  return createVoiceTarget(el)?.el ?? el
+}
+
 function onFocusIn(e: FocusEvent) {
-  focusEl.value = e.target as HTMLElement
+  focusEl.value = focusAnchor(e.target as HTMLElement)
   placeFab()
 }
 function onFocusOut() {
   // activeElement is already the next element by the time this fires, but give
   // the browser a tick for the case where focus lands on a freshly mounted node.
   window.setTimeout(() => {
-    focusEl.value = (document.activeElement as HTMLElement | null) ?? null
+    const next = (document.activeElement as HTMLElement | null) ?? null
+    focusEl.value = next ? focusAnchor(next) : null
     placeFab()
   }, 0)
 }

@@ -212,6 +212,18 @@ export function useVoiceInput() {
   const currentTuning = () => tuning
 
   /**
+   * Where the status pill should sit, in viewport coordinates.
+   *
+   * A host that knows its caret (CodeMirror) reports that line; a plain field
+   * is anchored by its box. Null once the target is released — the overlay
+   * falls back to the element it already holds.
+   */
+  function targetRect(): DOMRect | null {
+    if (!target) return null
+    return target.host.rect?.() ?? target.el.getBoundingClientRect()
+  }
+
+  /**
    * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
    * protocol by provider capability, and only the engines that decode PCM
    * (Doubao, Alibaba Cloud Paraformer, Tencent Cloud) are reached that way —
@@ -773,11 +785,12 @@ export function useVoiceInput() {
 
   /**
    * A field can disappear mid-recording (the chat box is re-keyed when the
-   * composer is rebuilt). Writing into a detached node would swallow the
-   * transcript, so the text moves to the capsule instead of being lost.
+   * composer is rebuilt, an editor is unmounted). Writing into a detached
+   * surface would swallow the transcript, so the text moves to the capsule
+   * instead of being lost.
    */
   function dropDeadTarget(): void {
-    if (!target || target.el.isConnected) return
+    if (!target || target.host.alive()) return
     const carried = target.applied
     target = null
     targetEl.value = null
@@ -845,5 +858,6 @@ export function useVoiceInput() {
     setInputText,
     shortcutKey,
     currentTuning,
+    targetRect,
   }
 }
