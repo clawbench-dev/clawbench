@@ -9,6 +9,7 @@
         :disabled="busy" @click="toggleFlagged">
         <Star :class="{ 'is-on': detail?.flagged }" />
       </button>
+      <PanelWindowControls />
     </div>
 
     <!-- One icon row, matching every other quote entry point. ActionBar shows the
@@ -135,6 +136,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { ArrowLeft, Forward, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
 import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'

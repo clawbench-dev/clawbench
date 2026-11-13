@@ -289,6 +289,10 @@ export default {
     hideLeftPane: 'Hide left panel',
     hideChat: 'Hide chat area',
     showChat: 'Show chat area',
+    minimizePanel: 'Minimize panel',
+    maximizePanel: 'Maximize panel',
+    restorePanel: 'Restore panel',
+    closePanel: 'Close panel',
   },
   forge: {
     type: { issues: 'Issues', prs: 'PRs', pipelines: 'Pipelines' },

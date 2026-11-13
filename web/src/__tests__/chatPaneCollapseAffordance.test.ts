@@ -139,28 +139,20 @@ describe('chat pane collapse affordance', () => {
     expect(src).not.toContain('data-action="hide-chat"')
   })
 
-  it('offers a full-size maximize button in the file header, wired to the same handler', () => {
-    // The divider handle is a ~14px target on a 6px line that only appears
-    // under the cursor — hard to hit and easy to trigger while aiming at the
-    // scrollbar. The header button is the same operation with a normal target,
-    // placed next to the refresh button the user already reaches for. Both must
-    // route to ONE handler, or the two entry points drift apart.
-    const app = readWebFile(APP)
-    expect(app).toContain('@toggle-maximize-pane="toggleChatPane"')
+  it('offers the maximize affordance from the shared panel window controls', () => {
+    // The file viewer used to carry its own maximize button. It now uses the
+    // same three-button cluster every panel header gets, so the operation has
+    // one implementation and one home instead of one per panel.
+    const controls = readWebFile('src/components/common/PanelWindowControls.vue')
+    expect(controls).toContain('@click.stop="toggleChatPane"')
+    expect(controls).toContain('chatCollapsed')
+    expect(controls).toContain("t('nav.maximizePanel')")
+    expect(controls).toContain("t('nav.restorePanel')")
 
+    // The file header's private copy is gone, replaced by the shared cluster.
     const header = readWebFile('src/components/file/FileHeader.vue')
-    expect(header).toContain('data-action="toggle-maximize-pane"')
-    expect(header).toContain("@click.stop=\"emit('toggleMaximizePane')\"")
-    // Wide screen only: narrow layout has no split to maximize. Whether it fits
-    // inline, or gets folded into the More menu, is ActionBar's decision.
-    expect(header).toContain('v-if="isWideScreen"')
-    expect(header).toContain('data-toolbar-id="maximize"')
-
-    // The event must be forwarded through both wrapper layers, or the click
-    // dies at FileHeader and App.vue never sees it.
-    for (const wrapper of ['src/components/file/FileViewer.vue', 'src/components/file/FileOverlay.vue']) {
-      expect(readWebFile(wrapper), `${wrapper} must forward the event`).toContain("@toggle-maximize-pane=\"emit('toggleMaximizePane')\"")
-    }
+    expect(header).not.toContain('data-action="toggle-maximize-pane"')
+    expect(header).toMatch(/<PanelWindowControls\b/)
   })
 
   it('keeps the divider handle as the discoverable entry point', () => {

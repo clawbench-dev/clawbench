@@ -100,7 +100,15 @@
             @collapse="onSplitCollapse"
           >
             <template #left>
-              <div class="col-left" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
+              <div class="col-left" :class="{ 'col-left--chrome': isWideScreen }" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
+                <!-- Fallback window controls for a panel that has no header in
+                     its current state (file viewer with no file open, git
+                     history in a non-repo, mail with no account). Hidden by
+                     CSS as soon as the ACTIVE panel renders its own cluster;
+                     the hidden, still-mounted panels do not count. -->
+                <div v-if="isWideScreen" class="panel-fallback-controls">
+                  <PanelWindowControls />
+                </div>
                 <!-- File Manager Tab (directory browsing only) -->
                 <TabPanel tabId="browse" :activeTab="leftPanelActive" :noHeader="true">
                   <div class="browse-panel">
@@ -171,7 +179,6 @@
                       @quote-in-chat="handleFileQuoteInChat"
                       @set-as-background="handleSetAsBackground"
                       @open-search="openFileSearch"
-                      @toggle-maximize-pane="toggleChatPane"
                     />
                     <div v-else class="view-panel-empty" :class="{ 'has-recent': recentFileEntries.length }">
                       <template v-if="recentFileEntries.length">
@@ -657,6 +664,7 @@ import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontC
 import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
+import PanelWindowControls from './components/common/PanelWindowControls.vue'
 import EmptyState from './components/common/EmptyState.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
 import InertPathPicker from './components/file/InertPathPicker.vue'
@@ -832,6 +840,7 @@ import {
   setSplitRatio,
   setLeftCollapsed,
   setChatCollapsed,
+  toggleChatPane,
   isChatPanelVisible,
   registerWideScreenCallbacks,
   WIDE_SCREEN_PRIMARY_TABS,
@@ -1288,17 +1297,9 @@ function onSplitCollapse(side: 'left' | 'right') {
 // width. Hiding routes focus to the left pane so the user keeps working there
 // (chat shortcuts are intentionally inactive while hidden).
 //
-// ALSO the handler behind the file header's maximize button. That button is the
-// same operation — "give the left pane the whole width" — reached from the
-// place the user is already looking, instead of the collapse handle that only
-// appears when the cursor is over the divider. Both call this one function so
-// the mutual-exclusion guard (`setChatCollapsed` re-opens the left pane) cannot
-// diverge between them.
-function toggleChatPane() {
-  const hiding = !chatCollapsed.value
-  setChatCollapsed(hiding)
-  if (hiding) setActivePane(PANE_LEFT)
-}
+// The single implementation lives in useWideScreenLayout (shared with the
+// panel header's maximize button), so the mutual-exclusion guard
+// (`setChatCollapsed` re-opens the left pane) cannot diverge between them.
 
 // Clicking into the left pane must also move keyboard focus out of any text
 // field (e.g. the chat input on the right). Otherwise the focused INPUT/TEXTAREA
@@ -5190,11 +5191,34 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+/* Fallback window controls: a panel whose current state has no header (empty
+   file viewer, non-repo history, no mail account) still needs the three
+   buttons. Sits at the panel's top-right in the same 36px band a header would
+   occupy; components.css hides it as soon as the ACTIVE panel renders its own
+   cluster. */
+.panel-fallback-controls {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: var(--header-height);
+    z-index: 4;
+}
+
 /* Wide-screen split panes — positioned ancestors for the absolute TabPanels */
 .col-left,
 .col-right {
     position: relative;
     height: 100%;
+}
+
+/* Width reserved at the right end of every panel header for the three panel
+   window controls (components/common/PanelWindowControls.vue). Declared here
+   because this is the element that only exists on a wide screen: on narrow
+   layouts the class is absent, the variable falls back to 0px, and each header
+   keeps its own right padding. The value is 3 × 26dp — keep it in sync with
+   the component's button width. */
+.col-left--chrome {
+    --panel-controls-w: calc(52 * var(--dp));
 }
 .col-right {
     display: flex;

@@ -5,6 +5,7 @@
         <ArrowLeft />
       </button>
       <div class="mail-compose__title">{{ title }}</div>
+      <PanelWindowControls />
     </div>
 
     <div class="mail-compose__fields">
@@ -94,6 +95,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { ArrowLeft, Paperclip, X } from 'lucide-vue-next'
 import { apiPatch, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'

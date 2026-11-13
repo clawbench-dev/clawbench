@@ -321,6 +321,31 @@ export function setSplitRatio(ratio: number) {
   writePanelState('splitRatio', splitRatio.value)
 }
 
+/**
+ * Show/hide the chat pane. The single implementation behind every entry point
+ * (divider handle, right-edge rail, the panel's maximize button), so the
+ * mutual-exclusion guard cannot diverge between them.
+ */
+export function toggleChatPane() {
+  const hiding = !chatCollapsed.value
+  setChatCollapsed(hiding)
+  if (hiding) setActivePane(PANE_LEFT)
+}
+
+/**
+ * Minimize the left panel: hide it, the same way a window minimizes to the
+ * dock. The dock tab stays where it was, so clicking it brings the panel back.
+ *
+ * Restores the chat first: `setLeftCollapsed` refuses to hide the only visible
+ * pane, so minimizing from the maximized state would otherwise be a silent
+ * no-op.
+ */
+export function minimizeLeftPanel() {
+  setChatCollapsed(false)
+  setLeftCollapsed(true)
+  setActivePane(PANE_RIGHT)
+}
+
 export function resetWideScreenState() {
   leftTab.value = 'browse'
   splitRatio.value = DEFAULT_RATIO

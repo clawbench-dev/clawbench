@@ -311,99 +311,6 @@ describe('FileHeader', () => {
     })
   })
 
-  describe('collapse / restore chat pane button', () => {
-    // The chat pane could previously only be collapsed from the divider handle
-    // that appears under the cursor: a ~14px target on a 6px line, hard to hit
-    // and easy to trigger while aiming at the scrollbar. The header button is
-    // the same operation with a full-size target, next to the refresh button
-    // the user already reaches for.
-    beforeEach(() => {
-      mockIsWideScreen.value = true
-      mockChatCollapsed.value = false
-    })
-
-    function maximizeBtn(wrapper: any) {
-      return wrapper.find('[data-action="toggle-maximize-pane"]')
-    }
-
-    it('sits immediately after the refresh button', () => {
-      const wrapper = mountHeader()
-      const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
-      const iRefresh = titles.indexOf('Refresh')
-      const iMax = titles.findIndex(t => t === 'Hide chat area')
-      expect(iRefresh).toBeGreaterThan(-1)
-      expect(iMax, 'the chat-toggle button must be in the inline toolbar').toBeGreaterThan(-1)
-      expect(iMax).toBe(iRefresh + 1)
-    })
-
-    it('emits toggleMaximizePane when clicked', async () => {
-      const wrapper = mountHeader()
-      await maximizeBtn(wrapper).trigger('click')
-      expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
-    })
-
-    it('offers to hide the chat while it is visible', () => {
-      const wrapper = mountHeader()
-      const btn = maximizeBtn(wrapper)
-      expect(btn.attributes('title')).toBe('Hide chat area')
-      // PanelRightClose is the "the right pane goes away" glyph. It must NOT
-      // be Maximize2: this same toolbar has a Maximize2 for images ("view full
-      // size"), and two identical glyphs three buttons apart meaning different
-      // things is unreadable (the reported bug).
-      expect(btn.html()).toContain('lucide-panel-right-close')
-      expect(btn.html()).not.toContain('lucide-maximize-2')
-    })
-
-    it('offers to show the chat once it is collapsed', async () => {
-      mockChatCollapsed.value = true
-      const wrapper = mountHeader()
-      const btn = maximizeBtn(wrapper)
-      expect(btn.attributes('title')).toBe('Show chat area')
-      expect(btn.html()).toContain('lucide-panel-right-open')
-      expect(btn.classes()).toContain('active')
-      // Same handler either way: the button toggles.
-      await btn.trigger('click')
-      expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
-    })
-
-    it('never shares a glyph with the image full-size button', () => {
-      // The regression this guards: both buttons used Maximize2, so an image
-      // showed two identical icons for two unrelated actions.
-      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
-      const chatBtn = maximizeBtn(wrapper)
-      const imageBtn = wrapper.findAll('.header-actions > .file-header-btn')
-        .find(b => (b.attributes('title') ?? '') === 'View image')
-      expect(imageBtn, 'the image full-size button must still exist').toBeTruthy()
-      expect(imageBtn!.html()).toContain('lucide-maximize-2')
-      expect(chatBtn.html()).not.toContain('lucide-maximize-2')
-    })
-
-    it('is absent on a narrow screen, where there is no split to maximize', () => {
-      mockIsWideScreen.value = false
-      const wrapper = mountHeader()
-      expect(maximizeBtn(wrapper).exists()).toBe(false)
-    })
-
-    it('is never lost when the row runs out of room', async () => {
-      // ActionBar folds the tail of the row into its menu, so a narrow pane can
-      // never make this action disappear. jsdom has no layout, so the folding
-      // itself is covered by ActionBar's own test; here we only pin that the
-      // button exists and carries a label for the menu entry to use.
-      const wrapper = mountHeader()
-      const btn = maximizeBtn(wrapper)
-      expect(btn.exists()).toBe(true)
-      expect(btn.find('.action-label').exists()).toBe(true)
-    })
-
-    it('is offered even when the file has no text content', () => {
-      // Unlike refresh (which needs something to re-fetch), maximizing is a
-      // layout action on the pane — an image or an empty buffer can still be
-      // given the whole width.
-      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
-      expect(maximizeBtn(wrapper).exists()).toBe(true)
-    })
-  })
-
   describe('permanent More-menu actions', () => {
     // The 11 low-frequency / destructive actions must never occupy toolbar
     // space, regardless of how wide the header is. useToolbarOverflow is mocked
@@ -1214,29 +1121,38 @@ describe('FileHeader — project-external badge', () => {
   })
 })
 
-describe('FileHeader — overlay close button', () => {
-  // jsdom does not apply SFC <style>, so both geometry facts are asserted
-  // against the source. They are deliberately separate: a filled block with a
-  // square corner reads as a UI slab rather than a button, and an un-nudged
-  // block sits 0.5px above the bar's true middle (the bar's 1px bottom border
-  // is inside its border-box, so flex centring happens in a 35px content box).
-  // Bare 14px glyphs hide that half-pixel; a 26px red block does not.
-  const src = readFileSync(resolve(__dirname, '../../../components/file/FileHeader.vue'), 'utf8')
+describe('FileHeader — panel window controls', () => {
+  function mountForControls() {
+    return mount(FileHeader, {
+      props: {
+        file: { name: 'main.ts', path: '/tmp/main.ts', content: 'const x = 1' },
+        viewMode: 'source',
+        tocOpen: false,
+        searchOpen: false,
+        wordWrap: true,
+        showLineNumbers: true,
+        stickyScroll: true,
+        overlayOpen: false,
+      },
+      global: { plugins: [i18n] },
+    })
+  }
 
-  it('uses the smallest radius token rather than square corners', () => {
-    const rule = src.match(/\.overlay-close-btn\s*\{([^}]*)\}/)
-    expect(rule, '.overlay-close-btn rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/border-radius:\s*var\(--radius-xs\)/)
-    expect(rule![1]).not.toMatch(/border-radius:\s*0\b/)
+  it('shows three cells here (minimize / maximize / close) and close emits overlayClose', async () => {
+    mockIsWideScreen.value = true
+    const wrapper = mountForControls()
+    const cells = wrapper.findAll('.panel-window-controls .panel-control')
+    expect(cells).toHaveLength(3)
+
+    await cells[2].trigger('click')
+    expect(wrapper.emitted('overlayClose')).toHaveLength(1)
   })
 
-  it('nudges the block back onto the bar centre', () => {
-    const rule = src.match(/\.overlay-close-btn\s*\{([^}]*)\}/)
-    expect(rule, '.overlay-close-btn rule must exist').not.toBeNull()
-    // 0.5px is half of the bar's literal 1px border — not a --dp-derived value,
-    // because the border stays 1px at every UI scale.
-    expect(rule![1]).toMatch(/position:\s*relative/)
-    expect(rule![1]).toMatch(/top:\s*0\.5px/)
+  it('reserves room for all three cells in the header row', () => {
+    const src = readFileSync(resolve(__dirname, '../../../components/file/FileHeader.vue'), 'utf8')
+    const rule = src.match(/\.file-header-bar\s*\{([^}]*)\}/)
+    expect(rule, '.file-header-bar rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/--panel-controls-w:\s*calc\(78\s*\*\s*var\(--dp\)\)/)
   })
 })
 

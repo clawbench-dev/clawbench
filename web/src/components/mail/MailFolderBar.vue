@@ -144,6 +144,11 @@
       />
       <button class="mail-bar__search-cancel" @click="closeSearch">{{ t('common.cancel') }}</button>
     </div>
+
+    <!-- Sits on the mail bar as a whole, not on either row: search replaces the
+         toolbar row in place, and the controls must not move or blink when it
+         does. -->
+    <PanelWindowControls />
   </div>
 </template>
 
@@ -167,6 +172,7 @@
 import { computed, nextTick, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ActionBar from '@/components/common/ActionBar.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import {
   Archive,

@@ -1,6 +1,7 @@
 <template>
   <div class="notif-panel">
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
+    <div class="panel-head-row">
     <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
         <Inbox class="crumb-icon" :size="14" />
@@ -27,6 +28,8 @@
         <span class="action-label">{{ t('notifications.clear') }}</span>
       </button>
     </ActionBar>
+    <PanelWindowControls />
+    </div>
 
     <!-- Filters: three dropdowns on one row (project / type / time). -->
     <div class="notif-filters">
@@ -194,6 +197,7 @@ import {
 import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'

@@ -42,36 +42,9 @@
         <span class="action-label">{{ t('nav.refresh') }}</span>
       </RefreshButton>
 
-      <!-- Collapse / restore the chat pane (wide screen only).
-           The pre-existing affordance is the collapse handle that appears on
-           the split divider under the cursor — a ~14px target on a 6px-wide
-           line, which is both hard to hit and easy to trigger by accident while
-           aiming at the scrollbar. This button is a full-size target in the
-           place the user is already looking, and does the same thing, so the
-           divider handle stays as the discoverable one.
-
-           ICON: PanelRightClose / PanelRightOpen, NOT Maximize2/Minimize2.
-           This toolbar already has a Maximize2 for images ("view full size"),
-           and the two sat three buttons apart wearing the same glyph for
-           completely different actions. Maximize2 also means "open external
-           link", "enlarge a shared screen" and "maximize the OS window"
-           elsewhere in the app — a fifth meaning is unreadable. These two
-           glyphs say what actually happens: the RIGHT pane (chat) closes or
-           opens. -->
-      <button
-        v-if="isWideScreen"
-        class="file-header-btn"
-        data-toolbar-id="maximize"
-        data-action="toggle-maximize-pane"
-        :class="{ active: chatCollapsed }"
-        @click.stop="emit('toggleMaximizePane')"
-        :title="chatCollapsed ? t('nav.showChat') : t('nav.hideChat')"
-        :aria-label="chatCollapsed ? t('nav.showChat') : t('nav.hideChat')"
-      >
-        <PanelRightOpen v-if="chatCollapsed" :size="14" />
-        <PanelRightClose v-else :size="14" />
-        <span class="action-label">{{ chatCollapsed ? t('actionLabels.showChat') : t('actionLabels.hideChat') }}</span>
-      </button>
+      <!-- Collapse / restore the chat pane used to live here. It is now the
+           panel's own maximize button (PanelWindowControls), which does the
+           same thing for every tab instead of only the file viewer. -->
 
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc" data-toolbar-id="toc" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
@@ -205,12 +178,10 @@
       </template>
     </ActionBar>
 
-    <!-- Region 3: Overlay nav (close only, always present, fixed size) -->
-    <div class="overlay-nav">
-      <button class="file-header-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
-        <X :size="14" />
-      </button>
-    </div>
+    <!-- Region 3: panel window controls (wide screen only). The close cell is
+         only offered here: it closes the open file, which is a distinct action
+         from minimizing the panel. -->
+    <PanelWindowControls closable :close-title="t('common.close')" @close="emit('overlayClose')" />
   </div>
 </template>
 
@@ -219,10 +190,11 @@ import { computed, ref, watch, inject } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen, Mail } from 'lucide-vue-next'
+import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Mail } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -252,14 +224,11 @@ const props = defineProps({
     canGoForwardFile: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat', 'toggleMaximizePane'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
-// `chatCollapsed` decides whether the maximize button reads as maximize or
-// restore, so it has to be reactive here — the pane can also be collapsed from
-// the divider handle or the settings drawer while this header is mounted.
-const { isWideScreen, chatCollapsed } = getWideScreenState()
+const { isWideScreen } = getWideScreenState()
 const { refreshFileShare, isFileShared } = useFileShare()
 
 /** The open file lives outside the project root (chat annotations may name any
@@ -562,6 +531,10 @@ function handleFileNameDragEnd() {
     align-items: center;
     gap: var(--space-2);
     height: var(--header-height);
+    /* Three cells here (minimize / maximize / close), two everywhere else —
+       see PanelWindowControls. The global padding rule reads this variable, so
+       the row reserves exactly the room the cluster takes. */
+    --panel-controls-w: calc(78 * var(--dp));
     padding: 0 var(--space-2) 0 var(--space-3);
     /* Follows the surface it sits on (same rule as every other panel header).
        A fixed `--bg-secondary` made this one header a different colour from the
@@ -661,42 +634,6 @@ function handleFileNameDragEnd() {
 /* Dropdown */
 .dropdown-wrapper {
     position: relative;
-}
-
-/* Region 3: Overlay nav — fixed size, never shrinks, always visible */
-.overlay-nav {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-}
-/* Deliberately NOT an ActionBar button: it closes the overlay view rather than
-   acting on the file, so it keeps its own filled-red shape and full 26px box
-   (the shared row rules would make it a flat 14px glyph — the row's own
-   `> button` sizing does not reach here because it is outside the bar, but the
-   `.file-header-btn` base is shared, so the size is stated explicitly). */
-.overlay-close-btn {
-    width: calc(26 * var(--dp));
-    height: calc(26 * var(--dp));
-    padding: 0;
-    background: #b91c1c;
-    /* Just a hint of rounding — a larger radius on a filled block reads as a
-       floating chip rather than a corner affordance. */
-    border-radius: var(--radius-xs);
-    color: #fff;
-    /* The bar's 1px bottom border sits inside its border-box, so flex centring
-       happens in a 35px content box and every child lands 0.5px above the bar's
-       real middle. Bare 14px glyphs hide that; a 26px filled block does not — it
-       reads as "sitting high" next to the icons. Nudge the block, not the shared
-       bar geometry (the border is a literal 1px at every UI scale, so this
-       offset does not need --dp). */
-    position: relative;
-    top: 0.5px;
-}
-@media (hover: hover) {
-    .overlay-close-btn:hover {
-        background: #991b1b;
-        color: #fff;
-    }
 }
 </style>
 

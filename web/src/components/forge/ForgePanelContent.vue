@@ -109,6 +109,7 @@
               <span class="action-label">{{ t('nav.refresh') }}</span>
             </RefreshButton>
           </ActionBar>
+          <PanelWindowControls />
         </div>
 
         <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="3">
@@ -447,6 +448,7 @@ import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/uti
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import ActionBar from '@/components/common/ActionBar.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { consumePendingForgeTarget, pendingForgeTarget } from '@/composables/useForgeNavigation'
 import { appLog } from '@/utils/appLog'
 import { startQuoteDrag, forgeItemDragPayload, pipelineDragPayload } from '@/utils/quoteDrag'

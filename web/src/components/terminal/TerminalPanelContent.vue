@@ -85,6 +85,7 @@
         <ZapIcon :size="14" />
       </button>
       </template>
+      <PanelWindowControls />
     </div>
 
     <!-- Upload progress for files dropped onto the terminal (shared state with
@@ -322,6 +323,7 @@ import { copyText, readClipboardText } from '@/utils/clipboard.ts'
 import { isCopySelectionShortcut, isPasteSelectionShortcut } from '@/utils/terminalClipboardUtils'
 import { useTerminalCopyOnSelect } from '@/composables/useTerminalCopyOnSelect'
 import ActionBar from '@/components/common/ActionBar.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'

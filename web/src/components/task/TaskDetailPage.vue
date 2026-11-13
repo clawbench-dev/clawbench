@@ -4,6 +4,7 @@
     <div class="detail-header">
       <TaskBreadcrumb />
       <RefreshButton class="header-btn refresh-btn" :loading="refreshing" :disabled="refreshing" :title="t('common.refresh')" @click="onRefresh" />
+      <PanelWindowControls />
     </div>
     <!-- Unified scrollable content: task overview + execution history in one scroll container -->
     <div ref="scrollRef" class="detail-scroll">
@@ -103,6 +104,7 @@ import { History, Pencil, Pause, Power, Square, Zap, Trash2, CheckCheck } from '
 import { useI18n } from 'vue-i18n'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import TaskOverviewTab from '@/components/task/TaskOverviewTab.vue'
 import TaskHistoryTab from '@/components/task/TaskHistoryTab.vue'
 import { useTaskTab } from '@/composables/useTaskTab'

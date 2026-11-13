@@ -6,6 +6,7 @@
       </button>
       <span class="meeting-header__title">{{ t('meeting.join.title') }}</span>
       <span class="meeting-header__spacer" />
+      <PanelWindowControls />
     </div>
 
     <div class="meeting-body">
@@ -56,6 +57,7 @@
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import { ArrowLeft } from 'lucide-vue-next'
 import { getNative } from '@/utils/clawbenchNative'
 import { useToast } from '@/composables/useToast'

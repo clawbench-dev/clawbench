@@ -41,7 +41,6 @@
             @set-as-background="(path) => emit('setAsBackground', path)"
             @quote-in-chat="(path) => emit('quoteInChat', path)"
             @open-search="emit('openSearch')"
-            @toggle-maximize-pane="emit('toggleMaximizePane')"
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
@@ -133,7 +132,6 @@ const emit = defineEmits([
   'captureScroll',
   'quoteInChat',
   'openSearch',
-  'toggleMaximizePane',
 ])
 
 const contentRef = ref(null)

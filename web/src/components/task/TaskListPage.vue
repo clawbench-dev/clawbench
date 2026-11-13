@@ -19,6 +19,7 @@
           <span class="action-label">{{ t('task.form.createTitle') }}</span>
         </button>
       </ActionBar>
+      <PanelWindowControls />
     </div>
     <div class="task-list-body">
       <div v-if="loading && tasks.length === 0" class="task-loading task-loading--skeleton">
@@ -148,6 +149,7 @@ import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
+import PanelWindowControls from '@/components/common/PanelWindowControls.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'

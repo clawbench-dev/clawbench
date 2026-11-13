@@ -37,7 +37,6 @@
       @fit-width="handleFitWidth"
       @set-as-background="(path) => emit('setAsBackground', path)"
       @quote-in-chat="(path) => emit('quoteInChat', path)"
-      @toggle-maximize-pane="emit('toggleMaximizePane')"
       @export-drawio="handleExportDrawio"
     />
 
@@ -373,7 +372,7 @@ const props = defineProps({
      *  off — the same gate OpenApiPreview uses. */
     chatQuote: { type: Boolean, default: false },
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat', 'openSearch', 'toggleMaximizePane'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat', 'openSearch'])
 
 const fileNav = useFileNavStack()
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
