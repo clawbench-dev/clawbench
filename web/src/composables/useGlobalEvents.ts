@@ -136,21 +136,34 @@ const processedEventIds = new Set<string>()
 const MAX_PROCESSED_IDS = 100
 let ws: WebSocket | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
-// The server pings every 30s. The heartbeat watches the wall-clock time since
-// the last received ping, instead of a fragile missed-count that can trip on a
-// single delayed ping under load/network jitter.
-const HEARTBEAT_CHECK_INTERVAL_MS = 15000   // how often we re-check staleness
-const HEARTBEAT_STALE_MS = 90000            // no ping for 90s (3 missed pings) => dead
-// Fallback stale-detection for the "socket alive but events silently dropped"
-// case (e.g. a mobile WebView/Electron pauseTimers() freezes the event loop yet
-// keeps the TCP socket open). The server pings every 30s, so 60s with NO WS
-// message at all (ping or event) means the connection is effectively dead —
-// much earlier than the 90s ping-only window. This forces a reconnect which
-// re-runs the full state sync (clawbench-reconnect on open), correcting stale
-// state even though the socket looked alive.
-const EVENT_STALE_MS = 60000                // no message (ping or event) for 60s => silently dead
-let lastPingAt = 0
-let lastEventAt = 0
+
+// ── Liveness ────────────────────────────────────────────────────────────────
+// `lastMessageAt` is the single liveness signal: refreshed by pings AND by real
+// events, so "no message for a while" covers both a half-open socket (the far
+// end is gone, the client cannot tell) and a frozen event loop that kept the
+// TCP connection open.
+//
+// There used to be a SECOND, ping-only threshold (90s) checked alongside it. It
+// could never fire: every ping also refreshed this timestamp, so "90s with no
+// ping" was always preceded by "60s with no message at all". A redundant
+// detector is not free — it is one more thing to keep in sync, and it made the
+// liveness story look more complicated than it is. Removed.
+const MESSAGE_STALE_MS = 60000
+// How often liveness is re-evaluated. This is the granularity of both bounds
+// below, so it is deliberately much shorter than either: a 15s tick on top of a
+// 15s handshake bound would let a stuck handshake sit unnoticed for 30s. The
+// check is a couple of comparisons, so a short tick costs nothing.
+const HEARTBEAT_CHECK_INTERVAL_MS = 5000
+// A healthy handshake takes well under a second, so this only ever fires for a
+// socket that is genuinely stuck. Kept separate from MESSAGE_STALE_MS because
+// the two measure different things: one is "the far end stopped talking", the
+// other is "we never got to talking at all".
+const HANDSHAKE_TIMEOUT_MS = 15000
+
+let lastMessageAt = 0
+// When the current socket began connecting — needed to time out a handshake that
+// neither opens nor closes (see HANDSHAKE_TIMEOUT_MS).
+let connectStartedAt = 0
 
 // Client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
@@ -376,6 +389,11 @@ function connect() {
     const url = `${protocol}//${location.host}/api/ai/events/ws?client_id=${clientId}`
 
     ws = new WebSocket(url)
+    connectStartedAt = Date.now()
+    // Start monitoring at dial time, not at open time. A socket that never opens
+    // is exactly the case that needs watching, so the tick has to be running
+    // while the handshake is still in flight. One timer covers every state.
+    startHeartbeat()
 
     ws.onopen = () => {
         connected.value = true
@@ -384,8 +402,7 @@ function connect() {
         // would duplicate those requests.
         const isReconnect = hasConnectedOnce.value
         hasConnectedOnce.value = true
-        lastPingAt = Date.now()
-        lastEventAt = Date.now()
+        lastMessageAt = Date.now()
         reconnect.reset()
 
         // Fetch missed events that occurred while offline
@@ -397,19 +414,15 @@ function connect() {
         if (isReconnect) {
             window.dispatchEvent(new CustomEvent('clawbench-reconnect'))
         }
-
-        // Start heartbeat monitoring
-        startHeartbeat()
     }
 
     ws.onmessage = (event) => {
         try {
             const msg: ServerEvent = JSON.parse(event.data)
-            lastEventAt = Date.now()
+            lastMessageAt = Date.now()
 
             if (msg.type === 'ping') {
                 send({ type: 'pong' })
-                lastPingAt = Date.now()
                 return
             }
 
@@ -541,6 +554,82 @@ function connect() {
     }
 }
 
+/**
+ * Classify the current socket. `null` means healthy — anything else is a
+ * reason to dial again.
+ *
+ * ── Why this is ONE function (do not split it up again) ─────────────────────
+ * Deciding "is this connection usable" used to be spread over four places, each
+ * asking a slightly different question:
+ *
+ *   1. the close handler            — "did it close?"
+ *   2. a periodic tick (60s)        — "OPEN but no message?"
+ *   3. a periodic tick (90s)        — "OPEN but no ping?"   (never fired)
+ *   4. the foreground resume        — its own copy of all of the above
+ *
+ * Every one of them was written to plug a hole the others left, and each new
+ * hole got a new detector instead of a better shared question. That is how the
+ * "back from background, never reconnects, only a force-quit fixes it" bug
+ * appeared: a fix on 2026-10-15 taught the resume path to leave a CONNECTING
+ * socket alone (correct — do not tear down a healthy in-flight handshake), but
+ * no existing detector covered a handshake that is stuck in CONNECTING forever,
+ * so the one state that needed killing became the one state nothing looked at.
+ *
+ * So: adding a new "looks alive but is not" case means adding a branch HERE.
+ * Do not hang a fifth timer or a second resume-path check off the side — that
+ * is exactly the shape that produced the bug above. The test for whether this
+ * refactor is still intact: `grep -n readyState useGlobalEvents.ts` should show
+ * this function and `send()`, nothing else.
+ *
+ * ── The two clocks are not redundant ────────────────────────────────────────
+ *
+ *  - `handshake-timeout`: a socket stuck in CONNECTING. Mobile clients land
+ *    here after returning from the background — the handshake was started while
+ *    the OS had the page frozen, the network stack dropped it, and NEITHER
+ *    onopen NOR onclose ever fires. A CONNECTING socket is not OPEN (so the
+ *    silence check below never looks at it) and never closes (so no reconnect
+ *    is scheduled). Left alone the client sits on "连接断开，正在重连…" until the
+ *    app is force-quit and relaunched. A healthy handshake takes well under a
+ *    second, so a generous bound is still short.
+ *
+ *  - `silent`: OPEN but no message for MESSAGE_STALE_MS. The server pings every
+ *    30s, so silence means the other end is gone (half-open socket) or our own
+ *    event loop was frozen while the TCP connection stayed open. This bound
+ *    must stay above the ping interval, which is why it is its own constant
+ *    rather than reusing HANDSHAKE_TIMEOUT_MS.
+ *
+ * They measure different things — "the far end stopped talking" versus "we
+ * never got to talking at all" — so they cannot be merged into one number. A
+ * ping-only threshold that was ALSO checked here (90s) was removed: every ping
+ * refreshed the same timestamp the silence check reads, so it could never fire
+ * first. One redundant detector is cheap to write and expensive to reason
+ * about later.
+ */
+type SocketFailure = 'absent' | 'handshake-timeout' | 'silent' | null
+
+function socketFailure(now: number): SocketFailure {
+    if (!ws) return 'absent'
+    if (ws.readyState === WebSocket.CONNECTING) {
+        return now - connectStartedAt > HANDSHAKE_TIMEOUT_MS ? 'handshake-timeout' : null
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+        return now - lastMessageAt > MESSAGE_STALE_MS ? 'silent' : null
+    }
+    // CLOSING / CLOSED: the close handler owns the retry.
+    return 'absent'
+}
+
+/** Drop the current socket and schedule one retry, whatever killed it. */
+function recycle(failure: Exclude<SocketFailure, null>) {
+    appLog.w('GlobalEvents', `connection ${failure} — reconnecting`)
+    // disconnect() detaches onclose, so the abandoned socket cannot schedule a
+    // competing reconnect; the explicit schedule below owns the retry.
+    disconnect()
+    if (reconnect.shouldReconnect()) {
+        reconnect.scheduleReconnect()
+    }
+}
+
 function disconnect() {
     stopHeartbeat()
     if (ws) {
@@ -559,37 +648,9 @@ function send(msg: ClientMessage) {
 
 function startHeartbeat() {
     stopHeartbeat()
-    lastPingAt = Date.now()
-    lastEventAt = Date.now()
     heartbeatTimer = setInterval(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            // If no message at all (ping or event) was received within the
-            // event-stale window, the connection is silently dead even though
-            // the socket looks alive (half-open socket / frozen event loop that
-            // kept the TCP socket open). Force a reconnect so the UI reflects
-            // the real state, the client re-subscribes, and the onopen handler
-            // re-runs the full state sync (clawbench-reconnect). This closes
-            // the "WS alive but state stale" window earlier than the ping-only
-            // check below.
-            if (Date.now() - lastEventAt > EVENT_STALE_MS) {
-                appLog.w('GlobalEvents', `No WS message for ${EVENT_STALE_MS}ms — connection silently dead, forcing reconnect`)
-                disconnect()
-                if (reconnect.shouldReconnect()) {
-                    reconnect.scheduleReconnect()
-                }
-                return
-            }
-            // If the server hasn't pinged within the stale window, the
-            // connection is effectively dead (half-open socket / server closed
-            // without a close frame). Force a reconnect so the UI reflects the
-            // real state and the client re-subscribes promptly.
-            if (Date.now() - lastPingAt > HEARTBEAT_STALE_MS) {
-                disconnect()
-                if (reconnect.shouldReconnect()) {
-                    reconnect.scheduleReconnect()
-                }
-            }
-        }
+        const failure = socketFailure(Date.now())
+        if (failure) recycle(failure)
     }, HEARTBEAT_CHECK_INTERVAL_MS)
 }
 
@@ -939,10 +1000,14 @@ export function useGlobalEvents() {
         // and any stale attempt count left by backgrounded reconnect attempts
         // the OS killed. Must run on every foreground entry.
         reconnect.reset()
-        // Reconnect only when there is no live or in-flight socket. A healthy
-        // connection is left untouched — tearing it down would drop live
-        // stream events and re-run the whole state sync for nothing.
-        if (!ws || (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)) {
+        // One question, the same one the liveness tick asks: is this socket
+        // usable? A healthy connection is left untouched — tearing it down
+        // would drop live stream events and re-run the whole state sync for
+        // nothing. Anything else is replaced immediately rather than waiting up
+        // to a full tick, because on resume the user is looking at the screen.
+        const failure = socketFailure(Date.now())
+        if (failure) {
+            appLog.w('GlobalEvents', `resume: ${failure} — reconnecting`)
             connect()
         }
         // Emit a custom event that other composables can listen to
@@ -999,8 +1064,8 @@ export function useGlobalEvents() {
         handlers.length = 0
         processedEventIds.clear()
         lastSeenEventId = ''
-        lastPingAt = 0
-        lastEventAt = 0
+        lastMessageAt = 0
+        connectStartedAt = 0
         hasConnectedOnce.value = false
         initialized = false
     }
