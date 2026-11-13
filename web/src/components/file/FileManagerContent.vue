@@ -2627,8 +2627,14 @@ function doBatchArchive() {
 }
 
 function doAttachToChat() {
-    const path = ctxMenu.entry.path
-    const isDir = ctxMenu.entry.type === 'dir'
+    // A multi-selection is the operand of every other context-menu action
+    // (delete delegates to the batch flow), so attaching must cover the whole
+    // selection — taking only the row under the cursor silently dropped every
+    // other file the user had picked.
+    const selected = multiSelect.active ? [...multiSelect.selected] : []
+    const entries = selected.length
+        ? selected.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' }))
+        : [{ path: ctxMenu.entry.path, isDir: ctxMenu.entry.type === 'dir' }]
     closeCtxMenu()
     // Add-only: there is no per-file "attached" indicator any more (the target
     // session can be any session, so no single icon could represent it), hence
@@ -2637,7 +2643,7 @@ function doAttachToChat() {
     //
     // The destination is always the user's choice (the picker), so nothing is
     // attached locally — confirmTarget attaches for the session they pick.
-    requestAttachmentTarget({ path, isDir })
+    requestAttachmentTarget(entries)
 
     // Fly-to-chat particle animation
     const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')

@@ -484,6 +484,31 @@ describe('useConversationTarget', () => {
       requestAttachmentTarget({ path: '', isDir: false })
       expect(usePendingTarget().pickerOpen.value).toBe(false)
     })
+
+    it('accepts several entries as one request (a multi-selection)', () => {
+      // One gesture over N files must ask for a destination once — N separate
+      // requests would open the picker N times.
+      requestAttachmentTarget([
+        { path: '/a.ts', isDir: false },
+        { path: '/dir', isDir: true },
+      ])
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value?.attachments).toEqual([
+        { path: '/a.ts', isDir: false },
+        { path: '/dir', isDir: true },
+      ])
+    })
+
+    it('drops path-less entries from an array but still delivers the rest', () => {
+      requestAttachmentTarget([{ path: '', isDir: false }, { path: '/a.ts', isDir: false }])
+      expect(usePendingTarget().pending.value?.attachments).toEqual([{ path: '/a.ts', isDir: false }])
+    })
+
+    it('opens nothing when every entry in the array has no path', () => {
+      requestAttachmentTarget([{ path: '', isDir: false }])
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+    })
   })
 
   // ── dispatch: create ─────────────────────────────────────────

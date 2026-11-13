@@ -268,14 +268,22 @@ export function cancelTarget() {
  *
  * A path-less entry opens nothing (there would be nothing to attach).
  *
+ * An ARRAY means one gesture covered several files (the file manager's context
+ * menu acting on a multi-selection); they are delivered as one request so the
+ * picker asks for a destination once instead of once per file.
+ *
  * `opts.deliverTo` mirrors {@link requestTarget}: the markdown / mermaid badges
  * are comments on the document being read, so they land in the active
  * conversation; the file browser's "add to session" keeps the picker, because
  * there the destination is what the user is choosing.
  */
-export function requestAttachmentTarget(entry: FileEntry, opts: RequestTargetOptions = {}): void {
-  if (!entry?.path) return
-  requestTarget({ mode: 'add', quotes: [], attachments: [entry], text: '' }, opts)
+export function requestAttachmentTarget(
+  entry: FileEntry | FileEntry[],
+  opts: RequestTargetOptions = {},
+): void {
+  const entries = (Array.isArray(entry) ? entry : [entry]).filter(e => e?.path)
+  if (!entries.length) return
+  requestTarget({ mode: 'add', quotes: [], attachments: entries, text: '' }, opts)
 }
 
 // ── Dispatch ───────────────────────────────────────────────────

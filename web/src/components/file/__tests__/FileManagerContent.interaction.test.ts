@@ -1976,6 +1976,47 @@ describe('FileManagerContent — context menu actions', () => {
     cancelTarget()
   })
 
+  it('doAttachToChat attaches the whole multi-selection, not just the row under the cursor', async () => {
+    // Every other context-menu action treats the multi-selection as its
+    // operand (delete delegates to the batch flow). Attaching used to take only
+    // `ctxMenu.entry`, so a right-click on one of several picked files dropped
+    // the rest without any feedback.
+    cancelTarget()
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doAttachToChat()
+
+    const attachments = usePendingTarget().pending.value?.attachments ?? []
+    expect(attachments).toHaveLength(3)
+    expect(new Set(attachments.map(a => a.path))).toEqual(new Set(['test.ts', 'src', 'readme.md']))
+    // The directory in the selection keeps its type: the chat strip and the
+    // backend both branch on isDir.
+    expect(attachments.find(a => a.path === 'src')?.isDir).toBe(true)
+    expect(attachments.find(a => a.path === 'test.ts')?.isDir).toBe(false)
+    cancelTarget()
+  })
+
+  it('doAttachToChat with an active but empty multi-selection falls back to the single entry', async () => {
+    // Mirrors doDelete: multi-select mode alone does not mean "batch" — with
+    // nothing picked there is only the right-clicked row to act on.
+    cancelTarget()
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doAttachToChat()
+
+    expect(usePendingTarget().pending.value?.attachments).toEqual([{ path: 'src', isDir: true }])
+    cancelTarget()
+  })
+
   it('doArchiveDir archives a directory via context menu', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       const res = { ok: true, status: 200, blob: async () => new Blob(['zip']) }
