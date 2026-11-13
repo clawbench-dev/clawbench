@@ -16,6 +16,7 @@ import { readWebFile } from '@/testUtils/readWebFile'
 const HEADERS = [
   '.dir-toolbar',
   '.file-header-bar',
+  '.view-empty-header',
   '.settings-page__header',
   '.share-header',
   '.forge-header',

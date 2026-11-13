@@ -182,9 +182,17 @@
                       @open-search="openFileSearch"
                     />
                     <div v-else class="view-panel-empty" :class="{ 'has-recent': recentFileEntries.length }">
+                      <!-- Same one-row header as every other tab: the shared
+                           tab icon sits at the left, this title in the middle,
+                           the window controls at the right. Without it the
+                           empty state's title floated under the icon with no
+                           baseline and no bottom border. -->
+                      <div class="view-empty-header">
+                        <span class="view-empty-header-title">{{ t('appHeader.recentFiles') }}</span>
+                      </div>
+                      <div class="view-empty-body">
                       <template v-if="recentFileEntries.length">
                         <div class="view-empty-recent">
-                          <div class="view-empty-recent-title">{{ t('appHeader.recentFiles') }}</div>
                           <div class="view-empty-recent-list">
                             <div
                               v-for="entry in recentFileEntries"
@@ -227,6 +235,7 @@
                           </button>
                         </template>
                       </EmptyState>
+                      </div>
                     </div>
                   </div>
                 </TabPanel>
@@ -5077,8 +5086,37 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* The empty state's own header row. Geometry (36px, surface, bottom border,
+   left/right padding for the shared icon and controls) comes from the global
+   header rule in components.css; only the flex alignment lives here. */
+.view-empty-header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.view-empty-header-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+}
+
+.view-empty-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Without recent files the empty state centres in the remaining space. */
+.view-panel-empty:not(.has-recent) .view-empty-body {
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+}
+
 /* With recent files: list fills available space, manager button pinned to bottom */
-.view-panel-empty.has-recent {
+.view-panel-empty.has-recent .view-empty-body {
   align-items: stretch;
   justify-content: flex-start;
   gap: var(--space-6);
@@ -5107,15 +5145,6 @@ onUnmounted(() => {
 
 .view-panel-empty.has-recent .view-empty-manager-btn {
   margin-top: auto;
-}
-
-.view-empty-recent-title {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  text-align: left;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: calc(0.5 * var(--dp));
 }
 
 .view-empty-recent-item {
