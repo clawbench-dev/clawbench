@@ -171,7 +171,6 @@
           :file="file"
           @save="handleSave"
           @save-and-exit="handleSaveAndExit"
-          @cancel="editing = false"
           @exit-edit="handleExitEdit"
         />
         <!-- Source/raw mode: a single CodeMirrorViewer for both browse and edit

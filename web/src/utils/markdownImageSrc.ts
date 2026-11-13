@@ -19,7 +19,12 @@
  */
 import { dirName, joinPath, splitPath, normalizeSlashes, isAbsolutePath } from '@/utils/path.ts'
 
-export function resolveMarkdownImageSrc(src: string | null | undefined, filePath: string | null | undefined): string {
+export function resolveMarkdownImageSrc(
+    src: string | null | undefined,
+    filePath: string | null | undefined,
+    /** Cache-busting stamp. Pass a stable value per editor session. */
+    stamp: number = Date.now(),
+): string {
     const raw = (src || '').trim()
     if (!raw) return raw
     // Already usable as-is. `/api/fs/` matters: markup authored with a served
@@ -33,7 +38,6 @@ export function resolveMarkdownImageSrc(src: string | null | undefined, filePath
         // Malformed encoding — keep what the author wrote.
     }
 
-    const stamp = Date.now()
     if (isAbsolutePath(decoded)) {
         return `/api/fs/raw/?target=${encodeURIComponent(decoded)}&t=${stamp}`
     }

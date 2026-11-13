@@ -12,7 +12,7 @@
       <button class="editor-btn icon-btn" :disabled="saving" @mousedown.prevent @click="handleRedo" :title="t('file.editor.redo')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10H8a4 4 0 0 0 0 8h7"/><path d="M21 10l-5-5M21 10l-5 5"/></svg>
       </button>
-      <button v-if="dirty" class="editor-btn icon-btn primary" :disabled="saving" @mousedown.prevent @click="emit('save', getValue())" :title="t('file.editor.save')">
+      <button v-if="dirty" class="editor-btn icon-btn primary" :disabled="saving" @mousedown.prevent @click="emitSave()" :title="t('file.editor.save')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>
       <button class="editor-btn icon-btn" @mousedown.prevent @click="handleExit" :title="t('file.editor.exitEdit')">
@@ -47,7 +47,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history, undoCommand, redoCommand } from '@milkdown/kit/plugin/history'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
-import { callCommand, getMarkdown, $view } from '@milkdown/kit/utils'
+import { callCommand, getMarkdown, $view, replaceAll } from '@milkdown/kit/utils'
 import { imageSchema } from '@milkdown/kit/preset/commonmark'
 import { resolveMarkdownImageSrc } from '@/utils/markdownImageSrc.ts'
 import { createMathPlugins } from './milkdownMath.ts'
@@ -72,6 +72,12 @@ const editor = shallowRef(null)
 const dirty = ref(false)
 /** Last persisted text. Saving rewrites props.content, which advances this. */
 const baseline = ref(props.content || '')
+/**
+ * The exact string handed to the save flow. A successful save comes back as
+ * `props.content`; matching it lets the baseline advance even when the user
+ * kept typing while the write was in flight.
+ */
+let pendingSave = null
 
 /** Current document as markdown. Synchronous: Milkdown's serializer runs here. */
 function getValue() {
@@ -84,7 +90,14 @@ function getValue() {
 }
 
 function isDirty() {
-    return getValue() !== baseline.value
+    // A serializer failure must never read as "clean": that would let the exit
+    // path discard edits without a prompt. Treat it as dirty instead.
+    try {
+        if (!editor.value) return false
+        return editor.value.action(getMarkdown()) !== baseline.value
+    } catch {
+        return true
+    }
 }
 
 function handleUndo() {
@@ -99,11 +112,15 @@ function handleRedo() {
  * `/api/fs/raw/docs/screenshots/a.png`. The document keeps the original src, so
  * only the rendered <img> is rewritten (and re-rewritten on every node update).
  */
+// One cache-busting stamp per editor session: a fresh Date.now() on every node
+// update would give the <img> a new URL on each keystroke and refetch it.
+const imageStamp = Date.now()
+
 const imageView = $view(imageSchema.node, () => (node) => {
     const img = document.createElement('img')
     img.className = 'md-editor-image'
     const apply = (n) => {
-        img.src = resolveMarkdownImageSrc(n.attrs.src, props.file?.path)
+        img.src = resolveMarkdownImageSrc(n.attrs.src, props.file?.path, imageStamp)
         img.alt = n.attrs.alt || ''
         if (n.attrs.title) img.title = n.attrs.title
         else img.removeAttribute('title')
@@ -128,6 +145,12 @@ const mathPlugins = createMathPlugins((value) =>
 const codeBlockView = createCodeBlockView()
 const highlightPlugin = createHighlightPlugin()
 
+function emitSave() {
+    const value = getValue()
+    pendingSave = value
+    emit('save', value)
+}
+
 // Ctrl/Cmd+S mirrors the save button. Registered on the host (not window) so it
 // only fires while the editor owns focus.
 function handleKeydown(e) {
@@ -136,7 +159,7 @@ function handleKeydown(e) {
         // isDirty() reads the live document: the listener that drives the dot is
         // debounced, so a keystroke followed immediately by Ctrl+S would still
         // look clean for a moment.
-        if (isDirty() && !props.saving) emit('save', getValue())
+        if (isDirty() && !props.saving) emitSave()
     }
 }
 
@@ -156,7 +179,8 @@ async function handleExit() {
         onExtraAction: () => {},
     })
     if (choice === true) {
-        emit('saveAndExit', getValue())
+        pendingSave = getValue()
+        emit('saveAndExit', pendingSave)
         return true
     }
     if (choice === null) {
@@ -221,15 +245,47 @@ onBeforeUnmount(() => {
     if (ed) void ed.destroy()
 })
 
-// A successful save rewrites props.content with exactly what this editor
-// serialized, so the dirty flag can clear. An external refresh (file changed on
-// disk while editing) does NOT match the live document and is deliberately
-// ignored here — silently reloading would throw away the user's unsaved edits.
+/**
+ * Content changed underneath us. Three cases, in order:
+ *
+ * 1. Our own save came back (or nothing actually changed): advance the baseline.
+ * 2. The user typed while the save was in flight: `props.content` is the text we
+ *    handed to the write, so advance the baseline to it and recompute dirty
+ *    against the live document (it stays dirty — those newer edits are unsaved).
+ * 3. An external change (file rewritten on disk, or the user accepted the
+ *    "reload?" prompt): adopt it. When the buffer was dirty the prompt already
+ *    asked; when it was clean the source editor replaces its document the same
+ *    way. Ignoring it would let the next save silently overwrite the new text.
+ */
+let applyingExternal = false
 watch(() => props.content, (next) => {
+    if (applyingExternal || !editor.value) return
     const value = next || ''
     if (value === getValue()) {
+        pendingSave = null
         baseline.value = value
         dirty.value = false
+        return
+    }
+    if (pendingSave !== null && value === pendingSave) {
+        pendingSave = null
+        baseline.value = value
+        dirty.value = getValue() !== baseline.value
+        return
+    }
+    applyingExternal = true
+    try {
+        editor.value.action(replaceAll(value, true))
+        pendingSave = null
+        baseline.value = getValue()
+        dirty.value = false
+    } catch (err) {
+        // Parsing the replacement failed: keep the current buffer (dirty) rather
+        // than leaving a half-applied document.
+        appLog.e('MilkdownEditor', 'failed to apply external content', err)
+        dirty.value = true
+    } finally {
+        applyingExternal = false
     }
 })
 

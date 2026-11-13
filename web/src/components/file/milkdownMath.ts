@@ -91,6 +91,11 @@ export function createMathPlugins(editMath: EditMath) {
                 if (typeof pos !== 'number') return
                 void editMath(current.attrs.value || '').then((next) => {
                     if (next == null || next === current.attrs.value) return
+                    // The prompt is async: the document may have changed while it
+                    // was open. Only write when the node still sits at that
+                    // position and is still the same kind of formula.
+                    const nodeAtPos = view.state.doc.nodeAt(pos)
+                    if (!nodeAtPos || nodeAtPos.type.name !== current.type.name) return
                     view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, value: next }))
                 })
             })

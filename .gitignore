@@ -137,3 +137,6 @@ npm/platforms/*/config/
 # them in the index would record gitlinks with no .gitmodules entry, which
 # breaks `git submodule update --init --recursive` (Cloudflare Pages hit this).
 /test/git-graph-repos/*/
+
+# Throwaway fixtures created and deleted by e2e/specs/markdown-visual-edit.spec.ts
+/test/markdown/__e2e_*.md

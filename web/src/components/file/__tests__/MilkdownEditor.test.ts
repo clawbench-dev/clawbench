@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import MilkdownEditor from '../MilkdownEditor.vue'
@@ -99,6 +99,23 @@ describe('MilkdownEditor', () => {
         wrapper.unmount()
     })
 
+    it('adopts an external content change instead of ignoring it', async () => {
+        // The file was rewritten on disk (or the user accepted the "reload?"
+        // prompt). Keeping the stale buffer would let the next save overwrite
+        // the new text, so the editor must take the new document.
+        const wrapper = mountEditor('# 旧标题\n')
+        await waitForEditor(wrapper)
+
+        await wrapper.setProps({ content: '# 新标题\n\n外部改动\n' })
+        await flushPromises()
+
+        expect(wrapper.text()).toContain('外部改动')
+        expect(wrapper.vm.getValue()).toContain('# 新标题')
+        expect(wrapper.vm.isDirty()).toBe(false)
+
+        wrapper.unmount()
+    })
+
     it('rewrites a relative image src to a served URL without touching the document', async () => {
         const source = '# Title\n\n![shot](screenshots/a.png)\n'
         const wrapper = mountEditor(source, { name: 'app.md', path: 'docs/user-guide/app.md' })
@@ -156,9 +173,13 @@ describe('MilkdownEditor', () => {
 
         // The preview slot is revealed after the debounce, even if the diagram
         // itself cannot be measured in jsdom (the util paints its own card).
-        await new Promise((resolve) => setTimeout(resolve, 600))
-        const preview = wrapper.find('.ProseMirror .md-code-preview')
-        expect(preview.attributes('hidden')).toBeUndefined()
+        // Poll instead of sleeping: a fixed delay is timing-dependent on CI.
+        await vi.waitFor(
+            () => {
+                expect(wrapper.find('.ProseMirror .md-code-preview').attributes('hidden')).toBeUndefined()
+            },
+            { timeout: 3000, interval: 50 },
+        )
 
         wrapper.unmount()
     })

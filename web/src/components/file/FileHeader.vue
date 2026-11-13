@@ -348,7 +348,15 @@ const hasToc = computed(() => fileSupportsToc(props.file, effectiveViewMode.valu
 // Visual markdown editing: only for a real markdown file with loaded text, and
 // only while not already editing (the edit toggle owns the exit flow then).
 const canWysiwygEdit = computed(
-  () => isMarkdown.value && !isUntitled.value && !props.editing && hasTextContent.value && !isMediaFile.value,
+  () =>
+    isMarkdown.value &&
+    !isUntitled.value &&
+    !props.editing &&
+    hasTextContent.value &&
+    !isMediaFile.value &&
+    // A truncated buffer holds only the first slice of the file; saving from
+    // the visual editor would write that slice back as the whole file.
+    !props.file?.truncated,
 )
 
 // Search button for any file with searchable text. For the rendered markdown

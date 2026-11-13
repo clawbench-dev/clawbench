@@ -72,6 +72,11 @@ async function exitVisualEdit(page: Page) {
 }
 
 test.describe('Markdown visual editing', () => {
+  // Opening a file, loading the editor chunk and (for mermaid) the diagram
+  // chunk can exceed the suite default on a slow machine. The per-assertion
+  // budgets below are chosen against this number, not the global 30s.
+  test.describe.configure({ timeout: 90_000 })
+
   let fm: FileManagerPage
   let nav: NavigationPage
 
@@ -163,9 +168,16 @@ test.describe('Markdown visual editing', () => {
     await page.locator('.md-editor .ProseMirror p').last().click()
     await page.keyboard.press('Control+End')
     await page.keyboard.type('E2E-TYPED')
-    await page.keyboard.press('Control+s')
 
+    // Typing marks the buffer dirty (the dot in the editor's action bar).
+    await expect(page.locator('.md-editor .dirty-dot')).toBeVisible({ timeout: 5000 })
+
+    await page.keyboard.press('Control+s')
     await expect(page.locator('.toast-text')).toContainText(/Saved|已保存/, { timeout: 10000 })
+
+    // A successful save clears the dirty flag — otherwise leaving would prompt
+    // "save changes?" for text that is already on disk.
+    await expect(page.locator('.md-editor .dirty-dot')).toHaveCount(0, { timeout: 5000 })
 
     const resp = await page.request.get(`/api/fs/file/${TEMP_FILE}`)
     expect(resp.ok()).toBe(true)

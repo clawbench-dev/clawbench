@@ -34,6 +34,7 @@ export function createCodeBlockView() {
         let token = 0
         let timer: ReturnType<typeof setTimeout> | null = null
         let lastText = ''
+        let destroyed = false
 
         const clearPreview = () => {
             token++
@@ -57,7 +58,7 @@ export function createCodeBlockView() {
                 preview.appendChild(source)
                 try {
                     const mermaid = await import('@/utils/mermaid.ts')
-                    if (mine !== token) return
+                    if (mine !== token || destroyed) return
                     await mermaid.renderMermaidInElement(preview, 'md-editor-mermaid')
                 } catch {
                     // The mermaid module paints its own error card on failure.
@@ -91,6 +92,7 @@ export function createCodeBlockView() {
             // preview we paint above it is ours and must not trigger a reload.
             ignoreMutation: (mutation) => !code.contains(mutation.target as Node),
             destroy: () => {
+                destroyed = true
                 token++
                 if (timer) clearTimeout(timer)
             },
@@ -99,6 +101,9 @@ export function createCodeBlockView() {
 }
 
 const highlightKey = new PluginKey('md-editor-highlight')
+
+/** Fences longer than this stay uncoloured (see buildHighlightDecorations). */
+const MAX_HIGHLIGHT_CHARS = 20000
 
 /** Build `hljs-*` inline decorations for every fenced code block. */
 function buildHighlightDecorations(doc: PMNode): DecorationSet {
@@ -110,6 +115,9 @@ function buildHighlightDecorations(doc: PMNode): DecorationSet {
         const text = node.textContent
         // Mermaid is drawn as a diagram; colouring its DSL adds noise.
         if (!text || !language || language === 'mermaid') return
+        // Very large fences are not worth a synchronous highlight pass on every
+        // idle keystroke; they stay plain text (same fallback as unknown langs).
+        if (text.length > MAX_HIGHLIGHT_CHARS) return
         if (!hljs.getLanguage(language)) return
 
         let html: string
@@ -131,13 +139,21 @@ function buildHighlightDecorations(doc: PMNode): DecorationSet {
                     let parent: Element | null = child.parentElement
                     while (parent && parent !== root) {
                         const found = Array.from(parent.classList).filter((c) => c.startsWith('hljs-'))
-                        if (found.length) cls = found.join(' ')
+                        if (found.length) {
+                            // Innermost token wins; outer wrappers (e.g. hljs-string
+                            // around an interpolation) would otherwise paint over it.
+                            cls = found.join(' ')
+                            break
+                        }
                         parent = parent.parentElement
                     }
                     if (cls && length) {
-                        decorations.push(
-                            Decoration.inline(pos + 1 + offset, pos + 1 + offset + length, { class: cls }),
-                        )
+                        // Clamp to the block's text range: a length mismatch must
+                        // never throw inside the plugin's state init (that would
+                        // abort editor creation for the whole file).
+                        const from = pos + 1 + offset
+                        const to = Math.min(from + length, pos + 1 + node.content.size)
+                        if (to > from) decorations.push(Decoration.inline(from, to, { class: cls }))
                     }
                     offset += length
                 } else if (child.nodeType === 1 /* ELEMENT_NODE */) {
