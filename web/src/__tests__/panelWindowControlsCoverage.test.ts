@@ -27,8 +27,7 @@ const HEADERS = [
   '.proxy-header',
   '.meeting-header',
   '.live-panel__header',
-  '.mail-bar__top',
-  '.mail-bar__search-row',
+  '.mail-bar',
   '.mail-reader__head',
   '.mail-compose__head',
   '.stats-tab-bar',
@@ -113,6 +112,19 @@ describe('one panel header row', () => {
     expect(readWebFile('src/components/forge/ForgePanelContent.vue')).not.toMatch(
       /forge-header-title[\s\S]{0,120}<Github/,
     )
+  })
+
+  it('flattens the mail bar wrapper to one 36px row', () => {
+    // The mail bar is a padded wrapper around its row; left alone it renders
+    // 44px tall, the only header that is taller than the rest.
+    const css = readWebFile('css/components.css')
+    const mail = css.match(/\.col-left--chrome \.tab-panel :is\(\.mail-bar[^)]*\)\s*\{([^}]*)\}/)
+    expect(mail, 'the mail wrapper must own the row height').not.toBeNull()
+    expect(mail![1]).toMatch(/padding-top:\s*0/)
+    expect(mail![1]).toMatch(/padding-bottom:\s*0/)
+    const fill = css.match(/\.col-left--chrome \.tab-panel \.mail-bar > :is\([^)]*\)\s*\{([^}]*)\}/)
+    expect(fill, 'the inner row must fill the wrapper').not.toBeNull()
+    expect(fill![1]).toMatch(/flex:\s*1 1 auto/)
   })
 
   it('reserves exactly two button-widths for the controls', () => {

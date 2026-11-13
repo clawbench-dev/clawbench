@@ -1809,8 +1809,7 @@
     .proxy-header,
     .meeting-header,
     .live-panel__header,
-    .mail-bar__top,
-    .mail-bar__search-row,
+    .mail-bar,
     .mail-reader__head,
     .mail-compose__head,
     .stats-tab-bar,
@@ -1823,4 +1822,19 @@
     padding-left: calc(32 * var(--dp));
     /* 8 gap + two 26px control cells. */
     padding-right: calc(var(--space-2) + 52 * var(--dp));
+}
+
+/* The mail bar is a wrapper with 4px vertical padding around its row; left as
+   is it renders 44px tall (the extra 8px showed up as a taller header than
+   every other panel). The wrapper owns the row height, its single visible
+   child fills it, and the vertical padding goes away. The two mail sub-views
+   carry the same 4px padding on their own row, so they get the same reset. */
+.col-left--chrome .tab-panel :is(.mail-bar, .mail-reader__head, .mail-compose__head) {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.col-left--chrome .tab-panel .mail-bar > :is(.mail-bar__top, .mail-bar__search-row) {
+    flex: 1 1 auto;
+    min-height: 0;
 }
