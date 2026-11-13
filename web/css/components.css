@@ -1818,6 +1818,11 @@
     /* One row height everywhere, so the overlay's cells line up with whatever
        header the current view draws (32 / 28 / 34px rows otherwise). */
     height: var(--header-height);
+    /* One surface for every header, like the app header above it. Panels used
+       to paint --bg-primary, --bg-secondary or nothing at all, so switching
+       tabs changed the bar's colour. */
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
     /* 10 left + 14 icon + 8 gap. */
     padding-left: calc(32 * var(--dp));
     /* 8 gap + two 26px control cells. */

@@ -82,6 +82,8 @@ describe('one panel header row', () => {
     expect(rule![2]).toMatch(/padding-left:\s*calc\(32 \* var\(--dp\)\)/)
     expect(rule![2]).toMatch(/padding-right:\s*calc\(var\(--space-2\) \+ 52 \* var\(--dp\)\)/)
     expect(rule![2]).toMatch(/height:\s*var\(--header-height\)/)
+    expect(rule![2]).toMatch(/background:\s*var\(--bg-secondary\)/)
+    expect(rule![2]).toMatch(/border-bottom:\s*1px solid var\(--border-color\)/)
   })
 
   it('is not duplicated inside any panel view', () => {
