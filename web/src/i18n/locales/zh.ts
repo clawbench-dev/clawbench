@@ -5272,6 +5272,8 @@ export default {
     openMeeting: '打开会议',
     copy: '复制链接',
     copied: '链接已复制',
+    copyDirectLink: '复制直链',
+    directCopied: '直链已复制，打开即下载文件',
     shareTo: '分享到其他应用',
     copyInstead: '复制链接（桌面版没有系统分享面板）',
     mail: '用邮件发送',

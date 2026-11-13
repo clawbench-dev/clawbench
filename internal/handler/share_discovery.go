@@ -136,6 +136,33 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	b.WriteString(`    <link rel="alternate" type="application/json" href="` + dataURL + `" title="` + titleHTML + ` (JSON)">` + "\n")
 	b.WriteString(`    <link rel="alternate" type="application/json" href="` + metaURL + `" title="Share metadata">` + "\n")
 
+	// Direct file access. A browser that clicks the download button fetches
+	// exactly this URL, but nothing in the shell says so — and an agent reading
+	// the page has no way to guess a token-scoped API path. Stating it in the
+	// source (comment + a link element) is what turns "here is a page" into
+	// "here is the file". Conversation shares have no file, so they get none of
+	// this; a folder has no single file, so its bare download URL is invalid and
+	// only the ?path= form is advertised.
+	if d.Kind != shareKindSession {
+		downloadURL := "/api/share/" + d.Token + "/download"
+		localURL := "/api/share/" + d.Token + "/local"
+		b.WriteString("\n    <!-- Direct file access (same token, no sign-in):\n")
+		b.WriteString("         GET " + downloadURL + "  → the file as a download\n")
+		b.WriteString("         GET " + localURL + "  → the same bytes inline (usable as <img src> / <video src>)\n")
+		if d.Kind == shareKindDir {
+			b.WriteString("         A folder has no single file: append ?path=<absolute path inside the folder>\n")
+			b.WriteString("         to either URL to fetch one entry. List the entries first with\n")
+			b.WriteString("         GET /api/share/" + d.Token + "/list?path=<absolute path>.\n")
+		} else {
+			b.WriteString("         A file the shared document references: append ?path=<absolute path>\n")
+			b.WriteString("         (the path must stay inside the share's scope).\n")
+		}
+		b.WriteString("    -->\n")
+		if d.Kind == shareKindFile {
+			b.WriteString(`    <link rel="alternate" type="application/octet-stream" href="` + downloadURL + `" title="Direct download">` + "\n")
+		}
+	}
+
 	b.WriteString(`    <script type="application/ld+json">`)
 	b.WriteString(`{"@context":"https://schema.org","@type":"` + schemaType + `","name":` + string(titleJSON))
 	if d.Kind == shareKindSession && d.MessageCount > 0 {
@@ -153,6 +180,13 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	b.WriteString("      <h1>" + titleHTML + "</h1>\n")
 	b.WriteString("      <p>" + desc + " The full content is available as JSON at\n")
 	b.WriteString(`         <a href="` + dataURL + `">` + dataURL + "</a>.</p>\n")
+	if d.Kind == shareKindFile {
+		b.WriteString(`      <p>Download the file itself: <a href="/api/share/` + d.Token + `/download">` +
+			`/api/share/` + d.Token + `/download</a>.</p>` + "\n")
+	} else if d.Kind == shareKindDir {
+		b.WriteString("      <p>Download one entry: <code>/api/share/" + d.Token +
+			"/download?path=&lt;absolute path inside the folder&gt;</code>.</p>\n")
+	}
 	b.WriteString("    </noscript>\n")
 
 	// Title: replaces the generic "ClawBench Share" so tabs, bookmarks and link

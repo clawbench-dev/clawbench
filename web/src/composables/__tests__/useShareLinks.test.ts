@@ -233,3 +233,37 @@ describe('useShareLinks', () => {
     expect(s.all.value).toHaveLength(2)
   })
 })
+
+/**
+ * The direct link must live on the SAME host as the page link the user picked:
+ * on a multi-homed machine the page link is chosen for the network the reader
+ * can reach, and a direct link built from `location` would silently point at a
+ * different (possibly unreachable) interface.
+ */
+describe('directDownloadUrl', () => {
+  it('swaps the page path for the download endpoint on the same origin', async () => {
+    const { directDownloadUrl } = await import('../useShareLinks')
+    expect(directDownloadUrl('http://192.168.100.142:20000/share/abc123', 'abc123'))
+      .toBe('http://192.168.100.142:20000/api/share/abc123/download')
+  })
+
+  it('keeps a non-default port and an https origin', async () => {
+    const { directDownloadUrl } = await import('../useShareLinks')
+    expect(directDownloadUrl('https://box.example:8443/share/tok', 'tok'))
+      .toBe('https://box.example:8443/api/share/tok/download')
+  })
+
+  it('percent-encodes the token rather than splicing it raw', async () => {
+    const { directDownloadUrl } = await import('../useShareLinks')
+    expect(directDownloadUrl('http://h:20000/share/a b', 'a b'))
+      .toBe('http://h:20000/api/share/a%20b/download')
+  })
+
+  it('returns an empty string when there is nothing to build from', async () => {
+    const { directDownloadUrl } = await import('../useShareLinks')
+    expect(directDownloadUrl('', 'tok')).toBe('')
+    expect(directDownloadUrl('http://h:20000/share/tok', '')).toBe('')
+    expect(directDownloadUrl('not a url', 'tok')).toBe('')
+  })
+})
+

@@ -74,6 +74,43 @@ func TestInjectShareDiscovery_AlwaysOffersMeta(t *testing.T) {
 	}
 }
 
+// A file share must say how to fetch the FILE, not just the page: that is what
+// lets an agent (or a script) download the bytes instead of scraping markup.
+func TestInjectShareDiscovery_FileShareAdvertisesDirectDownload(t *testing.T) {
+	const tok = "0123456789abcdef0123456789abcdef"
+	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindFile})
+
+	assert.Contains(t, out, `href="/api/share/`+tok+`/download"`,
+		"the download URL must be a machine-readable link, not only prose")
+	assert.Contains(t, out, `/api/share/`+tok+`/local`,
+		"the inline endpoint is how an agent embeds the file in <img>/<video>")
+	// The endpoint refuses a relative ?path=, so the hint must say absolute.
+	assert.Contains(t, out, "?path=<absolute path>")
+	// Plain-text readers get it too.
+	assert.Contains(t, out, "Download the file itself")
+}
+
+// A folder has no single file, so its bare /download is a 404. Advertising it
+// would hand an agent a URL that cannot work.
+func TestInjectShareDiscovery_FolderShareAdvertisesOnlyPathForm(t *testing.T) {
+	const tok = "0123456789abcdef0123456789abcdef"
+	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindDir})
+
+	assert.NotContains(t, out, `type="application/octet-stream"`)
+	assert.Contains(t, out, "?path=<absolute path inside the folder>")
+	assert.Contains(t, out, `/api/share/`+tok+`/list?path=`)
+}
+
+// A conversation share has no downloadable payload at all.
+func TestInjectShareDiscovery_ConversationHasNoDownloadPointer(t *testing.T) {
+	out := injectShareDiscovery(shellDoc, shareDiscovery{
+		Token: "0123456789abcdef0123456789abcdef",
+		Kind:  shareKindSession,
+	})
+	assert.NotContains(t, out, "/download")
+	assert.NotContains(t, out, "/local")
+}
+
 // A token is attacker-controlled (it comes straight from the URL), so anything
 // that is not a plausible token must be refused outright rather than escaped
 // into a URL.

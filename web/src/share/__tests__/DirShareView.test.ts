@@ -221,6 +221,12 @@ describe('DirShareView', () => {
 
     const downloadBtn = wrapper.findAll('.dir-row')[1].find('.dir-row-download')
     expect(downloadBtn.exists()).toBe(true)
+    // A real link, so right-clicking the row's download control offers the
+    // browser's "copy link address" — the per-file direct URL.
+    expect(downloadBtn.element.tagName).toBe('A')
+    expect(String(downloadBtn.attributes('href'))).toBe(
+      `/api/share/tokabc/download?path=${encodeURIComponent(ROOT + '/a.md')}`,
+    )
     await downloadBtn.trigger('click')
 
     expect(mockDownloadUrlWithProgress).toHaveBeenCalledWith(

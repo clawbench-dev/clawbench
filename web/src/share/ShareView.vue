@@ -44,15 +44,19 @@
           <List :size="16" />
         </button>
       </div>
-      <button
+      <!-- A real link, not a button: the href IS the file, so right-clicking it
+           offers the browser's own "copy link address" / "save link as" — which
+           is how a reader gets the direct URL without inspecting the network
+           panel. The click handler is still what drives the progress bar. -->
+      <a
         v-if="file && !error"
         class="share-btn share-btn--download"
-        type="button"
+        :href="downloadUrl"
         :title="t('share.download')"
-        @click="handleDownload"
+        @click.prevent="handleDownload"
       >
         <Download :size="16" />
-      </button>
+      </a>
       <!-- Both of these are ALWAYS available (not behind hasToc / error) and
            in a fixed order, so they never shift when the other actions appear:
            the theme picker is the one control a reader needs on a page that
@@ -232,14 +236,16 @@
             />
           </div>
 
-          <!-- Binary / too-large / unsupported fallback: download -->
+          <!-- Binary / too-large / unsupported fallback: download. Also a real
+               link (see the topbar one) so the URL is copyable from the
+               browser's context menu. -->
           <div v-else class="share-center-hint share-unsupported">
             <FileIcon :path="file.name" :size="48" />
             <div class="share-error-desc">{{ file.tooLarge ? t('share.tooLarge') : t('share.noPreview') }}</div>
-            <button class="share-download-btn" type="button" @click="handleDownload">
+            <a class="share-download-btn" :href="downloadUrl" @click.prevent="handleDownload">
               <Download :size="14" />
               {{ t('common.download') }}
-            </button>
+            </a>
           </div>
         </template>
       </div>

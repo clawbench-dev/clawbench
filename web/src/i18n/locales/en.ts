@@ -5292,6 +5292,8 @@ export default {
     openMeeting: 'Open meeting',
     copy: 'Copy link',
     copied: 'Link copied',
+    copyDirectLink: 'Copy direct link',
+    directCopied: 'Direct link copied — opens the file',
     shareTo: 'Share to another app',
     copyInstead: 'Copy link (desktop has no system share sheet)',
     mail: 'Send by email',

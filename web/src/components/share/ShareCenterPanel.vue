@@ -161,6 +161,21 @@
                 <ExternalLink :size="14" />
                 <span class="action-label">{{ t('shareCenter.openPage') }}</span>
               </button>
+              <!-- The page link and the file itself are two different URLs, and
+                   "I want to download it directly" is a different intent from
+                   "open the preview". File shares only: a folder has no single
+                   file and a conversation/meeting has nothing to download. -->
+              <button
+                v-if="item.kind === 'file' && !item.sourceGone"
+                class="fbtn"
+                type="button"
+                data-action="copy-direct"
+                :title="t('shareCenter.copyDirectLink')"
+                @click="copyDirectLink(item)"
+              >
+                <Download :size="14" />
+                <span class="action-label">{{ t('shareCenter.copyDirectLink') }}</span>
+              </button>
               <button
                 class="fbtn"
                 type="button"
@@ -201,6 +216,7 @@ import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   ChevronDown,
+  Download,
   ExternalLink,
   FileText,
   Folder,
@@ -222,7 +238,9 @@ import { useShareCenter, type ShareItem } from '@/composables/useShareCenter'
 import { onShareChanged } from '@/composables/useShareEvents'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import type { ShareLink } from '@/composables/useShareLinks'
+import { directDownloadUrl } from '@/composables/useShareLinks'
 import { openExternalUrl } from '@/utils/externalLink'
+import { copyText } from '@/utils/clipboard'
 import { formatRelativeTime } from '@/utils/format'
 import { appLog } from '@/utils/appLog'
 import { serverConfig } from '@/composables/useSettingsConfig'
@@ -423,6 +441,21 @@ async function shareTo(item: ShareItem): Promise<void> {
     icon: 'link',
     type: 'success',
     duration: 1800,
+  })
+}
+
+/**
+ * Copy the file's DIRECT download URL, not the share page.
+ *
+ * Built from the row's primary address, so it lands on the same host as the
+ * page link the user can actually open. The server endpoint takes the token
+ * alone; no cookie is needed.
+ */
+function copyDirectLink(item: ShareItem): void {
+  const url = directDownloadUrl(primaryUrl(), item.token)
+  if (!url) return
+  copyText(url, () => {
+    toast.show(t('shareCenter.directCopied'), { icon: 'link', type: 'success', duration: 1800 })
   })
 }
 

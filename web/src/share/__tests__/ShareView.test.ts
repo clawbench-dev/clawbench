@@ -658,12 +658,17 @@ describe('ShareView — in-place navigation to referenced files', () => {
     await flushPromises()
 
     mockDownloadUrlWithProgress.mockClear()
-    await wrapper.find('button.share-btn--download').trigger('click')
+    // A link, so the URL is copyable from the browser's context menu.
+    const link = wrapper.find('a.share-btn--download')
+    await link.trigger('click')
 
     expect(mockDownloadUrlWithProgress).toHaveBeenCalledTimes(1)
     const [url] = mockDownloadUrlWithProgress.mock.calls[0]
     expect(url).toContain('/download?path=')
     expect(decodeURIComponent(url)).toContain(LINKED.path)
+    // The href must be the same URL the click downloads, or "copy link
+    // address" would hand out something else.
+    expect(String(link.attributes('href'))).toBe(String(url))
   })
 
   it('ignores a share-open-file event for the file already on screen', async () => {
@@ -790,11 +795,15 @@ describe('ShareView — over-cap files fall back to download', () => {
     const unsupported = wrapper.find('.share-unsupported')
     expect(unsupported.exists()).toBe(true)
     expect(unsupported.text()).toContain('Too large to preview')
-    // A button, not an anchor: the download must route through the progress
-    // helper rather than the browser's native download mechanism.
-    const btn = unsupported.find('button.share-download-btn')
-    expect(btn.exists()).toBe(true)
-    expect(unsupported.find('a.share-download-btn').exists()).toBe(false)
+    // A link carrying the direct URL (so right-click → "copy link address"
+    // works), but the click is still routed through the progress helper rather
+    // than the browser's native download mechanism.
+    const link = unsupported.find('a.share-download-btn')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toContain('/download')
+    mockDownloadUrlWithProgress.mockClear()
+    await link.trigger('click')
+    expect(mockDownloadUrlWithProgress).toHaveBeenCalledTimes(1)
   })
 
   it('does not render an empty markdown preview for an over-cap markdown file', async () => {

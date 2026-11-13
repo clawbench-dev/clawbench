@@ -95,16 +95,18 @@
             <span class="dir-row-name" :title="entry.name">{{ entry.name }}</span>
             <span class="dir-row-size">{{ entry.type === 'dir' ? '' : formatFileSize(entry.size || 0) }}</span>
             <span class="dir-row-date">{{ formatModified(entry.modified) }}</span>
-            <button
+            <!-- A real link: right-clicking it offers the browser's "copy link
+                 address", which is how a reader gets a per-file direct URL. -->
+            <a
               v-if="entry.type !== 'dir'"
               class="share-btn dir-row-download"
-              type="button"
+              :href="entryDownloadUrl(entry)"
               :title="t('share.dir.download')"
               :aria-label="t('share.dir.download')"
-              @click.stop="downloadEntry(entry)"
+              @click.stop.prevent="downloadEntry(entry)"
             >
               <Download :size="16" />
-            </button>
+            </a>
           </div>
         </div>
       </div>
@@ -292,14 +294,18 @@ function backToRoot() {
   location.assign(shareDeepLink(''))
 }
 
-function downloadEntry(entry: ShareListEntry) {
+/** Token-scoped download URL for one entry of the current listing. */
+function entryDownloadUrl(entry: ShareListEntry): string {
   const base = listing.value?.path
-  if (!base) return
+  if (!base) return ''
   const absPath = joinPath(base, entry.name)
-  downloadUrlWithProgress(
-    `${shareApiUrl('download')}?path=${encodeURIComponent(absPath)}`,
-    entry.name,
-  )
+  return `${shareApiUrl('download')}?path=${encodeURIComponent(absPath)}`
+}
+
+function downloadEntry(entry: ShareListEntry) {
+  const url = entryDownloadUrl(entry)
+  if (!url) return
+  downloadUrlWithProgress(url, entry.name)
 }
 
 function formatModified(value?: string): string {
