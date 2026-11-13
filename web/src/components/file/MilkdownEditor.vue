@@ -196,6 +196,14 @@ onMounted(async () => {
             // Unmounted while the async create was in flight.
             await editor.value.destroy()
             editor.value = null
+        } else {
+            // The baseline is the editor's OWN serialization of what it parsed,
+            // not the raw file text: Milkdown normalizes some syntax (table
+            // column padding, list markers), so comparing against the file would
+            // mark every such document dirty the moment it opens and prompt
+            // "save changes?" before the user touched anything.
+            baseline.value = getValue()
+            dirty.value = false
         }
     } catch (err) {
         // Creating the editor must never leave the user stuck in a blank pane:

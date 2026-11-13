@@ -85,6 +85,20 @@ describe('MilkdownEditor', () => {
         wrapper.unmount()
     })
 
+    it('starts clean even when the serializer rewrites the source formatting', async () => {
+        // Milkdown pads table columns and escapes `_` inside cells. The editor
+        // must treat that normalization as the baseline, otherwise opening such
+        // a file looks like "unsaved changes" before the user touched anything.
+        const source = '| 列一 | 列二 |\n|---|---|\n| a_b | >10 |\n'
+        const wrapper = mountEditor(source)
+        await waitForEditor(wrapper)
+
+        expect(wrapper.vm.getValue()).not.toBe(source)
+        expect(wrapper.vm.isDirty()).toBe(false)
+
+        wrapper.unmount()
+    })
+
     it('rewrites a relative image src to a served URL without touching the document', async () => {
         const source = '# Title\n\n![shot](screenshots/a.png)\n'
         const wrapper = mountEditor(source, { name: 'app.md', path: 'docs/user-guide/app.md' })
