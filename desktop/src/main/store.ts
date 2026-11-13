@@ -3,6 +3,7 @@ import type { ServerEntry } from './types'
 import type { TransportPreference } from './transport'
 import type { WindowBounds } from './windowGeometry'
 import type { FloatingStats, Rect, ResolvedColors } from './floatingPolicy'
+import type { CloseAction } from './closePolicy'
 import { DEFAULT_THEME_ID } from '../shared/theme'
 
 export interface ServerListSchema {
@@ -82,6 +83,16 @@ export interface ServerListSchema {
   /** Palette the web UI pushed through `setTheme`, for the capsule. */
   floatingColors: ResolvedColors | null
   /**
+   * What the window's close button does: ask every time, hide to the tray, or
+   * quit.
+   *
+   * Persisted because "remember my choice" is the whole point of the dialog —
+   * re-deriving it would ask again on the next launch. The tray icon exists
+   * whenever this is 'tray', independently of `floatingEnabled`: hiding the
+   * window with no icon to click would strand the app with no way back.
+   */
+  closeAction: CloseAction
+  /**
    * Certificates the user accepted for a self-signed server: `origin ->
    * fingerprint` (`https://host:port`, WebSocket schemes folded onto their
    * HTTP equivalent).
@@ -109,6 +120,7 @@ const defaults: ServerListSchema = {
   floatingBounds: null,
   floatingStats: null,
   floatingColors: null,
+  closeAction: 'ask',
   trustedCertificates: {},
 }
 

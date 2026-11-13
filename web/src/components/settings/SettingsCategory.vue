@@ -390,6 +390,13 @@ const renderList = computed(() => {
         if (entry.spec.key === 'downloadAndroidApp' || entry.spec.key === 'downloadDesktopApp') continue
       }
       if (entry.spec.key === 'trustedCerts' && typeof getNative()?.forgetTrustedCerts !== 'function') continue
+      // The close-behaviour row describes the frameless shell's own close
+      // button. Only the Electron host on Windows/Linux has one — macOS keeps a
+      // native frame and its red button already closes the window without
+      // quitting — so the capability is what decides, not a platform flag. This
+      // also keeps the row off Android, Harmony and the plain browser, where the
+      // dialog can never appear.
+      if (entry.spec.key === 'closeAction' && getNative()?.hasCustomWindowControls?.() !== true) continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue

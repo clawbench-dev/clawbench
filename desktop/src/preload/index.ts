@@ -54,6 +54,13 @@ ipcRenderer.on('clawbench-floating-enabled-changed', (_e, detail: unknown) => {
   window.dispatchEvent(new CustomEvent('clawbench-floating-enabled-changed', { detail }))
 })
 
+// The close behaviour was remembered from the dialog ("remember my choice"),
+// which the settings row has no other way of learning about. Same CustomEvent
+// convention as above so the renderer never touches IPC directly.
+ipcRenderer.on('clawbench-close-action-changed', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-close-action-changed', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
@@ -271,4 +278,12 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   windowToggleMaximize: () => { ipcRenderer.send('native:window-toggle-maximize') },
   windowClose: () => { ipcRenderer.send('native:window-close') },
   isWindowMaximized: () => invoke('native:window-is-maximized'),
+  // What the close button does ('ask' | 'tray' | 'exit'). Read synchronously so
+  // the settings row can render the current option on mount; the write is
+  // fire-and-forget, and the main process pushes the authoritative value back
+  // over `clawbench-close-action-changed` when it changes.
+  getCloseAction: () => {
+    try { return ipcRenderer.sendSync('native:get-close-action') } catch { return 'ask' }
+  },
+  setCloseAction: (action: string) => { ipcRenderer.send('native:set-close-action', action) },
 })

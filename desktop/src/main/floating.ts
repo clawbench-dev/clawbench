@@ -5,6 +5,7 @@ import https from 'node:https'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
+import { normalizeCloseAction } from './closePolicy'
 import { getCookieHeaderForUrl, record, recordError } from './clientLog'
 import { floatingCapsuleLabels, resolveNativeLanguage } from './labels'
 import { createMainWindow, getMainWindow, onMainWindowCreated } from './window'
@@ -161,6 +162,7 @@ function getStoreSafe() {
       floatingBounds: s.get('floatingBounds'),
       floatingStats: s.get('floatingStats'),
       floatingColors: s.get('floatingColors'),
+      closeAction: s.get('closeAction'),
     } as const
   } catch {
     return {
@@ -169,12 +171,29 @@ function getStoreSafe() {
       floatingBounds: null,
       floatingStats: null,
       floatingColors: null,
+      closeAction: 'ask',
     } as const
   }
 }
 
 function isEnabled(): boolean {
   return getStoreSafe().floatingEnabled === true
+}
+
+/**
+ * Whether the persisted close behaviour needs a tray icon of its own.
+ *
+ * "Minimize to tray" is a promise that there IS a tray icon; the capsule
+ * feature is a separate switch, and a user who only wants close-to-tray must
+ * not have to turn the capsule on to get one.
+ */
+function closeActionNeedsTray(): boolean {
+  return normalizeCloseAction(getStoreSafe().closeAction) === 'tray'
+}
+
+/** Whether a tray icon should exist at all, for either reason. */
+function trayWanted(): boolean {
+  return isEnabled() || closeActionNeedsTray()
 }
 
 // ── geometry ────────────────────────────────────────────────────────────────
@@ -514,31 +533,49 @@ function trayImage(): Electron.NativeImage {
   return nativeImage.createEmpty()
 }
 
+/**
+ * The tray icon's right-click menu.
+ *
+ * Capsule entries appear only while the capsule FEATURE is on. The icon itself
+ * can also exist just to keep the app reachable after "minimize to tray" (see
+ * `closeActionNeedsTray`), and a menu offering "show floating window" there
+ * would describe a feature the user never turned on.
+ */
 function trayMenu(): Menu {
   const t = labels()
   const capsuleOn = isFloatingAlive()
   const main = getMainWindow()
   const mainOnScreen = !!main && !main.isDestroyed() && main.isVisible()
-  return Menu.buildFromTemplate([
-    { label: capsuleOn ? t.hideFloating : t.showFloating, click: () => toggleCapsule() },
+  const items: Electron.MenuItemConstructorOptions[] = []
+  if (isEnabled()) {
+    items.push({ label: capsuleOn ? t.hideFloating : t.showFloating, click: () => toggleCapsule() })
+  }
+  // `enabled` is evaluated when the menu is BUILT, but the click can land
+  // seconds later, after the window is gone. `hideMainWindow` re-checks.
+  items.push(
     { label: t.openMain, enabled: !mainOnScreen, click: () => openMainWindow() },
-    // `enabled` is evaluated when the menu is BUILT, but the click can land
-    // seconds later, after the window is gone. `hideMainWindow` re-checks.
     { label: t.hideMain, enabled: mainOnScreen, click: () => hideMainWindow() },
-    { type: 'separator' },
-    { label: t.resetPosition, click: () => resetCapsulePosition() },
-    { type: 'separator' },
-    { label: t.disableFloating, click: () => applyFloatingEnabled(false) },
-    { label: t.quit, click: () => app.quit() },
-  ])
+  )
+  if (isEnabled()) {
+    items.push(
+      { type: 'separator' },
+      { label: t.resetPosition, click: () => resetCapsulePosition() },
+      { type: 'separator' },
+      { label: t.disableFloating, click: () => applyFloatingEnabled(false) },
+    )
+  }
+  items.push({ type: 'separator' }, { label: t.quit, click: () => app.quit() })
+  return Menu.buildFromTemplate(items)
 }
 
 /**
  * Create the tray icon, or refresh it if it already exists.
  *
- * The tray lives as long as the FEATURE does, not as long as the capsule window
- * is visible. Without that, hiding the capsule would leave no way back: no
- * window, no tray, and the preference only reachable by editing the config.
+ * The tray lives as long as something needs it (`trayWanted`), not as long as
+ * the capsule window is visible: hiding the capsule would otherwise leave no
+ * way back — no window, no tray, and the preference only reachable by editing
+ * the config. "Minimize to tray" is the second such need, and it is why the
+ * icon can exist with the capsule feature switched off.
  */
 function ensureTray(): void {
   if (tray) {
@@ -547,9 +584,9 @@ function ensureTray(): void {
   }
   try {
     tray = new Tray(trayImage())
-    // Left click toggles the capsule — the same gesture the capsule's own body
-    // uses, so "hide" and "bring back" read as one control in two places.
-    tray.on('click', () => toggleCapsule())
+    // Left click: see `trayClick` — with the capsule on this is the capsule's
+    // own toggle, without it the icon is the app's only handle.
+    tray.on('click', () => trayClick())
     tray.on('double-click', () => openMainWindow())
     syncTray()
     // The tray is now a surface showing the counters, and the capsule may not
@@ -585,8 +622,74 @@ function syncTray(): void {
 }
 
 /** Whether a tray icon exists — which is what keeps the app alive window-less. */
-export function hasFloatingTray(): boolean {
+export function hasAppTray(): boolean {
   return !!tray
+}
+
+/**
+ * Make sure a tray icon exists (used by "minimize to tray").
+ *
+ * The icon is the only way back to a hidden window, so the caller checks
+ * `hasAppTray()` before hiding anything.
+ */
+export function ensureAppTray(): void {
+  ensureTray()
+}
+
+/**
+ * Keep the tray in step with the persisted close behaviour.
+ *
+ * Turning the capsule feature off used to destroy the tray unconditionally;
+ * that is still right unless the close behaviour needs it. The reverse — the
+ * user switching the close behaviour to "minimize to tray" — has to create it,
+ * or the next close would hide the window with nothing to click.
+ */
+export function syncTrayForCloseAction(): void {
+  if (trayWanted()) {
+    ensureTray()
+    return
+  }
+  destroyTray()
+  // Nothing on screen shows the counters any more; the poll must stop with it.
+  stopPollingIfIdle()
+}
+
+/**
+ * Tell the renderer that the stored close behaviour changed outside its own
+ * settings row — the dialog's "remember my choice" is the only other writer,
+ * and the row would otherwise keep showing the previous value.
+ */
+export function notifyCloseActionChanged(action: string): void {
+  const w = getMainWindow()
+  if (!w || w.isDestroyed()) return
+  try {
+    w.webContents.send('clawbench-close-action-changed', action)
+  } catch {
+    /* renderer gone */
+  }
+}
+
+/**
+ * Left click on the tray icon.
+ *
+ * A window that is out of sight always wins: the icon has to be a way BACK, not
+ * a second way to hide — otherwise "minimize to tray" followed by a click would
+ * hide the capsule as well and leave nothing on screen to click.
+ *
+ * With the window in front, the capsule feature keeps its long-standing gesture
+ * (show/hide the capsule); without it the icon toggles the window, which is what
+ * the click means when the tray is the app's only handle.
+ */
+function trayClick(): void {
+  if (mainWindowOutOfSight()) {
+    openMainWindow()
+    return
+  }
+  if (isEnabled()) {
+    toggleCapsule()
+    return
+  }
+  hideMainWindow()
 }
 
 /**
@@ -695,9 +798,10 @@ export function applyFloatingEnabled(enabled: boolean): void {
     // front) leaves it hidden until the window is minimized or closed.
     syncCapsuleToMainWindow()
   } else {
-    // Turning the FEATURE off removes the tray too, so nothing would be left to
-    // click: make sure the main window is on screen first.
-    destroyTray()
+    // Turning the FEATURE off removes the tray too — unless "minimize to tray"
+    // still needs it. Without the tray nothing would be left to click, so make
+    // sure the main window is on screen first.
+    if (!trayWanted()) destroyTray()
     const w = getMainWindow()
     if (!w || w.isDestroyed()) {
       createMainWindow()
@@ -1015,6 +1119,10 @@ export function initFloating(): void {
     // user, and `mainWindowOutOfSight` treats a not-yet-shown window as visible
     // precisely so this call is a no-op here. The first minimize shows it.
     syncCapsuleToMainWindow()
+  } else if (closeActionNeedsTray()) {
+    // Close behaviour is "minimize to tray": the icon has to be there before the
+    // first close, or that close would find nothing to hide behind.
+    ensureTray()
   }
   // A monitor unplugged or a resolution change can strand the capsule off-screen.
   screen.on('display-metrics-changed', () => {

@@ -857,7 +857,7 @@ describe('settingsFieldMap', () => {
     expect(desktopNotify.map(i => i.key)).toEqual(['desktopNotification'])
 
     const desktopSystem = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
-    expect(desktopSystem.map(i => i.key)).toEqual(['floatingStatusWindow', 'liveUpdate'])
+    expect(desktopSystem.map(i => i.key)).toEqual(['floatingStatusWindow', 'closeAction', 'liveUpdate'])
 
     // Every item must carry one of the three section headers, so no row can fall
     // into the header-less "其他" card at the bottom of the page.
@@ -995,6 +995,18 @@ describe('settingsFieldMap', () => {
     expect(liveUpdate, 'liveUpdate must be in the desktop/system section').toBeDefined()
     expect(liveUpdate!.androidOnly, 'Live Updates is Android-only').toBe(true)
     expect(liveUpdate!.appOnly).toBeFalsy()
+
+    // The close-behaviour row is the third kind: a desktop-only row whose
+    // native half (dialog + tray + bridge) exists only in the Electron shell.
+    // `hideInAndroidApp` is what expresses that — `appOnly` alone would render
+    // it in the Android WebView, where `setCloseAction` does not exist.
+    const closeAction = desktop.find(i => i.key === 'closeAction')
+    expect(closeAction, 'closeAction must be in the desktop/system section').toBeDefined()
+    expect(closeAction!.type, 'a three-way choice needs a select').toBe('select')
+    expect(closeAction!.source).toBe('local')
+    expect(closeAction!.appOnly, 'must stay out of browser mode').toBe(true)
+    expect(closeAction!.hideInAndroidApp, 'the dialog exists only on desktop').toBe(true)
+    expect((closeAction!.options ?? []).map(o => o.value)).toEqual(['ask', 'tray', 'exit'])
   })
 
   it('desktopNotification is a local switch that is NOT app-only', () => {

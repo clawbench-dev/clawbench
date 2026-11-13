@@ -44,6 +44,25 @@ function ensureFloatingEnabledListener() {
   }) as EventListener)
 }
 
+/**
+ * Listen for the close behaviour being remembered in the native dialog.
+ *
+ * The dialog's "remember my choice" writes the native store directly, so the
+ * settings row would otherwise keep showing the previous option until a reload.
+ * Registered once, like the floating-window listener above.
+ */
+let closeActionListenerReady = false
+function ensureCloseActionListener() {
+  if (closeActionListenerReady) return
+  closeActionListenerReady = true
+  window.addEventListener('clawbench-close-action-changed', ((e: CustomEvent) => {
+    const action = e.detail
+    if (typeof action !== 'string') return
+    if (localConfig.closeAction === action) return
+    setLocalConfig('closeAction', action)
+  }) as EventListener)
+}
+
 /** One-time migration: copy legacy localStorage keys to new prefixed keys. */
 function migrateLegacyKeys() {
   const migrations: Record<string, { key: string; format: 'raw' | 'json' }> = {
@@ -206,6 +225,23 @@ const legacyKeys: Record<string, {
     sideEffect(value: boolean) {
       try {
         getNative()?.setFloatingWindowEnabled?.(!!value)
+      } catch { /* not in app mode */ }
+    },
+  },
+  /**
+   * What the desktop shell's close button does ('ask' | 'tray' | 'exit').
+   *
+   * Mirrored into the native store rather than kept as a web preference: the
+   * dialog that asks belongs to the main process, and it must agree with this
+   * row. The read-back in `syncCloseActionToNative` covers the other direction
+   * (a choice remembered in the dialog).
+   */
+  closeAction: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: string) {
+      try {
+        getNative()?.setCloseAction?.(value)
       } catch { /* not in app mode */ }
     },
   },
@@ -463,6 +499,9 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // when they are sitting at it.
   desktopNotification: true,
   floatingStatusWindow: false,
+  // What the close button does. 'ask' on a fresh install, matching the shell's
+  // own default — the native store is the authority once it has answered.
+  closeAction: 'ask',
   liveUpdate: true,
   fontMono: 'default',
   fontUi: 'default',
@@ -923,6 +962,7 @@ export function useSettingsConfig() {
   // The tray can turn the feature off behind the page's back — listen before
   // anything else so the settings row converges from the first render.
   ensureFloatingEnabledListener()
+  ensureCloseActionListener()
 
   /** Sync push_mode from server config to Android native push state. */
   function syncPushModeToNative() {
@@ -967,6 +1007,26 @@ export function useSettingsConfig() {
     } catch { /* not in app mode */ }
   }
 
+  /**
+   * Reconcile the close behaviour with the native host.
+   *
+   * The host is the source of truth: the dialog can remember a choice, and this
+   * row only ever writes. Adopting the host's value (rather than pushing ours)
+   * is what stops a stale localStorage value from silently undoing a remembered
+   * "minimize to tray" on the next load.
+   *
+   * Hosts without the accessor (Android, browser) are left alone — the row is
+   * not rendered there at all.
+   */
+  function syncCloseActionToNative() {
+    try {
+      const actual = getNative()?.getCloseAction?.()
+      if (typeof actual !== 'string') return
+      if (actual === localConfig.closeAction) return
+      setLocalConfig('closeAction', actual)
+    } catch { /* not in app mode */ }
+  }
+
   async function loadConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
@@ -996,6 +1056,8 @@ export function useSettingsConfig() {
     syncFloatingWindowToNative()
     // Sync Live Updates chip preference to Android native
     syncLiveUpdateToNative()
+    // Adopt the close behaviour the shell actually has stored
+    syncCloseActionToNative()
   }
 
   async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {

@@ -7,7 +7,7 @@ import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
 import { handOffToPointedVersion } from './install'
-import { flushFloatingBounds, hasFloatingTray, initFloating, openMainWindow } from './floating'
+import { flushFloatingBounds, hasAppTray, initFloating, openMainWindow } from './floating'
 import { recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 
@@ -156,11 +156,12 @@ app.whenReady().then(() => {
 
 // A tray icon means the app is still reachable with no window on screen, so it
 // keeps running until Quit is chosen from the tray — the usual Windows pattern
-// for a background app. Without a tray there is nothing to click, so closing
-// every window still quits.
+// for a background app. The icon comes either from the floating capsule or from
+// "minimize to tray", so both cases are covered by the same question. Without a
+// tray there is nothing to click, so closing every window still quits.
 app.on('window-all-closed', () => {
   if (process.platform === 'darwin') return
-  if (hasFloatingTray()) return
+  if (hasAppTray()) return
   app.quit()
 })
 

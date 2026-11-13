@@ -17,6 +17,7 @@ import {
   certificateLabels,
   floatingCapsuleLabels,
   unloadGuardLabels,
+  closeDialogLabels,
 } from './labels'
 
 describe('normalizeNativeLanguage', () => {
@@ -164,6 +165,45 @@ describe('unloadGuardLabels', () => {
 
   it('has no hardcoded Chinese left in the English table', () => {
     const l = unloadGuardLabels('en')
+    for (const v of Object.values(l)) {
+      expect(v).not.toMatch(/[\u4e00-\u9fff]/)
+    }
+  })
+})
+
+describe('closeDialogLabels', () => {
+  it('returns Chinese wording for zh locales', () => {
+    const l = closeDialogLabels('zh-CN')
+    expect(l.title).toBe('关闭 ClawBench')
+    expect(l.tray).toBe('最小化到托盘')
+    expect(l.exit).toBe('退出程序')
+    expect(l.cancel).toBe('取消')
+    expect(l.remember).toContain('记住')
+  })
+
+  it('returns English wording for non-Chinese locales', () => {
+    const l = closeDialogLabels('en')
+    expect(l.title).toBe('Close ClawBench')
+    expect(l.tray).toBe('Minimize to tray')
+    expect(l.exit).toBe('Quit the app')
+    expect(l.cancel).toBe('Cancel')
+    expect(l.remember).toContain('Remember')
+  })
+
+  it('names where the app goes and how to get it back', () => {
+    // The dialog is the only place a user learns that the window is still
+    // running and that the tray icon brings it back.
+    expect(closeDialogLabels('zh').detail).toContain('托盘')
+    expect(closeDialogLabels('en').detail.toLowerCase()).toContain('tray')
+    for (const locale of ['zh', 'en']) {
+      const l = closeDialogLabels(locale)
+      expect(l.trayUnavailable.length).toBeGreaterThan(0)
+      expect(l.ok.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('has no hardcoded Chinese left in the English table', () => {
+    const l = closeDialogLabels('en')
     for (const v of Object.values(l)) {
       expect(v).not.toMatch(/[\u4e00-\u9fff]/)
     }

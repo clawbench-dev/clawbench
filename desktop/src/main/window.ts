@@ -18,6 +18,7 @@ import {
 } from './versionGate'
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
+import { cancelPendingQuit, handleCloseRequest, isAppQuitting, noteOsShutdown } from './closeFlow'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
@@ -217,7 +218,16 @@ function registerUnloadGuard(win: BrowserWindow): void {
       message: labels.message,
       detail: labels.detail,
     })
-    if (choice === 0) event.preventDefault()
+    if (choice === 0) {
+      // For `will-prevent-unload`, `preventDefault` means "ignore the
+      // renderer's veto and unload anyway" — i.e. the user chose to leave.
+      event.preventDefault()
+      return
+    }
+    // The window refused to close, which also aborts whatever quit started this
+    // close. Clearing the flag is what makes the NEXT close ask again instead of
+    // quitting outright — the very decision the user just declined.
+    cancelPendingQuit()
   })
 }
 
@@ -319,7 +329,13 @@ export function toggleMaximizeMainWindow(): void {
   else mainWindow.maximize()
 }
 
-/** Close the main window (frameless header control). */
+/**
+ * Close the main window (frameless header control).
+ *
+ * Goes through the window's own `close` event rather than acting directly, so
+ * this button, Alt+F4 and the taskbar's "close" all take the same route into
+ * `closeFlow.ts`.
+ */
 export function closeMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
 }
@@ -327,6 +343,36 @@ export function closeMainWindow(): void {
 /** Whether the main window is currently maximized (frameless header control). */
 export function isMainWindowMaximized(): boolean {
   return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()
+}
+
+/**
+ * Route every close of the main window through the close-behaviour flow.
+ *
+ * The header's close button only reaches the main process over IPC, but Alt+F4,
+ * the taskbar's "close" and the window manager's X all fire the window's own
+ * `close` event — intercepting here is what makes them behave identically
+ * instead of some quitting and some asking.
+ *
+ * The event is prevented up front: the flow decides (quit / hide to tray /
+ * ask), and `app.quit()` re-enters this handler with `isAppQuitting()` true, at
+ * which point it steps aside. macOS is left alone — it keeps the native frame,
+ * its red button already means "close the window, keep the app" and the dock
+ * icon is the way back, so there is nothing to ask.
+ */
+function registerCloseInterception(win: BrowserWindow): void {
+  if (process.platform === 'darwin') return
+  // Windows shuts down by closing every window. That is not a user close: the
+  // dialog would appear on a machine that is already going away, and preventing
+  // the close can hold the shutdown up.
+  win.on('query-session-end', () => noteOsShutdown())
+  win.on('close', (event) => {
+    if (isAppQuitting()) return
+    event.preventDefault()
+    // A flow that throws (a dialog that cannot open, a tray that cannot be
+    // created) leaves the window open, which is the safe outcome — it must not
+    // become an unhandled rejection either.
+    void handleCloseRequest(win).catch(() => { /* window stays open */ })
+  })
 }
 
 /**
@@ -440,6 +486,7 @@ export function createMainWindow(): BrowserWindow {
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
   registerUnloadGuard(mainWindow)
+  registerCloseInterception(mainWindow)
   registerWindowStateReporting(mainWindow)
   // After the window's own wiring, before anything can show it: a listener that
   // missed the first `show` would think the window is still hidden.

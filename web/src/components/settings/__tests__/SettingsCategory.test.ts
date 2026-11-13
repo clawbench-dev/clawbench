@@ -1544,6 +1544,34 @@ describe('SettingsCategory', () => {
       expect(rowLabels).not.toContain('liveUpdate')
     })
 
+    it('shows the close-behaviour row only where the shell owns the close button', () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+
+      // The row describes the frameless header's own close button, so the
+      // capability decides rather than a platform flag: macOS keeps a native
+      // frame (its red button already closes the window without quitting) and
+      // the Android/Harmony shells have no such dialog at all.
+      const without = mountCategory('notification')
+      expect(without.findAll('[data-settings-key]').map(el => el.attributes('data-settings-key')))
+        .not.toContain('closeAction')
+
+      const native = {
+        isNativeApp: () => true,
+        isDesktopApp: () => true,
+        getHostPlatform: () => 'electron',
+        hasCustomWindowControls: () => true,
+      }
+      ;(window as unknown as Record<string, unknown>).ClawBenchNative = native
+      try {
+        const wrapper = mountCategory('notification')
+        expect(wrapper.findAll('[data-settings-key]').map(el => el.attributes('data-settings-key')))
+          .toContain('closeAction')
+      } finally {
+        delete (window as unknown as Record<string, unknown>).ClawBenchNative
+      }
+    })
+
     it('drops the 桌面与系统 card entirely in browser mode (app-only rows)', () => {
       const wrapper = mountCategory('notification')
       const titles = wrapper.findAllComponents({ name: 'SettingsCard' })

@@ -201,6 +201,9 @@ function liveListeners(port: number): number {
 }
 
 vi.mock('electron', () => ({
+  // `window.ts` (reached through the tunnel's reconnect path) imports the close
+  // flow, which registers a `before-quit` listener at module scope.
+  app: { on: () => undefined },
   safeStorage: { isEncryptionAvailable: () => false, encryptString: (s: string) => Buffer.from(s), decryptString: (b: Buffer) => b.toString() },
 }))
 

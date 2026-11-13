@@ -496,6 +496,16 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // left the desktop feature with no way to be switched on at all, and the
     // tray's "turn off" then had no way back.
     { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    // What the frameless shell's close button does. Desktop-only for the same
+    // reason as `trustedCerts` below: the dialog, the tray icon and the
+    // `getCloseAction`/`setCloseAction` bridge exist only in the Electron shell.
+    // macOS is excluded at runtime (`windowChrome.ts` gives it a native frame
+    // and its red button already means "close the window, keep the app").
+    { type: 'item', spec: { labelKey: 'settings.items.closeAction', descriptionKey: 'settings.items.closeActionDesc', key: 'closeAction', type: 'select', source: 'local', appOnly: true, hideInAndroidApp: true, sectionHeader: 'settings.items.desktopSystemSection', options: [
+      { labelKey: 'settings.items.closeActionAsk', value: 'ask' },
+      { labelKey: 'settings.items.closeActionTray', value: 'tray' },
+      { labelKey: 'settings.items.closeActionExit', value: 'exit' },
+    ] } },
     { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'panel', config: {
       panelId: 'push',
