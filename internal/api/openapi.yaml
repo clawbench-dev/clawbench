@@ -7227,8 +7227,12 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选门控脚本（仅 cron），AI 调用前执行，工作目录为项目路径。
+                    可选门控脚本（三种触发方式都支持），AI 调用前执行，工作目录为项目路径。
+                    定时任务到点先跑；邮件任务在账号 / 文件夹 / 子串 / 附件条件通过后跑；
+                    事件任务在匹配到订阅的事件后跑。
                     退出码 0 放行并调用 AI；非 0 / 超时关闭门控，跳过本次 AI（不建会话、不发通知）。
+                    触发信息以环境变量传入（`CLAWBENCH_TRIGGER`、`CLAWBENCH_MAIL_SUBJECT`、
+                    `CLAWBENCH_EVENT_TYPE` 等），正文走标准输入。
                     结果记录在执行记录上；提示词可用模板变量：
                     {{code}}、{{stdout}}、{{stderr}}、{{output}}。
                 script_timeout:
@@ -7288,8 +7292,9 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选门控脚本（仅 cron）。`action=update` 时生效。
+                    可选门控脚本（三种触发方式都支持）。`action=update` 时生效。
                     退出码 0 放行 AI，非 0 / 超时跳过 AI；脚本结果可在提示词中以模板变量引用。
+                    触发信息以 `CLAWBENCH_*` 环境变量传入，正文走标准输入。
                     **省略该字段表示保持不变**（与 `name` / `prompt` 等一致的部分更新语义）；
                     传空字符串表示清除脚本。
                 script_timeout:

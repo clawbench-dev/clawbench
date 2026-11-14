@@ -53,6 +53,9 @@ type MailEventContext struct {
 	Body        string
 	// MessageID is the cached mail_messages row id, useful for logging.
 	MessageID int64
+	// HasAttachments mirrors the message flag so a gating script can read it
+	// without parsing the rendered context block.
+	HasAttachments bool
 	// URL is empty for mail (there is no public link); kept so the execution
 	// payload writer has one shape for both trigger kinds.
 	URL string
@@ -187,7 +190,11 @@ func fireForTask(task model.ScheduledTask, acc MailAccount, folderName, folderPa
 			return
 		}
 		body := ""
-		if strings.TrimSpace(task.MailBody) != "" {
+		// A body substring gate needs the decoded text; so does a gating
+		// script, which receives the body on stdin. Fetch it once here — the
+		// gate runs before the scheduler is involved, and a script must not see
+		// a silently empty body.
+		if strings.TrimSpace(task.MailBody) != "" || task.Script != "" {
 			body = loadMailBodyForGate(msg)
 			if body == "" {
 				continue
@@ -205,14 +212,15 @@ func fireForTask(task model.ScheduledTask, acc MailAccount, folderName, folderPa
 			continue // already fired for this message
 		}
 		ctx := MailEventContext{
-			AccountName: acc.Name,
-			Folder:      folderName,
-			From:        formatMailSender(msg),
-			To:          joinMailAddrs(msg.To),
-			Subject:     msg.Subject,
-			Date:        formatMailTime(msg.SentAt),
-			Body:        mailGateBody(msg, body),
-			MessageID:   msg.ID,
+			AccountName:    acc.Name,
+			Folder:         folderName,
+			From:           formatMailSender(msg),
+			To:             joinMailAddrs(msg.To),
+			Subject:        msg.Subject,
+			Date:           formatMailTime(msg.SentAt),
+			Body:           mailGateBody(msg, body),
+			MessageID:      msg.ID,
+			HasAttachments: msg.HasAttachments,
 		}
 		if !mailTaskFire(task.ID, ctx) {
 			// The task is busy; release the claim so the next sync can retry.

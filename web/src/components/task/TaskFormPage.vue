@@ -259,13 +259,16 @@
           <input type="number" class="form-input" v-model.number="form.maxRuns" min="1" />
         </div>
 
-        <!-- Gating script (pre-AI precondition). Cron tasks only: an event
-             task's prompt is driven by the injected event context, and the
-             backend ignores a script on an event task.
+        <!-- Gating script is NOT part of this block: it applies to every
+             trigger kind, so it lives in its own section below. -->
+        </template>
+      </div>
 
-             Gated behind a switch so a task without a gate carries no script
-             configuration at all. The switch is off unless the stored task
-             already has a script, so an edit never silently drops one. -->
+      <!-- Gating script (pre-AI precondition). Cron runs it when the schedule
+           fires; an email task runs it after the mailbox conditions pass; an
+           event task runs it after the subscription matches. -->
+      <div class="form-section">
+        <h3 class="section-title">{{ t('task.form.gateSection') }}</h3>
         <div class="form-group">
           <!-- Reuses the global switch primitive (`.settings-item__switch*`,
                shape defined once in css/components.css) — only the row layout
@@ -286,11 +289,31 @@
         </div>
 
         <template v-if="scriptEnabled">
-          <!-- Gate semantics + template variables live here rather than in the
-               editor placeholder: a placeholder is transient (it disappears as
-               soon as the user types) and cannot be laid out, so the four
-               variables were effectively undiscoverable while writing the
-               script. A dedicated panel stays visible and readable. -->
+          <!-- Trigger context (what the script can READ). Collapsed by default:
+               an event task exposes ~20 variables, and a permanently open list
+               would push the editor and the prompt far down the form. -->
+          <div class="script-guide">
+            <button type="button" class="script-guide-head script-guide-toggle" @click="scriptVarsOpen = !scriptVarsOpen">
+              <Info :size="13" class="script-guide-icon" />
+              <span>{{ t('task.form.scriptContextTitle', { n: triggerVars.length }) }}</span>
+              <ChevronDown :size="13" class="script-guide-caret" :class="{ 'is-open': scriptVarsOpen }" />
+            </button>
+            <template v-if="scriptVarsOpen">
+              <p class="script-guide-intro">{{ t('task.form.scriptContextIntro') }}</p>
+              <ul class="script-guide-vars">
+                <li v-for="v in triggerVars" :key="v.name" class="script-guide-var">
+                  <code class="script-guide-token">{{ v.name }}</code>
+                  <span class="script-guide-label">{{ v.label }}</span>
+                </li>
+              </ul>
+              <p class="script-guide-intro">{{ t('task.form.scriptContextStdin') }}</p>
+            </template>
+          </div>
+
+          <!-- Prompt template variables (what the script WRITES back). Kept as
+               a separate panel: this direction is the opposite of the one
+               above, and mixing them would read as one list of variables with
+               no indication of which way each flows. -->
           <div class="script-guide">
             <div class="script-guide-head">
               <Info :size="13" class="script-guide-icon" />
@@ -323,7 +346,6 @@
             <input type="number" class="form-input" v-model.number="form.scriptTimeout" min="0" placeholder="300" />
             <div v-if="errors.scriptTimeout" class="form-error">{{ errors.scriptTimeout }}</div>
           </div>
-        </template>
         </template>
       </div>
 
@@ -381,6 +403,7 @@ import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { useForgeBinding } from '@/composables/useForgeBinding'
 import { FORGE_EVENT_TRANSITIONS, FORGE_REPO_TARGETED_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel, transitionOfEventKey } from '@/utils/forgeEventLabels' 
 import { eventContextTemplateText, isRepoTargetedOnly } from '@/utils/forgeEventContextVars'
+import { gateScriptVarsFor } from '@/utils/gateScriptVars'
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
 
@@ -613,6 +636,13 @@ const scriptVars = computed(() => [
   { token: '{{' + 'stderr' + '}}', label: t('task.form.scriptVarStderr') },
   { token: '{{' + 'output' + '}}', label: t('task.form.scriptVarOutput') },
 ])
+
+// What the script can READ (environment variables), scoped to the current
+// trigger mode. Collapsed by default — an event task exposes ~20 entries.
+const scriptVarsOpen = ref(false)
+const triggerVars = computed(() =>
+  gateScriptVarsFor(form.value.triggerMode).map((v) => ({ name: v.name, label: t(v.labelKey) })),
+)
 
 // ── Time option lists ──
 // MenuSelect holds a flat option array, so the generated ranges live here
@@ -907,6 +937,30 @@ onMounted(() => {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
+}
+
+/* Collapsible header for the trigger-context list. A button so it is reachable
+   by keyboard; the reset below keeps it visually identical to the static
+   header above, so the two panels read as one block. */
+.script-guide-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.script-guide-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-muted, #6b7280);
+  transition: transform var(--duration-fast, 0.1s) ease;
+}
+
+.script-guide-caret.is-open {
+  transform: rotate(180deg);
 }
 
 .script-guide-icon {

@@ -72,6 +72,9 @@ const gateChips = computed(() => {
   if (subject) chips.push(t('task.mail.gateSubject', { v: subject }))
   if (body) chips.push(t('task.mail.gateBody', { v: body }))
   if (props.task.mailHasAttachment) chips.push(t('task.mail.gateAttachment'))
+  // The substring gates are only part of the story once a script is attached;
+  // without this chip the card claims a task fires on those conditions alone.
+  if (props.task.script) chips.push(t('task.gateScriptChip'))
   return chips
 })
 

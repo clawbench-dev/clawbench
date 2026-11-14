@@ -948,15 +948,20 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// ── Pre-AI gating script phase ───────────────────────────────────────
 	// An optional script runs BEFORE the session/AI as a gate: exit code 0
 	// opens it and the AI turn runs, anything else (non-zero, timeout) closes
-	// it and the run is skipped without spawning a session. Only cron tasks
-	// have a script: an event task's prompt is driven entirely by the injected
-	// event context.
+	// it and the run is skipped without spawning a session.
+	//
+	// Every trigger kind can carry one. For an email task it runs after the
+	// account/folder/substring gates and the dedupe claim, so a gate-closed
+	// message is judged exactly once; for a forge event it runs after the
+	// subscription match and queueing. The trigger's own fields are handed to
+	// the script through the environment (see gateScriptInput), so a script can
+	// make decisions the substring gates cannot express.
 	//
 	// The script's result is always persisted on the execution row (exit code,
 	// stdout, stderr) so the run's history can show what the gate saw, and its
 	// output is substituted into the prompt through the template variables.
 	var scriptRes *ScriptResult
-	if !task.IsEventTriggered() && task.Script != "" {
+	if task.Script != "" {
 		// Register the script as a cancellable running execution so a user
 		// cancel reaches the script's context (CancelExecution looks up by the
 		// map key, hence the synthetic "script-<id>" id — there is no session
@@ -977,7 +982,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			Phase:       RunningPhaseScript,
 		})
 
-		res := RunTaskScript(ctx, task.Script, projectPath, scriptTimeoutDuration(task.ScriptTimeout))
+		res := RunTaskScript(ctx, task.Script, projectPath, scriptTimeoutDuration(task.ScriptTimeout),
+			gateScriptInput(task, mailCtx, eventCtx))
 		s.runningExecutions.Delete(scriptExecID)
 		scriptRes = &res
 
@@ -1258,10 +1264,16 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask, countRun bool
 		counted = 1
 	}
 
-	// Event-triggered tasks do not participate in cron completion semantics:
-	// there is no next cron run and no repeat-mode exhaustion. They simply record
-	// the run and stay active so the next matching event fires again.
-	if task.IsEventTriggered() {
+	// Event-triggered tasks (forge events AND new mail) do not participate in
+	// cron completion semantics: there is no next cron run and no repeat-mode
+	// exhaustion. They simply record the run and stay active so the next
+	// matching event fires again.
+	//
+	// This must test HasEventSource, not IsEventTriggered: an email task has an
+	// empty cron_expr, so falling through to the cron branch made
+	// ParseStandard("") fail and paused the task — every email task stopped
+	// firing after its first completed run.
+	if task.HasEventSource() {
 		_, _ = store.WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), counted, task.ID)
 		return task.Status

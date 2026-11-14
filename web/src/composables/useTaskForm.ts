@@ -51,9 +51,11 @@ export function useTaskForm(options: UseTaskFormOptions) {
     mailSubject: '',
     mailBody: '',
     mailHasAttachment: false,
-    // Optional gating shell script (cron tasks only). Runs before the AI call
-    // as a gate: exit 0 runs the AI, anything else skips the run. Its result is
-    // available to the prompt as {{code}} / {{stdout}} / {{stderr}} / {{output}}.
+    // Optional gating shell script (every trigger kind). Runs before the AI
+    // call as a gate: exit 0 runs the AI, anything else skips the run. Its
+    // result is available to the prompt as {{code}} / {{stdout}} / {{stderr}} /
+    // {{output}}, and the trigger's fields are exposed to the script as
+    // CLAWBENCH_* environment variables.
     script: '',
     // Script timeout in seconds. Kept as '' so the input renders empty (the
     // 300s default is shown as a placeholder instead, mirroring how maxRuns
@@ -122,14 +124,11 @@ export function useTaskForm(options: UseTaskFormOptions) {
     // A timeout is only meaningful as a non-negative whole number of seconds;
     // a negative or fractional value would be rejected (or silently truncated)
     // by the backend, so catch it here instead. An empty input coerces to 0,
-    // which is valid and means "use the backend default". Checked only in cron
-    // mode: the script section (and so the field) is hidden for event tasks, so
-    // an error there would be unreachable.
-    if (form.value.triggerMode !== 'event' && form.value.triggerMode !== 'email') {
-      const timeout = Number(form.value.scriptTimeout)
-      if (!Number.isInteger(timeout) || timeout < 0) {
-        e.scriptTimeout = 'task.form.scriptTimeoutInvalid'
-      }
+    // which is valid and means "use the backend default". The script (and so
+    // this field) is available for every trigger kind.
+    const timeout = Number(form.value.scriptTimeout)
+    if (!Number.isInteger(timeout) || timeout < 0) {
+      e.scriptTimeout = 'task.form.scriptTimeoutInvalid'
     }
     errors.value = e
     return Object.keys(e).length === 0
@@ -154,12 +153,12 @@ export function useTaskForm(options: UseTaskFormOptions) {
       max_runs: form.value.maxRuns,
       trigger_mode: form.value.triggerMode,
       event_types: isEvent ? form.value.eventTypes : '',
-      // A gating script is a cron-task precondition: an event task's prompt is
-      // driven by the injected event context, so the field is cleared like
-      // event_types is for the cron mode.
-      script: isEvent || isEmail ? '' : form.value.script,
+      // A gating script is available for every trigger kind: cron runs it when
+      // the schedule fires, an email task after its mailbox conditions pass, an
+      // event task after the subscription matches.
+      script: form.value.script,
       // 0 means "use the backend default" (300s); an empty input coerces to 0.
-      script_timeout: isEvent || isEmail ? 0 : Number(form.value.scriptTimeout) || 0,
+      script_timeout: Number(form.value.scriptTimeout) || 0,
       // Mail fields are only meaningful in email mode; sending them in other
       // modes would leave stale gates behind after switching back.
       mail_account_id: isEmail ? form.value.mailAccountId : 0,

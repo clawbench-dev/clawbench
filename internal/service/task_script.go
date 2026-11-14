@@ -6,7 +6,10 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"os"
 	"os/exec"
+	"sort"
+	"strings"
 	"time"
 
 	"clawbench/internal/platform"
@@ -63,6 +66,27 @@ const (
 	// ScriptCanceled means the caller's context was canceled (e.g. user pressed cancel).
 	ScriptCanceled
 )
+
+// ScriptInput is the trigger context handed to a gating script.
+//
+// Short structured fields travel as environment variables, the long free-text
+// body travels on stdin. The split is deliberate: Windows caps the whole
+// process environment block at ~32K characters, so a 4000-character Chinese
+// mail body would push exec over the limit and the script would fail to start
+// (which closes the gate and silently disables the task). stdin has no such
+// limit and also survives NUL bytes.
+type ScriptInput struct {
+	// Env is added to the inherited environment. Values are NUL-stripped and
+	// length-capped (see sanitizeScriptEnvValue).
+	Env map[string]string
+	// Stdin is the raw text of the trigger (mail body / event text). Empty
+	// leaves the script with an immediately-closed stdin.
+	Stdin string
+}
+
+// scriptEnvValueMax bounds one environment value. Real fields are far shorter;
+// the cap only stops a pathological title from bloating the environment block.
+const scriptEnvValueMax = 8 * 1024
 
 // ScriptResult is the outcome of RunTaskScript.
 type ScriptResult struct {
@@ -125,13 +149,21 @@ func (c *cappedBuffer) String() string { return c.buf.String() }
 // timeout <= 0 means DefaultScriptTimeout (300 * time.Second).
 // ctx cancellation and timeout must both terminate the whole process group.
 //
+// The optional input carries the trigger context (environment variables plus
+// the body on stdin). It is variadic only so the many call sites that run a
+// bare script stay readable; at most one is used.
+//
 // stdout and stderr are captured into distinct buffers so the caller can
 // substitute them into the prompt template and persist them on the execution
 // record. The script's exit code is the gate signal: 0 succeeds and lets the
 // AI run, anything else closes the gate. Output does not affect classification.
-func RunTaskScript(ctx context.Context, script string, workDir string, timeout time.Duration) ScriptResult {
+func RunTaskScript(ctx context.Context, script string, workDir string, timeout time.Duration, inputs ...ScriptInput) ScriptResult {
 	if timeout <= 0 {
 		timeout = DefaultScriptTimeout
+	}
+	var input ScriptInput
+	if len(inputs) > 0 {
+		input = inputs[0]
 	}
 
 	scriptCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -149,6 +181,16 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 	}
 	if workDir != "" {
 		cmd.Dir = workDir
+	}
+
+	// Environment: inherit the server's, then overlay the trigger context. A
+	// duplicate name must be replaced rather than appended — getenv returns the
+	// first match on most platforms, so an inherited value would shadow ours.
+	if len(input.Env) > 0 {
+		cmd.Env = mergeScriptEnv(input.Env)
+	}
+	if input.Stdin != "" {
+		cmd.Stdin = strings.NewReader(input.Stdin)
 	}
 
 	// Capture stdout and stderr separately: the skip decision requires both to
@@ -233,6 +275,45 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 	)
 
 	return res
+}
+
+// mergeScriptEnv returns the server environment with extra overlaid. Names are
+// sorted so the child sees a stable order (map iteration is random, and tests
+// assert on the environment). Values are sanitized because a NUL byte makes
+// exec fail outright, and a failed start reads as a closed gate.
+func mergeScriptEnv(extra map[string]string) []string {
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	env := make([]string, 0, len(os.Environ())+len(names))
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if _, overridden := extra[name]; overridden {
+			continue
+		}
+		env = append(env, kv)
+	}
+	for _, name := range names {
+		env = append(env, name+"="+sanitizeScriptEnvValue(extra[name]))
+	}
+	return env
+}
+
+// sanitizeScriptEnvValue strips NUL bytes and caps the value at
+// scriptEnvValueMax bytes, dropping a partially cut UTF-8 sequence at the
+// boundary instead of emitting an invalid one.
+func sanitizeScriptEnvValue(v string) string {
+	v = strings.ReplaceAll(v, "\x00", "")
+	if len(v) > scriptEnvValueMax {
+		return strings.ToValidUTF8(v[:scriptEnvValueMax], "")
+	}
+	return v
 }
 
 // dropWaitDelayError discards the exec.ErrWaitDelay that cmd.Wait() returns

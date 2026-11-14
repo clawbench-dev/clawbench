@@ -2035,19 +2035,56 @@ export default {
       repeatLimited: '限制次数',
       repeatUnlimited: '不限次数',
       maxRuns: '最大执行次数',
-      // Optional gating script (cron tasks only). The gate semantics live in
-      // the placeholder; the timeout's 300s default is a placeholder, not a
-      // value. The switch controls whether the task carries a script at all.
+      // Optional gating script, available for every trigger kind. The gate
+      // semantics live in the guide panels; the timeout's 300s default is a
+      // placeholder, not a value. The switch controls whether the task carries
+      // a script at all.
+      gateSection: '执行前检查',
       script: '门控脚本',
       scriptEnabled: '启用门控脚本',
-      scriptHint: '脚本在智能体执行前运行，用于判断是否满足执行条件。',
-      // The full explanation lives in the dedicated guide panel (below); the
+      scriptHint: '脚本在智能体执行前运行：定时任务到点先跑，邮件任务在发件人 / 主题 / 正文条件通过后跑，事件任务在匹配到订阅的事件后跑。退出码 0 才会执行智能体。',
+      // The full explanation lives in the dedicated guide panels (below); the
       // placeholder stays a one-liner. The tokens themselves are built in the
       // component from plain strings, so no i18n brace escaping is needed here.
       scriptPlaceholder: '输入 Shell 脚本，例如：test -f .build-needed',
       scriptGuideTitle: '门控脚本说明',
       scriptGuideIntro: '在智能体执行前，使用脚本做前置条件判断，避免不必要的 token 消耗。脚本退出码为 0 触发智能体执行。',
       scriptGuideVarsTitle: '智能体提示词中可引用以下模板变量：',
+      // The opposite direction: what the script can read. Collapsed by default.
+      scriptContextTitle: '脚本能读到的触发信息（{n} 项）',
+      scriptContextIntro: '这些值以环境变量传入，脚本里可以直接用 $CLAWBENCH_... 读取。',
+      scriptContextStdin: '本次触发的正文（邮件正文 / 事件描述或评论）通过标准输入传入，脚本里用 cat 读取。',
+      scriptVarTrigger: '触发方式：cron / email / event',
+      scriptVarTaskId: '任务 id',
+      scriptVarTaskName: '任务名称',
+      scriptVarProjectPath: '项目路径（也是脚本的工作目录）',
+      scriptVarMailAccount: '邮箱账号名称',
+      scriptVarMailFolder: '邮件所在文件夹',
+      scriptVarMailFrom: '发件人（名字 <地址>）',
+      scriptVarMailTo: '收件人，逗号分隔',
+      scriptVarMailSubject: '邮件主题',
+      scriptVarMailDate: '邮件时间',
+      scriptVarMailHasAttachment: '是否带附件：1 / 0',
+      scriptVarMailMessageId: '本地缓存的邮件 id',
+      scriptVarEventType: '事件类型，如 opened / merged / pipeline_done',
+      scriptVarRepo: '仓库，owner/repo',
+      scriptVarItemType: '条目类型：议题 / 合并请求 / 流水线',
+      scriptVarItemNumber: '议题或合并请求的编号（流水线事件为空）',
+      scriptVarTitle: '标题',
+      scriptVarUrl: '链接',
+      scriptVarAuthor: '触发这次事件的用户',
+      scriptVarState: '当前状态',
+      scriptVarPrevState: '变化前的状态',
+      scriptVarLabels: '标签，逗号分隔',
+      scriptVarAssignees: '指派给谁，逗号分隔',
+      scriptVarSourceBranch: '合并请求的源分支',
+      scriptVarDraft: '是否草稿：1 / 0',
+      scriptVarActorIsSelf: '是否由凭据自己的账号触发：1 / 0',
+      scriptVarPipelineStatus: '流水线结果，如 success / failure',
+      scriptVarPipelineUrl: '流水线链接',
+      scriptVarPipelineNumber: '流水线编号',
+      scriptVarPipelineRef: '流水线对应的分支或标签',
+      scriptVarPipelineSha: '流水线对应的提交',
       scriptVarCode: '退出码',
       scriptVarStdout: '脚本标准输出',
       scriptVarStderr: '脚本标准错误输出',
@@ -2083,6 +2120,7 @@ export default {
       gateAttachment: '带附件',
       hint: '只对配置之后新到的邮件生效；同一封邮件只触发一次。',
     },
+    gateScriptChip: '脚本门控',
     exec: {
       eventTriggeredFrom: '事件触发，查看来源',
       eventContext: '查看触发时的上下文',

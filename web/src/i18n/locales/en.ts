@@ -2035,19 +2035,56 @@ export default {
       repeatLimited: 'Limited runs',
       repeatUnlimited: 'Unlimited runs',
       maxRuns: 'Max runs',
-      // Optional gating script (cron tasks only). The gate semantics live in
-      // the placeholder; the timeout's 300s default is a placeholder, not a
-      // value. The switch controls whether the task carries a script at all.
+      // Optional gating script, available for every trigger kind. The gate
+      // semantics live in the guide panels; the timeout's 300s default is a
+      // placeholder, not a value. The switch controls whether the task carries
+      // a script at all.
+      gateSection: 'Pre-run check',
       script: 'Gating script',
       scriptEnabled: 'Enable gating script',
-      scriptHint: 'The script runs before the agent to decide whether the run should proceed.',
-      // The full explanation lives in the dedicated guide panel (below); the
+      scriptHint: 'The script runs before the agent: a scheduled task when its time comes, an email task after the sender / subject / body conditions pass, an event task after a subscribed event matches. The agent runs only when the script exits 0.',
+      // The full explanation lives in the dedicated guide panels (below); the
       // placeholder stays a one-liner. The tokens themselves are built in the
       // component from plain strings, so no i18n brace escaping is needed here.
       scriptPlaceholder: 'Enter a shell script, e.g. test -f .build-needed',
       scriptGuideTitle: 'About the gating script',
       scriptGuideIntro: 'Before the agent runs, use a script as a precondition to avoid unnecessary token usage. The agent runs when the script exits 0.',
       scriptGuideVarsTitle: 'The agent prompt can reference these template variables:',
+      // The opposite direction: what the script can read. Collapsed by default.
+      scriptContextTitle: 'What the script can read ({n})',
+      scriptContextIntro: 'These arrive as environment variables; read them in the script as $CLAWBENCH_...',
+      scriptContextStdin: 'The text this trigger is about (mail body / event description or comment) arrives on stdin; read it with cat.',
+      scriptVarTrigger: 'Trigger kind: cron / email / event',
+      scriptVarTaskId: 'Task id',
+      scriptVarTaskName: 'Task name',
+      scriptVarProjectPath: 'Project path (also the script working directory)',
+      scriptVarMailAccount: 'Mailbox account name',
+      scriptVarMailFolder: 'Folder the mail is in',
+      scriptVarMailFrom: 'Sender (Name <address>)',
+      scriptVarMailTo: 'Recipients, comma separated',
+      scriptVarMailSubject: 'Mail subject',
+      scriptVarMailDate: 'Mail time',
+      scriptVarMailHasAttachment: 'Has attachments: 1 / 0',
+      scriptVarMailMessageId: 'Cached mail row id',
+      scriptVarEventType: 'Event type, e.g. opened / merged / pipeline_done',
+      scriptVarRepo: 'Repository, owner/repo',
+      scriptVarItemType: 'Item type: issue / pr / pipeline',
+      scriptVarItemNumber: 'Issue or PR number (empty for pipeline events)',
+      scriptVarTitle: 'Title',
+      scriptVarUrl: 'URL',
+      scriptVarAuthor: 'User who caused this event',
+      scriptVarState: 'Current state',
+      scriptVarPrevState: 'State before the change',
+      scriptVarLabels: 'Labels, comma separated',
+      scriptVarAssignees: 'Assignees, comma separated',
+      scriptVarSourceBranch: 'Source branch of the PR',
+      scriptVarDraft: 'Draft: 1 / 0',
+      scriptVarActorIsSelf: 'Caused by the credential account: 1 / 0',
+      scriptVarPipelineStatus: 'Pipeline result, e.g. success / failure',
+      scriptVarPipelineUrl: 'Pipeline URL',
+      scriptVarPipelineNumber: 'Pipeline number',
+      scriptVarPipelineRef: 'Branch or tag the pipeline ran on',
+      scriptVarPipelineSha: 'Commit the pipeline ran against',
       scriptVarCode: 'Exit code',
       scriptVarStdout: 'Script stdout',
       scriptVarStderr: 'Script stderr',
@@ -2083,6 +2120,7 @@ export default {
       gateAttachment: 'has attachment',
       hint: 'Only messages that arrive after this task is saved can fire it, and each message fires it at most once.',
     },
+    gateScriptChip: 'Script gate',
     exec: {
       eventTriggeredFrom: 'Triggered by an event — view source',
       eventContext: 'Show the triggering context',

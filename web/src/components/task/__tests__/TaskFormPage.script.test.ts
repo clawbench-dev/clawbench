@@ -74,6 +74,7 @@ const i18n = createI18n({
           varPipelineSha: 'psha', varPipelineTrigger: 'ptr', varPipelineDuration: 'pd',
           varPipelineLinkedPrs: 'plpr',
           repeatMode: 'Repeat', presets: {},
+          gateSection: 'Pre-run check',
           script: 'Gating script',
           scriptEnabled: 'Enable gating script',
           scriptHint: 'Runs before the agent',
@@ -81,6 +82,15 @@ const i18n = createI18n({
           scriptGuideTitle: 'About the gating script',
           scriptGuideIntro: 'Exits 0 to run the agent.',
           scriptGuideVarsTitle: 'The prompt can reference:',
+          scriptContextTitle: 'What the script can read ({n})',
+          scriptContextIntro: 'Environment variables.',
+          scriptContextStdin: 'The body arrives on stdin.',
+          scriptVarTrigger: 'trigger',
+          scriptVarTaskId: 'task id',
+          scriptVarTaskName: 'task name',
+          scriptVarProjectPath: 'project path',
+          scriptVarMailSubject: 'mail subject',
+          scriptVarEventType: 'event type',
           scriptVarCode: 'Exit code',
           scriptVarStdout: 'Script stdout',
           scriptVarStderr: 'Script stderr',
@@ -202,16 +212,34 @@ describe('TaskFormPage gating script section', () => {
     expect(formRef.value.script).toBe('')
   })
 
-  it('hides the script field for an event task', async () => {
-    // A script is a cron-task precondition: an event task's prompt comes from
-    // the injected event context, so the field would be inert.
+  it('offers the script for an event task and lists the event variables', async () => {
+    // The gate used to be cron-only. An event task can now run a script too,
+    // and the guide must show the forge fields rather than the mail ones.
     formRef.value.triggerMode = 'event'
     const wrapper = mountForm()
     await wrapper.vm.$nextTick()
 
-    expect(switchRow(wrapper), 'the gate switch is cron-only').toBeFalsy()
-    expect(scriptSection(wrapper)).toBeFalsy()
-    expect(wrapper.text()).not.toContain('Script timeout (seconds)')
+    expect(switchRow(wrapper), 'the gate switch must render for an event task').toBeTruthy()
+    await switchRow(wrapper).find('input[type="checkbox"]').setValue(true)
+    expect(scriptSection(wrapper), 'an event task must be able to configure a script').toBeTruthy()
+
+    await wrapper.find('.script-guide-toggle').trigger('click')
+    const tokens = wrapper.findAll('.script-guide-token').map(t => t.text())
+    expect(tokens).toContain('CLAWBENCH_EVENT_TYPE')
+    expect(tokens).toContain('CLAWBENCH_TRIGGER')
+    expect(tokens).not.toContain('CLAWBENCH_MAIL_SUBJECT')
+  })
+
+  it('lists the mail variables for an email task', async () => {
+    formRef.value.triggerMode = 'email'
+    const wrapper = mountForm()
+    await wrapper.vm.$nextTick()
+
+    await switchRow(wrapper).find('input[type="checkbox"]').setValue(true)
+    await wrapper.find('.script-guide-toggle').trigger('click')
+    const tokens = wrapper.findAll('.script-guide-token').map(t => t.text())
+    expect(tokens).toContain('CLAWBENCH_MAIL_SUBJECT')
+    expect(tokens).not.toContain('CLAWBENCH_EVENT_TYPE')
   })
 
   it('shows the 300s default as a placeholder on an empty timeout input', async () => {
@@ -225,14 +253,16 @@ describe('TaskFormPage gating script section', () => {
   it('documents the template variables in a dedicated guide panel', async () => {
     // The four substitution variables are the feature's contract. They belong
     // in a persistent, styleable panel — not the editor placeholder, which
-    // disappears on the first keystroke.
+    // disappears on the first keystroke. This is the SECOND guide panel: the
+    // first documents what the script can read, which is the opposite
+    // direction and must not be merged with it.
     const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
     await wrapper.vm.$nextTick()
-    const guide = wrapper.find('.script-guide')
-    expect(guide.exists(), 'the guide panel must render once the gate is on').toBe(true)
-    expect(guide.text()).toContain('About the gating script')
+    const guides = wrapper.findAll('.script-guide')
+    expect(guides.length, 'both the trigger-context and template panels must render').toBe(2)
+    expect(guides[1].text()).toContain('About the gating script')
 
-    const tokens = wrapper.findAll('.script-guide-token').map(t => t.text())
+    const tokens = guides[1].findAll('.script-guide-token').map(t => t.text())
     expect(tokens).toEqual(['{{code}}', '{{stdout}}', '{{stderr}}', '{{output}}'])
   })
 

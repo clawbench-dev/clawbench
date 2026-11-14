@@ -61,7 +61,7 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			// An event task always watches its project's bound repository, so
 			// there is no repository parameter.
 			EventTypes string `json:"event_types"`
-			// Script is an optional pre-AI shell script (cron tasks only).
+			// Script is an optional pre-AI shell script (every trigger kind).
 			Script string `json:"script"`
 			// ScriptTimeout bounds Script in seconds; 0 means the default.
 			ScriptTimeout int `json:"script_timeout"`
@@ -291,7 +291,7 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			// repository is always the project's binding, so it is not a
 			// per-task parameter.
 			EventTypes string `json:"event_types"`
-			// Script is an optional pre-AI shell script (cron tasks only).
+			// Script is an optional pre-AI shell script (every trigger kind).
 			// A pointer so "not provided" (leave unchanged) is distinguishable
 			// from "set to empty" (clear) — this endpoint is a partial update,
 			// so an unconditional assignment would let any caller that omits

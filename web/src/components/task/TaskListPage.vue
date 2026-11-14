@@ -100,15 +100,18 @@
             <div v-if="task.triggerMode === 'event'" class="task-item-next">
               <Zap class="meta-icon" :size="12" />
               <span class="task-item-events" :title="eventRowLabel(task)">{{ eventRowLabel(task) }}</span>
+              <span v-if="task.script" class="task-gate-flag">{{ t('task.gateScriptChip') }}</span>
             </div>
             <div v-else-if="task.triggerMode === 'email'" class="task-item-next">
               <Mail class="meta-icon" :size="12" />
               <span class="task-item-events" :title="mailRowLabel(task)">{{ mailRowLabel(task) }}</span>
+              <span v-if="task.script" class="task-gate-flag">{{ t('task.gateScriptChip') }}</span>
             </div>
             <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
               <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
               <span v-else>{{ t('task.nextRunNone') }}</span>
+              <span v-if="task.script" class="task-gate-flag">{{ t('task.gateScriptChip') }}</span>
             </div>
           </div>
           <!-- Right rail: lifecycle pill on top, row actions at the bottom.
@@ -176,6 +179,8 @@ interface TaskItem {
   nextRunAt?: string
   // Trigger mode: 'cron' (default/absent) or 'event'.
   triggerMode?: string
+  // Gating script body; non-empty means the run is gated by a script.
+  script?: string
   mailFrom?: string
   mailSubject?: string
   mailBody?: string
@@ -608,6 +613,16 @@ onMounted(refresh)
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+/* Marks a row whose run is gated by a script. Sits on the summary line so all
+   three trigger kinds can show it without a fourth line of its own. */
+.task-gate-flag {
+  flex-shrink: 0;
+  padding: 0 calc(4 * var(--dp));
+  border-radius: calc(3 * var(--dp));
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
 }
 
 /* Stretches the card's full content height so the pill anchors to the top
