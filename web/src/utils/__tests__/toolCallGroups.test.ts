@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest'
+import { buildToolCallGroups, MIN_GROUPED_TOOLS } from '@/utils/toolCallGroups'
+
+const tool = (id: string, extra: Record<string, any> = {}) => ({ type: 'tool_use', id, done: true, status: 'success', ...extra })
+const thinking = (id: string) => ({ type: 'thinking', think_id: id, done: true })
+const text = (t: string) => ({ type: 'text', text: t })
+
+const opts = {
+  isTool: (b: any) => b?.type === 'tool_use',
+  isThinking: (b: any) => b?.type === 'thinking',
+  describe: (b: any) => ({ name: b.id, summary: '' }),
+}
+
+describe('buildToolCallGroups', () => {
+  it('folds consecutive tool calls into one run', () => {
+    const { groups, byIndex } = buildToolCallGroups([tool('a'), tool('b'), tool('c')], opts)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ start: 0, end: 2, toolCount: 3, failedCount: 0, runningIndex: 0 })
+    expect([...byIndex.keys()].sort()).toEqual([0, 1, 2])
+  })
+
+  it('spans the collapsed thinking chips between tool calls', () => {
+    // Real turns arrive as thinking, tool, tool, thinking, tool, … — requiring
+    // strictly adjacent tool blocks would leave nothing to fold.
+    const { groups } = buildToolCallGroups([thinking('t1'), tool('a'), thinking('t2'), tool('b')], opts)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ start: 0, end: 3, toolCount: 2 })
+  })
+
+  it('leaves a single tool call alone', () => {
+    expect(MIN_GROUPED_TOOLS).toBe(2)
+    const { groups } = buildToolCallGroups([thinking('t1'), tool('a')], opts)
+    expect(groups).toHaveLength(0)
+  })
+
+  it('breaks the run on a text block', () => {
+    const { groups } = buildToolCallGroups([tool('a'), tool('b'), text('done'), tool('c'), tool('d')], opts)
+    expect(groups).toHaveLength(2)
+    expect(groups.map((g) => [g.start, g.end])).toEqual([[0, 1], [3, 4]])
+  })
+
+  it('counts failed tools without excluding them', () => {
+    const { groups } = buildToolCallGroups([tool('a'), tool('b', { status: 'error' }), tool('c', { status: 'error' })], opts)
+    expect(groups[0]).toMatchObject({ toolCount: 3, failedCount: 2 })
+  })
+
+  it('reports the last running tool with its 1-based position', () => {
+    const { groups } = buildToolCallGroups(
+      [tool('a'), tool('b', { done: false, status: '' }), tool('c', { done: false, status: '' })],
+      opts,
+    )
+    expect(groups[0]).toMatchObject({ runningIndex: 3, runningName: 'c' })
+  })
+
+  it('ignores blocks the caller does not classify as foldable', () => {
+    // An AskUserQuestion card is never foldable — it must not be counted, and
+    // it breaks the run into two (each of which still needs MIN_GROUPED_TOOLS).
+    const isTool = (b: any) => b?.type === 'tool_use' && b.id !== 'ask'
+    const { groups } = buildToolCallGroups(
+      [tool('a'), tool('b'), tool('ask'), tool('c'), tool('d')],
+      { ...opts, isTool },
+    )
+    expect(groups).toHaveLength(2)
+    expect(groups.map((g) => [g.start, g.end, g.toolCount])).toEqual([[0, 1, 2], [3, 4, 2]])
+  })
+
+  it('returns nothing for an empty or non-array input', () => {
+    expect(buildToolCallGroups([], opts).groups).toEqual([])
+    expect(buildToolCallGroups(null as any, opts).groups).toEqual([])
+  })
+})

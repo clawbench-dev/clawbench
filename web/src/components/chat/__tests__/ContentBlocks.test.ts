@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
 import { store } from '@/stores/app.ts'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { updateAskSubmitState, handleToolAction, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 
 // ── Mocks ──
@@ -175,6 +176,9 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
+        toolGroupRunning: 'Running {index}/{count}',
+        toolGroupDone: 'Ran {count} operations',
+        toolGroupFailed: '{count} failed',
         // Needed by the error_source chip: getErrorSourceLabel looks up
         // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
         // is missing (mirrors the real t()).
@@ -3966,5 +3970,115 @@ describe('done thinking blocks auto-load their text', () => {
     await flushPromises(); await nextTick()
 
     expect(fetchMock, 'a finished, fully-collapsed history must not bulk-load').not.toHaveBeenCalled()
+  })
+})
+
+// ── Compact tool calls (设置 → 聊天 → 消息 → 收起工具调用) ──
+//
+// The fold is a rendering concern only: every folded block must still be the
+// SAME block (same index) once the row is opened, because the tool-detail
+// drawer and the expand keys are derived from that index.
+describe('compact tool calls', () => {
+  const tool = (name: string, id: string, extra: Record<string, unknown> = {}) => ({
+    type: 'tool_use', name, id, done: true, status: 'success', summary: name, ...extra,
+  })
+  const thinking = (id: string) => ({ type: 'thinking', think_id: id, done: true })
+
+  beforeEach(() => { (localConfig as any).compactToolCalls = true })
+  afterEach(() => { (localConfig as any).compactToolCalls = false })
+
+  it('leaves every pill visible when the option is off', async () => {
+    (localConfig as any).compactToolCalls = false
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    expect(wrapper.findAll('[data-tool-group]')).toHaveLength(0)
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(3)
+  })
+
+  it('replaces a run of tool calls with one counted row', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.exists()).toBe(true)
+    expect(row.attributes('data-tool-count')).toBe('3')
+    expect(row.text()).toContain('Ran 3 operations')
+    // The individual pills are gone — the row IS the run.
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
+  })
+
+  it('spans collapsed thinking chips inside the run', async () => {
+    const wrapper = mountBlocks({
+      blocks: [thinking('th1'), tool('Read', 't1'), thinking('th2'), tool('Bash', 't2')],
+    })
+    await nextTick()
+    expect(wrapper.find('[data-tool-group]').attributes('data-tool-count')).toBe('2')
+    expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
+  })
+
+  it('unfolds the run in place, keeping every block reachable', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    await wrapper.find('[data-tool-group]').trigger('click')
+    await nextTick()
+    // The summary row stays (it is the collapse affordance) and the three
+    // original pills come back.
+    expect(wrapper.find('[data-tool-group]').exists()).toBe(true)
+    expect(wrapper.find('[data-tool-group]').classes()).toContain('is-open')
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(4)
+    // Every unfolded member carries the "belongs to the row above" marker —
+    // without it the run reads as unrelated tools (the reason this exists).
+    expect(wrapper.findAll('.chat-tool-group-member')).toHaveLength(3)
+    expect(wrapper.findAll('.chat-run-member')).toHaveLength(3)
+    expect(wrapper.text()).toContain('Read')
+    expect(wrapper.text()).toContain('Bash')
+    expect(wrapper.text()).toContain('Grep')
+  })
+
+  it('offers a collapse affordance at the bottom of an unfolded run', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    await wrapper.find('[data-tool-group]').trigger('click')
+    await nextTick()
+    const footer = wrapper.find('.chat-run-footer')
+    expect(footer.exists()).toBe(true)
+    await footer.trigger('click')
+    await nextTick()
+    // Collapsed again: one row, no members, no footer.
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
+    expect(wrapper.find('.chat-run-footer').exists()).toBe(false)
+  })
+
+  it('shows the failure count instead of hiding it', async () => {
+    const wrapper = mountBlocks({
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { status: 'error' })],
+    })
+    await nextTick()
+    expect(wrapper.find('[data-tool-group]').attributes('data-tool-failed')).toBe('1')
+    expect(wrapper.find('[data-tool-group]').text()).toContain('1 failed')
+  })
+
+  it('names the tool that is still running', async () => {
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.text()).toContain('Running 2/2')
+    expect(row.text()).toContain('Bash')
+  })
+
+  it('never folds an interactive card or an Agent card with a sub-agent group', async () => {
+    const ask = {
+      type: 'tool_use', name: 'AskUserQuestion', id: 'ask1', done: true,
+      input: { questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+    }
+    const wrapper = mountBlocks({
+      blocks: [tool('Read', 't1'), tool('Bash', 't2'), ask],
+    })
+    await nextTick()
+    // The two plain tools fold; the ask card renders on its own.
+    expect(wrapper.find('[data-tool-group]').attributes('data-tool-count')).toBe('2')
+    expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
   })
 })

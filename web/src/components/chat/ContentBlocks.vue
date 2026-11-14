@@ -119,20 +119,60 @@
     </template>
     <!-- Original content mode -->
     <template v-if="nested || !showingSummary || !summary">
-    <template v-for="(block, bi) in blocks" :key="stableBlockKey(bi, block)">
+    <template v-for="{ block, bi, kind, group, itemKey } in renderItems" :key="itemKey">
+      <!-- Compact tool calls: one row replaces a whole run of tool pills.
+           Clicking it unfolds the run in place — the member blocks then render
+           through the exact same branches as before, so nothing else changes. -->
+      <div
+        v-if="kind === 'group' && group"
+        class="chat-tool-call chat-tool-group-strip chat-run-head"
+        :class="{ done: !group.runningIndex, 'is-open': isToolGroupOpen(group) }"
+        data-tool-group="1"
+        :data-tool-count="group.toolCount"
+        :data-tool-failed="group.failedCount"
+        @click.stop="toggleToolGroup(group)"
+      >
+        <LoadingIndicator v-if="group.runningIndex" class="tool-spinner" size="sm" inline />
+        <Wrench v-else :size="12" class="tool-icon" />
+        <RollingText
+          class="tool-name"
+          :text="group.runningIndex
+            ? t('chat.contentBlocks.toolGroupRunning', { index: group.runningIndex, count: group.toolCount })
+            : t('chat.contentBlocks.toolGroupDone', { count: group.toolCount })"
+        />
+        <RollingText
+          v-if="group.runningIndex"
+          class="tool-summary"
+          :text="group.runningSummary ? group.runningName + ' · ' + group.runningSummary : group.runningName"
+        />
+        <span v-else-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
+        <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
+        <ChevronDown v-else :size="12" class="tool-group-chevron" />
+      </div>
+      <!-- Bottom collapse affordance, same idea as the sub-agent group's footer. -->
+      <button
+        v-else-if="kind === 'groupFooter' && group"
+        type="button"
+        class="chat-run-footer"
+        :aria-label="t('chat.contentBlocks.toolGroupCollapse')"
+        @click.stop="toggleToolGroup(group)"
+      >
+        <ChevronUp :size="12" />
+        <span>{{ t('chat.contentBlocks.toolGroupCollapse') }}</span>
+      </button>
       <!-- Sub-agent child blocks are rendered nested under their parent Agent
            block below; skip them in the flat stream. Children always arrive
            AFTER their parent (the parent id is known when they are emitted), so
            this branch never flips mid-stream for a live block. -->
-      <template v-if="isChildBlock(block)"></template>
+      <template v-else-if="isChildBlock(block)"></template>
       <!-- Member fallback group: this block's parent Agent card is not in this
            message, so the member's output groups under a synthetic header at
            its first block instead of interleaving with the lead's. -->
       <div v-else-if="memberGroupNameForAnchor(block)" class="subagent-group member-group" :class="{ 'subagent-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" :style="memberGroupAccentStyle(memberGroupNameForAnchor(block))">
-        <div :ref="(el) => setMemberPillRef(memberGroupKey(memberGroupNameForAnchor(block)), el)" class="chat-tool-call" :class="{ done: !memberGroupStreaming(memberGroupNameForAnchor(block)), 'chat-tool-call-group': true, 'chat-tool-call-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" data-category="agent" :data-member-name="memberGroupNameForAnchor(block)" @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))">
+        <div :ref="(el) => setMemberPillRef(memberGroupKey(memberGroupNameForAnchor(block)), el)" class="chat-tool-call chat-run-head" :class="{ done: !memberGroupStreaming(memberGroupNameForAnchor(block)), 'chat-tool-call-group': true, 'chat-tool-call-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" data-category="agent" :data-member-name="memberGroupNameForAnchor(block)" @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))">
           <Users :size="12" class="tool-icon" />
           <span class="tool-name">{{ memberGroupNameForAnchor(block) }}</span>
-          <span v-if="memberFallbackStepCount(memberGroupNameForAnchor(block)) > 0" class="subagent-group-count">{{ t('chat.contentBlocks.subagentSteps', { count: memberFallbackStepCount(memberGroupNameForAnchor(block)) }) }}</span>
+          <RollingText v-if="memberFallbackStepCount(memberGroupNameForAnchor(block)) > 0" class="subagent-group-count" :text="t('chat.contentBlocks.subagentSteps', { count: memberFallbackStepCount(memberGroupNameForAnchor(block)) })" />
           <LoadingIndicator v-if="memberGroupStreaming(memberGroupNameForAnchor(block))" class="tool-spinner" size="sm" inline />
           <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
           <button
@@ -200,6 +240,8 @@
         :ref="(el) => setThinkingRef(stableBlockKey(bi, block), el)"
         class="chat-thinking"
         :class="{
+          'chat-tool-group-member': !!group,
+          'chat-run-member': !!group,
           'thinking-streaming': isThinkingStreaming(block),
           'thinking-expanded-done': isThinkingExpandedDone(block, bi),
           'thinking-collapsed': isThinkingCollapsed(block, bi),
@@ -261,7 +303,7 @@
           </div>
         </div>
         <template v-else>
-          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
+          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call chat-run-head" :class="{ done: block.done, 'chat-tool-group-member': !!group, 'chat-run-member': !!group, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <!-- A team member's card wears the team glyph, exactly like the
                  member fallback group header below. Two paths render the same
                  member, so they must look identical: before this, the card
@@ -276,7 +318,7 @@
                  so the Agent call and its sub-agent work are one row instead of
                  two stacked bars showing the same name. -->
             <template v-if="hasSubagentGroup(block)">
-              <span v-if="subagentStepCount(block.id) > 0" class="subagent-group-count">{{ t('chat.contentBlocks.subagentSteps', { count: subagentStepCount(block.id) }) }}</span>
+              <RollingText v-if="subagentStepCount(block.id) > 0" class="subagent-group-count" :text="t('chat.contentBlocks.subagentSteps', { count: subagentStepCount(block.id) })" />
               <LoadingIndicator v-if="isSubagentStreaming(block)" class="tool-spinner" size="sm" inline />
               <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
               <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
@@ -499,6 +541,7 @@ import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import RollingText from '@/components/common/RollingText.vue'
 import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
 import { getShareToolCall } from '@/share/shareMode'
@@ -511,6 +554,8 @@ import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
 import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { blockWrapVersion } from '@/utils/blockWrapPref.ts'
+import { buildToolCallGroups, type ToolCallGroup } from '@/utils/toolCallGroups'
+import { localConfig } from '@/composables/useSettingsConfig'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
 import '@/assets/modal-footer-btn.css'
@@ -1727,6 +1772,109 @@ function stableBlockKey(bi: number, block: any) {
   _blockKeyCache.set(bi, { block, blocks: props.blocks, root: props.rootBlocks, key })
   return key
 }
+
+// ── Compact tool calls (设置 → 聊天 → 消息 → 收起工具调用) ──────────────
+//
+// A turn that runs 20 tools renders 20 full-width pills. When the option is on,
+// a run of tool calls (plus the collapsed thinking chips between them) folds
+// into ONE row that reports the count; clicking it unfolds the run in place.
+//
+// What must never fold:
+//  * interactive cards (AskUserQuestion / PermissionApproval) — the user has to
+//    answer them;
+//  * an Agent card hosting a sub-agent group — it already has its own fold and
+//    its step count is the only sign of what the sub-agent did;
+//  * anything the member fallback group replaced with its own header.
+function isFoldableTool(block: any, bi: number): boolean {
+  if (block?.type !== 'tool_use') return false
+  if (isChildBlock(block)) return false
+  if (memberGroupNameOf(block)) return false
+  if (isSuppressedAskCard(bi)) return false
+  if (shouldAutoExpand(block) && isUnifiedCardTool(block.name)) return false
+  if (hasSubagentGroup(block)) return false
+  if (getToolIcon(block.name).category === 'agent') return false
+  return true
+}
+
+/** A thinking chip may sit inside a run, but only while it is COLLAPSED. A chip
+ *  the user expanded (or one still streaming) stays visible — folding it away
+ *  would hide the text they are reading. */
+function isFoldableThinking(block: any, bi: number): boolean {
+  if (block?.type !== 'thinking') return false
+  if (isChildBlock(block)) return false
+  if (memberGroupNameOf(block)) return false
+  if (isThinkingStreaming(block)) return false
+  return isThinkingCollapsed(block, bi)
+}
+
+const toolGroups = computed(() => {
+  if (!localConfig.compactToolCalls) return { groups: [], byIndex: new Map<number, ToolCallGroup>() }
+  if (props.showingSummary && props.summary && !props.nested) {
+    return { groups: [], byIndex: new Map<number, ToolCallGroup>() }
+  }
+  return buildToolCallGroups(props.blocks, {
+    isTool: isFoldableTool,
+    isThinking: isFoldableThinking,
+    describe: (block) => ({
+      name: toolDisplayName(block.name, block.input, block.display_name),
+      summary: props.toolCallSummary(block),
+    }),
+  })
+})
+
+// Open state lives on the component, not in `expandedTools`: it is a reading
+// preference for this transcript, and it must not collide with tool-detail keys.
+const openToolGroups = ref<Record<string, boolean>>({})
+function toolGroupKeyOf(group: ToolCallGroup): string {
+  return 'tg-' + stableBlockKey(group.start, props.blocks[group.start])
+}
+function isToolGroupOpen(group: ToolCallGroup): boolean {
+  return !!openToolGroups.value[toolGroupKeyOf(group)]
+}
+function toggleToolGroup(group: ToolCallGroup) {
+  const key = toolGroupKeyOf(group)
+  if (openToolGroups.value[key]) delete openToolGroups.value[key]
+  else openToolGroups.value[key] = true
+}
+
+/**
+ * The loop source. A folded run yields ONE `group` item; unfolding it also
+ * yields a `block` item per member so they render exactly as before.
+ *
+ * `bi` is always the ORIGINAL index into props.blocks — every consumer of it
+ * (`key()`, `absIdx()`, `askKeyForBlock()`, the tool-detail drawer) keeps
+ * pointing at the right block.
+ */
+const renderItems = computed(() => {
+  const out: Array<{ kind: 'group' | 'groupFooter' | 'block'; block: any; bi: number; group?: ToolCallGroup; itemKey: string }> = []
+  const { byIndex } = toolGroups.value
+  for (let bi = 0; bi < props.blocks.length; bi++) {
+    const block = props.blocks[bi]
+    const group = byIndex.get(bi)
+    if (!group) {
+      out.push({ kind: 'block', block, bi, itemKey: stableBlockKey(bi, block) })
+      continue
+    }
+    if (group.start === bi) {
+      out.push({ kind: 'group', block, bi, group, itemKey: 'tg-' + stableBlockKey(bi, block) })
+    }
+    if (isToolGroupOpen(group)) {
+      out.push({ kind: 'block', block, bi, group, itemKey: stableBlockKey(bi, block) })
+      // The bottom "collapse" affordance, mirroring the sub-agent group: after
+      // scrolling a long run, the bottom is where the eye already is.
+      if (group.end === bi) {
+        out.push({
+          kind: 'groupFooter',
+          block: props.blocks[group.start],
+          bi: group.start,
+          group,
+          itemKey: 'tgf-' + stableBlockKey(group.start, props.blocks[group.start]),
+        })
+      }
+    }
+  }
+  return out
+})
 
 function handleThinkingClick(block: any, bi: number) {
   const blockKey = stableBlockKey(bi, block)
@@ -3016,6 +3164,115 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+/* Compact tool calls: the row that replaces a whole run of tool pills. It
+   reuses the pill shell so it reads as "a tool", but stays neutral-coloured —
+   a run mixes categories (file / bash / search), so no single accent applies. */
+.chat-tool-group-strip .tool-name {
+  color: var(--text-secondary);
+}
+
+.chat-tool-group-strip .tool-group-failed {
+  color: #ef4444;
+  font-weight: var(--font-weight-semibold);
+}
+
+.chat-tool-group-strip .tool-group-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+/* Unfolded members belong to the row above them.
+   Without this the row and the pills under it look like unrelated tools: every
+   pill is a full-width rounded box of its own. Indenting them and hanging them
+   off one rail that drops from the row's left edge makes the run read as the
+   row's contents instead of a new list. */
+.chat-tool-group-strip.is-open {
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  margin-bottom: 0;
+}
+
+/* ── A "run": a foldable sequence of steps ──
+   Shared by the compact tool-call row and the sub-agent group so both read the
+   same way: one head row, then content indented under a continuous rail, then
+   an optional bottom collapse affordance. Only the rail colour differs — tool
+   runs use the neutral one, sub-agents their member colour. */
+.chat-run-member,
+.chat-run-footer {
+  position: relative;
+  /* `width: auto` (not the pill's 100%) so the indent does not push the right
+     edge past the container. */
+  width: auto;
+  margin-left: calc(10 * var(--dp));
+}
+
+.chat-run-member {
+  margin-top: calc(2 * var(--dp));
+  margin-bottom: 0;
+  /* The rail is drawn outside the box, so the pill's own `overflow: hidden`
+     (meant for the summary ellipsis) would clip it away. */
+  overflow: visible;
+}
+
+.chat-run-member::before,
+.chat-run-footer::before {
+  content: '';
+  position: absolute;
+  left: calc(-10 * var(--dp));
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+}
+
+.chat-run-member::before {
+  /* Absolute children are positioned against the PADDING box, so `0` stops the
+     rail at the inside of the 1px border. Each member therefore loses 1px at
+     both ends and the 2px gap between members opens a visible break. Extending
+     by the border + gap on both sides makes neighbouring segments overlap, so
+     the rail reads as one continuous line. */
+  top: calc(-2 * var(--dp) - 1px);
+  bottom: -1px;
+}
+
+/* The run ends here: the rail stops at the middle of the button instead of
+   running past it. */
+.chat-run-footer::before {
+  top: calc(-2 * var(--dp));
+  bottom: 50%;
+}
+
+.chat-run-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  /* A <button> sizes to its label even as a flex container, so `auto` made the
+     row only as wide as "Collapse" — the top border stopped halfway and the
+     label sat at the left edge. Fill the indented column instead. */
+  width: calc(100% - 10 * var(--dp));
+  margin-top: 0;
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--text-muted) 32%, var(--border-color));
+  cursor: pointer;
+  transition: color var(--duration-base);
+}
+
+.chat-run-footer:hover {
+  color: var(--text-secondary);
+}
+
+/* Inside a run the thinking chip's own violet bar would be a second, differently
+   coloured line next to the rail. Keep its width (so the layout does not shift
+   when it expands) but let the rail be the only line. */
+.chat-run-member.chat-thinking {
+  border-left-color: transparent;
+}
+
 .chat-tool-call .tool-check {
   flex-shrink: 0;
   margin-left: auto;
@@ -3049,13 +3306,25 @@ onUnmounted(() => {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
-.subagent-group-open > .subagent-group-body-wrapper {
-  border-left: 2px solid color-mix(in srgb, var(--subagent-accent) 35%, transparent);
-  border-right: 2px solid color-mix(in srgb, var(--subagent-accent) 35%, transparent);
-  border-bottom: 2px solid color-mix(in srgb, var(--subagent-accent) 35%, transparent);
-  border-bottom-left-radius: calc(6 * var(--dp));
-  border-bottom-right-radius: calc(6 * var(--dp));
-  background: color-mix(in srgb, var(--subagent-accent) 4%, transparent);
+/* Indent unconditionally: applying it only while open makes the body jump
+   sideways the instant the grid animation starts. */
+.subagent-group > .subagent-group-body-wrapper {
+  position: relative;
+  margin-left: calc(10 * var(--dp));
+}
+
+/* Same rail as a tool run, tinted with the member's colour so the sub-agent is
+   still identifiable at a glance. The wrapper is a grid whose height animates,
+   so the rail grows and shrinks with the body. */
+.subagent-group-open > .subagent-group-body-wrapper::before {
+  content: '';
+  position: absolute;
+  left: calc(-10 * var(--dp));
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--subagent-accent) 45%, transparent);
 }
 
 .subagent-group-count {
@@ -3108,7 +3377,7 @@ onUnmounted(() => {
 }
 
 .subagent-group-body-open .subagent-group-body {
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-2) 0 var(--space-2);
 }
 
 /* Bottom "collapse" affordance shown only while the group is open. */
@@ -3243,60 +3512,10 @@ onUnmounted(() => {
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="agent"]  { --tool-accent: #f472b6; }
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="skill"]  { --tool-accent: #22d3ee; }
 
-/* Tool output section */
-.content-blocks .tool-detail .tool-output-section {
-  margin-top: var(--space-3);
-  border-top: 1px solid var(--border-color);
-  padding-top: var(--space-3);
-}
-
-.content-blocks .tool-detail .tool-output-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
-}
-
-.content-blocks .tool-detail .tool-output-label {
-  font-size: var(--font-size-2xs);
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-xs);
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
-  font-weight: var(--font-weight-semibold);
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .tool-output-label {
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
-}
-
-.content-blocks .tool-detail .tool-output-status {
-  font-size: var(--font-size-2xs);
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-xs);
-  font-weight: var(--font-weight-semibold);
-}
-
-.content-blocks .tool-detail .tool-output-success {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .tool-output-success {
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
-}
-
-.content-blocks .tool-detail .tool-output-error {
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .tool-output-error {
-  background: rgba(248, 113, 113, 0.15);
-  color: #fca5a5;
-}
+/* Tool output section — the header (label + ok/error chip) and its styles live
+   in ToolDetailDrawer: the inline card renders tool INPUT only (clicking it
+   opens the drawer), so no .tool-output-header / -label / -status node can ever
+   appear under .content-blocks. Only the body wrappers below are shared. */
 
 .content-blocks .tool-detail .tool-output-body {
   max-height: calc(200 * var(--dp));

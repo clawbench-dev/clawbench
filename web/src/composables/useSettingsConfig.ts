@@ -459,6 +459,9 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // keeps the pre-existing behaviour.
   layoutMemory: 'global',
   messageDisplayMode: 'mixed',
+  // Fold a run of tool calls into one "ran N operations" row (设置 → 聊天 → 消息).
+  // Per device: it is purely how this screen draws a transcript.
+  compactToolCalls: false,
   // Where the OTHER projects' sessions go in the session list:
   //   'strip' — the default: cards under the project's own rows, one scroll.
   //   'tabs'  — a two-slot bar at the bottom switches between this project and

@@ -428,6 +428,19 @@ describe('settingsFieldMap', () => {
     expect(values).toEqual(['mixed', 'summary', 'original'])
   })
 
+  it('chat category has a local switch for folding tool calls', () => {
+    // Local, not server: folding a run of tool calls is purely how this screen
+    // draws a transcript, and a phone may reasonably want it while a desktop
+    // does not.
+    const chatEntries = categoryItems['chat']
+    const entry = chatEntries.find(e => e.type === 'item' && e.spec.key === 'compactToolCalls')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item')
+    expect(entry.spec.source).toBe('local')
+    expect(entry.spec.type).toBe('switch')
+    expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
+  })
+
   it('chat category has a server switch for recent-activity session ordering', () => {
     const chatEntries = categoryItems['chat']
     const entry = chatEntries.find(e => e.type === 'item' && e.spec.key === 'chat.session_sort_recent')

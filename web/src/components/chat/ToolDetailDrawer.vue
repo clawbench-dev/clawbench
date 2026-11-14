@@ -285,18 +285,18 @@ onUpdated(restoreAskStates)
   margin-left: auto;
 }
 
+/* "output" names the block below — it is a SECTION LABEL, not a result. It used
+   to wear the exact same green pill as the ok/error chip beside it, so the row
+   read as two equal statuses and the label looked like a second "success"
+   badge. Give it the typographic label tier (muted, uppercase, letter-spaced,
+   no pill) and leave the pill to the status chip, which is the only thing in
+   this row that carries a verdict. */
 .tool-detail-body .tool-output-label {
   font-size: var(--font-size-2xs);
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-xs);
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
+  color: var(--text-muted);
   font-weight: var(--font-weight-semibold);
-}
-
-:root[data-theme-base="dark"] .tool-detail-body .tool-output-label {
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .tool-detail-body .tool-output-status {

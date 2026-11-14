@@ -1492,6 +1492,11 @@ export default {
       subagentSteps: '{count} 步',
       subagentExpand: '展开子智能体输出',
       subagentCollapse: '收起子智能体输出',
+      // 极简模式：把一段连续的工具调用折成一行，只显示次数
+      toolGroupRunning: '正在执行 {index}/{count}',
+      toolGroupDone: '已执行 {count} 个操作',
+      toolGroupFailed: '{count} 个失败',
+      toolGroupCollapse: '收起',
       warningReasons: {
         user_cancel: '用户已中断',
         disconnect: '连接已断开，AI 响应中断',
@@ -3661,6 +3666,8 @@ export default {
       messageDisplayModeMixed: '混合模式',
       messageDisplayModeSummary: '摘要模式',
       messageDisplayModeOriginal: '原文模式',
+      compactToolCalls: '收起工具调用',
+      compactToolCallsDesc: '把连续的工具调用合并成一行，只显示执行次数；点这一行可以展开查看每个工具的详情',
       chatSystemPromptInterval: '系统提示间隔',
       chatSystemPromptIntervalDesc: '每隔多少条消息插入一次系统提示（0 = 从不插入）',
       chatForkContextBudget: '分支/回溯历史上限',
