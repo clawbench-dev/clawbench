@@ -770,10 +770,16 @@ defineExpose({
   flex: 1 1 auto;
 }
 
-/* Only what the shared ActionBar row rules do NOT set. */
+/* Only what the shared ActionBar row rules do NOT set. `display: flex` is one
+   of them and it is not optional: a <button> defaults to inline-block, so the
+   icon and the label line up on the text baseline and the icon sits visibly
+   high next to the word once the bar is wide enough to show labels. */
 .header-btn {
   border: none;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .kb-body {
