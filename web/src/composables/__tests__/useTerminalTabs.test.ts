@@ -149,6 +149,21 @@ function createTabManager(overrides?: {
 }
 
 /**
+ * A manager that already has one tab.
+ *
+ * Opening the terminal no longer creates a tab on the user's behalf (a project
+ * with no saved tabs lands on the empty state), so every test about tab
+ * BEHAVIOUR seeds one through the restore path instead of relying on the old
+ * implicit default tab.
+ */
+function createTabManagerWithTab(overrides?: Parameters<typeof createTabManager>[0]) {
+  return createTabManager({
+    ...overrides,
+    restore: { tabs: [{ sessionId: '', cwd: '', title: 'Terminal' }], activeIndex: 0 },
+  })
+}
+
+/**
  * Get the raw (non-reactive-unwrapped) mock session for a tab.
  *
  * Since useTerminalTabs wraps sessions in reactive(), accessing session
@@ -179,22 +194,23 @@ afterEach(() => {
 
 describe('useTerminalTabs', () => {
   describe('initialization', () => {
-    it('creates one default tab on initialization', () => {
+    it('starts empty when the project has no saved tabs', () => {
+      // Opening the panel must not spawn a shell the user did not ask for.
       const mgr = createTabManager()
-      expect(mgr.tabs.value).toHaveLength(1)
-      expect(mgr.activeTabId.value).toBeTruthy()
-      expect(mgr.activeTab.value).not.toBeNull()
+      expect(mgr.tabs.value).toHaveLength(0)
+      expect(mgr.activeTabId.value).toBe('')
+      expect(mgr.activeTab.value).toBeNull()
     })
 
     it('default tab has empty cwd and title "Terminal"', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       expect(tab.cwd).toBe('')
       expect(tab.title).toBe('Terminal')
     })
 
     it('default tab session starts disconnected', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       expect(tab.session.connectionState).toBe('disconnected')
     })
@@ -204,7 +220,7 @@ describe('useTerminalTabs', () => {
     // Using .value would read the .value property of the already-unwrapped
     // string, which is undefined.
     it('session Refs are auto-unwrapped by reactive() — no .value needed', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       // Direct access (correct) returns the unwrapped string
       expect(tab.session.connectionState).toBe('disconnected')
@@ -240,7 +256,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('passes errorMessages to useTerminalSession', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       mgr.createTab()
       // Session was created and stored — verify mock was called
       expect(mockSessionStore.length).toBeGreaterThanOrEqual(2)
@@ -262,8 +278,8 @@ describe('useTerminalTabs', () => {
 
     it('calls onTermCreated with the xterm instance when a tab is created', () => {
       const created: unknown[] = []
-      const mgr = createTabManager({ onTermCreated: (term) => created.push(term) })
-      // useTerminalTabs creates an initial default tab on init
+      const mgr = createTabManagerWithTab({ onTermCreated: (term) => created.push(term) })
+      // The restored tab already produced one xterm instance
       expect(created).toHaveLength(1)
 
       mgr.createTab()
@@ -273,7 +289,7 @@ describe('useTerminalTabs', () => {
 
   describe('closeTab', () => {
     it('removes the tab from the list', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.createTab('/home/user/project')
       expect(mgr.tabs.value).toHaveLength(2)
 
@@ -283,7 +299,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('switches to adjacent tab when closing the active tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab1 = mgr.tabs.value[0]
       const tab2 = mgr.createTab('/home/user/project')
 
@@ -294,7 +310,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('allows closing the last tab without auto-creating a new one', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const onlyTab = mgr.tabs.value[0]
       expect(mgr.tabs.value).toHaveLength(1)
 
@@ -304,7 +320,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('activeTab becomes null when all tabs are closed', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const onlyTab = mgr.tabs.value[0]
 
       mgr.closeTab(onlyTab.id)
@@ -312,7 +328,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('returns switchToId for the new active tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab1 = mgr.tabs.value[0]
       const tab2 = mgr.createTab()
 
@@ -404,7 +420,7 @@ describe('useTerminalTabs', () => {
 
   describe('disposeAll', () => {
     it('clears all tabs and resets activeTabId', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       mgr.createTab('/home/a')
       mgr.createTab('/home/b')
       expect(mgr.tabs.value.length).toBeGreaterThanOrEqual(3)
@@ -507,10 +523,16 @@ describe('useTerminalTabs', () => {
       expect(mgr.activeTabId.value).toBe('')
     })
 
-    it('starts with one blank tab when the project has no snapshot', () => {
+    it('starts with no tab when the project has no snapshot', () => {
+      // First visit to a project: nothing is remembered, so nothing is opened.
       const mgr = createTabManager({ restore: null })
-      expect(mgr.tabs.value).toHaveLength(1)
-      expect(mgr.tabs.value[0].session.sessionId).toBe('')
+      expect(mgr.tabs.value).toHaveLength(0)
+      expect(mgr.activeTabId.value).toBe('')
+    })
+
+    it('starts with no tab when the restore option is omitted entirely', () => {
+      const mgr = createTabManager()
+      expect(mgr.tabs.value).toHaveLength(0)
     })
 
     it('falls back to the cwd-derived title when the saved title is empty', () => {
@@ -523,7 +545,7 @@ describe('useTerminalTabs', () => {
 
   describe('snapshotTabs', () => {
     it('records session id, cwd and title of every tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.createTab('/work/x')
       const raw = getRawSession(tabIndex(mgr, tab))
       raw.sessionId.value = 'live-1'
@@ -535,7 +557,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('records the index of the active tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const second = mgr.createTab('/work/b')
       expect(mgr.activeTabId.value).toBe(second.id)
 
@@ -546,7 +568,7 @@ describe('useTerminalTabs', () => {
       // A tab whose shell exited has no id left; it must still be remembered so
       // the user gets a fresh shell in the same directory instead of losing the
       // tab entirely.
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.createTab('/work/dead')
       const raw = getRawSession(tabIndex(mgr, tab))
       raw.sessionId.value = ''
@@ -559,7 +581,7 @@ describe('useTerminalTabs', () => {
   describe('suspendAll', () => {
     it('detaches every session without closing the shell', () => {
       const onCloseViaHttp = vi.fn()
-      const mgr = createTabManager({ onCloseSessionViaHttp: onCloseViaHttp })
+      const mgr = createTabManagerWithTab({ onCloseSessionViaHttp: onCloseViaHttp })
       const tab1 = mgr.tabs.value[0]
       const tab2 = mgr.createTab('/work/b')
       const raw1 = getRawSession(tabIndex(mgr, tab1))
@@ -576,7 +598,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('disposes the xterm instances and clears the tab list', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const disposeSpy = vi.spyOn(tab.xterm!, 'dispose')
 
@@ -588,7 +610,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('keeps the session ids recoverable through snapshotTabs', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       getRawSession(tabIndex(mgr, tab)).sessionId.value = 'keep-me'
 
@@ -601,7 +623,7 @@ describe('useTerminalTabs', () => {
 
   describe('switchTab', () => {
     it('changes the active tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab1 = mgr.tabs.value[0]
       const tab2 = mgr.createTab()
 
@@ -621,7 +643,7 @@ describe('useTerminalTabs', () => {
 
   describe('disconnectAll', () => {
     it('disconnects all tab sessions', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab1 = mgr.tabs.value[0]
       const tab2 = mgr.createTab()
       const rawSession1 = getRawSession(tabIndex(mgr, tab1))
@@ -634,7 +656,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('syncs sessionId after disconnect for reconnect', async () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const rawSession = getRawSession(tabIndex(mgr, tab))
 
@@ -653,7 +675,7 @@ describe('useTerminalTabs', () => {
 
   describe('connectTab', () => {
     it('connects a disconnected tab', async () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const rawSession = getRawSession(tabIndex(mgr, tab))
 
@@ -664,7 +686,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('does not connect an already connected tab', async () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const rawSession = getRawSession(tabIndex(mgr, tab))
 
@@ -682,7 +704,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('syncs sessionId to tab after connect', async () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const rawSession = getRawSession(tabIndex(mgr, tab))
 
@@ -698,7 +720,7 @@ describe('useTerminalTabs', () => {
 
   describe('syncTabSessionId', () => {
     it('syncs session sessionId to tab sessionId', async () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const rawSession = getRawSession(tabIndex(mgr, tab))
 
@@ -841,7 +863,7 @@ describe('useTerminalTabs', () => {
 
   describe('reactive auto-unwrap behavior', () => {
     it('tab.session.connectionState is a string (not Ref) due to reactive()', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const state = tab.session.connectionState
       expect(typeof state).toBe('string')
@@ -849,7 +871,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('tab.session.sessionId is a string (not Ref) due to reactive()', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const id = tab.session.sessionId
       expect(typeof id).toBe('string')
@@ -857,7 +879,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('tab.session.wsOpen is a boolean (not Ref) due to reactive()', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const open = tab.session.wsOpen
       expect(typeof open).toBe('boolean')
@@ -865,7 +887,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('connectionState updates are reflected without .value', async () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const rawSession = getRawSession(tabIndex(mgr, tab))
 
@@ -996,13 +1018,13 @@ describe('useTerminalTabs', () => {
     }
 
     it('defaults hasUnread to false', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       expect(tab.hasUnread).toBe(false)
     })
 
     it('sets hasUnread when output arrives for a background tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const bgTab = mgr.tabs.value[0]
       const activeTab = mgr.createTab() // becomes active
       expect(activeTab.id).toBe(mgr.activeTabId.value)
@@ -1012,7 +1034,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('does not set hasUnread when output arrives for the active tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const activeTab = mgr.tabs.value[0]
       expect(activeTab.id).toBe(mgr.activeTabId.value)
 
@@ -1021,7 +1043,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('clears hasUnread on switchTab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const bgTab = mgr.tabs.value[0]
       const activeTab = mgr.createTab()
 
@@ -1033,7 +1055,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('clears hasUnread on the tab switched to after closing the active tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const firstTab = mgr.tabs.value[0]
       const activeTab = mgr.createTab()
 
@@ -1049,7 +1071,7 @@ describe('useTerminalTabs', () => {
 
   describe('mountTabXterm', () => {
     it('sets container on the tab', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const container = document.createElement('div')
 
@@ -1058,7 +1080,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('does not throw for tab without xterm', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       tab.xterm = null
 
@@ -1066,7 +1088,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('updates container even if xterm element already exists', () => {
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
 
       // First mount
@@ -1092,7 +1114,7 @@ describe('useTerminalTabs', () => {
       // needed. Patching private internals is fragile (it depends on `_core`
       // staying shaped this way) and it must not creep back in: a stale patch
       // would now DOUBLE-apply a factor that is no longer present.
-      const mgr = createTabManager()
+      const mgr = createTabManagerWithTab()
       const tab = mgr.tabs.value[0]
       const container = document.createElement('div')
 
@@ -1168,7 +1190,7 @@ describe('useTerminalTabs', () => {
    */
   describe('link activation', () => {
     it('routes terminal URLs through the confirm-then-open path', () => {
-      createTabManager()
+      createTabManagerWithTab()
       expect(mockLinkHandlers).toHaveLength(1)
 
       mockLinkHandlers[0]({}, 'https://example.com/build/123')
@@ -1177,7 +1199,7 @@ describe('useTerminalTabs', () => {
     })
 
     it('never falls back to window.open', () => {
-      createTabManager()
+      createTabManagerWithTab()
       const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
 
       mockLinkHandlers[0]({}, 'https://example.com')
@@ -1191,7 +1213,7 @@ describe('useTerminalTabs', () => {
      * `window.open`, so it needs the same handler or those links stay dead.
      */
     it('routes OSC 8 hyperlinks through the same confirm-then-open path', () => {
-      createTabManager()
+      createTabManagerWithTab()
       const linkHandler = mockTerminals[0].options.linkHandler as {
         activate: (event: unknown, text: string) => void
       }

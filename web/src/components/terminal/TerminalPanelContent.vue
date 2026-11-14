@@ -17,7 +17,7 @@
       :desc="t('terminal.noSessionsDesc')"
     >
       <template #action>
-        <button class="fbtn fbtn-primary" @click="handleCreateTab">
+        <button class="fbtn fbtn-primary" data-action="create-first-tab" @click="handleCreateTab">
           <PlusIcon :size="16" />
           <span>{{ t('terminal.createSession') }}</span>
         </button>

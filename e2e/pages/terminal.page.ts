@@ -220,12 +220,27 @@ export class TerminalPage {
   }
 
   /**
+   * Make sure the panel has at least one tab.
+   *
+   * Opening the terminal no longer spawns a shell on the user's behalf: a
+   * project with no saved tabs lands on the empty state, and the first tab is
+   * an explicit user action (the button in that empty state).
+   */
+  async ensureTabExists(): Promise<void> {
+    if (await this.getTabs().count()) return
+    const create = this.page.locator('.terminal-panel .empty-state [data-action="create-first-tab"]')
+    await create.click({ timeout: 5000 })
+    await expect(this.getTabs()).toHaveCount(1, { timeout: 5000 })
+  }
+
+  /**
    * Activate the terminal tab, reloading the page if the panel will not
    * connect. A long full-suite run can leave the panel's websocket unable to
    * attach even though the server is healthy; a fresh load recovers it.
    */
   async ensureTerminalConnected(index = 0, timeout = 15000): Promise<void> {
     await this.switchToTerminal()
+    await this.ensureTabExists()
     try {
       await this.waitForTabConnected(index, timeout)
     } catch {
@@ -233,6 +248,7 @@ export class TerminalPage {
       await this.page.waitForLoadState('domcontentloaded')
       await expect(this.page.locator('.chat-textarea')).toBeVisible({ timeout: 15000 })
       await this.switchToTerminal()
+      await this.ensureTabExists()
       await this.waitForTabConnected(index, timeout)
     }
   }

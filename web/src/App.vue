@@ -1010,6 +1010,33 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   activeTab.value = 'chat'
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
+  // Land the left column on the DESTINATION's remembered panel before the new
+  // subtree renders. `leftTab` is module-level and survives the key change, so
+  // without this the new tree first mounts the PREVIOUS project's panel (the
+  // remembered one is only applied in Phase 6, after the background loads) —
+  // and a terminal panel mounted that way is not harmless: it restores its tabs
+  // and connects them, i.e. it starts shells in the project being switched TO.
+  // `currentFile` is not restored yet, so a remembered 'view' resolves to
+  // 'browse' here; applyProjectPanel re-reads the record afterwards and lands
+  // the real tab (this pre-set is not persisted — the save watcher is still
+  // suppressed by beginPanelSwitch()).
+  if (isWideScreen.value) {
+    const remembered = resolvePanelTab(
+      loadProjectPanel(resolvedProjectPath),
+      true,
+      false,
+      isForgeTabHidden.value,
+      isMailTabHidden.value,
+    )
+    // Same fallback as applyProjectPanel: a panel the user hid from the dock
+    // must not be restored, or the new tree would mount something with no entry
+    // pointing at it (and a terminal there would connect its tabs). 'chat' is
+    // not a left-column tab: resolvePanelTab never returns it on a wide screen,
+    // but its return type is the wider TabId, so the check also narrows it.
+    const nextLeft = remembered === 'chat' || isDockTabHiddenById(remembered) ? 'browse' : remembered
+    leftTab.value = nextLeft
+    activeTab.value = nextLeft
+  }
   projectKey.value = newProjectPath
 
   // ── Phase 5: Fade in EARLY — UI is visible while data loads in background ──

@@ -62,10 +62,10 @@ export function useTerminalTabs(
      * utils/terminalProjectTabs). Each entry reattaches to the backend session
      * it names — the shell kept running while the user was in another project.
      *
-     * `null`/omitted means "this project has no snapshot": start with one blank
-     * tab, as always. An EMPTY `tabs` array is different and deliberate: the
-     * user had closed every tab, so nothing is created and the panel shows its
-     * empty state.
+     * `null`/omitted means "this project has no snapshot" and an EMPTY `tabs`
+     * array means "the user had closed every tab". Both start with NO tabs, so
+     * the panel shows its empty state: opening the terminal never spawns a
+     * shell the user did not ask for.
      */
     restore?: SavedTerminalTabs | null
   },
@@ -450,7 +450,8 @@ export function useTerminalTabs(
   }
 
   // Initialize from the project's snapshot when there is one (a project switch
-  // brings its tabs back), otherwise with one blank tab.
+  // brings its tabs back). No snapshot means no tabs — the panel shows its
+  // empty state instead of starting a shell nobody asked for.
   if (opts.restore) {
     for (const saved of opts.restore.tabs) {
       createTab(saved.cwd, { sessionId: saved.sessionId, title: saved.title })
@@ -459,8 +460,6 @@ export function useTerminalTabs(
       const idx = Math.min(Math.max(opts.restore.activeIndex, 0), tabs.value.length - 1)
       activeTabId.value = tabs.value[idx].id
     }
-  } else {
-    createTab()
   }
 
   return {
