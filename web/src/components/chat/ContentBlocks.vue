@@ -3218,7 +3218,12 @@ onUnmounted(() => {
 .chat-run-footer::before {
   content: '';
   position: absolute;
-  left: calc(-10 * var(--dp));
+  /* Absolute children sit against the PADDING box, which starts one border
+     width inside the element. Every member and the footer therefore carry the
+     same 1px left border (transparent where the pill has none), and the rail
+     subtracts it — otherwise each row's rail lands at a different x and the
+     line looks broken at the collapse button. */
+  left: calc(-10 * var(--dp) - 1px);
   width: 2px;
   border-radius: 1px;
   background: color-mix(in srgb, var(--text-muted) 35%, transparent);
@@ -3258,6 +3263,8 @@ onUnmounted(() => {
   background: none;
   border: none;
   border-top: 1px solid color-mix(in srgb, var(--text-muted) 32%, var(--border-color));
+  /* Keeps the rail's x aligned with the members above (see ::before). */
+  border-left: 1px solid transparent;
   cursor: pointer;
   transition: color var(--duration-base);
 }
@@ -3267,10 +3274,10 @@ onUnmounted(() => {
 }
 
 /* Inside a run the thinking chip's own violet bar would be a second, differently
-   coloured line next to the rail. Keep its width (so the layout does not shift
-   when it expands) but let the rail be the only line. */
+   coloured line next to the rail, and its 3px width would also offset the rail
+   by 2px. One 1px transparent border keeps every member's rail on the same x. */
 .chat-run-member.chat-thinking {
-  border-left-color: transparent;
+  border-left: 1px solid transparent;
 }
 
 .chat-tool-call .tool-check {
