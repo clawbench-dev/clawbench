@@ -266,11 +266,18 @@ describe('isNumericTable', () => {
     )).toBe(true)
   })
 
-  it('ignores the first column when looking for that numeric column', () => {
+  it('counts the first column too — a numeric 序号 column makes it a data table', () => {
     expect(isNumericTable(
       ['序号', '名称', '说明'],
       [['1', '网关', '正常'], ['2', '鉴权', '正常']],
-    )).toBe(false)
+    )).toBe(true)
+  })
+
+  it('does not treat the first column as a label just because of its position', () => {
+    expect(isNumericTable(
+      ['年份', '说明'],
+      [['2024', '上线'], ['2025', '扩容']],
+    )).toBe(true)
   })
 
   it('rejects a table where no column is purely numeric', () => {

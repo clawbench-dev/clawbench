@@ -151,7 +151,7 @@
               :class="{ 'is-numeric': isNumCol(col), 'is-frozen': frozen === col }"
               :style="frozenStyle(col)"
             >
-              <template v-if="col === visibleColumns[0]">{{ t('dataTable.total') }}</template>
+              <template v-if="col === totalLabelColumn">{{ t('dataTable.total') }}</template>
               <template v-else>{{ footerValue(col) }}</template>
             </td>
           </tr>
@@ -367,7 +367,7 @@ const columnFilters = ref<string[]>([])
 const sort = ref<SortState | null>(null)
 const page = ref(1)
 const hidden = ref<Set<number>>(new Set())
-const frozen = ref<number | null>(0)
+const frozen = ref<number | null>(null)
 const barsOff = ref<Set<number>>(new Set())
 const valueFilters = ref<Map<number, Set<string>>>(new Map())
 
@@ -396,7 +396,7 @@ watch(
     sort.value = null
     page.value = 1
     hidden.value = new Set()
-    frozen.value = 0
+    frozen.value = null
     barsOff.value = new Set()
     valueFilters.value = new Map()
     closePop()
@@ -475,7 +475,7 @@ const scrollStyle = computed(() => {
 })
 
 function isNumCol(col: number): boolean {
-  return isData.value && col > 0 && Boolean(numeric.value[col])
+  return isData.value && Boolean(numeric.value[col])
 }
 
 function headerLabel(col: number): string {
@@ -738,6 +738,11 @@ const popStats = computed(() => {
 /** 有数值列才显示合计行；纯文字表切到数据表也没有合计可算。 */
 const hasNumericColumn = computed(() =>
   visibleColumns.value.some(col => isNumCol(col)),
+)
+
+/** 「合计」两个字放在第一个文字列；整表都是数字时不占列，合计值照常显示。 */
+const totalLabelColumn = computed<number | null>(() =>
+  visibleColumns.value.find(col => !isNumCol(col)) ?? null,
 )
 
 /** 合计行是否真的渲染。CSS 要据此决定最后一行还画不画下边线（否则叠成 2px）。 */

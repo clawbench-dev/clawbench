@@ -355,15 +355,13 @@ export function filterAndSortRows(rows: string[][], filter: RowFilter): string[]
 /**
  * Is this table a "data table"?
  *
- * 产品定的规则：第一列通常是标签，不参与；**其余列里只要有一列是纯数字**
- * （非空的格子全是数字，空格子算缺失），整张表就默认按数据表展示。
- *
- * 之前是「除第一列外每一格都必须是数字」，太严：一张「名称 / 数量 / 备注」
- * 的表只要备注里有一个字，就整表退化成简单表，数量列明明能排序、能合计。
+ * 产品定的规则：**任意一列是纯数字**（非空的格子全是数字，空格子算缺失），
+ * 整张表就默认按数据表展示。第一列不特殊对待——序号、年份、金额都可能落在
+ * 第一列，按内容判断而不是按位置。
  */
 export function isNumericTable(headers: string[], rows: string[][]): boolean {
     if (headers.length < 2 || rows.length < 1) return false
-    for (let c = 1; c < headers.length; c++) {
+    for (let c = 0; c < headers.length; c++) {
         let seen = 0
         let allNumeric = true
         for (const row of rows) {

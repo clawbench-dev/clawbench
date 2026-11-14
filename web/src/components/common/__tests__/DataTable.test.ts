@@ -245,9 +245,9 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
-  it('freezes a column from its menu', async () => {
+  it('freezes a column only when asked to (no default freeze)', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
-    expect(wrapper.findAll('.dt-grid thead th')[0].classes()).toContain('is-frozen')
+    expect(wrapper.findAll('.dt-grid thead th')[0].classes()).not.toContain('is-frozen')
 
     await wrapper.findAll('.dt-funnel')[1].trigger('click')
     await menuItem(wrapper, 'Freeze this column').trigger('click')
@@ -311,6 +311,28 @@ describe('DataTable', () => {
     expect(wrapper.findAll('.dt-grid thead th')[1].classes()).toContain('is-numeric')
     // 3450,75 + 12,5 = 3463.25
     expect(wrapper.find('.dt-grid tfoot').text()).toContain('3,463.25')
+    wrapper.unmount()
+  })
+
+  it('不把第一列当标题列：数字照样右对齐、参与合计', () => {
+    const wrapper = mountTable(
+      ['q1', 'q2', 'region'],
+      [['10', '20', 'East'], ['5', '7', 'West']],
+    )
+    expect(wrapper.find('.dt').classes()).toContain('is-data')
+    expect(wrapper.findAll('.dt-grid thead th')[0].classes()).toContain('is-numeric')
+
+    const foot = wrapper.findAll('.dt-grid tfoot td')
+    expect(foot[0].text()).toBe('15')
+    expect(foot[1].text()).toBe('27')
+    // 「合计」字样落在第一个文字列，不占掉数字列的合计值
+    expect(foot[2].text()).toBe('Total')
+    wrapper.unmount()
+  })
+
+  it('整表都是数字时合计行只显示合计值，没有「合计」字样占列', () => {
+    const wrapper = mountTable(['q1', 'q2'], [['10', '20'], ['5', '7']])
+    expect(wrapper.findAll('.dt-grid tfoot td').map(cell => cell.text())).toEqual(['15', '27'])
     wrapper.unmount()
   })
 
