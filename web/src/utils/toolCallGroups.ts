@@ -45,6 +45,12 @@ export interface ToolCallGroup {
    * a tool runs, so it looks like the pill it is standing in for.
    */
   runningCategory: string
+  /**
+   * Raw tool name of the running tool, e.g. `Bash`. The row's leading icon is
+   * resolved from it, so the row shows the tool actually running rather than a
+   * generic "a run of tools" glyph. `''` when nothing runs.
+   */
+  runningToolName: string
   /** Display name of the running tool, e.g. "Bash". */
   runningName: string
   /** One-line summary of the running tool, e.g. "npm test". */
@@ -56,8 +62,8 @@ export interface ToolCallGroupOptions {
   isTool: (block: any, index: number) => boolean
   /** Whether this block is a thinking chip that may sit inside a run. */
   isThinking: (block: any, index: number) => boolean
-  /** Display name, summary and colour category of the running tool. */
-  describe: (block: any) => { name: string; summary: string; category: string }
+  /** Display name, summary, colour category and raw name of the running tool. */
+  describe: (block: any) => { name: string; summary: string; category: string; toolName: string }
 }
 
 export interface ToolCallGroups {
@@ -115,7 +121,7 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
 
     const described = runningBlock
       ? opts.describe(runningBlock)
-      : { name: '', summary: '', category: '' }
+      : { name: '', summary: '', category: '', toolName: '' }
     const group: ToolCallGroup = {
       start,
       end,
@@ -126,6 +132,7 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       runningIndex,
       runningThinking: thinkingIndices.some((idx) => list[idx] && !list[idx].done),
       runningCategory: described.category,
+      runningToolName: described.toolName,
       runningName: described.name,
       runningSummary: described.summary,
     }

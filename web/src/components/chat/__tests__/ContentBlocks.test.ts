@@ -4164,6 +4164,24 @@ describe('compact tool calls', () => {
     expect(row.text()).toContain('Bash · npm test')
   })
 
+  it('puts the running ring in the right-hand tail and keeps a real tool icon on the left', async () => {
+    // The ring used to be the row's FIRST child: it replaced the leading icon
+    // and left the right edge empty, so the row's left edge moved whenever a
+    // tool started or finished. It belongs in the tail with every other status
+    // verdict; the leading slot shows the tool that is actually running.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    const tail = strip.find('.chat-tool-group-tail')
+
+    expect(tail.find('.tool-spinner').exists(), 'ring is pinned to the right edge').toBe(true)
+    expect(strip.element.children[0].classList.contains('tool-icon'), 'leading slot keeps an icon').toBe(true)
+    expect(strip.element.children[0].querySelector('.tool-spinner')).toBeNull()
+  })
+
   it('never folds an interactive card or an Agent card with a sub-agent group', async () => {
     const ask = {
       type: 'tool_use', name: 'AskUserQuestion', id: 'ask1', done: true,

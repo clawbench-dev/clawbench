@@ -140,8 +140,12 @@
           :data-category="groupAccentCategory(group)"
           @click.stop="toggleToolGroup(group)"
         >
-          <LoadingIndicator v-if="isGroupRunning(group)" class="tool-spinner" size="sm" inline />
-          <Layers v-else :size="12" class="tool-icon" />
+          <!-- Leading icon follows the tool that is actually running, so the row
+               reads as that tool's pill; at rest the run is a container, so it
+               wears the generic stack glyph. The ring loader lives in the tail
+               (right edge) with every other status verdict — as a leading child
+               it pushed the counts around and left the right edge empty. -->
+          <component :is="group.runningToolName ? getToolIcon(group.runningToolName).icon : Layers" :size="12" class="tool-icon" />
           <!-- Counts first — this row is a summary, not a log line. While a
                tool runs, the right-hand side says WHICH one ("Bash · npm test");
                what colour it wears comes from that same tool. -->
@@ -166,10 +170,14 @@
                  Only while folded — the opened body renders the chip's own one. -->
             <span v-if="!isToolGroupOpen(group) && groupHidesTailThinking(group) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
             <span v-else-if="!isToolGroupOpen(group) && groupHidesTailThinking(group) && stopped && !cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.stopped') }}</span>
+            <!-- Running: the ring sits in the same right-hand slot as every
+                 other verdict, so the row's left and right edges stay put as it
+                 moves between running and settled. -->
+            <LoadingIndicator v-if="isGroupRunning(group)" class="tool-spinner" size="sm" inline />
             <!-- Finished: same success/failure language as a single tool pill. -->
-            <XCircle v-if="!isGroupRunning(group) && group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
-            <CircleSlash v-else-if="!isGroupRunning(group) && (group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
-            <CheckCircle2 v-else-if="!isGroupRunning(group)" :size="14" color="#22c55e" class="tool-check" />
+            <XCircle v-else-if="group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
+            <CircleSlash v-else-if="(group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
+            <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
             <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
             <ChevronDown v-else :size="12" class="tool-group-chevron" />
           </span>
@@ -1898,6 +1906,7 @@ const toolGroups = computed(() => {
       name: toolDisplayName(block.name, block.input, block.display_name),
       summary: props.toolCallSummary(block),
       category: getToolIcon(block.name).category,
+      toolName: block.name || '',
     }),
   })
 })

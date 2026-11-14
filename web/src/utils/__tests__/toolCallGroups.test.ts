@@ -8,7 +8,7 @@ const text = (t: string) => ({ type: 'text', text: t })
 const opts = {
   isTool: (b: any) => b?.type === 'tool_use',
   isThinking: (b: any) => b?.type === 'thinking',
-  describe: (b: any) => ({ name: b.id, summary: '', category: b.category ?? 'fallback' }),
+  describe: (b: any) => ({ name: b.id, summary: '', category: b.category ?? 'fallback', toolName: b.name ?? b.id }),
 }
 
 describe('buildToolCallGroups', () => {
@@ -75,14 +75,19 @@ describe('buildToolCallGroups', () => {
     // travel with the group — and it must be empty when nothing runs, otherwise
     // a finished run would stay tinted with whatever ran last.
     const running = buildToolCallGroups(
-      [tool('a', { category: 'file' }), tool('b', { category: 'bash', done: false, status: '' })],
+      [tool('a', { category: 'file' }), tool('b', { category: 'bash', name: 'Bash', done: false, status: '' })],
       opts,
     )
     expect(running.groups[0].runningCategory).toBe('bash')
+    // The raw name travels too: the row's leading icon is resolved from it, so
+    // it must be the tool that is running (not the display name, not a generic
+    // run glyph).
+    expect(running.groups[0].runningToolName).toBe('Bash')
 
     const settled = buildToolCallGroups([tool('a', { category: 'file' }), tool('b', { category: 'bash' })], opts)
     expect(settled.groups[0].runningIndex).toBe(0)
     expect(settled.groups[0].runningCategory).toBe('')
+    expect(settled.groups[0].runningToolName).toBe('')
   })
 
   it('ignores blocks the caller does not classify as foldable', () => {
