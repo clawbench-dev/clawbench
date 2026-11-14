@@ -1,7 +1,12 @@
 import { app, BrowserWindow, dialog } from 'electron'
 import { record } from './clientLog'
 import { resolveNativeLanguage, certificateLabels } from './labels'
-import { decideCertificateAction, isRememberedCertificate, originOf } from './certificatePolicy'
+import {
+  decideCertificateAction,
+  isRememberedCertificate,
+  originOf,
+  SingleFlightPrompts,
+} from './certificatePolicy'
 import { rememberedCertificates } from './certificateTrust'
 import { getStore } from './store'
 
@@ -34,6 +39,17 @@ import { getStore } from './store'
  */
 
 const TAG = 'Cert'
+
+/**
+ * One dialog per origin at a time.
+ *
+ * A single navigation raises several `certificate-error` events at once — the
+ * main frame plus the WebSocket and any fetch that opens its own socket before
+ * the first answer arrives. Each one is paused until this handler answers, so
+ * prompting per event stacks identical dialogs and asks the user the same
+ * question two or three times for one connection. See `SingleFlightPrompts`.
+ */
+const prompts = new SingleFlightPrompts()
 
 /**
  * Remember the certificate the user just accepted.
@@ -119,7 +135,8 @@ export function registerCertificateHandler(): void {
     // rejection so our asynchronous answer is what decides.
     event.preventDefault()
     record('W', TAG, `certificate error for ${url}: ${error} — prompting`)
-    void promptTrustCertificate(url, error, BrowserWindow.fromWebContents(webContents))
+    void prompts
+      .run(originOf(url), () => promptTrustCertificate(url, error, BrowserWindow.fromWebContents(webContents)))
       .then((trusted) => {
         if (trusted) {
           rememberCertificate(url, certificate.fingerprint)

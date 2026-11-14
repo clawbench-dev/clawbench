@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { decideCertificateAction, isLocalhostHost, isRememberedCertificate, originOf } from './certificatePolicy'
+import {
+  decideCertificateAction,
+  isLocalhostHost,
+  isRememberedCertificate,
+  originOf,
+  SingleFlightPrompts,
+} from './certificatePolicy'
 
 describe('originOf', () => {
   it('returns scheme://host:port for a full URL', () => {
@@ -116,3 +122,113 @@ describe('decideCertificateAction', () => {
     expect(decideCertificateAction('garbage', true, true)).toBe('ignore')
   })
 })
+
+describe('SingleFlightPrompts', () => {
+  /** A start() whose answer the test controls, so "concurrent" is unambiguous. */
+  function deferred(): { start: () => Promise<boolean>; resolve: (v: boolean) => void; calls: () => number } {
+    let calls = 0
+    let resolve!: (v: boolean) => void
+    const start = (): Promise<boolean> => {
+      calls++
+      return new Promise<boolean>((r) => {
+        resolve = r
+      })
+    }
+    return { start, resolve: (v) => resolve(v), calls: () => calls }
+  }
+
+  it('shows ONE dialog for concurrent requests on the same origin', async () => {
+    // The real failure: a navigation plus the page's first sockets all raise
+    // certificate-error before any answer lands, stacking identical dialogs.
+    const prompts = new SingleFlightPrompts()
+    const d = deferred()
+
+    const first = prompts.run('https://gdp:20000', d.start)
+    const second = prompts.run('https://gdp:20000', d.start)
+    const third = prompts.run('https://gdp:20000', d.start)
+
+    expect(d.calls()).toBe(1)
+    d.resolve(true)
+
+    expect(await first).toBe(true)
+    expect(await second).toBe(true)
+    expect(await third).toBe(true)
+  })
+
+  it('shares a refusal with every waiting request', async () => {
+    const prompts = new SingleFlightPrompts()
+    const d = deferred()
+
+    const first = prompts.run('https://gdp:20000', d.start)
+    const second = prompts.run('https://gdp:20000', d.start)
+    d.resolve(false)
+
+    expect(await first).toBe(false)
+    expect(await second).toBe(false)
+  })
+
+  it('asks again once the previous answer has settled', async () => {
+    // Otherwise a later reconnect would be answered from a stale verdict.
+    const prompts = new SingleFlightPrompts()
+    const d = deferred()
+
+    const first = prompts.run('https://gdp:20000', d.start)
+    d.resolve(true)
+    await first
+
+    const second = deferred()
+    const result = prompts.run('https://gdp:20000', second.start)
+    expect(second.calls()).toBe(1)
+    second.resolve(false)
+    expect(await result).toBe(false)
+  })
+
+  it('keeps different origins independent', async () => {
+    const prompts = new SingleFlightPrompts()
+    const a = deferred()
+    const b = deferred()
+
+    const first = prompts.run('https://a:20000', a.start)
+    const second = prompts.run('https://b:20000', b.start)
+
+    expect(a.calls()).toBe(1)
+    expect(b.calls()).toBe(1)
+    a.resolve(true)
+    b.resolve(false)
+    expect(await first).toBe(true)
+    expect(await second).toBe(false)
+  })
+
+  it('never collapses an unparseable key', async () => {
+    const prompts = new SingleFlightPrompts()
+    let calls = 0
+    const resolvers: Array<(v: boolean) => void> = []
+    const start = (): Promise<boolean> => {
+      calls++
+      return new Promise<boolean>((r) => resolvers.push(r))
+    }
+
+    const first = prompts.run('', start)
+    const second = prompts.run('', start)
+    expect(calls).toBe(2)
+
+    resolvers.forEach((r) => r(true))
+    await Promise.all([first, second])
+  })
+
+  it('clears the slot when the dialog itself fails', async () => {
+    const prompts = new SingleFlightPrompts()
+    let calls = 0
+    const failing = (): Promise<boolean> => {
+      calls++
+      return Promise.reject(new Error('dialog failed'))
+    }
+
+    await expect(prompts.run('https://gdp:20000', failing)).rejects.toThrow('dialog failed')
+
+    // The next attempt must open a fresh dialog, not await the dead promise.
+    await expect(prompts.run('https://gdp:20000', failing)).rejects.toThrow('dialog failed')
+    expect(calls).toBe(2)
+  })
+})
+
