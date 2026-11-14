@@ -1842,9 +1842,9 @@
 }
 
 /* Wide-screen chrome: one row height and surface, plus room for the two
-   window controls at the right end. The controls are inset by the same token
-   (PanelWindowControls), so the gap from the last header control to the panel
-   edge equals the left inset. */
+   window controls at the right end. The controls sit flush against the panel
+   edge (they are window chrome, not header content), so the reservation is
+   exactly their width plus the gap before them. */
 .col-left--chrome .tab-panel :is(
     .dir-toolbar,
     .file-header-bar,
@@ -1875,8 +1875,8 @@
        tabs changed the bar's colour. */
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
-    /* Right edge inset + two 26px control cells + the gap before them. */
-    padding-right: calc(var(--panel-header-pad-x) + 52 * var(--dp) + var(--space-2));
+    /* Two 26px control cells (flush with the edge) + the gap before them. */
+    padding-right: calc(52 * var(--dp) + var(--space-2));
 }
 
 /* Section glyph rendered by each panel header itself. Geometry is shared so

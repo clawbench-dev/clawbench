@@ -91,7 +91,7 @@ describe('one panel header row', () => {
     // wide-screen chrome rule.
     expect(rule![2]).not.toMatch(/padding-left:/)
     expect(rule![2]).toMatch(
-      /padding-right:\s*calc\(var\(--panel-header-pad-x\) \+ 52 \* var\(--dp\) \+ var\(--space-2\)\)/,
+      /padding-right:\s*calc\(52 \* var\(--dp\) \+ var\(--space-2\)\)/,
     )
     expect(rule![2]).toMatch(/height:\s*var\(--header-height\)/)
     expect(rule![2]).toMatch(/background:\s*var\(--bg-secondary\)/)
@@ -114,14 +114,16 @@ describe('one panel header row', () => {
     )
   })
 
-  it('insets the window controls by the same token', () => {
-    // Otherwise the right-most control sits flush against the panel edge while
-    // the section glyph on the left has a margin — the asymmetry this token
-    // exists to prevent.
+  it('keeps the window controls flush with the panel edge', () => {
+    // The cluster is window chrome, not header content: a right inset leaves a
+    // strip of header background outside the buttons, which reads as a gap
+    // that should not be there. The header's reservation must therefore be
+    // exactly the two cells plus the gap before them (asserted above).
     const controls = readWebFile('src/components/common/PanelWindowControls.vue')
     const rule = controls.match(/\.panel-window-controls\s*\{([\s\S]*?)\}/)
     expect(rule, '.panel-window-controls rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/right:\s*var\(--panel-header-pad-x\)/)
+    expect(rule![1]).toMatch(/right:\s*0;/)
+    expect(rule![1]).not.toMatch(/right:\s*var\(--panel-header-pad-x\)/)
   })
 
   it('keeps the empty-state header row in narrow mode too', () => {

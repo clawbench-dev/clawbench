@@ -58,10 +58,11 @@ const { isWideScreen, chatCollapsed } = getWideScreenState()
 .panel-window-controls {
   position: absolute;
   top: 0;
-  /* Same edge inset as the header's own left padding, so the panel controls
-     do not sit closer to the right edge than the section glyph does to the
-     left one. */
-  right: var(--panel-header-pad-x);
+  /* Flush with the panel's right edge, like a desktop window's caption
+     buttons: the cluster is chrome, not header content, so it must not leave
+     a strip of header background outside it. The header's own left inset is
+     unaffected. */
+  right: 0;
   /* Stop above the header's 1px bottom border: painting over it tinted the
      line under the buttons, so the border changed colour at the right end. */
   bottom: 1px;
