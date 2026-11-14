@@ -227,16 +227,9 @@ describe('DrawioViewer bridge', () => {
 })
 
 describe('DrawioViewer read-only fit', () => {
-  /** The frame the fit is computed against (jsdom reports 0x0 by default). */
-  function mockFrameSize(w = 412, h = 795) {
-    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(w)
-    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(h)
-  }
-
   async function mountPreview() {
     apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
     mockContentWindow()
-    mockFrameSize()
     const wrapper = mount(DrawioViewer, { props: { file, readonly: true } })
     await nextTick()
     await nextTick()
@@ -245,10 +238,11 @@ describe('DrawioViewer read-only fit', () => {
     return wrapper
   }
 
-  /** draw.io's reply to `load`: a 1169x827 sheet shown at 50%, content 911 wide. */
-  const GEOMETRY = {
+  /** draw.io's reply to `load` (proto=json). */
+  const LOAD_REPLY = {
     event: 'load',
     scale: 0.5,
+    pageVisible: true,
     page: { x: 0, y: 0, width: 584.5, height: 413.5 },
     modelBounds: { x: 40, y: 20, width: 455.5, height: 192 },
     containerSize: { width: 412, height: 795 },
@@ -258,30 +252,27 @@ describe('DrawioViewer read-only fit', () => {
     return JSON.parse(postMessage.mock.calls.at(-1)[0])
   }
 
-  it('leaves the file zoom alone when loading, then fits from reported geometry', async () => {
-    // Fitting inside `load` runs before the graph has laid itself out and
-    // corrects the translate relative to the view it replaces, which on a phone
-    // left the diagram shifted off the left edge. The standalone `fit` action
-    // runs against a settled graph and reports the numbers it used.
+  it('leaves the file zoom alone when loading, then asks draw.io to fit the page', async () => {
+    // Fitting inside `load` runs before the graph has laid itself out, and the
+    // `fit` action's translate is corrected relative to the view it replaces —
+    // the same diagram landed at four different offsets depending on the
+    // previous zoom (measured). `fitPage` sizes the sheet deterministically.
     const wrapper = await mountPreview()
     expect(lastMessage()).toMatchObject({ action: 'load', autosave: 0 })
     expect(lastMessage().fit).toBeUndefined()
 
-    sendFromIframe(GEOMETRY)
+    sendFromIframe(LOAD_REPLY)
     await nextTick()
 
-    const fit = lastMessage()
-    expect(fit.action).toBe('fit')
-    // 412px frame, 1169px sheet: ~0.325 after the 16px margins.
-    expect(fit.maxScale).toBeCloseTo(0.325, 3)
-    // The border is back-solved so draw.io's own scale formula lands on it.
-    expect(fit.border).toBeGreaterThan(0)
+    expect(lastMessage()).toEqual({ action: 'invokeAction', actionName: 'fitPage' })
     wrapper.unmount()
   })
 
-  it('falls back to draw.io own fit when the geometry never arrives', async () => {
+  it('fits the content instead when the diagram has no page view', async () => {
+    // `fitPage` would switch the page ON instead of fitting, which would change
+    // the drawing on screen.
     const wrapper = await mountPreview()
-    wrapper.vm.fitToScreen()
+    sendFromIframe({ ...LOAD_REPLY, pageVisible: false })
     await nextTick()
     expect(lastMessage()).toEqual({ action: 'fit', border: 16, maxScale: 1 })
     wrapper.unmount()
@@ -289,7 +280,7 @@ describe('DrawioViewer read-only fit', () => {
 
   it('re-fits without reloading the diagram when the reader asks', async () => {
     const wrapper = await mountPreview()
-    sendFromIframe(GEOMETRY)
+    sendFromIframe(LOAD_REPLY)
     await nextTick()
     const before = postMessage.mock.calls.length
 
@@ -297,9 +288,7 @@ describe('DrawioViewer read-only fit', () => {
     await nextTick()
 
     expect(postMessage.mock.calls.length).toBe(before + 1)
-    const fit = lastMessage()
-    expect(fit.action).toBe('fit')
-    expect(fit.maxScale).toBeCloseTo(0.325, 3)
+    expect(lastMessage()).toEqual({ action: 'invokeAction', actionName: 'fitPage' })
     wrapper.unmount()
   })
 
@@ -308,7 +297,6 @@ describe('DrawioViewer read-only fit', () => {
     // for a view change.
     apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
     mockContentWindow()
-    mockFrameSize()
     const wrapper = mount(DrawioViewer, { props: { file } })
     await nextTick()
     await nextTick()
@@ -316,7 +304,7 @@ describe('DrawioViewer read-only fit', () => {
     await nextTick()
     const before = postMessage.mock.calls.length
 
-    sendFromIframe(GEOMETRY)
+    sendFromIframe(LOAD_REPLY)
     wrapper.vm.fitToScreen()
     await nextTick()
 

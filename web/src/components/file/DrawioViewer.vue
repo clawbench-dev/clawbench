@@ -323,15 +323,16 @@ function onMessage(e) {
   switch (msg.event) {
     case 'init':
       iframeReady = true
+      if (props.readonly) neutralizeLeftGutter()
       sendLoad()
       break
     case 'load':
-      // draw.io's reply to our `load` (proto=json only). It carries the view's
-      // geometry — content bounds, sheet bounds, scale, frame size — which the
-      // read-only preview uses to size its fit (see requestFit). The editor
-      // ignores it: the author's zoom is the author's business.
+      // draw.io's reply to our `load` (proto=json only). It reports whether the
+      // diagram has a page to fit; the read-only preview answers with a fit so
+      // the reader opens on the whole drawing instead of the file's own zoom.
+      // The editor ignores it: the author's zoom is the author's business.
       if (props.readonly) {
-        lastGeometry = msg
+        lastPageVisible = msg.pageVisible !== false
         requestFit()
       }
       break
@@ -383,73 +384,73 @@ function sendLoad() {
   postToFrame({ action: 'load', xml, autosave: props.readonly ? 0 : 1 })
 }
 
-/** Breathing room (px) a fitted diagram gets on every side. */
+/** Breathing room (px) the content fit leaves on every side. */
 const FIT_BORDER = 16
 
 /**
- * The view geometry draw.io reported with its last `load` reply, in px at
- * `scale`. Used to size the fit so the whole SHEET stays inside the frame.
+ * Undo draw.io's 10px left pull on its canvas, inside the read-only frame.
+ *
+ * In chromeless mode draw.io lays its diagram container out as
+ * `margin-left: -10px` (and 10px wider) to push the scrollbar gutter out of
+ * sight. That is fine when it owns the window, but inside an iframe it simply
+ * shifts everything 10px left: a fitted sheet lands flush against the frame's
+ * left edge with its border cut off, while the right edge keeps a visible
+ * margin. Zeroing the margin costs nothing here — with the page view on there is
+ * no scrollbar to hide (measured: no gutter appears either way).
+ *
+ * The stylesheet is injected into the frame's own document (same origin, the
+ * sandbox keeps `allow-same-origin`), because the rule lives inside draw.io and
+ * cannot be reached from this component's scoped styles. Read-only only: the
+ * editor is left exactly as draw.io ships it.
  */
-let lastGeometry = null
+function neutralizeLeftGutter() {
+  const doc = frameRef.value?.contentDocument
+  if (!doc) return
+  if (doc.querySelector('style[data-cb-drawio-gutter]')) return
+  const style = doc.createElement('style')
+  style.setAttribute('data-cb-drawio-gutter', '')
+  style.textContent = '.geDiagramContainer{margin-left:0!important}'
+  ;(doc.head || doc.documentElement).appendChild(style)
+}
 
 /**
- * Fit the shared diagram so nothing of it — content or the sheet it sits on —
- * is cut off by the frame (read-only preview only).
+ * Whether the diagram has a page (sheet) to fit, as reported by draw.io's last
+ * `load` reply. `null` until that reply arrives.
+ */
+let lastPageVisible = null
+
+/**
+ * Fit the shared diagram into the frame (read-only preview only).
  *
- * Why not `load`'s `fit` flag: it runs while the graph is still laying itself
- * out, and its translate correction is relative to the view it replaces, so on
- * a phone the result can still be shifted off the left edge. The standalone
- * `fit` action runs against a settled graph and reports its own geometry, so
- * the fit below is computed from measured numbers, not guesses:
+ * draw.io's own "Fit Page" (the View menu's fit-to-page, reachable from the
+ * embed protocol through `invokeAction`) is the right primitive here: it sizes
+ * the SHEET — the page the diagram sits on — to the frame, so the reader sees
+ * the whole drawing with its margins instead of a fragment. It is also
+ * deterministic; the `fit` action's translate is corrected relative to the view
+ * it replaces, and the same diagram landed at four different offsets depending
+ * on the previous zoom (measured).
  *
- *   1. draw.io replies to `load` with `page` (the sheet, px at `scale`) and
- *      `modelBounds` (the content, graph units).
- *   2. The largest scale at which the whole sheet fits inside the frame with
- *      `FIT_BORDER` on each side, capped at 100% so a small diagram is not
- *      blown up.
- *   3. draw.io's `fit` derives its scale from the border it is given
- *      (`scale = (frameWidth - 2*border) / contentWidth`), so the border that
- *      produces exactly that scale is sent along with it.
+ * Files with the page view turned off have no sheet: `fitPage` would switch the
+ * page on instead of fitting, so those fall back to the `fit` action, which
+ * sizes the CONTENT and is capped at 100% so a small diagram is not blown up.
  *
- * The editor is deliberately a no-op here: a reload-free fit is harmless, but
- * the author's zoom is the author's business.
+ * The editor is deliberately untouched: there the author's zoom is deliberate.
  */
 function requestFit() {
-  if (!props.readonly) return
-  const frame = frameRef.value
-  if (!frame) return
-  const w = frame.clientWidth
-  const h = frame.clientHeight
-  if (!w || !h) return
-
-  const page = lastGeometry?.page
-  const bounds = lastGeometry?.modelBounds
-  const scale = lastGeometry?.scale
-  if (!page || !bounds || !scale || page.width <= 0) {
-    // Geometry never arrived (older editor build, or a viewer mode without a
-    // sheet): draw.io's own fit is still far better than the file's zoom.
+  if (!props.readonly || !iframeReady) return
+  if (lastPageVisible === false) {
     postToFrame({ action: 'fit', border: FIT_BORDER, maxScale: 1 })
     return
   }
-
-  const sheetW = page.width / scale
-  const sheetH = page.height / scale
-  const s = Math.min((w - 2 * FIT_BORDER) / sheetW, (h - 2 * FIT_BORDER) / sheetH, 1)
-  if (s <= 0) return
-  // Undo the sheet's own margin around the content (a diagram is usually
-  // narrower than the page it sits on): without it the fitted content lands
-  // inside a sheet that still overflows the frame.
-  const border = Math.max(0, (w - 3 - s * bounds.width) / 2)
-  postToFrame({ action: 'fit', border, maxScale: s })
+  postToFrame({ action: 'invokeAction', actionName: 'fitPage' })
 }
 
 /**
  * The share page's "fit the whole diagram" action.
  *
- * The canvas zooms freely and draw.io's own fit control is hover-only, so on a
- * touch screen it never appears — this is the touch-sized way back to the whole
- * picture. No reload involved: `fit` re-derives the view from the diagram
- * already on screen.
+ * The canvas zooms freely and draw.io's own fit control lives in its menu, which
+ * this read-only embed hides — so without this the only way back to the whole
+ * picture is a browser reload.
  */
 function fitToScreen() {
   if (!props.readonly) return

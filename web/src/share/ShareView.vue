@@ -50,7 +50,7 @@
            .share-top-actions because a diagram has neither a TOC nor a
            rendered/source toggle, and this must not depend on them. -->
       <button
-        v-if="isDrawio && file && !error"
+        v-if="isDrawio && canRenderInline && file && !error"
         class="share-btn share-fit-diagram"
         type="button"
         :title="t('share.fitDiagram')"
