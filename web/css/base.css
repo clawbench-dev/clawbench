@@ -306,6 +306,7 @@ html.wallpaper-active .forge-detail-footer {
    bg-secondary tint under wallpaper-active would put the bar back, and the row
    hover tint below would then be invisible against it. */
 html.wallpaper-active .terminal-tab-bar,
+html.wallpaper-active .terminal-empty-header,
 html.wallpaper-active .stats-tab-bar,
 html.wallpaper-active .manage-tabs,
 html.wallpaper-active .toc-dock,

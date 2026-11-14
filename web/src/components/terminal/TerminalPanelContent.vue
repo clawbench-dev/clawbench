@@ -1,6 +1,17 @@
 <template>
   <div class="terminal-panel">
 
+    <!-- Header row for the two states that have no tab bar to serve as one.
+         Every other dock tab page keeps a header above its empty state; without
+         this the terminal page is the only one whose top edge is bare (wide
+         screens at least show the window controls up there, narrow screens
+         show nothing at all). The tab bar takes over as the header as soon as a
+         session exists — never both, so the one-row rule still holds. -->
+    <div v-if="platformUnsupported || tabs.length === 0" class="terminal-empty-header">
+      <TerminalIcon :size="14" class="panel-header-icon" />
+      <span class="terminal-empty-title">{{ t('terminal.title') }}</span>
+    </div>
+
     <!-- Platform unsupported state (top priority) -->
     <EmptyState
       v-if="platformUnsupported"
@@ -1610,6 +1621,26 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   height: 100%;
   overflow: hidden;
   position: relative;
+}
+
+/* Header row while there is no tab bar (no sessions yet / unsupported
+   platform). Geometry matches every other panel header — same height, surface
+   and divider — so the page does not lose its top row when the tab bar is
+   absent. The surface and the horizontal inset come from the shared rules in
+   `css/components.css` (`.terminal-empty-header` is registered there). */
+.terminal-empty-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--header-height);
+  flex-shrink: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.terminal-empty-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
 }
 
 /* Tab bar */

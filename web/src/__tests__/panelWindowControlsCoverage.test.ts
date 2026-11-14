@@ -37,6 +37,7 @@ const HEADERS = [
   '.mail-compose__head',
   '.stats-tab-bar',
   '.terminal-tab-bar',
+  '.terminal-empty-header',
 ]
 
 const PANEL_VIEWS = [
@@ -112,6 +113,21 @@ describe('one panel header row', () => {
     expect(vars, 'the horizontal-inset token must be declared once').toMatch(
       /--panel-header-pad-x:\s*var\(--space-7\)/,
     )
+  })
+
+  it('paints every header with the wide-screen surface in both layouts', () => {
+    // The chrome rule is wide-screen only, so on narrow screens each panel's
+    // own header rule used to decide the colour: `--bg-primary` for kb/forge/
+    // tasks/proxy/settings/share, nothing at all for mail/meeting/file. The
+    // same page therefore had a different header colour depending on layout.
+    // The shared (both-layouts) rule owns it now, with the wide-screen value.
+    const css = readWebFile('css/components.css')
+    const rule = css.match(/\.col-left \.tab-panel :is\(([\s\S]*?)\)\s*\{([\s\S]*?)\}/)
+    expect(rule, 'the shared header rule must exist').not.toBeNull()
+    for (const cls of HEADERS) {
+      expect(rule![1], `${cls} must share the header surface`).toContain(cls)
+    }
+    expect(rule![2]).toMatch(/background:\s*var\(--bg-secondary\)/)
   })
 
   it('keeps the window controls flush with the panel edge', () => {

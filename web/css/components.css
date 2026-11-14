@@ -1811,10 +1811,14 @@
    This list is every header row a panel can show, drill-down pages included —
    a missing one lets its right-side buttons slide under the controls.
    ========================================================================== */
-/* Horizontal inset in BOTH layouts. The narrow single-column layout has no
-   `.col-left--chrome`, so the wide-screen rule below cannot own this: without
-   this rule the tab bars that start with `padding: 0` (terminal, stats) put
-   their content flush against the panel edge. */
+/* Horizontal inset and header surface in BOTH layouts. The narrow
+   single-column layout has no `.col-left--chrome`, so the wide-screen rule
+   below cannot own these: without the inset, tab bars that start with
+   `padding: 0` (terminal, stats) put their content flush against the panel
+   edge; without the background, each panel's own header rule decided the
+   colour (`--bg-primary`, or nothing at all over the page surface), so the
+   same page's header changed colour between narrow and wide. One surface
+   everywhere: the wide-screen value. */
 .col-left .tab-panel :is(
     .dir-toolbar,
     .file-header-bar,
@@ -1835,10 +1839,16 @@
     .mail-reader__head,
     .mail-compose__head,
     .stats-tab-bar,
-    .terminal-tab-bar
+    .terminal-tab-bar,
+    .terminal-empty-header
 ) {
     padding-left: var(--panel-header-pad-x);
     padding-right: var(--panel-header-pad-x);
+    /* Same surface as the wide-screen chrome rule below. Panels that painted
+       `--bg-primary` (kb, forge, tasks, proxy, settings, share) or nothing
+       (mail, meeting, file toolbar) used to read as a different bar on narrow
+       screens; the header is one surface in both layouts. */
+    background: var(--bg-secondary);
 }
 
 /* Wide-screen chrome: one row height and surface, plus room for the two
@@ -1865,7 +1875,8 @@
     .mail-reader__head,
     .mail-compose__head,
     .stats-tab-bar,
-    .terminal-tab-bar
+    .terminal-tab-bar,
+    .terminal-empty-header
 ) {
     /* One row height everywhere, so the overlay's cells line up with whatever
        header the current view draws (32 / 28 / 34px rows otherwise). */
