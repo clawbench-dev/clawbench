@@ -3,8 +3,8 @@ import {
   _resetDockPluginsForTest,
   applyDockPreset,
   isDockTabHidden,
-  moveDockTab,
   resetDockPlugins,
+  setDockTabOrder,
   setDockTabVisible,
   toggleDockTab,
   useDockPlugins,
@@ -37,14 +37,29 @@ describe('useDockPlugins', () => {
     expect(isDockTabHidden('tasks')).toBe(false)
   })
 
-  it('minimal keeps only the four core tabs visible', () => {
+  it('minimal keeps only the permanent tabs visible', () => {
     applyDockPreset('minimal')
     const state = useDockPlugins()
     expect(state.preset.value).toBe('minimal')
-    // Left dock: browse / view / settings stay; every closable tab is hidden.
-    expect(state.visibleIds.value).toEqual(['browse', 'view', 'settings'])
+    // Left dock: browse / view / notifications / settings stay; every closable
+    // tab is hidden. Notifications is a permanent module now.
+    expect(state.visibleIds.value).toEqual(['browse', 'view', 'notifications', 'settings'])
     expect(isDockTabHidden('history')).toBe(true)
-    expect(isDockTabHidden('notifications')).toBe(true)
+    expect(isDockTabHidden('notifications')).toBe(false)
+  })
+
+  it('ignores stale hidden values for tabs that are now core', () => {
+    // Notifications used to be closable; a user who hid it then must not lose
+    // the tab (and with it every event log) after the upgrade.
+    localStorage.setItem(
+      'clawbench-panel.dockHidden',
+      JSON.stringify(['notifications', 'browse', 'settings']),
+    )
+    _resetDockPluginsForTest()
+    expect(isDockTabHidden('notifications')).toBe(false)
+    expect(isDockTabHidden('browse')).toBe(false)
+    expect(isDockTabHidden('settings')).toBe(false)
+    expect(useDockPlugins().visibleIds.value).toContain('notifications')
   })
 
   it('manual visibility changes switch the profile to custom', () => {
@@ -70,28 +85,24 @@ describe('useDockPlugins', () => {
     expect(isDockTabHidden('tasks')).toBe(false)
   })
 
-  it('moves a reorderable tab and marks the profile custom', () => {
+  it('replaces the order wholesale after a drag', () => {
     const state = useDockPlugins()
-    const before = [...state.order.value]
-    moveDockTab('mail', -1)
-    const after = state.order.value
-    expect(after.indexOf('mail')).toBe(before.indexOf('mail') - 1)
+    const ids = [...state.order.value]
+    ids.splice(ids.indexOf('mail'), 1)
+    ids.push('mail')
+    setDockTabOrder(ids)
+    expect(state.order.value.at(-1)).toBe('mail')
     expect(state.preset.value).toBe('custom')
-  })
 
-  it('does not move the first tab up or the last tab down', () => {
-    const state = useDockPlugins()
-    const first = state.order.value[0]
-    const last = state.order.value[state.order.value.length - 1]
-    moveDockTab(first, -1)
-    moveDockTab(last, 1)
-    expect(state.order.value[0]).toBe(first)
-    expect(state.order.value[state.order.value.length - 1]).toBe(last)
+    // A partial list (one tab) must not drop the others.
+    setDockTabOrder(['mail'])
+    expect(state.order.value[0]).toBe('mail')
+    expect(state.order.value).toHaveLength(state.reorderableIds.value.length)
   })
 
   it('persists visibility, order and preset', () => {
     applyDockPreset('standard')
-    moveDockTab('mail', -1)
+    setDockTabOrder(['mail'])
     setDockTabVisible('tasks', false)
 
     expect(readPanelState<string[]>('dockHidden')).toContain('tasks')

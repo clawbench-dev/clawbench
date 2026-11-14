@@ -405,9 +405,9 @@ describe('settingsFieldMap', () => {
 
   it('categoryItems covers all expected categories', () => {
     const expectedCategories = [
-      'appearance', 'agents', 'project', 'files', 'chat', 'debug', 'security', 'about',
-      'notification',
-      'terminal', 'tts', 'tts_engine', 'rag', 'portForward',
+      'appearance', 'agents', 'project', 'files', 'fileView', 'chat', 'debug', 'security', 'about',
+      'notification', 'notifications',
+      'terminal', 'tts', 'tts_engine', 'rag', 'kb', 'portForward',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -1138,8 +1138,8 @@ describe('settingsFieldMap', () => {
     expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 
-  it('files category contains markdownCodeLinkPreview local switch', () => {
-    const filesEntries = categoryItems['files']
+  it('fileView category contains markdownCodeLinkPreview local switch', () => {
+    const filesEntries = categoryItems['fileView']
     const entry = filesEntries.find(e => e.type === 'item' && e.spec.key === 'markdownCodeLinkPreview')
     expect(entry).toBeDefined()
     if (entry!.type !== 'item') throw new Error('expected item entry')
@@ -1149,8 +1149,8 @@ describe('settingsFieldMap', () => {
     expect(entry!.spec.descriptionKey).toBe('settings.items.markdownCodeLinkPreviewDesc')
   })
 
-  it('files category contains filePreviewMode local switch', () => {
-    const filesEntries = categoryItems['files']
+  it('fileView category contains filePreviewMode local switch', () => {
+    const filesEntries = categoryItems['fileView']
     const entry = filesEntries.find(e => e.type === 'item' && e.spec.key === 'filePreviewMode')
     expect(entry).toBeDefined()
     if (entry!.type !== 'item') throw new Error('expected item entry')

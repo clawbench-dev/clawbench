@@ -2,63 +2,93 @@
 
 ## 1. 面板放在哪
 
-当前版本，面板由 `web/src/App.vue` 的 `<TabPanel>` 挂载：
+面板组件放在功能目录，`dock.ts` 的 `panel.load` 指向它：
+
+```ts
+// web/src/components/snippets/dock.ts
+export const snippetsDock: DockPluginRuntime = {
+  panel: {
+    load: () => import('./SnippetsPanel.vue'),
+  },
+}
+```
+
+App.vue 不再为每个插件写 `<TabPanel>`。它对除文件管理/文件预览之外的所有左栏页签渲染一个通用的 `DockPanelHost`：
 
 ```vue
-<TabPanel tabId="snippets" :activeTab="leftPanelActive" :noHeader="true">
-  <SnippetsPanel :active="panelIsActive('snippets')" />
+<TabPanel
+  v-for="tab in genericDockTabs"
+  :key="tab"
+  :tabId="tab"
+  :activeTab="leftPanelActive"
+  :noHeader="true"
+>
+  <DockPanelHost :tab-id="tab" :active="panelIsActive(tab)" :host="dockPanelHost" />
 </TabPanel>
 ```
 
-`TabPanel` 是共享外壳（`web/src/components/common/TabPanel.vue`）：
+`DockPanelHost` 会：
+
+1. 按 `tabId` 从 `dockPluginRuntime` 取 `panel`；
+2. 用 `buildAsyncComponentOptions` 包装 `panel.load`；
+3. 把 `active` 传下去；
+4. `v-bind` `panel.props(host)`、`v-on` `panel.on(host)`。
+
+## 2. 额外 props 和事件
+
+面板需要宿主的东西时，不要 import App.vue。在 `panel` 里从 `host` 取：
+
+```ts
+panel: {
+  load: () => import('./ForgePanelContent.vue'),
+  props: (host) => ({ projectPath: host.projectPath }),
+  on: (host) => ({ 'request-project': host.requestProject }),
+}
+```
+
+`host` 的字段在 `web/src/composables/dockPluginTypes.ts` 的 `DockPanelHost` 里。当前有：
+
+| 字段 | 用途 |
+|---|---|
+| `projectPath` | 当前项目根目录 |
+| `terminalRequestedCwd` | 终端要打开的目录 |
+| `platformUnsupported` | 当前平台是否不支持 PTY |
+| `openFile(path)` | 在文件预览里打开文件 |
+| `openTaskFile(path)` | 任务打开文件 |
+| `quoteMeeting(token)` | 把会议引用到聊天 |
+| `openMailSettings()` | 跳到邮件设置 |
+| `requestProject()` | 请求选择项目（Forge 用） |
+| `openMeetingRelaySettings()` | 跳到会议中继设置 |
+| `clearTerminalCwd()` | 终端消费完 cwd 后清空 |
+
+需要新能力时，往这个接口加字段，并在 App.vue 的 `dockPanelHost` 里实现。不要在面板里 import App.vue，也不要让面板直接 import 别的插件。
+
+## 3. 懒加载
+
+`DockPanelHost` 统一用共享封装：
+
+```ts
+defineAsyncComponent(buildAsyncComponentOptions({ loader: panel.load }))
+```
+
+不要自己写裸 `defineAsyncComponent`。共享封装带：
+
+- 网络抖动重试；
+- 失败后的可点击错误页；
+- 旧页面引用已删除 chunk 时的恢复（`vite:preloadError` + 限频 reload）。
+
+`panel.load` 必须是动态 `import()`，不要 `import XxxPanel from ...` 再赋给 `component`——那会把面板拉回主包。
+
+## 4. `TabPanel` 保活
+
+`TabPanel`（`web/src/components/common/TabPanel.vue`）仍然是外壳：
 
 - `tabId` 与 `activeTab` 相等时显示；
 - 第一次打开后 `everOpened` 变 true，之后用 `v-show` 保活；
 - 所以 **`onMounted` 只会跑一次**，切走再切回不会重新挂载；
-- 面板需要知道“现在是不是我”的时候，用 `active` prop 或监听它，不要指望 `onMounted`。
+- 面板需要知道“现在是不是我”的时候，用 `active` prop 或监听它。
 
-## 2. 静态 import 还是懒加载
-
-| 面板 | 建议 |
-|---|---|
-| 聊天、文件管理、文件预览 | 静态 import（核心、首屏就可能用到） |
-| 其余可选面板 | 懒加载 |
-
-懒加载必须走共享封装，不要裸 `defineAsyncComponent`：
-
-```ts
-import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
-
-const SnippetsPanel = defineAsyncComponent(
-  buildAsyncComponentOptions({
-    loader: () => import('./components/snippets/SnippetsPanel.vue'),
-  }),
-)
-```
-
-原因：
-
-- 网络抖动时自动重试；
-- 重试失败显示可点击的错误页，不会永久转圈；
-- 旧页面引用已删除的 chunk 时，会走统一的陈旧 chunk 恢复（`vite:preloadError` + 限频 reload）。
-
-裸 `defineAsyncComponent` 没有 `errorComponent`，失败时会永远显示 loading —— 统计页签曾经因此永久转圈。
-
-## 3. 面板的 props / events 约定
-
-面板不 import `App.vue`，也不 import 别的插件。它需要宿主能力时，用 props / events：
-
-| 动作 | 约定 |
-|---|---|
-| 打开文件 | `emit('open-file', path)` |
-| 引用到聊天 | `emit('quote', payload)` |
-| 跳到另一个页签 | `emit('navigate', tabId)` |
-| 打开设置 | `emit('open-settings', categoryId)` |
-| 请求选择项目 | `emit('request-project')` |
-
-宿主在 `App.vue` 里接这些事件。不要为了“方便”让面板直接 import `switchTab` 或 `App.vue` 的内部函数。
-
-## 4. 空状态
+## 5. 空状态
 
 每个插件都必须能“单独打开”。没有数据时给一个像样的空状态：
 
@@ -75,7 +105,7 @@ const SnippetsPanel = defineAsyncComponent(
 | Forge | “还没有绑定仓库” + 绑定引导 |
 | 统计 | “还没有用量数据” |
 
-## 5. `active` 与轮询
+## 6. `active` 与轮询
 
 `TabPanel` 保活意味着面板切走后仍然存在。需要轮询/订阅的面板必须看 `active`：
 
@@ -88,16 +118,6 @@ watch(() => props.active, (active) => {
 
 不要用 `onMounted` 启动一个永不停的定时器：用户切走后它还在跑。
 
-## 6. 卸载与状态
-
-当前行为：
-
-- **用户隐藏**（插件管理器的显示开关）：Dock 入口消失，已经挂载的面板保持挂载，状态不丢；
-- **功能关闭 / 能力不可用**：`App.vue` 的 watcher 会把当前页签切走，但面板通常仍挂载；
-- **应用刷新**：全部重新挂载。
-
-设计目标（下一阶段）是“功能关闭即卸载面板”，释放定时器和内存。当前新增插件不要依赖“面板一定会被卸载”来做清理，清理逻辑要同时挂在 `active` 变化和 `onUnmounted` 上。
-
 ## 7. 样式
 
 - 先读 [`docs/spec/client/design-guide.md`](../spec/client/design-guide.md)；
@@ -108,11 +128,11 @@ watch(() => props.active, (active) => {
 
 ## 8. 面板检查清单
 
-- [ ] 静态或 `buildAsyncComponentOptions` 懒加载，二选一；
-- [ ] 第一次打开能渲染，切走再切回状态还在；
+- [ ] `dock.ts` 的 `panel.load` 指向面板；
+- [ ] 面板不 import App.vue / 其他插件；
+- [ ] 额外 props/events 从 `DockPanelHost` 的 host 取；
 - [ ] 空状态有说明和下一步；
 - [ ] `active` 变化时启停轮询/订阅；
-- [ ] 不 import `App.vue` / 其他插件；
-- [ ] 不裸 `defineAsyncComponent`；
+- [ ] 切走再切回状态还在；
 - [ ] 不写裸 px；
 - [ ] 有组件测试或至少一个 mount 测试。

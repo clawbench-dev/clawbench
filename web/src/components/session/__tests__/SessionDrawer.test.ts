@@ -27,7 +27,7 @@ vi.mock('@/utils/appLog', () => ({
 
 vi.mock('@/stores/app', () => ({
   store: {
-    state: { sessionCount: 0, sessionMaxCount: 10, chatSessionPageSize: 10, currentFile: null },
+    state: { sessionCount: 0, sessionMaxCount: 10, currentFile: null },
   },
 }))
 

@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { defineComponent } from 'vue'
 import DockPluginSetting from '@/components/settings/DockPluginSetting.vue'
 import { DOCK_TABS } from '@/composables/dockTabs'
 import {
@@ -9,6 +10,17 @@ import {
   useDockPlugins,
 } from '@/composables/useDockPlugins'
 import zh from '@/i18n/locales/zh'
+
+// The real component manipulates DOM/Sortable; the row assertions only need
+// the slot rendered. Reorder persistence is covered in useDockPlugins.test.ts.
+vi.mock('vue-draggable-plus', () => ({
+  VueDraggable: defineComponent({
+    name: 'VueDraggable',
+    props: ['modelValue', 'handle'],
+    emits: ['update:modelValue', 'end'],
+    template: `<div class="vdp-stub"><slot /></div>`,
+  }),
+}))
 
 const i18n = createI18n({
   legacy: false,
@@ -58,27 +70,41 @@ describe('DockPluginSetting', () => {
     expect(useDockPlugins().preset.value).toBe('custom')
   })
 
-  it('moves a reorderable plugin with the arrow buttons', async () => {
+  it('exposes a drag handle only on reorderable plugins', () => {
     const wrapper = mountSetting()
-    const state = useDockPlugins()
-    const before = [...state.order.value]
-    const row = wrapper.find('[data-dock-plugin="mail"]')
-    const buttons = row.findAll('.plugin-icon-btn')
-    await buttons[0].trigger('click')
-    expect(state.order.value.indexOf('mail')).toBe(before.indexOf('mail') - 1)
+    expect(wrapper.find('[data-dock-plugin="mail"] .plugin-drag-handle').exists()).toBe(true)
+    expect(wrapper.find('[data-dock-plugin="browse"] .plugin-drag-handle').exists()).toBe(false)
+    expect(wrapper.find('[data-dock-plugin="settings"] .plugin-drag-handle').exists()).toBe(false)
+    // The old up/down buttons are gone.
+    expect(wrapper.find('.plugin-icon-btn').exists()).toBe(false)
   })
 
-  it('emits navigate for a plugin with its own settings page', async () => {
+  it('emits navigate from the gear button for a plugin with its own settings page', async () => {
     const wrapper = mountSetting()
     const row = wrapper.find('[data-dock-plugin="mail"]')
-    await row.find('.plugin-link').trigger('click')
+    const gear = row.find('.plugin-gear')
+    expect(gear.text()).toBe('')
+    expect(gear.attributes('aria-label')).toBe('功能设置')
+    await gear.trigger('click')
     expect(wrapper.emitted('navigate')).toEqual([['mail']])
   })
 
-  it('does not offer a visibility switch for a core tab', () => {
+  it('hides the config entry when the plugin is disabled', async () => {
+    const wrapper = mountSetting()
+    const row = wrapper.find('[data-dock-plugin="mail"]')
+    expect(row.find('.plugin-gear').exists()).toBe(true)
+
+    await row.find('input[type="checkbox"]').trigger('change')
+    expect(wrapper.find('[data-dock-plugin="mail"] .plugin-gear').exists()).toBe(false)
+  })
+
+  it('keeps a disabled switch on core tabs so the row shape stays uniform', () => {
     const wrapper = mountSetting()
     const row = wrapper.find('[data-dock-plugin="browse"]')
-    expect(row.find('input[type="checkbox"]').exists()).toBe(false)
-    expect(row.find('.plugin-locked').exists()).toBe(true)
+    const input = row.find('input[type="checkbox"]')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).disabled).toBe(true)
+    expect((input.element as HTMLInputElement).checked).toBe(true)
+    expect(row.find('.plugin-locked').exists()).toBe(false)
   })
 })

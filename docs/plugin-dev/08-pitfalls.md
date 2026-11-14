@@ -48,9 +48,9 @@ const visiblePrimaryTabs = computed(() =>
 
 - 能力：灰掉 + 原因，不给开关；
 - 功能：真开关，文案写清“会停服务端”；
-- 偏好：只影响 Dock 入口，后台照常。
+- 偏好：只影响 Dock 入口；客户端角标轮询会停，服务端功能照常。
 
-插件管理器里的显示开关是偏好。Forge/邮件的服务端开关在各自设置页，不要复制到管理器里（Forge 关闭会清空项目绑定，是破坏性操作）。
+检查写在功能自己的 `dock.ts` 的 `available()` 里，不要写回 App.vue 的专用 computed。插件管理器里的显示开关是偏好。Forge/邮件的服务端开关在各自设置页，不要复制到管理器里（Forge 关闭会清空项目绑定，是破坏性操作）。
 
 ## 5. 隐藏的页签必须拒绝程序化导航
 
@@ -72,7 +72,7 @@ const visiblePrimaryTabs = computed(() =>
 
 **症状**：溢出按钮上有一个数字，点开菜单却找不到对应的页签。
 
-**规则**：`overflowBadgeCount` 只汇总“当前可见且会出现在溢出菜单里”的插件。隐藏的插件不贡献数字。
+**规则**：`overflowBadgeCount` 只汇总 `popupOverflowTabs` 里的插件。隐藏/不可用的插件不会进这个列表，所以不贡献数字。
 
 ## 8. `custom` 不是一种“用户类型”
 
@@ -116,7 +116,7 @@ hidden.value = next // 替换引用
 
 **原因**：裸 `defineAsyncComponent` 没有 `errorComponent`，失败后 Vue 会缓存 rejected promise。
 
-**规则**：用 `buildAsyncComponentOptions({ loader })`，它带重试、错误页、陈旧 chunk 恢复。
+**规则**：面板的 `panel.load` 由 `DockPanelHost` 用 `buildAsyncComponentOptions` 包装；不要自己写裸 `defineAsyncComponent`。
 
 ## 13. 新页签的文案两边都要加
 
@@ -124,11 +124,11 @@ hidden.value = next // 替换引用
 
 **规则**：`zh.ts` 和 `en.ts` 同时加。`SettingsIndex.test.ts` 与 `settingsFieldMap.test.ts` 会读真实 locale 文件检查部分 key，但不会覆盖所有运行时拼接的 key。
 
-## 14. 守卫测试会 grep `App.vue`
+## 14. 守卫测试仍读源码，但已改成断言 runtime
 
-**症状**：重构模板后 `forgeDockTabTitleWiring.test.ts` / `mailDockTabWiring.test.ts` 变红。
+**症状**：重构 `App.vue` 或 `dock.ts` 后 `forgeDockTabTitleWiring.test.ts` / `mailDockTabWiring.test.ts` 变红。
 
-**规则**：这两个测试目前直接读 `App.vue` 源码字符串。改模板时要同步改断言；长期应改成断言注册表与纯函数，不要继续钉模板字符串。
+**规则**：这两个测试现在断言 `components/<feature>/dock.ts` 的内容 + App.vue 是否走 runtime 解析（`resolveDockTitle` / `isDockPluginAvailable` / `unavailableDockTabs`），不再钉旧的 `forgeTabBlocked` 字符串。改接线时要同步改断言。
 
 ## 15. 新页签在旧顺序里不存在
 
@@ -163,3 +163,12 @@ hidden.value = next // 替换引用
 **症状**：`npm run typecheck` 报 `web/src/share/ShareView.vue` 的 `fitToScreen` 错误。
 
 **规则**：这是与插件无关的既有错误（或别的 agent 的并行改动）。确认错误不在你改的文件里，不要为了让 typecheck 变绿去改无关文件。Vite build 不做类型检查，仍可正常构建。
+
+## 20. `dock.ts` 不能 import 自己的面板
+
+**症状**：首屏包突然变大，或者面板的懒加载失效。
+
+**原因**：`dockPluginRuntime.ts` 在应用启动时静态 import 所有 `dock.ts`。如果 `dock.ts` 又 import 自己的面板，面板就被拉回主包了。
+
+**规则**：`dock.ts` 只放轻资源——角标、可用性、`onEnter`、`startBackground`，以及 `panel.load` 的**动态 import 函数**。不要把 `import XxxPanel from './XxxPanel.vue'` 写在 `dock.ts` 顶部；那会把面板拉回主包。面板由 `DockPanelHost` 通过 `panel.load` 懒加载。
+

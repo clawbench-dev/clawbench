@@ -23,10 +23,25 @@
 - `minimal` 只留核心；
 - 手动显示/隐藏 → `custom`；
 - 核心页签不能隐藏；
-- 上下移与边界；
+- 拖动排序与边界；
 - 持久化与重读；
 - `reset`；
 - `usePluginProfile`。
+
+`web/src/composables/__tests__/useDockLifecycle.test.ts` 覆盖：
+
+- 可见 + 可用时启动 `startBackground`；
+- 不可用 / 隐藏时停；
+- 恢复可见/可用时重启；
+- 组件卸载时清理。
+
+`web/src/composables/__tests__/dockPluginRuntime.test.ts` 覆盖：
+
+- 各插件的角标来源；
+- Forge / 邮件 / 终端 / 端口映射的 `available()`；
+- Forge 的动态标题；
+- 邮件后台资源的启停；
+- `browse` / `chat` / `tasks` 的 `onEnter`。
 
 每个用例前：
 
@@ -46,9 +61,16 @@ beforeEach(() => {
 - 三个预设 + 所有插件行；
 - 点“标准”后 `terminal`/`forge` 被隐藏；
 - 开关隐藏邮件 → `custom`；
-- 上下移；
-- “功能设置” emit `navigate`；
-- 核心页签没有开关。
+- 拖动排序（只有可排序行有拖动手柄）；
+- 齿轮按钮 emit `navigate`；
+- 核心页签的开关灰显且不可点。
+
+`web/src/components/dock/__tests__/DockPanelHost.test.ts` 覆盖：
+
+- 渲染 `panel.component` / `panel.load` 的组件；
+- 传 `active`；
+- `panel.props(host)` 的额外 props；
+- `panel.on(host)` 的事件。
 
 新增管理器 UI 时在这里加用例。
 
@@ -60,6 +82,9 @@ beforeEach(() => {
 |---|---|
 | `useWideScreenLayout.test.ts` | 渲染列表 ⊆ 切换白名单；主次顺序；门控过滤 |
 | `panelState.test.ts` | `PanelId` 与 `PANEL_ENTRIES` 一致；哪些状态是全局/按项目 |
+| `forgeDockTabTitleWiring.test.ts` | Forge 的 title/icon/badge/available 在 `forge/dock.ts`；App.vue 走 runtime 解析 |
+| `mailDockTabWiring.test.ts` | 邮件的 available/startBackground 在 `mail/dock.ts`；App.vue 不再自己启停轮询 |
+| `dockPanelCoverage.test.ts` | 每个非核心页签都有 `panel`；App.vue 不直接 import 可选面板 |
 | `SettingsIndex.test.ts` | 分类数量、分组分布、每个分类都有中英标签 |
 | `settingsFieldMap.test.ts` | 每个设置项的 label/description/sectionHeader 都能解析 |
 | `settingsControls.css.test.ts` | 开关/滑块的尺寸只在全局样式里定义 |
@@ -70,6 +95,10 @@ beforeEach(() => {
 npx vitest run \
   web/src/composables/__tests__/dockTabs.test.ts \
   web/src/composables/__tests__/useDockPlugins.test.ts \
+  web/src/composables/__tests__/useDockLifecycle.test.ts \
+  web/src/composables/__tests__/dockPluginRuntime.test.ts \
+  web/src/composables/__tests__/dockPanelCoverage.test.ts \
+  web/src/components/dock/__tests__/DockPanelHost.test.ts \
   web/src/components/settings/__tests__/DockPluginSetting.test.ts \
   web/src/components/settings/__tests__/SettingsIndex.test.ts \
   web/src/utils/__tests__/panelState.test.ts

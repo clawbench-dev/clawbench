@@ -242,85 +242,22 @@
                   </div>
                 </TabPanel>
 
-                <!-- History Tab -->
-                <TabPanel tabId="history" :activeTab="leftPanelActive" :noHeader="true">
-                  <GitHistoryContent
-                    mode="project"
-                    :active="panelIsActive('history')"
-                    @open-file="handleSelectFile"
+                <!-- Every non-core left tab. The panel component, its props and
+                     its listeners all come from that plugin's dock.ts; App.vue
+                     no longer imports optional panels or writes a TabPanel block
+                     per plugin. -->
+                <TabPanel
+                  v-for="tab in genericDockTabs"
+                  :key="tab"
+                  :tabId="tab"
+                  :activeTab="leftPanelActive"
+                  :noHeader="true"
+                >
+                  <DockPanelHost
+                    :tab-id="tab"
+                    :active="panelIsActive(tab)"
+                    :host="dockPanelHost"
                   />
-                </TabPanel>
-
-                <!-- 会议 Tab: the meeting records, and the meeting itself.
-                     One tab, not two: 听记 and screen sharing were always the
-                     same pipeline, and a record can be either a voice meeting
-                     or a shared screen. -->
-                <TabPanel tabId="live" :activeTab="leftPanelActive" :noHeader="true">
-                  <MeetingPanel
-                    :active="panelIsActive('live')"
-                    @quote="handleMeetingQuoteButton"
-                    @relay-settings="handleOpenMeetingRelaySettings"
-                  />
-                </TabPanel>
-
-                <!-- 邮件 Tab: folders, message list, reading pane and compose. -->
-                <TabPanel tabId="mail" :activeTab="leftPanelActive" :noHeader="true">
-                  <MailPanel :active="panelIsActive('mail')" @open-settings="openMailSettings" />
-                </TabPanel>
-
-                <!-- 知识库 Tab: multiple collections (global or per project),
-                     each a set of files indexed for keyword + semantic search. -->
-                <TabPanel tabId="kb" :activeTab="leftPanelActive" :noHeader="true">
-                  <KnowledgePanel :active="panelIsActive('kb')" />
-                </TabPanel>
-
-                <!-- 分享 Tab: every public link this project has handed out. -->
-                <TabPanel tabId="share" :activeTab="leftPanelActive" :noHeader="true">
-                  <ShareCenterPanel :active="panelIsActive('share')" />
-                </TabPanel>
-
-                <!-- Proxy Tab -->
-                <TabPanel tabId="proxy" :activeTab="leftPanelActive" :noHeader="true">
-                  <ProxyPanelContent :active="panelIsActive('proxy')" />
-                </TabPanel>
-
-                <!-- Terminal Tab -->
-                <TabPanel tabId="terminal" :activeTab="leftPanelActive" :noHeader="true">
-                  <TerminalPanelContent
-                    :requested-cwd="terminalRequestedCwd"
-                    :active="panelIsActive('terminal')"
-                    :platform-unsupported="isPlatformUnsupported"
-                    @cwd-handled="terminalRequestedCwd = null"
-                  />
-                </TabPanel>
-
-                <!-- Issues & PRs Tab -->
-                <TabPanel tabId="forge" :activeTab="leftPanelActive" :noHeader="true">
-                  <ForgePanelContent
-                    :active="panelIsActive('forge')"
-                    :project-path="store.state.projectRoot"
-                    @request-project="switchTab('chat')"
-                  />
-                </TabPanel>
-
-                <!-- Tasks Tab -->
-                <TabPanel tabId="tasks" :activeTab="leftPanelActive" :noHeader="true">
-                  <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
-                </TabPanel>
-
-                <!-- Notifications Tab (append-only event log; no badge) -->
-                <TabPanel tabId="notifications" :activeTab="leftPanelActive" :noHeader="true">
-                  <NotificationsPanelContent :active="panelIsActive('notifications')" />
-                </TabPanel>
-
-                <!-- Usage Statistics Tab -->
-                <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
-                  <StatsTabHost :active="panelIsActive('stats')" />
-                </TabPanel>
-
-                <!-- Settings Tab -->
-                <TabPanel tabId="settings" :activeTab="leftPanelActive" :noHeader="true">
-                  <SettingsPage :active="panelIsActive('settings')" />
                 </TabPanel>
               </div>
             </template>
@@ -585,7 +522,7 @@
               <button class="dock-btn" data-tab="history" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
                 <GitBranch />
               </button>
-              <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': historyBadgeAnim }" @animationend="historyBadgeAnim = false">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
+              <span v-if="dockTabBadgeCount('history') > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim('history') }" @animationend="dockTabBadgeAnimEnd('history')">{{ formatBadgeCount(dockTabBadgeCount('history')) }}</span>
             </div>
             <!-- Inline overflow tabs (rendered in overflowTabs order — settings always last) -->
             <div v-for="tab in inlineOverflowTabs" :key="tab" class="dock-btn-wrap">
@@ -593,10 +530,7 @@
                 <component :is="dockTabIcon(tab)" />
               </button>
               <span v-if="liveDotVisible(tab, activeTab === tab)" class="dock-badge dock-badge--live" />
-              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-              <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
+              <span v-if="dockTabBadgeCount(tab) > 0 && activeTab !== tab" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
             <!-- Single remaining popup item shown directly (no overflow menu) -->
             <div v-if="singleDirectTab" :key="'single-' + singleDirectTab" class="dock-btn-wrap">
@@ -604,10 +538,7 @@
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
               <span v-if="liveDotVisible(singleDirectTab, activeTab === singleDirectTab)" class="dock-badge dock-badge--live" />
-              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-              <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
+              <span v-if="dockTabBadgeCount(singleDirectTab) > 0 && activeTab !== singleDirectTab" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(singleDirectTab) }" @animationend="dockTabBadgeAnimEnd(singleDirectTab)">{{ formatBadgeCount(dockTabBadgeCount(singleDirectTab)) }}</span>
             </div>
             <!-- Overflow button (popup has >1 items) -->
             <div v-if="showOverflowButton" class="dock-overflow-wrapper">
@@ -663,8 +594,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent, type CSSProperties } from 'vue'
-import { startMailUnreadPolling, stopMailUnreadPolling, useMailUnread } from '@/composables/useMailUnread'
+import { ref, computed, reactive, watch, onMounted, onUnmounted, provide, nextTick, type CSSProperties } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
@@ -679,9 +609,10 @@ import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
+import DockPanelHost from './components/dock/DockPanelHost.vue'
 import PanelWindowControls from './components/common/PanelWindowControls.vue'
 import EmptyState from './components/common/EmptyState.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -692,37 +623,7 @@ import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
 import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
-import GitHistoryContent from './components/git/GitHistoryContent.vue'
-import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
-// 会议: records + the meeting itself (screen share or voice only). The tab is
-// always offered — the list is readable even on a host that cannot capture.
-const MeetingPanel = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/live/MeetingPanel.vue') }),
-)
-// 邮件: a complete mail client. Kept async like the meeting panel — the panel
-// pulls in DOMPurify-backed HTML rendering and the compose dialog, none of
-// which is needed until the tab is opened.
-const MailPanel = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/mail/MailPanel.vue') }),
-)
-// 分享: one list of every public link this project has handed out (files,
-// conversations, meetings) plus the "send it somewhere" actions. Async like the
-// other heavyweight panels — it pulls in the address list and the mail
-// composer plumbing, none of which is needed until the tab is opened.
-const ShareCenterPanel = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/share/ShareCenterPanel.vue') }),
-)
-// 知识库: collections, file indexing status and search. Async like the other
-// heavyweight panels — nothing here is needed until the tab is opened.
-const KnowledgePanel = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/kb/KnowledgePanel.vue') }),
-)
-import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
-import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
-const TerminalPanelContent = defineAsyncComponent(
-  buildAsyncComponentOptions({ loader: () => import('./components/terminal/TerminalPanelContent.vue') }),
-)
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
@@ -745,10 +646,6 @@ import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
 import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import GroupAvatarStack from './components/chat/GroupAvatarStack.vue'
-import SettingsPage from './components/settings/SettingsPage.vue'
-import TaskTab from '@/components/task/TaskTab.vue'
-import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
-import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { setOpenSessionHandler, usePendingTarget, usePickerIntent, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
@@ -837,11 +734,10 @@ import { getFileType } from './utils/fileType.ts'
 import { isAppSearchField, refocusSearchField } from './utils/appSearchField'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
-import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { consumeShareTargetResult, stageShareTargetResult, nativeShareTargetResult, nativeShareTargetSavedElsewhere } from './utils/shareTarget.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
-import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from './composables/useForgeBinding.ts'
+import { useForgeBinding } from './composables/useForgeBinding.ts'
 import { setPendingForgeTarget, clearPendingForgeTarget, forgeTargetFromDetail } from './composables/useForgeNavigation.ts'
 import type { ForgeTarget } from './composables/useForgeNavigation.ts'
 import { forgeTargetItemKey } from './composables/useForge.ts'
@@ -873,8 +769,17 @@ import {
 } from './composables/useWideScreenLayout'
 // Single source of truth for dock tabs (render list, switch whitelist, icons,
 // titles). See the module doc for why this exists.
-import { primaryDockTabs, secondaryDockTabs } from './composables/dockTabs'
+import { DOCK_TAB_IDS, primaryDockTabs, secondaryDockTabs, isDockTabId, type DockTabId } from './composables/dockTabs'
 import { useDockPlugins } from './composables/useDockPlugins'
+import { useDockLifecycle } from './composables/useDockLifecycle'
+import {
+  isDockPluginAvailable,
+  resolveDockBadge,
+  resolveDockIcon,
+  resolveDockTitle,
+  shouldLeaveUnavailableDockTab,
+} from './composables/dockPluginRuntime'
+import type { DockPanelHost as DockPanelHostContext } from './composables/dockPluginTypes'
 import { dockTabWithIcon } from './composables/dockTabMeta'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
@@ -1181,6 +1086,10 @@ const {
   isHidden: isDockTabHiddenById,
 } = useDockPlugins()
 
+// Owns the background resources plugins declare in their dock.ts (currently
+// only mail's unread poller). Starts/stops them with visibility and availability.
+const dockLifecycle = useDockLifecycle()
+
 const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value))
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
 const panelIsActive = (tabId: string) =>
@@ -1442,25 +1351,12 @@ function switchTab(tab: string, force = false) {
   // entry is gone, so landing there would strand the user on a panel with no
   // button pointing at it.
   if (dockTabBlocked(tab)) return
-  // A disabled integration must not be reachable through any programmatic path.
-  // There are several — notification deep links, the task panel's jump, and
-  // `returnToOrigin()`/`abandonJump()` in useNavigationCoordinator (which
-  // replays a remembered tab, including 'forge'). With the integration off the
-  // panel has nothing to show (polling stopped, bindings cleared), and landing
-  // there strands the user on a surface with no dock entry pointing at it.
-  //
-  // Refused rather than "re-enable it for them": the switch is a real disable
-  // now, so silently turning it back on because a stale notification was tapped
-  // would contradict a setting the user just changed deliberately.
-  //
-  // `switchTab` is hoisted, so it must not read the `const`s below directly —
-  // see forgeTabBlocked.
-  if (tab === 'forge' && forgeTabBlocked()) return
-  // Mail is the same kind of disable: with the feature switched off there is no
-  // dock entry and no background sync behind the panel, so any programmatic
-  // navigation (a remembered tab replayed by the navigation coordinator, a
-  // notification deep link) is refused rather than landing on an orphan panel.
-  if (tab === 'mail' && mailTabBlocked()) return
+  // A plugin that is currently unavailable (server feature off, capability
+  // missing) is not reachable through any programmatic path either. There are
+  // several: notification deep links, the task panel's jump, and
+  // `returnToOrigin()`/`abandonJump()` replaying a remembered tab. Refuse rather
+  // than landing on a panel with no dock entry pointing at it.
+  if (isDockTabId(tab) && !isDockPluginAvailable(tab)) return
   // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
   // per item now: opening a row clears that row, and the "mark all read" button
   // clears the rest. Clearing on tab open is what made the badge number
@@ -1493,24 +1389,8 @@ function switchTab(tab: string, force = false) {
   // scoping: a picker left open would otherwise float over the new panel, since
   // BottomSheet teleports to <body>.
   closeInertPathPicker()
-  if (tab === 'browse') {
-    store.loadFiles(store.state.currentDir, false, 0, true)
-  }
-  if (tab === 'chat') {
-    // Recalculate instead of blindly clearing — if the user switches to chat
-    // but hasn't opened the unread session, the indicator should keep flashing.
-    // loadSessionsOnce checks unreadCount per session (excluding current), so
-    // it only clears when all sessions are actually read.
-    loadSessionsOnce()
-  }
-  if (tab === 'tasks') {
-    // Opening the tab deliberately does NOT zero the badge. Read state is per
-    // execution now: opening a run clears that run, and "mark all read" clears
-    // the rest. Zeroing here also stuck permanently whenever loadTasks() failed
-    // (it returns early on a non-OK response), leaving a badge that said "all
-    // read" while unread runs were still there.
-    loadTasks()
-  }
+  // Plugin-specific "load on open" work lives in each feature's dock.ts.
+  dockLifecycle.onEnter(tab)
   // Close overflow menu on any tab switch
   overflowMenuOpen.value = false
 }
@@ -1676,7 +1556,7 @@ function handleOpenForge(e: Event) {
   // it) it would jump to a stale item, and Back would point at a jump that never
   // happened. A notification queued before the switch was turned off is the
   // realistic way to get here.
-  if (forgeTabBlocked()) {
+  if (tabBlocked('forge')) {
     clearPendingForgeTarget()
     return
   }
@@ -1763,7 +1643,7 @@ function handleOpenMail(e: Event) {
     appLog.w(TAG, 'clawbench-open-mail: no messageId in detail, ignoring')
     return
   }
-  if (mailTabBlocked()) return
+  if (tabBlocked('mail')) return
   switchTab('mail')
 }
 
@@ -1778,7 +1658,7 @@ function handleOpenMail(e: Event) {
  * it.
  */
 function handleComposeMail() {
-  if (mailTabBlocked()) return
+  if (tabBlocked('mail')) return
   switchTab('mail')
 }
 
@@ -2214,88 +2094,26 @@ async function restoreProjectWorkspace() {
 }
 
 const { isAppMode, isDesktopApp } = useAppMode()
-// A running share is not a count, so it gets a tinted tab rather than a badge:
-// "1" would be meaningless, and a dot needs a slot the badge layer does not have
-// in both dock variants.
-const liveShareState = useLiveShare().state
-const liveShareActive = computed(() => liveShareState.value !== 'idle')
-// A running meeting (screen or voice) is ONE state: the dock shows a single
-// accent dot (`liveDotVisible` below). There is deliberately no red "recording"
-// tint any more — red is reserved for errors, and "recording vs publishing" is
-// a distinction that only matters inside the panel.
-const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
-const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
-// Port forwarding is unusable only when NEITHER wire can carry it: the SSH
-// listener is off AND the configured transport cannot use h2. Keying off the
-// SSH listener alone (`sshInfo.enabled === false`) hid the port-mapping tab on
-// installs that forward ports over the stream tunnel. Shared predicate so the
-// dock, the watcher and the localhost-URL guards cannot drift apart.
-//
-// The listener is now unconditional, so this is normally false; it still
-// matters when the listener failed to bind (the reference is retracted and
-// /api/ssh/info reports enabled:false).
-const isPortForwardUnavailable = computed(() =>
-  portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value,
-    getNative()?.getCapabilities?.().tunnel !== false),
-)
+const { syncToNative, loadSSHInfo } = usePortForward()
+const { platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Platform unsupported: PTY cannot run on this OS (e.g. Windows lacks ConPTY).
 // The terminal tab is still shown so users see a clear "unsupported" empty state.
 const isPlatformUnsupported = computed(() => platformSupported.value === false)
-// Use runtime status (actual server state) not config value — mirrors SSH pattern.
-// Config may say enabled=true before restart; the runtime API returns false until
-// the terminal manager actually exists.  `null` means "not yet loaded" → treat as
-// disabled to avoid a flash of the terminal button on first mount.
-const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
-// Forge dock entry visibility follows the SERVER's master switch (issue #590).
-//
-// This is not a per-device preference: turning the integration off stops
-// polling and unlinks every project's repository on the server, so the dock must
-// agree on every client. `!== false` (rather than `=== true`) keeps the entry
-// for a client that has not loaded the config yet — a missing value is "not yet
-// known", and hiding the tab during the first paint would make it flicker in.
-const isForgeTabHidden = computed(
-  () => ((serverConfig.value?.forge ?? {}) as Record<string, unknown>).enabled === false,
-)
 
-// Mail dock entry visibility follows the SERVER's master switch, for the same
-// reason as forge: off stops the server's background IMAP sync (and the
-// email-triggered tasks that ride on it), so every client of that server must
-// agree. `=== false` keeps the tab while the config is still loading — a
-// missing value means "not known yet", and hiding it on first paint would make
-// the entry flicker in.
-const isMailTabHidden = computed(
-  () => ((serverConfig.value?.mail ?? {}) as Record<string, unknown>).enabled === false,
-)
+// Availability now lives in each feature's dock.ts (terminal / proxy / forge /
+// mail). These aliases stay because a few call sites still speak in the old
+// boolean terms (project-panel restore).
+const isForgeTabHidden = computed(() => !isDockPluginAvailable('forge'))
+const isMailTabHidden = computed(() => !isDockPluginAvailable('mail'))
 
-/**
- * Whether a programmatic navigation may enter the forge panel.
- *
- * The integration is now really disabled when the switch is off (polling
- * stopped, every binding cleared), so the panel has nothing to show. Navigating
- * there would land the user on an empty panel with no dock entry pointing at it
- * — the wide dock's indicator falls back to index 0, pointing at a different tab
- * than the content. A stale notification (queued before the switch was turned
- * off) is the realistic way to hit this, so it is refused rather than silently
- * re-enabling the integration behind the user's back.
- *
- * Defined after the `const`s it reads because `switchTab` is hoisted and would
- * otherwise be a latent TDZ crash the day anything calls it during setup.
- */
-function forgeTabBlocked(): boolean {
-  return isForgeTabHidden.value
-}
-
-/**
- * Whether a programmatic navigation may enter the mail panel.
- *
- * Same rule as forge: the switch is a real disable (background sync stops, the
- * dock entry is gone), so navigating there would strand the user on a panel with
- * nothing pointing at it. Declared after the computed it reads for the same TDZ
- * reason as `forgeTabBlocked`.
- */
-function mailTabBlocked(): boolean {
-  return isMailTabHidden.value
-}
+/** Tabs whose runtime availability check currently fails. */
+const unavailableDockTabs = computed(() => {
+  const set = new Set<DockTabId>()
+  for (const id of DOCK_TAB_IDS) {
+    if (!isDockPluginAvailable(id)) set.add(id)
+  }
+  return set
+})
 
 /**
  * Whether a tab was hidden by the user in the plugin manager.
@@ -2303,55 +2121,30 @@ function mailTabBlocked(): boolean {
  * The dock entry is gone, so a programmatic navigation (notification deep link,
  * task jump, remembered tab replay) must be refused rather than silently
  * re-showing the tab. Declared after the composable it reads for the same TDZ
- * reason as `forgeTabBlocked`.
+ * reason as the availability checks.
  */
 function dockTabBlocked(tab: string): boolean {
   return isDockTabHiddenById(tab)
 }
 
-/** Any reason the tab cannot be entered (hidden by the user or feature off). */
+/** Any reason the tab cannot be entered (hidden or currently unavailable). */
 function tabBlocked(tab: string): boolean {
-  return dockTabBlocked(tab) || (tab === 'forge' && forgeTabBlocked()) || (tab === 'mail' && mailTabBlocked())
+  return dockTabBlocked(tab) || (isDockTabId(tab) && !isDockPluginAvailable(tab))
 }
 
-watch(isPortForwardUnavailable, (disabled) => {
-  if (disabled && panelIsActive('proxy')) {
-    switchTab(isWideScreen.value ? 'browse' : 'chat')
-  }
-})
-watch(isTerminalDisabled, (disabled) => {
-  // Only force-switch when terminal is config-disabled (not platform unsupported).
-  // Platform unsupported shows a dedicated empty state — user can stay on the tab.
-  if (disabled && !isPlatformUnsupported.value && panelIsActive('terminal')) {
-    switchTab(isWideScreen.value ? 'browse' : 'chat')
-  }
-})
-watch(isForgeTabHidden, (hidden) => {
-  // Leaving the tab mounted with its entry gone would strand the user on a
-  // panel they can only leave via another dock button — move them out, same as
-  // the terminal/proxy gates above.
-  if (hidden && panelIsActive('forge')) {
-    switchTab(isWideScreen.value ? 'browse' : 'chat')
-  }
-})
-watch(isMailTabHidden, (hidden) => {
-  // The unread poller exists only to feed the dock badge. With the entry gone
-  // there is nothing to feed, and hitting /api/mail/unread every minute for a
-  // disabled feature is exactly the kind of background traffic the switch is
-  // supposed to stop. Re-enabling restarts it; the poller refreshes immediately,
-  // so the count is right the moment the tab comes back.
-  if (hidden) stopMailUnreadPolling()
-  else startMailUnreadPolling()
-  // Same reason as the forge gate above: a panel left mounted with no dock entry
-  // pointing at it strands the user.
-  if (hidden && panelIsActive('mail')) {
-    switchTab(isWideScreen.value ? 'browse' : 'chat')
-  }
+watch(unavailableDockTabs, (set) => {
+  // A plugin that just became unavailable must not leave the user stranded on
+  // its panel. Terminal opts out when the platform is unsupported: it keeps the
+  // panel mounted so the dedicated "unsupported" empty state can explain why.
+  const current = isWideScreen.value ? leftTab.value : activeTab.value
+  if (!isDockTabId(current) || !set.has(current)) return
+  if (!shouldLeaveUnavailableDockTab(current)) return
+  switchTab(isWideScreen.value ? 'browse' : 'chat')
 })
 watch(hiddenDockTabs, () => {
   // Hiding the tab the user is currently on must move them out: the dock entry
   // is gone, so they would otherwise be stuck on a panel with nothing pointing
-  // at it. Same rule as the feature/capability gates above.
+  // at it. Same rule as the availability watcher above.
   const current = isWideScreen.value ? leftTab.value : activeTab.value
   if (isDockTabHiddenById(current)) switchTab('browse')
 })
@@ -2643,15 +2436,8 @@ const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKey
 // teardown keeps the composable safe to unit test and hot-reload.
 const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSoftKeyboard } = useSoftKeyboard()
 onMounted(() => installSoftKeyboard())
-// The mail badge is the only consumer that must work while the panel is closed,
-// so its poller lives with the app shell rather than with the tab. Skipped when
-// the feature is already known to be off — the watcher above handles the
-// "config arrives later" case, and starting unconditionally would let a config
-// that loaded before mount be immediately undone here.
-onMounted(() => {
-  if (!isMailTabHidden.value) startMailUnreadPolling()
-})
-onUnmounted(stopMailUnreadPolling)
+// The mail unread poller is a plugin background resource now; useDockLifecycle
+// starts/stops it with mail's visibility and server-feature availability.
 onUnmounted(() => uninstallSoftKeyboard())
 
 // The selection toolbar needs the keyboard's SIZE (not just whether it is open)
@@ -3593,6 +3379,26 @@ const {
   surfaceLabel,
 } = navCoordinator
 
+/**
+ * Host context passed to every plugin panel through DockPanelHost.
+ *
+ * This is the narrow contract between the shell and the panels. A plugin's
+ * `dock.ts` picks the props/listeners it needs; a panel that needs something
+ * new gets it here, not by importing App.vue.
+ */
+const dockPanelHost: DockPanelHostContext = {
+  get projectPath() { return store.state.projectRoot },
+  get terminalRequestedCwd() { return terminalRequestedCwd.value },
+  get platformUnsupported() { return isPlatformUnsupported.value },
+  openFile: (path: string) => handleSelectFile(path),
+  openTaskFile: (path: string, lineStart?: number) => handleTaskOpenFile(path, lineStart),
+  quoteMeeting: (token: string) => { void handleMeetingQuoteButton(token) },
+  openMailSettings: () => openMailSettings(),
+  requestProject: () => switchTab('chat'),
+  openMeetingRelaySettings: () => handleOpenMeetingRelaySettings(),
+  clearTerminalCwd: () => { terminalRequestedCwd.value = null },
+}
+
 /** FileHeader「设置为主题背景」：把当前图片拷进本机图库并设为背景。 */
 async function handleSetAsBackground(path: string) {
     try {
@@ -3699,11 +3505,8 @@ const overflowBtnRef = ref<HTMLElement | null>(null)
 // render list stays a subset of the switch whitelist.
 const overflowTabs = computed(() =>
   secondaryDockTabs({
-    terminalDisabled: isTerminalDisabled.value,
-    portForwardUnavailable: isPortForwardUnavailable.value,
-    forgeHidden: isForgeTabHidden.value,
-    mailHidden: isMailTabHidden.value,
     hidden: hiddenDockTabs.value,
+    unavailable: unavailableDockTabs.value,
     order: dockTabOrder.value,
   }),
 )
@@ -3713,6 +3516,13 @@ const overflowTabs = computed(() =>
 // directly would leave a button for a tab the user just hid.
 const visiblePrimaryTabs = computed(() =>
   primaryDockTabs({ hidden: hiddenDockTabs.value }),
+)
+
+// Left-dock tabs rendered through the generic DockPanelHost. Browse and view
+// keep their explicit panels because they are core and need the file manager's
+// large prop surface; every other plugin supplies its panel in dock.ts.
+const genericDockTabs = computed(() =>
+  DOCK_TAB_IDS.filter((id) => id !== 'browse' && id !== 'view'),
 )
 
 // Responsive dock overflow — ResizeObserver drives inline promotion
@@ -3790,27 +3600,14 @@ watch([() => localConfig.uiScale], () => {
 
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab: string) {
-  // The forge tab serves both GitHub and GitLab. GitHub is the default brand
-  // (including before a repository is bound); the icon only switches to GitLab
-  // once a GitLab repository is actually bound.
-  if (tab === 'forge') {
-    return forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github
-  }
-  return dockTabMeta(tab)?.icon ?? Clock
+  return resolveDockIcon(tab) ?? dockTabMeta(tab)?.icon ?? Clock
 }
 function dockTabTitle(tab: string) {
-  // The forge tab is named after the integration in use ("GitHub integration" /
-  // "GitLab integration") rather than the platform-neutral registry title, so
-  // the dock entry (and the overflow button's tooltip, which reuses this) says
-  // which service it opens.
-  //
-  // This is the ONLY title lookup. Both docks and the overflow tooltip call it:
-  // the wide dock used to carry its own copy of the whole function, so the
-  // forge branch had to be added twice and the tooltip could silently keep the
-  // neutral label. `dockTabMeta` deliberately stays the icon-free registry
-  // (`dockTabs.ts` must import nothing, and `forgeTabTitleKey` lives in a
-  // composable), which is why the platform-aware key is resolved here.
-  if (tab === 'forge') return t(forgeTabTitleKey(forgePlatform.value))
+  // Runtime title first (Forge names the bound service); otherwise the static
+  // manifest title. This is the ONLY title lookup for both docks and the
+  // overflow tooltip.
+  const runtimeTitle = resolveDockTitle(tab)
+  if (runtimeTitle) return runtimeTitle
   const meta = dockTabMeta(tab)
   return meta ? t(meta.titleKey) : ''
 }
@@ -3894,10 +3691,8 @@ watch(isWideScreen, (val) => {
 registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
-    if (tab === 'browse') store.loadFiles(store.state.currentDir, false, 0, true)
-    // No zeroing here: see the narrow-mode switchTab note. The badge is
-    // re-derived from the server by loadTasks().
-    if (tab === 'tasks') loadTasks()
+    // Browse/tasks/chat "load on open" work now lives in their dock.ts.
+    dockLifecycle.onEnter(tab)
   },
 })
 
@@ -3921,9 +3716,9 @@ function handleWideDockTabClick(tab: string) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile, addStagedQuote, restoreAttachments } = useChatContext()
-const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
+const { refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
-const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
+const { refresh: refreshForgePlatform } = useForgeBinding()
 
 const meetingHistory = useMeetingHistory()
 
@@ -4154,10 +3949,7 @@ function dockTabMeta(tab: string) {
 }
 
 function wideDockTabIcon(tab: string) {
-  // Route forge through the same platform-aware logic as the compact dock, so
-  // the wide-screen dock shows the GitHub/GitLab brand too.
-  if (tab === 'forge') return dockTabIcon('forge')
-  return dockTabMeta(tab)?.icon ?? FolderOpen
+  return resolveDockIcon(tab) ?? dockTabMeta(tab)?.icon ?? FolderOpen
 }
 function wideDockBtnClass(tab: string) {
   return {
@@ -4180,41 +3972,18 @@ function wideDockBtnClass(tab: string) {
  * looking at carries no information.
  */
 function liveDotVisible(tab: string, isActive: boolean) {
-  return tab === 'live' && liveShareActive.value && !isActive
+  return tab === 'live' && !!resolveDockBadge('live')?.live && !isActive
 }
 // Badge lookups shared by the narrow popup, the inline overflow buttons and the
-// wide-screen dock. One switch per concern instead of one per dock.
+// wide-screen dock. The source is each feature's dock.ts.
 function dockTabBadgeCount(tab: string) {
-  switch (tab) {
-    case 'history': return store.state.gitWorkingTreeChangeCount
-    case 'forge': return forgeUnreadCount.value
-    case 'tasks': return store.state.taskUnreadCount
-    case 'terminal': return store.state.terminalSessionCount
-    case 'proxy': return store.state.portForwardEnabledCount
-    case 'mail': return mailUnread.value
-    default: return 0
-  }
+  return resolveDockBadge(tab)?.count ?? 0
 }
 function dockTabBadgeAnim(tab: string) {
-  switch (tab) {
-    case 'history': return historyBadgeAnim.value
-    case 'forge': return forgeBadgeAnim.value
-    case 'tasks': return taskBadgeAnim.value
-    case 'terminal': return terminalBadgeAnim.value
-    case 'proxy': return proxyBadgeAnim.value
-    case 'mail': return mailBadgeAnim.value
-    default: return false
-  }
+  return !!badgeAnims[tab]
 }
 function dockTabBadgeAnimEnd(tab: string) {
-  switch (tab) {
-    case 'history': historyBadgeAnim.value = false; break
-    case 'forge': forgeBadgeAnim.value = false; break
-    case 'tasks': taskBadgeAnim.value = false; break
-    case 'terminal': terminalBadgeAnim.value = false; break
-    case 'proxy': proxyBadgeAnim.value = false; break
-    case 'mail': mailBadgeAnim.value = false; break
-  }
+  badgeAnims[tab] = false
 }
 function wideDockBadgeVisible(tab: string) {
   return dockTabBadgeCount(tab) > 0 && leftTab.value !== tab
@@ -4253,69 +4022,42 @@ const overflowButtonIcon = computed(() => {
   return MoreHorizontal
 })
 
-// Dock badge change animations
+// Dock badge change animations. Per-tab state lives in one map; the badge
+// source is the plugin runtime, so adding a badge no longer needs a new ref and
+// a new watch in App.vue.
 const chatBadgeAnim = ref(false)
-const historyBadgeAnim = ref(false)
-const forgeBadgeAnim = ref(false)
-const taskBadgeAnim = ref(false)
-const terminalBadgeAnim = ref(false)
-const proxyBadgeAnim = ref(false)
-const { total: mailUnread } = useMailUnread()
-const mailBadgeAnim = ref(false)
 const overflowBadgeAnim = ref(false)
+const badgeAnims = reactive<Record<string, boolean>>({})
 
 function triggerBadgeAnim(animRef: { value: boolean }) {
   animRef.value = false
   nextTick(() => { animRef.value = true })
 }
 
-watch(() => store.state.chatUnreadCount, (n, o) => { if (o !== undefined && n !== o) triggerBadgeAnim(chatBadgeAnim) })
-watch(() => store.state.gitWorkingTreeChangeCount, (n, o) => { if (o !== undefined && n !== o) triggerBadgeAnim(historyBadgeAnim) })
-watch(() => store.state.taskUnreadCount, (n, o) => {
-  if (o !== undefined && n !== o) {
-    triggerBadgeAnim(taskBadgeAnim)
-    if (!allInlineOverflowTabs.value.includes('tasks')) triggerBadgeAnim(overflowBadgeAnim)
-  }
-})
-watch(() => store.state.terminalSessionCount, (n, o) => {
-  if (o !== undefined && n !== o) {
-    triggerBadgeAnim(terminalBadgeAnim)
-    if (!allInlineOverflowTabs.value.includes('terminal')) triggerBadgeAnim(overflowBadgeAnim)
-  }
-})
-watch(() => store.state.portForwardEnabledCount, (n, o) => {
-  if (o !== undefined && n !== o) {
-    triggerBadgeAnim(proxyBadgeAnim)
-    if (!allInlineOverflowTabs.value.includes('proxy')) triggerBadgeAnim(overflowBadgeAnim)
-  }
-})
-// Mail unread is a module-level singleton polled once a minute; the badge is
-// the only consumer outside the panel, so the poller starts with the app rather
-// than with the tab being opened.
-watch(mailUnread, (n, o) => {
-  if (o !== undefined && n !== o) {
-    triggerBadgeAnim(mailBadgeAnim)
-    if (!allInlineOverflowTabs.value.includes('mail')) triggerBadgeAnim(overflowBadgeAnim)
-  }
-})
+function triggerTabBadgeAnim(tab: string) {
+  badgeAnims[tab] = false
+  nextTick(() => { badgeAnims[tab] = true })
+}
 
-const overflowBadgeCount = computed(() => {
-  // A hidden forge tab must not contribute to the aggregate badge either — the
-  // count would advertise unread items behind a menu that cannot show them.
-  let count = store.state.taskUnreadCount
-  if (!isForgeTabHidden.value) count += forgeUnreadCount.value
-  if (!isPortForwardUnavailable.value) count += store.state.portForwardEnabledCount
-  if (!isTerminalDisabled.value) count += store.state.terminalSessionCount
-  // Subtract counts for ALL inline overflow tabs, so the aggregate badge only
-  // reflects what is hidden behind the overflow button.
-  for (const tab of allInlineOverflowTabs.value) {
-    if (tab === 'forge') count -= forgeUnreadCount.value
-    else if (tab === 'tasks') count -= store.state.taskUnreadCount
-    else if (tab === 'proxy') count -= store.state.portForwardEnabledCount
-    else if (tab === 'terminal') count -= store.state.terminalSessionCount
-  }
-  return Math.max(0, count)
+const leftBadgeCounts = computed(() => {
+  const out: Record<string, number> = {}
+  for (const id of DOCK_TAB_IDS) out[id] = resolveDockBadge(id)?.count ?? 0
+  return out
 })
+watch(leftBadgeCounts, (next, prev) => {
+  if (!prev) return
+  for (const id of DOCK_TAB_IDS) {
+    if (next[id] === prev[id]) continue
+    triggerTabBadgeAnim(id)
+    if (!allInlineOverflowTabs.value.includes(id)) triggerBadgeAnim(overflowBadgeAnim)
+  }
+}, { deep: true })
+
+watch(() => store.state.chatUnreadCount, (n, o) => { if (o !== undefined && n !== o) triggerBadgeAnim(chatBadgeAnim) })
+
+const overflowBadgeCount = computed(() =>
+  popupOverflowTabs.value.reduce((sum, tab) => sum + dockTabBadgeCount(tab), 0),
+)
 
 const overflowButtonTitle = computed(() => {
   if (popupOverflowTabs.value.includes(activeTab.value)) {

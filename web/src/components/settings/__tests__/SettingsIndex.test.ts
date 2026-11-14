@@ -15,6 +15,7 @@ const i18n = createI18n({
           project: '项目',
           dockPlugins: '插件与 Dock',
           files: '文件',
+          fileView: '文件预览',
           identity: '身份',
           chat: '聊天',
           agents: 'Agent偏好',
@@ -23,8 +24,10 @@ const i18n = createI18n({
           stt: '语音识别',
           meeting: '会议',
           rag: '会话搜索',
+          kb: '知识库',
           portForward: '端口映射',
           notification: '消息通知',
+          notifications: '通知中心',
           usageMeter: '用量',
           security: '安全',
           debug: '调试',
@@ -47,6 +50,9 @@ const globalStubs = {
   'lucide-chevron-right': true,
   'lucide-palette': true,
   'lucide-layout-grid': true,
+  'lucide-eye': true,
+  'lucide-book-open': true,
+  'lucide-inbox': true,
   'lucide-folder-tree': true,
   'lucide-user-round': true,
   'lucide-message-square': true,
@@ -69,11 +75,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 23 category rows', () => {
+  it('renders 26 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(23)
+    expect(rows.length).toBe(26)
   })
 
   it('renders category labels', () => {
@@ -116,10 +122,14 @@ describe('SettingsIndex', () => {
     // referenced; 会议 (10) brings the meeting defaults next to STT.
     // 连接与集成 gained 邮箱账号 (3 → 4): a mailbox is a connection this
     // machine holds, alongside port forwarding and the forge integration.
-    // 项目与外观 gained 插件与 Dock (3 → 4): Dock visibility/order is a
-    // presentation choice, next to appearance and file display.
-    expect(perCard).toEqual([4, 10, 4, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(23)
+    // 项目与外观 gained 插件与 Dock (3 → 4) and 文件预览 (4 → 5): the Dock
+    // manager and the preview page are presentation choices next to appearance
+    // and file display.
+    // AI 与对话 gained 知识库 (10 → 11): it sits next to 会话搜索.
+    // 通知与安全 gained 通知中心 (3 → 4): the append-only log is separate from
+    // push notifications.
+    expect(perCard).toEqual([5, 11, 4, 4, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(26)
   })
 
   // The dock tab, the meeting list header and the quote chip all draw
@@ -154,10 +164,10 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'project', 'appearance', 'dockPlugins', 'files',
-      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt', 'meeting',
+      'project', 'appearance', 'dockPlugins', 'files', 'fileView',
+      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'kb', 'tts', 'stt', 'meeting',
       'terminal', 'portForward', 'mail', 'forgeIntegration',
-      'notification', 'usageMeter', 'security',
+      'notification', 'notifications', 'usageMeter', 'security',
       'debug', 'about',
     ]
 

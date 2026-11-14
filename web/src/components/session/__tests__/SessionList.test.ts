@@ -44,7 +44,7 @@ const { mockGetAgentBackend, mockGetAgentName, mockGetAgentModel, mockDialogHold
   // projectRoot/homeDir are required by useCrossProjectSessions' "exclude the
   // current project" filter — without them the filter compares against
   // undefined and the test can never exercise the exclusion.
-  const mockStore = { state: reactive({ chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' }) }
+  const mockStore = { state: reactive({ sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' }) }
   const mockCrossState: {
     groups: any
     loading: any

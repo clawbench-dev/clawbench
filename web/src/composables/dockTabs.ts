@@ -123,7 +123,7 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     group: 'workspace',
     primary: true,
     closable: false,
-    settingsCategory: 'files',
+    settingsCategory: 'fileView',
   },
   {
     id: 'history',
@@ -195,7 +195,7 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.kb',
     group: 'personal',
     closable: true,
-    settingsCategory: 'rag',
+    settingsCategory: 'kb',
   },
   // 视频会议: the meeting records, and the meeting itself — screen/camera or
   // voice. It used to be two tabs (听记 and 桌面共享) even though both drove the
@@ -238,8 +238,8 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     titleKey: 'nav.notifications',
     descriptionKey: 'settings.dockPlugins.desc.notifications',
     group: 'system',
-    closable: true,
-    settingsCategory: 'notification',
+    closable: false,
+    settingsCategory: 'notifications',
   },
   {
     id: 'settings',
@@ -311,6 +311,8 @@ export interface DockVisibilityOptions {
   mailHidden?: boolean
   /** Tabs the user hid in the plugin manager. */
   hidden?: ReadonlySet<DockTabId>
+  /** Tabs whose runtime availability check currently fails. */
+  unavailable?: ReadonlySet<DockTabId>
   /** User order for the reorderable secondary tabs; missing ids keep default order. */
   order?: readonly DockTabId[]
 }
@@ -326,6 +328,7 @@ export const REORDERABLE_DOCK_TABS: readonly DockTabId[] = DOCK_TABS
   .map((t) => t.id)
 
 function isGated(id: DockTabId, opts: DockVisibilityOptions): boolean {
+  if (opts.unavailable?.has(id)) return true
   return (
     (id === 'terminal' && !!opts.terminalDisabled) ||
     (id === 'proxy' && !!opts.portForwardUnavailable) ||

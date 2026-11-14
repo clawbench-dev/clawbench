@@ -19,7 +19,7 @@ import { DEFAULT_DOCK_PRESET, readPanelState, writePanelState } from '@/utils/pa
  * Presets are deliberately coarse:
  *   - developer: nothing hidden
  *   - standard:  hide dev-related tabs (terminal / port mapping / Forge)
- *   - minimal:   hide every closable tab (only chat + browse + view + settings)
+ *   - minimal:   hide every closable tab (only chat + browse + view + notifications + settings)
  *   - custom:    the user changed something by hand; plugins should treat it as
  *                the neutral default
  *
@@ -84,9 +84,14 @@ const reorderableIds = computed<DockTabId[]>(() =>
   orderedIds.value.filter((id) => REORDERABLE_DOCK_TABS.includes(id)),
 )
 
+/** Only closable tabs can be hidden; a stale value must not hide a core tab. */
+function isClosable(id: DockTabId): boolean {
+  return !!DOCK_TAB_BY_ID.get(id)?.closable
+}
+
 /** Tabs the manager shows as enabled (hidden set inverted). */
 const visibleIds = computed<DockTabId[]>(() =>
-  DOCK_TABS.filter((t) => !hidden.value.has(t.id)).map((t) => t.id),
+  DOCK_TABS.filter((t) => !t.closable || !hidden.value.has(t.id)).map((t) => t.id),
 )
 
 function persist(): void {
@@ -120,17 +125,15 @@ export function toggleDockTab(id: DockTabId): void {
 }
 
 /**
- * Move a reorderable tab by one position. No-op at the ends and for tabs that
- * are not reorderable (primary workspace tabs, settings).
+ * Replace the reorderable order wholesale (drag and drop). Missing ids are
+ * appended in registry order, so a partial list can never drop a tab.
  */
-export function moveDockTab(id: DockTabId, delta: -1 | 1): void {
-  if (!REORDERABLE_DOCK_TABS.includes(id)) return
-  const list = [...orderedIds.value]
-  const i = list.indexOf(id)
-  const j = i + delta
-  if (i < 0 || j < 0 || j >= list.length) return
-  ;[list[i], list[j]] = [list[j], list[i]]
-  order.value = list
+export function setDockTabOrder(ids: readonly DockTabId[]): void {
+  const next = mergeDockOrder(ids)
+  const same =
+    next.length === orderedIds.value.length && next.every((id, i) => id === orderedIds.value[i])
+  if (same) return
+  order.value = next
   preset.value = 'custom'
   persist()
 }
@@ -140,9 +143,9 @@ export function resetDockPlugins(): void {
   applyDockPreset('developer')
 }
 
-/** True when the tab is hidden by the user (unknown ids are never hidden). */
+/** True when the tab is hidden by the user (unknown/core ids are never hidden). */
 export function isDockTabHidden(id: string): boolean {
-  return isDockTabId(id) && hidden.value.has(id)
+  return isDockTabId(id) && isClosable(id) && hidden.value.has(id)
 }
 
 /** True when the tab can be reordered (and therefore gets up/down buttons). */
@@ -160,8 +163,8 @@ export function useDockPlugins() {
     preset,
     applyPreset: applyDockPreset,
     setVisible: setDockTabVisible,
+    setOrder: setDockTabOrder,
     toggle: toggleDockTab,
-    move: moveDockTab,
     reset: resetDockPlugins,
     isHidden: isDockTabHidden,
     isReorderable: isDockTabReorderable,

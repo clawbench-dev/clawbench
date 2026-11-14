@@ -9,7 +9,7 @@
 - [ ] **primary**：要不要固定在宽屏头部？大多数插件不需要。
 - [ ] **closable**：能不能被用户隐藏？只有核心四件填 `false`。
 - [ ] **devRelated**：是不是开发相关？是的话“标准”预设会隐藏它。
-- [ ] **feature / capability**：依赖服务端功能或设备能力吗？填标记，但记得实际门控要自己接线。
+- [ ] **feature / capability**：依赖服务端功能或设备能力吗？填标记，并在 `dock.ts` 里实现 `available()`。
 - [ ] **settingsCategory**：有没有自己的设置页？有的话填分类 id。
 
 ## 1. 加类型与清单
@@ -32,7 +32,7 @@
 
 ## 2. 加图标
 
-- [ ] `web/src/composables/dockTabMeta.ts`：
+- [ ] 静态图标：`web/src/composables/dockTabMeta.ts`：
 
 ```ts
 import { Code2 } from 'lucide-vue-next'
@@ -43,7 +43,8 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
 }
 ```
 
-- [ ] 图标只放这里，不要放进 `dockTabs.ts`（零 import 红线）。
+- [ ] 图标随状态变（像 Forge 那样）：不写进 meta，在 `dock.ts` 里给 `icon: () => ...`。
+- [ ] 图标不要放进 `dockTabs.ts`（零 import 红线）。
 
 ## 3. 加文案
 
@@ -54,64 +55,63 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
 - [ ] 如果加了设置分类：`settings.categories.snippets` 中英都要有。
 - [ ] 如果加了设置项：`labelKey` / `descriptionKey` / `sectionHeader` 中英都要有。
 
-## 4. 加面板
+## 4. 加 `dock.ts`
 
-- [ ] 新建 `web/src/components/snippets/SnippetsPanel.vue`。
-- [ ] 在 `App.vue` import：
+在功能目录新建 `dock.ts`，只放运行时资源。没有需要的字段就留空/不写。
+
+- [ ] 有角标：
 
 ```ts
-// 可选面板：懒加载
-const SnippetsPanel = defineAsyncComponent(
-  buildAsyncComponentOptions({
-    loader: () => import('./components/snippets/SnippetsPanel.vue'),
-  }),
-)
+badge: () => ({ count: store.state.snippetUnreadCount }),
 ```
 
-- [ ] 在左栏加 `<TabPanel>`：
+- [ ] 有门控：
 
-```vue
-<TabPanel tabId="snippets" :activeTab="leftPanelActive" :noHeader="true">
-  <SnippetsPanel :active="panelIsActive('snippets')" />
-</TabPanel>
+```ts
+available: () => (serverConfig.value?.snippets as Record<string, unknown> | undefined)?.enabled !== false,
 ```
 
+- [ ] 打开时加载：
+
+```ts
+onEnter: () => { void loadSnippets() },
+```
+
+- [ ] 页签关闭也要跑的轮询：
+
+```ts
+startBackground: () => {
+  startSnippetPolling()
+  return stopSnippetPolling
+},
+```
+
+- [ ] 终端这类“平台不支持时不要切走”的插件，加 `leaveWhenUnavailable`。
+- [ ] 不 import 自己的面板。
+- [ ] 不 import 别的插件的 `dock.ts`。
+- [ ] 不在 `dock.ts` 里放 WebRTC / DOMPurify / 编辑器这类重依赖。
+
+## 5. 加面板
+
+- [ ] 新建 `web/src/components/snippets/SnippetsPanel.vue`。
+- [ ] 在 `dock.ts` 的 `panel` 里指向它：
+
+```ts
+panel: {
+  load: () => import('./SnippetsPanel.vue'),
+  // 需要宿主 props/events 时才写：
+  // props: (host) => ({ projectPath: host.projectPath }),
+  // on: (host) => ({ 'open-file': host.openFile }),
+}
+```
+
+- [ ] 不要在 `App.vue` 里写 `<TabPanel tabId="snippets">`；`DockPanelHost` 会统一渲染。
 - [ ] 面板能单独打开（空状态）。
 - [ ] 面板切走再切回状态还在（`TabPanel` 保活）。
 - [ ] 面板需要轮询时看 `active`，不要用永不停的 `onMounted` 定时器。
+- [ ] 面板不 import `App.vue` / 其他插件；需要的宿主能力从 `DockPanelHost` 的 host 取。
 
-## 5. 加角标（可选）
-
-如果不需要角标，跳过。
-
-- [ ] `dockTabBadgeCount(tab)` 加 `case`。
-- [ ] `dockTabBadgeAnim(tab)` 加 `case`。
-- [ ] `dockTabBadgeAnimEnd(tab)` 加 `case`。
-- [ ] 窄屏 Dock 的 inline 模板加 `v-if` 条件。
-- [ ] `overflowBadgeCount` 汇总加/减。
-- [ ] 如果角标需要常驻轮询，在 `App.vue` 里成对启动/停止。
-- [ ] 隐藏插件时角标不再参与汇总。
-
-> 下一阶段的 `dock.ts` 会把这五处收成一处；当前先按现状做。
-
-## 6. 加门控（可选）
-
-如果插件不依赖功能/能力，跳过。
-
-- [ ] 加一个 computed（例如 `isSnippetsDisabled`）。
-- [ ] `overflowTabs` 传入对应过滤参数（或扩展 `secondaryDockTabs` 的选项）。
-- [ ] `switchTab` 开头加 `if (tab === 'snippets' && ...) return`。
-- [ ] 加 `watch`，开关关闭时把当前页签切到 `browse`/`chat`。
-- [ ] 清单里填 `feature` / `capability` 标记，让管理器显示标签。
-- [ ] 如果是服务端功能，确认服务端端点/worker 也检查开关，不能只藏 UI。
-
-## 7. 加打开副作用（可选）
-
-- [ ] 如果打开时要加载数据，优先放在面板的 `active` watcher；确实需要全局的才放 `switchTab`。
-- [ ] 失败要有可见错误状态。
-- [ ] 不要阻塞切换。
-
-## 8. 加设置页（可选）
+## 6. 加设置页（可选）
 
 - [ ] `settingsFieldMap.ts` 的 `categoryItems` 加分类。
 - [ ] `SettingsIndex.vue` 的 `groupDefs` 加入口。
@@ -121,38 +121,41 @@ const SnippetsPanel = defineAsyncComponent(
 
 详见 [09-settings.md](09-settings.md)。
 
-## 9. 测试
+## 7. 测试
 
 - [ ] `dockTabs.test.ts`：如果改了顺序/可见性规则，加用例。
 - [ ] `useDockPlugins.test.ts`：如果改了预设/隐藏/排序逻辑，加用例。
+- [ ] `useDockLifecycle.test.ts`：如果新增了 `startBackground`，确认启停覆盖。
 - [ ] `DockPluginSetting.test.ts`：如果改了管理器 UI，加用例。
 - [ ] 新面板至少一个 mount 测试。
 - [ ] 变异验证：故意改错一行，测试应该红。
 
-## 10. 跑检查
+## 8. 跑检查
 
 ```bash
 npm run typecheck
 npx vitest run \
   web/src/composables/__tests__/dockTabs.test.ts \
   web/src/composables/__tests__/useDockPlugins.test.ts \
+  web/src/composables/__tests__/useDockLifecycle.test.ts \
   web/src/components/settings/__tests__/DockPluginSetting.test.ts \
   web/src/components/settings/__tests__/SettingsIndex.test.ts \
   web/src/utils/__tests__/panelState.test.ts
 npm run build
 ```
 
-- [ ] 类型检查没有新增错误（忽略 `ShareView.vue` 的既有错误）。
+- [ ] 类型检查通过。
 - [ ] 相关测试全绿。
 - [ ] 构建成功，产物在 `.clawbench-web/`。
 
-## 11. 手动验收
+## 9. 手动验收
 
 - [ ] 设置 → 插件与 Dock 能看到新插件。
 - [ ] 关掉再打开，Dock 入口跟着变。
-- [ ] 上下移，Dock 顺序跟着变。
+- [ ] 拖动排序，Dock 顺序跟着变。
 - [ ] 刷新页面，状态保持。
 - [ ] 应用“标准”预设，如果 `devRelated` 为 true，它被隐藏。
 - [ ] 当前停在该插件时关掉它，界面回到文件管理/聊天，不白屏。
-- [ ] 通知深链跳到已隐藏的插件时被拒绝。
+- [ ] 通知深链跳到已隐藏/不可用的插件时被拒绝。
 - [ ] 空状态正常。
+- [ ] 如果它有 `startBackground`：隐藏后轮询停止，重新显示后恢复。

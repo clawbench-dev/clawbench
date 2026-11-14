@@ -27,6 +27,9 @@ import { computed } from 'vue'
 import {
   Palette,
   LayoutGrid,
+  Eye,
+  BookOpen,
+  Inbox,
   FolderTree,
   FolderGit2,
   MessageSquare,
@@ -75,6 +78,7 @@ const groupDefs = [
       { id: 'appearance', icon: Palette },
       { id: 'dockPlugins', icon: LayoutGrid },
       { id: 'files', icon: FolderTree },
+      { id: 'fileView', icon: Eye },
     ],
   },
   {
@@ -89,6 +93,7 @@ const groupDefs = [
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
       { id: 'rag', icon: Brain },
+      { id: 'kb', icon: BookOpen },
       { id: 'tts', icon: Volume2 },
       { id: 'stt', icon: Mic },
       // Meeting defaults sit next to the speech settings they depend on:
@@ -113,6 +118,7 @@ const groupDefs = [
     id: 'notifySecurity',
     items: [
       { id: 'notification', icon: Bell },
+      { id: 'notifications', icon: Inbox },
       // Side by side with 推送通知, not inside it: the usage meter is a
       // notification feature but its configuration (cycle / metric / budget)
       // is a separate subject, and nesting it under the push-channel card made

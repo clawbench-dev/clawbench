@@ -17,9 +17,9 @@ describe('secondaryDockTabs ordering and visibility', () => {
   })
 
   it('applies the user order before the runtime gates', () => {
-    const order: DockTabId[] = ['mail', 'notifications', 'forge']
+    const order: DockTabId[] = ['mail', 'forge', 'tasks']
     const result = secondaryDockTabs({ order })
-    expect(result.slice(0, 3)).toEqual(['mail', 'notifications', 'forge'])
+    expect(result.slice(0, 3)).toEqual(['mail', 'forge', 'tasks'])
     expect(result.at(-1)).toBe('settings')
   })
 

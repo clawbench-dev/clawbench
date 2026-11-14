@@ -350,10 +350,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   files: [
     { type: 'item', spec: { labelKey: 'settings.items.fileSearchDisplayLimit', descriptionKey: 'settings.items.fileSearchDisplayLimitDesc', key: 'file_search.display_limit', type: 'number', source: 'server', min: 10, max: 500, sectionHeader: 'settings.items.searchSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.showHidden', descriptionKey: 'settings.items.showHiddenDesc', key: 'showHidden', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.recentFilesCount', descriptionKey: 'settings.items.recentFilesCountDesc', key: 'recentFilesCount', type: 'number', source: 'local', min: 1, max: 50, sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.wordWrap', descriptionKey: 'settings.items.wordWrapDesc', key: 'wordWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.lineNumbers', descriptionKey: 'settings.items.lineNumbersDesc', key: 'lineNumbers', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.stickyScroll', descriptionKey: 'settings.items.stickyScrollDesc', key: 'stickyScroll', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fileView', descriptionKey: 'settings.items.fileViewDesc', key: 'fileView', type: 'select', source: 'local', sectionHeader: 'settings.items.fileDisplaySection', options: [
       { labelKey: 'settings.items.fileViewList', value: 'list' },
       { labelKey: 'settings.items.fileViewGrid', value: 'grid' },
@@ -369,18 +365,27 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.sortDirAsc', value: 'asc' },
       { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    // draw.io editor is downloaded on first use rather than shipped. The URL
-    // only matters where github.com and the public proxies are unreachable —
-    // an air-gapped deployment points it at its own mirror.
-    { type: 'item', spec: { labelKey: 'settings.items.drawioDownloadUrl', descriptionKey: 'settings.items.drawioDownloadUrlDesc', key: 'drawio.download_url', type: 'text', source: 'server', sectionHeader: 'settings.items.drawioSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     // Retention deletes files, so it is a switch plus a day count rather than a
     // single number: 0 days would otherwise be indistinguishable from "off".
     { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionEnabled', descriptionKey: 'settings.items.uploadRetentionEnabledDesc', key: 'upload.retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionDays', descriptionKey: 'settings.items.uploadRetentionDaysDesc', key: 'upload.retention_days', type: 'number', source: 'server', min: 1, disableUnless: { key: 'upload.retention_enabled', value: true }, sectionHeader: 'settings.items.uploadSection' } },
+  ],
+  // File preview is its own tab, so it gets its own settings page rather than
+  // sharing the file manager's. The file manager keeps list/grid, sorting,
+  // hidden files and upload; preview keeps the reading surface.
+  fileView: [
+    { type: 'item', spec: { labelKey: 'settings.items.recentFilesCount', descriptionKey: 'settings.items.recentFilesCountDesc', key: 'recentFilesCount', type: 'number', source: 'local', min: 1, max: 50, sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.wordWrap', descriptionKey: 'settings.items.wordWrapDesc', key: 'wordWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.lineNumbers', descriptionKey: 'settings.items.lineNumbersDesc', key: 'lineNumbers', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.stickyScroll', descriptionKey: 'settings.items.stickyScrollDesc', key: 'stickyScroll', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    // draw.io editor is downloaded on first use rather than shipped. The URL
+    // only matters where github.com and the public proxies are unreachable —
+    // an air-gapped deployment points it at its own mirror.
+    { type: 'item', spec: { labelKey: 'settings.items.drawioDownloadUrl', descriptionKey: 'settings.items.drawioDownloadUrlDesc', key: 'drawio.download_url', type: 'text', source: 'server', sectionHeader: 'settings.items.drawioSection' } },
   ],
   debug: [
     // Opt-in: agent processes inherit what the user's shell startup files
@@ -1005,6 +1010,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       getTestCategories: (values) => [{ category: 'rag', values }],
     }},
   ],
+  // Custom pages (KbSetting.vue / NotificationsSetting.vue). They are not flat
+  // item lists; the empty entries keep the category registry complete.
+  kb: [],
+  notifications: [],
   portForward: [
     { type: 'panel', config: {
       panelId: 'portForward',

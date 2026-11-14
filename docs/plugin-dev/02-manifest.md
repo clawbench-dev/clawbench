@@ -60,28 +60,30 @@ export interface DockTabDescriptor {
 - 数组顺序 = 默认 Dock 顺序。
 - `primary: true` 的页签在宽屏固定头部，位置不随用户排序变化。
 - `settings` 必须留在数组最后，并且 `closable: false`。
-- 其余 `!primary && closable && id !== 'settings'` 的页签进入 `REORDERABLE_DOCK_TABS`，用户可以上下移。
+- 其余 `!primary && closable && id !== 'settings'` 的页签进入 `REORDERABLE_DOCK_TABS`，用户可以拖动排序。
 
 新增页签默认放在你想要的位置；如果用户已经存过顺序，新页签会被 `mergeDockOrder` 追加到可排序尾部，不会插到用户排好的前面。
 
-## 4. `feature` / `capability` 只是元数据
+## 4. `feature` / `capability` 是声明，检查在 `dock.ts`
 
-当前版本的 `feature` / `capability` **不会自动门控**。它们的作用是：
+清单里的 `feature` / `capability` 是**声明**：
 
-- 插件管理器显示“服务端功能”/“环境能力”标签；
-- 给后续统一可用性层提供声明；
-- 让 review 时一眼看出这个插件依赖什么。
+- 插件管理器据此显示“服务端功能”/“环境能力”标签；
+- review 时一眼看出这个插件依赖什么；
+- 提醒开发者去 `dock.ts` 实现 `available()`。
 
-实际门控仍在 `App.vue`：
+真正的检查在功能自己的 `dock.ts`：
 
-| 标记 | 实际读取位置 |
+| 标记 | `dock.ts` 里的实现 |
 |---|---|
-| `forge.enabled` | `isForgeTabHidden` + `forgeTabBlocked` |
-| `mail.enabled` | `isMailTabHidden` + `mailTabBlocked` |
-| `terminal` | `isTerminalDisabled` |
-| `portForward` | `isPortForwardUnavailable` |
+| `forge.enabled` | `components/forge/dock.ts` 的 `available()` |
+| `mail.enabled` | `components/mail/dock.ts` 的 `available()` |
+| `terminal` | `components/terminal/dock.ts` 的 `available()` |
+| `portForward` | `components/proxy/dock.ts` 的 `available()` |
 
-新增插件如果依赖某个功能/能力，要自己在 `App.vue` 接线，并在清单里填上对应标记。
+`App.vue` 把所有 `available()` 汇总成 `unavailableDockTabs`，再交给 `secondaryDockTabs` 过滤；程序化导航统一过 `isDockPluginAvailable`。
+
+新增插件如果依赖某个功能/能力，两处都要写：清单里声明，`dock.ts` 里实现。只填清单不会自动门控。
 
 ## 5. `primary` vs `closable`
 

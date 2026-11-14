@@ -18,10 +18,11 @@
 | 能力 | 状态 |
 |---|---|
 | 清单（id / 标题 / 分组 / 能否关 / 开发相关 / 功能 / 能力） | 已落地，见 `web/src/composables/dockTabs.ts` |
-| 插件管理器（显示/隐藏、上下移、预设） | 已落地，设置 → 插件与 Dock |
+| 插件管理器（显示/隐藏、拖动排序、预设） | 已落地，设置 → 插件与 Dock |
 | Dock 渲染按隐藏集合与用户顺序 | 已落地 |
 | 预设可被插件读取（`usePluginProfile`） | 已落地 |
-| 每个插件自己的 `dock.ts`（角标/生命周期自动注册） | **尚未落地**，目前角标、门控、打开副作用仍在 `App.vue` 里接线 |
+| 每个插件自己的 `dock.ts`（角标 / 门控 / onEnter / 后台资源） | 已落地，见 `web/src/components/<feature>/dock.ts` + `dockPluginRuntime.ts` |
+| 面板加载 | 已落地：各功能 `dock.ts` 的 `panel.load`，由 `DockPanelHost` 统一渲染 |
 
 所以现在新增一个插件，仍然要按 [07-checklist.md](07-checklist.md) 手工接线；`dock.ts` 自动注册是下一阶段的目标，设计见 [Dock 插件化重构设计](../plans/2026-11-14-dock-plugin-architecture-design.md)。
 
@@ -29,17 +30,17 @@
 
 | 分类 | 页签 | 能否关 |
 |---|---|---|
-| 常驻核心 | 聊天、文件管理、文件预览、设置 | 否 |
+| 常驻核心 | 聊天、文件管理、文件预览、通知中心、设置 | 否 |
 | 工作区 | Git 历史 | 是（位置固定在宽屏头部） |
 | 项目工具 | Forge、任务、终端、统计、分享、端口映射 | 是 |
 | 沟通与资料 | 邮件、知识库、会议 | 是 |
-| 系统 | 通知 | 是 |
 
 “常驻核心”关不掉的原因：
 
 - 聊天是主界面；
 - 文件管理是很多跳转的兜底落点；
 - 文件预览是打开文件的唯一去处；
+- 通知中心是事件日志：藏掉入口等于让用户错过提醒，而它本身不占地方；
 - 设置是重新打开其他插件的唯一入口。
 
 ## 三种“关闭”必须分开
@@ -48,7 +49,7 @@
 |---|---|---|---|
 | 能力（capability） | 终端、端口映射 | 不是“关”，是这台设备/宿主本来就没有 | 灰掉 + 原因 |
 | 功能（feature） | Forge、邮件 | 服务端也停（轮询、同步、接口拒绝） | 真开关 |
-| 偏好（preference） | 任务、统计、通知、分享、历史、知识库、会议 | 只是不在 Dock 显示，后台照常 | 眼睛/开关（只影响入口） |
+| 偏好（preference） | 任务、统计、分享、历史、知识库、会议 | 只是不在 Dock 显示；客户端角标轮询会停 | 眼睛/开关（只影响入口） |
 
 插件管理器里的显示开关属于**偏好**，不会停服务端。Forge / 邮件的服务端开关在它们自己的设置页。不要把三种语义合成一个布尔。
 
@@ -60,18 +61,18 @@
 |---|---|---|
 | 开发者 | 不隐藏任何页签 | 开发、调试 |
 | 标准 | 终端、端口映射、Forge（`devRelated`） | 日常使用 |
-| 极简 | 所有可关页签，只留聊天、文件管理、文件预览、设置 | 想要最干净的界面 |
+| 极简 | 所有可关页签，只留聊天、文件管理、文件预览、通知中心、设置 | 想要最干净的界面 |
 
 手动改任意一项后，当前状态变成“自定义”。插件通过 `usePluginProfile()` 读取预设，但应把 `custom` 当作中性默认值，不要拿它做权限判断。
 
 ## 快速开始
 
-新增一个可选插件的最小路径（当前版本）：
+新增一个可选插件的最小路径：
 
 1. 在 `web/src/composables/dockTabs.ts` 的 `DOCK_TABS` 加一条清单。
-2. 在 `web/src/composables/dockTabMeta.ts` 加图标。
-3. 在 `web/src/App.vue` 加面板 import 与 `<TabPanel>` 块。
-4. 如果需要角标 / 门控 / 打开副作用，在 `App.vue` 接线。
+2. 在 `web/src/composables/dockTabMeta.ts` 加图标（除非图标随状态变，那就在 `dock.ts` 里给 `icon`）。
+3. 在功能目录加一个 `dock.ts`：角标、可用性、`onEnter`、后台资源、面板加载都放这里。
+4. 面板组件放在功能目录；`dock.ts` 的 `panel.load` 指向它。App.vue 的 `DockPanelHost` 会统一渲染，不需要逐插件写 `<TabPanel>`。
 5. 如果需要自己的设置页，在 `settingsFieldMap.ts` 加分类，并在 `SettingsIndex.vue` 加入口。
 6. 补单测，跑 `npm run typecheck`、相关 vitest、`npm run build`。
 
@@ -82,11 +83,16 @@
 | 文件 | 作用 |
 |---|---|
 | `web/src/composables/dockTabs.ts` | 纯数据清单 + 顺序/可见性纯函数 |
-| `web/src/composables/dockTabMeta.ts` | 图标 |
+| `web/src/composables/dockTabMeta.ts` | 静态图标 |
+| `web/src/composables/dockPluginTypes.ts` | `dock.ts` 的契约类型（只含类型） |
+| `web/src/composables/dockPluginRuntime.ts` | 聚合层：id → 各功能 `dock.ts` 的解析函数 |
+| `web/src/composables/useDockLifecycle.ts` | 后台资源启停、`onEnter` / `onLeave` |
 | `web/src/composables/useDockPlugins.ts` | 隐藏集合、顺序、预设、`usePluginProfile` |
+| `web/src/components/<feature>/dock.ts` | 该插件的角标 / 可用性 / 打开副作用 / 面板加载 |
+| `web/src/components/dock/DockPanelHost.vue` | 通用面板宿主：按 id 取 `dock.ts` 的 panel，绑定 props/events |
 | `web/src/utils/panelState.ts` | 持久化：`dockHidden` / `dockOrder` / `dockPreset` |
 | `web/src/components/settings/DockPluginSetting.vue` | 插件管理器 UI |
-| `web/src/App.vue` | Dock 渲染、面板挂载、角标、门控、打开副作用 |
+| `web/src/App.vue` | Dock 渲染、核心面板（文件管理/文件预览）、角标展示 |
 | `web/src/components/common/TabPanel.vue` | 面板保活外壳 |
 | `web/src/components/settings/settingsFieldMap.ts` | 设置分类与字段 |
 | `web/src/i18n/locales/{zh,en}.ts` | 文案 |
