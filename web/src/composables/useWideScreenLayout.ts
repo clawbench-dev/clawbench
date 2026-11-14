@@ -60,9 +60,15 @@ export { WIDE_SCREEN_PRIMARY_TABS }
  * Visible tab order of the wide-screen vertical dock: fixed primary tabs first,
  * then the (already-filtered) secondary tabs. Used for rendering and for the
  * active-indicator position. Deterministic — never depends on runtime geometry.
+ *
+ * `primaryTabs` defaults to the declared list so existing callers/tests keep
+ * working; App.vue passes the visibility-filtered list (history can be hidden).
  */
-export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
-  return [...WIDE_SCREEN_PRIMARY_TABS, ...overflowTabs]
+export function wideDockTabOrder(
+  overflowTabs: readonly string[],
+  primaryTabs: readonly string[] = WIDE_SCREEN_PRIMARY_TABS,
+): string[] {
+  return [...primaryTabs, ...overflowTabs]
 }
 
 /**

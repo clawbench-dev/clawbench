@@ -26,6 +26,7 @@
 import { computed } from 'vue'
 import {
   Palette,
+  LayoutGrid,
   FolderTree,
   FolderGit2,
   MessageSquare,
@@ -72,6 +73,7 @@ const groupDefs = [
     items: [
       { id: 'project', icon: FolderGit2 },
       { id: 'appearance', icon: Palette },
+      { id: 'dockPlugins', icon: LayoutGrid },
       { id: 'files', icon: FolderTree },
     ],
   },

@@ -88,6 +88,9 @@ export type PanelId =
   | 'gitWorktreeCollapsed'
   | 'gitManageTab'
   | 'leftTab'
+  | 'dockHidden'
+  | 'dockOrder'
+  | 'dockPreset'
 
 /** Physical key prefix. Every panel-state key starts with this. */
 export const PANEL_KEY_PREFIX = 'clawbench-panel.'
@@ -116,6 +119,14 @@ export const DEFAULT_MAIL_SPLIT_RATIO = 0.42
  *  wide enough for list + detail side by side. */
 export const DEFAULT_KB_SPLIT_RATIO = 0.4
 export const DEFAULT_GIT_MANAGE_TAB = 'branches'
+
+/**
+ * The plugin-manager preset in force. `custom` means the user changed
+ * visibility/order by hand; plugins should treat it as the neutral default.
+ * Kept as a plain string here so panelState stays a leaf (the DockTabId union
+ * lives in composables/dockTabs.ts).
+ */
+export const DEFAULT_DOCK_PRESET = 'developer'
 
 export interface SessionSidebarState {
   open: boolean
@@ -259,6 +270,30 @@ function stringCodec(def: string | null): Pick<PanelEntry<string | null>, 'parse
 }
 
 /**
+ * String-array codec for the dock plugin manager (hidden ids / user order).
+ * Always hands back a fresh array: the default is a module constant, and
+ * returning it directly would let a caller's mutation leak into every later
+ * default read (same reason as sessionSidebarCodec).
+ */
+function stringArrayCodec(def: string[]): Pick<PanelEntry<string[]>, 'parse' | 'serialize'> {
+  const copy = (v: string[]): string[] => [...v]
+  return {
+    parse: (raw) => {
+      if (raw === null || raw === '') return copy(def)
+      try {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed)
+          ? parsed.filter((v): v is string => typeof v === 'string')
+          : copy(def)
+      } catch {
+        return copy(def)
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+  }
+}
+
+/**
  * Tri-state boolean: '1' / '0' / absent. Needed where "the user never chose"
  * must stay distinguishable from "the user chose false", because the component
  * has its own default that a stored false would wrongly override.
@@ -380,6 +415,22 @@ const entries: PanelEntry<unknown>[] = [
   {
     id: 'gitManageTab', key: 'git-manage-tab', scope: 'global', default: DEFAULT_GIT_MANAGE_TAB,
     ...stringCodec(DEFAULT_GIT_MANAGE_TAB),
+  },
+  // Dock plugin manager. These three are GLOBAL and deliberately do not follow
+  // the layout-memory switch: the plugin profile is a device-level preference
+  // that plugins read to adapt their own UI, so it must not silently change
+  // when the user switches projects.
+  {
+    id: 'dockHidden', key: 'dock-hidden', scope: 'global', followsLayoutMemory: false, default: [],
+    ...stringArrayCodec([]),
+  },
+  {
+    id: 'dockOrder', key: 'dock-order', scope: 'global', followsLayoutMemory: false, default: [],
+    ...stringArrayCodec([]),
+  },
+  {
+    id: 'dockPreset', key: 'dock-preset', scope: 'global', followsLayoutMemory: false, default: DEFAULT_DOCK_PRESET,
+    ...stringCodec(DEFAULT_DOCK_PRESET),
   },
   // The left-column tab is the ONE entry pinned to the project: which panel you
   // were on is a property of the project, not of the device (issue #474). Its

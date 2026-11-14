@@ -42,21 +42,25 @@ describe('panelState registry shape', () => {
       'leftCollapsed', 'chatCollapsed', 'splitRatio', 'sessionSidebar',
       'tocDockOpen', 'tocDockWidth', 'tocDockSide', 'fmPreviewRatio',
       'fmPreviewOpen', 'mailSplitRatio', 'kbSplitRatio', 'gitBranchCollapsed', 'gitWorktreeCollapsed',
-      'gitManageTab', 'leftTab',
+      'gitManageTab', 'leftTab', 'dockHidden', 'dockOrder', 'dockPreset',
     ]
     expect(new Set(declared)).toEqual(new Set(Object.keys(PANEL_ENTRIES)))
   })
 
-  it('marks only the left tab as pinned to the project', () => {
-    // Every other entry follows the layout-memory switch. leftTab must not:
-    // "remember layout globally" cannot make every project share one tab
-    // (issue #474). Pinned by identity, not by count, so adding a new entry
-    // cannot silently weaken the rule.
+  it('keeps only the left tab project-scoped; dock config is global', () => {
+    // The left tab is pinned to the project: "remember layout globally" cannot
+    // make every project share one tab (issue #474). The dock plugin manager is
+    // pinned to global for the opposite reason: its profile is read by every
+    // plugin and must not change when the user switches projects.
     const pinned = Object.values(PANEL_ENTRIES)
       .filter((e) => e.followsLayoutMemory === false)
       .map((e) => e.id)
-    expect(pinned).toEqual(['leftTab'])
+      .sort()
+    expect(pinned).toEqual(['dockHidden', 'dockOrder', 'dockPreset', 'leftTab'].sort())
     expect(PANEL_ENTRIES.leftTab.scope).toBe('project')
+    expect(PANEL_ENTRIES.dockHidden.scope).toBe('global')
+    expect(PANEL_ENTRIES.dockOrder.scope).toBe('global')
+    expect(PANEL_ENTRIES.dockPreset.scope).toBe('global')
   })
 })
 

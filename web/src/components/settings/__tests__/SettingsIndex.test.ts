@@ -13,6 +13,7 @@ const i18n = createI18n({
         categories: {
           appearance: '外观',
           project: '项目',
+          dockPlugins: '插件与 Dock',
           files: '文件',
           identity: '身份',
           chat: '聊天',
@@ -45,6 +46,7 @@ const i18n = createI18n({
 const globalStubs = {
   'lucide-chevron-right': true,
   'lucide-palette': true,
+  'lucide-layout-grid': true,
   'lucide-folder-tree': true,
   'lucide-user-round': true,
   'lucide-message-square': true,
@@ -67,11 +69,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 22 category rows', () => {
+  it('renders 23 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(22)
+    expect(rows.length).toBe(23)
   })
 
   it('renders category labels', () => {
@@ -114,8 +116,10 @@ describe('SettingsIndex', () => {
     // referenced; 会议 (10) brings the meeting defaults next to STT.
     // 连接与集成 gained 邮箱账号 (3 → 4): a mailbox is a connection this
     // machine holds, alongside port forwarding and the forge integration.
-    expect(perCard).toEqual([3, 10, 4, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(22)
+    // 项目与外观 gained 插件与 Dock (3 → 4): Dock visibility/order is a
+    // presentation choice, next to appearance and file display.
+    expect(perCard).toEqual([4, 10, 4, 3, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(23)
   })
 
   // The dock tab, the meeting list header and the quote chip all draw
@@ -150,7 +154,7 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'project', 'appearance', 'files',
+      'project', 'appearance', 'dockPlugins', 'files',
       'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt', 'meeting',
       'terminal', 'portForward', 'mail', 'forgeIntegration',
       'notification', 'usageMeter', 'security',

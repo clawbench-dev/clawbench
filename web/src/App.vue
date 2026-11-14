@@ -69,7 +69,7 @@
           <div class="wide-dock-center">
             <div class="dock-active-indicator wide-dock-active-indicator" v-show="!leftCollapsed" :style="wideDockIndicatorStyle"></div>
             <!-- Primary tabs (always visible) -->
-            <div v-for="tab in WIDE_SCREEN_PRIMARY_TABS" :key="tab" class="dock-btn-wrap">
+            <div v-for="tab in visiblePrimaryTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" v-dock-tip="dockTabTitle(tab)" :aria-label="dockTabTitle(tab)" @click.stop="handleWideDockTabClick(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
@@ -581,7 +581,7 @@
             <button class="dock-btn" data-tab="view" :class="{ active: activeTab === 'view' }" @click.stop="switchTab('view')" :title="t('nav.fileView')">
               <FileText />
             </button>
-            <div class="dock-btn-wrap">
+            <div v-if="!isDockTabHiddenById('history')" class="dock-btn-wrap">
               <button class="dock-btn" data-tab="history" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
                 <GitBranch />
               </button>
@@ -867,14 +867,14 @@ import {
   toggleChatPane,
   isChatPanelVisible,
   registerWideScreenCallbacks,
-  WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
   PANE_LEFT,
   PANE_RIGHT,
 } from './composables/useWideScreenLayout'
 // Single source of truth for dock tabs (render list, switch whitelist, icons,
 // titles). See the module doc for why this exists.
-import { secondaryDockTabs } from './composables/dockTabs'
+import { primaryDockTabs, secondaryDockTabs } from './composables/dockTabs'
+import { useDockPlugins } from './composables/useDockPlugins'
 import { dockTabWithIcon } from './composables/dockTabMeta'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
@@ -1146,6 +1146,14 @@ const activeTab = ref('chat')
 // ── Wide-screen layout state ──
 const { isWideScreen, leftTab, splitRatio, activePane, leftCollapsed, chatCollapsed } = useWideScreenLayout()
 
+// ── Dock plugin orchestration (visibility / order / profile) ──
+// The settings manager is the only writer; App.vue reads the derived lists.
+const {
+  hidden: hiddenDockTabs,
+  order: dockTabOrder,
+  isHidden: isDockTabHiddenById,
+} = useDockPlugins()
+
 const chatActive = computed(() => (isWideScreen.value ? 'chat' : activeTab.value))
 const leftPanelActive = computed(() => (isWideScreen.value ? leftTab.value : activeTab.value))
 const panelIsActive = (tabId: string) =>
@@ -1188,14 +1196,19 @@ function applyPanelTab(tab: string) {
  * no surviving file is stored back as 'browse').
  */
 function applyProjectPanel(root: string) {
+  const resolved = resolvePanelTab(
+    loadProjectPanel(root),
+    isWideScreen.value,
+    !!store.state.currentFile,
+    isForgeTabHidden.value,
+    isMailTabHidden.value,
+  )
+  // A remembered tab the user has since hidden must fall back to the layout
+  // default, not restore a panel with no dock entry pointing at it.
   applyPanelTab(
-    resolvePanelTab(
-      loadProjectPanel(root),
-      isWideScreen.value,
-      !!store.state.currentFile,
-      isForgeTabHidden.value,
-      isMailTabHidden.value,
-    ),
+    isDockTabHiddenById(resolved)
+      ? (isWideScreen.value ? 'browse' : 'chat')
+      : resolved,
   )
   saveProjectPanel(root, currentPanelTab.value)
 }
@@ -1369,7 +1382,7 @@ function dp(designPx: number): number {
 }
 
 const dockActiveIndex = computed(() => {
-  const visibleTabs = ['chat', 'browse', 'view', 'history', ...inlineOverflowTabs.value]
+  const visibleTabs = ['chat', ...visiblePrimaryTabs.value, ...inlineOverflowTabs.value]
   if (singleDirectTab.value) visibleTabs.push(singleDirectTab.value)
   if (showOverflowButton.value) visibleTabs.push('__overflow__')
   const idx = visibleTabs.indexOf(activeTab.value)
@@ -1396,6 +1409,12 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab: string, force = false) {
+  // A tab the user hid in the plugin manager is not reachable through any
+  // programmatic path either (notification deep link, task jump, navigation
+  // coordinator replay). Refuse instead of silently re-showing it — the dock
+  // entry is gone, so landing there would strand the user on a panel with no
+  // button pointing at it.
+  if (dockTabBlocked(tab)) return
   // A disabled integration must not be reachable through any programmatic path.
   // There are several — notification deep links, the task panel's jump, and
   // `returnToOrigin()`/`abandonJump()` in useNavigationCoordinator (which
@@ -2251,6 +2270,23 @@ function mailTabBlocked(): boolean {
   return isMailTabHidden.value
 }
 
+/**
+ * Whether a tab was hidden by the user in the plugin manager.
+ *
+ * The dock entry is gone, so a programmatic navigation (notification deep link,
+ * task jump, remembered tab replay) must be refused rather than silently
+ * re-showing the tab. Declared after the composable it reads for the same TDZ
+ * reason as `forgeTabBlocked`.
+ */
+function dockTabBlocked(tab: string): boolean {
+  return isDockTabHiddenById(tab)
+}
+
+/** Any reason the tab cannot be entered (hidden by the user or feature off). */
+function tabBlocked(tab: string): boolean {
+  return dockTabBlocked(tab) || (tab === 'forge' && forgeTabBlocked()) || (tab === 'mail' && mailTabBlocked())
+}
+
 watch(isPortForwardUnavailable, (disabled) => {
   if (disabled && panelIsActive('proxy')) {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
@@ -2284,6 +2320,13 @@ watch(isMailTabHidden, (hidden) => {
   if (hidden && panelIsActive('mail')) {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
+})
+watch(hiddenDockTabs, () => {
+  // Hiding the tab the user is currently on must move them out: the dock entry
+  // is gone, so they would otherwise be stuck on a panel with nothing pointing
+  // at it. Same rule as the feature/capability gates above.
+  const current = isWideScreen.value ? leftTab.value : activeTab.value
+  if (isDockTabHiddenById(current)) switchTab('browse')
 })
 const { navigateToTaskSettings, openExecDetail, loadTasks } = useTaskTab()
 registerSwitchTab(switchTab)
@@ -3633,7 +3676,16 @@ const overflowTabs = computed(() =>
     portForwardUnavailable: isPortForwardUnavailable.value,
     forgeHidden: isForgeTabHidden.value,
     mailHidden: isMailTabHidden.value,
+    hidden: hiddenDockTabs.value,
+    order: dockTabOrder.value,
   }),
+)
+
+// The wide dock's fixed head. `history` is primary but closable, so the list
+// has to be filtered before rendering — rendering WIDE_SCREEN_PRIMARY_TABS
+// directly would leave a button for a tab the user just hid.
+const visiblePrimaryTabs = computed(() =>
+  primaryDockTabs({ hidden: hiddenDockTabs.value }),
 )
 
 // Responsive dock overflow — ResizeObserver drives inline promotion
@@ -3761,7 +3813,7 @@ watch(isWideScreen, (val) => {
     // the switchTab guard, and landing on a panel with no dock entry also throws
     // the wide dock's indicator off (indexOf → -1 → falls back to index 0).
     const candidate = resolveLeftTabOnEnter(activeTab.value, leftTab.value)
-    const next = candidate === 'forge' && forgeTabBlocked() ? 'browse' : candidate
+    const next = tabBlocked(candidate) ? 'browse' : candidate
     // Focus continuity is resolved from the tab we ENTERED with, captured before
     // the block below rewrites `activeTab` to a left-column tab. Passing the
     // post-rewrite value made resolveActivePaneOnEnter's `chat` branch
@@ -4142,7 +4194,7 @@ function wideDockBadgeVisible(tab: string) {
 }
 const wideDockActiveIndex = computed(() => {
   // Visible order mirrors the rendered dock: fixed primary tabs + all secondary tabs.
-  const i = wideDockTabOrder(overflowTabs.value).indexOf(leftTab.value)
+  const i = wideDockTabOrder(overflowTabs.value, visiblePrimaryTabs.value).indexOf(leftTab.value)
   return i >= 0 ? i : 0
 })
 const wideDockIndicatorStyle = computed(() => ({

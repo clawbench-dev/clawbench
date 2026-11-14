@@ -194,6 +194,10 @@ export type CategoryEntry =
  * Each entry is either a flat instant-save item or a group panel with batch save.
  */
 export const categoryItems: Record<string, CategoryEntry[]> = {
+  // Custom page (DockPluginSetting.vue): presets + visibility + order. The
+  // empty entry keeps the "every SettingsIndex category exists here" contract
+  // without pretending it is a flat item list.
+  dockPlugins: [],
   // The human user's identity. A first-class category rather than a row under
   // 群聊: the nickname is also the meeting display name, and the profile is
   // injected into every agent's system prompt — neither is group-chat-specific.

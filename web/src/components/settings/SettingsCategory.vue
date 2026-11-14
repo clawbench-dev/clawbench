@@ -24,6 +24,13 @@
     :key="categoryId"
     :agent-id="categoryId.slice('agentSessions:'.length)"
   />
+  <!-- Dock plugin manager: a custom page (presets + visibility + order), not a
+       flat settings list. It emits `navigate` so its "feature settings" links
+       can drill into the plugin's own settings category. -->
+  <DockPluginSetting
+    v-else-if="categoryId === 'dockPlugins'"
+    @navigate="(id: string) => $emit('navigate', id)"
+  />
   <!-- Project detail route (project:<id>): a read-only stats page, not a
        batch-save panel, so it gets its own component rather than going through
        subPagePanelMap. It has no back button — the breadcrumb crumb is the way
@@ -213,6 +220,7 @@ import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import SettingsAgentSessions from './SettingsAgentSessions.vue'
+import DockPluginSetting from './DockPluginSetting.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
