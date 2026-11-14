@@ -65,10 +65,28 @@
     <link rel="icon" type="image/png" href="/favicon.png">
     <title>ClawBench Share</title>
     <style>
-      /* Share SPA: full-viewport read-only container */
+      /* Share SPA: full-viewport read-only container.
+
+         `!important` is deliberate: css/base.css (loaded later, from the JS
+         entry) sizes `html`/`body` with `100vh` for the app. On a phone `vh` is
+         the LARGE viewport — the height the page would have with the browser's
+         address bar hidden — so the document ends up ~50px taller than what the
+         reader can see and the PAGE scrolls: a 50px drag carries the 44px
+         `.share-topbar` clean off the screen ("一拖动，整个 Header 和背景全消失，
+         只剩那张图"). `dvh` tracks the height that is actually visible, and
+         `overflow: hidden` keeps the shell fixed even if a browser disagrees.
+         `100%` stays as the fallback for browsers without `dvh`.
+
+         Every share view is built the same way — top bar as the first row of a
+         full-height column, every list scrolling inside `.share-body` — so no
+         view needs document scrolling. */
       html, body, #app {
         height: 100%;
         margin: 0;
+      }
+      html, body {
+        height: 100dvh !important;
+        overflow: hidden !important;
       }
     </style>
 </head>

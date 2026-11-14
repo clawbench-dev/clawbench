@@ -3,22 +3,27 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
- * Guard: the share page must disable page-level pinch zoom, exactly like the
- * app shell does.
+ * Guard: the share page must not let the BROWSER move the page around.
  *
- * Why this matters: `.share-topbar` is the first row of a fixed flex column.
- * A browser-level pinch (or the pan that follows it) moves the whole document
- * inside the visual viewport, so the top bar and the page background leave the
- * screen and the reader is left with nothing but the artwork. On a phone this
- * happens without meaning to — the top bar sits 44px above the draw.io canvas,
- * so one finger of a two-finger pinch lands on the bar while the other lands on
- * the diagram. (Reported as "整个 Header 和背景全消失，只剩那张图".)
+ * Two ways it can, both reported as "一拖动/放大，整个 Header 和背景全消失，就只剩
+ * 下那张图":
+ *
+ *   1. Page-level pinch zoom. `.share-topbar` is the first row of a fixed flex
+ *      column, so a browser pinch (and the pan that follows) carries it off the
+ *      screen. On a phone this happens without meaning to — the bar sits 44px
+ *      above the draw.io canvas, so one finger of a two-finger pinch lands on
+ *      the bar while the other lands on the diagram.
+ *   2. Document scrolling. `base.css` sizes `html`/`body` with `100vh`, which on
+ *      a phone means the LARGE viewport (browser address bar hidden), so the
+ *      document is ~50px taller than the visible area and a 50px drag scrolls
+ *      the 44px top bar clean off the screen.
  *
  * Every zoomable surface on the share page owns its own zoom (image lightbox,
- * draw.io canvas, Excalidraw canvas, PDF viewer), so nothing user-visible is
- * lost by mirroring index.html here. This is a source-sniffing test because the
- * meta tag runs in the browser before any module — the same pattern
- * themeBootstrap.test.ts uses for the inline theme scripts.
+ * draw.io canvas, Excalidraw canvas, PDF viewer) and every list scrolls inside
+ * `.share-body`, so nothing user-visible is lost by pinning both. These are
+ * source-sniffing tests because the meta tag and the shell height run before any
+ * module — the same pattern themeBootstrap.test.ts uses for the inline theme
+ * scripts.
  */
 
 const webRoot = resolve(__dirname, '../../..')
@@ -45,5 +50,20 @@ describe('share page viewport zoom guard', () => {
       expect(viewportMeta('index.html')).toContain(flag)
       expect(viewportMeta('share.html')).toContain(flag)
     }
+  })
+})
+
+describe('share page document scroll guard', () => {
+  const html = readFileSync(resolve(webRoot, 'share.html'), 'utf8')
+
+  it('sizes the document to the VISIBLE viewport and forbids page scrolling', () => {
+    // `100vh` is the large viewport on a phone, i.e. ~50px taller than what the
+    // reader can see — enough to scroll the 44px top bar away. The declarations
+    // need `!important` because css/base.css (loaded later from the JS entry)
+    // sizes html/body with `100vh` for the app.
+    expect(html).toMatch(/height:\s*100dvh\s*!important/)
+    expect(html).toMatch(/overflow:\s*hidden\s*!important/)
+    // Fallback for browsers that do not know `dvh`.
+    expect(html).toMatch(/height:\s*100%/)
   })
 })
