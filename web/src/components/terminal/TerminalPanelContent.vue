@@ -1728,7 +1728,15 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   align-items: center;
   justify-content: center;
   width: calc(28 * var(--dp));
-  height: calc(28 * var(--dp));
+  /* The bar is not 28dp tall on wide screens: components.css forces
+     `.terminal-tab-bar` to --header-height (36dp) so the window-controls
+     overlay lines up with every other panel header. With `align-items:
+     stretch`, a child that keeps a definite height is aligned at the TOP of
+     that taller bar — a `height: calc(28 * var(--dp))` here left the icons
+     ~4dp above the row's centre. Fill the row instead (same as the window
+     controls on the same bar); on narrow screens the bar is 28dp, so
+     stretching is a no-op there. */
+  align-self: stretch;
   border: none;
   border-radius: 0;
   background: transparent;
