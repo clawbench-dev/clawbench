@@ -271,42 +271,73 @@
 
     <!-- Create collection -->
     <ModalDialog :open="createOpen" :title="t('kb.createTitle')" @close="createOpen = false">
+      <template #header>
+        <BookOpen :size="16" class="modal-header-icon" />
+        <span class="modal-title">{{ t('kb.createTitle') }}</span>
+      </template>
+
       <div class="kb-form">
         <label class="kb-field">
           <span class="kb-label">{{ t('kb.nameLabel') }}</span>
-          <input v-model="createName" class="kb-input" :placeholder="t('kb.namePlaceholder')" maxlength="100" @keydown.enter="submitCreate" />
+          <input
+            v-model="createName"
+            class="kb-input"
+            data-role="kb-name"
+            :placeholder="t('kb.namePlaceholder')"
+            maxlength="100"
+            @keydown.enter="submitCreate"
+          />
         </label>
         <label class="kb-field">
           <span class="kb-label">{{ t('kb.descriptionLabel') }}</span>
-          <textarea v-model="createDescription" class="kb-input kb-textarea" :placeholder="t('kb.descriptionPlaceholder')" rows="3" />
+          <textarea
+            v-model="createDescription"
+            class="kb-input kb-textarea"
+            data-role="kb-description"
+            :placeholder="t('kb.descriptionPlaceholder')"
+            rows="3"
+          />
         </label>
         <div class="kb-field">
           <span class="kb-label">{{ t('kb.scopeLabel') }}</span>
-          <div class="kb-scope-options">
-            <label class="kb-radio" :class="{ 'is-disabled': !hasProject }">
-              <input v-model="createScope" type="radio" value="project" :disabled="!hasProject" />
-              <span>
-                <strong>{{ t('kb.scopeProject') }}</strong>
-                <em>{{ t('kb.scopeProjectHint') }}</em>
-              </span>
-            </label>
-            <label class="kb-radio">
-              <input v-model="createScope" type="radio" value="global" />
-              <span>
-                <strong>{{ t('kb.scopeGlobal') }}</strong>
-                <em>{{ t('kb.scopeGlobalHint') }}</em>
-              </span>
-            </label>
+          <!-- Segmented control, same shape as the provider form: two choices
+               belong on one line, and only the CURRENT one's explanation is
+               shown. The old radio cards printed both hints at once and were
+               the heaviest thing in the dialog. -->
+          <div class="kb-seg" role="radiogroup" :aria-label="t('kb.scopeLabel')">
+            <button
+              type="button"
+              class="kb-seg-btn"
+              :class="{ 'is-on': createScope === 'project' }"
+              :disabled="!hasProject"
+              role="radio"
+              :aria-checked="createScope === 'project'"
+              data-role="kb-scope-project"
+              @click="createScope = 'project'"
+            >{{ t('kb.scopeProject') }}</button>
+            <button
+              type="button"
+              class="kb-seg-btn"
+              :class="{ 'is-on': createScope === 'global' }"
+              role="radio"
+              :aria-checked="createScope === 'global'"
+              data-role="kb-scope-global"
+              @click="createScope = 'global'"
+            >{{ t('kb.scopeGlobal') }}</button>
           </div>
+          <span class="kb-hint-text">
+            {{ createScope === 'global' ? t('kb.scopeGlobalHint') : t('kb.scopeProjectHint') }}
+          </span>
         </div>
-        <div v-if="createError" class="kb-form-error">{{ createError }}</div>
-        <div class="kb-form-actions">
-          <button class="fbtn" type="button" @click="createOpen = false">{{ t('common.cancel') }}</button>
-          <button class="fbtn fbtn-primary" type="button" :disabled="creating" @click="submitCreate">
-            {{ t('kb.create') }}
-          </button>
-        </div>
+        <div v-if="createError" class="kb-form-error" role="alert">{{ createError }}</div>
       </div>
+
+      <template #footer>
+        <button class="fbtn" type="button" @click="createOpen = false">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-primary" type="button" :disabled="creating" @click="submitCreate">
+          {{ creating ? t('common.loading') : t('kb.create') }}
+        </button>
+      </template>
     </ModalDialog>
 
     <!-- Add documents. This is the SAME picker the chat composer opens: browse
@@ -538,7 +569,7 @@ async function submitCreate(): Promise<void> {
   try {
     await createCollection(name, createDescription.value.trim(), createScope.value)
     createOpen.value = false
-    toast.show(t('kb.added'), { type: 'success', duration: 1800 })
+    toast.show(t('kb.created'), { type: 'success', duration: 1800 })
   } catch (e) {
     createError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -768,7 +799,7 @@ defineExpose({
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg-primary);
+  background: var(--panel-page-bg);
 }
 
 .kb-header {
@@ -1438,11 +1469,14 @@ defineExpose({
 }
 
 /* ── Create form ── */
+/* ── Create form ──
+   The modal body has NO inset of its own (modal-card.css); every consumer
+   supplies it. 12/16dp is the convention the other form dialogs use. */
 .kb-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  padding: var(--space-1) 0 0;
+  padding: var(--space-6) var(--space-7);
 }
 
 .kb-field {
@@ -1452,73 +1486,85 @@ defineExpose({
 }
 
 .kb-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 .kb-input {
   width: 100%;
   box-sizing: border-box;
-  padding: var(--space-3) var(--space-4);
+  height: calc(34 * var(--dp));
+  padding: 0 var(--space-5);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-md);
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--duration-base);
+}
+
+.kb-input:focus {
+  border-color: var(--accent-color);
+}
+
+.kb-input::placeholder {
+  color: var(--text-muted);
 }
 
 .kb-textarea {
+  height: auto;
+  min-height: calc(76 * var(--dp));
+  padding: var(--space-4) var(--space-5);
+  line-height: var(--line-height-normal);
   resize: vertical;
-  font-family: inherit;
 }
 
-.kb-scope-options {
+.kb-seg {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.kb-radio {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-1);
+  padding: var(--space-1);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.kb-seg-btn {
+  flex: 1;
+  min-width: 0;
+  height: calc(30 * var(--dp));
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
   cursor: pointer;
 }
 
-.kb-radio.is-disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.kb-radio span {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.kb-radio strong {
-  font-size: var(--font-size-sm);
+.kb-seg-btn.is-on {
+  background: var(--accent-color);
+  color: var(--bg-primary);
   font-weight: var(--font-weight-medium);
 }
 
-.kb-radio em {
+.kb-seg-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.kb-hint-text {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-style: normal;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
 }
 
 .kb-form-error {
   color: var(--color-red);
-  font-size: var(--font-size-xs);
-}
-
-.kb-form-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
+  font-size: var(--font-size-sm);
 }
 
 </style>

@@ -124,10 +124,12 @@ test.describe('Knowledge base end to end', () => {
         await page.locator('[data-action="kb-new"]').click()
         const form = page.locator('.kb-form')
         await expect(form).toBeVisible()
-        await form.locator('input.kb-input').fill(colName)
-        await form.locator('textarea.kb-input').fill('E2E 自动测试')
-        await form.locator('input[value="global"]').check()
-        await form.locator('.kb-form-actions .fbtn-primary').click()
+        await form.locator('[data-role="kb-name"]').fill(colName)
+        await form.locator('[data-role="kb-description"]').fill('E2E 自动测试')
+        // Scope is a segmented control; the buttons live in the shared modal
+        // footer, outside the form body.
+        await form.locator('[data-role="kb-scope-global"]').click()
+        await page.locator('.modal-footer .fbtn-primary').click()
         await expect(form).toBeHidden({ timeout: 10000 })
 
         const row = page.locator('.kb-col').filter({ hasText: colName })

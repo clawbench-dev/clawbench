@@ -338,6 +338,7 @@ export default {
     added: 'Added; indexing in the background',
     addPartial: '{first} ({count} more files could not be added)',
     addToCollection: 'Add to knowledge base',
+    created: 'Knowledge base created',
     dirImportDone: 'Added {added} files; indexing in the background',
     dirImportSummary: '{added} added, {skipped} skipped, {duplicates} already there, {failed} failed',
     dirImportTruncated: 'Too many files — only the first 500 were imported',
