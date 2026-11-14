@@ -5,7 +5,7 @@
          come back to, so its state has to be visible from the tab, not only
          inside a dialog that has been closed. -->
     <div class="live-panel__header">
-      <MonitorUp :size="14" class="panel-header-icon" />
+      <component :is="MEETING_ICON" :size="14" class="panel-header-icon" />
       <!-- Leaving the stage for the record list is NAVIGATION, not an exit:
            the room lives in useLiveShare, so the meeting keeps running and its
            record (the live row) leads straight back. The hardware back gesture
@@ -241,7 +241,7 @@
                 data-role="stage-screen-share"
                 @change="onToggleScreen(($event.target as HTMLInputElement).checked)"
               />
-              <span class="meeting-check__icon"><MonitorUp :size="13" /></span>
+              <span class="meeting-check__icon"><component :is="MEETING_ICON" :size="13" /></span>
               {{ t('liveShare.allowScreenShare') }}
             </label>
           </div>
@@ -474,7 +474,7 @@
  * only answer "not available" is worse than no button.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Captions, ImageIcon, MessageSquare, Mic, MonitorUp, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Captions, ImageIcon, MessageSquare, Mic, NotebookPen, PenLine, PhoneOff } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import MemberScreenCard from '@/components/live/MemberScreenCard.vue'
@@ -528,6 +528,7 @@ import { parseControlMessage, toInjectorEvent, type ControlMessage } from '@/sha
 import { chunkChatHistory, appendChatMessage, trimChat } from '@/share/chatHistory'
 import { viewerLabel, memberCount } from '@/components/live/viewerLabels'
 import { appLog } from '@/utils/appLog'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 // The same section / hint / checkbox primitives the create form uses.
 import '@/assets/meeting-form.css'
 // The footer's pills: this panel is not inside ModalDialog, so it loads the

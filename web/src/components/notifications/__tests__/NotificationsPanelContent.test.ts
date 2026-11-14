@@ -12,7 +12,7 @@ vi.mock('lucide-vue-next', () => {
   const names = [
     'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
     'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert', 'Gauge',
-    'Video', 'Hand',
+    'MonitorUp', 'Hand',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })

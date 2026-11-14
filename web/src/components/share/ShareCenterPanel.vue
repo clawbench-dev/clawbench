@@ -85,7 +85,7 @@
               <Folder v-if="item.kind === 'dir'" :size="15" />
               <FileText v-else-if="item.kind === 'file'" :size="15" />
               <MessageSquareShare v-else-if="item.kind === 'session'" :size="15" />
-              <Video v-else :size="15" />
+              <component :is="MEETING_ICON" v-else :size="15" />
             </span>
             <span class="share-row-text">
               <span class="share-row-name-line">
@@ -154,7 +154,7 @@
                 <Folder v-if="item.kind === 'dir'" :size="14" />
                 <FileText v-else-if="item.kind === 'file'" :size="14" />
                 <MessageSquareShare v-else-if="item.kind === 'session'" :size="14" />
-                <Video v-else :size="14" />
+                <component :is="MEETING_ICON" v-else :size="14" />
                 <span class="action-label">{{ t(sourceLabelKey(item)) }}</span>
               </button>
               <button class="fbtn" type="button" data-action="open-page" @click="openLink">
@@ -225,7 +225,6 @@ import {
   MessageSquareShare,
   Share2,
   Trash2,
-  Video,
 } from 'lucide-vue-next'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -243,6 +242,7 @@ import { openExternalUrl } from '@/utils/externalLink'
 import { copyText } from '@/utils/clipboard'
 import { formatRelativeTime } from '@/utils/format'
 import { appLog } from '@/utils/appLog'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { useMailCompose } from '@/composables/useMailCompose'
 import { builtInMailAvailable, openSystemMail, shareCapability, shareLink } from '@/utils/shareActions'

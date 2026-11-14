@@ -189,7 +189,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Video, Hand,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Hand,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -202,6 +202,7 @@ import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
 import { formatClockTime, formatDayLabel, formatFullTimestamp, startOfLocalDay } from '@/utils/format'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import type { NotificationItem, NotificationKind, NotificationRange } from '@/utils/notificationsApi'
 
 const props = defineProps<{ active: boolean }>()
@@ -348,7 +349,7 @@ function kindIcon(n: NotificationItem) {
     case 'task': return Clock
     case 'forge': return GitMerge
     case 'usage': return Gauge
-    case 'meeting': return Video
+    case 'meeting': return MEETING_ICON
     default: return Bot
   }
 }
@@ -378,7 +379,7 @@ function eventIcon(n: NotificationItem) {
     if (s === 'control_request') return Hand
     if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return X
     if (s === 'minutes_ready' || s === 'transcript_ready' || s === 'revised_ready') return Check
-    return Video
+    return MEETING_ICON
   }
   if (s === 'failed' || s === 'cancelled') return X
   if (s === 'permission_pending') return ShieldAlert

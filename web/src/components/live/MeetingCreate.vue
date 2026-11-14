@@ -1,7 +1,7 @@
 <template>
   <div class="meeting-panel">
     <div class="meeting-header">
-      <MonitorUp :size="14" class="panel-header-icon" />
+      <component :is="MEETING_ICON" :size="14" class="panel-header-icon" />
       <button class="meeting-icon-btn" type="button" :title="t('common.back')" data-action="meeting-create-back" @click="emit('back')">
         <ArrowLeft :size="14" />
       </button>
@@ -168,7 +168,7 @@
               data-role="meeting-allow-member-screen"
               @change="allowMemberScreen = ($event.target as HTMLInputElement).checked"
             />
-            <span class="meeting-check__icon"><MonitorUp :size="13" /></span>
+            <span class="meeting-check__icon"><component :is="MEETING_ICON" :size="13" /></span>
             {{ t('liveShare.allowScreenShare') }}
           </label>
         </div>
@@ -247,7 +247,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, ImageIcon, Mic, MonitorUp, NotebookPen, Radio } from 'lucide-vue-next'
+import { ArrowLeft, ImageIcon, Mic, NotebookPen, Radio } from 'lucide-vue-next'
 import CaptureSourceGrid from '@/components/live/CaptureSourceGrid.vue'
 import DeviceChoiceGrid from '@/components/live/DeviceChoiceGrid.vue'
 import HttpsNotice from '@/components/live/HttpsNotice.vue'
@@ -273,6 +273,7 @@ import {
 import { buildCaptureChoices, captureSourceIdOf } from '@/utils/captureSourceChoices'
 import { recallCaptureSources, rememberCaptureSources } from '@/utils/captureSourceCache'
 import { appLog } from '@/utils/appLog'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import '@/assets/modal-footer-btn.css'
 // The section / field / hint / checkbox primitives, shared with the running
 // meeting's 会议管理 tab so one form has one look.

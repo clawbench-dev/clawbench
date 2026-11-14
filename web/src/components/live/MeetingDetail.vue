@@ -1,7 +1,7 @@
 <template>
   <div class="meeting-panel">
     <div class="meeting-header">
-      <MonitorUp :size="14" class="panel-header-icon" />
+      <component :is="MEETING_ICON" :size="14" class="panel-header-icon" />
       <button class="meeting-icon-btn" type="button" :title="t('meeting.detail.back')" data-action="meeting-back" @click="emit('back')">
         <ArrowLeft :size="14" />
       </button>
@@ -314,7 +314,6 @@ import {
   FileText,
   MessageSquare,
   MessagesSquare,
-  MonitorUp,
   Pencil,
   SpellCheck,
   Trash2,
@@ -369,6 +368,7 @@ import { parseRevisedTranscript, revisedToPlainText } from '@/utils/revisedTrans
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
 import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import ActionBar from '@/components/common/ActionBar.vue'
 import '@/assets/modal-footer-btn.css'
 
