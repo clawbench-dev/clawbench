@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -895,15 +894,15 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 
 // postProcessBlocks applies finalize post-processing on blocks:
 // clawbench-ask-question conversion, rejected-tool removal, thinking-block merging,
-// and terminal thinking completion.
+// terminal thinking completion, and terminal tool completion.
 // Shared by buildResult and Finalize to prevent divergence.
-// NOTE: persistAskToolCalls must be called separately after Finalize
+// NOTE: persistToolCalls must be called separately after Finalize
 // uses postProcessBlocks, to avoid double-persisting from buildResult.
 //
 // Every caller is a TERMINAL path (buildResult on done/error/ctx.Done, Finalize,
 // and the steer split's "before" half), which is what makes MarkAllThinkingDone
-// correct here: no thinking block can still be running once the turn is over.
-// It is deliberately not applied on the streaming flush path, where done=false
+// and CloseUnfinishedTools correct here: nothing can still be running once the
+// turn is over. Neither is applied on the streaming flush path, where done=false
 // is a real, current fact.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
@@ -920,32 +919,43 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 	// survives: a turn ending on reasoning never receives thinking_done, so its
 	// last block would otherwise persist as done=false and render as a spinner.
 	blocks = ai.MarkAllThinkingDone(blocks)
+	// Same for tools: a cancelled turn / crashed agent / steer split never
+	// delivers the tool_result of a call that was still in flight, and an open
+	// block here makes the transcript (which renders a settled row as done) and
+	// the detail drawer (which reads chat_tool_calls) disagree forever.
+	ai.CloseUnfinishedTools(blocks)
 
 	return blocks
 }
 
-// persistAskToolCalls writes converted AskUserQuestion tool blocks to
-// the chat_tool_calls table. These blocks were created by
-// ConvertAskQuestionBlocks and missed the normal upsertToolCallToDB
-// path during the event loop. Must be called after every postProcessBlocks
-// call that writes blocks to the DB (currently Finalize).
-func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
+// persistToolCalls writes every tool block of the finalized row to
+// chat_tool_calls. Must be called after every postProcessBlocks call that
+// writes blocks to the DB (Finalize and the steer split's "before" half).
+//
+// It re-writes blocks the streaming flush already wrote on purpose: that flush
+// ran while the tools were still RUNNING, so a tool that never finished kept
+// done=false in the table even though the row is now settled — and the detail
+// drawer, the only reader of that table, would spin forever on it. The same
+// pass persists the blocks that only exist after conversion
+// (ConvertAskQuestionBlocks mints ask-* blocks the event loop never saw).
+func (e *SessionExecutor) persistToolCalls(blocks []model.ContentBlock) {
 	if e.cfg.StreamingMessageID <= 0 || e.timelineSID() == "" {
 		return
 	}
 	for i := range blocks {
 		b := &blocks[i]
-		if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
-			inputJSON, _ := json.Marshal(b.Input)
-			if err := UpsertToolCall(
-				e.cfg.StreamingMessageID, e.timelineSID(),
-				b.ID, b.Name, inputJSON,
-				b.Output, b.Status, b.Summary, b.Done, b.DurationMs,
-			); err != nil {
-				slog.Warn("upsert converted AskUserQuestion tool call failed",
-					slog.String("toolID", b.ID),
-					slog.String("err", err.Error()))
-			}
+		if b.Type != "tool_use" || b.ID == "" {
+			continue
+		}
+		inputJSON, _ := json.Marshal(b.Input)
+		if err := UpsertToolCall(
+			e.cfg.StreamingMessageID, e.timelineSID(),
+			b.ID, b.Name, inputJSON,
+			b.Output, b.Status, b.Summary, b.Done, b.DurationMs,
+		); err != nil {
+			slog.Warn("upsert terminal tool call failed",
+				slog.String("toolID", b.ID),
+				slog.String("err", err.Error()))
 		}
 	}
 }
@@ -1412,10 +1422,11 @@ func (e *SessionExecutor) resetForSplitLocked(newMessageID int64) {
 func (e *SessionExecutor) buildSplitContentLocked() string {
 	blocks := e.postProcessBlocks(e.blocks)
 	// Mirror Finalize: ConvertAskQuestionBlocks creates ask-* tool blocks that
-	// the normal upsert path never saw, so persist them against the "before"
-	// row. Without this the completed half would render the question as plain
-	// text after a reload.
-	e.persistAskToolCalls(blocks)
+	// the normal upsert path never saw, and CloseUnfinishedTools closed the tools
+	// this half will never see a result for — persist the whole set against the
+	// "before" row, or the completed half renders a question as plain text after
+	// a reload and its unfinished tools keep spinning in the detail drawer.
+	e.persistToolCalls(blocks)
 	content, _ := e.buildContentJSON(blocks, RunResult{Blocks: blocks}, e.responseMetadata)
 	return persistThinkingToDB(content, e.cfg.StreamingMessageID, e.timelineSID())
 }
@@ -1833,10 +1844,11 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	donePost := ft.phase("post_process")
 	blocks = e.postProcessBlocks(blocks)
 
-	// Persist converted AskUserQuestion tool calls to DB.
-	// Only done here (in Finalize), not in buildResult, to avoid
-	// duplicate records from the two postProcessBlocks calls.
-	e.persistAskToolCalls(blocks)
+	// Persist the terminal tool-call rows (see persistToolCalls): converted ask
+	// blocks, plus every tool the streaming flush wrote while it was still
+	// running. Only done here (in Finalize), not in buildResult, to avoid
+	// duplicate writes from the two postProcessBlocks calls.
+	e.persistToolCalls(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
 	// The knowledge base passages were retrieved while building the request,

@@ -16,6 +16,8 @@
  * the (very large) ContentBlocks component.
  */
 
+import { TOOL_STATUS_INTERRUPTED } from '@/utils/toolStatus'
+
 export interface ToolCallGroup {
   /** Index of the first block of the run (a tool or a thinking chip). */
   start: number
@@ -25,6 +27,8 @@ export interface ToolCallGroup {
   toolCount: number
   /** How many of those tools finished with `status === 'error'`. */
   failedCount: number
+  /** How many were closed without a result (turn cancelled / agent crash). */
+  interruptedCount: number
   /** 1-based position of the running tool inside the run; 0 when none runs. */
   runningIndex: number
   /** Display name of the running tool, e.g. "Bash". */
@@ -78,11 +82,13 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
     if (toolIndices.length < MIN_GROUPED_TOOLS) continue
 
     let failedCount = 0
+    let interruptedCount = 0
     let runningIndex = 0
     let runningBlock: any = null
     toolIndices.forEach((idx, order) => {
       const block = list[idx]
       if (block?.status === 'error') failedCount++
+      if (block?.status === TOOL_STATUS_INTERRUPTED) interruptedCount++
       if (block && !block.done) {
         runningIndex = order + 1
         runningBlock = block
@@ -95,6 +101,7 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       end,
       toolCount: toolIndices.length,
       failedCount,
+      interruptedCount,
       runningIndex,
       runningName: described.name,
       runningSummary: described.summary,

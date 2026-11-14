@@ -12,6 +12,7 @@
 
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
+import { TOOL_STATUS_INTERRUPTED } from '@/utils/toolStatus'
 
 /** A content block within a chat message (text, thinking, tool_use, error, warning). */
 export interface ContentBlock {
@@ -274,6 +275,28 @@ function isGarbageOutput(output: string | undefined): boolean {
 export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
 
 /**
+ * Close a tool block whose result this view will never see, marking it
+ * `interrupted` instead of pretending it succeeded.
+ *
+ * Every caller has stopped waiting for the same reason — the turn ended, the
+ * reply was split at a mid-turn injection, the tool went silent past the stall
+ * watchdog, or this view navigated away — and a green check on a tool nobody
+ * watched finish is exactly what made the transcript claim 已完成 while the
+ * detail drawer still said 执行中. A real tool_result arriving later overwrites
+ * both fields, so stamping this optimistically is safe.
+ *
+ * PermissionApproval is exempt: its card reads `done` as "approved", and none of
+ * these paths approved anything.
+ */
+export function closeToolAsInterrupted<T extends object>(block: T): void {
+  const b = block as T & { type?: string; name?: string; done?: boolean; status?: string; output?: string }
+  if (b.type !== 'tool_use' || b.name === 'PermissionApproval') return
+  b.done = true
+  if (!b.status) b.status = TOOL_STATUS_INTERRUPTED
+  if (isGarbageOutput(b.output)) b.output = ''
+}
+
+/**
  * Tool names that spawn a sub-agent. Their calls run for minutes inside a child
  * session and legitimately outlive the generic 30s tool watchdog, so any
  * "mark unfinished tools as done" cleanup must exempt them — otherwise the
@@ -452,21 +475,13 @@ export function forceCleanupStreamingState(
     // from a stale pre-disconnect prefix (which must yield to the DB row).
     if (holdsCompleteTurn) streamingMsg._finalizedLocally = true
     else delete streamingMsg._finalizedLocally
-    // Mark all unfinished tool_use blocks as done so spinner stops.
-    // Exception: PermissionApproval blocks require user interaction —
-    // marking them done without a real result makes the card appear
-    // "Approved" when it's actually stuck (no user response received).
+    // Mark all unfinished tool_use blocks as interrupted so the spinner stops
+    // without claiming a success. Exception: PermissionApproval blocks require
+    // user interaction — marking them done without a real result makes the card
+    // appear "Approved" when it's actually stuck (no user response received).
     if (streamingMsg.blocks) {
       for (const block of streamingMsg.blocks) {
-        if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
-          block.done = true
-          // Clear garbage output that may have been set by intermediate
-          // ACP ToolCallUpdate events (e.g., a lone "}" from partial JSON).
-          // Real output arrives via tool_result events which set done=true.
-          if (isGarbageOutput(block.output)) {
-            block.output = ''
-          }
-        }
+        if (block.type === 'tool_use') closeToolAsInterrupted(block)
         // Close out any thinking block still marked streaming. `thinking_done`
         // is NOT guaranteed per block (a turn ending on reasoning never gets
         // one) and is never re-delivered to a client that was unsubscribed when
@@ -671,13 +686,10 @@ export function finalizeStreamingForDrain(
   if (!streamingMsg) return
   delete streamingMsg.streaming
   if (streamingMsg.blocks) {
+    // The reply this turn produced is complete; a tool still open in it will
+    // never get its result (the next queued message starts a new turn).
     for (const block of streamingMsg.blocks) {
-      if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
-        block.done = true
-        if (isGarbageOutput(block.output)) {
-          block.output = ''
-        }
-      }
+      if (block.type === 'tool_use') closeToolAsInterrupted(block)
     }
   }
   callbacks.onExtractScheduledTasks?.(messages)
@@ -1962,15 +1974,12 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const before = state.find((m) => m.role === 'assistant' && m.streaming)
       if (before) {
         delete before.streaming
-        // Unfinished tool blocks belong to the completed half: mark them done so
-        // their spinners stop (PermissionApproval excluded — see
-        // forceCleanupStreamingState for why).
+        // Unfinished tool blocks belong to the completed half: close them as
+        // interrupted so their spinners stop without claiming success
+        // (PermissionApproval excluded — see forceCleanupStreamingState).
         if (before.blocks) {
           for (const block of before.blocks) {
-            if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
-              block.done = true
-              if (isGarbageOutput(block.output)) block.output = ''
-            }
+            if (block.type === 'tool_use') closeToolAsInterrupted(block)
           }
         }
       }

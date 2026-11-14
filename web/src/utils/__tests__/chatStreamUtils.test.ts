@@ -237,6 +237,34 @@ describe('forceCleanupStreamingState', () => {
     expect(messages[0].blocks.find((b: any) => b.type === 'tool_use').done).toBe(true)
   })
 
+  // A tool still open when the turn ends will never get its result. It is
+  // settled (spinner stops) but it did NOT succeed — a green check here is what
+  // made the transcript claim 已完成 while the detail drawer still said 执行中.
+  it('closes an unfinished tool as interrupted, not as a success', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'tool_use', name: 'Bash', id: 't-run', done: false },
+        { type: 'tool_use', name: 'Read', id: 't-done', done: true, status: 'success' },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    const [running, done] = messages[0].blocks
+    expect(running.done).toBe(true)
+    expect(running.status, 'never claim a success nobody saw').toBe('interrupted')
+    expect(done.status, 'a real verdict is kept').toBe('success')
+  })
+
+  it('leaves a pending PermissionApproval card pending', () => {
+    // Its card renders "approved" from done; a cancelled turn approved nothing.
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'tool_use', name: 'PermissionApproval', id: 'perm-1', done: false },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    expect(messages[0].blocks[0].done).toBe(false)
+  })
+
   it('leaves an already-finished thinking block alone', () => {
     const messages: any[] = [
       { role: 'assistant', content: '', streaming: true, blocks: [

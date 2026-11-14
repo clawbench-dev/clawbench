@@ -8,6 +8,12 @@
         <span v-if="toolDone && toolDuration > 0" class="tool-detail-duration">{{ formatDuration(toolDuration) }}</span>
         <LoadingIndicator v-if="!toolDone" size="sm" inline />
         <XCircle v-else-if="toolStatus === 'error'" :size="14" color="#ef4444" class="tool-detail-status" />
+        <!-- Closed without a result: the turn ended (or the tool went silent)
+             while it was running. Not a success, not an error. -->
+        <span v-else-if="toolStatus === 'interrupted'" class="tool-detail-interrupted">
+          {{ $t('chat.contentBlocks.toolInterrupted') }}
+          <CircleSlash :size="14" color="#f59e0b" />
+        </span>
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
     </template>
@@ -18,6 +24,9 @@
         <div class="tool-output-header">
           <span class="tool-output-label">output</span>
           <span v-if="toolStatus === 'error'" class="tool-output-status tool-output-error">error</span>
+          <!-- Partial output from a tool the turn stopped waiting for is not an
+               "ok" result either. -->
+          <span v-else-if="toolStatus === 'interrupted'" class="tool-output-status tool-output-interrupted">{{ $t('chat.contentBlocks.toolInterrupted') }}</span>
           <span v-else class="tool-output-status tool-output-success">ok</span>
           <span class="tool-output-header-actions">
             <button class="tool-content-copy-btn" data-action="copy" data-content-selector=".tool-output-body" type="button" :title="$t('common.copy')" :aria-label="$t('common.copy')" v-html="COPY_ICON_SVG" />
@@ -40,7 +49,7 @@
 
 <script setup>
 import { computed, ref, onMounted, onUpdated, nextTick, inject } from 'vue'
-import { CheckCircle2, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, CircleSlash, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -230,6 +239,20 @@ onUpdated(restoreAskStates)
   margin-left: auto;
 }
 
+/* Interrupted is a verdict of its own, so it gets the text label the other two
+   verdicts only carry as an icon: nothing failed, and the reader would otherwise
+   read a bare amber glyph as a warning. */
+.tool-detail-interrupted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #f59e0b;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
 .tool-detail-duration {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
@@ -324,6 +347,16 @@ onUpdated(restoreAskStates)
 :root[data-theme-base="dark"] .tool-detail-body .tool-output-error {
   background: rgba(248, 113, 113, 0.15);
   color: #fca5a5;
+}
+
+.tool-detail-body .tool-output-interrupted {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+:root[data-theme-base="dark"] .tool-detail-body .tool-output-interrupted {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
 }
 
 .tool-detail-body .tool-output-body {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -250,6 +251,21 @@ func TestExtractSummaryCards_ExcludesSubAgentBlocks(t *testing.T) {
 	}
 	if len(cards.Tools) != 1 || cards.Tools[0].ID != "top-ask" {
 		t.Fatalf("expected only the top-level ask card, got %+v", cards.Tools)
+	}
+}
+
+// A tool the turn stopped waiting for is closed (Done=true) but never reported
+// a result, so the file it was editing may not have been touched at all. The
+// summary view offers a diff per entry — do not claim a change nobody saw.
+func TestExtractSummaryCards_SkipsInterruptedFileChanges(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "Edit", ID: "e-done", FilePath: "/src/ok.go", Done: true, Status: "success"},
+		{Type: "tool_use", Name: "Edit", ID: "e-cut", FilePath: "/src/cut.go", Done: true, Status: ai.ToolStatusInterrupted},
+	}
+	cards := extractSummaryCards(blocks)
+
+	if len(cards.ModifiedFiles) != 1 || cards.ModifiedFiles[0].Path != "/src/ok.go" {
+		t.Fatalf("expected only the finished edit, got %+v", cards.ModifiedFiles)
 	}
 }
 

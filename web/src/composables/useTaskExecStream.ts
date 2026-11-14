@@ -1,7 +1,7 @@
 import { ref, onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from './useGlobalEvents'
-import { appendThinkingDelta, findLastBlockOfType, isSubagentToolName, isElicitationRequest, type ContentBlock } from '@/utils/chatStreamUtils.ts'
+import { appendThinkingDelta, findLastBlockOfType, isSubagentToolName, isElicitationRequest, closeToolAsInterrupted, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 
@@ -184,8 +184,9 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (!shouldSkipWatchdog(existing.name, existing.input)) {
               toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
                 if (!existing.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                  existing.done = true
+                  // Stalled is not finished — see closeToolAsInterrupted.
+                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as interrupted`)
+                  closeToolAsInterrupted(existing)
                 }
               })
             }
@@ -203,8 +204,9 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (!shouldSkipWatchdog(data.name, data.input)) {
               toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
                 if (!newBlock.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                  newBlock.done = true
+                  // Stalled is not finished — see closeToolAsInterrupted.
+                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as interrupted`)
+                  closeToolAsInterrupted(newBlock)
                 }
               })
             }

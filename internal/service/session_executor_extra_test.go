@@ -978,13 +978,13 @@ func TestSessionExecutor_BuildResult_AskUserQuestionPersisted(t *testing.T) {
 	result := executor.buildResult(true, wallStart)
 
 	// AskUserQuestion tool calls are persisted only in Finalize, not buildResult.
-	// Simulate the full pipeline by calling persistAskToolCalls on the result blocks.
-	executor.persistAskToolCalls(result.Blocks)
+	// Simulate the full pipeline by calling persistToolCalls on the result blocks.
+	executor.persistToolCalls(result.Blocks)
 
 	// Verify the AskUserQuestion tool call was persisted
 	record, err := GetToolCall("ask-001", msgID)
 	require.NoError(t, err)
-	require.NotNil(t, record, "AskUserQuestion tool call should be persisted after persistAskToolCalls")
+	require.NotNil(t, record, "AskUserQuestion tool call should be persisted after persistToolCalls")
 	assert.Equal(t, "AskUserQuestion", record.Name)
 	_ = result
 }

@@ -617,6 +617,30 @@ func TestMarkAllThinkingDone(t *testing.T) {
 	assert.Equal(t, "reply", got[3].Text)
 }
 
+func TestCloseUnfinishedTools(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", ID: "t-running", Name: "Bash", Done: false},
+		{Type: "tool_use", ID: "t-done", Name: "Read", Done: true, Status: "success"},
+		{Type: "tool_use", ID: "t-perm", Name: "PermissionApproval", Done: false},
+		{Type: "text", Text: "reply"},
+	}
+
+	CloseUnfinishedTools(blocks)
+
+	// The still-running tool is the only one closed, and it is closed as
+	// interrupted — never as a success nobody observed.
+	assert.True(t, blocks[0].Done, "an in-flight tool cannot survive a terminal path")
+	assert.Equal(t, ToolStatusInterrupted, blocks[0].Status)
+	// A finished tool keeps its verdict.
+	assert.True(t, blocks[1].Done)
+	assert.Equal(t, "success", blocks[1].Status)
+	// PermissionApproval is left open on purpose: its card renders "approved"
+	// from done, and a cancelled turn approved nothing (same rule as the
+	// frontend's cleanup paths).
+	assert.False(t, blocks[2].Done, "a pending permission must not look approved")
+	assert.Equal(t, "reply", blocks[3].Text)
+}
+
 func TestAccumulateBlock_ToolCallUpdateMergeInput(t *testing.T) {
 	// When tool_call_update carries partial input, existing fields are preserved
 	// and new fields are added/overwritten

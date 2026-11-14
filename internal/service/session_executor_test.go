@@ -1796,7 +1796,7 @@ Which approach?
 	executor := NewSessionExecutor(ctx, cfg)
 	result := executor.RunWithChannel(ch)
 
-	// Finalize: this is where persistAskToolCalls runs, assigning the
+	// Finalize: this is where persistToolCalls runs, assigning the
 	// definitive IDs that get written to chat_tool_calls.
 	finalized := executor.Finalize(result, nil)
 	msgID := finalized.MsgID
@@ -1840,6 +1840,110 @@ Which approach?
 	if !ok || len(questions) == 0 {
 		t.Errorf("expected questions array in tool call input, got %v", toolInput)
 	}
+}
+
+// A cancelled turn leaves its in-flight tool without a tool_result. The
+// streaming flush already wrote that tool's chat_tool_calls row with done=false,
+// and the transcript renders the settled block as done (a turn that is over
+// cannot still be running). If Finalize does not close the row too, the two
+// views disagree for the rest of the row's life: the collapsed pill shows a
+// check while the detail drawer spins forever.
+func TestSessionExecutor_Finalize_ClosesUnfinishedToolCall(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	require.NotZero(t, streamingMsgID, "expected a streaming message row from setup")
+
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	}
+	events := []ai.StreamEvent{
+		// The tool starts and never reports back: the user cancels the turn while
+		// `sleep 60` is running.
+		{Type: "tool_use", Tool: &ai.ToolCall{
+			Name:  "Bash",
+			ID:    "toolu_running",
+			Input: `{"command":"sleep 60"}`,
+			Done:  false,
+		}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	// The streaming flush wrote this row while the tool was still running, and
+	// the final flush only re-writes tools queued since the last window — so
+	// without an explicit terminal pass the row keeps done=false for ever.
+	require.NoError(t, UpsertToolCall(
+		streamingMsgID, sid, "toolu_running", "Bash",
+		json.RawMessage(`{"command":"sleep 60"}`), "", "", "", false, 0,
+	))
+
+	SetCancelReason(sid, cancelReasonUser)
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	finalized := executor.Finalize(result, nil)
+	require.NotZero(t, finalized.MsgID, "expected a finalized message id")
+
+	rec, err := GetToolCall("toolu_running", finalized.MsgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec, "the in-flight tool must still have its chat_tool_calls row")
+	require.True(t, rec.Done, "a terminal path must not leave a tool running in chat_tool_calls")
+	require.Equal(t, ai.ToolStatusInterrupted, rec.Status,
+		"an unfinished tool is neither a success nor an error — it was interrupted")
+}
+
+// The row above can also be written by an EARLIER flush (a Bash that ran for a
+// minute was flushed seconds after it started). That row is not in the final
+// flush's pending set, so only the terminal pass can correct it.
+func TestSessionExecutor_PersistToolCalls_ClosesRowWrittenWhileRunning(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	require.NotZero(t, streamingMsgID)
+
+	// The mid-stream flush: the tool is still running.
+	require.NoError(t, UpsertToolCall(
+		streamingMsgID, sid, "toolu_slow", "Bash",
+		json.RawMessage(`{"command":"sleep 60"}`), "", "", "", false, 0,
+	))
+
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: streamingMsgID,
+	})
+	// A terminal path has already closed the block by now (postProcessBlocks).
+	executor.persistToolCalls([]model.ContentBlock{
+		{Type: "tool_use", ID: "toolu_slow", Name: "Bash", Input: map[string]any{"command": "sleep 60"}, Done: true},
+	})
+
+	rec, err := GetToolCall("toolu_slow", streamingMsgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.True(t, rec.Done, "the terminal pass must re-write rows the mid-stream flush left open")
 }
 
 func TestSessionExecutor_BuildResult_AskUserQuestionContentJSONIncludesInput(t *testing.T) {

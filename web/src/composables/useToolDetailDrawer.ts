@@ -94,6 +94,39 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   // If user clicks retry while a fetch is in flight, flag to re-fetch after current one completes
   let _retryRequested = false
 
+  /**
+   * `done` only ever moves FORWARD (running → finished); a tool never starts
+   * running again. Every source of it here is a lagging copy of that one
+   * transition — the live block (WS events) and the API record
+   * (chat_tool_calls, written by the ~500 ms streaming flush) — so assigning it
+   * verbatim let a stale copy undo a newer fact:
+   *
+   *  - the detail of a tool that had just finished opened its fetch while the
+   *    row still said done=false; the response landed AFTER the live block's
+   *    done=true, and the drawer spun forever on a tool the transcript already
+   *    showed as completed;
+   *  - a settled row whose tool never reported a result (cancelled turn, crashed
+   *    agent, steer split) keeps done=false in chat_tool_calls for the rest of
+   *    its life, while the transcript renders it as done (parseAssistantContent
+   *    cannot know, so it does not leave a spinner).
+   *
+   * Both showed up as "详情还在执行，收起状态下却是已完成". Only raise it, never
+   * lower it.
+   */
+  function markDone(done: unknown) {
+    if (done === true) toolDetailData.value.done = true
+  }
+
+  /**
+   * `status` is the verdict and it is just as sticky: the API record can be
+   * older than the block the drawer opened on (a cancelled turn keeps an empty
+   * status in that table for ever), and assigning its '' verbatim would erase
+   * "interrupted"/"error" and fall back to the green check.
+   */
+  function applyStatus(status: unknown) {
+    if (typeof status === 'string' && status !== '') toolDetailData.value.status = status
+  }
+
   function toolCallEmptyState(msg: string) {
     return `<div class="tool-call-empty"><span class="tool-call-empty-msg">${msg}</span><button class="tool-call-retry-btn" onclick="this.closest('.tool-call-empty').dataset.retry='1'">${t('chat.contentBlocks.retry')}</button></div>`
   }
@@ -121,6 +154,11 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
     if (block.blockIdx !== undefined) {
       activeToolOverlay.value = { msgId: String(block.msgId), blockIdx: block.blockIdx }
+    } else {
+      // Clear it: leaving the previous tool's coordinates in place made the
+      // live-block watcher copy THAT tool's done/status/duration onto this one
+      // (a summary card has no block index at all).
+      activeToolOverlay.value = null
     }
 
     const hasInput = block.input && Object.keys(block.input).length > 0
@@ -190,8 +228,8 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
           // Share snapshots carry a finished tool, so annotate unconditionally.
           toolDetailData.value.outputHtml = formatToolOutput(shared.output, block.name || '', { input: shared.input as Record<string, unknown> | undefined })
         }
-        if (shared.done !== undefined) toolDetailData.value.done = !!shared.done
-        if (shared.status) toolDetailData.value.status = shared.status
+        if (shared.done !== undefined) markDone(shared.done)
+        applyStatus(shared.status)
         if (shared.durationMs !== undefined && shared.durationMs > 0) toolDetailData.value.duration = shared.durationMs
         _verifyAnnotations()
         return
@@ -241,13 +279,11 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       }
       // Verify file path and commit hash annotations after DOM update
       _verifyAnnotations()
-      // Sync done/status from API response so the polling watcher can stop
-      if (data.done !== undefined) {
-        toolDetailData.value.done = !!data.done
-      }
-      if (data.status !== undefined && data.status !== null) {
-        toolDetailData.value.status = data.status
-      }
+      // Sync done/status from API response so the polling watcher can stop.
+      // `done` may only be raised (see markDone) — this response can be older
+      // than the live block it is being merged into.
+      if (data.done !== undefined) markDone(data.done)
+      applyStatus(data.status)
       if (data.duration_ms !== undefined && data.duration_ms !== null && data.duration_ms > 0) {
         toolDetailData.value.duration = data.duration_ms
       }
@@ -302,12 +338,13 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       },
       (snap) => {
         if (!snap || !drawer.isOpen.value) return
-        // Direct assignment (no truthy guards): live block is the source of
-        // truth for streaming state, and its fields only ever accumulate
-        // ('' → 'running' → success/error, duration 0 → positive). Keeping the
-        // guards would leave stale values if a field were ever reset.
-        toolDetailData.value.done = snap.done
-        toolDetailData.value.status = snap.status
+        // done is monotonic (see markDone): the live block is the source of
+        // truth for streaming state, but a response that already learned the
+        // tool finished must not be walked back by a lagging live snapshot.
+        markDone(snap.done)
+        // Same rule for the verdict (see applyStatus), and duration only ever
+        // grows.
+        applyStatus(snap.status)
         toolDetailData.value.duration = snap.duration
       },
     )

@@ -1501,6 +1501,8 @@ export default {
       toolGroupRunning: '正在执行 {index}/{count}',
       toolGroupDone: '已执行 {count} 个操作',
       toolGroupFailed: '{count} 个失败',
+      toolGroupInterrupted: '{count} 个已中断',
+      toolInterrupted: '已中断',
       toolGroupCollapse: '收起',
       warningReasons: {
         user_cancel: '用户已中断',

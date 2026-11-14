@@ -1495,6 +1495,8 @@ export default {
       toolGroupRunning: 'Running {index}/{count}',
       toolGroupDone: 'Ran {count} operations',
       toolGroupFailed: '{count} failed',
+      toolGroupInterrupted: '{count} interrupted',
+      toolInterrupted: 'Interrupted',
       toolGroupCollapse: 'Collapse',
       warningReasons: {
         user_cancel: 'User cancelled',

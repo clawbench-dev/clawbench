@@ -8,7 +8,7 @@ import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
 import { updateTeamState } from './useTeamState'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, isElicitationRequest, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, isElicitationRequest, closeToolAsInterrupted, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -888,8 +888,13 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name) && !isElicitationRequest(block?.input)) {
             toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
               if (block && !block.done) {
-                appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                block.done = true
+                // "Stalled" is not "finished": the completion event may have been
+                // dropped, or the tool may still be running (a quiet `sleep 300`
+                // sends nothing for minutes). Stop the spinner, but label it
+                // interrupted — a green check here is what showed 已完成 for a
+                // tool the detail drawer still reported as running.
+                appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as interrupted`)
+                closeToolAsInterrupted(block)
                 onRenderNeeded()
               }
             })

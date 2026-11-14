@@ -5,7 +5,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { buildSendChannels, dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
-import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
+import { isSubagentToolName, closeToolAsInterrupted } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
 import { addQueued, clearQueue, getQueue, removeQueued, removeQueuedMany, updateQueuedText } from '@/composables/useMessageQueue.ts'
 import type { ForkTarget } from '@/composables/useChatSession.ts'
@@ -424,7 +424,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           // exemption the streaming tool watchdog applies (useChatStream). Without
           // it a still-working sub-agent shows its finished check.
           if (block.type === 'tool_use' && !block.done && !isSubagentToolName(block.name as string | undefined)) {
-            block.done = true
+            // This view is walking away from a turn that is still running, so
+            // nothing here finished — label it interrupted rather than success.
+            closeToolAsInterrupted(block)
           }
         }
       }

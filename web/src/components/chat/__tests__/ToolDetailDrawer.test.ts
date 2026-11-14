@@ -38,7 +38,13 @@ import i18nGlobal from '@/i18n'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { common: { copy: 'Copy' }, toolDetailBlock: { wrapOn: 'Wrap on', wrapOff: 'Wrap off' } } },
+  messages: {
+    en: {
+      common: { copy: 'Copy' },
+      toolDetailBlock: { wrapOn: 'Wrap on', wrapOff: 'Wrap off' },
+      chat: { contentBlocks: { toolInterrupted: 'Interrupted' } },
+    },
+  },
 })
 
 const LucideStub = { template: '<span />' }
@@ -75,6 +81,29 @@ afterEach(() => {
   for (const w of wrappers.splice(0)) {
     if (w.exists()) w.unmount()
   }
+})
+
+describe('ToolDetailDrawer — interrupted tools', () => {
+  // The transcript shows an interrupted tool with its own mark, so the drawer
+  // header must say the same thing instead of spinning (it has no result to
+  // wait for) or showing a green check (nothing succeeded).
+  it('labels a tool whose result never arrived', async () => {
+    const wrapper = mountDrawer({
+      toolName: 'Bash',
+      toolStatus: 'interrupted',
+      toolDone: true,
+      toolInputHtml: '<div class="bash-terminal-view" />',
+    })
+    await nextTick()
+    expect(wrapper.find('.tool-detail-interrupted').text()).toBe('Interrupted')
+    expect(wrapper.find('.tool-detail-header').exists()).toBe(true)
+  })
+
+  it('still shows the spinner while the tool is running', async () => {
+    const wrapper = mountDrawer({ toolName: 'Bash', toolStatus: '', toolDone: false, toolInputHtml: '<div />' })
+    await nextTick()
+    expect(wrapper.find('.tool-detail-interrupted').exists()).toBe(false)
+  })
 })
 
 describe('ToolDetailDrawer — subagent label', () => {

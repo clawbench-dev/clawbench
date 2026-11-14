@@ -44,6 +44,16 @@ describe('buildToolCallGroups', () => {
     expect(groups[0]).toMatchObject({ toolCount: 3, failedCount: 2 })
   })
 
+  it('counts interrupted tools separately from failures', () => {
+    // Nothing failed here — the turn stopped waiting for them. The strip must
+    // not report them as failures, and must not report them as success either.
+    const { groups } = buildToolCallGroups(
+      [tool('a'), tool('b', { status: 'interrupted' }), tool('c', { status: 'error' })],
+      opts,
+    )
+    expect(groups[0]).toMatchObject({ toolCount: 3, failedCount: 1, interruptedCount: 1 })
+  })
+
   it('reports the last running tool with its 1-based position', () => {
     const { groups } = buildToolCallGroups(
       [tool('a'), tool('b', { done: false, status: '' }), tool('c', { done: false, status: '' })],

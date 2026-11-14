@@ -4,6 +4,7 @@
  */
 import { baseName } from '@/utils/path.ts'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
+import { TOOL_STATUS_INTERRUPTED } from '@/utils/toolStatus'
 
 /** Options for parseAssistantContent. */
 export interface ParseAssistantContentOptions {
@@ -38,14 +39,27 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
         if (b.type === 'tool_use') {
           if (!b.name) b.name = ''
           // Historical rows may not carry `done` at all (it was not persisted
-          // before Done-field support), so an absent/false value there means
-          // "we cannot know it finished" and the row is rendered as settled.
+          // before Done-field support), so an ABSENT value there means "we
+          // cannot know it finished" and the row is rendered as settled.
           //
           // A LIVE row is the opposite: `done: false` is a real, current fact —
           // the tool is still running. Forcing it to true made a running
           // sub-agent's Agent pill show its green check while the sub-agent was
           // still producing output (and the same for any long tool).
-          if (!liveStreaming && (b.done === undefined || b.done === false)) b.done = true
+          //
+          // A SETTLED row that still says `done: false` is a third case: the
+          // turn ended while that tool was in flight (user cancel, agent crash,
+          // steer split), so the result will never arrive. It is settled — no
+          // spinner — but it is NOT a success, so it is stamped "interrupted"
+          // and every view draws it that way instead of a green check.
+          if (!liveStreaming) {
+            if (b.done === false) {
+              b.done = true
+              if (!b.status) b.status = TOOL_STATUS_INTERRUPTED
+            } else if (b.done === undefined) {
+              b.done = true
+            }
+          }
           if (!b.output && b.input && b.input.output) {
             b.output = b.input.output
             delete b.input.output

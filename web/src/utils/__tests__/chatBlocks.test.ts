@@ -210,6 +210,35 @@ describe('parseAssistantContent', () => {
       expect(parseAssistantContent(content).blocks[0].done).toBe(true)
       expect(parseAssistantContent(content, { liveStreaming: false }).blocks[0].done).toBe(true)
     })
+
+    // A settled row that still says done=false is NOT the same as an old row
+    // with no `done` field at all: the backend knew the tool never finished
+    // (turn cancelled / agent crashed / reply split). It is settled — no
+    // spinner — but it must not wear a success check either.
+    it('marks a settled-but-unfinished tool as interrupted', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Bash', id: 'call_sleep', input: { command: 'sleep 60' }, done: false, status: '' }],
+      })
+      const block = parseAssistantContent(content).blocks[0]
+      expect(block.done).toBe(true)
+      expect(block.status).toBe('interrupted')
+    })
+
+    it('keeps a verdict the row already carries', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Bash', id: 'call_sleep', input: {}, done: false, status: 'error' }],
+      })
+      expect(parseAssistantContent(content).blocks[0].status).toBe('error')
+    })
+
+    it('does not invent a verdict for old rows that simply lack `done`', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Read', id: 'old', input: {} }],
+      })
+      const block = parseAssistantContent(content).blocks[0]
+      expect(block.done).toBe(true)
+      expect(block.status).toBeUndefined()
+    })
   })
 
   it('migrates input.output to output field (Codex backward compat)', () => {
