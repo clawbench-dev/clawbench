@@ -2379,6 +2379,14 @@ export default {
       notReady: '编辑器还没准备好，请稍候再试',
       timeout: '导出超时，请重试',
     },
+    excel: {
+      viewMode: 'Excel 显示方式',
+      tableMode: '表格',
+      originalMode: '原样',
+      sheetFallback: '工作表 {n}',
+      rowsTruncated: '行数过多，仅显示前 {n} 行',
+      parseFailed: '这个表格解析失败了',
+    },
     table: {
       searchPlaceholder: '搜索表格内容',
       clearSearch: '清除搜索',

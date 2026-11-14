@@ -1,11 +1,14 @@
 <template>
   <div ref="rootRef" class="dt" :class="{ 'is-data': isData, 'is-fill': fill, 'no-wrap': !wrap }">
-    <!-- 表头栏：标题本身就是「简单表 / 数据表」的切换器 -->
+    <!-- 表头栏：左边是「简单表 ⇄ 数据表」开关 -->
     <div class="dt-head">
-      <div class="dt-seg" role="group" :aria-label="t('dataTable.mode')">
-        <button type="button" :class="{ 'is-on': !isData }" @click="setMode('normal')">{{ t('dataTable.normal') }}</button>
-        <button type="button" :class="{ 'is-on': isData }" @click="setMode('data')">{{ t('dataTable.data') }}</button>
-      </div>
+      <ModeSwitch
+        :model-value="isData"
+        :left-label="t('dataTable.normal')"
+        :right-label="t('dataTable.data')"
+        :aria-label="t('dataTable.mode')"
+        @update:model-value="setMode($event ? 'data' : 'normal')"
+      />
       <span class="dt-head-spacer" />
       <div class="dt-actions">
         <button
@@ -339,6 +342,7 @@ import { copyText } from '@/utils/clipboard'
 import { getDefaultBlockWrap } from '@/utils/blockWrapRead'
 import { maximizeIconSvg } from '@/utils/blockHeaderIcons'
 import { useToast } from '@/composables/useToast'
+import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const props = defineProps<{
   headers: string[]
@@ -936,39 +940,6 @@ defineExpose({ focusSearch, closeSearch })
   flex: 1 1 auto;
 }
 
-/* 尺寸跟原来的「表格」标题一致：小字号、无边框、无大背景。 */
-.dt-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  padding: 1px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-}
-
-.dt-seg button {
-  padding: 0 calc(4 * var(--dp));
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.dt-seg button:hover {
-  color: var(--text-secondary);
-}
-
-.dt-seg button.is-on {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
 .dt-actions {
   display: flex;
   align-items: center;
@@ -1009,7 +980,6 @@ defineExpose({ focusSearch, closeSearch })
   opacity: 0.6;
 }
 
-.dt-seg button:focus-visible,
 .dt-tool:focus-visible,
 .dt-page-btn:focus-visible {
   outline: 2px solid var(--accent-color);

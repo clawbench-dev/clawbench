@@ -97,7 +97,7 @@ describe('DataTable', () => {
     const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
     expect(wrapper.find('.dt-bar').exists()).toBe(false)
 
-    await wrapper.findAll('.dt-seg button')[1].trigger('click')
+    await wrapper.find('.mode-switch').trigger('click')
     expect(wrapper.find('.dt-bar').exists()).toBe(true)
     expect(wrapper.findAll('.dt-funnel')).toHaveLength(2)
     // 没有数字列，不画合计行
@@ -131,13 +131,16 @@ describe('DataTable', () => {
 
   it('switches between plain and data mode from the toolbar', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
-    const [plain, data] = wrapper.findAll('.dt-seg button')
+    const modeSwitch = wrapper.find('.mode-switch')
+    expect(modeSwitch.attributes('aria-checked')).toBe('true')
 
-    await plain.trigger('click')
+    await modeSwitch.trigger('click')
     expect(wrapper.find('.dt').classes()).not.toContain('is-data')
+    expect(modeSwitch.attributes('aria-checked')).toBe('false')
 
-    await data.trigger('click')
+    await modeSwitch.trigger('click')
     expect(wrapper.find('.dt').classes()).toContain('is-data')
+    expect(modeSwitch.attributes('aria-checked')).toBe('true')
     wrapper.unmount()
   })
 

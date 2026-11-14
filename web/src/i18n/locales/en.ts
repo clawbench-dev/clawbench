@@ -2381,6 +2381,14 @@ export default {
       notReady: 'The editor is not ready yet, please retry shortly',
       timeout: 'Export timed out, please retry',
     },
+    excel: {
+      viewMode: 'Excel display mode',
+      tableMode: 'Table',
+      originalMode: 'Original',
+      sheetFallback: 'Sheet {n}',
+      rowsTruncated: 'Too many rows — only the first {n} are shown',
+      parseFailed: 'Could not parse this spreadsheet',
+    },
     table: {
       searchPlaceholder: 'Search table',
       clearSearch: 'Clear search',

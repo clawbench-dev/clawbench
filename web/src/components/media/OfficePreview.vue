@@ -1,28 +1,65 @@
 <template>
   <div class="office-preview-container" @wheel="onWheel">
+    <!-- 一条工具栏：左边工作表页签（放不下就横向滚动），右边「表格 / 原样」。
+         .xls 是二进制老格式，解析库读不了，只留原样。 -->
+    <div v-if="canShowExcelTable" class="excel-head">
+      <div v-if="sheetNames.length > 1" class="sheet-tabs" role="tablist">
+        <button
+          v-for="(name, index) in sheetNames"
+          :key="`${index}-${name}`"
+          type="button"
+          role="tab"
+          class="sheet-tab"
+          :class="{ 'is-on': index === activeSheet }"
+          :aria-selected="index === activeSheet"
+          @click="activeSheet = index"
+        >
+          {{ name || t('file.excel.sheetFallback', { n: index + 1 }) }}
+        </button>
+      </div>
+      <div class="excel-mode">
+        <ModeSwitch
+          :model-value="excelView === 'original'"
+          :left-label="t('file.excel.tableMode')"
+          :right-label="t('file.excel.originalMode')"
+          :aria-label="t('file.excel.viewMode')"
+          @update:model-value="setExcelView($event ? 'original' : 'table')"
+        />
+      </div>
+    </div>
+
     <!-- Preview body — component always mounted to avoid dead-lock -->
     <div
       ref="bodyRef"
       class="office-preview-body"
+      :class="{ 'is-table': isExcelTable }"
       :data-file-path="file?.path || ''"
       @touchstart.passive="onTouchStart"
       @touchmove="onTouchMove"
       @touchend="onTouchEnd"
       @touchcancel="onTouchEnd"
     >
-      <VueOfficeDocx v-if="isWord" :src="fileUrl" @rendered="onRendered" @error="onError" />
+      <ExcelTableBody
+        v-if="isExcelTable"
+        :src="fileUrl"
+        :active-sheet="activeSheet"
+        @sheets="onSheets"
+        @update:active-sheet="activeSheet = $event"
+      />
+      <VueOfficeDocx v-else-if="isWord" :src="fileUrl" @rendered="onRendered" @error="onError" />
       <VueOfficeExcel v-else-if="isExcel" :src="fileUrl" @rendered="onRendered" @error="onError" />
       <VueOfficePptx v-else-if="isPpt" :src="fileUrl" @rendered="onRendered" @error="onError" />
     </div>
 
     <!-- Loading overlay (absolute, does not block component mount). A document
-         preview has no rows to preserve, so it previews the page shape. -->
-    <div v-if="loading" class="office-loading-overlay">
+         preview has no rows to preserve, so it previews the page shape.
+         Excel 表格视图自己管加载/失败态，这里不能再盖一层。 -->
+    <div v-if="loading && !isExcelTable" class="office-loading-overlay">
       <PanelSkeleton class="office-loading-skeleton" variant="text" :rows="12" :label="t('common.loading')" />
     </div>
 
     <!-- Error overlay -->
-    <div v-if="error" class="office-error-overlay">
+    <div v-if="error && !isExcelTable" class="office-error-overlay">
       <FileX :size="48" />
       <div class="office-error-title">{{ t('file.viewer.loadFailed') }}</div>
       <div class="office-error-desc">{{ error }}</div>
@@ -41,22 +78,30 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX, Download, RefreshCw } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import ExcelTableBody from '@/components/media/ExcelTableBody.vue'
+import ModeSwitch from '@/components/common/ModeSwitch.vue'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { appLog } from '@/utils/appLog.ts'
 
 // Static imports — components must be available at mount time to avoid dead-lock
 // Reference doc: "组件始终挂载，立刻拉取 src 并渲染"
 import VueOfficeDocx from '@vue-office/docx'
-import VueOfficeExcel from '@vue-office/excel'
 import VueOfficePptx from '@vue-office/pptx'
 
 // CSS for docx and excel (PPT has NO CSS file — do NOT import)
 import '@vue-office/docx/lib/index.css'
 import '@vue-office/excel/lib/index.css'
+
+// Excel 默认走表格视图，原样渲染按需加载 —— 那个包有 1.6MB（内含 exceljs +
+// 表格画布），打开 xlsx 不该先付这笔钱。
+const VueOfficeExcel = defineAsyncComponent(
+  buildAsyncComponentOptions({ loader: () => import('@vue-office/excel').then(m => m.default) }),
+)
 
 const TAG = 'OfficePreview'
 
@@ -83,6 +128,21 @@ const lower = computed(() => (props.file?.name || '').toLowerCase())
 const isWord = computed(() => lower.value.endsWith('.docx'))
 const isExcel = computed(() => lower.value.endsWith('.xlsx') || lower.value.endsWith('.xls'))
 const isPpt = computed(() => lower.value.endsWith('.pptx'))
+// 老 .xls 是二进制 BIFF 格式，exceljs 读不了 —— 只提供原样渲染。
+const isXls = computed(() => lower.value.endsWith('.xls'))
+const canShowExcelTable = computed(() => isExcel.value && !isXls.value)
+
+const excelView = ref('table')
+const isExcelTable = computed(() => canShowExcelTable.value && excelView.value === 'table')
+
+// 页签归这条工具栏所有：表格视图解析完把工作表名报上来，切换只改序号。
+const sheetNames = ref([])
+const activeSheet = ref(0)
+
+function onSheets(names) {
+  sheetNames.value = names
+  if (activeSheet.value >= names.length) activeSheet.value = 0
+}
 
 // Reactivity trigger: changes the computed URL when file changes or reload() is called,
 // forcing the office viewer to re-fetch the file.
@@ -92,6 +152,24 @@ const fileUrl = computed(() => {
   const base = buildLocalFileUrl(props.file.path)
   return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
 })
+
+function setExcelView(view) {
+  if (excelView.value === view) return
+  excelView.value = view
+  error.value = ''
+  if (view === 'original') {
+    // 原样渲染器是重新挂载的，会再拉一次文件。
+    loading.value = true
+    mediaTimestamp.value = Date.now()
+    // 原样视图没有表格页签，先清掉，免得留一排点不动的名字。
+    sheetNames.value = []
+    activeSheet.value = 0
+  } else {
+    loading.value = false
+  }
+  // 换了渲染器，之前的几何量作废。
+  lastFitWidth = -1
+}
 
 // --- PPT zoom: CSS transform on pptx-preview-wrapper ---
 // `scale` is user zoom on top of the width fit: at 1 the wrapper is laid out at
@@ -245,7 +323,7 @@ function scheduleRefit() {
       refitRaf = 0
       refitPptx()
     })
-  } else if (isExcel.value) {
+  } else if (isExcel.value && !isExcelTable.value) {
     // Trailing debounce: a splitter drag emits a resize per frame and each
     // excel re-measure redraws the whole sheet.
     clearTimeout(refitTimer)
@@ -280,6 +358,10 @@ watch(() => props.file?.path, (newPath, oldPath) => {
     mediaTimestamp.value = Date.now()
     // New document, new mount-time geometry.
     lastFitWidth = -1
+    // 新文件回到默认的表格视图。
+    if (canShowExcelTable.value) excelView.value = 'table'
+    sheetNames.value = []
+    activeSheet.value = 0
   }
 })
 
@@ -306,6 +388,8 @@ defineExpose({
   onError,
   loading,
   error,
+  excelView,
+  setExcelView,
 })
 </script>
 
@@ -321,10 +405,85 @@ defineExpose({
   overflow: hidden;
 }
 
+/* Excel 顶部那一条工具栏：左边工作表页签，右边「表格 / 原样」。
+   硬朗紧凑风 —— 直角、1px 分隔线、2px 主题色下划线表示选中，不做胶囊。
+   必须压过加载遮罩（z-index: 10），否则原样视图加载期间没法切回表格。 */
+.excel-head {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  min-height: calc(26 * var(--dp));
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+
+/* 页签放不下就横向滚动，绝不换行撑高工具栏 */
+.sheet-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.sheet-tabs::-webkit-scrollbar {
+  height: calc(2 * var(--dp));
+}
+
+.sheet-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+}
+
+.sheet-tab {
+  flex-shrink: 0;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-right: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sheet-tab.is-on {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent-color);
+}
+
+@media (hover: hover) {
+  .sheet-tab:not(.is-on):hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.excel-mode {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 var(--space-4);
+  border-left: 1px solid var(--border-color);
+}
+
 .office-preview-body {
   flex: 1;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* 表格视图要自己撑满并内部滚动：DataTable 的 fill 模式要求父级是定高的
+   flex 列容器，否则表头粘不住、整页跟着一起滚。 */
+.office-preview-body.is-table {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* PPT zoom: allow pan but disable browser pinch-zoom so our handler takes over */

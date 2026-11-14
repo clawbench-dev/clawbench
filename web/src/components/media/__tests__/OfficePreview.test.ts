@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 import OfficePreview from '../OfficePreview.vue'
@@ -44,7 +44,10 @@ const i18n = createI18n({
   messages: {
     en: {
       common: { loading: 'Loading...', retry: 'Retry', download: 'Download' },
-      file: { viewer: { loadFailed: 'Failed to load document' } },
+      file: {
+        viewer: { loadFailed: 'Failed to load document' },
+        excel: { viewMode: 'Display', tableMode: 'Table', originalMode: 'Original' },
+      },
     },
   },
 })
@@ -91,6 +94,17 @@ const stubs = {
   FileX: true,
   Download: true,
   RefreshCw: true,
+  // The table view has its own test; here we only care which renderer is mounted
+  // and that its sheet names land in the shared toolbar.
+  ExcelTableBody: {
+    name: 'ExcelTableBody',
+    props: ['src', 'activeSheet'],
+    emits: ['sheets', 'update:activeSheet'],
+    template: '<div class="mock-excel-table"></div>',
+    mounted() {
+      this.$emit('sheets', ['销售', '备注'])
+    },
+  },
 }
 
 describe('OfficePreview', () => {
@@ -138,9 +152,53 @@ describe('OfficePreview', () => {
     expect(wrapper.find('.mock-docx').exists() || wrapper.find('.office-preview-body').exists()).toBe(true)
   })
 
-  it('renders excel component for .xlsx files', () => {
+  it('opens .xlsx in the table view by default', async () => {
     const wrapper = mountOffice({ file: { name: 'data.xlsx', path: 'data.xlsx', isOffice: true } })
-    expect(wrapper.find('.mock-excel').exists() || wrapper.find('.office-preview-body').exists()).toBe(true)
+    await flushPromises()
+    expect(wrapper.find('.mock-excel-table').exists()).toBe(true)
+    expect(wrapper.find('.mode-switch').exists()).toBe(true)
+  })
+
+  it('shows the sheet tabs and the view toggle in one toolbar', async () => {
+    const wrapper = mountOffice({ file: { name: 'data.xlsx', path: 'data.xlsx', isOffice: true } })
+    await flushPromises()
+
+    const head = wrapper.find('.excel-head')
+    expect(head.exists()).toBe(true)
+    expect(head.findAll('.sheet-tab').map(tab => tab.text())).toEqual(['销售', '备注'])
+    const modeSwitch = head.find('.mode-switch')
+    expect(modeSwitch.exists()).toBe(true)
+    expect(modeSwitch.attributes('aria-checked')).toBe('false')
+    expect(modeSwitch.text()).toContain('Table')
+    expect(modeSwitch.text()).toContain('Original')
+
+    await head.findAll('.sheet-tab')[1].trigger('click')
+    expect(wrapper.findComponent({ name: 'ExcelTableBody' }).props('activeSheet')).toBe(1)
+  })
+
+  it('drops the sheet tabs when switching to the original renderer', async () => {
+    const wrapper = mountOffice({ file: { name: 'data.xlsx', path: 'data.xlsx', isOffice: true } })
+    await flushPromises()
+    expect(wrapper.findAll('.sheet-tab')).toHaveLength(2)
+
+    await wrapper.find('.mode-switch').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.sheet-tab')).toHaveLength(0)
+    expect(wrapper.find('.excel-head').exists()).toBe(true)
+  })
+
+  it('switches an .xlsx to the original renderer', async () => {
+    const wrapper = mountOffice({ file: { name: 'data.xlsx', path: 'data.xlsx', isOffice: true } })
+    await flushPromises()
+    const modeSwitch = wrapper.find('.mode-switch')
+    expect(modeSwitch.attributes('aria-checked')).toBe('false')
+    await modeSwitch.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.mode-switch').attributes('aria-checked')).toBe('true')
+    expect(wrapper.find('.mock-excel').exists()).toBe(true)
+    expect(wrapper.find('.mock-excel-table').exists()).toBe(false)
   })
 
   it('renders pptx component for .pptx files', () => {
@@ -148,9 +206,11 @@ describe('OfficePreview', () => {
     expect(wrapper.find('.mock-pptx').exists() || wrapper.find('.office-preview-body').exists()).toBe(true)
   })
 
-  it('renders excel component for .xls files', () => {
+  it('keeps .xls on the original renderer (no table view, no toggle)', async () => {
     const wrapper = mountOffice({ file: { name: 'data.xls', path: 'data.xls', isOffice: true } })
-    expect(wrapper.find('.mock-excel').exists() || wrapper.find('.office-preview-body').exists()).toBe(true)
+    await flushPromises()
+    expect(wrapper.find('.mock-excel').exists()).toBe(true)
+    expect(wrapper.find('.office-view-toggle').exists()).toBe(false)
   })
 
   it('shows error overlay when error is set', async () => {
@@ -384,6 +444,8 @@ describe('OfficePreview', () => {
       vi.useFakeTimers()
       try {
         const wrapper = mountOffice({ file: { name: 'data.xlsx', path: 'data.xlsx', isOffice: true } })
+        // The table view is the default; the original renderer owns the re-measure.
+        ;(wrapper.vm as any).setExcelView('original')
         await nextTick()
         const spy = vi.fn()
         window.addEventListener('resize', spy)
