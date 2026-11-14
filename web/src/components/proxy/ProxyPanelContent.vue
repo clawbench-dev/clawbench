@@ -614,9 +614,9 @@ async function handleRetryTunnel() {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  /* White container so the bg-secondary cards stand out, matching the
+  /* Shared page surface so the bg-secondary cards stand out, matching the
      scheduled-task list page look. */
-  background: var(--bg-primary, #ffffff);
+  background: var(--panel-page-bg);
 }
 
 .proxy-panel {

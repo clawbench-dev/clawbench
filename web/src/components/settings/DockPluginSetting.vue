@@ -182,7 +182,8 @@ function openSettings(category: string | undefined): void {
 <style scoped>
 .dock-plugins {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Shared page surface (see --panel-page-bg). */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
@@ -208,7 +209,9 @@ function openSettings(category: string | undefined): void {
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  /* Card step above the page surface (see --panel-page-bg), like every other
+     card in the app. */
+  background: var(--bg-secondary);
   color: var(--text-primary);
   text-align: left;
   font-family: inherit;

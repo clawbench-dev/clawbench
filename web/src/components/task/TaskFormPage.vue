@@ -785,7 +785,7 @@ onMounted(() => {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-primary, #ffffff);
+  background: var(--panel-page-bg);
 }
 
 /* Compact header — unified with list/detail/settings/proxy headers */

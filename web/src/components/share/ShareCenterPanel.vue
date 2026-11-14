@@ -709,7 +709,10 @@ watch(
 .share-row {
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
   border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  /* The card step above the page surface, like every other panel's cards
+     (notifications, knowledge base, tasks). Painting it with the page colour
+     made the cards disappear into the background. */
+  background: var(--bg-secondary);
   overflow: hidden;
   transition: border-color var(--duration-fast);
 }

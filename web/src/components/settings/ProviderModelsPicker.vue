@@ -439,8 +439,10 @@ watch(
   width: 100%;
   padding: var(--space-2) var(--space-6);
 }
+/* The row sits inside a card that is already --bg-secondary, so the old
+   bg-secondary hover was invisible. */
 .models-row:hover {
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
 }
 .models-check {
   display: inline-flex;

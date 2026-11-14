@@ -1211,11 +1211,11 @@ watch(localValues, () => {
   background: var(--border-color);
 }
 
-/* Compact iOS-style card container */
+/* Compact card container — the surface step above the shared page surface */
 .group-panel__card {
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   margin-bottom: var(--space-4);
 }
 .group-panel__card :deep(.settings-item) {

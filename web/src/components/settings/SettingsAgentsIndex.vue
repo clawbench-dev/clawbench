@@ -160,7 +160,8 @@ async function handleRescan() {
 <style scoped>
 .settings-agents-index {
   padding: var(--space-4) 0;
-  background: var(--bg-secondary);
+  /* Shared page surface (see --panel-page-bg). */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
@@ -171,7 +172,7 @@ async function handleRescan() {
   min-height: calc(38 * var(--dp));
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   position: relative;
 }
 
@@ -187,12 +188,12 @@ async function handleRescan() {
 
 @media (hover: hover) {
   .settings-agents-index__rescan-row:hover {
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
   }
 }
 
 .settings-agents-index__rescan-row:active {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
 }
 
 .settings-agents-index__rescan-label {
@@ -219,7 +220,7 @@ async function handleRescan() {
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
   gap: var(--space-6);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   position: relative;
 }
 
@@ -236,12 +237,12 @@ async function handleRescan() {
 
 @media (hover: hover) {
   .settings-agents-index__row:hover {
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
   }
 }
 
 .settings-agents-index__row:active {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
 }
 
 .settings-agents-index__drag-handle {

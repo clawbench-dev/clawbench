@@ -1793,6 +1793,23 @@
 }
 
 /* ==========================================================================
+   One page surface for every left panel
+
+   A tab's page background used to depend on whether its root painted one:
+   panels that did used `--bg-primary`, panels that left the root transparent
+   fell through to `.tab-panel`'s `--bg-secondary`. Switching tabs therefore
+   changed the page colour by one step (white ↔ off-white in light themes,
+   clearly different in dark ones). Both paths now read `--panel-page-bg`, so
+   every tab page is the same surface.
+
+   Scoped to `.col-left`: the chat pane also renders a `.tab-panel` and keeps
+   its own `--bg-secondary` surface — it is a pane, not a tab.
+   ========================================================================== */
+.col-left .tab-panel {
+    background: var(--panel-page-bg);
+}
+
+/* ==========================================================================
    One header row for every left panel
 
    The two window controls (App.vue's .panel-head) are overlaid on the panel's

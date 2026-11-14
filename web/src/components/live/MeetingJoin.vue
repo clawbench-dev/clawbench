@@ -111,7 +111,7 @@ async function join(): Promise<void> {
 </script>
 
 <style scoped>
-.meeting-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-primary); }
+.meeting-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--panel-page-bg); }
 .meeting-header {
   display: flex; align-items: center; gap: var(--space-3);
   height: var(--header-height); padding: 0 var(--space-5) 0 var(--space-6);

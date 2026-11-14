@@ -189,7 +189,7 @@ function onRefresh() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-primary, #fff);
+  background: var(--panel-page-bg);
 }
 
 /* ── Tab bar (connected rectangular tabs, like terminal tabs) ── */

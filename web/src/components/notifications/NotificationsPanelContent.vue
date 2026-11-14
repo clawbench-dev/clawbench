@@ -611,7 +611,7 @@ function forgeTargetFromItemKey(key: string) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--panel-page-bg);
 }
 
 /* Header — unified with the task/forge panel headers. */

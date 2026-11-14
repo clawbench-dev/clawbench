@@ -302,7 +302,8 @@ async function openSession(item: AgentSessionEntry) {
 .settings-agent-sessions__list {
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary);
+  /* Surface step above the shared page surface (see --panel-page-bg). */
+  background: var(--bg-secondary);
 }
 
 /* A row is a real button (it navigates), so it must reset the UA button look

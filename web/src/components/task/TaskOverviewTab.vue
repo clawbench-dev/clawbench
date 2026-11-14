@@ -234,7 +234,7 @@ async function handlePromptClick(event: MouseEvent) {
 .task-overview {
   display: flex;
   flex-direction: column;
-  background: var(--bg-primary, #ffffff);
+  background: var(--panel-page-bg);
 }
 
 /* Flows as a plain block inside the parent scroll container (TaskDetailPage.detail-scroll).

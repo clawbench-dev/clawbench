@@ -805,6 +805,7 @@ function handleDiscard() {
 <style scoped>
 .settings-category {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Shared page surface (see --panel-page-bg). */
+  background: var(--panel-page-bg);
 }
 </style>

@@ -197,6 +197,14 @@
        right-most control must sit the same distance from the panel edge. ── */
     --panel-header-pad-x: var(--space-7);
 
+    /* ── The page surface behind EVERY left-panel tab. It is one token so
+       switching tabs never changes the page colour: panels either paint their
+       own root with it or stay transparent and let `.col-left .tab-panel`
+       show it. The chat pane is deliberately not included (it is a pane, not
+       a tab). Currently `--bg-primary`, i.e. the surface the git history tab
+       has always used. ── */
+    --panel-page-bg: var(--bg-primary);
+
     /* ── The empty-state glyph. Every "nothing here yet" surface in the app —
        the dock tabs, the meeting tabs, the drawers and search dialogs — draws
        the same centred glyph, so its size and stroke live here instead of at

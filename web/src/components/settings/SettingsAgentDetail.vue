@@ -930,7 +930,8 @@ async function handleDelete() {
 <style scoped>
 .settings-agent-detail {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Shared page surface (see --panel-page-bg). */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
@@ -1094,7 +1095,7 @@ async function handleDelete() {
 .settings-agent-detail__selftest-deep {
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-left: 2px solid #22c55e;
 }
 
@@ -1126,7 +1127,7 @@ async function handleDelete() {
 .settings-agent-detail__selftest-result {
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-left: 2px solid #22c55e;
 }
 

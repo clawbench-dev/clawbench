@@ -290,7 +290,7 @@ onMounted(refresh)
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-primary, #ffffff);
+  background: var(--panel-page-bg);
 }
 
 /* Compact header — unified with detail/form/history/settings/proxy headers */

@@ -18,11 +18,13 @@ defineProps<{
   margin-bottom: var(--space-4);
 }
 
-/* Compact iOS-style card: white rounded body on the grey page background */
+/* Compact iOS-style card: the surface step above the shared page surface
+   (--panel-page-bg). The page used to be the darker step and the card the
+   lighter one; unifying the page with the other tabs flipped the polarity. */
 .settings-card__body {
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
 }
 
 /* Group title inside the card, distinct from card body and page background */

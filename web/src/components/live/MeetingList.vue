@@ -721,7 +721,7 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-primary, #ffffff);
+  background: var(--panel-page-bg);
 }
 
 .meeting-header {

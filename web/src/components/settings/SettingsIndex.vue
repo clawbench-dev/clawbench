@@ -147,7 +147,9 @@ const groups = computed(() =>
 <style scoped>
 .settings-index {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Same page surface as every other left-panel tab; the grouped cards below
+     are the surface step on top of it. */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
@@ -180,13 +182,16 @@ const groups = computed(() =>
 }
 
 @media (hover: hover) {
+  /* The row sits on a --bg-secondary card, so the old bg-secondary hover
+     vanished into it. Mixed from the text colour: correct in every theme,
+     unlike a fixed one-step background jump. */
   .settings-index__row:hover {
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
   }
 }
 
 .settings-index__row:active {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
 }
 
 .settings-index__left {
