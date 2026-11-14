@@ -825,6 +825,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/kb/collections", ServeKBCollections)
 	register("/api/kb/documents", ServeKBDocuments)
 	register("/api/kb/documents/upload", ServeKBDocumentUpload)
+	register("/api/kb/documents/import", ServeKBDocumentImport)
 	register("/api/kb/documents/reindex", ServeKBDocumentReindex)
 	register("/api/kb/search", ServeKBSearch)
 	register("/api/kb/reindex", ServeKBReindex)

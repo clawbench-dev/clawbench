@@ -63,6 +63,11 @@ const i18n = createI18n({
         addFile: 'Add file',
         added: 'Added',
         addPartial: '{first} ({count} more failed)',
+        addToCollection: 'Add to knowledge base',
+        dirImportDone: 'Added {added} files',
+        dirImportSummary: '{added} added, {skipped} skipped, {duplicates} already there, {failed} failed',
+        dirImportTruncated: 'Too many files',
+        dirImportEmpty: 'No files to add',
         statusPending: 'Queued',
         statusExtracting: 'Parsing',
         statusReady: 'Searchable',
@@ -252,6 +257,28 @@ describe('KnowledgePanel', () => {
     expect(h.apiPost).toHaveBeenCalledWith('/api/kb/documents', { collection_id: 2, path: 'docs/a.md' })
     expect(h.apiPost).toHaveBeenCalledWith('/api/kb/documents', { collection_id: 2, path: 'docs/b.txt' })
     expect(h.toast).toHaveBeenCalledWith('Added', expect.anything())
+    expect(wrapper.findComponent({ name: 'AttachmentPicker' }).props('open')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('imports a selected folder in one request', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    h.apiPost.mockResolvedValueOnce({ added: 3, duplicates: 1, skipped: 2, failed: 0, truncated: false })
+
+    await wrapper.find('[data-action="kb-add"]').trigger('click')
+    const picker = wrapper.findComponent({ name: 'AttachmentPicker' })
+    picker.vm.$emit('confirm', [{ path: 'docs', isDir: true }])
+    await flushPromises()
+
+    expect(h.apiPost).toHaveBeenCalledWith('/api/kb/documents/import', { collection_id: 2, path: 'docs' })
+    expect(h.toast).toHaveBeenCalledWith(
+      '3 added, 2 skipped, 1 already there, 0 failed',
+      expect.objectContaining({ type: 'success' }),
+    )
+    // Folder imports close even when some files were skipped: retrying the
+    // same folder would only re-add what already landed.
     expect(wrapper.findComponent({ name: 'AttachmentPicker' }).props('open')).toBe(false)
     wrapper.unmount()
   })

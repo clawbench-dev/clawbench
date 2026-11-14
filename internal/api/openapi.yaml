@@ -7888,6 +7888,55 @@ paths:
         "413":
           description: 文件超过大小上限
 
+  /api/kb/documents/import:
+    post:
+      tags: [KnowledgeBase]
+      summary: 把整个文件夹加入知识库
+      description: |
+        递归遍历该文件夹，把其中**受支持**的文件逐个加入知识库（图片、音视频、
+        压缩包、旧版 Office、超大文件会被跳过并计入 `skipped`）。隐藏文件与
+        隐藏目录、依赖/构建目录（`.git`、`node_modules`、`dist` 等）不参与导入；
+        符号链接一律跳过。单次最多导入 500 个文件，超出时 `truncated` 为 true。
+        单个文件失败不影响其余文件。
+      operationId: kbDocumentImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection_id, path]
+              properties:
+                collection_id:
+                  type: integer
+                path:
+                  type: string
+                  description: 文件夹路径（相对项目根或绝对路径）。
+      responses:
+        "200":
+          description: |
+            导入结果：`added`（新增）、`duplicates`（已存在）、`skipped`
+            （不支持或过大）、`failed`（读写/入库失败）、`truncated`（超过单次上限）。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added:
+                    type: integer
+                  duplicates:
+                    type: integer
+                  skipped:
+                    type: integer
+                  failed:
+                    type: integer
+                  truncated:
+                    type: boolean
+        "400":
+          description: 路径不是文件夹，或请求体不完整
+        "403":
+          description: 该知识库不属于当前项目
+
   /api/kb/documents/reindex:
     post:
       tags: [KnowledgeBase]

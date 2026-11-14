@@ -71,6 +71,16 @@ export interface KBSearchResult {
   mode: 'hybrid' | 'vector' | 'fts'
 }
 
+/** Outcome of importing a folder: what landed, what was skipped as
+ *  unindexable, what already existed, and what failed outright. */
+export interface KBDirImportResult {
+  added: number
+  duplicates: number
+  skipped: number
+  failed: number
+  truncated: boolean
+}
+
 export interface KBStats {
   collections: number
   documents: number
@@ -238,22 +248,19 @@ export function useKnowledgeBase() {
     return doc
   }
 
-  async function uploadFile(file: File): Promise<KBDocument> {
+  /** Add every supported file under a folder. One request: the server walks
+   *  the tree (and applies its own skip rules), so a big folder is not hundreds
+   *  of round trips. */
+  async function importDirectory(path: string): Promise<KBDirImportResult> {
     if (selectedId.value == null) throw new Error('no collection selected')
-    const form = new FormData()
-    form.append('collection_id', String(selectedId.value))
-    form.append('file', file)
-    const resp = await fetch('/api/kb/documents/upload', { method: 'POST', body: form })
-    const data = (await resp.json().catch(() => ({}))) as Record<string, unknown>
-    if (!resp.ok) {
-      const err = new Error(data.error ? String(data.error) : resp.statusText)
-      ;(err as Error & { status?: number }).status = resp.status
-      throw err
-    }
-    bumpDocCount(1)
+    const result = await apiPost<KBDirImportResult>('/api/kb/documents/import', {
+      collection_id: selectedId.value,
+      path,
+    })
+    if (result.added > 0) bumpDocCount(result.added)
     await loadDocuments(selectedId.value, true)
     startPolling()
-    return data as unknown as KBDocument
+    return result
   }
 
   async function deleteDocument(id: number): Promise<void> {
@@ -358,7 +365,7 @@ export function useKnowledgeBase() {
     deleteCollection,
     setAutoInject,
     addFile,
-    uploadFile,
+    importDirectory,
     deleteDocument,
     reindexDocument,
     reindexCollection,

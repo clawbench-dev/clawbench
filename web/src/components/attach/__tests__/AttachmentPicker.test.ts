@@ -371,12 +371,11 @@ describe('AttachmentPicker', () => {
   })
 
   it('kb variant keeps the picker and uploads but drops the chat history tab', () => {
-    const wrapper = mountDrawer({ variant: 'kb', allowDir: false })
+    const wrapper = mountDrawer({ variant: 'kb' })
     expect(wrapper.findAll('.ad-tab').map(t => t.text())).toEqual(['Files', 'Uploads'])
     expect(wrapper.find('.file-picker-stub').exists()).toBe(true)
-    // A knowledge base ingests files, not folders: picking a directory could
-    // only end in a silent no-op.
-    expect(wrapper.findComponent({ name: 'FilePicker' }).props('allowDir')).toBe(false)
+    // A folder is a valid pick: the knowledge base imports its whole subtree.
+    expect(wrapper.findComponent({ name: 'FilePicker' }).props('allowDir')).toBe(true)
   })
 
   it('kb variant offers only the upload entry on mobile', () => {

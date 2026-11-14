@@ -317,9 +317,8 @@
       :open="addOpen"
       variant="kb"
       selection-only
-      :allow-dir="false"
-      :title="t('kb.addFile')"
-      :confirm-label="adding ? t('common.loading') : t('kb.addFile')"
+      :title="t('kb.addToCollection')"
+      :confirm-label="adding ? t('common.loading') : t('kb.addToCollection')"
       :busy="adding"
       :current-file="store.state.currentFile?.path || null"
       :current-dir="store.state.projectRoot"
@@ -402,6 +401,7 @@ const {
   deleteCollection,
   setAutoInject,
   addFile,
+  importDirectory,
   deleteDocument,
   reindexDocument,
   reindexCollection,
@@ -608,20 +608,59 @@ function closeAdd(): void {
 async function submitAdd(entries: FileEntry[]): Promise<void> {
   if (adding.value) return
   const files = entries.filter((e) => !e.isDir)
-  if (files.length === 0) return
+  const dirs = entries.filter((e) => e.isDir)
+  if (files.length === 0 && dirs.length === 0) return
   adding.value = true
   const failed: string[] = []
+  // Files and folders are counted together so one confirmation reads as one
+  // outcome, whichever mix the user picked.
+  const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
   try {
     for (const entry of files) {
       try {
         await addFile(entry.path)
+        totals.added++
       } catch (e) {
+        totals.failed++
         failed.push(`${baseName(entry.path)}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    for (const dir of dirs) {
+      try {
+        const res = await importDirectory(dir.path)
+        totals.added += res.added
+        totals.duplicates += res.duplicates
+        totals.skipped += res.skipped
+        totals.failed += res.failed
+        totals.truncated = totals.truncated || res.truncated
+      } catch (e) {
+        totals.failed++
+        failed.push(`${baseName(dir.path)}: ${e instanceof Error ? e.message : String(e)}`)
       }
     }
   } finally {
     adding.value = false
   }
+
+  if (dirs.length > 0) {
+    // A folder import always closes: retrying the same folder would only
+    // re-add what already landed. The summary says what happened to the rest.
+    closeAdd()
+    const messy = totals.skipped > 0 || totals.duplicates > 0 || totals.failed > 0
+    if (totals.added === 0 && totals.skipped === 0 && totals.duplicates === 0 && totals.failed === 0) {
+      toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3200 })
+      return
+    }
+    toast.show(
+      messy ? t('kb.dirImportSummary', totals) : t('kb.dirImportDone', totals),
+      { type: totals.added > 0 && totals.failed === 0 ? 'success' : 'error', duration: 4000 },
+    )
+    if (totals.truncated) {
+      toast.show(t('kb.dirImportTruncated'), { icon: 'warning', type: 'error', duration: 4000 })
+    }
+    return
+  }
+
   if (failed.length === 0) {
     closeAdd()
     toast.show(t('kb.added'), { type: 'success', duration: 1800 })

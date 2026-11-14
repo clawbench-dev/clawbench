@@ -282,9 +282,9 @@ const props = withDefaults(defineProps<{
    * the uploads tab (progress + recent uploads), so a mail attachment can be a
    * project file or a fresh upload.
    *
-   * `kb` is the knowledge-base "add documents" flow: same picker and uploads,
-   * but no camera/photo entries (a knowledge base only ingests text-like
-   * files).
+   * `kb` is the knowledge-base "add documents" flow: same picker, uploads and
+   * folder selection (a whole folder is imported recursively), but no
+   * camera/photo entries — a knowledge base only ingests text-like files.
    */
   variant?: 'chat' | 'mail' | 'kb'
   /** Sheet title; defaults to the attachment wording. */
@@ -300,7 +300,8 @@ const props = withDefaults(defineProps<{
   selectionOnly?: boolean
   /** Host is working on a confirmed selection: keep OK disabled. */
   busy?: boolean
-  /** Whether the embedded picker may attach folders (a knowledge base cannot). */
+  /** Whether the embedded picker may attach folders. A folder means "import
+   *  its whole subtree" for the knowledge base. */
   allowDir?: boolean
 }>(), {
   currentFile: null,

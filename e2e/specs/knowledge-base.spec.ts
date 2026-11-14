@@ -1,6 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -35,6 +35,17 @@ test.describe('Knowledge base end to end', () => {
     writeFileSync(mainPath, '报销流程：先提交申请，再等财务审批。\n年假天数按工龄计算。\n')
     writeFileSync(secondPath, '这是一个稍后会被删除的临时文件。\n')
     writeFileSync(legacyPath, 'legacy word file')
+
+    // A real folder INSIDE the project: the picker browses the project root, and
+    // a folder pick means "import its whole subtree".
+    const dirName = `kb-dir-${stamp}`
+    const dirPath = join(process.cwd(), dirName)
+    const dirFileA = `folder-a-${stamp}.md`
+    const dirFileB = `folder-b-${stamp}.md`
+    mkdirSync(join(dirPath, 'nested'), { recursive: true })
+    writeFileSync(join(dirPath, dirFileA), '差旅标准：市内交通每日上限 100 元。\n')
+    writeFileSync(join(dirPath, 'nested', dirFileB), '年假：满一年 5 天。\n')
+    writeFileSync(join(dirPath, `skip-${stamp}.png`), 'png')
 
     let collectionId = ''
     let sessionId = ''
@@ -97,6 +108,7 @@ test.describe('Knowledge base end to end', () => {
         }
       }
       rmSync(workDir, { recursive: true, force: true })
+      rmSync(dirPath, { recursive: true, force: true })
     }
 
     try {
@@ -191,6 +203,24 @@ test.describe('Knowledge base end to end', () => {
         await expect(second).toHaveCount(0, { timeout: 15000 })
         await expect(page.locator('.kb-doc').filter({ hasText: mainName })).toBeVisible()
         await expect(page.locator('.kb-col').filter({ hasText: colName })).toContainText(/1 个文件|1 file/)
+      })
+
+      await test.step('add a whole folder in one pick', async () => {
+        const sheet = await openAddSheet()
+        // The sheet remembers the tab it was last on, and the previous steps
+        // uploaded files — folders live on the Files tab.
+        await sheet.locator('.ad-tab').first().click()
+        const row = sheet.locator(`[data-path="${dirName}"]`)
+        await expect(row).toBeVisible({ timeout: 10000 })
+        await row.locator('[data-action="fp-pick-dir"]').click()
+        await expect(sheet.locator('[data-role="attach-selected-count"]')).toBeVisible()
+        await sheet.locator('[data-action="attach-ok"]').click()
+        await expect(sheet).toBeHidden({ timeout: 30000 })
+
+        // Both nested files landed; the image was skipped and the summary says so.
+        await expect(page.locator('.kb-doc').filter({ hasText: dirFileA })).toBeVisible({ timeout: 30000 })
+        await expect(page.locator('.kb-doc').filter({ hasText: dirFileB })).toBeVisible({ timeout: 30000 })
+        await expect(page.locator('.toast-text')).toContainText(/跳过|skipped/i, { timeout: 15000 })
       })
 
       await test.step('reindex the collection and wait until it is searchable again', async () => {

@@ -64,6 +64,8 @@ func writeKBError(w http.ResponseWriter, r *http.Request, err error) {
 		writeLocalizedErrorf(w, r, http.StatusForbidden, "AccessDenied")
 	case errors.Is(err, kb.ErrInvalidScope):
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+	case errors.Is(err, kb.ErrNotDirectory):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBNotDirectory")
 	case errors.Is(err, kb.ErrUnavailable):
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "KBUnavailable")
 	default:
@@ -389,6 +391,41 @@ func ServeKBDocumentUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, doc)
+}
+
+// ServeKBDocumentImport handles POST /api/kb/documents/import.
+//
+// Adds every supported file under a folder in one request. The frontend could
+// list the folder and POST each file, but that turns a large pick into hundreds
+// of round trips and lets the UI's own walk drift from the server's rules.
+func ServeKBDocumentImport(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var body struct {
+		CollectionID int64  `json:"collection_id"`
+		Path         string `json:"path"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.CollectionID <= 0 || strings.TrimSpace(body.Path) == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, body.CollectionID) {
+		return
+	}
+	absPath, ok := resolveAbsPath(w, r, strings.TrimSpace(body.Path))
+	if !ok {
+		return
+	}
+	result, err := kb.ImportDirectory(body.CollectionID, absPath)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // ServeKBDocumentReindex handles POST /api/kb/documents/reindex?id=.

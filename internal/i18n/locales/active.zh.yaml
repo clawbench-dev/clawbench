@@ -519,6 +519,7 @@ KBNotFound: 知识库内容不存在或已被删除
 KBDuplicate: 这个文件已经在当前知识库里了
 KBFileTooLarge: 文件太大，无法加入知识库
 KBUnsupportedFile: 这个文件类型不支持
+KBNotDirectory: 选中的不是一个文件夹
 KBNameRequired: 知识库名称不能为空，且不超过 100 个字
 KBReasonLegacyDoc: 旧版 Word 格式（.doc）不支持，请另存为 .docx 后重新添加
 KBReasonLegacyXls: 旧版 Excel 格式（.xls）不支持，请另存为 .xlsx 后重新添加

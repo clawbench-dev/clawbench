@@ -531,6 +531,7 @@ KBNotFound: This knowledge base item does not exist or was deleted
 KBDuplicate: This file is already in the selected knowledge base
 KBFileTooLarge: The file is too large to add
 KBUnsupportedFile: This file type is not supported
+KBNotDirectory: The selected path is not a folder
 KBNameRequired: A knowledge base name is required and must be at most 100 characters
 KBReasonLegacyDoc: Legacy Word format (.doc) is not supported; save it as .docx and add it again
 KBReasonLegacyXls: Legacy Excel format (.xls) is not supported; save it as .xlsx and add it again

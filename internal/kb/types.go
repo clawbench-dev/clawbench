@@ -42,6 +42,7 @@ var (
 	ErrUnsupportedFile    = errors.New("this file type cannot be indexed")
 	ErrFileTooLarge       = errors.New("file exceeds the knowledge base size limit")
 	ErrNoText             = errors.New("no extractable text in this file")
+	ErrNotDirectory       = errors.New("the path is not a folder")
 	ErrInvalidScope       = errors.New("invalid knowledge base scope")
 	ErrAccessDenied       = errors.New("knowledge base is not accessible from this project")
 	ErrUnavailable        = errors.New("knowledge base is not enabled")

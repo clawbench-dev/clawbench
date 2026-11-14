@@ -243,3 +243,38 @@ func TestKBHandlersRejectBadRequests(t *testing.T) {
 	w = callHandler(ServeKBDocuments, req)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
+
+func TestKBDocumentImportEndpoint(t *testing.T) {
+	env := setupKBHandlerTest(t)
+
+	col, err := kb.CreateCollection("资料", "", kb.ScopeGlobal, 0)
+	require.NoError(t, err)
+
+	dir := filepath.Join(env.ProjectDir, "kb-import")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("# 手册\n\n报销流程。"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("差旅标准。"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pic.png"), []byte("png"), 0o644))
+
+	req := newRequest(t, http.MethodPost, "/api/kb/documents/import", map[string]any{
+		"collection_id": col.ID, "path": dir,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeKBDocumentImport, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var res kb.DirImportResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+	require.Equal(t, 2, res.Added)
+	require.Equal(t, 1, res.Skipped)
+	require.Equal(t, 0, res.Failed)
+	require.False(t, res.Truncated)
+
+	// A file is not a folder.
+	req = newRequest(t, http.MethodPost, "/api/kb/documents/import", map[string]any{
+		"collection_id": col.ID, "path": filepath.Join(dir, "a.md"),
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocumentImport, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
