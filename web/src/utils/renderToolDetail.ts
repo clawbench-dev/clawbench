@@ -22,6 +22,7 @@ import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
 import { teamMemberColorVar } from './teamMemberColor.ts'
+import { localizedToolName } from './toolNames.ts'
 import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 import { annotateToolHtml } from '@/utils/annotateToolHtml.ts'
@@ -1060,7 +1061,7 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
   // lives on the surrounding card header strip, not here — this body focuses
   // on WHICH tool and WHAT it wants to do.
   if (toolName) {
-    html += `<div class="permission-tool-name">${escapeHtml(toolName)}</div>`
+    html += `<div class="permission-tool-name">${escapeHtml(localizedToolName(toolName))}</div>`
   }
 
   // Requested action details. Each label sits on its own line above the content

@@ -223,9 +223,11 @@ describe('ToolDetailDrawer — header title', () => {
     expect(wrapper.find('.tool-detail-header-name').text()).toBe('Custom')
   })
 
-  it('leaves ordinary tools on their own name', () => {
+  it('shows the localized label for ordinary tools', () => {
     const wrapper = mountDrawer({ toolName: 'Bash' })
-    expect(wrapper.find('.tool-detail-header-name').text()).toBe('Bash')
+    const title = wrapper.find('.tool-detail-header-name').text()
+    expect(title).not.toBe('Bash')
+    expect(title).toBe(i18nGlobal.global.t('tool.name.bash'))
   })
 })
 

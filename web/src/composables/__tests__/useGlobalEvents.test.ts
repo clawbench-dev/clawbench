@@ -1126,7 +1126,7 @@ describe('useGlobalEvents', () => {
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
         })
 
-        it('shows browser notification for permission_pending with tool name', () => {
+        it('shows browser notification for permission_pending with the localized tool name', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
 
@@ -1139,9 +1139,11 @@ describe('useGlobalEvents', () => {
             })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // i18n is mocked to echo the key, so this proves the body went
+            // through the name table instead of rendering the raw wire name.
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
                 'chat.push.actionRequired',
-                expect.objectContaining({ body: 'Bash' })
+                expect.objectContaining({ body: 'tool.name.bash' })
             )
         })
 

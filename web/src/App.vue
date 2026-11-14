@@ -826,6 +826,7 @@ import {
 } from './composables/useProjectPanel.ts'
 import { openPendingSessionWhenReady, armPendingOpenSession, clearPendingOpenSession } from './composables/usePendingSessionOpen.ts'
 import { markSessionRead } from '@/utils/sessionRead.ts'
+import { localizedToolName } from '@/utils/toolNames'
 import { registerChatPanelVisibility, markVisibleSessionRead } from '@/composables/sessionReadGate.ts'
 import { setLayoutProjectRoot } from './utils/panelState'
 import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
@@ -2443,8 +2444,9 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
 
     // 正文与系统通知用同一份纯文本：同一事件不该因为页面是否聚焦而读起来不同。
     // permission_pending 的 response_preview 为空，用工具名代替（同系统通知）。
+    // 工具名要显示本地化标题：用户看到的是「执行命令」，不是线名 "Bash"。
     const body = status === 'permission_pending'
-        ? (data.tool_name || '')
+        ? localizedToolName(data.tool_name || '')
         : (plainPreview(data) || data.session_title || '')
     // 跨项目才显示项目信息：本项目不加（用户知道自己在哪）。它回答
     // "这事不在你正看的项目里"，是点击前的关键判断依据。

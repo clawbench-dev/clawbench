@@ -14,6 +14,7 @@ import { forgeTargetItemKey } from '@/composables/useForge'
 import type { ForgeTarget } from '@/composables/useForgeNavigation'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
+import { localizedToolName } from '@/utils/toolNames'
 
 // Event types from server
 export interface ServerEvent {
@@ -797,6 +798,9 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         if (status !== 'completed' && status !== 'cancelled' && status !== 'permission_pending') return
 
         const toolName = data.tool_name || ''
+        // Same localized label as the chat card strip — the notification must
+        // not show a different (raw wire) name for the same tool.
+        const toolLabel = localizedToolName(toolName)
 
         // Default title/alert per status
         if (status === 'completed') {
@@ -808,7 +812,7 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         } else {
             // permission_pending
             title = gt('chat.push.actionRequired')
-            alert_ = toolName || gt('chat.push.actionRequired')
+            alert_ = toolLabel || gt('chat.push.actionRequired')
         }
 
         // Click: navigate to the session

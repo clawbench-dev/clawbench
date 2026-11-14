@@ -106,9 +106,29 @@ describe('getToolIcon', () => {
 })
 
 describe('toolDisplayName', () => {
-  it('returns the tool name as-is for regular tools', () => {
-    expect(toolDisplayName('Read')).toBe('Read')
-    expect(toolDisplayName('Bash')).toBe('Bash')
+  const originalLocale = i18n.global.locale.value
+  function withLocale(locale: 'en' | 'zh', fn: () => void) {
+    i18n.global.locale.value = locale
+    try {
+      fn()
+    } finally {
+      i18n.global.locale.value = originalLocale
+    }
+  }
+
+  it('shows a localized label for known tools instead of the wire name', () => {
+    withLocale('en', () => {
+      expect(toolDisplayName('Read')).toBe('Read file')
+      expect(toolDisplayName('Bash')).toBe('Run command')
+    })
+    withLocale('zh', () => {
+      expect(toolDisplayName('Read')).toBe('读取文件')
+      expect(toolDisplayName('Bash')).toBe('执行命令')
+    })
+  })
+
+  it('falls back to the raw name for tools it does not know', () => {
+    expect(toolDisplayName('mcp__acme__deploy')).toBe('mcp__acme__deploy')
   })
 
   it('returns displayName when provided', () => {
@@ -127,12 +147,15 @@ describe('toolDisplayName', () => {
   it('resolves OpenCode subagent calls from the agent input', () => {
     expect(toolDisplayName('subagent', { agent: 'general' })).toBe('General')
     expect(toolDisplayName('Sub Agent', { agent: 'explore' })).toBe('Explore')
-    // No type reported → the generic Agent label, never the raw "subagent".
-    expect(toolDisplayName('subagent', {})).toBe('Agent')
+    // No type reported → the localized Agent label, never the raw "subagent".
+    withLocale('en', () => expect(toolDisplayName('subagent', {})).toBe('Agent'))
+    withLocale('zh', () => expect(toolDisplayName('subagent', {})).toBe('智能体'))
   })
 
   it('ignores subagent_type for non-Agent/Task tools', () => {
-    expect(toolDisplayName('Read', { subagent_type: 'explore' })).toBe('Read')
+    withLocale('en', () => {
+      expect(toolDisplayName('Read', { subagent_type: 'explore' })).toBe('Read file')
+    })
   })
 
   it('returns empty string for empty name', () => {
@@ -148,14 +171,22 @@ describe('toolDisplayName', () => {
     expect(toolDisplayName('Agent', { subagent_type: 'explore' }, 'Custom')).toBe('Custom')
   })
 
-  it('returns name when input has no subagent_type', () => {
-    expect(toolDisplayName('Agent', {})).toBe('Agent')
-    expect(toolDisplayName('Agent', { other: 'value' })).toBe('Agent')
+  it('returns the localized generic label when input has no subagent_type', () => {
+    withLocale('en', () => {
+      expect(toolDisplayName('Agent', {})).toBe('Agent')
+      expect(toolDisplayName('Agent', { other: 'value' })).toBe('Agent')
+    })
+    withLocale('zh', () => {
+      expect(toolDisplayName('Agent', {})).toBe('智能体')
+      expect(toolDisplayName('Agent', { other: 'value' })).toBe('智能体')
+    })
   })
 
   it('handles null/undefined input gracefully', () => {
-    expect(toolDisplayName('Agent')).toBe('Agent')
-    expect(toolDisplayName('Agent', undefined)).toBe('Agent')
+    withLocale('en', () => {
+      expect(toolDisplayName('Agent')).toBe('Agent')
+      expect(toolDisplayName('Agent', undefined)).toBe('Agent')
+    })
   })
 
   // ── Task-tool family (issue #645) ──
@@ -213,10 +244,10 @@ describe('toolDisplayName', () => {
       })
     })
 
-    it('leaves non-task tools untouched', () => {
+    it('still localizes the non-task tools it renders', () => {
       withLocale('en', () => {
-        expect(toolDisplayName('Bash')).toBe('Bash')
-        expect(toolDisplayName('Read')).toBe('Read')
+        expect(toolDisplayName('Bash')).toBe('Run command')
+        expect(toolDisplayName('Read')).toBe('Read file')
       })
     })
 

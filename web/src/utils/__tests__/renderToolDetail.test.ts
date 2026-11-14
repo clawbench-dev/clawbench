@@ -1691,10 +1691,11 @@ describe('PermissionApproval renderer', () => {
     expect(html).not.toContain('permission-title')
   })
 
-  it('renders tool name when present', () => {
+  it('renders the localized tool name when present', () => {
     const html = formatToolInput({ toolName: 'Bash', options: [] }, 'PermissionApproval')
     expect(html).toContain('permission-tool-name')
-    expect(html).toContain('Bash')
+    expect(html).toContain(i18n.global.t('tool.name.bash'))
+    expect(html).not.toContain('>Bash<')
   })
 
   it('omits tool name when absent', () => {
