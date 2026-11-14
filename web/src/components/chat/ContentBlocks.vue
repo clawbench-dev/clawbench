@@ -3260,6 +3260,11 @@ onUnmounted(() => {
 .chat-tool-group.is-open > .chat-tool-group-strip {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   margin-bottom: 0;
+  /* See .chat-tool-call-group-open: the head's bottom border would cut the rail,
+     and its 1px left border would leave a step against the body's 2px rail. */
+  border-bottom-color: transparent;
+  border-left-width: 2px;
+  border-left-color: color-mix(in srgb, var(--text-muted) 35%, transparent);
 }
 
 /* ── A "run": a foldable sequence of steps ──
@@ -3272,6 +3277,10 @@ onUnmounted(() => {
    one unbroken line for the whole run, and it grows/shrinks with the container
    instead of being stitched together from segments. */
 .chat-run-body {
+  /* `flow-root` keeps the first member's top margin INSIDE the box. Without it
+     that margin collapses through the container's top edge, the border starts
+     below it, and the rail visibly detaches from the head above. */
+  display: flow-root;
   border-left: 2px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
   padding-left: calc(8 * var(--dp));
 }
@@ -3340,8 +3349,16 @@ onUnmounted(() => {
 
 /* Only when expanded does the pill's shape change: it becomes the rounded-
    rectangle top half of the group (small radius, not a pill). */
+/* Only when expanded does the pill's shape change: it becomes the head of the
+   run (small radius, not a pill). The bottom edge keeps its width (so the body
+   does not shift up) but loses its colour — otherwise that horizontal border
+   cuts the rail exactly where the head meets the body. Left border matches the
+   body rail's width and colour so the two meet flush. */
 .chat-tool-call-group-open {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-bottom-color: transparent;
+  border-left-width: 2px;
+  border-left-color: color-mix(in srgb, var(--subagent-accent) 45%, transparent);
 }
 
 /* Same rail as a tool run — a single border on the container — tinted with the
