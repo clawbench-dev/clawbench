@@ -2,7 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- Page-level pinch zoom is DISABLED here, matching index.html.
+
+         The share page is a fixed-viewport shell: `.share-topbar` is the first
+         row of a flex column and the content fills the rest. A browser-level
+         pinch (or the pan that follows it) moves the whole document inside the
+         visual viewport, so the top bar — and the page background behind the
+         content — leave the screen, and the reader is left with nothing but the
+         artwork and no way back except pinching out again. On a phone this
+         happens without meaning to: the top bar sits 44px above the canvas, so
+         one finger of a two-finger pinch lands on it while the other lands on
+         the diagram.
+
+         Nothing is lost by disabling it: every zoomable surface on this page
+         owns its own zoom (the lightbox for images/SVG, the draw.io and
+         Excalidraw canvases, the PDF viewer), and text pages keep the reader's
+         own font-size settings. Chrome's "force enable zoom" accessibility
+         setting still overrides this for readers who need page zoom. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#1d2021">
 
     <!-- Resolve theme BEFORE CSS loads to prevent flash of default colors.

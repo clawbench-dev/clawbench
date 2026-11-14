@@ -4906,6 +4906,7 @@ export default {
     loading: 'Loading...',
     download: 'Download original',
     toggleToc: 'Toggle table of contents',
+    fitDiagram: 'Fit diagram to screen',
     fitLabel: 'Fit to screen',
     fitOn: 'Fit to my screen',
     fitOff: 'Use the original size',

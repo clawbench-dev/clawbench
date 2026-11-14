@@ -4898,6 +4898,7 @@ export default {
     loading: '加载中...',
     download: '下载原文件',
     toggleToc: '切换目录',
+    fitDiagram: '整图适应屏幕',
     fitLabel: '自适应屏幕大小',
     fitOn: '自适应屏幕大小',
     fitOff: '恢复原始大小',

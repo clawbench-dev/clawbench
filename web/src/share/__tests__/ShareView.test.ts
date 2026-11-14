@@ -67,6 +67,8 @@ vi.mock('@/utils/download.ts', async (importOriginal) => ({
 // defineAsyncComponent (a delay timer would leak in the test env), so instead
 // of module-mocking them they are stubbed per-mount via VTU's `stubs` option —
 // VTU replaces the async wrapper type before its loader ever runs.
+/** Records "fit the whole diagram" calls made from the share topbar. */
+const drawioFitCalls: boolean[] = []
 const asyncComponentStubs = {
   CodeMirrorViewer: {
     name: 'CodeMirrorViewer',
@@ -82,11 +84,18 @@ const asyncComponentStubs = {
     props: { file: Object, readonly: { type: Boolean, default: false } },
     template: '<div class="excalidrawviewer-stub" :data-readonly="String(readonly)" />',
   },
-  // draw.io editor host. Also mounted read-only on the share page.
+  // draw.io editor host. Also mounted read-only on the share page. Records the
+  // "fit the whole diagram" calls the topbar button makes (the real component
+  // exposes it as `fitToScreen`).
   DrawioViewer: {
     name: 'DrawioViewer',
     props: { file: Object, readonly: { type: Boolean, default: false } },
     template: '<div class="drawioviewer-stub" :data-readonly="String(readonly)" />',
+    methods: {
+      fitToScreen() {
+        drawioFitCalls.push(true)
+      },
+    },
   },
 }
 
@@ -102,6 +111,7 @@ const i18n = createI18n({
         loading: 'Loading...',
         download: 'Download original',
         toggleToc: 'Toggle table of contents',
+        fitDiagram: 'Fit diagram to screen',
         toc: 'Contents',
         invalidTitle: 'Cannot view this share',
         invalidUrl: 'Invalid link format',
@@ -126,6 +136,7 @@ const mountedWrappers: Array<{ unmount: () => void }> = []
 beforeEach(() => {
   window.history.replaceState({}, '', '/share/tokShareTest')
   setShareToken(null)
+  drawioFitCalls.length = 0
   globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' }),
@@ -777,6 +788,35 @@ describe('ShareView — image blocks + narrow TOC drawer', () => {
 // The backend answers 200 + tooLarge (empty content) for files past its inline
 // cap instead of rejecting the link — every file is shareable at any size.
 // The SPA must degrade to the download card, not report a broken link.
+describe('ShareView — draw.io fit button', () => {
+  it('asks the canvas to re-fit when the topbar action is pressed', async () => {
+    // A shared diagram is read-only and the canvas zooms freely; on a phone the
+    // topbar button is the only way back to the whole picture (draw.io's own
+    // fit control is hover-only, so it never appears on touch).
+    const wrapper = await mountShare({
+      name: 'flow.drawio',
+      path: '/repo/flow.drawio',
+      content: '<mxfile/>',
+      subtype: 'drawio',
+    })
+    expect(wrapper.find('.drawioviewer-stub').exists()).toBe(true)
+
+    const fit = wrapper.find('[data-action="share-fit-diagram"]')
+    expect(fit.exists()).toBe(true)
+    expect(fit.attributes('title')).toBe('Fit diagram to screen')
+
+    await fit.trigger('click')
+    expect(drawioFitCalls.length).toBe(1)
+  })
+
+  it('does not offer the fit action for files without a diagram', async () => {
+    const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    expect(wrapper.find('[data-action="share-fit-diagram"]').exists()).toBe(false)
+    await mountShare({ name: 'pic.png', path: '/repo/pic.png', content: '' })
+    expect(wrapper.find('[data-action="share-fit-diagram"]').exists()).toBe(false)
+  })
+})
+
 describe('ShareView — over-cap files fall back to download', () => {
   it('shows the download card with the too-large notice, not an invalid-link error', async () => {
     const wrapper = await mountShare({

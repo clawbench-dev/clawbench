@@ -325,6 +325,16 @@ function onMessage(e) {
       iframeReady = true
       sendLoad()
       break
+    case 'load':
+      // draw.io's reply to our `load` (proto=json only). It carries the view's
+      // geometry — content bounds, sheet bounds, scale, frame size — which the
+      // read-only preview uses to size its fit (see requestFit). The editor
+      // ignores it: the author's zoom is the author's business.
+      if (props.readonly) {
+        lastGeometry = msg
+        requestFit()
+      }
+      break
     case 'autosave':
       // draw.io pushes the current XML as the user edits. Keeping the latest
       // one means an exit right after an edit still saves the edit even if the
@@ -371,6 +381,79 @@ function sendLoad() {
   // switch) from discarding edits made before the first autosave landed.
   const xml = latestXml || props.file?.content || ''
   postToFrame({ action: 'load', xml, autosave: props.readonly ? 0 : 1 })
+}
+
+/** Breathing room (px) a fitted diagram gets on every side. */
+const FIT_BORDER = 16
+
+/**
+ * The view geometry draw.io reported with its last `load` reply, in px at
+ * `scale`. Used to size the fit so the whole SHEET stays inside the frame.
+ */
+let lastGeometry = null
+
+/**
+ * Fit the shared diagram so nothing of it — content or the sheet it sits on —
+ * is cut off by the frame (read-only preview only).
+ *
+ * Why not `load`'s `fit` flag: it runs while the graph is still laying itself
+ * out, and its translate correction is relative to the view it replaces, so on
+ * a phone the result can still be shifted off the left edge. The standalone
+ * `fit` action runs against a settled graph and reports its own geometry, so
+ * the fit below is computed from measured numbers, not guesses:
+ *
+ *   1. draw.io replies to `load` with `page` (the sheet, px at `scale`) and
+ *      `modelBounds` (the content, graph units).
+ *   2. The largest scale at which the whole sheet fits inside the frame with
+ *      `FIT_BORDER` on each side, capped at 100% so a small diagram is not
+ *      blown up.
+ *   3. draw.io's `fit` derives its scale from the border it is given
+ *      (`scale = (frameWidth - 2*border) / contentWidth`), so the border that
+ *      produces exactly that scale is sent along with it.
+ *
+ * The editor is deliberately a no-op here: a reload-free fit is harmless, but
+ * the author's zoom is the author's business.
+ */
+function requestFit() {
+  if (!props.readonly) return
+  const frame = frameRef.value
+  if (!frame) return
+  const w = frame.clientWidth
+  const h = frame.clientHeight
+  if (!w || !h) return
+
+  const page = lastGeometry?.page
+  const bounds = lastGeometry?.modelBounds
+  const scale = lastGeometry?.scale
+  if (!page || !bounds || !scale || page.width <= 0) {
+    // Geometry never arrived (older editor build, or a viewer mode without a
+    // sheet): draw.io's own fit is still far better than the file's zoom.
+    postToFrame({ action: 'fit', border: FIT_BORDER, maxScale: 1 })
+    return
+  }
+
+  const sheetW = page.width / scale
+  const sheetH = page.height / scale
+  const s = Math.min((w - 2 * FIT_BORDER) / sheetW, (h - 2 * FIT_BORDER) / sheetH, 1)
+  if (s <= 0) return
+  // Undo the sheet's own margin around the content (a diagram is usually
+  // narrower than the page it sits on): without it the fitted content lands
+  // inside a sheet that still overflows the frame.
+  const border = Math.max(0, (w - 3 - s * bounds.width) / 2)
+  postToFrame({ action: 'fit', border, maxScale: s })
+}
+
+/**
+ * The share page's "fit the whole diagram" action.
+ *
+ * The canvas zooms freely and draw.io's own fit control is hover-only, so on a
+ * touch screen it never appears — this is the touch-sized way back to the whole
+ * picture. No reload involved: `fit` re-derives the view from the diagram
+ * already on screen.
+ */
+function fitToScreen() {
+  if (!props.readonly) return
+  requestFit()
 }
 
 function setDirty(v) {
@@ -482,7 +565,7 @@ watch(
   (content, old) => {
     if (content == null || content === old) return
     if (iframeReady) {
-      postToFrame({ action: 'load', xml: content, autosave: 1 })
+      postToFrame({ action: 'load', xml: content, autosave: props.readonly ? 0 : 1 })
       setDirty(false)
     }
   }
@@ -531,7 +614,7 @@ async function requestExit() {
   return handleExit()
 }
 
-defineExpose({ requestExit, requestExport, isDirty: () => dirty })
+defineExpose({ requestExit, requestExport, isDirty: () => dirty, fitToScreen })
 </script>
 
 <style scoped>

@@ -44,6 +44,22 @@
           <List :size="16" />
         </button>
       </div>
+      <!-- draw.io only: fit the whole diagram back into the frame. The canvas
+           zooms freely (that is what makes it usable), so a reader who zoomed
+           in needs a one-tap way back to the whole picture. Placed outside
+           .share-top-actions because a diagram has neither a TOC nor a
+           rendered/source toggle, and this must not depend on them. -->
+      <button
+        v-if="isDrawio && file && !error"
+        class="share-btn share-fit-diagram"
+        type="button"
+        :title="t('share.fitDiagram')"
+        :aria-label="t('share.fitDiagram')"
+        data-action="share-fit-diagram"
+        @click="fitDiagram"
+      >
+        <Scan :size="16" />
+      </button>
       <!-- A real link, not a button: the href IS the file, so right-clicking it
            offers the browser's own "copy link address" / "save link as" — which
            is how a reader gets the direct URL without inspecting the network
@@ -177,7 +193,7 @@
                note instead of offering an install — a public page has no
                session to trigger one with. -->
           <div v-else-if="isDrawio && canRenderInline" class="share-fill-viewer">
-            <DrawioViewer :file="file" :readonly="true" />
+            <DrawioViewer ref="drawioViewerRef" :file="file" :readonly="true" />
           </div>
 
           <!-- OpenAPI / Swagger spec (rendered docs) -->
@@ -296,7 +312,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch, defineAsyncComponent, provide, readonly, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Download, Eye, FileX2, List, ArrowLeft } from 'lucide-vue-next'
+import { Download, Eye, FileX2, List, ArrowLeft, Scan } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import Lightbox from '@/components/media/Lightbox.vue'
@@ -512,6 +528,23 @@ const isOpenapi = computed(() => file.value?.subtype === 'openapi' || false)
  *  extension, exactly like the app's file store does. */
 const isExcalidraw = computed(() => file.value?.isExcalidraw === true)
 const isDrawio = computed(() => file.value?.isDrawio === true)
+
+/** The mounted draw.io canvas (an async component, so the ref fills in late).
+ *  Typed by the one method this page calls: `defineExpose` is not visible to
+ *  `ref(null)` (its type would collapse to `never`). */
+const drawioViewerRef = ref<{ fitToScreen?: () => void } | null>(null)
+
+/**
+ * Fit the whole diagram back into the frame.
+ *
+ * The canvas zooms freely, so a reader who pinched in can end up looking at a
+ * fragment with no way back except the browser's reload. draw.io's own
+ * floating toolbar (fit / zoom out) is hover-only, so on a touch screen it
+ * never appears — this button is the touch-sized way back to the whole picture.
+ */
+function fitDiagram() {
+  drawioViewerRef.value?.fitToScreen?.()
+}
 
 const isTable = computed(() => {
   if (!file.value) return false
