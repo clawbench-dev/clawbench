@@ -818,7 +818,7 @@ onMounted(() => {
   background: rgba(34, 197, 94, 0.1);
   color: #16a34a;
   padding: var(--space-3) var(--space-6);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   margin-bottom: var(--space-2);
@@ -837,7 +837,7 @@ onMounted(() => {
 .form-section {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
@@ -848,7 +848,7 @@ onMounted(() => {
   flex: 1;
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-5);
   gap: var(--space-5);
 }
@@ -885,7 +885,7 @@ onMounted(() => {
   width: 100%;
   padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
@@ -1081,7 +1081,7 @@ onMounted(() => {
 .agent-display-tag {
   font-size: var(--font-size-2xs);
   padding: 1px var(--space-2);
-  border-radius: 0;
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
@@ -1146,7 +1146,7 @@ onMounted(() => {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary, #f8f9fa);
   color: var(--text-primary, #1a1a1a);
   font-size: var(--font-size-sm);
@@ -1163,7 +1163,7 @@ onMounted(() => {
   gap: var(--space-3);
   margin-top: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
   color: var(--color-yellow, #a16207);
@@ -1181,7 +1181,7 @@ onMounted(() => {
 .form-error-general {
   background: rgba(239, 68, 68, 0.1);
   padding: var(--space-4) var(--space-5);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   margin-top: var(--space-3);
 }
 
@@ -1226,7 +1226,7 @@ onMounted(() => {
   padding: var(--space-5) var(--space-6);
   background: var(--bg-secondary, #f9fafb);
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   color: var(--text-secondary, #4b5563);
@@ -1263,7 +1263,7 @@ onMounted(() => {
 /* Time selectors */
 .time-selectors {
   background: var(--bg-tertiary, #f3f4f6);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-color, #e5e7eb);
 }
@@ -1340,7 +1340,7 @@ onMounted(() => {
   padding: var(--space-4) var(--space-6);
   background: var(--bg-tertiary, #f3f4f6);
   border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 0;
+  border-radius: var(--radius-md);
 }
 
 .cron-display code {
