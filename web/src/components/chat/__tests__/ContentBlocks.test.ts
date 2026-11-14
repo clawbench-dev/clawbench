@@ -247,6 +247,13 @@ function mountBlocks(props: Record<string, unknown> = {}) {
   return wrapper
 }
 
+// The compact tool-call mode is ON by default, but most tests in this file were
+// written against the individual pills. Opt out globally; the compact suite
+// below turns it back on for its own cases.
+beforeEach(() => {
+  ;(localConfig as any).compactToolCalls = false
+})
+
 afterEach(() => {
   for (const wrapper of mountedWrappers.splice(0)) {
     if (wrapper.exists()) wrapper.unmount()

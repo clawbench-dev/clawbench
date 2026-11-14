@@ -290,9 +290,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.messageDisplayModeSummary', value: 'summary' },
       { labelKey: 'settings.items.messageDisplayModeOriginal', value: 'original' },
     ]}},
-    // Fold a run of tool calls into one "ran N operations" row. Off by default:
-    // it hides the per-tool detail (which tool, what it ran on) that the
-    // transcript has always shown, so it must be an explicit choice.
+    // Fold a run of tool calls into one "ran N operations" row. On by default:
+    // a long turn otherwise becomes a wall of full-width pills. The per-tool
+    // detail is one click away (the row unfolds in place).
     { type: 'item', spec: { labelKey: 'settings.items.compactToolCalls', descriptionKey: 'settings.items.compactToolCallsDesc', key: 'compactToolCalls', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
