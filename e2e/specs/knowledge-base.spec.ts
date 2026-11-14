@@ -54,6 +54,23 @@ test.describe('Knowledge base end to end', () => {
       await expect(panel).toBeVisible({ timeout: 15000 })
     }
 
+    // "Add file" opens the SAME attachment sheet the chat composer uses, so the
+    // test drives the real flow: pick/upload into the draft, then confirm.
+    const openAddSheet = async () => {
+      await page.locator('[data-action="kb-add"]').click()
+      const sheet = page.locator('.bs-panel').filter({ has: page.locator('.ad-header') })
+      await expect(sheet).toBeVisible({ timeout: 10000 })
+      return sheet
+    }
+
+    const uploadIntoSheet = async (sheet: import('@playwright/test').Locator, filePath: string) => {
+      await sheet.locator('input[type="file"]:not([accept])').setInputFiles(filePath)
+      // The file is committed to the draft once its transfer finishes; only
+      // then does OK mean "add this".
+      await expect(sheet.locator('[data-role="attach-selected-count"]')).toBeVisible({ timeout: 30000 })
+      await sheet.locator('[data-action="attach-ok"]').click()
+    }
+
     const cleanup = async () => {
       try {
         const cols = await page.evaluate(async () => {
@@ -85,6 +102,10 @@ test.describe('Knowledge base end to end', () => {
     try {
       await test.step('open the knowledge base tab', async () => {
         await openKBPanel()
+        // Wide panel: list and detail share the width (the mail-style split).
+        await expect(page.locator('.kb-split')).toHaveClass(/split-view--active/)
+        await expect(page.locator('.kb-rail')).toBeVisible()
+        await expect(page.locator('.kb-main')).toBeVisible()
       })
 
       await test.step('create a global collection', async () => {
@@ -108,10 +129,9 @@ test.describe('Knowledge base end to end', () => {
       })
 
       await test.step('upload and index a markdown file', async () => {
-        await page.locator('[data-action="kb-add"]').click()
-        await expect(page.locator('.kb-add')).toBeVisible({ timeout: 10000 })
-        await page.locator('.kb-file-input').setInputFiles(mainPath)
-        await expect(page.locator('.kb-add')).toBeHidden({ timeout: 20000 })
+        const sheet = await openAddSheet()
+        await uploadIntoSheet(sheet, mainPath)
+        await expect(sheet).toBeHidden({ timeout: 20000 })
 
         const doc = page.locator('.kb-doc').filter({ hasText: mainName })
         await expect(doc).toBeVisible({ timeout: 20000 })
@@ -142,23 +162,25 @@ test.describe('Knowledge base end to end', () => {
       })
 
       await test.step('duplicate and unsupported uploads are rejected with a reason', async () => {
-        await page.locator('[data-action="kb-add"]').click()
-        await page.locator('.kb-file-input').setInputFiles(mainPath)
+        // A rejection keeps the sheet open with the selection intact, so the
+        // user can drop the bad file and retry without browsing again.
+        const dup = await openAddSheet()
+        await uploadIntoSheet(dup, mainPath)
         await expect(page.locator('.toast-text')).toContainText(/已经|already/i, { timeout: 15000 })
-        await page.locator('.kb-add-actions .fbtn').first().click()
-        await expect(page.locator('.kb-add')).toBeHidden({ timeout: 10000 })
+        await dup.locator('[data-action="attach-cancel"]').click()
+        await expect(dup).toBeHidden({ timeout: 10000 })
 
-        await page.locator('[data-action="kb-add"]').click()
-        await page.locator('.kb-file-input').setInputFiles(legacyPath)
+        const legacy = await openAddSheet()
+        await uploadIntoSheet(legacy, legacyPath)
         await expect(page.locator('.toast-text')).toContainText(/docx|旧版|Legacy/i, { timeout: 15000 })
-        await page.locator('.kb-add-actions .fbtn').first().click()
-        await expect(page.locator('.kb-add')).toBeHidden({ timeout: 10000 })
+        await legacy.locator('[data-action="attach-cancel"]').click()
+        await expect(legacy).toBeHidden({ timeout: 10000 })
       })
 
       await test.step('delete one document without touching the collection', async () => {
-        await page.locator('[data-action="kb-add"]').click()
-        await page.locator('.kb-file-input').setInputFiles(secondPath)
-        await expect(page.locator('.kb-add')).toBeHidden({ timeout: 20000 })
+        const sheet = await openAddSheet()
+        await uploadIntoSheet(sheet, secondPath)
+        await expect(sheet).toBeHidden({ timeout: 20000 })
 
         const second = page.locator('.kb-doc').filter({ hasText: secondName })
         await expect(second).toBeVisible({ timeout: 20000 })
@@ -327,6 +349,8 @@ test.describe('Knowledge base on a phone-width viewport', () => {
         await page.locator('.dock-overflow-item').filter({ hasText: /知识库|Knowledge base/ }).click()
       }
       await expect(page.locator('.kb-panel')).toBeVisible({ timeout: 15000 })
+      // Phone: one pane at a time (drill down), not the split.
+      await expect(page.locator('.kb-split')).not.toHaveClass(/split-view--active/)
       await expect(page.locator('.kb-rail')).toBeVisible()
 
       const row = page.locator('.kb-col').filter({ hasText: colName })
@@ -337,6 +361,25 @@ test.describe('Knowledge base on a phone-width viewport', () => {
       await expect(page.locator('.kb-main-name')).toContainText(colName)
       await expect(page.locator('.kb-rail')).toBeHidden()
       await expect(page.locator('.kb-back')).toBeVisible()
+
+      // The name must stay on ONE line: the action bar used to win the width
+      // contest and squeezed it into a vertical one-character column.
+      const nameBox = await page.locator('.kb-main-name-text').boundingBox()
+      expect(nameBox?.width ?? 0).toBeGreaterThan(80)
+      expect(nameBox?.height ?? 99).toBeLessThan(40)
+
+      // "Add file" opens the shared attachment sheet: the same upload entry and
+      // the two tabs (files / recent uploads) the chat composer has. The
+      // camera/photo entries are host-gated, not width-gated, so they only
+      // appear in a real mobile UA — covered by AttachmentPicker.test.ts.
+      await page.locator('[data-action="kb-add"]').click()
+      const sheet = page.locator('.bs-panel').filter({ has: page.locator('.ad-header') })
+      await expect(sheet).toBeVisible({ timeout: 10000 })
+      await expect(sheet.locator('.ad-header-upload-btn')).toBeVisible()
+      await expect(sheet.locator('.ad-tab')).toHaveCount(2)
+      await expect(sheet.locator('.ad-tab').first()).toContainText(/文件|Files/)
+      await sheet.locator('[data-action="attach-cancel"]').click()
+      await expect(sheet).toBeHidden({ timeout: 10000 })
 
       await page.locator('.kb-search input').fill('报销')
       await page.locator('[data-action="kb-search"]').click()

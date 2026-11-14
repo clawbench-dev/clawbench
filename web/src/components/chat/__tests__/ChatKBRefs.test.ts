@@ -1,8 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+// vue-i18n tries to install its devtools plugin in dev builds; the rejection is
+// unrelated to these assertions and leaks into the NEXT test file in the same
+// worker (vitest then reports a file-level failure with zero failing tests).
+// This suite does not use <i18n-t>, so skipping the full install is safe.
+;(globalThis as { __VUE_I18N_FULL_INSTALL__?: boolean }).__VUE_I18N_FULL_INSTALL__ = false
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ChatKBRefs from '@/components/chat/ChatKBRefs.vue'
 import type { ChatKBRef } from '@/utils/kbRefs'
+
+vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
+  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
 
 const i18n = createI18n({
   legacy: false,

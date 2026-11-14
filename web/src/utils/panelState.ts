@@ -83,6 +83,7 @@ export type PanelId =
   | 'fmPreviewRatio'
   | 'fmPreviewOpen'
   | 'mailSplitRatio'
+  | 'kbSplitRatio'
   | 'gitBranchCollapsed'
   | 'gitWorktreeCollapsed'
   | 'gitManageTab'
@@ -111,6 +112,9 @@ export const DEFAULT_FM_PREVIEW_RATIO = 0.6
  * row of subjects, the detail pane renders the mail body.
  */
 export const DEFAULT_MAIL_SPLIT_RATIO = 0.42
+/** Share of the knowledge-base panel taken by the collection list when it is
+ *  wide enough for list + detail side by side. */
+export const DEFAULT_KB_SPLIT_RATIO = 0.4
 export const DEFAULT_GIT_MANAGE_TAB = 'branches'
 
 export interface SessionSidebarState {
@@ -343,6 +347,12 @@ const entries: PanelEntry<unknown>[] = [
   {
     id: 'mailSplitRatio', key: 'mail-split-ratio', scope: 'global', default: DEFAULT_MAIL_SPLIT_RATIO,
     ...numberCodec(DEFAULT_MAIL_SPLIT_RATIO),
+  },
+  // Knowledge base: collection list vs. the opened collection's detail. The
+  // drill-down layout never reads it.
+  {
+    id: 'kbSplitRatio', key: 'kb-split-ratio', scope: 'global', default: DEFAULT_KB_SPLIT_RATIO,
+    ...numberCodec(DEFAULT_KB_SPLIT_RATIO),
   },
   // Whether the docked preview pane is expanded. Distinct from
   // `fmPreviewRatio` (how the split is divided) and from the `filePreviewMode`

@@ -1,24 +1,19 @@
 <template>
-  <div class="kb-panel" :class="{ 'is-narrow': !isWideScreen }">
-    <!-- Header -->
+  <div ref="rootEl" class="kb-panel">
     <div class="kb-header">
       <div class="kb-title-line">
-        <BookOpen :size="16" class="kb-title-icon" />
+        <BookOpen :size="14" class="panel-header-icon" />
         <span class="kb-title">{{ t('kb.title') }}</span>
         <span v-if="collections.length" class="kb-count">{{ t('kb.count', { count: collections.length }) }}</span>
       </div>
       <ActionBar class="kb-header-actions" mode="menu" align="end" size="header">
-        <RefreshButton
-          class="header-btn"
-          :loading="loadingCollections"
-          :disabled="loadingCollections"
-          :title="t('kb.refresh')"
-          @click="refresh(isWideScreen)"
-        />
-        <button class="header-btn" type="button" data-action="kb-new" :title="t('kb.newCollection')" @click="openCreate">
+        <button class="header-btn is-primary" type="button" data-action="kb-new" :title="t('kb.newCollection')" @click="openCreate">
           <Plus :size="15" />
           <span class="action-label">{{ t('kb.newCollection') }}</span>
         </button>
+        <RefreshButton class="header-btn" :loading="loadingCollections" :disabled="loadingCollections" :title="t('kb.refresh')" @click="refresh(split)">
+          <span class="action-label">{{ t('kb.refresh') }}</span>
+        </RefreshButton>
       </ActionBar>
     </div>
 
@@ -29,233 +24,249 @@
     </div>
 
     <div v-else class="kb-body">
-      <!-- Collection rail -->
-      <aside v-show="isWideScreen || selectedId == null" class="kb-rail">
-        <PanelSkeleton v-if="loadingCollections && collections.length === 0" variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
+      <SplitView
+        class="kb-split"
+        orientation="horizontal"
+        :enabled="split"
+        :ratio="splitRatio"
+        :min-left="SPLIT_MIN_LIST"
+        :min-right="SPLIT_MIN_DETAIL"
+        @update:ratio="onSplitRatioChange"
+      >
+        <!-- Collections: cards on the left. On a phone this pane is the whole
+             panel; picking one drills into the detail pane. -->
+        <template #left>
+          <aside v-show="split || selectedId == null" class="kb-rail">
+            <PanelSkeleton v-if="loadingCollections && collections.length === 0" variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
 
-        <div v-else-if="error" class="kb-hint kb-hint--error">
-          <AlertTriangle :size="16" />
-          <span>{{ error }}</span>
-          <button class="kb-link" type="button" @click="refresh(isWideScreen)">{{ t('common.retry') }}</button>
-        </div>
-
-        <EmptyState
-          v-else-if="collections.length === 0"
-          :icon="BookOpen"
-          :title="t('kb.emptyCollections')"
-          :desc="t('kb.emptyCollectionsDesc')"
-        >
-          <template #action>
-            <button class="fbtn fbtn-primary" type="button" @click="openCreate">
-              <Plus :size="15" />
-              <span>{{ t('kb.newCollection') }}</span>
-            </button>
-          </template>
-        </EmptyState>
-
-        <template v-else>
-          <div v-for="group in groupedCollections" :key="group.key" class="kb-group">
-            <div class="kb-group-title">{{ t(group.labelKey) }}</div>
-            <button
-              v-for="col in group.items"
-              :key="col.id"
-              type="button"
-              class="kb-col"
-              :class="{ 'is-active': col.id === selectedId }"
-              :data-kb-collection="col.id"
-              @click="selectCollection(col.id)"
-            >
-              <span class="kb-col-icon">
-                <BookOpen :size="15" />
-              </span>
-              <span class="kb-col-text">
-                <span class="kb-col-name">{{ col.name }}</span>
-                <span class="kb-col-meta">
-                  {{ t('kb.documents', { count: col.doc_count }) }}
-                  <span v-if="!col.auto_inject" class="kb-col-off">{{ t('kb.autoInjectOff') }}</span>
-                </span>
-              </span>
-            </button>
-          </div>
-        </template>
-      </aside>
-
-      <!-- Main area -->
-      <section v-show="isWideScreen || selectedId != null" class="kb-main">
-        <template v-if="selected">
-          <div class="kb-main-head">
-            <div class="kb-main-title-line">
-              <button
-                v-if="!isWideScreen"
-                class="kb-back"
-                type="button"
-                :title="t('common.back')"
-                @click="backToCollections"
-              >
-                <ChevronLeft :size="18" />
-              </button>
-              <div class="kb-main-title-text">
-                <div class="kb-main-name">
-                  {{ selected.name }}
-                  <span class="kb-scope" :class="`kb-scope--${selected.scope}`">
-                    {{ selected.scope === 'global' ? t('kb.scopeGlobal') : t('kb.scopeProject') }}
-                  </span>
-                </div>
-                <div v-if="selected.description" class="kb-main-desc">{{ selected.description }}</div>
-              </div>
+            <div v-else-if="error" class="kb-hint kb-hint--error">
+              <AlertTriangle :size="16" />
+              <span>{{ error }}</span>
+              <button class="kb-link" type="button" @click="refresh(split)">{{ t('common.retry') }}</button>
             </div>
-
-            <ActionBar class="kb-main-actions" mode="menu" align="end" size="bar">
-              <button
-                class="header-btn"
-                type="button"
-                data-action="kb-toggle-auto-inject"
-                :title="selected.auto_inject ? t('kb.autoInjectOn') : t('kb.autoInjectOff')"
-                :class="{ 'is-off': !selected.auto_inject }"
-                @click="toggleAutoInject"
-              >
-                <Sparkles :size="14" />
-                <span class="action-label">{{ selected.auto_inject ? t('kb.autoInjectOn') : t('kb.autoInjectOff') }}</span>
-              </button>
-              <button class="header-btn" type="button" data-action="kb-add" :title="t('kb.addFile')" @click="openAdd">
-                <Plus :size="15" />
-                <span class="action-label">{{ t('kb.addFile') }}</span>
-              </button>
-              <button class="header-btn" type="button" data-action="kb-reindex-collection" :title="t('kb.reindex')" @click="reindexCurrent">
-                <RotateCw :size="14" />
-                <span class="action-label">{{ t('kb.reindex') }}</span>
-              </button>
-              <button class="header-btn is-danger" type="button" data-action="kb-delete-collection" :title="t('kb.deleteCollection')" @click="removeCurrent">
-                <Trash2 :size="14" />
-              </button>
-            </ActionBar>
-          </div>
-
-          <!-- Search -->
-          <div class="kb-search-row">
-            <SearchInput
-              v-model="searchQuery"
-              class="kb-search"
-              :placeholder="t('kb.searchPlaceholder')"
-              @enter="runSearch"
-            />
-            <select v-model="searchScope" class="kb-select" :title="t('kb.searchAll')" @change="searchResult && runSearch()">
-              <option value="current">{{ t('kb.searchThis') }}</option>
-              <option value="all">{{ t('kb.searchAll') }}</option>
-            </select>
-            <select v-model="searchMode" class="kb-select" @change="searchResult && runSearch()">
-              <option value="hybrid">{{ t('kb.modeHybrid') }}</option>
-              <option value="fts">{{ t('kb.modeFts') }}</option>
-            </select>
-            <button class="header-btn" type="button" data-action="kb-search" :disabled="searching || !searchQuery.trim()" @click="runSearch">
-              <Search :size="14" />
-            </button>
-          </div>
-
-          <!-- Search results -->
-          <div v-if="searchResult || searching || searchError" class="kb-results">
-            <div class="kb-results-head">
-              <span v-if="searching" class="kb-results-count">{{ t('common.loading') }}</span>
-              <span v-else-if="searchResult" class="kb-results-count">{{ t('kb.results', { count: searchResult.total }) }}</span>
-              <button v-if="searchResult || searchError" class="kb-link" type="button" @click="clearSearch">
-                {{ t('common.close') }}
-              </button>
-            </div>
-
-            <div v-if="searchError" class="kb-hint kb-hint--error">
-              <AlertTriangle :size="15" />
-              <span>{{ searchError }}</span>
-            </div>
-            <EmptyState
-              v-else-if="!searching && searchResult && searchResult.results.length === 0"
-              :icon="Search"
-              :title="t('kb.searchEmpty')"
-              :desc="t('kb.searchEmptyDesc')"
-            />
-            <div v-else class="kb-result-list">
-              <div v-for="hit in searchResult?.results ?? []" :key="hit.chunk_id" class="kb-result" :data-kb-hit="hit.chunk_id">
-                <div class="kb-result-head">
-                  <span class="kb-result-title">{{ hit.document_title }}</span>
-                  <span v-if="hit.location" class="kb-result-loc">{{ locationText(hit.location) }}</span>
-                  <span class="kb-result-col">{{ t('kb.inCollection', { name: hit.collection_name }) }}</span>
-                </div>
-                <div class="kb-result-text">
-                  <template v-for="(part, i) in snippetPartsOf(hit)" :key="i">
-                    <mark v-if="part.hit" class="kb-mark">{{ part.text }}</mark>
-                    <span v-else>{{ part.text }}</span>
-                  </template>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Documents -->
-          <div v-else class="kb-docs">
-            <PanelSkeleton v-if="loadingDocuments && documents.length === 0" variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
 
             <EmptyState
-              v-else-if="documents.length === 0"
-              :icon="FileText"
-              :title="t('kb.emptyDocuments')"
-              :desc="t('kb.emptyDocumentsDesc')"
+              v-else-if="collections.length === 0"
+              :icon="BookOpen"
+              :title="t('kb.emptyCollections')"
+              :desc="t('kb.emptyCollectionsDesc')"
             >
               <template #action>
-                <button class="fbtn fbtn-primary" type="button" @click="openAdd">
+                <button class="fbtn fbtn-primary" type="button" @click="openCreate">
                   <Plus :size="15" />
-                  <span>{{ t('kb.addFile') }}</span>
+                  <span>{{ t('kb.newCollection') }}</span>
                 </button>
               </template>
             </EmptyState>
 
-            <div v-else class="kb-doc-list">
-              <div v-for="doc in documents" :key="doc.id" class="kb-doc" :data-kb-doc="doc.id">
-                <span class="kb-doc-icon" :class="`kb-doc-icon--${doc.ext?.replace('.', '') || 'file'}`">
-                  <FileText :size="16" />
-                </span>
-                <div class="kb-doc-main">
-                  <div class="kb-doc-name-line">
-                    <span class="kb-doc-name" :title="doc.title">{{ doc.title }}</span>
-                    <span class="kb-status" :class="`kb-status--${statusKindOf(doc)}`">{{ statusLabelOf(doc) }}</span>
-                  </div>
-                  <div class="kb-doc-meta">
-                    <span>{{ formatSize(doc.size_bytes) }}</span>
-                    <template v-if="doc.chunk_count > 0">
-                      <span class="kb-sep">·</span>
-                      <span>{{ t('kb.chunks', { count: doc.chunk_count }) }}</span>
-                    </template>
-                    <template v-if="doc.status === 'ready'">
-                      <span class="kb-sep">·</span>
-                      <span :class="{ 'kb-muted': !doc.vector_ready }">
-                        {{ doc.vector_ready ? t('kb.vectorReady') : t('kb.vectorPending') }}
-                      </span>
-                    </template>
-                    <template v-if="doc.warning === 'truncated'">
-                      <span class="kb-sep">·</span>
-                      <span class="kb-warn">{{ t('kb.warningTruncated') }}</span>
-                    </template>
-                  </div>
-                  <div v-if="doc.error" class="kb-doc-error">{{ doc.error }}</div>
+            <template v-else>
+              <div v-for="group in groupedCollections" :key="group.key" class="kb-group">
+                <div class="kb-group-title">
+                  <span>{{ t(group.labelKey) }}</span>
+                  <span class="kb-group-count">{{ group.items.length }}</span>
                 </div>
-                <div class="kb-doc-actions">
-                  <button class="kb-icon-btn" type="button" data-action="kb-reindex-doc" :title="t('kb.reindex')" @click="reindexDoc(doc)">
+                <button
+                  v-for="col in group.items"
+                  :key="col.id"
+                  type="button"
+                  class="kb-col"
+                  :class="{ 'is-active': col.id === selectedId }"
+                  :data-kb-collection="col.id"
+                  @click="selectCollection(col.id)"
+                >
+                  <span class="kb-col-icon"><BookOpen :size="15" /></span>
+                  <span class="kb-col-text">
+                    <span class="kb-col-name">{{ col.name }}</span>
+                    <span class="kb-col-meta">
+                      {{ t('kb.documents', { count: col.doc_count }) }}
+                      <span v-if="!col.auto_inject" class="kb-col-off">{{ t('kb.autoInjectOff') }}</span>
+                    </span>
+                  </span>
+                  <ChevronRight v-if="!split" :size="16" class="kb-col-chevron" />
+                </button>
+              </div>
+            </template>
+          </aside>
+        </template>
+
+        <template #right>
+          <section v-show="split || selectedId != null" class="kb-main">
+            <template v-if="selected">
+              <!-- Detail header: identity first, actions second. They never
+                   compete for the same line, so a narrow pane cannot squeeze
+                   the name into a vertical column. -->
+              <header class="kb-main-head">
+                <div class="kb-main-title-line">
+                  <button v-if="!split" class="kb-back" type="button" :title="t('common.back')" @click="backToCollections">
+                    <ChevronLeft :size="18" />
+                  </button>
+                  <span class="kb-main-icon"><BookOpen :size="18" /></span>
+                  <div class="kb-main-title-text">
+                    <div class="kb-main-name">
+                      <span class="kb-main-name-text">{{ selected.name }}</span>
+                      <span class="kb-scope" :class="`kb-scope--${selected.scope}`">
+                        {{ selected.scope === 'global' ? t('kb.scopeGlobal') : t('kb.scopeProject') }}
+                      </span>
+                      <button
+                        type="button"
+                        class="kb-inject-chip"
+                        :class="{ 'is-off': !selected.auto_inject }"
+                        data-action="kb-toggle-auto-inject"
+                        :title="selected.auto_inject ? t('kb.autoInjectOn') : t('kb.autoInjectOff')"
+                        @click="toggleAutoInject"
+                      >
+                        <Sparkles :size="11" />
+                        <span>{{ t('kb.autoInjectShort') }}</span>
+                        <span class="kb-inject-state">{{ selected.auto_inject ? t('kb.on') : t('kb.off') }}</span>
+                      </button>
+                    </div>
+                    <div v-if="selected.description" class="kb-main-desc">{{ selected.description }}</div>
+                  </div>
+                </div>
+
+                <ActionBar class="kb-main-actions" mode="menu" align="start" size="bar">
+                  <button class="header-btn is-primary" type="button" data-action="kb-add" :title="t('kb.addFile')" @click="openAdd">
+                    <Plus :size="15" />
+                    <span class="action-label">{{ t('kb.addFile') }}</span>
+                  </button>
+                  <button class="header-btn" type="button" data-action="kb-reindex-collection" :title="t('kb.reindex')" @click="reindexCurrent">
                     <RotateCw :size="14" />
                   </button>
-                  <button class="kb-icon-btn is-danger" type="button" data-action="kb-delete-doc" :title="t('common.delete')" @click="removeDoc(doc)">
+                  <button class="header-btn is-danger" type="button" data-action="kb-delete-collection" :title="t('kb.deleteCollection')" @click="removeCurrent">
                     <Trash2 :size="14" />
+                  </button>
+                </ActionBar>
+              </header>
+
+              <div class="kb-search-row">
+                <SearchInput
+                  v-model="searchQuery"
+                  class="kb-search"
+                  :placeholder="t('kb.searchPlaceholder')"
+                  @enter="runSearch"
+                />
+                <!-- Filters + submit travel as one block: if the row wraps they
+                     move together instead of leaving the button alone. -->
+                <div class="kb-search-controls">
+                  <select v-model="searchScope" class="kb-select" :title="t('kb.searchAll')" @change="searchResult && runSearch()">
+                    <option value="current">{{ t('kb.searchThis') }}</option>
+                    <option value="all">{{ t('kb.searchAll') }}</option>
+                  </select>
+                  <select v-model="searchMode" class="kb-select" @change="searchResult && runSearch()">
+                    <option value="hybrid">{{ t('kb.modeHybrid') }}</option>
+                    <option value="fts">{{ t('kb.modeFts') }}</option>
+                  </select>
+                  <button class="header-btn" type="button" data-action="kb-search" :disabled="searching || !searchQuery.trim()" @click="runSearch">
+                    <Search :size="14" />
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-        </template>
 
-        <EmptyState
-          v-else
-          :icon="BookOpen"
-          :title="t('kb.selectCollection')"
-          :desc="t('kb.selectCollectionDesc')"
-        />
-      </section>
+              <div v-if="searchResult || searching || searchError" class="kb-results">
+                <div class="kb-results-head">
+                  <span v-if="searching" class="kb-results-count">{{ t('common.loading') }}</span>
+                  <span v-else-if="searchResult" class="kb-results-count">{{ t('kb.results', { count: searchResult.total }) }}</span>
+                  <button v-if="searchResult || searchError" class="kb-link" type="button" @click="clearSearch">
+                    {{ t('common.close') }}
+                  </button>
+                </div>
+
+                <div v-if="searchError" class="kb-hint kb-hint--error">
+                  <AlertTriangle :size="15" />
+                  <span>{{ searchError }}</span>
+                </div>
+                <EmptyState
+                  v-else-if="!searching && searchResult && searchResult.results.length === 0"
+                  :icon="Search"
+                  :title="t('kb.searchEmpty')"
+                  :desc="t('kb.searchEmptyDesc')"
+                />
+                <div v-else class="kb-result-list">
+                  <article v-for="hit in searchResult?.results ?? []" :key="hit.chunk_id" class="kb-result" :data-kb-hit="hit.chunk_id">
+                    <div class="kb-result-head">
+                      <span class="kb-result-title">{{ hit.document_title }}</span>
+                      <span v-if="hit.location" class="kb-result-loc">{{ locationText(hit.location) }}</span>
+                      <span class="kb-result-col">{{ t('kb.inCollection', { name: hit.collection_name }) }}</span>
+                    </div>
+                    <!-- Rendered as markdown (same as the session search
+                         drawer), with rune positions re-applied as <mark>. -->
+                    <div
+                      class="kb-result-text markdown-body"
+                      :ref="(el) => setHitRef(hit.chunk_id, el)"
+                      v-html="renderedHits[hit.chunk_id] || ''"
+                    />
+                  </article>
+                </div>
+              </div>
+
+              <div v-else class="kb-docs">
+                <PanelSkeleton v-if="loadingDocuments && documents.length === 0" variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
+
+                <EmptyState
+                  v-else-if="documents.length === 0"
+                  :icon="FileText"
+                  :title="t('kb.emptyDocuments')"
+                  :desc="t('kb.emptyDocumentsDesc')"
+                >
+                  <template #action>
+                    <button class="fbtn fbtn-primary" type="button" @click="openAdd">
+                      <Plus :size="15" />
+                      <span>{{ t('kb.addFile') }}</span>
+                    </button>
+                  </template>
+                </EmptyState>
+
+                <div v-else class="kb-doc-list">
+                  <div v-for="doc in documents" :key="doc.id" class="kb-doc" :data-kb-doc="doc.id">
+                    <span class="kb-doc-icon" :class="`kb-doc-icon--${doc.ext?.replace('.', '') || 'file'}`">
+                      <FileText :size="16" />
+                    </span>
+                    <div class="kb-doc-main">
+                      <div class="kb-doc-name-line">
+                        <span class="kb-doc-name" :title="doc.title">{{ doc.title }}</span>
+                        <span class="kb-status" :class="`kb-status--${statusKindOf(doc)}`">{{ statusLabelOf(doc) }}</span>
+                      </div>
+                      <div class="kb-doc-meta">
+                        <span>{{ formatSize(doc.size_bytes) }}</span>
+                        <template v-if="doc.chunk_count > 0">
+                          <span class="kb-sep">·</span>
+                          <span>{{ t('kb.chunks', { count: doc.chunk_count }) }}</span>
+                        </template>
+                        <template v-if="doc.status === 'ready'">
+                          <span class="kb-sep">·</span>
+                          <span :class="{ 'kb-muted': !doc.vector_ready }">
+                            {{ doc.vector_ready ? t('kb.vectorReady') : t('kb.vectorPending') }}
+                          </span>
+                        </template>
+                        <template v-if="doc.warning === 'truncated'">
+                          <span class="kb-sep">·</span>
+                          <span class="kb-warn">{{ t('kb.warningTruncated') }}</span>
+                        </template>
+                      </div>
+                      <div v-if="doc.error" class="kb-doc-error">{{ doc.error }}</div>
+                    </div>
+                    <div class="kb-doc-actions">
+                      <button class="kb-icon-btn" type="button" data-action="kb-reindex-doc" :title="t('kb.reindex')" @click="reindexDoc(doc)">
+                        <RotateCw :size="14" />
+                      </button>
+                      <button class="kb-icon-btn is-danger" type="button" data-action="kb-delete-doc" :title="t('common.delete')" @click="removeDoc(doc)">
+                        <Trash2 :size="14" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <EmptyState
+              v-else
+              :icon="BookOpen"
+              :title="t('kb.selectCollection')"
+              :desc="t('kb.selectCollectionDesc')"
+            />
+          </section>
+        </template>
+      </SplitView>
     </div>
 
     <!-- Create collection -->
@@ -298,45 +309,34 @@
       </div>
     </ModalDialog>
 
-    <!-- Add file -->
-    <BottomSheet :open="addOpen" :title="t('kb.pickServerFile')" maximized @close="closeAdd">
-      <div class="kb-add">
-        <div class="kb-add-toolbar">
-          <span class="kb-add-hint">{{ t('kb.pickFileHint') }}</span>
-          <button class="header-btn" type="button" @click="pickUpload">
-            <Upload :size="14" />
-            <span class="action-label">{{ t('kb.uploadFile') }}</span>
-          </button>
-          <input ref="fileInput" type="file" class="kb-file-input" @change="onUploadPicked" />
-        </div>
-        <div class="kb-picker-wrap">
-          <FilePicker
-            :open="addOpen"
-            :start-dir="store.state.projectRoot"
-            :current-file="store.state.currentFile?.path || null"
-            :selected="draft"
-            :allow-dir="false"
-            @update:selected="draft = $event"
-          />
-        </div>
-        <div class="kb-add-actions">
-          <button class="fbtn" type="button" @click="closeAdd">{{ t('common.cancel') }}</button>
-          <button class="fbtn fbtn-primary" type="button" :disabled="adding || draft.length === 0" @click="submitAdd">
-            {{ adding ? t('common.loading') : t('kb.addFile') }}
-          </button>
-        </div>
-      </div>
-    </BottomSheet>
+    <!-- Add documents. This is the SAME picker the chat composer opens: browse
+         the project, upload from the device (with progress + terminate), or
+         reuse a recent upload. Re-implementing a bare file browser here lost
+         multi-select, upload progress and the mobile upload entry. -->
+    <AttachmentPicker
+      :open="addOpen"
+      variant="kb"
+      selection-only
+      :allow-dir="false"
+      :title="t('kb.addFile')"
+      :confirm-label="adding ? t('common.loading') : t('kb.addFile')"
+      :busy="adding"
+      :current-file="store.state.currentFile?.path || null"
+      :current-dir="store.state.projectRoot"
+      @close="closeAdd"
+      @confirm="submitAdd"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUpdate, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   BookOpen,
   ChevronLeft,
+  ChevronRight,
   Database,
   FileText,
   Plus,
@@ -344,37 +344,40 @@ import {
   Search,
   Sparkles,
   Trash2,
-  Upload,
 } from 'lucide-vue-next'
 import ActionBar from '@/components/common/ActionBar.vue'
+import SplitView from '@/components/common/SplitView.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
-import BottomSheet from '@/components/common/BottomSheet.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
-import FilePicker from '@/components/file/FilePicker.vue'
+import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import { useDialog } from '@/composables/useDialog'
-import { useKnowledgeBase, type KBCollection, type KBDocument, type KBSearchHit } from '@/composables/useKnowledgeBase'
+import { useKnowledgeBase, type KBCollection, type KBDocument } from '@/composables/useKnowledgeBase'
 import { useToast } from '@/composables/useToast'
+import { useUiScale } from '@/composables/useUiScale'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { store } from '@/stores/app'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import { baseName } from '@/utils/path'
 import {
   formatLocation,
   formatSize,
-  snippetParts,
   statusKind,
   statusLabel,
-  type SnippetPart,
   type TFn,
 } from '@/utils/kbFormat'
 import { appLog } from '@/utils/appLog'
+import { DEFAULT_KB_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { highlightTermsInElement, termsFromRunePositions } from '@/utils/searchHighlight'
 
 const props = defineProps<{ active?: boolean }>()
 
 const { t } = useI18n()
 const { isWideScreen } = useWideScreenLayout()
+const uiScale = useUiScale()
 const dialog = useDialog()
 const toast = useToast()
 const kb = useKnowledgeBase()
@@ -399,7 +402,6 @@ const {
   deleteCollection,
   setAutoInject,
   addFile,
-  uploadFile,
   deleteDocument,
   reindexDocument,
   reindexCollection,
@@ -413,6 +415,67 @@ const selected = computed<KBCollection | null>(
   () => collections.value.find((c) => c.id === selectedId.value) ?? null,
 )
 const hasProject = computed(() => !!store.state.projectRoot)
+
+// ── Layout: split by the PANEL's width, not the window's ──
+// The dock pane is 40% of the window, so the same window can hold a wide or a
+// narrow panel. Mail does the same: split only when both panes fit, otherwise
+// drill down. `clientWidth` is CSS px, so thresholds are scaled.
+// At the default 1280px window the dock pane is ~492px. 190 + 280 leaves the
+// detail pane usable while still fitting that default, so wide screens get the
+// side-by-side layout without the user having to drag the divider first.
+const SPLIT_MIN_LIST = 190
+const SPLIT_MIN_DETAIL = 280
+const SPLIT_MIN_PANEL = SPLIT_MIN_LIST + SPLIT_MIN_DETAIL + 1
+
+const rootEl = ref<HTMLElement | null>(null)
+const panelWidth = ref(0)
+const split = computed(() => {
+  // jsdom / first paint has no measurement yet; fall back to the window class
+  // so tests and the first desktop frame behave like a wide panel.
+  const width = panelWidth.value || (isWideScreen.value ? 900 : 0)
+  return width >= SPLIT_MIN_PANEL * uiScale.value
+})
+
+const splitRatio = ref(clampSplitRatio(readPanelState('kbSplitRatio')))
+
+function clampSplitRatio(ratio: number): number {
+  return ratio > 0 && ratio < 1 ? ratio : DEFAULT_KB_SPLIT_RATIO
+}
+
+function onSplitRatioChange(ratio: number): void {
+  splitRatio.value = ratio
+  writePanelState('kbSplitRatio', ratio)
+}
+
+watch(layoutEpoch, () => {
+  splitRatio.value = clampSplitRatio(readPanelState('kbSplitRatio'))
+})
+
+function measureWidth(): void {
+  const el = rootEl.value
+  if (el) panelWidth.value = el.getBoundingClientRect().width
+}
+
+let widthObserver: ResizeObserver | null = null
+onMounted(() => {
+  measureWidth()
+  if (typeof ResizeObserver !== 'undefined' && rootEl.value) {
+    widthObserver = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (typeof width === 'number') panelWidth.value = width
+    })
+    widthObserver.observe(rootEl.value)
+  }
+})
+
+// When the panel grows from drill-down to split, the list has no selection
+// (that is the mobile entry state). Pick the project collection, then the
+// first one, so the right pane is not empty.
+watch(split, (on) => {
+  if (!on || selectedId.value != null || collections.value.length === 0) return
+  const target = collections.value.find((c) => c.scope === 'project') ?? collections.value[0]
+  if (target) void selectCollection(target.id)
+})
 
 const groupedCollections = computed(() => {
   const global = collections.value.filter((c) => c.scope === 'global')
@@ -428,7 +491,7 @@ watch(
   () => props.active,
   (on) => {
     if (on) {
-      void refresh(isWideScreen.value)
+      void refresh(split.value)
     } else {
       stopPolling()
     }
@@ -442,7 +505,11 @@ watch(documents, () => {
   }
 })
 
-onBeforeUnmount(() => stopPolling())
+onBeforeUnmount(() => {
+  stopPolling()
+  widthObserver?.disconnect()
+  widthObserver = null
+})
 
 // ── Create ──
 const createOpen = ref(false)
@@ -523,56 +590,50 @@ function backToCollections(): void {
   clearSearch()
 }
 
-// ── Add file ──
+// ── Add documents ──
+// The selection is owned by AttachmentPicker; this panel only applies it. A
+// batch is added one file at a time (the API takes one path), so a single
+// unsupported file does not throw away the rest of the batch.
 const addOpen = ref(false)
-const draft = ref<FileEntry[]>([])
 const adding = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
 
 function openAdd(): void {
-  draft.value = []
   addOpen.value = true
 }
 
 function closeAdd(): void {
   addOpen.value = false
-  draft.value = []
 }
 
-async function submitAdd(): Promise<void> {
-  const entry = draft.value.find((e) => !e.isDir)
-  if (!entry) return
+async function submitAdd(entries: FileEntry[]): Promise<void> {
+  if (adding.value) return
+  const files = entries.filter((e) => !e.isDir)
+  if (files.length === 0) return
   adding.value = true
+  const failed: string[] = []
   try {
-    await addFile(entry.path)
+    for (const entry of files) {
+      try {
+        await addFile(entry.path)
+      } catch (e) {
+        failed.push(`${baseName(entry.path)}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+  } finally {
+    adding.value = false
+  }
+  if (failed.length === 0) {
     closeAdd()
     toast.show(t('kb.added'), { type: 'success', duration: 1800 })
-  } catch (e) {
-    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3200 })
-  } finally {
-    adding.value = false
+    return
   }
-}
-
-function pickUpload(): void {
-  fileInput.value?.click()
-}
-
-async function onUploadPicked(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  adding.value = true
-  try {
-    await uploadFile(file)
-    closeAdd()
-    toast.show(t('kb.uploaded'), { type: 'success', duration: 1800 })
-  } catch (e) {
-    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3200 })
-  } finally {
-    adding.value = false
-  }
+  // Keep the sheet open on failure: the selection is still there, so the user
+  // can drop the rejected file and retry without browsing again.
+  const first = failed[0]
+  toast.show(
+    failed.length === 1 ? first : t('kb.addPartial', { first, count: failed.length - 1 }),
+    { icon: 'warning', type: 'error', duration: 4000 },
+  )
 }
 
 // ── Document actions ──
@@ -606,9 +667,38 @@ function locationText(loc?: string): string {
   return formatLocation(loc, tf)
 }
 
-function snippetPartsOf(hit: KBSearchHit): SnippetPart[] {
-  return snippetParts(hit)
+// ── Search result rendering ──
+// The chunk text is markdown (the document IS markdown), so plain-text
+// snippets showed raw `#` headings. Render the same way the session search
+// drawer does, then re-apply the server's match positions as <mark> terms.
+const renderedHits = computed<Record<number, string>>(() => {
+  const map: Record<number, string> = {}
+  for (const hit of searchResult.value?.results ?? []) {
+    map[hit.chunk_id] = renderMarkdownHtml(hit.chunk_text, {
+      skipEnhancements: true,
+      wrapTables: false,
+    })
+  }
+  return map
+})
+
+const hitRefs = new Map<number, HTMLElement>()
+function setHitRef(id: number, el: unknown): void {
+  if (el instanceof HTMLElement) hitRefs.set(id, el)
+  else hitRefs.delete(id)
 }
+
+onBeforeUpdate(() => hitRefs.clear())
+
+function applyHitHighlights(): void {
+  for (const hit of searchResult.value?.results ?? []) {
+    const el = hitRefs.get(hit.chunk_id)
+    if (!el) continue
+    highlightTermsInElement(el, termsFromRunePositions(hit.chunk_text, hit.match_positions), 'kb-mark')
+  }
+}
+
+watch(searchResult, () => nextTick(applyHitHighlights))
 
 function statusKindOf(doc: KBDocument): string {
   return statusKind(doc)
@@ -627,18 +717,19 @@ watch(available, (on) => {
 // Expose for tests.
 defineExpose({
   formatLocation: locationText,
-  snippetParts: snippetPartsOf,
   statusKind: statusKindOf,
   statusLabel: statusLabelOf,
 })
 </script>
 
 <style scoped>
+/* ── Panel shell ── */
 .kb-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: var(--bg-primary);
 }
 
 .kb-header {
@@ -655,26 +746,24 @@ defineExpose({
 .kb-title-line {
   display: flex;
   align-items: center;
-  gap: calc(6 * var(--dp));
+  gap: var(--space-2);
   min-width: 0;
-}
-
-.kb-title-icon {
-  color: var(--text-secondary);
-  flex: none;
 }
 
 .kb-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;
 }
 
 .kb-count {
-  font-size: var(--font-size-xs);
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
   color: var(--text-muted);
-  white-space: nowrap;
+  font-size: var(--font-size-2xs);
 }
 
 .kb-header-actions {
@@ -688,135 +777,197 @@ defineExpose({
 }
 
 .kb-body {
-  display: flex;
   flex: 1;
   min-height: 0;
 }
 
-.kb-rail {
-  width: calc(220 * var(--dp));
-  flex: none;
-  border-right: 1px solid var(--border-color);
-  overflow-y: auto;
-  padding: calc(6 * var(--dp));
+.kb-split {
+  height: 100%;
 }
 
-.kb-group + .kb-group {
-  margin-top: calc(10 * var(--dp));
+/* ── Collection rail ── */
+.kb-rail {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--panel-body-pad);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  background: var(--bg-primary);
+}
+
+.kb-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .kb-group-title {
-  padding: calc(4 * var(--dp)) calc(8 * var(--dp));
-  font-size: var(--font-size-xs);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-2);
   color: var(--text-muted);
-  text-transform: uppercase;
+  font-size: var(--font-size-2xs);
   letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.kb-group-count {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .kb-col {
   display: flex;
-  align-items: flex-start;
-  gap: calc(8 * var(--dp));
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
-  padding: calc(7 * var(--dp)) calc(8 * var(--dp));
-  border: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
+  background: var(--bg-secondary);
+  color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
 }
 
-.kb-col:hover {
-  background: var(--bg-hover);
+@media (hover: hover) {
+  .kb-col:hover {
+    border-color: var(--border-color);
+    background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-secondary));
+  }
 }
 
 .kb-col.is-active {
-  background: var(--bg-active);
+  border-color: color-mix(in srgb, var(--accent-color) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-secondary));
 }
 
 .kb-col-icon {
-  color: var(--text-secondary);
-  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
+  border-radius: var(--radius-sm);
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .kb-col-text {
   display: flex;
   flex-direction: column;
-  gap: calc(2 * var(--dp));
+  gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .kb-col-name {
+  color: var(--text-primary);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .kb-col-meta {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
   display: flex;
-  gap: calc(6 * var(--dp));
   align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .kb-col-off {
-  color: var(--warning, #b7791f);
+  color: var(--color-orange);
 }
 
+.kb-col-chevron {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* ── Detail pane ── */
 .kb-main {
-  flex: 1;
+  height: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-primary);
 }
 
 .kb-main-head {
   display: flex;
-  align-items: flex-start;
-  gap: calc(8 * var(--dp));
-  padding: calc(10 * var(--dp)) calc(12 * var(--dp)) calc(6 * var(--dp));
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border-color);
   flex: none;
 }
 
 .kb-main-title-line {
   display: flex;
   align-items: flex-start;
-  gap: calc(6 * var(--dp));
+  gap: var(--space-2);
   min-width: 0;
-  flex: 1;
 }
 
 .kb-main-title-text {
   min-width: 0;
+  flex: 1;
+}
+
+.kb-main-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: calc(34 * var(--dp));
+  height: calc(34 * var(--dp));
+  border-radius: var(--radius-md);
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .kb-main-name {
   display: flex;
   align-items: center;
-  gap: calc(6 * var(--dp));
-  font-size: var(--font-size-md);
-  font-weight: 600;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
   color: var(--text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.kb-main-name-text {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-main-desc {
-  margin-top: calc(2 * var(--dp));
-  font-size: var(--font-size-xs);
+  margin-top: var(--space-1);
   color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
 }
 
 .kb-scope {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px calc(5 * var(--dp));
-  border-radius: var(--radius-full);
+  flex: none;
+  padding: 1px var(--space-2);
   border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
   color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
 }
 
 .kb-scope--global {
@@ -824,120 +975,253 @@ defineExpose({
   border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
 }
 
-.kb-main-actions {
-  flex: 0 0 auto;
-}
-
-.kb-back {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  padding: calc(2 * var(--dp));
+/* Whether chat retrieval includes this collection. A property of the
+   collection, so it sits beside the scope tag rather than in the action bar. */
+.kb-inject-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  padding: 1px var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  color: var(--accent-color);
+  font-size: var(--font-size-2xs);
+  font-family: inherit;
   cursor: pointer;
 }
 
+.kb-inject-chip.is-off {
+  border-color: var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.kb-inject-state {
+  padding-left: var(--space-1);
+  border-left: 1px solid currentColor;
+  opacity: 0.75;
+}
+
+.kb-main-actions {
+  width: 100%;
+}
+
+.kb-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.kb-back:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Search ── */
 .kb-search-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: calc(6 * var(--dp));
-  row-gap: var(--space-2);
-  padding: 0 calc(12 * var(--dp)) calc(8 * var(--dp));
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-color);
   flex: none;
 }
 
-/* The input must keep a usable width. Without a flex basis it shrank to zero
-   when the rail left the main column ~280px wide (the two selects took the
-   rest), making the box invisible and unfocusable. With a basis the row wraps
-   the selects onto their own line instead. */
 .kb-search {
-  flex: 1 1 calc(180 * var(--dp));
-  min-width: calc(140 * var(--dp));
+  flex: 1 1 calc(170 * var(--dp));
+  min-width: calc(130 * var(--dp));
+}
+
+.kb-search-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
 }
 
 .kb-select {
   height: calc(30 * var(--dp));
+  padding: 0 var(--space-2);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: var(--font-size-xs);
-  padding: 0 calc(4 * var(--dp));
 }
 
+/* ── Result / document bodies ── */
 .kb-results,
 .kb-docs {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 calc(12 * var(--dp)) calc(12 * var(--dp));
+  padding: var(--panel-body-pad);
 }
 
 .kb-results-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(4 * var(--dp)) 0 calc(6 * var(--dp));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .kb-results-count {
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
+.kb-result-list,
+.kb-doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── Search result card ── */
 .kb-result {
-  padding: calc(8 * var(--dp)) 0;
-  border-bottom: 1px solid var(--border-color);
+  padding: var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
 }
 
 .kb-result-head {
   display: flex;
-  align-items: baseline;
-  gap: calc(6 * var(--dp));
+  align-items: center;
   flex-wrap: wrap;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .kb-result-title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  min-width: 0;
   color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-result-loc {
-  color: var(--accent-color);
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.kb-result-col {
+  min-width: 0;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-result-text {
-  margin-top: calc(4 * var(--dp));
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
   line-height: 1.55;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  /* A chunk can be a whole document section; cap the card and scroll inside
+     instead of letting one result push the others (and the pane) down. */
+  max-height: calc(320 * var(--dp));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.kb-mark {
+/* The global .markdown-body rules set reading-pane rhythm; this card is
+   compact, so pull block margins in and drop the heading rule line. */
+.kb-result-text :deep(h1),
+.kb-result-text :deep(h2),
+.kb-result-text :deep(h3),
+.kb-result-text :deep(h4),
+.kb-result-text :deep(p),
+.kb-result-text :deep(ul),
+.kb-result-text :deep(ol) {
+  margin: calc(4 * var(--dp)) 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.kb-result-text :deep(h1),
+.kb-result-text :deep(h2),
+.kb-result-text :deep(h3),
+.kb-result-text :deep(h4) {
+  font-weight: var(--font-weight-semibold);
+  border: 0;
+  padding: 0;
+}
+
+/* The <mark> elements are injected into rendered HTML, so a scoped rule
+   without :deep() would never match them. */
+.kb-result-text :deep(mark.kb-mark) {
   background: color-mix(in srgb, var(--accent-color) 24%, transparent);
-  color: var(--text-primary);
+  color: inherit;
   border-radius: 2px;
   padding: 0 1px;
+}
+
+/* ── Document rows ── */
+.kb-doc-list {
+  gap: 0;
 }
 
 .kb-doc {
   display: flex;
   align-items: flex-start;
-  gap: calc(8 * var(--dp));
-  padding: calc(8 * var(--dp)) 0;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-2);
   border-bottom: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast);
+}
+
+.kb-doc:last-child {
+  border-bottom: 0;
+}
+
+@media (hover: hover) {
+  .kb-doc:hover {
+    background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  }
 }
 
 .kb-doc-icon {
-  color: var(--text-secondary);
-  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
+  width: calc(32 * var(--dp));
+  height: calc(32 * var(--dp));
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
 }
+
+.kb-doc-icon--pdf { color: var(--color-red); background: color-mix(in srgb, var(--color-red) 10%, transparent); }
+.kb-doc-icon--docx { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 10%, transparent); }
+.kb-doc-icon--xlsx { color: var(--color-green); background: color-mix(in srgb, var(--color-green) 10%, transparent); }
+.kb-doc-icon--pptx { color: var(--color-orange); background: color-mix(in srgb, var(--color-orange) 10%, transparent); }
+.kb-doc-icon--md { color: var(--color-purple); background: color-mix(in srgb, var(--color-purple) 10%, transparent); }
 
 .kb-doc-main {
   flex: 1;
@@ -947,57 +1231,60 @@ defineExpose({
 .kb-doc-name-line {
   display: flex;
   align-items: center;
-  gap: calc(6 * var(--dp));
+  flex-wrap: wrap;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .kb-doc-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  min-width: 0;
   color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .kb-status {
-  font-size: 10px;
-  padding: 1px calc(5 * var(--dp));
+  flex: none;
+  padding: 1px var(--space-2);
   border-radius: var(--radius-full);
-  white-space: nowrap;
-  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
   color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
 }
 
 .kb-status--ready {
-  color: var(--success, #2f855a);
-  border-color: color-mix(in srgb, var(--success, #2f855a) 40%, transparent);
+  background: color-mix(in srgb, var(--color-green) 12%, transparent);
+  color: var(--color-green);
 }
 
 .kb-status--fts {
-  color: var(--warning, #b7791f);
-  border-color: color-mix(in srgb, var(--warning, #b7791f) 40%, transparent);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  color: var(--color-orange);
 }
 
 .kb-status--failed {
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
   color: var(--color-red);
-  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
 }
 
 .kb-status--working,
 .kb-status--pending {
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   color: var(--accent-color);
-  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
 }
 
 .kb-doc-meta {
   display: flex;
   align-items: center;
-  gap: calc(4 * var(--dp));
   flex-wrap: wrap;
-  margin-top: calc(2 * var(--dp));
-  font-size: var(--font-size-xs);
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-1);
   color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .kb-sep {
@@ -1009,28 +1296,45 @@ defineExpose({
 }
 
 .kb-warn {
-  color: var(--warning, #b7791f);
+  color: var(--color-orange);
 }
 
 .kb-doc-error {
-  margin-top: calc(3 * var(--dp));
-  font-size: var(--font-size-xs);
+  margin-top: var(--space-1);
   color: var(--color-red);
-  word-break: break-word;
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
 }
 
 .kb-doc-actions {
   display: flex;
-  gap: calc(2 * var(--dp));
+  align-items: center;
+  gap: var(--space-1);
   flex: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast);
+}
+
+.kb-doc:hover .kb-doc-actions,
+.kb-doc:focus-within .kb-doc-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .kb-doc-actions { opacity: 1; }
 }
 
 .kb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  padding: 0;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  padding: calc(3 * var(--dp));
-  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -1040,16 +1344,18 @@ defineExpose({
 }
 
 .kb-icon-btn.is-danger:hover {
+  background: color-mix(in srgb, var(--color-red) 10%, transparent);
   color: var(--color-red);
 }
 
+/* ── Small helpers ── */
 .kb-hint {
   display: flex;
   align-items: center;
-  gap: calc(6 * var(--dp));
-  padding: calc(10 * var(--dp));
-  font-size: var(--font-size-sm);
+  gap: var(--space-2);
+  padding: var(--space-5);
   color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 .kb-hint--error {
@@ -1060,8 +1366,8 @@ defineExpose({
   border: 0;
   background: transparent;
   color: var(--accent-color);
-  cursor: pointer;
   font-size: var(--font-size-xs);
+  cursor: pointer;
 }
 
 .kb-empty {
@@ -1070,9 +1376,11 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(6 * var(--dp));
+  gap: var(--space-2);
+  padding: var(--space-8);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
+  text-align: center;
 }
 
 .kb-empty-icon {
@@ -1080,38 +1388,38 @@ defineExpose({
 }
 
 .kb-empty-desc {
-  font-size: var(--font-size-xs);
   max-width: calc(320 * var(--dp));
-  text-align: center;
+  font-size: var(--font-size-xs);
 }
 
+/* ── Create form ── */
 .kb-form {
   display: flex;
   flex-direction: column;
-  gap: calc(12 * var(--dp));
-  padding: calc(4 * var(--dp)) calc(2 * var(--dp)) calc(2 * var(--dp));
+  gap: var(--space-5);
+  padding: var(--space-1) 0 0;
 }
 
 .kb-field {
   display: flex;
   flex-direction: column;
-  gap: calc(4 * var(--dp));
+  gap: var(--space-2);
 }
 
 .kb-label {
-  font-size: var(--font-size-xs);
   color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .kb-input {
   width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  padding: calc(7 * var(--dp)) calc(8 * var(--dp));
-  box-sizing: border-box;
 }
 
 .kb-textarea {
@@ -1122,14 +1430,14 @@ defineExpose({
 .kb-scope-options {
   display: flex;
   flex-direction: column;
-  gap: calc(6 * var(--dp));
+  gap: var(--space-2);
 }
 
 .kb-radio {
   display: flex;
   align-items: flex-start;
-  gap: calc(8 * var(--dp));
-  padding: calc(7 * var(--dp)) calc(8 * var(--dp));
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -1148,85 +1456,24 @@ defineExpose({
 
 .kb-radio strong {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .kb-radio em {
+  color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-style: normal;
-  color: var(--text-muted);
 }
 
 .kb-form-error {
-  font-size: var(--font-size-xs);
   color: var(--color-red);
+  font-size: var(--font-size-xs);
 }
 
 .kb-form-actions {
   display: flex;
   justify-content: flex-end;
-  gap: calc(8 * var(--dp));
+  gap: var(--space-3);
 }
 
-.kb-add {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.kb-add-toolbar {
-  display: flex;
-  align-items: center;
-  gap: calc(8 * var(--dp));
-  padding: calc(6 * var(--dp)) calc(12 * var(--dp));
-  border-bottom: 1px solid var(--border-color);
-  flex: none;
-}
-
-.kb-add-hint {
-  flex: 1;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-}
-
-.kb-file-input {
-  display: none;
-}
-
-.kb-picker-wrap {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.kb-picker-wrap :deep(.fp) {
-  height: 100%;
-  min-height: 0;
-}
-
-.kb-add-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: calc(8 * var(--dp));
-  padding: calc(8 * var(--dp)) calc(12 * var(--dp));
-  border-top: 1px solid var(--border-color);
-  flex: none;
-}
-
-/* Narrow screens: one column at a time. The rail fills the panel until a
-   collection is picked; the main area then takes over with a back button. */
-.kb-panel.is-narrow .kb-body {
-  flex-direction: column;
-}
-
-.kb-panel.is-narrow .kb-rail {
-  width: 100%;
-  border-right: 0;
-}
-
-.kb-panel.is-narrow .kb-main {
-  width: 100%;
-}
 </style>

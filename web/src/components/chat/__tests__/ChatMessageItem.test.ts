@@ -1,4 +1,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+// vue-i18n tries to install its devtools plugin in dev builds; the rejection is
+// unrelated to these assertions and leaks into the NEXT test file in the same
+// worker (vitest then reports a file-level failure with zero failing tests).
+// This suite does not use <i18n-t>, so skipping the full install is safe.
+;(globalThis as { __VUE_I18N_FULL_INSTALL__?: boolean }).__VUE_I18N_FULL_INSTALL__ = false
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
@@ -6,6 +11,10 @@ import { resolve } from 'node:path'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 
 // Mocks for composables and stores used by ChatMessageItem
+vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
+  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
+
 vi.mock('@/composables/useDoubleClickCopy', () => ({
   useDoubleClickCopy: () => ({ handleDblClick: vi.fn() }),
 }))

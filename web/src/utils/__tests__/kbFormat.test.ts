@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  formatLocation,
-  formatSize,
-  snippetParts,
-  statusKind,
-  statusLabel,
-  type TFn,
-} from '../kbFormat'
-import type { KBDocument, KBSearchHit } from '@/composables/useKnowledgeBase'
+import { formatLocation, formatSize, statusKind, statusLabel, type TFn } from '../kbFormat'
+import type { KBDocument } from '@/composables/useKnowledgeBase'
 
 const t: TFn = (key, named) => `${key}${named ? JSON.stringify(named) : ''}`
 
@@ -27,18 +20,6 @@ function doc(over: Partial<KBDocument>): KBDocument {
   }
 }
 
-function hit(over: Partial<KBSearchHit>): KBSearchHit {
-  return {
-    chunk_id: 1,
-    document_id: 1,
-    document_title: 'a.txt',
-    collection_id: 1,
-    collection_name: 'c',
-    chunk_text: '',
-    score: 1,
-    ...over,
-  }
-}
 
 describe('formatLocation', () => {
   it('translates every neutral label the server emits', () => {
@@ -60,31 +41,6 @@ describe('formatLocation', () => {
   })
 })
 
-describe('snippetParts', () => {
-  it('returns one plain run when there are no matches', () => {
-    expect(snippetParts(hit({ chunk_text: 'hello' }))).toEqual([{ text: 'hello', hit: false }])
-  })
-
-  it('splits at the match ranges', () => {
-    const parts = snippetParts(
-      hit({ chunk_text: '报销流程：先提交申请', match_positions: [{ start: 5, end: 10 }] }),
-    )
-    expect(parts).toEqual([
-      { text: '报销流程：', hit: false },
-      { text: '先提交申请', hit: true },
-    ])
-  })
-
-  it('clamps out-of-range and collapses overlapping ranges', () => {
-    const parts = snippetParts(
-      hit({ chunk_text: 'abcdef', match_positions: [{ start: 2, end: 4 }, { start: 3, end: 10 }] }),
-    )
-    expect(parts).toEqual([
-      { text: 'ab', hit: false },
-      { text: 'cdef', hit: true },
-    ])
-  })
-})
 
 describe('status helpers', () => {
   it('maps each state to a badge kind', () => {

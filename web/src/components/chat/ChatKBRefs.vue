@@ -25,7 +25,9 @@
         <div v-if="ref.collectionName" class="chat-kb-ref-collection">
           {{ t('chat.message.kbRefs.from', { name: ref.collectionName }) }}
         </div>
-        <p class="chat-kb-ref-text">{{ ref.text }}</p>
+        <!-- The passage is the document's own text (often markdown), rendered
+             like the bubble body instead of showing raw # headings. -->
+        <div class="chat-kb-ref-text markdown-body" v-html="refHtml(ref.text)" />
       </article>
     </div>
   </div>
@@ -36,6 +38,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookOpen, ChevronDown } from 'lucide-vue-next'
 import { formatLocation, type TFn } from '@/utils/kbFormat'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import type { ChatKBRef } from '@/utils/kbRefs'
 
 const props = defineProps<{ refs: ChatKBRef[] }>()
@@ -53,6 +56,17 @@ const label = computed(() =>
 
 function locationText(loc: string): string {
   return formatLocation(loc, tf)
+}
+
+const refHtmlCache = new Map<string, string>()
+
+function refHtml(text: string): string {
+  let html = refHtmlCache.get(text)
+  if (html === undefined) {
+    html = renderMarkdownHtml(text, { skipEnhancements: true, wrapTables: false })
+    refHtmlCache.set(text, html)
+  }
+  return html
 }
 </script>
 
@@ -149,7 +163,29 @@ function locationText(loc: string): string {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   line-height: 1.55;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Rendered markdown: compact rhythm, inherit the card's size and colour. */
+.chat-kb-ref-text :deep(h1),
+.chat-kb-ref-text :deep(h2),
+.chat-kb-ref-text :deep(h3),
+.chat-kb-ref-text :deep(h4),
+.chat-kb-ref-text :deep(p),
+.chat-kb-ref-text :deep(ul),
+.chat-kb-ref-text :deep(ol) {
+  margin: calc(3 * var(--dp)) 0;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.chat-kb-ref-text :deep(h1),
+.chat-kb-ref-text :deep(h2),
+.chat-kb-ref-text :deep(h3),
+.chat-kb-ref-text :deep(h4) {
+  font-weight: var(--font-weight-semibold);
+  border: 0;
+  padding: 0;
 }
 </style>

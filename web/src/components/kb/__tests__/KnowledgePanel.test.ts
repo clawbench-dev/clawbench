@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+// vue-i18n tries to install its devtools plugin in dev builds; the rejection is
+// unrelated to these assertions and leaks into the NEXT test file in the same
+// worker (vitest then reports a file-level failure with zero failing tests).
+// This suite does not use <i18n-t>, so skipping the full install is safe.
+;(globalThis as { __VUE_I18N_FULL_INSTALL__?: boolean }).__VUE_I18N_FULL_INSTALL__ = false
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
@@ -25,6 +30,9 @@ vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: h.confi
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: h.toast }) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 vi.mock('@/stores/app', () => ({ store: { state: { projectRoot: '/p', currentFile: null } } }))
+vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
+  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
 
 import KnowledgePanel from '@/components/kb/KnowledgePanel.vue'
 
@@ -53,9 +61,8 @@ const i18n = createI18n({
         emptyDocuments: 'No files',
         emptyDocumentsDesc: 'Add one',
         addFile: 'Add file',
-        uploadFile: 'Upload file',
-        pickServerFile: 'Server file',
-        pickFileHint: 'Pick one',
+        added: 'Added',
+        addPartial: '{first} ({count} more failed)',
         statusPending: 'Queued',
         statusExtracting: 'Parsing',
         statusReady: 'Searchable',
@@ -141,6 +148,7 @@ describe('KnowledgePanel', () => {
       global: {
         plugins: [i18n],
         stubs: {
+          AttachmentPicker: true,
           FilePicker: true,
           BottomSheet: true,
           ModalDialog: true,
@@ -219,6 +227,49 @@ describe('KnowledgePanel', () => {
     expect(hit.exists()).toBe(true)
     expect(hit.text()).toContain('p.12')
     expect(hit.find('mark').text()).toBe('先提交申请')
+    wrapper.unmount()
+  })
+
+  it('adds every confirmed file through the shared attachment picker', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-action="kb-add"]').trigger('click')
+    const picker = wrapper.findComponent({ name: 'AttachmentPicker' })
+    expect(picker.exists()).toBe(true)
+    expect(picker.props('open')).toBe(true)
+    // The panel applies the list itself; the picker must not touch the chat
+    // composer and must stay open until the add finishes.
+    expect(picker.props('selectionOnly')).toBe(true)
+    expect(picker.props('variant')).toBe('kb')
+
+    picker.vm.$emit('confirm', [
+      { path: 'docs/a.md', isDir: false },
+      { path: 'docs/b.txt', isDir: false },
+    ])
+    await flushPromises()
+
+    expect(h.apiPost).toHaveBeenCalledWith('/api/kb/documents', { collection_id: 2, path: 'docs/a.md' })
+    expect(h.apiPost).toHaveBeenCalledWith('/api/kb/documents', { collection_id: 2, path: 'docs/b.txt' })
+    expect(h.toast).toHaveBeenCalledWith('Added', expect.anything())
+    expect(wrapper.findComponent({ name: 'AttachmentPicker' }).props('open')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the picker open and reports the reason when a file is rejected', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    h.apiPost.mockRejectedValueOnce(new Error('already in the collection'))
+
+    await wrapper.find('[data-action="kb-add"]').trigger('click')
+    const picker = wrapper.findComponent({ name: 'AttachmentPicker' })
+    picker.vm.$emit('confirm', [{ path: 'docs/a.md', isDir: false }])
+    await flushPromises()
+
+    expect(h.toast).toHaveBeenCalledWith('a.md: already in the collection', expect.anything())
+    // Still open: the selection is intact so the user can drop the bad file.
+    expect(wrapper.findComponent({ name: 'AttachmentPicker' }).props('open')).toBe(true)
     wrapper.unmount()
   })
 })
