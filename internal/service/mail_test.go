@@ -34,9 +34,14 @@ func setupMailDB(t *testing.T) {
 	model.DataDir = t.TempDir()
 	// The sync worker honors the mail master switch. These fixtures are about
 	// the mail machinery itself, so they run with the feature on — the same
-	// state ApplyDefaults produces for a real install.
+	// state ApplyDefaults produces for a real install. The tuning values are
+	// set explicitly for the same reason: `body_prefetch` 0 means "do not
+	// prefetch", which is a real user choice, so a zero-value fixture would
+	// silently switch the prefetch tests off instead of testing them.
 	prevConfig := model.ConfigInstance
 	model.ConfigInstance.Mail.Enabled = true
+	model.ConfigInstance.Mail.SyncWindow = mailDefaultSyncWindow
+	model.ConfigInstance.Mail.BodyPrefetch = mailDefaultBodyPrefetch
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -295,6 +300,82 @@ func TestMailAccountCRUDAndPasswordMasking(t *testing.T) {
 	if updated.Name != "改名" || updated.Password != "secret" {
 		t.Fatalf("update kept wrong values: %+v", updated)
 	}
+}
+
+// TestSyncHonoursConfiguredSyncWindow pins the setting the user actually feels:
+// `mail.sync_window` decides how many of the newest messages a folder caches,
+// so it must reach FetchNewest instead of the historical constant.
+func TestSyncHonoursConfiguredSyncWindow(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 8, time.Now())
+	installFakeDialer(t, f)
+
+	model.ConfigInstance.Mail.SyncWindow = 3
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	folders, _ := ListMailFolders(acc.ID)
+	msgs, err := ListMailMessages(MailMessageFilter{FolderID: folders[0].ID, Limit: 100})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("cached %d messages, want the configured window of 3", len(msgs))
+	}
+	// The window is the NEWEST messages, not the oldest.
+	if msgs[0].UID != 8 || msgs[2].UID != 6 {
+		t.Fatalf("window kept the wrong messages: %d..%d", msgs[0].UID, msgs[2].UID)
+	}
+}
+
+// TestSyncHonoursBodyPrefetchSetting covers both ends of `mail.body_prefetch`:
+// 0 must really mean "do not prefetch" (bodies stay unfetched until opened),
+// and a positive value must be the count actually decoded.
+func TestSyncHonoursBodyPrefetchSetting(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 4, time.Now())
+	installFakeDialer(t, f)
+
+	model.ConfigInstance.Mail.BodyPrefetch = 0
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	folders, _ := ListMailFolders(acc.ID)
+	fetched := countFetchedBodies(t, folders[0].ID)
+	if fetched != 0 {
+		t.Fatalf("body_prefetch=0 decoded %d bodies, want 0", fetched)
+	}
+
+	model.ConfigInstance.Mail.BodyPrefetch = 2
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	fetched = countFetchedBodies(t, folders[0].ID)
+	if fetched != 2 {
+		t.Fatalf("body_prefetch=2 decoded %d bodies, want 2", fetched)
+	}
+}
+
+func countFetchedBodies(t *testing.T, folderID int64) int {
+	t.Helper()
+	msgs, err := ListMailMessages(MailMessageFilter{FolderID: folderID, Limit: 100})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	n := 0
+	for _, m := range msgs {
+		if m.BodyFetched {
+			n++
+		}
+	}
+	return n
 }
 
 func TestDeleteMailAccountRemovesCachedRows(t *testing.T) {

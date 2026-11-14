@@ -730,6 +730,18 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["mail.enabled"] {
 		cfg.Mail.Enabled = true
 	}
+	// Sync tuning. Presence is checked the same way, but here it matters for a
+	// different reason: 0 is a MEANINGFUL value for body_prefetch ("do not
+	// prefetch"), so an absent key must not be read as "user chose 0".
+	if !presence["mail.sync_interval_minutes"] {
+		cfg.Mail.SyncIntervalMinutes = 3
+	}
+	if !presence["mail.sync_window"] {
+		cfg.Mail.SyncWindow = 100
+	}
+	if !presence["mail.body_prefetch"] {
+		cfg.Mail.BodyPrefetch = 10
+	}
 
 	// --- Skills (cross-agent skill discovery) ---
 	// Enabled defaults to false: auto-injecting every discovered skill spends

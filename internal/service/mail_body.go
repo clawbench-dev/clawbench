@@ -145,6 +145,11 @@ func storeMailBody(msg MailMessage, raw []byte, writeFiles bool) error {
 // and the first open is instant. Bounded on purpose: only messages that are
 // already in the cache, still without a body, and small enough to be cheap.
 func prefetchMailBodies(ctx context.Context, client mail.Client, folderID int64, path string, limit int) {
+	// 0 is a real setting ("do not prefetch"). Without this guard the loop
+	// below would still queue one message before noticing `len(todo) >= 0`.
+	if limit <= 0 {
+		return
+	}
 	rows, err := ListMailMessages(MailMessageFilter{FolderID: folderID, Limit: 50})
 	if err != nil {
 		return

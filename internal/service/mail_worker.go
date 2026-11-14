@@ -10,15 +10,17 @@ import (
 )
 
 const (
-	// mailSyncInterval is how often the background worker checks every enabled
-	// account. Deliberately a constant rather than a config knob: the value has
-	// to be sane for everyone, and a hidden setting nobody can find is worse
-	// than a fixed three minutes.
+	// mailSyncInterval is the fallback poll interval, used when the config has
+	// no value (tests, or an install whose config predates the setting). The
+	// live value is `mail.sync_interval_minutes` — a constant nobody can find
+	// was worse than a configurable one, but a setting without a sane default
+	// is worse still.
 	mailSyncInterval = 3 * time.Minute
 	// mailSyncStartupDelay lets the server finish booting before the first
-	// IMAP connection is opened.
+	// IMAP connection is opened. Internal, deliberately not configurable.
 	mailSyncStartupDelay = 20 * time.Second
-	// mailSyncAccountTimeout bounds one account's whole sync pass.
+	// mailSyncAccountTimeout bounds one account's whole sync pass. Internal:
+	// it exists so one stuck mailbox cannot block the others forever.
 	mailSyncAccountTimeout = 5 * time.Minute
 )
 
@@ -96,16 +98,32 @@ func (w *MailSyncWorker) run() {
 	}
 
 	w.tick()
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
 	for {
+		// Re-read the interval every round instead of running a fixed ticker:
+		// changing the setting then takes effect on the next poll, without
+		// restarting the worker (and without restarting the server).
 		select {
 		case <-w.stopCh:
 			return
-		case <-ticker.C:
+		case <-time.After(w.effectiveInterval()):
 			w.tick()
 		}
 	}
+}
+
+// effectiveInterval returns the configured poll interval.
+//
+// `w.interval` is the fallback and stays the field tests inject, so a config
+// without the key keeps the historical three minutes. Only the worker goroutine
+// touches it after construction.
+func (w *MailSyncWorker) effectiveInterval() time.Duration {
+	if minutes := model.ConfigInstance.Mail.SyncIntervalMinutes; minutes > 0 {
+		w.interval = time.Duration(minutes) * time.Minute
+	}
+	if w.interval <= 0 {
+		w.interval = mailSyncInterval
+	}
+	return w.interval
 }
 
 func (w *MailSyncWorker) tick() {

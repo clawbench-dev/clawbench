@@ -1773,6 +1773,49 @@ func TestApplyDefaults_MailEnabledPresence(t *testing.T) {
 	}
 }
 
+// TestApplyDefaults_MailSyncTuning covers the three mail sync knobs.
+//
+// The subtle one is body_prefetch: 0 is a real choice ("do not prefetch"), so
+// the presence map must distinguish "user wrote 0" from "key absent" — an
+// absent key silently turning prefetching off would look like a broken
+// feature, not a default.
+func TestApplyDefaults_MailSyncTuning(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Mail.SyncIntervalMinutes != 3 {
+		t.Errorf("SyncIntervalMinutes = %d, want 3", cfg.Mail.SyncIntervalMinutes)
+	}
+	if cfg.Mail.SyncWindow != 100 {
+		t.Errorf("SyncWindow = %d, want 100", cfg.Mail.SyncWindow)
+	}
+	if cfg.Mail.BodyPrefetch != 10 {
+		t.Errorf("BodyPrefetch = %d, want 10", cfg.Mail.BodyPrefetch)
+	}
+
+	// An explicitly written 0 for body_prefetch must survive: it is the
+	// "do not prefetch" value, not a missing field.
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{"mail.body_prefetch": true})
+	if cfg.Mail.BodyPrefetch != 0 {
+		t.Errorf("explicit BodyPrefetch 0 was overwritten to %d", cfg.Mail.BodyPrefetch)
+	}
+
+	// The same presence rule keeps a user's own numbers.
+	cfg = Config{}
+	cfg.Mail.SyncIntervalMinutes = 15
+	cfg.Mail.SyncWindow = 300
+	ApplyDefaults(&cfg, map[string]bool{
+		"mail.sync_interval_minutes": true,
+		"mail.sync_window":           true,
+	})
+	if cfg.Mail.SyncIntervalMinutes != 15 || cfg.Mail.SyncWindow != 300 {
+		t.Errorf("configured values were overwritten: %d / %d",
+			cfg.Mail.SyncIntervalMinutes, cfg.Mail.SyncWindow)
+	}
+}
+
 // TestApplyDefaults_ForgeEnabledPresence covers the master switch's default.
 // Go's bool zero value is false, so without the presence check every existing
 // install would read "forge disabled" on upgrade and lose its integration.

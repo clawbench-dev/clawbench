@@ -615,6 +615,26 @@ func TestPersist_PortForwardPort(t *testing.T) {
 	assert.Equal(t, 2222, getNestedValue(cfg, "port_forward.port"))
 }
 
+// ─── Mail section ──────────────────────────────────────
+
+// The sync knobs must survive a restart, so they have to reach config.yaml —
+// the worker reads them from the loaded config, not from the PATCH request.
+func TestPersist_MailSyncTuning(t *testing.T) {
+	_, cleanup := setupPersistTestEnv(t)
+	defer cleanup()
+
+	model.ConfigInstance = model.Config{}
+
+	cfg := patchAndReadConfig(t,
+		`{"mail":{"sync_interval_minutes":7,"sync_window":250,"body_prefetch":0}}`)
+
+	assert.Equal(t, 7, getNestedValue(cfg, "mail.sync_interval_minutes"))
+	assert.Equal(t, 250, getNestedValue(cfg, "mail.sync_window"))
+	// 0 must be WRITTEN, not omitted: the loader uses key presence to tell
+	// "user turned prefetch off" from "key never existed" (which defaults to 10).
+	assert.Equal(t, 0, getNestedValue(cfg, "mail.body_prefetch"))
+}
+
 // ─── Multi-field PATCH ──────────────────────────────────────
 
 func TestPersist_MultipleFieldsInOnePatch(t *testing.T) {

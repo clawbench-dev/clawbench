@@ -683,8 +683,77 @@ func TestServeConfig_Patch_MailEnabledRoundTrip(t *testing.T) {
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
 	assert.Equal(t, http.StatusOK, gw.Code)
-	assert.Contains(t, gw.Body.String(), `"mail":{"enabled":false}`,
+	assert.Contains(t, gw.Body.String(), `"mail":{"enabled":false,`,
 		"GET must echo the switch, otherwise the UI resets it on reload")
+}
+
+// TestServeConfig_Patch_MailSyncTuningRoundTrip covers the three sync knobs.
+//
+// They are server-side numbers the worker re-reads every pass, so a value that
+// reaches config.yaml but not ConfigInstance would look saved and change
+// nothing — the exact bug TestApplyConfigPatchCoversEveryPatchableField guards
+// structurally. This is the behavioral half.
+func TestServeConfig_Patch_MailSyncTuningRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Mail: model.MailConfig{Enabled: true}}
+
+	body := `{"mail":{"sync_interval_minutes":15,"sync_window":300,"body_prefetch":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, 15, model.ConfigInstance.Mail.SyncIntervalMinutes)
+	assert.Equal(t, 300, model.ConfigInstance.Mail.SyncWindow)
+	// 0 is a real value here ("do not prefetch"), so it must survive both the
+	// patch and the JSON round trip instead of being read as "absent".
+	assert.Equal(t, 0, model.ConfigInstance.Mail.BodyPrefetch)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(getReq, model.SessionToken)
+	gw := callHandler(ServeConfig, getReq)
+	assert.Equal(t, http.StatusOK, gw.Code)
+	assert.Contains(t, gw.Body.String(), `"sync_interval_minutes":15`)
+	assert.Contains(t, gw.Body.String(), `"sync_window":300`)
+	assert.Contains(t, gw.Body.String(), `"body_prefetch":0`)
+}
+
+// TestServeConfig_Patch_MailSyncTuningBounds keeps the stored value inside the
+// range the UI advertises. PATCH does not re-run ApplyDefaults, so whatever is
+// accepted here is echoed back by GET — an out-of-range number would make the
+// panel show a value the worker cannot honour.
+func TestServeConfig_Patch_MailSyncTuningBounds(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"interval below 1", `{"mail":{"sync_interval_minutes":0}}`},
+		{"interval above 120", `{"mail":{"sync_interval_minutes":121}}`},
+		{"window below 20", `{"mail":{"sync_window":19}}`},
+		{"window above 500", `{"mail":{"sync_window":501}}`},
+		{"prefetch below 0", `{"mail":{"body_prefetch":-1}}`},
+		{"prefetch above 50", `{"mail":{"body_prefetch":51}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
+			model.ConfigInstance = model.Config{Mail: model.MailConfig{Enabled: true}}
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "mail.")
+			// A rejected patch must not half-apply.
+			assert.Equal(t, 0, model.ConfigInstance.Mail.SyncWindow)
+		})
+	}
 }
 
 // TestServeConfig_Patch_ForgeDisableClearsBindings is the behavior the user

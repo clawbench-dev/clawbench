@@ -226,7 +226,12 @@ var hotReloadFields = map[string]bool{
 	"forge.notify.commented":    true,
 	"forge.notify.pipeline":     true,
 	"forge.pause_event_tasks":   true,
-	"mail.enabled":              true,
+	// Mail — the worker re-reads these on every poll/pass, so a change
+	// applies without a restart.
+	"mail.enabled":               true,
+	"mail.sync_interval_minutes": true,
+	"mail.sync_window":           true,
+	"mail.body_prefetch":         true,
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
@@ -750,13 +755,15 @@ type configForgeNotify struct {
 	Pipeline  bool `json:"pipeline"`
 }
 
-// configMail exposes the mail client's master switch.
+// configMail exposes the mail client's master switch and its sync tuning.
 //
-// Only the switch is here: the accounts themselves live in the database and are
-// managed through /api/mail/accounts, and disabling mail deliberately does not
-// touch them.
+// The accounts themselves live in the database and are managed through
+// /api/mail/accounts, and disabling mail deliberately does not touch them.
 type configMail struct {
-	Enabled bool `json:"enabled"`
+	Enabled             bool `json:"enabled"`
+	SyncIntervalMinutes int  `json:"sync_interval_minutes"`
+	SyncWindow          int  `json:"sync_window"`
+	BodyPrefetch        int  `json:"body_prefetch"`
 }
 
 type configFileSearch struct {
@@ -1164,6 +1171,9 @@ var PatchableConfigPaths = map[string]bool{
 	"forge.notify.pipeline":                  true,
 	"forge.pause_event_tasks":                true,
 	"mail.enabled":                           true,
+	"mail.sync_interval_minutes":             true,
+	"mail.sync_window":                       true,
+	"mail.body_prefetch":                     true,
 	"file_search.display_limit":              true,
 	"tls.cert_dir":                           true,
 	"fonts.dir":                              true,
@@ -1469,7 +1479,12 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Drawio:     configDrawio{DownloadURL: cfg.Drawio.DownloadURL},
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
-		Mail:       configMail{Enabled: cfg.Mail.Enabled},
+		Mail: configMail{
+			Enabled:             cfg.Mail.Enabled,
+			SyncIntervalMinutes: cfg.Mail.SyncIntervalMinutes,
+			SyncWindow:          cfg.Mail.SyncWindow,
+			BodyPrefetch:        cfg.Mail.BodyPrefetch,
+		},
 		UsageMeter: configUsageMeter{
 			Enabled:    cfg.UsageMeter.Enabled,
 			AnchorDate: cfg.UsageMeter.AnchorDate,
@@ -2531,6 +2546,25 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			return fmt.Errorf("chat.restart_resume_window_minutes must be non-negative")
 		}
 	}
+	// Mail sync tuning. The PATCH path does not re-run ApplyDefaults, so a value
+	// accepted here is what GET /api/config echoes back — every bound has to be
+	// enforced at the edge or the UI and the worker disagree.
+	if mailCfg, ok := patch["mail"].(map[string]any); ok {
+		// No "0 = never sync": that is what mail.enabled is for, and a second
+		// way to stop syncing would leave users guessing which one is in effect.
+		if v, ok := mailCfg["sync_interval_minutes"].(float64); ok && (v < 1 || v > 120) {
+			return fmt.Errorf("mail.sync_interval_minutes must be between 1 and 120")
+		}
+		// Below 20 the list reads as empty after a sync; above 500 every pass
+		// pulls a mailbox worth of headers for little benefit.
+		if v, ok := mailCfg["sync_window"].(float64); ok && (v < 20 || v > 500) {
+			return fmt.Errorf("mail.sync_window must be between 20 and 500")
+		}
+		// 0 is valid and means "do not prefetch" (metered connections).
+		if v, ok := mailCfg["body_prefetch"].(float64); ok && (v < 0 || v > 50) {
+			return fmt.Errorf("mail.body_prefetch must be between 0 and 50")
+		}
+	}
 	session, ok := patch["session"].(map[string]any)
 	if ok {
 		if v, ok := session["max_count"].(float64); ok && v < 0 {
@@ -3228,12 +3262,21 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	// Mail master switch. Only the switch is patchable — the accounts live in
-	// the database and are managed through /api/mail/accounts, so disabling mail
+	// Mail: the master switch plus the sync tuning. The accounts live in the
+	// database and are managed through /api/mail/accounts, so disabling mail
 	// must not (and does not) touch them.
 	if mailMap, ok := patch["mail"].(map[string]any); ok {
 		if v, ok := mailMap["enabled"].(bool); ok {
 			cfg.Mail.Enabled = v
+		}
+		if v, ok := mailMap["sync_interval_minutes"].(float64); ok {
+			cfg.Mail.SyncIntervalMinutes = int(v)
+		}
+		if v, ok := mailMap["sync_window"].(float64); ok {
+			cfg.Mail.SyncWindow = int(v)
+		}
+		if v, ok := mailMap["body_prefetch"].(float64); ok {
+			cfg.Mail.BodyPrefetch = int(v)
 		}
 	}
 

@@ -439,6 +439,20 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // placeholder only opens the section and must also be listed in
     // PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+    // How often the server polls, how deep it caches and how much it downloads
+    // up front. All three are server-side because they describe what the
+    // SERVER does to the mailbox and to its own disk — a per-device value
+    // would mean one client's server polling on another device's behalf.
+    //
+    // Deliberately NOT exposed: the flag re-read window, the per-account sync
+    // timeout, the startup delay, the page size and the 25MB attachment cap.
+    // Those are internal safety numbers — a user cannot make a better choice
+    // than the default, and each one would be a knob nobody can explain.
+    { type: 'item', spec: { labelKey: 'settings.items.mailSyncInterval', descriptionKey: 'settings.items.mailSyncIntervalDesc', key: 'mail.sync_interval_minutes', type: 'number', source: 'server', min: 1, max: 120, sectionHeader: 'settings.items.mailSyncSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.mailSyncWindow', descriptionKey: 'settings.items.mailSyncWindowDesc', key: 'mail.sync_window', type: 'number', source: 'server', min: 20, max: 500, sectionHeader: 'settings.items.mailSyncSection' } },
+    // 0 is a real value here (do not prefetch), so the row must not treat an
+    // empty input as 0 by accident — `min: 0` documents the floor.
+    { type: 'item', spec: { labelKey: 'settings.items.mailBodyPrefetch', descriptionKey: 'settings.items.mailBodyPrefetchDesc', key: 'mail.body_prefetch', type: 'number', source: 'server', min: 0, max: 50, sectionHeader: 'settings.items.mailSyncSection' } },
     // How a message body is drawn. Local, not server: it changes nothing about
     // what the server fetches or stores, only whether this screen lets the
     // mail's own <img> tags hit the network. The default is ON, so the row is

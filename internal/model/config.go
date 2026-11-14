@@ -407,12 +407,13 @@ type ForgeNotifyConfig struct {
 	Pipeline  bool `yaml:"pipeline"`
 }
 
-// MailConfig is the master switch for the built-in mail client.
+// MailConfig holds the built-in mail client's server-side settings: the master
+// switch plus the sync tuning the background worker obeys.
 //
-// It is a SERVER-side switch, like Forge.Enabled: the thing being turned off is
-// the background IMAP polling and the email-triggered tasks that ride on it, and
-// those live on the server. A per-device flag would leave one client's server
-// syncing after another device had "disabled" mail.
+// Everything here is SERVER-side, like Forge.Enabled: the thing being turned off
+// or slowed down is the background IMAP polling and the email-triggered tasks
+// that ride on it, and those live on the server. A per-device flag would leave
+// one client's server syncing after another device had "disabled" mail.
 //
 // Off means: no background sync, no email-triggered task firing, no dock entry
 // and no unread polling. It does NOT delete the configured accounts — turning
@@ -421,6 +422,34 @@ type MailConfig struct {
 	// Enabled defaults to TRUE via ApplyDefaults' presence check: mail is an
 	// existing feature, so an install that never wrote the key must keep it.
 	Enabled bool `yaml:"enabled"`
+
+	// SyncIntervalMinutes is how often the background worker polls every
+	// enabled account. Server-side because the polling is: a per-device value
+	// would mean one client's server hammering IMAP on another device's behalf.
+	//
+	// 3 by default. There is deliberately no "0 = never sync" value — that is
+	// what Enabled is for, and two ways to stop syncing would leave users
+	// guessing which one is in effect.
+	SyncIntervalMinutes int `yaml:"sync_interval_minutes"`
+
+	// SyncWindow is how many of the newest messages each folder keeps cached.
+	// This is the number the user actually feels: it decides how far back the
+	// list can be read without another IMAP round trip, and how much mail the
+	// local database holds per folder.
+	//
+	// 100 by default; older pages are still fetched on demand when the user
+	// scrolls past the window.
+	SyncWindow int `yaml:"sync_window"`
+
+	// BodyPrefetch is how many of the newest messages have their body decoded
+	// during a sync. It is what gives the list its preview lines and makes the
+	// first click instant, at the cost of downloading those bodies before they
+	// are opened.
+	//
+	// 0 means "do not prefetch at all" — bodies are then fetched only when the
+	// message is opened, which is the traffic-saving choice for a metered
+	// connection.
+	BodyPrefetch int `yaml:"body_prefetch"`
 }
 
 // AppearanceConfig holds the custom-wallpaper *resources* the server owns.

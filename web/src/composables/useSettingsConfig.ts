@@ -641,6 +641,12 @@ const serverDefaults: Record<string, unknown> = {
   // Mail master switch defaults ON, mirroring ApplyDefaults so the dock does not
   // flash the tab away before /api/config arrives.
   'mail.enabled': true,
+  // Sync tuning, same reason as above: without these the rows render 0 until
+  // the config lands — and for body_prefetch 0 means "do not prefetch", so the
+  // panel would briefly show a value the server is not using.
+  'mail.sync_interval_minutes': 3,
+  'mail.sync_window': 100,
+  'mail.body_prefetch': 10,
   'forge.notify.opened': true,
   'forge.notify.closed': true,
   'forge.notify.merged': true,
