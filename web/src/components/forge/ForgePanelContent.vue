@@ -45,6 +45,7 @@
       <ForgePipelineDetail
         v-if="detailOpen && activeTab === 'pipeline'"
         :run-id="pipelineDetailId"
+        :header-icon="forgeHeaderIcon"
         @back="closeDetail"
         @quote="onPipelineQuote"
         @open-pr="onOpenLinkedPr"
@@ -54,6 +55,7 @@
         v-else-if="detailOpen"
         :type="items.type.value"
         :number="detailNumber"
+        :header-icon="forgeHeaderIcon"
         @back="closeDetail"
         @quote="onQuote"
         @open-pipeline="onOpenItemPipeline"
@@ -75,6 +77,7 @@
              sits outside its ActionBar. -->
         <div class="forge-header">
           <span class="forge-header-title">
+            <component :is="forgeHeaderIcon" :size="14" class="panel-header-icon" />
             <button
               v-if="items.binding.value"
               ref="repoBadgeRef"
@@ -425,7 +428,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Github, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
+  Github, Gitlab, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
   ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Unlink, CheckCheck,
   ExternalLink,
 } from 'lucide-vue-next'
@@ -440,6 +443,7 @@ import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
+import { useForgeBinding, forgeDockIconKind } from '@/composables/useForgeBinding'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
@@ -466,6 +470,12 @@ const { t } = useI18n()
 const { isWideScreen } = useWideScreenLayout()
 const items = useForgeItems(() => props.projectPath)
 const pipelines = useForgePipelines(() => props.projectPath)
+// Same platform-aware brand as the dock tab: GitHub by default, GitLab only
+// when the project is actually bound to one.
+const { platform: forgePlatform } = useForgeBinding()
+const forgeHeaderIcon = computed(() =>
+  forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github,
+)
 // The same count the dock badge shows, so the "mark all read" button reflects
 // the badge rather than a separately-tracked number that could disagree.
 const { forgeUnreadCount } = useForgeUnread()

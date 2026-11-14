@@ -7,6 +7,10 @@
         :class="{ current: i === crumbs.length - 1 }"
         @click="i < crumbs.length - 1 && $emit('navigate', crumb.depth)"
       >
+        <!-- The root crumb carries the section glyph, like the task breadcrumb's
+             root does — so the header still reads as "the settings panel" once
+             the plain title has been replaced by the trail. -->
+        <Settings v-if="i === 0" :size="14" class="panel-header-icon" />
         <span>{{ crumb.label }}</span>
       </span>
     </template>
@@ -14,6 +18,7 @@
 </template>
 
 <script setup lang="ts">
+import { Settings } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 

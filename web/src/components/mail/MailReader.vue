@@ -1,6 +1,7 @@
 <template>
   <div class="mail-reader">
     <div class="mail-reader__head">
+      <Mail :size="14" class="panel-header-icon" />
       <button class="mail-icon-btn" :title="t('mail.reader.back')" @click="emit('back')">
         <ArrowLeft />
       </button>

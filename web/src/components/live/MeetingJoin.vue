@@ -1,6 +1,7 @@
 <template>
   <div class="meeting-panel">
     <div class="meeting-header">
+      <MonitorUp :size="14" class="panel-header-icon" />
       <button class="meeting-icon-btn" type="button" :title="t('common.back')" @click="emit('back')">
         <ArrowLeft :size="14" />
       </button>
@@ -56,7 +57,7 @@
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, MonitorUp } from 'lucide-vue-next'
 import { getNative } from '@/utils/clawbenchNative'
 import { useToast } from '@/composables/useToast'
 import { useMeetingNickname } from '@/composables/useMeetingNickname'

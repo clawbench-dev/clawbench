@@ -2,10 +2,13 @@
   <div class="forge-detail forge-pipeline-detail">
     <!-- Standard drill-down header, matching every other detail page. -->
     <div class="forge-detail-header">
-      <button class="forge-back" @click="emit('back')">
-        <ChevronLeft :size="18" />
-        <span>{{ t('forge.pipeline.detail.back') }}</span>
-      </button>
+      <div class="forge-detail-leading">
+        <component v-if="headerIcon" :is="headerIcon" :size="14" class="panel-header-icon" />
+        <button class="forge-back" @click="emit('back')">
+          <ChevronLeft :size="18" />
+          <span>{{ t('forge.pipeline.detail.back') }}</span>
+        </button>
+      </div>
       <div class="forge-detail-actions">
         <button
           v-if="detail.run.value"
@@ -157,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ChevronLeft, ChevronRight, ExternalLink, MessageSquare, AlertCircle, ListChecks,
@@ -170,6 +173,8 @@ import type { ForgePipelineRun, ForgePipelinePullRequest } from '@/utils/forgeAp
 
 const props = defineProps<{
   runId: number
+  /** Section glyph (GitHub / GitLab), owned by the panel that hosts this view. */
+  headerIcon?: Component
 }>()
 const emit = defineEmits<{
   (e: 'back'): void

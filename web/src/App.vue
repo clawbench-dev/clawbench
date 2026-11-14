@@ -101,13 +101,14 @@
           >
             <template #left>
               <div class="col-left" :class="{ 'col-left--chrome': isWideScreen }" v-show="isWideScreen || activeTab !== 'chat'" @pointerdown="onLeftPanePointerDown" @focusin="setActivePane('left')">
-                <!-- Shared head cells over the panel's own header row: the
-                     tab icon on the left, the two window controls on the right.
-                     The middle is whatever header the current view renders —
-                     including drill-down pages — so there is ONE row, not two,
-                     and the controls cannot be covered. Wide screens only. -->
+                <!-- Shared head cells over the panel's own header row: the two
+                     window controls on the right. The middle is whatever header
+                     the current view renders — including drill-down pages — so
+                     there is ONE row, not two, and the controls cannot be
+                     covered. The section icon is NOT drawn here: each header
+                     owns its own leading glyph (see .panel-header-icon).
+                     Wide screens only. -->
                 <div v-if="isWideScreen" class="panel-head">
-                  <component :is="wideDockTabIcon(leftTab)" :size="14" class="panel-head-icon" />
                   <PanelWindowControls />
                 </div>
                 <!-- File Manager Tab (directory browsing only) -->
@@ -182,12 +183,13 @@
                       @open-search="openFileSearch"
                     />
                     <div v-else class="view-panel-empty" :class="{ 'has-recent': recentFileEntries.length }">
-                      <!-- Same one-row header as every other tab: the shared
-                           tab icon sits at the left, this title in the middle,
-                           the window controls at the right. Without it the
-                           empty state's title floated under the icon with no
-                           baseline and no bottom border. -->
+                      <!-- Same one-row header as every other tab: the section
+                           glyph lives in this header, then the title, with the
+                           window controls overlaid at the right. Without it the
+                           empty state's title floated with no baseline and no
+                           bottom border. -->
                       <div class="view-empty-header">
+                        <FileText :size="14" class="panel-header-icon" />
                         <span class="view-empty-header-title">{{ t('appHeader.recentFiles') }}</span>
                       </div>
                       <div class="view-empty-body">
@@ -5099,13 +5101,20 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* The empty state's own header row. Geometry (36px, surface, bottom border,
-   left/right padding for the shared icon and controls) comes from the global
-   header rule in components.css; only the flex alignment lives here. */
+/* The empty state's own header row. It carries the row geometry itself: the
+   wide-screen chrome rule in components.css is scoped to `.col-left--chrome`,
+   which only exists on wide screens — narrow screens render the same panel
+   without it, and a header that leaned on that rule sat flush against the panel
+   edge with no surface or divider. The horizontal inset comes from the shared
+   `--panel-header-pad-x` token rule. */
 .view-empty-header {
   display: flex;
   align-items: center;
+  gap: var(--space-3);
   flex-shrink: 0;
+  height: var(--header-height);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .view-empty-header-title {
@@ -5239,10 +5248,10 @@ onUnmounted(() => {
    buttons. Sits at the panel's top-right in the same 36px band a header would
    occupy; components.css hides it as soon as the ACTIVE panel renders its own
    cluster. */
-/* The shared head cells sit ON the panel's own header row (no second row).
-   They are an overlay so they survive drill-down pages, which replace the
-   header content but keep the same row. Pointer events pass through the empty
-   middle; only the controls take clicks (PanelWindowControls sets its own
+/* The shared head cell sits ON the panel's own header row (no second row).
+   It is an overlay so it survives drill-down pages, which replace the header
+   content but keep the same row. Pointer events pass through the empty middle;
+   only the controls take clicks (PanelWindowControls sets its own
    `pointer-events: auto`). */
 .panel-head {
     position: absolute;
@@ -5253,14 +5262,6 @@ onUnmounted(() => {
     height: var(--header-height);
     pointer-events: none;
     user-select: none;
-}
-
-.panel-head-icon {
-    position: absolute;
-    top: 50%;
-    left: var(--space-5);
-    transform: translateY(-50%);
-    color: var(--text-muted);
 }
 
 /* Wide-screen split panes — positioned ancestors for the absolute TabPanels */

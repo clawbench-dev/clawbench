@@ -7,6 +7,7 @@
          activation, so switching preserves scroll positions and only the
          visible pane ever covers the body area. -->
     <div class="stats-tab-bar">
+      <BarChart3 :size="14" class="panel-header-icon" />
       <!-- Horizontally scrollable strip. The three labels keep their natural
            width; a narrow panel scrolls them sideways instead of letting the
            row overflow its box (which painted the last tab on top of the
@@ -53,7 +54,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defineAsyncComponent } from 'vue'
-import { Coins, Files, GitCommitHorizontal } from 'lucide-vue-next'
+import { BarChart3, Coins, Files, GitCommitHorizontal } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { useUsageStats } from '@/composables/useUsageStats'
@@ -201,6 +202,11 @@ function onRefresh() {
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   position: relative;
   z-index: 2;
+}
+/* The bar has no gap (the strip is meant to start flush at its edge), so the
+   section glyph carries its own spacing. */
+.stats-tab-bar > .panel-header-icon {
+  margin-right: var(--space-3);
 }
 .stats-tab-list {
   display: flex;

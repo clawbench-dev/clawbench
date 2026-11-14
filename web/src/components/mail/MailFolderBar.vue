@@ -6,6 +6,7 @@
          icon-button box, and their length would decide how many buttons fold.
          Same split as the git history toolbar's branch picker. -->
     <div v-if="!searchOpen" class="mail-bar__top">
+      <Mail :size="14" class="panel-header-icon" />
       <!-- Two pickers, deliberately not drawn as two equal boxes. The account
            is switched rarely, so it collapses to a small avatar; the folder is
            where the user is, so it gets the name, its unread count and the
@@ -135,6 +136,7 @@
          hidden filter is a lie (the list would stay filtered with nothing on
          screen saying why). Same rule as the git history search. -->
     <div v-else class="mail-bar__search-row" @keydown.esc="closeSearch">
+      <Mail :size="14" class="panel-header-icon" />
       <SearchInput
         ref="searchRef"
         class="mail-bar__search"
@@ -175,6 +177,7 @@ import {
   FileText,
   Folder,
   Inbox,
+  Mail,
   MailCheck,
   MailX,
   PenLine,

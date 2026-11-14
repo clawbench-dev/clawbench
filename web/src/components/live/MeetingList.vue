@@ -12,6 +12,7 @@
          the refresh control closes the row, the way every other panel header
          does it (git history, forge, file manager). -->
     <div class="meeting-header">
+      <component :is="MEETING_ICON" :size="14" class="panel-header-icon" />
       <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
       <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />

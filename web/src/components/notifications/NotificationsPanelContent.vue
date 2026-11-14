@@ -3,6 +3,7 @@
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
     <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
+        <Inbox :size="14" class="panel-header-icon" />
         <span>{{ t('notifications.title') }}</span>
       </div>
       <RefreshButton

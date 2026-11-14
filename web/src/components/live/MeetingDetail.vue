@@ -1,6 +1,7 @@
 <template>
   <div class="meeting-panel">
     <div class="meeting-header">
+      <MonitorUp :size="14" class="panel-header-icon" />
       <button class="meeting-icon-btn" type="button" :title="t('meeting.detail.back')" data-action="meeting-back" @click="emit('back')">
         <ArrowLeft :size="14" />
       </button>
@@ -313,6 +314,7 @@ import {
   FileText,
   MessageSquare,
   MessagesSquare,
+  MonitorUp,
   Pencil,
   SpellCheck,
   Trash2,

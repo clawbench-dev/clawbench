@@ -1,12 +1,14 @@
 <template>
   <div class="task-breadcrumb" data-horizontal-scroll="true" @wheel="onHorizontalWheel">
-    <!-- Root crumb: 任务列表. The section glyph lives in the shared panel
-         head (App.vue), so the crumb is text-only. -->
+    <!-- Root crumb: 任务列表. The glyph is the section's own dock icon, so the
+         panel header reads as the same section the dock button stands for
+         (same rule as the git history and forge headers). -->
     <span
       class="crumb"
       :class="{ current: isList, clickable: !isList }"
       @click="!isList && navigate('list')"
     >
+      <Clock :size="14" class="panel-header-icon" />
       <span>{{ t('task.title') }}</span>
     </span>
 
@@ -39,6 +41,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { Clock } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { store } from '@/stores/app'

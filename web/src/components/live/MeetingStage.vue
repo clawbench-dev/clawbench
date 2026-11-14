@@ -5,6 +5,7 @@
          come back to, so its state has to be visible from the tab, not only
          inside a dialog that has been closed. -->
     <div class="live-panel__header">
+      <MonitorUp :size="14" class="panel-header-icon" />
       <!-- Leaving the stage for the record list is NAVIGATION, not an exit:
            the room lives in useLiveShare, so the meeting keeps running and its
            record (the live row) leads straight back. The hardware back gesture
@@ -1782,9 +1783,9 @@ watch(
 
 
 /* Same geometry as the record view's `.meeting-icon-btn`, so the two headers
-   read as one family. The negative margin absorbs the header's own left
-   padding: the glyph should sit where the title's icon sits on the other
-   panels, not 12px further in. */
+   read as one family. No negative margin: the section glyph now sits in the
+   header's own flow before this button, so the back button starts where the
+   header content starts. */
 .live-panel__back {
   display: inline-flex;
   align-items: center;
@@ -1792,7 +1793,6 @@ watch(
   width: calc(26 * var(--dp));
   height: calc(26 * var(--dp));
   padding: 0;
-  margin-left: calc(-1 * var(--space-2, 4px));
   border: none;
   border-radius: var(--radius-sm, 4px);
   background: transparent;

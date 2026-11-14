@@ -306,6 +306,15 @@
     gap: var(--space-4);
 }
 
+/* The section glyph and the back button read as one left-hand group; the
+   header's own space-between layout keeps the actions at the far right. */
+.forge-detail-leading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
 .forge-back {
     display: flex;
     align-items: center;
@@ -1786,15 +1795,56 @@
 /* ==========================================================================
    One header row for every left panel
 
-   The shared tab icon and the two window controls (App.vue's .panel-head) are
-   overlaid on the panel's OWN header row, so there is a single row rather than
-   a title bar stacked on a toolbar. Each header reserves the two ends with
-   padding: the icon and controls never cover its content, and an ActionBar
-   inside it folds against the reduced width on its own.
+   The two window controls (App.vue's .panel-head) are overlaid on the panel's
+   OWN header row, so there is a single row rather than a title bar stacked on
+   a toolbar. Each header reserves the right end with padding so the controls
+   never cover its content, and an ActionBar inside it folds against the
+   reduced width on its own.
+
+   The section icon is NOT part of the shared overlay: every header owns its
+   leading glyph (`.panel-header-icon`) in its own template, because the right
+   glyph differs per section (and drill-down pages may deliberately have none).
+   The horizontal inset comes from one token (`--panel-header-pad-x`) applied
+   below, so the glyph sits inside the header's content flow rather than in a
+   reserved gutter.
 
    This list is every header row a panel can show, drill-down pages included —
    a missing one lets its right-side buttons slide under the controls.
    ========================================================================== */
+/* Horizontal inset in BOTH layouts. The narrow single-column layout has no
+   `.col-left--chrome`, so the wide-screen rule below cannot own this: without
+   this rule the tab bars that start with `padding: 0` (terminal, stats) put
+   their content flush against the panel edge. */
+.col-left .tab-panel :is(
+    .dir-toolbar,
+    .file-header-bar,
+    .view-empty-header,
+    .settings-page__header,
+    .share-header,
+    .kb-header,
+    .forge-header,
+    .list-header,
+    .detail-header,
+    .form-header,
+    .exec-detail-header,
+    .drilldown-header,
+    .proxy-header,
+    .meeting-header,
+    .live-panel__header,
+    .mail-bar,
+    .mail-reader__head,
+    .mail-compose__head,
+    .stats-tab-bar,
+    .terminal-tab-bar
+) {
+    padding-left: var(--panel-header-pad-x);
+    padding-right: var(--panel-header-pad-x);
+}
+
+/* Wide-screen chrome: one row height and surface, plus room for the two
+   window controls at the right end. The controls are inset by the same token
+   (PanelWindowControls), so the gap from the last header control to the panel
+   edge equals the left inset. */
 .col-left--chrome .tab-panel :is(
     .dir-toolbar,
     .file-header-bar,
@@ -1825,10 +1875,18 @@
        tabs changed the bar's colour. */
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
-    /* 10 left + 14 icon + 8 gap. */
-    padding-left: calc(32 * var(--dp));
-    /* 8 gap + two 26px control cells. */
-    padding-right: calc(var(--space-2) + 52 * var(--dp));
+    /* Right edge inset + two 26px control cells + the gap before them. */
+    padding-right: calc(var(--panel-header-pad-x) + 52 * var(--dp) + var(--space-2));
+}
+
+/* Section glyph rendered by each panel header itself. Geometry is shared so
+   the icon lands on the same optical line whichever header draws it; colour
+   stays muted like the old shared overlay so the header's title remains the
+   primary content. */
+.panel-header-icon {
+    flex: 0 0 auto;
+    align-self: center;
+    color: var(--text-muted);
 }
 
 /* The mail bar is a wrapper with 4px vertical padding around its row; left as

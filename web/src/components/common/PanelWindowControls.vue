@@ -58,7 +58,10 @@ const { isWideScreen, chatCollapsed } = getWideScreenState()
 .panel-window-controls {
   position: absolute;
   top: 0;
-  right: 0;
+  /* Same edge inset as the header's own left padding, so the panel controls
+     do not sit closer to the right edge than the section glyph does to the
+     left one. */
+  right: var(--panel-header-pad-x);
   /* Stop above the header's 1px bottom border: painting over it tinted the
      line under the buttons, so the border changed colour at the right end. */
   bottom: 1px;

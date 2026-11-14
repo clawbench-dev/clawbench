@@ -27,6 +27,7 @@
     <template v-else>
     <!-- Tab bar (replaces old header) -->
     <div class="terminal-tab-bar">
+      <TerminalIcon :size="14" class="panel-header-icon" />
       <div class="terminal-tab-list">
         <div
           v-for="tab in tabs"
@@ -1623,6 +1624,12 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   position: relative;
   z-index: 2;
   gap: 0;
+}
+
+/* The bar has no gap (the tabs are meant to start flush at its edge), so the
+   section glyph carries its own spacing. */
+.terminal-tab-bar > .panel-header-icon {
+  margin-right: var(--space-3);
 }
 
 .terminal-tab-list {

@@ -5,6 +5,7 @@
       <!-- Top toolbar. Shows the browse toolbar, or the multi-select toolbar
            while multi-select is active (the resident search bar sits below). -->
       <div ref="dirToolbarRef" class="dir-toolbar">
+        <FolderOpen :size="14" class="panel-header-icon" />
         <!-- Multi-select toolbar — replaces the browse toolbar while
              multi-select is active, reusing the exact top-toolbar chrome so the
              header never changes height. -->
@@ -3068,6 +3069,12 @@ function scrollSelectedIntoView(path) {
     height: var(--toolbar-row-height);
     padding: 0 var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
+}
+
+/* The row has no gap of its own (its two toolbars are full-width flex items),
+   so the section glyph carries its own spacing. */
+.dir-toolbar > .panel-header-icon {
+    margin-right: var(--space-3);
 }
 
 .dir-toolbar-btns {

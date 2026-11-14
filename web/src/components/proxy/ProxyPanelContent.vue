@@ -6,6 +6,7 @@
          a More menu. -->
     <ActionBar class="proxy-header" mode="menu" size="header">
       <div class="proxy-header-leading">
+        <NetworkIcon :size="14" class="panel-header-icon" />
         <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
       </div>
       <RefreshButton

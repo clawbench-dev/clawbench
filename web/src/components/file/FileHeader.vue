@@ -1,5 +1,6 @@
 <template>
   <div class="file-header-bar">
+    <FileText :size="14" class="panel-header-icon" />
     <!-- Navigation cluster at the top-left: view back/forward plus in-file jump
          history. Same control set on every layout, touch included — there is no
          separate floating bar for narrow screens. -->
@@ -204,7 +205,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, PenLine, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Mail } from 'lucide-vue-next'
+import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, PenLine, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Mail, FileText } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
