@@ -120,16 +120,31 @@ describe('DataTable 单元格边框（不许叠成 2px）', () => {
       expect(decl(cell, 'border-right')).toBe('1px solid var(--border-color)')
       expect(decl(cell, 'border-bottom')).toBe('1px solid var(--border-color)')
     }
-    // 左/上两条边各补一次，拼成闭合网格
+    // 左边补一次，拼成闭合网格
     expect(decl(ruleFor('.dt .dt-grid th:first-child'), 'border-left')).toBe(
       '1px solid var(--border-color)',
     )
     expect(decl(ruleFor('.dt .dt-grid td:first-child'), 'border-left')).toBe(
       '1px solid var(--border-color)',
     )
-    expect(decl(ruleFor('.dt .dt-grid thead th'), 'border-top')).toBe(
-      '1px solid var(--border-color)',
-    )
+  })
+
+  it('网格不画顶边：那条线由上方表头栏提供（否则叠成 2px）', () => {
+    // 网格上方永远有兄弟元素：简单表是 .dt-head，数据表多一条 .dt-bar，
+    // 两者都用 border-bottom 画了分界线。thead 再补一条 border-top 就是
+    // 「两条 1px 并排」，也就是用户看到的「表头下面那条线比别处粗」。
+    expect(
+      RULES.some(r => r.selectors.includes('.dt .dt-grid thead th')),
+      'thead 不该再声明 border-top',
+    ).toBe(false)
+    // 简单表的 th 是四边完整边框，上边同样要归零
+    expect(decl(ruleFor('.dt:not(.is-data) .dt-grid thead th'), 'border-top')).toBe('0')
+    // 分界线改由表头栏提供，这两条 border-bottom 少一条表格顶边就没了
+    for (const selector of ['\\.dt-head', '\\.dt-bar']) {
+      expect(dataTableSrc, `${selector} 必须保留 border-bottom`).toMatch(
+        new RegExp(`${selector}\\s*\\{[^}]*border-bottom:\\s*1px solid var\\(--border-color\\)`),
+      )
+    }
   })
 
   it('字号挂在 `.dt .dt-grid` 上（否则会被 .markdown-body table 抢走）', () => {

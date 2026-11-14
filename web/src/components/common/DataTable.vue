@@ -918,6 +918,7 @@ defineExpose({ focusSearch, closeSearch })
   gap: var(--space-3);
   flex-shrink: 0;
   padding: var(--space-3) var(--space-4);
+  /* 同上：工具条的下边就是网格的顶边，不能省。 */
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-primary);
 }
@@ -932,6 +933,7 @@ defineExpose({ focusSearch, closeSearch })
   min-height: calc(24 * var(--dp));
   padding: 0 var(--space-3);
   background: var(--code-bg);
+  /* 这条线同时是网格的顶边：网格自己不再画 border-top，去掉它表格就没有上边框。 */
   border-bottom: 1px solid var(--border-color);
   user-select: none;
 }
