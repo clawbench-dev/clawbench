@@ -423,6 +423,17 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.tool-error-icon').exists()).toBe(true)
     })
 
+    // A tool that was still running when the turn ended is settled but never
+    // succeeded: it must not wear the green check the transcript used to paint.
+    it('shows the interrupted mark (not the check) for a tool without a result', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'Bash', done: true, status: 'interrupted' }],
+      })
+      expect(wrapper.find('.tool-interrupted-icon').exists()).toBe(true)
+      expect(wrapper.find('.tool-check').exists()).toBe(false)
+      expect(wrapper.find('.tool-error-icon').exists()).toBe(false)
+    })
+
     it('emits show-tool-detail on tool click for non-auto-expand tools', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'Read', done: true, status: 'success', id: 'tool-1' }],
@@ -1269,6 +1280,31 @@ describe('ContentBlocks', () => {
       await card!.trigger('click')
       const detail = wrapper.emitted('show-tool-detail')!.at(-1)![0] as any
       expect(detail.duration_ms).toBe(4321)
+    })
+
+    // `ti` indexes summaryCards.tools, NOT the message's blocks. Passing it as
+    // blockIdx made the drawer's live-block watcher read whatever block sat at
+    // that position in the message and copy ITS done/status/duration onto this
+    // card — a summary pill then showed "still executing" because an unrelated,
+    // unfinished tool happened to share the index.
+    it('does not hand a block index to the drawer for a summary tool card', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'Bash', id: 'tool-live', done: false }],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [{ name: 'Read', id: 'tool-sum', done: true, status: 'success' }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      const card = wrapper.findAll('.chat-tool-call').find((c) => c.text().includes('Read'))
+      expect(card, 'a clickable Read pill must render in the summary view').toBeTruthy()
+      await card!.trigger('click')
+
+      const detail = wrapper.emitted('show-tool-detail')!.at(-1)![0] as any
+      expect(detail.tool_id).toBe('tool-sum')
+      expect(detail.blockIdx).toBeUndefined()
     })
 
     it('hides PermissionApproval cards in summary view (actionable-only, no dead buttons)', () => {
@@ -4018,26 +4054,43 @@ describe('compact tool calls', () => {
   it('unfolds the run in place, keeping every block reachable', async () => {
     const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
     await nextTick()
-    await wrapper.find('[data-tool-group]').trigger('click')
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
     await nextTick()
     // The summary row stays (it is the collapse affordance) and the three
-    // original pills come back.
-    expect(wrapper.find('[data-tool-group]').exists()).toBe(true)
-    expect(wrapper.find('[data-tool-group]').classes()).toContain('is-open')
+    // original pills come back — inside the run's container, so the rail is one
+    // border rather than a segment per row.
+    const group = wrapper.find('[data-tool-group]')
+    expect(group.exists()).toBe(true)
+    expect(group.classes()).toContain('is-open')
     expect(wrapper.findAll('.chat-tool-call')).toHaveLength(4)
-    // Every unfolded member carries the "belongs to the row above" marker —
-    // without it the run reads as unrelated tools (the reason this exists).
-    expect(wrapper.findAll('.chat-tool-group-member')).toHaveLength(3)
-    expect(wrapper.findAll('.chat-run-member')).toHaveLength(3)
+    const body = wrapper.find('.chat-run-body')
+    expect(body.exists()).toBe(true)
+    expect(body.findAll('.chat-tool-call')).toHaveLength(3)
     expect(wrapper.text()).toContain('Read')
     expect(wrapper.text()).toContain('Bash')
     expect(wrapper.text()).toContain('Grep')
   })
 
+  it('keeps the root index when a tool inside an unfolded run is opened', async () => {
+    // The run renders through a nested ContentBlocks instance, so `bi` there is
+    // an index into the slice, not into the message. The detail drawer is keyed
+    // by the ROOT index — getting this wrong opens the wrong tool.
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    const pills = wrapper.find('.chat-run-body').findAll('.chat-tool-call')
+    expect(pills).toHaveLength(3)
+    await pills[1].trigger('click')
+    const events = wrapper.emitted('show-tool-detail')
+    expect(events).toBeTruthy()
+    expect((events!.at(-1)![0] as any).blockIdx).toBe(1)
+  })
+
   it('offers a collapse affordance at the bottom of an unfolded run', async () => {
     const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
     await nextTick()
-    await wrapper.find('[data-tool-group]').trigger('click')
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
     await nextTick()
     const footer = wrapper.find('.chat-run-footer')
     expect(footer.exists()).toBe(true)
