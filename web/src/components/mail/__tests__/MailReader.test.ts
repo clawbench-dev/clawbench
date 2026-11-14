@@ -79,6 +79,15 @@ describe('MailReader', () => {
     expect(links).toHaveLength(1)
     expect(links[0].text()).toContain('report.pdf')
     expect(links[0].attributes('href')).toBe('/api/mail/messages/5/attachments/11')
+    // Attachments are typed, not all paperclips: the icon carries the kind as
+    // a class, which is what the type colour keys off.
+    const icon = links[0].find('.mail-attachment__icon')
+    expect(icon.classes()).toContain('is-pdf')
+    // The sender keeps the colour it had in the list row.
+    const avatar = wrapper.find('.mail-reader__avatar')
+    expect(avatar.exists()).toBe(true)
+    expect(avatar.text()).toBe('李')
+    expect(avatar.attributes('style') || '').toContain('--mail-hue')
   })
 
   it('lets remote images through by default, per the mail setting', async () => {

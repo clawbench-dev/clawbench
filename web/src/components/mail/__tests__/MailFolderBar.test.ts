@@ -72,13 +72,45 @@ describe('MailFolderBar', () => {
     wrapper.unmount()
   })
 
+  it('tints the well-known folder icons and keeps custom ones neutral', async () => {
+    const wrapper = mountBar()
+    // The icon, not the label, is what makes the folder recognisable at a
+    // glance; its hue comes from the semantic class, never a hard-coded colour.
+    expect(wrapper.find('.mail-bar__folder .mail-loc__icon').classes()).toContain('is-inbox')
+
+    await wrapper.find('.mail-bar__folder .menu-select').trigger('click')
+    const icons = wrapper.findAll('.mail-bar__folder .mail-menu__fic')
+    expect(icons[0].classes()).toContain('is-inbox')
+    expect(icons[1].classes()).toContain('is-sent')
+
+    // A folder the server did not label stays grey rather than borrowing a
+    // special folder's meaning.
+    const custom = mountBar({
+      folders: [
+        ...folders,
+        { id: 3, accountId: 1, path: 'Receipts', name: 'Receipts', delimiter: '/', specialUse: '', unread: 0, total: 1 },
+      ],
+    })
+    await custom.find('.mail-bar__folder .menu-select').trigger('click')
+    const customIcons = custom.findAll('.mail-bar__folder .mail-menu__fic')
+    expect(customIcons[2].classes()).toContain('is-plain')
+    wrapper.unmount()
+    custom.unmount()
+  })
+
+  it('gives each account its own avatar hue', async () => {
+    const wrapper = mountBar()
+    const style = wrapper.find('.mail-acct__avatar').attributes('style') || ''
+    expect(style).toContain('--mail-hue')
+    wrapper.unmount()
+  })
+
   it('lists every folder with its count and switches on pick', async () => {
     const wrapper = mountBar()
     await wrapper.find('.mail-bar__folder .menu-select').trigger('click')
 
     const rows = wrapper.findAll('.mail-bar__folder .mail-menu__row')
-    expect(rows.map((el) => el.find('.mail-menu__name').text())).toEqual(['Inbox', 'Sent'])
-    // The count is its own element at the right edge, not part of the label.
+    expect(rows.map((el) => el.find('.mail-menu__name').text())).toEqual(['Inbox', 'Sent'])    // The count is its own element at the right edge, not part of the label.
     expect(rows[0].find('.mail-menu__count').text()).toBe('3')
     expect(rows[1].find('.mail-menu__count').exists()).toBe(false)
 
