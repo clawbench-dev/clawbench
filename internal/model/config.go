@@ -147,7 +147,6 @@ type Config struct {
 	Chat struct {
 		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)
 		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
-		SessionPageSize          int  `yaml:"session_page_size"`          // Number of sessions per page in session list (default: 10)
 		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 0)
 		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 推荐回复: generate a next-step recommendation after each assistant reply (default: false)
 		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
@@ -901,7 +900,6 @@ var (
 	// Chat UI config (set from config, with defaults)
 	ChatInitialMessages      int  // Default: 20
 	ChatPageSize             int  // Default: 20
-	ChatSessionPageSize      int  // Default: 10
 	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 0)
 	ChatRecommendEnabled     bool // 推荐回复: generate next-step recommendation after each assistant reply (default: false)
 	// ChatForkContextBudget bounds the history text re-injected on fork/rewind

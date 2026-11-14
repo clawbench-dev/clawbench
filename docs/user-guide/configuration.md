@@ -103,7 +103,6 @@
 |---|---|---|
 | `initial_messages` | `20` | 打开会话时先加载几条消息 |
 | `page_size` | `20` | 往上滚时每次再加载几条 |
-| `session_page_size` | `10` | 会话列表每页几条 |
 | `system_prompt_interval` | `0` | 每隔多少轮把系统提示重新注入一次。`0`＝只在会话开始时注入一次 |
 | `recommend_enabled` | `false` | 每条回复后生成「下一步建议」 |
 | `recommend_context_messages` | `10` | 生成建议时参考最近几条消息 |

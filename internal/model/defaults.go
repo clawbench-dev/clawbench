@@ -180,9 +180,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.PageSize <= 0 {
 		cfg.Chat.PageSize = 20
 	}
-	if cfg.Chat.SessionPageSize <= 0 {
-		cfg.Chat.SessionPageSize = 10
-	}
 	// SystemPromptInterval: 0 = never re-inject is the intentional DEFAULT.
 	// The old `<= 0 → 10` rewrite made 0 unexpressable — a user who
 	// explicitly disabled periodic re-injection was silently switched back

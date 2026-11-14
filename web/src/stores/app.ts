@@ -150,7 +150,6 @@ interface AppState {
     // Chat UI config
     chatInitialMessages: number
     chatPageSize: number
-    chatSessionPageSize: number
     sessionMaxCount: number
     sessionCount: number
 
@@ -222,7 +221,6 @@ const state = reactive<AppState>({
     // Chat UI config
     chatInitialMessages: 20,
     chatPageSize: 20,
-    chatSessionPageSize: 10,
     sessionMaxCount: 15,
     sessionCount: 0,
     groupMaxMembers: 12,
@@ -263,7 +261,7 @@ const state = reactive<AppState>({
 async function loadProject(): Promise<void> {
     try {
         try {
-            const wd = await apiGet<{ roots: string[]; uploadMaxSizeMB: number; uploadMaxFiles: number; chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number; sessionMaxCount?: number; recentProjectsMaxCount?: number }>('/api/roots')
+            const wd = await apiGet<{ roots: string[]; uploadMaxSizeMB: number; uploadMaxFiles: number; chatInitialMessages?: number; chatPageSize?: number; sessionMaxCount?: number; recentProjectsMaxCount?: number }>('/api/roots')
             state.rootPaths = wd.roots || []
             applyServerLimits(wd)
         } catch (error) {
@@ -284,7 +282,7 @@ async function setProject(path: string): Promise<string> {
     const data = await apiPost<{
         ok: string; path: string; homeDir?: string
         roots?: string[]; uploadMaxSizeMB?: number; uploadMaxFiles?: number
-        chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number
+        chatInitialMessages?: number; chatPageSize?: number
         sessionMaxCount?: number; groupMaxMembers?: number; recentProjectsMaxCount?: number
     }>('/api/project', { path })
     resetProjectState()
@@ -316,7 +314,7 @@ async function setProject(path: string): Promise<string> {
  */
 export function applyServerLimits(limits: {
     uploadMaxSizeMB?: number; uploadMaxFiles?: number
-    chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number
+    chatInitialMessages?: number; chatPageSize?: number
     sessionMaxCount?: number; recentProjectsMaxCount?: number; groupMaxMembers?: number
 }): void {
     if (typeof limits.sessionMaxCount === 'number') state.sessionMaxCount = limits.sessionMaxCount
@@ -325,7 +323,6 @@ export function applyServerLimits(limits: {
     if ((limits.uploadMaxFiles ?? 0) > 0) state.uploadMaxFiles = limits.uploadMaxFiles!
     if ((limits.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = limits.chatInitialMessages!
     if ((limits.chatPageSize ?? 0) > 0) state.chatPageSize = limits.chatPageSize!
-    if ((limits.chatSessionPageSize ?? 0) > 0) state.chatSessionPageSize = limits.chatSessionPageSize!
     if ((limits.recentProjectsMaxCount ?? 0) > 0) state.recentProjectsMaxCount = limits.recentProjectsMaxCount!
 }
 
@@ -382,7 +379,6 @@ function resetProjectState(): void {
     state.uploadMaxFiles = 20
     state.chatInitialMessages = 20
     state.chatPageSize = 20
-    state.chatSessionPageSize = 10
     state.sessionMaxCount = 15
     state.sessionCount = 0
     state.recentProjectsMaxCount = 10

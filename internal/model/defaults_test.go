@@ -862,20 +862,6 @@ func TestApplyDefaults_RAGOllamaMigration(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults_ChatSessionPageSize(t *testing.T) {
-	setupTestBinDir(t)
-
-	cfg := Config{}
-	ApplyDefaults(&cfg, nil)
-
-	if cfg.Chat.SessionPageSize != 10 {
-		t.Errorf("Chat.SessionPageSize = %d, want 10", cfg.Chat.SessionPageSize)
-	}
-	if cfg.Chat.SystemPromptInterval != 0 {
-		t.Errorf("Chat.SystemPromptInterval = %d, want 0 (never is the default)", cfg.Chat.SystemPromptInterval)
-	}
-}
-
 func TestApplyDefaults_TTSCacheFiles(t *testing.T) {
 	setupTestBinDir(t)
 
