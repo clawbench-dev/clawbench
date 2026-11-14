@@ -129,11 +129,21 @@ export function annotateMediaBlocksIn(doc: Document, opts?: { wrapperClass?: str
         const host = el.parentNode as HTMLElement | null
         const hostIsP = !!host && host.tagName === 'P'
 
+        // HTML-authored alignment (`<p align="center">` around a README hero
+        // image) is a presentational hint on the paragraph this figure replaces.
+        // The figure is `width: fit-content`, which text-align cannot centre, so
+        // carry it over as a margin rule instead of losing it with the <p>.
+        // Start above the element: `align` on the <img> itself is a float hint,
+        // not the block alignment this carries over.
+        const alignHost = el.parentElement?.closest('[align]') as HTMLElement | null
+        const align = (alignHost?.getAttribute('align') || '').trim().toLowerCase()
+        const alignClass = align === 'center' || align === 'right' ? ` image-block-align-${align}` : ''
+
         // 1. Build the wrapper shell at the element's old position.
         const wrapper = doc.createElement('div')
         wrapper.className = opts?.wrapperClass
-            ? `image-block-wrapper ${opts.wrapperClass}`
-            : 'image-block-wrapper'
+            ? `image-block-wrapper ${opts.wrapperClass}${alignClass}`
+            : `image-block-wrapper${alignClass}`
         // The source line the host block carried (markedConfig stamps paragraphs
         // with data-source-line) is transferred below — to the leading <p> when
         // the paragraph keeps leading content, otherwise to the figure. Keeping

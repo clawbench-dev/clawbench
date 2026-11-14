@@ -52,6 +52,7 @@ import { imageSchema } from '@milkdown/kit/preset/commonmark'
 import { resolveMarkdownImageSrc } from '@/utils/markdownImageSrc.ts'
 import { createMathPlugins } from './milkdownMath.ts'
 import { createCodeBlockView, createHighlightPlugin } from './milkdownCodeBlock.ts'
+import { createHtmlBlockView } from './milkdownHtmlBlock.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { appLog } from '@/utils/appLog.ts'
 
@@ -142,6 +143,19 @@ const imageView = $view(imageSchema.node, () => (node) => {
 const mathPlugins = createMathPlugins((value) =>
     dialog.prompt(t('file.editor.editMath'), { value, title: t('file.editor.editMath') }),
 )
+
+// Raw HTML blocks (a README's centred hero image, an author's <div> callout)
+// are rendered in place instead of showing their tags. The atom keeps the
+// source, so a save writes back exactly what was there; double-click edits it.
+const htmlBlockView = createHtmlBlockView({
+    filePath: () => props.file?.path,
+    stamp: imageStamp,
+    edit: (value) => dialog.prompt(t('file.editor.editHtml'), {
+        value,
+        title: t('file.editor.editHtml'),
+        enterInsertsNewline: true,
+    }),
+})
 const codeBlockView = createCodeBlockView()
 const highlightPlugin = createHighlightPlugin()
 
@@ -214,6 +228,7 @@ onMounted(async () => {
             .use(listener)
             .use(imageView)
             .use(mathPlugins)
+            .use(htmlBlockView)
             .use(codeBlockView)
             .create()
         if (!mounted) {
@@ -385,6 +400,19 @@ defineExpose({ getValue, isDirty, handleExit })
     height: auto;
     border-radius: var(--radius-md);
     vertical-align: bottom;
+}
+/* Raw HTML: a complete element owns its line, a lone void element stays in the
+   text flow. The block is rendered, not editable — double-click edits source. */
+.md-editor-host .md-html-block {
+    display: block;
+    margin: 0.4em 0;
+    /* The editable surface inherits pre-wrap; the authored source's newlines
+       and indentation must not turn into visible gaps inside rendered HTML. */
+    white-space: normal;
+}
+.md-editor-host .md-html-block img {
+    max-width: 100%;
+    height: auto;
 }
 /* Rendered formulas (atoms): inline ones sit in the text flow, display ones
    take a centred block like the preview's `.katex-display`. Double-click edits

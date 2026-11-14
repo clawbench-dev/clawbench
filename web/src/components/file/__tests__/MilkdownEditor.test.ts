@@ -3,6 +3,15 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import MilkdownEditor from '../MilkdownEditor.vue'
 
+// The double-click handler asks for the new source through the shared dialog;
+// resolving it here is the only way to drive that path without mounting it.
+const { promptMock } = vi.hoisted(() => ({ promptMock: vi.fn(async (): Promise<string | null> => null) }))
+
+vi.mock('@/composables/useDialog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/composables/useDialog')>()
+    return { ...actual, useDialog: () => ({ ...actual.useDialog(), prompt: promptMock }) }
+})
+
 const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -143,6 +152,70 @@ describe('MilkdownEditor', () => {
         const value = wrapper.vm.getValue()
         expect(value).toContain('$a_1 + b_2$')
         expect(value).toContain('\\int_0^1 x^2 dx')
+
+        wrapper.unmount()
+    })
+
+    it('renders a raw HTML block in place instead of showing its tags', async () => {
+        // A README hero image: `<p align="center">` only exists to centre the
+        // image, which has no markdown spelling — so it must render, not read
+        // as literal tags, and it must survive the round trip byte-for-byte.
+        const source = '# Title\n\n<p align="center">\n  <img src="docs/hero.png" alt="hero" width="960">\n</p>\n'
+        const wrapper = mountEditor(source, { name: 'README.md', path: 'README.md' })
+        await waitForEditor(wrapper)
+
+        const block = wrapper.find('.ProseMirror .md-html-block')
+        expect(block.exists()).toBe(true)
+        expect(block.find('p').attributes('align')).toBe('center')
+        const img = block.find('img')
+        expect(img.attributes('src')).toMatch(/^\/api\/fs\/raw\/docs\/hero\.png\?t=/)
+        expect(img.attributes('alt')).toBe('hero')
+        // The tags themselves must not be visible as text.
+        expect(wrapper.text()).not.toContain('<p align="center">')
+        // Rendering is presentation only: the source is untouched.
+        expect(wrapper.vm.getValue()).toBe(source)
+
+        wrapper.unmount()
+    })
+
+    it('keeps inline HTML as literal text', async () => {
+        // Inline tags arrive as separate atoms; rendering half a tag paints
+        // nothing, so those keep showing their source.
+        const wrapper = mountEditor('前 <b>粗</b> 后\n')
+        await waitForEditor(wrapper)
+
+        expect(wrapper.find('.ProseMirror .md-html-block').exists()).toBe(false)
+        expect(wrapper.find('.ProseMirror').text()).toContain('<b>粗</b>')
+
+        wrapper.unmount()
+    })
+
+    it('edits a rendered HTML block through the double-click prompt', async () => {
+        const source = '<p align="center"><img src="a.png"></p>\n'
+        promptMock.mockResolvedValueOnce('<div class="note">替换</div>')
+        const wrapper = mountEditor(source, { name: 'a.md', path: 'a.md' })
+        await waitForEditor(wrapper)
+
+        await wrapper.find('.ProseMirror .md-html-block').trigger('dblclick')
+        await flushPromises()
+
+        expect(promptMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ value: source.trim() }))
+        expect(wrapper.vm.getValue()).toContain('<div class="note">替换</div>')
+        expect(wrapper.find('.ProseMirror .md-html-block').exists()).toBe(true)
+
+        wrapper.unmount()
+    })
+
+    it('leaves the block alone when the prompt is cancelled', async () => {
+        const source = '<p align="center"><img src="a.png"></p>\n'
+        promptMock.mockResolvedValueOnce(null)
+        const wrapper = mountEditor(source, { name: 'a.md', path: 'a.md' })
+        await waitForEditor(wrapper)
+
+        await wrapper.find('.ProseMirror .md-html-block').trigger('dblclick')
+        await flushPromises()
+
+        expect(wrapper.vm.getValue()).toBe(source)
 
         wrapper.unmount()
     })

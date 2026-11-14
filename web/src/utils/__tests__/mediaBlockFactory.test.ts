@@ -39,6 +39,21 @@ describe('annotateMediaBlocks', () => {
     expect(out).toContain('image-block-reset-btn')
   })
 
+  it('carries HTML-authored alignment from the replaced paragraph onto the figure', () => {
+    // A README hero image: the <p> exists only to centre the image, and the
+    // factory drops it (solo media). The alignment must survive on the figure,
+    // otherwise a centred image silently renders left-aligned.
+    const out = annotateMediaBlocks('<p align="center"><img src="/api/fs/raw/a.png" alt="a"></p>')
+    expect(out).toContain('<div class="image-block-wrapper image-block-align-center">')
+    expect(out).not.toContain('align="center"')
+  })
+
+  it('does not add an alignment class for ordinary paragraphs', () => {
+    const out = annotateMediaBlocks('<p><img src="/api/fs/raw/a.png" alt="a"></p>')
+    expect(out).toContain('<div class="image-block-wrapper">')
+    expect(out).not.toContain('image-block-align')
+  })
+
   it('stamps the lightbox-img marker without duplicating it', () => {
     const html = '<p><img src="x.png" class="chat-img lightbox-img"></p>'
     const out = annotateMediaBlocks(html)

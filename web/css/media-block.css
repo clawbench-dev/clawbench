@@ -40,6 +40,17 @@
     line-height: 0;
 }
 
+/* HTML-authored alignment (`<p align="center">` around a README hero image).
+   The figure is width:fit-content, so the paragraph's text-align cannot centre
+   it — margins can. Carried over by annotateMediaBlocks before the <p> goes. */
+.image-block-wrapper.image-block-align-center {
+    margin-left: auto;
+    margin-right: auto;
+}
+.image-block-wrapper.image-block-align-right {
+    margin-left: auto;
+}
+
 /* ─── Floating toolbar (top-right overlay) ────────────────────────────────
    Replaces the old full-width header row. Sits over the media's top-right
    corner as a translucent chip; icons are semi-transparent by default and

@@ -2515,6 +2515,7 @@ export default {
       confirmExit: 'You have unsaved changes. Do you want to save them before leaving?',
       dontSave: "Don't save",
       editMath: 'Edit formula',
+      editHtml: 'Edit HTML',
       externalChangeTitle: 'File changed',
       externalChange: 'This file was modified elsewhere. Reload it?',
       reload: 'Reload',
