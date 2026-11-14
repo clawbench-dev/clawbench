@@ -139,7 +139,7 @@
           @click.stop="toggleToolGroup(group)"
         >
           <LoadingIndicator v-if="group.runningIndex" class="tool-spinner" size="sm" inline />
-          <Wrench v-else :size="12" class="tool-icon" />
+          <Layers v-else :size="12" class="tool-icon" />
           <RollingText
             class="tool-name"
             :text="group.runningIndex
@@ -153,6 +153,10 @@
           />
           <span v-else-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
           <span v-else-if="group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
+          <!-- Finished: same success/failure language as a single tool pill. -->
+          <XCircle v-if="!group.runningIndex && group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
+          <CircleSlash v-else-if="!group.runningIndex && (group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
+          <CheckCircle2 v-else-if="!group.runningIndex" :size="14" color="#22c55e" class="tool-check" />
           <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
           <ChevronDown v-else :size="12" class="tool-group-chevron" />
         </div>
@@ -584,7 +588,7 @@ import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
-import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, CircleSlash, Bot, Wrench, Sparkles, Users } from 'lucide-vue-next'
+import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, CircleSlash, Bot, Wrench, Sparkles, Users, Layers } from 'lucide-vue-next'
 import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
@@ -3231,24 +3235,45 @@ onUnmounted(() => {
 /* Compact tool calls: the row that replaces a whole run of tool pills. It
    reuses the pill shell so it reads as "a tool", but stays neutral-coloured —
    a run mixes categories (file / bash / search), so no single accent applies. */
+.chat-tool-group-strip {
+  /* One step further back than a single tool pill: this row is a container, not
+     an action, so it must not compete with the pills it summarises. */
+  background: color-mix(in srgb, var(--text-muted) 3%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--text-muted) 10%, var(--border-color));
+}
+
 .chat-tool-group-strip .tool-name {
   color: var(--text-secondary);
+  /* The count changes while the run streams; tabular digits keep the row from
+     twitching left and right. */
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-tool-group-strip .tool-group-failed {
   color: #ef4444;
   font-weight: var(--font-weight-semibold);
+  /* Right-aligned so the count sits next to its status icon instead of crowding
+     the operation count on the left. */
+  text-align: right;
 }
 
 /* Same slot, but amber: nothing failed here, the turn stopped waiting. */
 .chat-tool-group-strip .tool-group-interrupted {
   color: #f59e0b;
   font-weight: var(--font-weight-semibold);
+  text-align: right;
+}
+
+.chat-tool-group-strip .tool-spinner,
+.chat-tool-group-strip .tool-group-chevron {
+  /* The spinner and chevron sit at the START and END of this row, so the shared
+     `margin-left: auto` (meant for a pill's trailing status icon) would shove
+     them into the middle. The trailing status icon keeps it. */
+  margin-left: 0;
 }
 
 .chat-tool-group-strip .tool-group-chevron {
   flex-shrink: 0;
-  margin-left: auto;
   color: var(--text-muted);
 }
 
