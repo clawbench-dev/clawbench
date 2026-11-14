@@ -2902,66 +2902,6 @@ describe('useChatStream', () => {
     })
   })
 
-  // ── tool_use watchdog vs a live elicitation card ──
-  //
-  // An elicitation (ACP `elicitation/create`) blocks the agent until the USER
-  // answers; `done` only arrives on submit (or on the server's 30-minute
-  // timeout). The 30s "stalled tool" fallback used to mark it done, which
-  // re-rendered the card read-only: every option click was dropped, no
-  // /api/ai/elicitation/respond was ever posted, and the turn sat "running"
-  // for 30 minutes (issue #676).
-  describe('tool_use watchdog — live elicitation', () => {
-    function toolBlock(options: ReturnType<typeof createOptions>, id: string) {
-      const live = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
-      return (live?.blocks || []).find((b: any) => b.type === 'tool_use' && b.id === id)
-    }
-
-    it('leaves an unanswered elicitation block alone past the 30s fallback', () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-
-      simulateWsEvent('tool_use', {
-        id: 'elic_1',
-        name: 'AskUserQuestion',
-        input: { elicitationId: 'elic_1', questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
-        done: false,
-      })
-
-      vi.advanceTimersByTime(31000)
-
-      expect(toolBlock(options, 'elic_1')?.done, 'the card must stay answerable while the agent waits').toBe(false)
-      expect(mockAppLogW).not.toHaveBeenCalledWith(
-        expect.anything(),
-        expect.stringContaining("stalled without 'done'"),
-      )
-      vi.useRealTimers()
-    })
-
-    it('still marks a plain AskUserQuestion done (no elicitation behind it) (control)', () => {
-      // The exemption keys on `input.elicitationId`, NOT on the tool name: an
-      // ask card that is answered by a chat message has no blocked RPC behind
-      // it, so the ordinary fallback still applies.
-      vi.useFakeTimers()
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-
-      simulateWsEvent('tool_use', {
-        id: 'ask_1',
-        name: 'AskUserQuestion',
-        input: { questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
-        done: false,
-      })
-
-      vi.advanceTimersByTime(31000)
-
-      expect(toolBlock(options, 'ask_1')?.done).toBe(true)
-      vi.useRealTimers()
-    })
-  })
-
   // ── Concurrent streams (parallel group speaking): by-id routing ──
   describe('concurrent streams route by message_id', () => {
     it('routes content to the bubble named by message_id, not the first streaming one', () => {
@@ -3611,86 +3551,92 @@ describe('useChatStream', () => {
     })
   })
 
-  // ── tool_use block timeout ──
+  // ── tool_use blocks that outlive their events ──
 
-  describe('tool_use block timeout', () => {
-    it('keeps subagent (task) tool block running past the 30s tool timeout', () => {
+  describe('tool_use blocks that outlive their events', () => {
+    const blockOf = (options: ReturnType<typeof createOptions>, id: string) => {
+      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
+      return streamingMsg?.blocks.find((b: any) => b.id === id)
+    }
+
+    it('keeps a long-running tool running — silence is not a verdict', () => {
+      // A Bash build / test run / typecheck routinely emits no progress frame
+      // for minutes. The old 30s fallback stamped `interrupted`, so the pill
+      // showed 已中断 for the rest of the run and then flipped to success when
+      // the result landed (client.log: 217 hits, every one a tool that finished
+      // fine after 55-180s). Only the turn's terminal paths may close a tool.
+      vi.useFakeTimers()
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { id: 'tool-bash-1', name: 'Bash', done: false, status: '' })
+      vi.advanceTimersByTime(60000)
+
+      const block = blockOf(options, 'tool-bash-1')
+      expect(block?.done, 'still running: nobody reported a result').toBe(false)
+      // No verdict was reported, so nothing may be stamped. (The reducer drops
+      // an empty status, so this is undefined rather than '' — both mean "no
+      // verdict"; what matters is that it is not `interrupted`.)
+      expect(block?.status || '').toBe('')
+      vi.useRealTimers()
+    })
+
+    it('keeps a sub-agent (task) call running too', () => {
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
       simulateWsEvent('tool_use', { id: 'tool-task-1', name: 'task', done: false, status: '' })
-      vi.advanceTimersByTime(5000)
-      // Reset the stream timeout so only the per-tool timeout fires.
-      simulateWsEvent('content', { content: 'working' })
-      vi.advanceTimersByTime(26000) // 31s total since the tool started
+      vi.advanceTimersByTime(60000)
 
-      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
-      const taskBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-task-1')
-      expect(taskBlock.done).toBe(false)
+      expect(blockOf(options, 'tool-task-1')?.done).toBe(false)
       vi.useRealTimers()
     })
 
-    it('marks a non-subagent tool done after the 30s tool timeout (unchanged)', () => {
+    it('closes a native AskUserQuestion card after the fallback (no tool_result ever arrives)', () => {
+      // The answer to an ask card comes back as a chat message, so the call
+      // itself is never completed — without this fallback its card spins for
+      // the rest of the turn.
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      simulateWsEvent('tool_use', { id: 'tool-read-1', name: 'Read', done: false, status: '' })
-      vi.advanceTimersByTime(5000)
-      simulateWsEvent('content', { content: 'working' })
-      vi.advanceTimersByTime(26000)
+      simulateWsEvent('tool_use', {
+        id: 'ask_1',
+        name: 'AskUserQuestion',
+        input: { questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+        done: false,
+      })
+      vi.advanceTimersByTime(31000)
 
-      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
-      const readBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-read-1')
-      expect(readBlock.done).toBe(true)
+      const block = blockOf(options, 'ask_1')
+      expect(block?.done).toBe(true)
+      // Closed without a result — never a success.
+      expect(block?.status).toBe('interrupted')
       vi.useRealTimers()
     })
 
-    it('keeps a long-running tool running when progress events keep arriving (watchdog re-armed)', () => {
+    it('leaves an unanswered elicitation block alone past the fallback', () => {
+      // A live elicitation blocks the agent on the RPC: `done` only arrives once
+      // the user answers. Closing it flipped the card read-only and dropped every
+      // option click (issue #676).
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      // First sight of the tool call arms the watchdog.
-      simulateWsEvent('tool_use', { id: 'tool-bash-1', name: 'Bash', done: false, status: '' })
-      // Progress events every 25s keep re-arming the 30s watchdog — the tool
-      // runs for well past the original 30s but must NOT be marked done.
-      for (let t = 25; t <= 100; t += 25) {
-        vi.advanceTimersByTime(25000)
-        simulateWsEvent('tool_use', { id: 'tool-bash-1', name: 'Bash', done: false, status: 'running', summary: `progress ${t}s` })
-      }
+      simulateWsEvent('tool_use', {
+        id: 'elic_1',
+        name: 'AskUserQuestion',
+        input: { elicitationId: 'elic_1', questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+        done: false,
+      })
+      vi.advanceTimersByTime(31000)
 
-      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
-      const bashBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-bash-1')
-      expect(bashBlock.done).toBe(false)
-      expect(bashBlock.summary).toBe('progress 100s')
-      vi.useRealTimers()
-    })
-
-    it('marks a tool done when it goes silent for 30s even after progress events (stall fallback)', () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-
-      // Two progress events keep the tool alive...
-      simulateWsEvent('tool_use', { id: 'tool-grep-1', name: 'Grep', done: false, status: '' })
-      vi.advanceTimersByTime(20000)
-      simulateWsEvent('tool_use', { id: 'tool-grep-1', name: 'Grep', done: false, status: 'running' })
-      // Re-arm the stream watchdog separately (content event) so the per-tool
-      // watchdog at 50s fires without racing the stream timeout.
-      vi.advanceTimersByTime(25000)
-      simulateWsEvent('content', { content: 'still working' })
-      vi.advanceTimersByTime(10000)
-
-      // ...then it goes silent — the per-tool watchdog (last armed at 20s) fires at 50s.
-      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant')
-      const grepBlock = streamingMsg.blocks.find((b: any) => b.id === 'tool-grep-1')
-      expect(grepBlock.done).toBe(true)
+      expect(blockOf(options, 'elic_1')?.done, 'the card must stay answerable while the agent waits').toBe(false)
       vi.useRealTimers()
     })
   })

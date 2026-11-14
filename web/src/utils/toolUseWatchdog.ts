@@ -2,13 +2,15 @@
  * ToolUseWatchdog — per-tool-call timeout management for streaming tool_use
  * blocks.
  *
- * Semantics: a tool call that keeps producing progress events (e.g. ACP
- * ToolCallUpdate, Claude content_block_delta) must NOT be marked as finished
- * just because it has been running for a while. Only a tool call that goes
- * silent for `timeoutMs` is considered stalled and should fall back to done.
+ * Only a tool whose completion can NEVER arrive needs this: a native
+ * AskUserQuestion (answered by a chat message, so no tool_result is emitted) and
+ * an ACP elicitation's exemption aside. An ordinary tool going silent is not
+ * evidence that it stopped — a build can run for minutes without a progress
+ * frame — and the turn's terminal paths close whatever is still open. Do not
+ * arm this for them; doing so showed 已中断 on tools that then finished fine.
  *
- * `start()` therefore RESETS the timer every time it is called — call it on
- * every progress event for the tool id, not just on first sight.
+ * `start()` RESETS the timer every time it is called — call it on every progress
+ * event for the tool id, not just on first sight.
  */
 export class ToolUseWatchdog {
   private timers = new Map<string, ReturnType<typeof setTimeout>>()

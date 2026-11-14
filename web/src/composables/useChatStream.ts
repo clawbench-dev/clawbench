@@ -8,7 +8,7 @@ import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
 import { updateTeamState } from './useTeamState'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isSubagentToolName, isElicitationRequest, closeToolAsInterrupted, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isAskQuestionTool, isElicitationRequest, closeToolAsInterrupted, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -110,9 +110,10 @@ export function useChatStream(options: UseChatStreamOptions) {
   } = options
 
   const renderScheduler = new StreamFrameScheduler()
-  // Watchdog for tool_use blocks: a tool that goes silent for TOOL_USE_TIMEOUT_MS
-  // is considered stalled and marked done. Restarted on every tool_use progress
-  // event so long-running tools aren't falsely marked finished.
+  // Fallback for a native AskUserQuestion card, which never receives a
+  // tool_result (the answer comes back as a chat message). Everything else
+  // reports a result or is closed by the turn's terminal path — see the
+  // tool_use handler.
   const toolUseWatchdog = new ToolUseWatchdog()
   // Counter for assigning stable _key to thinking blocks during streaming
   let thinkingBlockCounter = 0
@@ -121,7 +122,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   let isSubscribed = false
   let subscribedSessionId: string | null = null
 
-  const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
+  const ASK_CARD_FALLBACK_MS = 30000 // no answer event for 30s => stop the card's spinner
 
   // Set when a `stream_start` opens this turn's bubble BEFORE the sender's POST
   // resolves (the WS routinely beats the HTTP response). connectStream then has
@@ -275,13 +276,6 @@ export function useChatStream(options: UseChatStreamOptions) {
       stallWatchTimer = null
     }
   }
-
-  // Subagent (task/Agent) tool calls run for minutes inside a child session whose
-  // inner events aren't forwarded over ACP, so the outer call legitimately exceeds
-  // TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the 30s fallback, otherwise a
-  // long-running subagent looks like it already finished.
-  // (isSubagentToolName is shared with the session-manager cleanup sweep so both
-  // places agree on which tool names are exempt.)
 
   const { onEvent, sendWsMessage, connected, isReplayingEvents } = useGlobalEvents()
 
@@ -875,25 +869,27 @@ export function useChatStream(options: UseChatStreamOptions) {
           toolUseWatchdog.clear(data.id!)
           maybeNotifyFileModified(data, existing, wasDone)
         } else if (!data.done) {
-          // Progress event: reset the stall watchdog so long-running tools
-          // that keep emitting updates are never falsely marked done.
+          // A native AskUserQuestion is the one tool whose `done` never arrives:
+          // the answer comes back as a chat message, so nothing closes the call
+          // itself and its card would spin for the rest of the turn. Close it
+          // after a grace period. A live ACP elicitation is exempt — the agent
+          // is BLOCKED on that RPC, so `done` only arrives once the user
+          // answers (issue #676).
           //
-          // An elicitation card (ACP `elicitation/create`) waits on the USER,
-          // not on the tool: its `done` only arrives once the answer is
-          // submitted (or the request expires). The 30s fallback must not fire
-          // here — it flipped the card to its read-only form, which dropped
-          // every option click and left the agent blocked until the server's
-          // 30-minute timeout (issue #676).
+          // Every OTHER tool's silence is not a verdict. A Bash build / test run
+          // / typecheck routinely runs 1-3 minutes without emitting a progress
+          // frame; stamping "interrupted" at 30s showed 已中断 for the rest of
+          // the run and then flipped to success when the result landed (measured
+          // in client.log: 217 hits, every one a tool that finished fine after
+          // 55-180s). The terminal paths already close whatever is still open —
+          // forceCleanupStreamingState on the frontend, CloseUnfinishedTools on
+          // the backend — so a live tool keeps its spinner, exactly like a
+          // sub-agent, which has always been exempt for the same reason.
           const block = existing || blocksAfter[blocksAfter.length - 1]
-          if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name) && !isElicitationRequest(block?.input)) {
-            toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
+          if (isAskQuestionTool(data.name) && !isElicitationRequest(block?.input)) {
+            toolUseWatchdog.start(data.id!, ASK_CARD_FALLBACK_MS, () => {
               if (block && !block.done) {
-                // "Stalled" is not "finished": the completion event may have been
-                // dropped, or the tool may still be running (a quiet `sleep 300`
-                // sends nothing for minutes). Stop the spinner, but label it
-                // interrupted — a green check here is what showed 已完成 for a
-                // tool the detail drawer still reported as running.
-                appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as interrupted`)
+                appLog.w(TAG, `ask card ${data.id} still open after ${ASK_CARD_FALLBACK_MS}ms, closing it (a native AskUserQuestion never receives a tool_result)`)
                 closeToolAsInterrupted(block)
                 onRenderNeeded()
               }

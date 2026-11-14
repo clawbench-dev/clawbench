@@ -1,7 +1,7 @@
 import { ref, onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from './useGlobalEvents'
-import { appendThinkingDelta, findLastBlockOfType, isSubagentToolName, isElicitationRequest, closeToolAsInterrupted, type ContentBlock } from '@/utils/chatStreamUtils.ts'
+import { appendThinkingDelta, findLastBlockOfType, isAskQuestionTool, isElicitationRequest, closeToolAsInterrupted, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 
@@ -39,22 +39,21 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
   const streamingMsg = ref<StreamingMsg | null>(null)
   const isStreaming = ref(false)
 
-  const TOOL_USE_TIMEOUT_MS = 30000
-  // Watchdog for tool_use blocks: reset on every tool_use progress event so
-  // long-running tools aren't falsely marked done after a fixed 30s.
+  const ASK_CARD_FALLBACK_MS = 30000
+  // Fallback for a native AskUserQuestion card only — see shouldArmAskFallback.
   const toolUseWatchdog = new ToolUseWatchdog()
 
-  // Subagent (task/Agent/subagent) tool calls run for minutes inside a child
-  // session whose inner events aren't forwarded over ACP, so the outer call
-  // legitimately exceeds TOOL_USE_TIMEOUT_MS. Don't kill their spinner with the
-  // 30s fallback, otherwise a long-running subagent looks like it already
-  // finished. Same for PermissionApproval, which waits on user interaction, and
-  // for a live elicitation (AskUserQuestion with an elicitationId), whose `done`
-  // only arrives once the user answers — see isElicitationRequest.
-  function shouldSkipWatchdog(name?: unknown, input?: unknown): boolean {
-    return name === 'PermissionApproval'
-      || isSubagentToolName(name as string | undefined)
-      || isElicitationRequest(input)
+  // A native AskUserQuestion never receives a tool_result (the answer arrives as
+  // a chat message), so its card needs a fallback or it spins for the rest of the
+  // execution. A live elicitation (AskUserQuestion with an elicitationId) is
+  // exempt: the agent is blocked on that RPC and `done` only arrives once the
+  // user answers — see isElicitationRequest.
+  //
+  // Every other tool either reports completion or is closed by the execution's
+  // terminal path, so silence must not become a verdict: a long build that emits
+  // no progress for 30s was shown as 已中断 and then flipped to success.
+  function shouldArmAskFallback(name?: unknown, input?: unknown): boolean {
+    return isAskQuestionTool(name as string | undefined) && !isElicitationRequest(input)
   }
 
   const { onEvent, sendWsMessage, connected } = useGlobalEvents()
@@ -179,13 +178,13 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.summary !== undefined) existing.summary = data.summary
             if (data.display_name !== undefined) existing.display_name = data.display_name
             if (data.file_path !== undefined) existing.file_path = data.file_path
-            // Progress event: reset the stall watchdog so long-running tools
-            // that keep emitting updates are never falsely marked done.
-            if (!shouldSkipWatchdog(existing.name, existing.input)) {
-              toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
+            // Progress event: keep the tool running. Only the ask card's own
+            // fallback is armed (see shouldArmAskFallback).
+            if (shouldArmAskFallback(existing.name, existing.input)) {
+              toolUseWatchdog.start(data.id, ASK_CARD_FALLBACK_MS, () => {
                 if (!existing.done) {
                   // Stalled is not finished — see closeToolAsInterrupted.
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as interrupted`)
+                  appLog.w(TAG, `ask card ${data.id} still open after ${ASK_CARD_FALLBACK_MS}ms, closing it`)
                   closeToolAsInterrupted(existing)
                 }
               })
@@ -201,11 +200,11 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
             if (data.display_name) newBlock.display_name = data.display_name
             if (data.file_path) newBlock.file_path = data.file_path
             blocks.push(newBlock)
-            if (!shouldSkipWatchdog(data.name, data.input)) {
-              toolUseWatchdog.start(data.id, TOOL_USE_TIMEOUT_MS, () => {
+            if (shouldArmAskFallback(data.name, data.input)) {
+              toolUseWatchdog.start(data.id, ASK_CARD_FALLBACK_MS, () => {
                 if (!newBlock.done) {
                   // Stalled is not finished — see closeToolAsInterrupted.
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as interrupted`)
+                  appLog.w(TAG, `ask card ${data.id} still open after ${ASK_CARD_FALLBACK_MS}ms, closing it`)
                   closeToolAsInterrupted(newBlock)
                 }
               })

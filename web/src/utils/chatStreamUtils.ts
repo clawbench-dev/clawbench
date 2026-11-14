@@ -310,6 +310,20 @@ export function isSubagentToolName(name?: string): boolean {
 }
 
 /**
+ * Whether a tool name denotes the native AskUserQuestion card.
+ *
+ * It is the ONE tool that never receives a tool_result: the answer travels back
+ * as a chat message, so the agent never reports completion for the call itself
+ * and its block stays `done: false` for the rest of the turn. Every other tool
+ * either reports a result or is closed by the turn's terminal path — silence
+ * from those is NOT evidence that they stopped (see useChatStream's tool_use
+ * handler), which is why only this one gets a fallback.
+ */
+export function isAskQuestionTool(name?: string): boolean {
+  return (name || '').toLowerCase() === 'askuserquestion'
+}
+
+/**
  * Whether a tool block is a live ACP elicitation (`elicitation/create`).
  *
  * Such a block renders as the AskUserQuestion card and the agent BLOCKS on the
