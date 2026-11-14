@@ -185,9 +185,21 @@ describe('geometry follows the scale', () => {
   it('keeps hairline borders literal', () => {
     // A border is meant to be one device pixel. Scaling 1px to 1.5px at 150%
     // makes every divider and focus ring blurry, so `calc(1 * var(--dp))` must
-    // not appear as a border width.
+    // not appear as a border width. `border-radius` is exempt: a radius is
+    // geometry, not a hairline (a 1dp rounded knob in ModeSwitch is meant to
+    // grow with the UI like every other corner).
+    // Pin the pattern itself: the exemption must not quietly grow into
+    // "nothing is a hairline any more".
+    const hairlineSource = /border(?![a-z-]*-radius)[a-z-]*:\s*calc\(\s*1\s*\*\s*var\(--dp\)\s*\)/.source
+    expect('border: calc(1 * var(--dp))').toMatch(new RegExp(hairlineSource))
+    expect('border-top-width: calc(1 * var(--dp))').toMatch(new RegExp(hairlineSource))
+    expect('border-radius: calc(1 * var(--dp))').not.toMatch(new RegExp(hairlineSource))
+    expect('border-top-left-radius: calc(1 * var(--dp))').not.toMatch(new RegExp(hairlineSource))
+
     for (const { file, css } of allStyleSources()) {
-      for (const m of stripComments(css).matchAll(/border[a-z-]*:\s*calc\(\s*1\s*\*\s*var\(--dp\)\s*\)/g)) {
+      // `(?![a-z-]*-radius)` exempts every radius longhand (`border-radius`,
+      // `border-top-left-radius`, …) while still catching every width form.
+      for (const m of stripComments(css).matchAll(new RegExp(hairlineSource, 'g'))) {
         throw new Error(`${file} scales a 1px border: ${m[0]}`)
       }
     }
