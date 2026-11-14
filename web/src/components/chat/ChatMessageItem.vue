@@ -79,6 +79,7 @@
         :streaming="msg.streaming"
         :startedAt="msg.createdAt"
         :cancelled="msg.cancelled"
+        :stopped="msg.stopped"
         :summary="msg.summary"
         :summaryCards="msg.summaryCards"
         :showingSummary="showSummary"

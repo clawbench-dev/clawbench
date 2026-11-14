@@ -1498,9 +1498,10 @@ export default {
       subagentSteps: '{count} 步',
       subagentExpand: '展开子智能体输出',
       subagentCollapse: '收起子智能体输出',
-      // 极简模式：把一段连续的工具调用折成一行，只显示次数
-      toolGroupRunning: '正在执行 {index}/{count}',
-      toolGroupDone: '已执行 {count} 个操作',
+      // 极简模式：把一段连续的工具调用与思考折成一行，只显示次数
+      toolGroupOps: '{count} 个操作',
+      toolGroupThinking: '{count} 个思考',
+      toolGroupThinkingRunning: '思考中…',
       toolGroupFailed: '{count} 个失败',
       toolGroupInterrupted: '{count} 个已中断',
       toolInterrupted: '已中断',

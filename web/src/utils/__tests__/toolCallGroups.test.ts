@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildToolCallGroups, MIN_GROUPED_TOOLS } from '@/utils/toolCallGroups'
+import { buildToolCallGroups, MIN_GROUPED_STEPS } from '@/utils/toolCallGroups'
 
 const tool = (id: string, extra: Record<string, any> = {}) => ({ type: 'tool_use', id, done: true, status: 'success', ...extra })
 const thinking = (id: string) => ({ type: 'thinking', think_id: id, done: true })
@@ -8,29 +8,37 @@ const text = (t: string) => ({ type: 'text', text: t })
 const opts = {
   isTool: (b: any) => b?.type === 'tool_use',
   isThinking: (b: any) => b?.type === 'thinking',
-  describe: (b: any) => ({ name: b.id, summary: '' }),
+  describe: (b: any) => ({ name: b.id, summary: '', category: b.category ?? 'fallback' }),
 }
 
 describe('buildToolCallGroups', () => {
   it('folds consecutive tool calls into one run', () => {
     const { groups, byIndex } = buildToolCallGroups([tool('a'), tool('b'), tool('c')], opts)
     expect(groups).toHaveLength(1)
-    expect(groups[0]).toMatchObject({ start: 0, end: 2, toolCount: 3, failedCount: 0, runningIndex: 0 })
+    expect(groups[0]).toMatchObject({ start: 0, end: 2, toolCount: 3, thinkingCount: 0, failedCount: 0, runningIndex: 0 })
     expect([...byIndex.keys()].sort()).toEqual([0, 1, 2])
   })
 
-  it('spans the collapsed thinking chips between tool calls', () => {
+  it('spans the thinking chips between tool calls and counts them', () => {
     // Real turns arrive as thinking, tool, tool, thinking, tool, … — requiring
     // strictly adjacent tool blocks would leave nothing to fold.
     const { groups } = buildToolCallGroups([thinking('t1'), tool('a'), thinking('t2'), tool('b')], opts)
     expect(groups).toHaveLength(1)
-    expect(groups[0]).toMatchObject({ start: 0, end: 3, toolCount: 2 })
+    expect(groups[0]).toMatchObject({ start: 0, end: 3, toolCount: 2, thinkingCount: 2 })
   })
 
-  it('leaves a single tool call alone', () => {
-    expect(MIN_GROUPED_TOOLS).toBe(2)
+  it('folds thinking into a run even before a second tool arrives', () => {
+    // thinking + one tool is already two steps: leaving the chip outside would
+    // split one stretch of work into chip / pill / chip.
     const { groups } = buildToolCallGroups([thinking('t1'), tool('a')], opts)
-    expect(groups).toHaveLength(0)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ toolCount: 1, thinkingCount: 1 })
+  })
+
+  it('leaves a single step alone', () => {
+    expect(MIN_GROUPED_STEPS).toBe(2)
+    expect(buildToolCallGroups([tool('a')], opts).groups).toHaveLength(0)
+    expect(buildToolCallGroups([thinking('t1')], opts).groups).toHaveLength(0)
   })
 
   it('breaks the run on a text block', () => {
@@ -62,9 +70,24 @@ describe('buildToolCallGroups', () => {
     expect(groups[0]).toMatchObject({ runningIndex: 3, runningName: 'c' })
   })
 
+  it('carries the running tool category, and none once the run settles', () => {
+    // The summary row wears the running tool's accent, so the category has to
+    // travel with the group — and it must be empty when nothing runs, otherwise
+    // a finished run would stay tinted with whatever ran last.
+    const running = buildToolCallGroups(
+      [tool('a', { category: 'file' }), tool('b', { category: 'bash', done: false, status: '' })],
+      opts,
+    )
+    expect(running.groups[0].runningCategory).toBe('bash')
+
+    const settled = buildToolCallGroups([tool('a', { category: 'file' }), tool('b', { category: 'bash' })], opts)
+    expect(settled.groups[0].runningIndex).toBe(0)
+    expect(settled.groups[0].runningCategory).toBe('')
+  })
+
   it('ignores blocks the caller does not classify as foldable', () => {
     // An AskUserQuestion card is never foldable — it must not be counted, and
-    // it breaks the run into two (each of which still needs MIN_GROUPED_TOOLS).
+    // it breaks the run into two (each of which still needs MIN_GROUPED_STEPS).
     const isTool = (b: any) => b?.type === 'tool_use' && b.id !== 'ask'
     const { groups } = buildToolCallGroups(
       [tool('a'), tool('b'), tool('ask'), tool('c'), tool('d')],

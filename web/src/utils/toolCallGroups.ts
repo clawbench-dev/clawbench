@@ -9,8 +9,8 @@
  * Thinking chips between two tool calls are part of the same run: real turns
  * arrive as `thinking, tool, tool, thinking, tool, tool, …`, so requiring
  * strictly adjacent tool blocks would leave the fold with almost nothing to
- * merge. A run therefore spans tool calls AND the collapsed thinking chips
- * between them; the whole run collapses into the single row.
+ * merge. A run therefore spans tool calls AND the thinking chips between them;
+ * the whole run collapses into the single row, which reports both counts.
  *
  * Pure function on purpose — the grouping rules are testable without mounting
  * the (very large) ContentBlocks component.
@@ -23,14 +23,28 @@ export interface ToolCallGroup {
   start: number
   /** Index of the last block of the run. */
   end: number
-  /** How many tool calls the run contains (thinking chips are not counted). */
+  /** How many tool calls the run contains. */
   toolCount: number
+  /** How many thinking chips the run contains. */
+  thinkingCount: number
   /** How many of those tools finished with `status === 'error'`. */
   failedCount: number
   /** How many were closed without a result (turn cancelled / agent crash). */
   interruptedCount: number
   /** 1-based position of the running tool inside the run; 0 when none runs. */
   runningIndex: number
+  /**
+   * Whether a thinking chip in the run has not reported done yet. The caller
+   * still gates this on the message being live — a finished turn can leave a
+   * tail thinking block without `done`.
+   */
+  runningThinking: boolean
+  /**
+   * Icon/colour category of the running tool (`file` / `bash` / `search` …), or
+   * `''` when nothing runs. The summary row wears this category's accent while
+   * a tool runs, so it looks like the pill it is standing in for.
+   */
+  runningCategory: string
   /** Display name of the running tool, e.g. "Bash". */
   runningName: string
   /** One-line summary of the running tool, e.g. "npm test". */
@@ -40,10 +54,10 @@ export interface ToolCallGroup {
 export interface ToolCallGroupOptions {
   /** Whether this block is a tool call the user wants folded. */
   isTool: (block: any, index: number) => boolean
-  /** Whether this block is a collapsed thinking chip that may sit inside a run. */
+  /** Whether this block is a thinking chip that may sit inside a run. */
   isThinking: (block: any, index: number) => boolean
-  /** Display name + summary for the running-tool line. */
-  describe: (block: any) => { name: string; summary: string }
+  /** Display name, summary and colour category of the running tool. */
+  describe: (block: any) => { name: string; summary: string; category: string }
 }
 
 export interface ToolCallGroups {
@@ -53,10 +67,12 @@ export interface ToolCallGroups {
 }
 
 /**
- * A single tool call is clearer left alone than folded into "ran 1 operation",
- * so a run must hold at least this many tools before it collapses.
+ * A single step (one tool, or one thinking chip) is clearer left alone than
+ * folded into "1 operation", so a run must hold at least this many steps before
+ * it collapses. Thinking counts as a step: a run of "thinking → one tool" is a
+ * run, and leaving the thinking chip outside would split the transcript again.
  */
-export const MIN_GROUPED_TOOLS = 2
+export const MIN_GROUPED_STEPS = 2
 
 export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): ToolCallGroups {
   const groups: ToolCallGroup[] = []
@@ -73,13 +89,15 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
 
     const start = i
     const toolIndices: number[] = []
+    const thinkingIndices: number[] = []
     while (i < list.length && (opts.isTool(list[i], i) || opts.isThinking(list[i], i))) {
       if (opts.isTool(list[i], i)) toolIndices.push(i)
+      else thinkingIndices.push(i)
       i++
     }
     const end = i - 1
 
-    if (toolIndices.length < MIN_GROUPED_TOOLS) continue
+    if (toolIndices.length + thinkingIndices.length < MIN_GROUPED_STEPS) continue
 
     let failedCount = 0
     let interruptedCount = 0
@@ -95,14 +113,19 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       }
     })
 
-    const described = runningBlock ? opts.describe(runningBlock) : { name: '', summary: '' }
+    const described = runningBlock
+      ? opts.describe(runningBlock)
+      : { name: '', summary: '', category: '' }
     const group: ToolCallGroup = {
       start,
       end,
       toolCount: toolIndices.length,
+      thinkingCount: thinkingIndices.length,
       failedCount,
       interruptedCount,
       runningIndex,
+      runningThinking: thinkingIndices.some((idx) => list[idx] && !list[idx].done),
+      runningCategory: described.category,
       runningName: described.name,
       runningSummary: described.summary,
     }

@@ -176,8 +176,9 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
-        toolGroupRunning: 'Running {index}/{count}',
-        toolGroupDone: 'Ran {count} operations',
+        toolGroupOps: '{count} operation | {count} operations',
+        toolGroupThinking: '{count} thought | {count} thoughts',
+        toolGroupThinkingRunning: 'Thinking…',
         toolGroupFailed: '{count} failed',
         // Needed by the error_source chip: getErrorSourceLabel looks up
         // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
@@ -4044,18 +4045,50 @@ describe('compact tool calls', () => {
     const row = wrapper.find('[data-tool-group]')
     expect(row.exists()).toBe(true)
     expect(row.attributes('data-tool-count')).toBe('3')
-    expect(row.text()).toContain('Ran 3 operations')
+    expect(row.text()).toContain('3 operations')
     // The individual pills are gone — the row IS the run.
     expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
   })
 
-  it('spans collapsed thinking chips inside the run', async () => {
+  it('spans thinking chips inside the run and counts them', async () => {
     const wrapper = mountBlocks({
       blocks: [thinking('th1'), tool('Read', 't1'), thinking('th2'), tool('Bash', 't2')],
     })
     await nextTick()
-    expect(wrapper.find('[data-tool-group]').attributes('data-tool-count')).toBe('2')
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.attributes('data-tool-count')).toBe('2')
+    expect(row.attributes('data-thinking-count')).toBe('2')
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
+    // Counts only — the row is a summary, not a log line.
+    expect(row.text()).toContain('2 operations · 2 thoughts')
+  })
+
+  it('folds a live thinking chip into the run instead of splitting it out', async () => {
+    // The chip used to stay visible while streaming, which split one stretch of
+    // work into chip / pill / chip.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [thinking('th1'), tool('Read', 't1')],
+    })
+    await nextTick()
+    expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
+    expect(wrapper.find('[data-tool-group]').text()).toContain('1 operation · 1 thought')
+  })
+
+  it('takes the deep-thinking colour while only a thinking chip runs', async () => {
+    // Nothing but the thinking chip is live: the row keeps its count layout but
+    // wears the chip's purple, not a tool colour.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), { type: 'thinking', think_id: 'th1', done: false }],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.attributes('data-category')).toBe('thinking')
+    expect(strip.find('.tool-spinner').exists()).toBe(true)
+    expect(strip.text()).toContain('1 operation · 1 thought')
+    // The slot that normally names the running tool says what is happening.
+    expect(strip.find('.tool-group-thinking').text()).toBe('Thinking…')
   })
 
   it('unfolds the run in place, keeping every block reachable', async () => {
@@ -4117,15 +4150,18 @@ describe('compact tool calls', () => {
     expect(wrapper.find('[data-tool-group]').text()).toContain('1 failed')
   })
 
-  it('names the tool that is still running', async () => {
+  it('keeps naming the tool that is running, next to the counts', async () => {
     const wrapper = mountBlocks({
       streaming: true,
+      toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
       blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
     })
     await nextTick()
     const row = wrapper.find('[data-tool-group]')
-    expect(row.text()).toContain('Running 2/2')
-    expect(row.text()).toContain('Bash')
+    expect(row.find('.tool-spinner').exists()).toBe(true)
+    expect(row.text()).toContain('2 operations')
+    // WHICH tool is running still matters — only the "Running 2/2" prefix went away.
+    expect(row.text()).toContain('Bash · npm test')
   })
 
   it('never folds an interactive card or an Agent card with a sub-agent group', async () => {

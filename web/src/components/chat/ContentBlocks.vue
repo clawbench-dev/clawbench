@@ -131,34 +131,48 @@
         :class="{ 'is-open': isToolGroupOpen(group) }"
         data-tool-group="1"
         :data-tool-count="group.toolCount"
+        :data-thinking-count="group.thinkingCount"
         :data-tool-failed="group.failedCount"
       >
         <div
           class="chat-tool-call chat-tool-group-strip chat-run-head"
-          :class="{ done: !group.runningIndex }"
+          :class="{ done: !isGroupRunning(group) }"
+          :data-category="groupAccentCategory(group)"
           @click.stop="toggleToolGroup(group)"
         >
-          <LoadingIndicator v-if="group.runningIndex" class="tool-spinner" size="sm" inline />
+          <LoadingIndicator v-if="isGroupRunning(group)" class="tool-spinner" size="sm" inline />
           <Layers v-else :size="12" class="tool-icon" />
-          <RollingText
-            class="tool-name"
-            :text="group.runningIndex
-              ? t('chat.contentBlocks.toolGroupRunning', { index: group.runningIndex, count: group.toolCount })
-              : t('chat.contentBlocks.toolGroupDone', { count: group.toolCount })"
-          />
+          <!-- Counts first — this row is a summary, not a log line. While a
+               tool runs, the right-hand side says WHICH one ("Bash · npm test");
+               what colour it wears comes from that same tool. -->
+          <RollingText class="tool-name" :text="toolGroupLabel(group)" />
           <RollingText
             v-if="group.runningIndex"
             class="tool-summary"
             :text="group.runningSummary ? group.runningName + ' · ' + group.runningSummary : group.runningName"
           />
+          <span v-else-if="group.runningThinking && streaming" class="tool-summary tool-group-thinking">{{ t('chat.contentBlocks.toolGroupThinkingRunning') }}</span>
           <span v-else-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
           <span v-else-if="group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
-          <!-- Finished: same success/failure language as a single tool pill. -->
-          <XCircle v-if="!group.runningIndex && group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
-          <CircleSlash v-else-if="!group.runningIndex && (group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
-          <CheckCircle2 v-else-if="!group.runningIndex" :size="14" color="#22c55e" class="tool-check" />
-          <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
-          <ChevronDown v-else :size="12" class="tool-group-chevron" />
+          <!-- Everything from the cancelled marker to the chevron is one block
+               pinned to the right edge. Grouping it is what keeps the row
+               aligned in every state: while only a thinking chip runs there is
+               no summary and no status icon, and a flat row left the chevron
+               stranded next to the text. -->
+          <span class="chat-tool-group-tail">
+            <!-- The run swallowed the message's last block, and that block is a
+                 thinking chip: its own cancelled/stopped marker is not rendered,
+                 so this row has to carry it or the turn looks like it just ended.
+                 Only while folded — the opened body renders the chip's own one. -->
+            <span v-if="!isToolGroupOpen(group) && groupHidesTailThinking(group) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
+            <span v-else-if="!isToolGroupOpen(group) && groupHidesTailThinking(group) && stopped && !cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.stopped') }}</span>
+            <!-- Finished: same success/failure language as a single tool pill. -->
+            <XCircle v-if="!isGroupRunning(group) && group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
+            <CircleSlash v-else-if="!isGroupRunning(group) && (group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
+            <CheckCircle2 v-else-if="!isGroupRunning(group)" :size="14" color="#22c55e" class="tool-check" />
+            <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
+            <ChevronDown v-else :size="12" class="tool-group-chevron" />
+          </span>
         </div>
         <!-- The run's content is rendered by a nested ContentBlocks instance,
              exactly like a sub-agent group: one real container, so the rail is a
@@ -873,6 +887,9 @@ const props = defineProps({
   streaming: { type: Boolean, default: false },
   startedAt: { type: String, default: '' },
   cancelled: { type: Boolean, default: false },
+  // A group-chat member's speech was stopped on purpose (distinct from a
+  // cancelled turn). Only used when the tail block is folded into a run.
+  stopped: { type: Boolean, default: false },
   summary: { type: String as () => string | null, default: null },
   summaryCards: { type: Object as () => Record<string, any> | null, default: null },
   showingSummary: { type: Boolean, default: false },
@@ -1859,15 +1876,13 @@ function isFoldableTool(block: any, bi: number): boolean {
   return true
 }
 
-/** A thinking chip may sit inside a run, but only while it is COLLAPSED. A chip
- *  the user expanded (or one still streaming) stays visible — folding it away
- *  would hide the text they are reading. */
-function isFoldableThinking(block: any, bi: number): boolean {
+/** A thinking chip is folded like a tool call: leaving it outside splits the
+ *  transcript into pill / chip / pill for the same stretch of work. */
+function isFoldableThinking(block: any): boolean {
   if (block?.type !== 'thinking') return false
   if (isChildBlock(block)) return false
   if (memberGroupNameOf(block)) return false
-  if (isThinkingStreaming(block)) return false
-  return isThinkingCollapsed(block, bi)
+  return true
 }
 
 const toolGroups = computed(() => {
@@ -1882,9 +1897,48 @@ const toolGroups = computed(() => {
     describe: (block) => ({
       name: toolDisplayName(block.name, block.input, block.display_name),
       summary: props.toolCallSummary(block),
+      category: getToolIcon(block.name).category,
     }),
   })
 })
+
+/** "3 operations · 2 thoughts" — whichever counts are non-zero. */
+function toolGroupLabel(group: ToolCallGroup): string {
+  const parts: string[] = []
+  if (group.toolCount > 0) {
+    parts.push(t('chat.contentBlocks.toolGroupOps', group.toolCount, { named: { count: group.toolCount } }))
+  }
+  if (group.thinkingCount > 0) {
+    parts.push(t('chat.contentBlocks.toolGroupThinking', group.thinkingCount, { named: { count: group.thinkingCount } }))
+  }
+  return parts.join(' · ')
+}
+
+/** A run is still running while a tool OR a thinking chip in it is unfinished.
+ *  The thinking half is gated on the live message: a finished turn can leave a
+ *  tail thinking block that never got its done event. */
+function isGroupRunning(group: ToolCallGroup): boolean {
+  return !!group.runningIndex || (group.runningThinking && props.streaming)
+}
+
+/** Accent of the row: the running tool's category; the deep-thinking purple
+ *  while only a thinking chip runs (so the bar matches that chip's colour);
+ *  none (neutral) once the run settles. */
+function groupAccentCategory(group: ToolCallGroup): string | undefined {
+  if (group.runningIndex) return group.runningCategory || undefined
+  if (group.runningThinking && props.streaming) return 'thinking'
+  return undefined
+}
+
+/**
+ * Whether this run swallowed the message's LAST block and that block is a
+ * thinking chip. `ChatMessageItem` suppresses its own cancelled/stopped marker
+ * when the tail block is thinking (the chip renders one inline instead), so in
+ * this shape the row has to carry it — otherwise neither one shows.
+ */
+function groupHidesTailThinking(group: ToolCallGroup): boolean {
+  return group.end === props.blocks.length - 1 && props.blocks[group.end]?.type === 'thinking'
+}
 
 // Open state lives on the component, not in `expandedTools`: it is a reading
 // preference for this transcript, and it must not collide with tool-detail keys.
@@ -3204,6 +3258,9 @@ onUnmounted(() => {
 .chat-tool-call[data-category="skill"]    { --tool-accent: #06b6d4; }
 .chat-tool-call[data-category="ask"]      { --tool-accent: #f97316; }
 .chat-tool-call[data-category="permission"] { --tool-accent: #eab308; }
+/* Not a tool category: a folded run wears it while its thinking chip streams,
+   so the row takes the deep-thinking chip's own purple. */
+.chat-tool-call[data-category="thinking"] { --tool-accent: #8b5cf6; }
 .chat-tool-call[data-category="fallback"] { --tool-accent: var(--text-muted); }
 
 @media (hover: hover) {
@@ -3233,13 +3290,37 @@ onUnmounted(() => {
 }
 
 /* Compact tool calls: the row that replaces a whole run of tool pills. It
-   reuses the pill shell so it reads as "a tool", but stays neutral-coloured —
-   a run mixes categories (file / bash / search), so no single accent applies. */
+   reuses the pill shell so it reads as "a tool". At rest it stays neutral —
+   a finished run mixes categories (file / bash / search), so no single accent
+   applies. While a tool runs the row wears THAT tool's accent (`data-category`
+   comes from the running block), so it reads as the pill it stands in for; the
+   colour cross-fades as the run moves on to the next tool. */
 .chat-tool-group-strip {
   /* One step further back than a single tool pill: this row is a container, not
      an action, so it must not compete with the pills it summarises. */
   background: color-mix(in srgb, var(--text-muted) 3%, var(--bg-secondary));
   border-color: color-mix(in srgb, var(--text-muted) 10%, var(--border-color));
+  /* Background / border / text all move together — a run can hop file → bash →
+     search within a second, and a hard cut would read as a flicker. */
+  transition:
+    background-color var(--duration-slow) ease,
+    border-color var(--duration-slow) ease,
+    color var(--duration-slow) ease;
+}
+
+/* Running: same accent mix as the running tool's own pill would have (or the
+   deep-thinking purple, via [data-category="thinking"]). */
+.chat-tool-group-strip[data-category] {
+  background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
+}
+
+@media (hover: hover) {
+  /* The shared `.chat-tool-call:hover` rule is neutral and sits before this
+     block, so a tinted running row needs its own hover to keep responding. */
+  .chat-tool-group-strip[data-category]:hover {
+    background: color-mix(in srgb, var(--tool-accent) 12%, var(--bg-secondary));
+  }
 }
 
 .chat-tool-group-strip .tool-name {
@@ -3247,6 +3328,18 @@ onUnmounted(() => {
   /* The count changes while the run streams; tabular digits keep the row from
      twitching left and right. */
   font-variant-numeric: tabular-nums;
+  transition: color var(--duration-slow) ease;
+}
+
+.chat-tool-group-strip[data-category] .tool-name {
+  color: var(--tool-accent);
+}
+
+/* The ring is painted by the global .li-spinner and tinted by --li-color, which
+   .tool-spinner already points at --tool-accent — so it follows the row, and
+   this keeps it from snapping to the new colour ahead of the background. */
+.chat-tool-group-strip :deep(.li-spinner) {
+  transition: border-top-color var(--duration-slow) ease;
 }
 
 .chat-tool-group-strip .tool-group-failed {
@@ -3264,16 +3357,19 @@ onUnmounted(() => {
   text-align: right;
 }
 
-.chat-tool-group-strip .tool-spinner,
-.chat-tool-group-strip .tool-group-chevron {
-  /* The spinner and chevron sit at the START and END of this row, so the shared
-     `margin-left: auto` (meant for a pill's trailing status icon) would shove
-     them into the middle. The trailing status icon keeps it. */
-  margin-left: 0;
+/* Everything from the cancelled marker to the chevron is one block pinned to the
+   right edge. Pinning the CONTAINER (not one child) is what keeps the row
+   aligned in every state: while only a thinking chip runs there is no summary
+   and no status icon, and a flat row left the chevron stranded next to the text. */
+.chat-tool-group-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5 * var(--dp));
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .chat-tool-group-strip .tool-group-chevron {
-  flex-shrink: 0;
   color: var(--text-muted);
 }
 
@@ -3358,6 +3454,19 @@ onUnmounted(() => {
 .chat-tool-call .tool-error-icon {
   flex-shrink: 0;
   margin-left: auto;
+}
+
+/* Inside the tail the shared `margin-left: auto` (meant for a pill's trailing
+   status icon) has nothing left to distribute — the tail itself owns the free
+   space. Two `auto` margins would split it and park an icon in the middle. */
+.chat-tool-group-tail .tool-spinner,
+.chat-tool-group-tail .tool-check,
+.chat-tool-group-tail .tool-warn,
+.chat-tool-group-tail .tool-error-icon,
+.chat-tool-group-tail .tool-group-chevron,
+.chat-tool-group-tail .chat-cancelled-mark-inline {
+  margin-left: 0;
+  flex-shrink: 0;
 }
 
 /* ── Sub-agent group ──
@@ -3579,6 +3688,7 @@ onUnmounted(() => {
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="task"]   { --tool-accent: #fbbf24; }
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="agent"]  { --tool-accent: #f472b6; }
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="skill"]  { --tool-accent: #22d3ee; }
+:root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="thinking"] { --tool-accent: #a78bfa; }
 
 /* Tool output section — the header (label + ok/error chip) and its styles live
    in ToolDetailDrawer: the inline card renders tool INPUT only (clicking it
