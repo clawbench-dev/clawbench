@@ -7,10 +7,39 @@
 
 现在加一个后端是「新建 1 个目录 + 6 处登记 + 可能还要去核心包开 3 个文件」；做完之后是「新建 1 个目录 + 跑一次 `go generate`」。
 
-## 0.1 实施进度（2026-11-15）
+## 0.1 实施进度（2026-11-16）
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
+| Phase 1 注册收编 | ✅ 完成 | 4 个注册入口 → 1 次 `backends.Register`；`CLI`/`Custom` 合并并接上 |
+| Phase 2 自动发现 | ✅ 完成 | `genbackendimports` + `backends/all`；`main.go` 20 行 → 1 行 |
+| Phase 3 行为钩子 | ✅ 完成（2 处例外） | 11 个 ACP 解析/桥接文件搬进子包 |
+| Phase 4 搬 CLI 解析 | ✅ 完成 | vecli / deepseek / grok / claude(+StreamParser) / codex / opencode / pi / openclaw 全部搬走 |
+| Phase 5 数据搬家 | 🚧 部分 | 守卫已改为派生；4 张数据表仍在核心包（原因见下） |
+
+**实测结论**：新建一个后端目录 + `go generate ./internal/ai/backends/all` + `go build` 即可通过；
+随后 3 条守卫会点名要你补声明：
+
+1. `TestProviderEnvTableCoversEveryBackend` → `internal/model/provider_env.go` 一行
+2. `TestBackendSkillAwarenessMatchesReviewedTable` → 技能目录审阅表一行（这是人拍板的结论，应该手工）
+3. `TestSpecDocsBackendCountMatchesRegistry` → 文档里的后端计数
+
+比改造前的 14–22 个文件少了约 80%。
+
+**Phase 5 为什么没做完数据表**：`providerEnvTable` / `mcpUnsupportedBackends` /
+`provider_config_dir` 的 switch / `catalogs.go` 都被 `model`、`service` 的
+**包内测试**直接读取，而这些测试不 import 后端插件（会成环）。把数据搬进
+插件，等于要求几十个测试文件先转成外部测试包（`package model_test`）并各自
+播种夹具——那是一次独立的测试重构，硬塞进这一轮只会做出「生产对了、测试全红」
+的半成品。本次先做完了其中纯收益的两条（目录派生、路径放行）。
+
+Phase 3/4 的例外（都写在代码注释里）：
+
+- `acp_opencode_children.go`：挂在 `ClawBenchACPClient` 的私有 map 上，是客户端逻辑而非事件映射。
+- `acp_meta_codebuddy.go`：核心的取消回合用量累积测试以它的解析结果为夹具；导出为 `ai.ExtractCodeBuddyMeta`，插件仍以 `ExtractMeta` 注册同一实现。
+- `opencode_error_types.go`：ACP 侧错误分类器与 CLI 解析器共用的一张表。
+
+---|---|---|
 | Phase 1 注册收编 | ✅ 完成 | 4 个注册入口 → 1 次 `backends.Register`；`CLI`/`Custom` 死字段合并并接上 |
 | Phase 2 自动发现 | ✅ 完成 | `genbackendimports` + `backends/all`；`main.go` 20 行 → 1 行 |
 | Phase 3 行为钩子 | ✅ 完成（2 处例外） | 11 个 ACP 解析/桥接文件搬进子包；`ACPBehavior` 全部字段可选 |
